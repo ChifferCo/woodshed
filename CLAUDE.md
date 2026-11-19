@@ -149,7 +149,7 @@ URL on top of each env file's Repo settings values
   access"): the console logged `fleet: session tainted`, and its card says Production. A call through the egress proxy
   answers 403 `refused by this session's lockdown: <why>`, and the console logs `egress: refused` with the session, the
   host and why (once each); a call round it finds no DNS and no route. GitHub is allowed only for its own project's
-  owner's private repos: `is public` or `is not <org>'s` is the rule, `could not tell whether <repo> is private` is
+  owner's private repos, and its own project's repo to read even when public: a push to a public repo answers `is public`, `is not <org>'s` is another owner's, `could not tell whether <repo> is private` is
   GitHub not answering anonymously (60 calls an hour). In the session, `cat /tmp/woodshed-egress.env` shows the proxy's
   variables, and `/tmp/woodshed-tainted` its taint. A git call that says `Proxy CONNECT aborted` is a git without
   `GIT_HTTP_PROXY_AUTHMETHOD=basic` (an image from before it). Nothing undoes a taint: what it needs that is not
@@ -160,7 +160,10 @@ URL on top of each env file's Repo settings values
   declare` is a mutation document shaped otherwise than `gh` makes them. Its Anthropic calls are refused for an image
   or document given by URL, and for a body that is not JSON (`anthropicProxy: refused, a tainted session's call the
   console cannot read`).
-- **An MCP server from Console settings fails in `/mcp`, or a session does not have it.** A session gets the servers
+- **An MCP server from Console settings fails in `/mcp`, or a session does not have it.** First press **Test** on its row:
+  it calls the server as the relay would and says what failed in one sentence (`mcpServers: server tested` with `ok` and
+  `status`). A server at a link-local address, or a name resolving to one, is refused by both (`mcpRelay: refused, a
+  link-local address`). A session gets the servers
   that existed when it started: its log says `MCP servers offered` with them, or nothing when it got none
   (`WOODSHED_MCP_SERVERS`, from `mcpServers.forSession`: a QA run, a review and a Codex session get none, a shared one
   only those marked for shared sessions, a production one only where the console can lock a session down). The console

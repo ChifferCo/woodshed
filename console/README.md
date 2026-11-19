@@ -711,6 +711,16 @@ server (`mcpServers.mjs`, `checkServer`):
   `header`, a header (`header`, such as `authorization` or `x-api-key`) whose value is kept in the secret store as
   `mcp-servers/<name>/header`, written once on the card or with `/header` and never read back; or `none`.
 
+**Testing a server** (`mcpTest.mjs`, `POST /api/console-settings/mcp-servers/test`): the card's Add server and Save test
+first, and each row has Test. The console itself calls the server as the relay would, with the same auth (a signed token
+with `sub` `console:test` and `test: true`, or the header, the typed value before the saved one), sends `initialize`,
+`notifications/initialized` and `tools/list`, and answers whether it was reached, the server's name and version and how
+many tools it has, or one sentence saying what failed (not reached, refused what the console added, no MCP endpoint at
+that path, not an MCP server). No session takes part, nothing is tainted, and neither the answer nor the log
+(`mcpServers: server tested` with `ok` and `status`) carries the server's body or any secret. A failed test saves
+nothing unless the admin chooses Add anyway. The console never calls a link-local address, the instance metadata's
+among them, by address or by a name resolving to one: the relay and the test both refuse it.
+
 A server added, changed or removed reaches sessions started after it; a removed one's calls are refused at once
 (`mcpRelay: refused, no such server`). The fleet hands each session its servers' names in `WOODSHED_MCP_SERVERS`, and
 the session writes claude's `--mcp-config` from them (`session/taint.mjs mcp-config`). The console logs `mcpServers:
@@ -756,8 +766,9 @@ with `WOODSHED_PROD_MCP_PEOPLE` and `_REPOS`).
   session's token as its proxy credential. A tainted session reaches GitHub's hosts alone, through TLS the proxy opens
   with its own authority (made by `openssl` in `egress/` in the state folder, name-constrained to github.com): git and
   the API on its project's owner's repos that are not public, and the API's pull request writes and GraphQL mutations,
-  each id checked (the GraphQL document read with a tokenizer as GitHub reads it: a mutation must be the document's only
-  operation, with no fragments, each top-level field an allowed one, every value a variable, and every value that lands
+  each id checked; its own project's repo it may always read (fetch, clone, API reads), public or not, so a resumed
+  session gets its branch, though it never pushes to a public one (the GraphQL document read with a tokenizer as GitHub reads it: a mutation must be the document's only
+  operation, with no fragment definitions or variable defaults, each top-level field an allowed one, every value a variable, and every value that lands
   in an `ID` variable or an `id`/`…Id`/`…Ids` field checked). A guarded session not tainted yet (AWS) goes anywhere on
   the public internet, untouched, but never to the console's own network: the name is resolved and every address it
   has must be public (no loopback, link-local and so no instance metadata, private or shared ranges), and that address

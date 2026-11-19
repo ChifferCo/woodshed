@@ -73,11 +73,12 @@ export function anonymousVisibility({ request = https.request } = {}) {
  *          upstream?: {request?: typeof https.request, connect?: (port: number, host: string) => net.Socket, ca?: string|Buffer,
  *                      port?: number, lookup?: Function},
  *          now?: () => number}} opts
- *   `isLocked` is the fleet's: true from the moment a lockdown starts. `orgOf` names the owner whose private repos a
+ *   `isLocked` is the fleet's: true from the moment a lockdown starts. `repoOf` names the session's own project's repo,
+ *   which it may always read (fetch, clone, API reads), public or not. `orgOf` names the owner whose private repos a
  *   session may reach: its project's. `upstream` is where calls go, the real GitHub and internet but in tests
  * @returns {http.Server}  not yet listening
  */
-export function createEgressProxy({ sessions, isLocked, orgOf, certs, visibility = anonymousVisibility(), upstream = {}, now = Date.now, passThrough = () => true, lookup = dns.lookup }) {
+export function createEgressProxy({ sessions, isLocked, orgOf, repoOf = () => null, certs, visibility = anonymousVisibility(), upstream = {}, now = Date.now, passThrough = () => true, lookup = dns.lookup }) {
   const request = upstream.request ?? https.request;
   const connect = upstream.connect ?? ((port, host) => net.connect(port, host));
   const plainRequest = upstream.plainRequest ?? http.request;
@@ -183,6 +184,10 @@ export function createEgressProxy({ sessions, isLocked, orgOf, certs, visibility
     if (rule.kind === 'deny') return refuse(rule.why);
     const org = orgOf(session);
     if (rule.kind === 'repo') {
+      // Its own project's repo it may always read, public or not: fetching code anyone can read takes nothing out, and a
+      // resumed session needs its branch. Writes to it are checked as any repo's.
+      const own = String(repoOf(session) ?? '').toLowerCase();
+      if (!rule.write && own && own === `${rule.owner}/${rule.name}`.toLowerCase()) return send(req, res, host);
       let seen;
       try {
         seen = await visibilityOf(rule.owner, rule.name, session);

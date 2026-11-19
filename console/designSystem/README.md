@@ -43,6 +43,16 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 ## Settings pages
 
 - A few things each set on or off at once, such as who reviews your pull requests on My settings, are an on/off grid (`components/OnOffGrid`): radios under Off and On, a row each, saved as they are picked.
+- Two or three exclusive choices whose difference matters, such as an MCP server's Ordinary or Production, are choice
+  cards (`components/ChoiceCards`): side by side, each a title and one line saying what it does, the picked one in the
+  `amber` outline. A choice with a cost (Production) fills with its own colours (`prod`) when picked, with a callout under
+  the cards saying what will happen. One not available here stays, disabled, and says why.
+- Some of the console's repos, or all, is a repo pick (`components/RepoPick`): a fold whose summary says the pick, over
+  **All repos** and a checkbox per repo. A saved repo the console no longer has stays listed, ticked. Never a typed list.
+- A server or anything the console calls on a person's behalf is tested before it is saved: the button says
+  `Testing…`, a failure is a `form-error` with a quiet **Add anyway** beside it, and the form keeps what was typed.
+  A saved one's row has a quiet **Test**, whose answer is a line under the row.
+- An HTTP header's name is shown in Title-Case (`Authorization`, `X-Api-Key`), whatever case it is kept in.
 - Each settings page has a quiet `Only you` or `Everyone` tag beside its title, and the settings rail has a search at its top (`components/SettingsSearch`).
   Name a card by whose it is when the same thing exists on both sides: "My repo settings", "My session timeouts".
 

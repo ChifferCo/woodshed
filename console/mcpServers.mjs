@@ -19,6 +19,9 @@
 // The installation's environment may name one production server too (WOODSHED_PROD_MCP_URL, Terraform's prod_mcp):
 // listed as `woodshed-prod`, `source: environment`, and changed only where it is set.
 
+import dns from 'node:dns';
+import net from 'node:net';
+
 import { issuerFrom } from './oidcIssuer.mjs';
 import { isAsk, isQa, isReview } from './sessions.mjs';
 
@@ -314,4 +317,46 @@ export function createMcpServers({ store, settings, secrets = null, host = null,
   }
 
   return { list, get, forSession, view, load, save, remove, setHeader, headerValue, settings };
+}
+
+// Link-local addresses, the cloud's instance metadata among them (169.254.169.254, fd00:ec2::254): never an MCP server,
+// and on AWS the console's own role's credentials. Loopback and private ranges stay allowed: a server on the internal
+// network is an ordinary setup.
+const LINK_LOCAL = new net.BlockList();
+LINK_LOCAL.addSubnet('169.254.0.0', 16, 'ipv4');
+LINK_LOCAL.addSubnet('fe80::', 10, 'ipv6');
+LINK_LOCAL.addAddress('fd00:ec2::254', 'ipv6');
+
+/** @returns {boolean}  whether an address is link-local or the instance metadata's */
+export function isLinkLocal(address) {
+  const text = String(address).replace(/^\[|\]$/g, '').split('%')[0];
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(text);
+  if (mapped) return isLinkLocal(mapped[1]);
+  const family = net.isIP(text);
+  return Boolean(family) && LINK_LOCAL.check(text, family === 6 ? 'ipv6' : 'ipv4');
+}
+
+/**
+ * A dns.lookup for the console's own calls to MCP servers that refuses a name resolving to a link-local address.
+ * @type {typeof dns.lookup}
+ */
+export function mcpLookup(host, options, callback) {
+  const cb = typeof options === 'function' ? options : callback;
+  const opts = typeof options === 'function' ? {} : (typeof options === 'number' ? { family: options } : options ?? {});
+  dns.lookup(host, { ...opts, all: true }, (err, addresses) => {
+    if (err) return cb(err);
+    const bad = addresses.find((a) => isLinkLocal(a.address));
+    if (bad) return cb(Object.assign(new Error(`${host} resolves to ${bad.address}, a link-local address the console never calls`), { code: 'ELINKLOCAL' }));
+    if (opts.all) return cb(null, addresses);
+    return cb(null, addresses[0].address, addresses[0].family);
+  });
+}
+
+/** @returns {Promise<string|null>}  why the console will not call this host, or null */
+export function linkLocalRefusal(hostname, lookup = mcpLookup) {
+  const host = String(hostname).replace(/^\[|\]$/g, '');
+  if (net.isIP(host)) return Promise.resolve(isLinkLocal(host) ? `${host} is a link-local address, which the console never calls` : null);
+  return new Promise((resolve) => {
+    lookup(host, { all: true }, (err) => resolve(err?.code === 'ELINKLOCAL' ? err.message : null));
+  });
 }

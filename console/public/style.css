@@ -761,6 +761,50 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .set-row.is-bad .field { border-color: var(--bad); }
 .set-row .form-error { grid-column: 1 / -1; margin: 0; font-size: 12.5px; color: var(--bad); }
 @media (max-width: 560px) { .set-row { grid-template-columns: 1fr; } .set-value { flex-wrap: wrap; } .set-value .field.is-repo { width: 100%; } }
+/* Two or three exclusive choices that each need a line of their own (designSystem/components/ChoiceCards): the MCP
+   servers card's Ordinary or Production. Native radios under the cards, so arrows move between them. */
+.set-row.is-block { grid-template-columns: minmax(0, 1fr); }
+.choice-set { margin: 0; padding: 0; border: 0; min-width: 0; }
+.choice-set > legend { padding: 0; margin-bottom: 8px; }
+.choice-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.choice-card { position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 4px 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--ground); color: var(--ink); cursor: pointer; }
+.choice-card > input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: inherit; }
+.choice-card .radio { width: 16px; height: 16px; margin-top: 1px; border-radius: 50%; border: 1.5px solid var(--meta); box-sizing: border-box; }
+.choice-title { font-weight: 600; font-size: 14px; }
+.choice-line { grid-column: 2; font-size: 12.5px; color: var(--sub); }
+.choice-card.is-on { border-color: var(--amber); box-shadow: inset 0 0 0 1px var(--amber); }
+.choice-card.is-on .radio { border: 5px solid var(--amber); }
+.choice-card:has(> input:focus-visible) { outline: 2px solid var(--amber); outline-offset: 2px; }
+.choice-card.is-production .choice-title::before { content: ""; display: inline-block; width: 7px; height: 6px; background: currentColor; border-radius: 1px; margin-right: 6px; vertical-align: 1px; box-shadow: 0 -3px 0 -1px currentColor; }
+.choice-card.is-production.is-on { background: var(--prod); border-color: var(--prod); box-shadow: none; color: var(--prod-ink); }
+.choice-card.is-production.is-on .choice-line { color: var(--prod-ink); }
+.choice-card.is-production.is-on .radio { border-color: var(--prod-ink); }
+.choice-card.is-off { cursor: not-allowed; background: var(--stopped); color: var(--sub); }
+.choice-card.is-off .radio { border-color: var(--line); }
+@media (max-width: 560px) { .choice-cards { grid-template-columns: minmax(0, 1fr); } }
+/* What a production server does to a session, under its choice: the Production tag, then the lines, on a prod edge. */
+.prod-callout { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--prod); border-left-width: 4px; border-radius: 6px; background: var(--ground); font-size: 12.5px; color: var(--ink); }
+.prod-callout-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 6px; font-weight: 600; font-size: 13px; }
+.prod-callout ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+/* Some of the console's repos, or all: checkboxes under a fold, the pick written on its summary. */
+.repo-pick { flex: 0 1 280px; width: 280px; max-width: 100%; min-width: 0; }
+.set-row.is-top { align-items: start; }
+.set-value .repo-pick > summary.field { width: auto; text-align: left; }
+.repo-pick > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; font-family: var(--mono); font-size: 12.5px; }
+.repo-pick > summary::-webkit-details-marker { display: none; }
+.repo-pick > summary::after { content: "▾"; margin-left: auto; font-family: inherit; color: var(--meta); }
+.repo-pick[open] > summary::after { content: "▴"; }
+.repo-pick-text { flex: 1 1 0; width: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo-pick-list { display: flex; flex-direction: column; margin-top: 4px; padding: 4px 0; border: 1px solid var(--line); border-radius: 6px; background: var(--ground); max-height: 260px; overflow-y: auto; }
+.repo-check { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
+.repo-check:hover { background: var(--slate-tint); }
+.repo-check:first-child { border-bottom: 1px solid var(--line-soft); font-weight: 600; }
+.repo-check input { margin: 0; accent-color: var(--slate); }
+.repo-check input:disabled + .repo-check-name { color: var(--sub); }
+.repo-check-name { min-width: 0; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; }
+.repo-check:first-child .repo-check-name { font-family: inherit; font-size: 13px; }
+.repo-check-note { flex-basis: 100%; padding-left: 21px; font-size: 11.5px; color: var(--meta); }
+@media (max-width: 560px) { .repo-pick { flex-basis: 100%; width: 100%; } }
 .card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
 .card-foot .sub { font-size: 12.5px; }
 .cap-note { margin: 0; font-size: 12.5px; color: var(--sub); padding: 9px 11px; border-radius: 6px; background: var(--slate-tint); }

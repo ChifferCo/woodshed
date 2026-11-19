@@ -14,7 +14,7 @@
 import http from 'node:http';
 import https from 'node:https';
 
-import { ENVIRONMENT_SERVER_NAME, serverEligibility } from './mcpServers.mjs';
+import { ENVIRONMENT_SERVER_NAME, isLinkLocal, mcpLookup, serverEligibility } from './mcpServers.mjs';
 
 const PREFIX = '/mcp/';
 const LEGACY = '/prod-mcp';
@@ -136,7 +136,13 @@ export function createMcpRelay({ servers, issuer, fleet, repoOf, now = Date.now 
     for (const name of REQUEST_HEADERS) if (req.headers[name] !== undefined) out[name] = req.headers[name];
     Object.assign(out, added);
     out.host = target.host;
+    if (isLinkLocal(target.hostname)) {
+      req.resume();
+      console.warn('mcpRelay: refused, a link-local address', { sessionId: session.id, server: server.name });
+      return reply(res, 502, { error: `${server.name}'s address is link-local, which the console never calls` });
+    }
     const call = transport.request({
+      lookup: mcpLookup,
       protocol: target.protocol, hostname: target.hostname, port: target.port || undefined,
       method: req.method, path: `${target.pathname.replace(/\/+$/, '')}${suffix}${search}` || '/', headers: out,
     }, (answer) => {

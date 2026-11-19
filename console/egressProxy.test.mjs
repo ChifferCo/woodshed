@@ -47,7 +47,7 @@ async function fakeGitHub(t) {
   return { seen, port, ca: await certs.caPem() };
 }
 
-async function setup(t, { passThrough = () => true, names = {}, connect: connectTo = null } = {}) {
+async function setup(t, { passThrough = () => true, names = {}, connect: connectTo = null, repoOf = () => 'acme/api' } = {}) {
   t.mock.method(console, 'log', () => {});
   t.mock.method(console, 'warn', () => {});
   const github = await fakeGitHub(t);
@@ -58,7 +58,7 @@ async function setup(t, { passThrough = () => true, names = {}, connect: connect
   ];
   const lookup = (host, opts, cb) => (opts?.all ? cb(null, [{ address: '127.0.0.1', family: 4 }]) : cb(null, '127.0.0.1', 4));
   const proxy = createEgressProxy({
-    sessions: () => sessions, isLocked: (s) => Boolean(s.taintedAt), orgOf: () => 'acme', certs,
+    sessions: () => sessions, isLocked: (s) => Boolean(s.taintedAt), orgOf: () => 'acme', repoOf, certs,
     visibility: async (owner, name) => (name === 'site' || owner === 'octocat' ? 'public' : 'unknown'),
     upstream: { ca: github.ca, port: github.port, lookup, ...(connectTo && { connect: connectTo }) },
     passThrough,
@@ -185,6 +185,19 @@ test('a tainted session reaches its organization\'s private repos over git and t
     assert.match(refused.body, why, request.path);
   }
   assert.equal(github.seen.length, before, 'none of them reached GitHub');
+});
+
+test('a tainted session reads its own project\'s repo even when it is public, so it can resume, and never pushes to it', async (t) => {
+  const { port, ca, github } = await setup(t, { repoOf: () => 'acme/site' });
+  const fetch = await viaProxy({ port, ca, host: 'github.com', path: '/acme/site.git/info/refs?service=git-upload-pack' });
+  assert.equal(fetch.status, 200);
+  assert.equal((await viaProxy({ port, ca, host: 'github.com', method: 'POST', path: '/acme/site.git/git-upload-pack', body: '0000' })).status, 200);
+  assert.equal((await viaProxy({ port, ca, host: 'api.github.com', path: '/repos/acme/site/pulls' })).status, 200);
+  const push = await viaProxy({ port, ca, host: 'github.com', method: 'POST', path: '/acme/site.git/git-receive-pack', body: 'PACK' });
+  assert.equal(push.status, 403);
+  assert.match(push.body, /public/);
+  assert.equal((await viaProxy({ port, ca, host: 'github.com', path: '/octocat/Hello-World.git/info/refs?service=git-upload-pack' })).status, 403, 'another public repo stays refused');
+  assert.equal(github.seen.length, 3);
 });
 
 test('a tainted session\'s GraphQL mutation goes on only once GitHub says it acts on the organization\'s private repo', async (t) => {

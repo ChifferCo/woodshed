@@ -122,6 +122,11 @@
 //   POST /api/console-settings/mcp-servers/remove  {"name": "<server>"}
 //   POST /api/console-settings/mcp-servers/header  {"name": "<server>", "value": "..."|""}   the header the console adds
 //                                to a server whose auth is header, kept in the secret store and never shown again
+//   POST /api/console-settings/mcp-servers/test  {"server": {...as above}, "value"?: "..."} or {"name": "<server>"}
+//                                calls the server as the relay would, with the same auth (mcpTest.mjs): initialize, then
+//                                tools/list. `value` is a header value to use instead of the saved one. Answers
+//                                {"ok": true, "status", "serverInfo": {"name", "version"}|null, "tools": <count>|null, "ms"}
+//                                or {"ok": false, "status": <number>|null, "error": "<what to do>"}; never a body or a secret
 //   GET  /api/console-settings/updates         the Woodshed commit this console runs, the newer ones on the branch its
 //                                git clone follows, and an update's steps (woodshedUpdate.mjs)
 //   POST /api/console-settings/updates/check   fetch that branch again, now
@@ -201,6 +206,7 @@ import { readMyPulls } from './myPulls.mjs';
 import { createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
 import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
+import { createMcpTester } from './mcpTest.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
@@ -270,7 +276,8 @@ const SLACK_SETUP_PATH = '/api/console-settings/slack';
 const SLACK_SETUP_WRITE_RE = /^\/api\/console-settings\/slack(?:\/(check|recheck|channels|disconnect))?$/;
 const PROJECT_TRIGGERS_PATH = `${PROJECTS_PATH}/triggers`;
 const MCP_SERVERS_PATH = '/api/console-settings/mcp-servers';
-const MCP_SERVERS_WRITES = new Set([MCP_SERVERS_PATH, `${MCP_SERVERS_PATH}/remove`, `${MCP_SERVERS_PATH}/header`]);
+const MCP_SERVERS_TEST_PATH = `${MCP_SERVERS_PATH}/test`;
+const MCP_SERVERS_WRITES = new Set([MCP_SERVERS_PATH, `${MCP_SERVERS_PATH}/remove`, `${MCP_SERVERS_PATH}/header`, MCP_SERVERS_TEST_PATH]);
 const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
 const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
 const PULLS_FRESH_MS = 60_000;
@@ -684,6 +691,8 @@ export function createHandler({
   projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
 }) {
+  // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
+  const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
@@ -2048,6 +2057,15 @@ export function createHandler({
     }
     if (typeof body !== 'object' || body === null || Array.isArray(body)) return reply(res, 400, { error: 'body must be a JSON object' });
     const by = login ?? 'console';
+    if (pathname === MCP_SERVERS_TEST_PATH) {
+      try {
+        return reply(res, 200, await mcpTester.run({ name: body.name, server: body.server, value: body.value, by }));
+      } catch (err) {
+        if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
+        console.error('console: MCP server test failed', { message: String(err?.message ?? err).split('\n')[0] });
+        return reply(res, 502, { error: 'The test failed; the console log says why' });
+      }
+    }
     try {
       if (pathname === MCP_SERVERS_PATH) await mcpServers.save({ server: body.server, by });
       else if (pathname === `${MCP_SERVERS_PATH}/remove`) await mcpServers.remove({ name: body.name, by });

@@ -432,6 +432,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const egressProxy = access.certs ? createEgressProxy({
     sessions: () => fleet.sessions(), isLocked: fleet.isLocked, certs: access.certs,
     orgOf: (session) => projectFor(config, session).repo?.split('/')[0] ?? null,
+    repoOf: (session) => projectFor(config, session).repo ?? null,
     // Untainted sessions use it only where their launcher sends them out through it: AWS's guarded network, which only a
     // session that may use production starts on.
     passThrough: (session) => Boolean(provider.launcher?.guardsEgress) && Boolean(session.mayUseProduction),
