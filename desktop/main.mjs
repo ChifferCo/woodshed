@@ -401,6 +401,10 @@ async function finishSignIn(link) {
   // the waiting page, and its address is the page's own, not whatever it shows by the time it has loaded (a setup
   // form, a page opened meanwhile). Setup shown since, even at the same address, is the person moving on too.
   const shownAt = setupShown;
+  // The console and the attempt this link is for, fixed before anything waits: a console changed while a window is made
+  // gets no code or verifier of another's.
+  const base = consoleUrl;
+  const attempt = signInAttempt;
   let from;
   if (!mainWindow) {
     const loaded = createMainWindow({ waiting: true });
@@ -411,14 +415,16 @@ async function finishSignIn(link) {
   } else {
     from = mainWindow.webContents.getURL();
   }
+  if (base !== consoleUrl || attempt !== signInAttempt) {
+    console.log('woodshed-desktop: the console changed or a newer sign-in began while a window was made for the link, dropped');
+    return;
+  }
   const win = mainWindow;
   if (win && !win.isDestroyed()) {
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
   }
-  const base = consoleUrl;
-  const attempt = signInAttempt;
   const claimUrl = new URL('auth/desktop/claim', base).href;
   let error = null;
   let setCookies = [];
@@ -464,6 +470,11 @@ async function finishSignIn(link) {
         return;
       }
     } catch (err) {
+      // Overtaken while it was being stored: the newer sign-in's page is the person's, and this failure says nothing to them.
+      if (attempt !== signInAttempt || base !== consoleUrl) {
+        console.log('woodshed-desktop: a sign-in overtaken while it was stored failed to store, dropped', { message: err.message });
+        return;
+      }
       error = `The sign-in could not be kept: ${err.message}`;
     }
   }
