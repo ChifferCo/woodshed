@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { appState, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
+import { appState, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -763,7 +763,9 @@ async function pickerPane(t, spec) {
   await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '40', `${process.execPath} ${picker} ${dir}/spec.json ${dir}/answers.json`);
   const shown = async () => (await tmux('capture-pane', '-p', '-t', 'claude')).stdout;
   for (let i = 0; i < 50 && !/Esc to cancel/.test(await shown()); i++) await new Promise((resolve) => setTimeout(resolve, 100));
-  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir } });
+  // claude's hooks say it asks, in a state file of the test's own: the default one is the machine's own claude's.
+  await fs.writeFile(path.join(dir, 'state.json'), JSON.stringify({ state: 'needs-you', event: 'PermissionRequest', at: Date.now(), shells: 0 }));
+  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, WOODSHED_CLAUDE_STATE_FILE: path.join(dir, 'state.json') } });
   return {
     call, tmux,
     answers: async () => JSON.parse(await fs.readFile(path.join(dir, 'answers.json'), 'utf8').catch(() => 'null')),
@@ -846,4 +848,60 @@ test('POST /send types nothing when the pane cannot be read, which may be showin
   assert.equal(sent.status, 503);
   assert.equal(sent.body.why, 'pane-unread');
   assert.doesNotMatch(JSON.stringify(sent.body), /go on/, 'the reply carries no text of the message');
+});
+
+// A stand-in claude at its prompt: its mode footer, and each line it is sent written to a file.
+async function promptPane(t, state) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-held-'));
+  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
+  t.after(async () => {
+    await tmux('kill-server').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const lines = path.join(dir, 'lines.txt');
+  const script = path.join(dir, 'claude.cjs');
+  await fs.writeFile(script, `const fs = require('fs');
+process.stdout.write('\\n> \\n  ⏵⏵ auto mode on (shift+tab to cycle)\\n');
+require('readline').createInterface({ input: process.stdin }).on('line', (l) => fs.appendFileSync(${JSON.stringify(lines)}, l + '\\n'));
+`);
+  await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '20', `${process.execPath} ${script}`);
+  const stateFile = path.join(dir, 'state.json');
+  const setState = (s) => fs.writeFile(stateFile, JSON.stringify({ state: s, event: s === 'done' ? 'Stop' : 'PreToolUse', at: Date.now(), shells: 0 }));
+  await setState(state);
+  for (let i = 0; i < 50 && !/auto mode on/.test((await tmux('capture-pane', '-p', '-t', 'claude')).stdout); i++) await new Promise((r) => setTimeout(r, 100));
+  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, WOODSHED_CLAUDE_STATE_FILE: stateFile } });
+  return { call, setState, got: async () => (await fs.readFile(lines, 'utf8').catch(() => '')) };
+}
+
+test('POST /send holds a message while the agent works, and sends it once the turn ends', async (t) => {
+  // A prompt opens only mid-turn, between any last look at the pane and an Enter: so mid-turn, no Enter at all.
+  const { call, setState, got } = await promptPane(t, 'working');
+  const sent = await call('POST', '/send', 'sess', JSON.stringify({ text: 'hello held' }));
+  assert.equal(sent.status, 202);
+  assert.deepEqual(sent.body, { ok: true, held: true });
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(await got(), '', 'nothing typed while it works');
+  await setState('done');
+  let lines = '';
+  for (let i = 0; i < 50 && !lines; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    lines = await got();
+  }
+  assert.equal(lines, 'hello held\n', 'sent once, at the turn\'s end');
+  // At its prompt, a message goes in at once.
+  assert.equal((await call('POST', '/send', 'sess', JSON.stringify({ text: 'and now' }))).status, 200);
+  for (let i = 0; i < 30 && !(await got()).includes('and now'); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.equal(await got(), 'hello held\nand now\n');
+});
+
+test('a failed typing call is said again without the message it typed', async () => {
+  // As execFile rejects: its message quotes the whole command line, the private draft with it.
+  const failed = await promisify(execFile)('tmux', ['-S', '/nonexistent/socket', 'send-keys', '-t', 'claude', '-l', 'my secret draft']).catch((err) => err);
+  assert.match(failed.message, /my secret draft/, 'the raw error has it');
+  const said = typingError(failed);
+  assert.equal(said.typing, true);
+  assert.doesNotMatch(said.message, /secret|draft|send-keys/);
+  assert.match(said.message, /^tmux could not type the message \(exit \d+\)$/);
+  assert.doesNotMatch(JSON.stringify({ ...said, message: said.message }), /secret/);
 });

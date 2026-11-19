@@ -206,7 +206,7 @@
       stopButton.hidden = !busy;
       sendButton.disabled = Boolean(T.notReady({ text: field.value, files: mine(), sending: sending.has(id) }));
       micButton.classList.toggle('is-live', Boolean(recognition));
-      hint.textContent = narrow.matches ? '' : busy ? `Sent now, ${agent()} reads it after this step` : 'Enter to send · Shift+Enter for a new line';
+      hint.textContent = narrow.matches ? '' : busy ? `Sent when ${agent()} ends this turn` : 'Enter to send · Shift+Enter for a new line';
     }
 
     async function attach(list) {

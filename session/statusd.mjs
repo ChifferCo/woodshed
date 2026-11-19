@@ -705,11 +705,17 @@ async function keepCodexAuth() {
   }
 }
 
-async function status() {
+/**
+ * The agent's state, from its hooks, its record and its pane, as the console's status read has it.
+ * @param {{strict?: boolean}} [opts]  strict: a pane that cannot be read throws, rather than reading as empty
+ * @returns {Promise<{state: string, source: string, pane: string, tail: object|null, hook: object|null}>}
+ */
+async function agentState({ strict = false } = {}) {
   let pane = '';
   try {
     pane = (await run('tmux', ['capture-pane', '-p', '-t', TMUX_TARGET])).stdout;
   } catch (err) {
+    if (strict) throw err;
     console.warn('statusd: capture-pane failed', { message: err?.message });
   }
   const tail = CODEX ? null : await transcriptTail().catch((err) => {
@@ -729,6 +735,11 @@ async function status() {
   });
   if (state !== lastState) console.log('statusd: claude state changed', { from: lastState, to: state, source });
   lastState = state;
+  return { state, source, pane, tail, hook };
+}
+
+async function status() {
+  const { state, tail, hook } = await agentState();
   return {
     sessionId: process.env.SESSION_ID || null,
     state,
@@ -857,16 +868,31 @@ async function answer(body) {
   }
 }
 
+/**
+ * A failed tmux call that typed a message, said again without the message: execFile's own error quotes the command
+ * line, and what someone typed never goes in a log or a reply.
+ * @returns {Error & {typing: true}}
+ */
+export function typingError(err) {
+  return Object.assign(new Error(`tmux could not type the message (exit ${Number.isInteger(err?.code) ? err.code : 'unknown'})`), { typing: true });
+}
+
 // The agent's pane, for typeMessage (panePrompt.mjs): read it, type into it, press Enter.
 const paneIo = {
   capture: () => capturePane(),
   async type(text) {
-    // Codex reads a fast run of keys as a paste and swallows an Enter that lands inside it, so a message of about 100
-    // characters or more sat unsent (measured on codex 0.167.0). A bracketed paste ends before the Enter arrives.
-    if (CODEX) {
-      await run('tmux', ['set-buffer', '-b', 'woodshed-send', '--', text]);
-      await run('tmux', ['paste-buffer', '-p', '-d', '-b', 'woodshed-send', '-t', TMUX_TARGET]);
-    } else await run('tmux', ['send-keys', '-t', TMUX_TARGET, '-l', text]);
+    // A failed call's error quotes its command line, the message's text with it: it is said again without it, since
+    // what someone typed never goes in a log.
+    try {
+      // Codex reads a fast run of keys as a paste and swallows an Enter that lands inside it, so a message of about
+      // 100 characters or more sat unsent (measured on codex 0.167.0). A bracketed paste ends before the Enter arrives.
+      if (CODEX) {
+        await run('tmux', ['set-buffer', '-b', 'woodshed-send', '--', text]);
+        await run('tmux', ['paste-buffer', '-p', '-d', '-b', 'woodshed-send', '-t', TMUX_TARGET]);
+      } else await run('tmux', ['send-keys', '-t', TMUX_TARGET, '-l', text]);
+    } catch (err) {
+      throw typingError(err);
+    }
   },
   enter: () => run('tmux', ['send-keys', '-t', TMUX_TARGET, 'Enter']),
 };
@@ -880,6 +906,41 @@ async function send(text) {
   if (done.sent) console.log('statusd: text sent to claude', { chars: text.length, paste: CODEX });
   else console.log('statusd: text not sent, a prompt is open', { kind: done.kind, typed: done.typed, chars: text.length });
   return done;
+}
+
+// Messages sent while the agent works, held until its turn ends. A prompt (an approval, a question) only ever opens
+// mid-turn, so one could open between any last look at the pane and the Enter that sends a message, and take that
+// Enter as its answer. At its prompt between turns the agent asks nothing of itself: there the look and the Enter
+// cannot be overtaken. So the Enter waits for the turn's end; the agent then reads it as its next message.
+const HELD_MAX = 10;
+const HELD_MS = 10 * 60_000;
+const held = [];
+let delivering = false;
+
+async function deliverHeld() {
+  if (delivering || !held.length) return;
+  delivering = true;
+  try {
+    while (held.length) {
+      if (Date.now() - held[0].at > HELD_MS) {
+        const [old] = held.splice(0, 1);
+        console.warn('statusd: held message dropped, the turn never ended', { chars: old.text.length, minutes: HELD_MS / 60_000 });
+        continue;
+      }
+      const { state } = await agentState({ strict: true });
+      if (state !== 'done') return;
+      const done = await send(held[0].text);
+      // A prompt at its prompt is not the agent's own doing, but it is no place for the Enter either: try again later,
+      // unless the text went in, where a second try would type it twice.
+      if (!done.sent && !done.typed) return;
+      held.shift();
+      console.log('statusd: held message delivered', { sent: done.sent, left: held.length });
+    }
+  } catch (err) {
+    console.warn('statusd: held messages not delivered yet', { message: String(err?.message ?? err).split('\n')[0] });
+  } finally {
+    delivering = false;
+  }
 }
 
 // The Claude home, as a gzipped tar streamed to the console's session API: a private session's for its owner alone,
@@ -1231,12 +1292,29 @@ async function handle(req, res) {
     }
     // A prompt on screen takes the Enter after the text as its answer: the highlighted option, often Yes. No Enter is
     // sent then (typeMessage); the console holds what it sends (fleet.mjs) and the page puts the text back in its box.
-    // A pane that could not be read may be showing one: no Enter then either.
+    // A pane that could not be read may be showing one: no Enter then either. Mid-turn, the message is held until the
+    // turn ends (deliverHeld), since a prompt can open at any moment of a turn.
+    const agentName = CODEX ? 'codex' : 'claude';
     let done;
     try {
+      const { state } = await agentState({ strict: true });
+      if (state === 'working') {
+        if (held.length >= HELD_MAX) return reply(res, 429, { why: 'held-full', error: `${HELD_MAX} messages already wait for ${agentName}'s turn to end` });
+        held.push({ text, at: Date.now() });
+        console.log('statusd: message held until the turn ends', { chars: text.length, held: held.length });
+        return reply(res, 202, { ok: true, held: true });
+      }
+      if (state !== 'done' && state !== 'needs-you') {
+        return reply(res, 409, { why: 'not-at-prompt', error: `${agentName} is not at its prompt (${state}), so nothing was typed` });
+      }
       done = await send(text);
     } catch (err) {
-      console.warn('statusd: text not sent, the pane could not be read', { chars: text.length, message: String(err?.message ?? err).split('\n')[0] });
+      const message = String(err?.message ?? err).split('\n')[0];
+      if (err?.typing) {
+        console.warn('statusd: text not sent, tmux could not type it', { chars: text.length, message });
+        return reply(res, 500, { why: 'not-typed', error: 'the message could not be typed into the agent\'s terminal' });
+      }
+      console.warn('statusd: text not sent, the pane could not be read', { chars: text.length, message });
       return reply(res, 503, { why: 'pane-unread', error: 'the agent\'s terminal could not be read, so it was not sent: try again' });
     }
     if (!done.sent) {
@@ -1341,6 +1419,8 @@ function main() {
   });
   server.on('upgrade', (req, socket, head) => handleUpgrade(req, socket, head));
   server.listen(PORT, HOST, () => console.log('statusd: listening', { port: PORT }));
+  // Held messages go in once the turn they waited on ends: checked each second while any wait.
+  setInterval(() => { deliverHeld(); }, 1000).unref();
   if (CONSOLE_URL) {
     setInterval(() => saveHomeIfChanged().catch((err) => {
       console.warn('statusd: Claude home check failed', { message: err?.message });
