@@ -208,3 +208,11 @@ test("Back to a review-only visit still to land on Review lands it, though a lat
   assert.equal(memory.asked('aaaa1111', 'diff', firstVisit), 'diff', 'an address with a tab still wins');
   assert.equal(memory.asked('aaaa1111', null, null), 'agent', 'a new entry (the rail) gets the memory');
 });
+
+test('an entry left before its session was drawn keeps no tab, so Back lands a review-only session on Review', () => {
+  // A bare link to a review-only session the cached list lacks; another session clicked before the lookup answers.
+  assert.equal(tabs.leftOn({ tab: 'agent', held: null, reviewPending: false, drawn: false }), null, 'nothing stamped');
+  assert.equal(tabs.leftOn({ tab: 'agent', held: 'diff', reviewPending: false, drawn: false }), null);
+  // Back to it: no entry tab and nothing remembered, so nothing is asked and the page lands it on Review once it runs.
+  assert.equal(tabs.memory(storage(), 'octocat').asked('aaaa1111', null, null), null);
+});

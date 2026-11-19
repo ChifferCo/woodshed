@@ -67,11 +67,13 @@
    * The tab a history entry keeps, for Back and Forward, written each time the page draws it: the one it shows, or a
    * held one over the Agent standing in for it. A review-only session still to land on its Review (`reviewPending`)
    * keeps LANDS_ON_REVIEW, since Agent there was not picked: coming back lands it on its Review as the first arrival
-   * would, even after a later visit picked another tab.
-   * @param {{ tab: string, held: string|null, reviewPending: boolean }} at
-   * @returns {string}
+   * would, even after a later visit picked another tab. An entry whose session was never drawn (left before the list
+   * had it) showed no tab and keeps none (null): coming back asks as a first arrival would.
+   * @param {{ tab: string, held: string|null, reviewPending: boolean, drawn?: boolean }} at
+   * @returns {string|null}
    */
-  function leftOn({ tab, held, reviewPending }) {
+  function leftOn({ tab, held, reviewPending, drawn = true }) {
+    if (!drawn) return null;
     return held || (reviewPending ? LANDS_ON_REVIEW : tab);
   }
 

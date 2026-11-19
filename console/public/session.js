@@ -57,8 +57,10 @@
   // This history entry's state alone, with the tab it keeps for Back and Forward (sessionTabs.cjs, leftOn): written as
   // the page draws a session, so an entry left by Back or Forward keeps it too, not only one left through a link.
   function stampEntry() {
+    const drawn = Boolean(id) && currentSession?.id === id;
     const reviewPending = landOnReview && Boolean(currentSession?.reviewOnly);
-    const left = SessionTabs.leftOn({ tab, held: heldTab, reviewPending });
+    const left = SessionTabs.leftOn({ tab, held: heldTab, reviewPending, drawn });
+    if (left === null) return;
     if ((window.history.state?.tab ?? null) !== left) window.history.replaceState({ ...window.history.state, tab: left }, '');
   }
   // The tab each session was last on, for this browser tab and the login signed in.
