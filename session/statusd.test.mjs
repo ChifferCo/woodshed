@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { AGENT_PANE_FORMAT, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
+import { AGENT_PANE_FORMAT, stillThePull, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -837,7 +837,8 @@ test('POST /send with agentOnly types into a running agent and never into a shel
   const bin = path.join(dir, 'bin');
   await fs.mkdir(bin);
   const current = path.join(dir, 'current-pr');
-  await fs.writeFile(current, 'https://github.com/o/r/pull/9');
+  const onPull = (url, { state = 'OPEN', head = 'abc1234def' } = {}) => fs.writeFile(current, JSON.stringify({ url, state, headRefOid: head }));
+  await onPull('https://github.com/o/r/pull/9');
   await fs.writeFile(path.join(bin, 'gh'), `#!/bin/sh\ncat ${current}\n`, { mode: 0o755 });
   const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, PATH: `${bin}:${process.env.PATH}` } });
   const send = (body, token) => call('POST', '/send', token, JSON.stringify(body));
@@ -857,12 +858,19 @@ test('POST /send with agentOnly types into a running agent and never into a shel
   assert.equal(await typed('agent'), 'The review asks for changes\n');
   assert.equal((await call('GET', '/status')).body.agentOnlySend, true);
 
-  // About a pull request: typed only while the branch checked out is on it, read afresh.
-  await fs.writeFile(current, 'https://github.com/o/r/pull/12');
-  const elsewhere = await send({ text: 'Fix PR 9', agentOnly: true, prUrl: 'https://github.com/o/r/pull/9' });
-  assert.deepEqual([elsewhere.status, elsewhere.body.error], [409, 'the branch checked out is not on that pull request now']);
-  await fs.writeFile(current, 'https://github.com/O/R/pull/9');
-  assert.equal((await send({ text: 'Fix PR 9', agentOnly: true, prUrl: 'https://github.com/o/r/pull/9' })).status, 200);
+  // About a pull request: typed only while the branch checked out is on it, open and on the same commit, read afresh.
+  const forNine = { text: 'Fix PR 9', agentOnly: true, prUrl: 'https://github.com/o/r/pull/9', headSha: 'abc1234def' };
+  for (const [why, url, opts] of [
+    ['another pull request', 'https://github.com/o/r/pull/12', {}],
+    ['a newer commit', 'https://github.com/o/r/pull/9', { head: 'fff9999' }],
+    ['closed', 'https://github.com/o/r/pull/9', { state: 'CLOSED' }],
+  ]) {
+    await onPull(url, opts);
+    const refused = await send(forNine);
+    assert.deepEqual([refused.status, refused.body.error], [409, 'the branch checked out is not on that pull request now'], why);
+  }
+  await onPull('https://github.com/O/R/pull/9');
+  assert.equal((await send(forNine)).status, 200);
   for (let i = 0; i < 50 && !(await typed('agent')).includes('Fix PR 9'); i++) await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(await typed('agent'), 'The review asks for changes\nFix PR 9\n', 'only the one on its pull request');
 });
@@ -882,4 +890,15 @@ test('a branch pointed at another pull request\'s ref, which @{u} cannot name, i
   const twelve = await prLookupKey(git);
   assert.notEqual(nine, twelve);
   assert.match(twelve, /refs\/pull\/12\/head/);
+});
+
+test('a guarded send\'s pull request must be the same one, open, on the same commit', () => {
+  const wanted = { url: 'https://github.com/o/r/pull/9', headSha: 'abc1234' };
+  const pull = { url: 'https://github.com/O/r/pull/9', state: 'OPEN', headRefOid: 'abc1234def567' };
+  assert.equal(stillThePull(pull, wanted), true);
+  assert.equal(stillThePull({ ...pull, headRefOid: 'fff' }, wanted), false);
+  assert.equal(stillThePull({ ...pull, state: 'MERGED' }, wanted), false);
+  assert.equal(stillThePull({ ...pull, url: 'https://github.com/o/r/pull/10' }, wanted), false);
+  assert.equal(stillThePull(null, wanted), false);
+  assert.equal(stillThePull({ ...pull, headRefOid: 'fff' }, { ...wanted, headSha: null }), true, 'no commit named: the pull request alone');
 });

@@ -251,16 +251,30 @@ export function sendAgentOnly(raw) {
 
 /**
  * @param {string} raw  request body, already accepted by parseSendBody
- * @returns {string|null}  the pull request an agentOnly text is about (`prUrl`): it is typed only while the branch
- *   checked out has that one, read afresh just before
+ * @returns {{url: string, headSha: string|null}|null}  the pull request an agentOnly text is about (`prUrl`, and the
+ *   commit `headSha`): it is typed only while the branch checked out has that one, open and on that commit, read
+ *   afresh just before
  */
 export function sendForPr(raw) {
   try {
-    const url = JSON.parse(raw)?.prUrl;
-    return typeof url === 'string' && /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(url) ? url : null;
+    const body = JSON.parse(raw);
+    const url = body?.prUrl;
+    if (typeof url !== 'string' || !/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(url)) return null;
+    const headSha = typeof body.headSha === 'string' && /^[0-9a-f]{7,40}$/i.test(body.headSha) ? body.headSha : null;
+    return { url, headSha };
   } catch {
     return null;
   }
+}
+
+/**
+ * @param {{url?: string, state?: string, headRefOid?: string}|null} pull  `gh pr view`'s answer for the branch checked out
+ * @param {{url: string, headSha: string|null}} wanted
+ * @returns {boolean}  whether it is still the pull request the text is about: the same one, open, on the same commit
+ */
+export function stillThePull(pull, wanted) {
+  if (!pull || !samePrUrl(pull.url, wanted.url) || pull.state !== 'OPEN') return false;
+  return !wanted.headSha || String(pull.headRefOid ?? '').toLowerCase().startsWith(wanted.headSha.toLowerCase());
 }
 
 /** @returns {boolean}  whether two pull request URLs are the same pull request (GitHub's owner and name ignore case) */
@@ -369,6 +383,8 @@ export async function prLookupKey(gitRun) {
 
 const ghPrUrl = async () => (await run('gh', ['pr', 'view', '--json', 'url', '--jq', '.url'], { cwd: REPO_DIR })).stdout.trim();
 const lookupPrUrl = createPrLookup({ branch: () => prLookupKey(git), lookup: ghPrUrl });
+// The pull request of the branch checked out, read afresh for a guarded send.
+const ghPullNow = async () => JSON.parse((await run('gh', ['pr', 'view', '--json', 'url,state,headRefOid'], { cwd: REPO_DIR })).stdout);
 
 async function prUrl() {
   if (ASK || QA) return null;
@@ -1215,7 +1231,7 @@ async function handle(req, res) {
     // A message meant for the agent never reaches the shell of one that exited, nor an agent on another pull request.
     if (sendAgentOnly(raw)) {
       const forPr = sendForPr(raw);
-      if (forPr && !samePrUrl(await ghPrUrl().catch(() => null), forPr)) {
+      if (forPr && !stillThePull(await ghPullNow().catch(() => null), forPr)) {
         console.log('statusd: text not sent, the branch is not on its pull request now');
         return reply(res, 409, { error: 'the branch checked out is not on that pull request now' });
       }

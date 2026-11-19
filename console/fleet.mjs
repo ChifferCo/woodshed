@@ -263,6 +263,8 @@ export function createFleet({
   const issueTracking = createIssueTracking({ github });
   const issueTrackings = new Map();
   const prCheckedAt = new Map();
+  // Private sessions whose statusd last refused or missed review feedback, so it is warned of once.
+  const untypedSaid = new Set();
   const homeDeleteTriedAt = new Map();
   let ticking = false;
   // The quick check has its own guard: sharing the tick's would skip ticks while starting sessions time out.
@@ -1099,7 +1101,7 @@ export function createFleet({
 
   // A review asking for changes, an approval's notes, or a suite that failed or was skipped: typed into the session,
   // or resumed with it (a shared one: a stopped My Woodshed session is not). True when the session was told.
-  async function prFeedback(item, text, { stillWanted = async () => true } = {}) {
+  async function prFeedback(item, text, { stillWanted = async () => true, sha = null } = {}) {
     const session = find(item.sessionId);
     if (!session) return false;
     // A My Woodshed session is typed into now or told again at the next check, never held: a held message would be
@@ -1122,11 +1124,16 @@ export function createFleet({
         // statusd checks the pane once more as it types (`agentOnly`, a 409 otherwise; an older statusd ignores it).
         // With the pull request it is about, which statusd checks afresh on the branch checked out, just before typing.
         const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
-        await statusd(session, 'POST', '/send', { body: { text, agentOnly: true, prUrl: `https://github.com/${project.repo}/pull/${item.number}` } });
+        await statusd(session, 'POST', '/send', {
+          body: { text, agentOnly: true, prUrl: `https://github.com/${project.repo}/pull/${item.number}`, ...(sha ? { headSha: sha } : {}) },
+        });
       } catch (err) {
-        console.warn('fleet: review feedback not typed in yet', { id: session.id, number: item.number, message: firstLine(err) });
+        // Once until it is typed in: it is tried every minute while the session refuses it.
+        if (!untypedSaid.has(session.id)) console.warn('fleet: review feedback not typed in yet', { id: session.id, number: item.number, message: firstLine(err) });
+        untypedSaid.add(session.id);
         return 'later';
       }
+      untypedSaid.delete(session.id);
       console.log('fleet: review feedback typed in', { id: session.id, number: item.number, outcome: 'sent', owner: true });
       return true;
     }
