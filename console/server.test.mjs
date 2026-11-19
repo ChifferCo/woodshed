@@ -144,6 +144,7 @@ test('a QA recording plays only for someone signed in who may open its session, 
   const qaRecordings = {
     serveVideo: async (_req, res, which) => { served.push(['video', which]); res.writeHead(200, { 'content-type': 'video/webm' }).end('webm'); },
     servePoster: async (_req, res, which) => { served.push(['poster', which]); res.writeHead(200, { 'content-type': 'image/png' }).end('png'); },
+    gone: (res) => { res.writeHead(410, { 'content-type': 'text/plain' }).end('no longer kept'); },
   };
   const handle = createHandler({ config, fleet, auth, qaRecordings });
   const server = http.createServer((req, res) => { handle(req, res); });
