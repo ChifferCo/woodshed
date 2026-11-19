@@ -4,8 +4,14 @@
 // and draws what statusd reads a codex pane by (session/codexState.mjs): `esc to interrupt` while it works, `Would you
 // like to run` while it asks, and the `› ` composer once its turn is over.
 // A message is typed in and Enter ends it. It answers each with a turn of a few tool calls and a reply. A message that
-// says "fail" has a tool call fail, and one that says "ask" waits on a yes first: Enter in the Agent tab gives it. Esc
-// stops the turn. Usage: node devChatAgent.mjs codex|claude <record dir> <repo dir>
+// says "fail" has a tool call fail, and one that says "ask" waits on an approval first: ↑/↓ and Enter in the Agent tab,
+// y or n, or the Chat tab's Approve and Deny (session/panePrompt.mjs reads it as it reads codex's). Esc stops the turn.
+// The approval is a stand-in: its words are codex 0.167's own (its title and options, from the strings in the codex
+// binary: `Would you like to run the following command?`, `Yes, just this once`, `Yes, and don't ask again for this
+// command in this session`, `No, and tell Codex what to do differently`, `Press enter to confirm or esc to cancel`), and
+// its layout (the `›` on the highlighted row, the numbers, each option's key after it) is how codex's list draws them,
+// as far as could be told without a signed-in codex to capture.
+// Usage: node devChatAgent.mjs codex|claude <record dir> <repo dir>
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -93,6 +99,9 @@ said('assistant', 'Changed the backoff to 5 s, 15 s and 45 s (`console/webhookDi
 // ---- The pane.
 const out = (s) => process.stdout.write(s);
 let screen = 'idle';
+// codex's approval options, each with its key, and the one highlighted.
+const APPROVAL = [['Yes, just this once', 'y'], ['Yes, and don\'t ask again for this command in this session', 'a'], ['No, and tell Codex what to do differently', 'esc']];
+let approvalAt = 0;
 let started = 0;
 let typed = '';
 let timers = [];
@@ -103,7 +112,11 @@ function draw() {
   out('\x1b[2J\x1b[H');
   out(`stand-in ${format} (dev console)\n\n`);
   if (screen === 'working') out(`• Working (${Math.round((Date.now() - started) / 1000)}s • esc to interrupt)\n`);
-  if (screen === 'asking') out('Would you like to run the following command?\n\n  $ npm run migrate\n\n› 1. Yes, proceed\n  2. No, and tell me what to do differently\n\nPress enter to confirm or esc to cancel\n');
+  if (screen === 'asking') {
+    out('Would you like to run the following command?\n\n  Reason: the tests need the new column\n\n  $ npm run migrate\n\n');
+    APPROVAL.forEach(([label, key], i) => out(`${i === approvalAt ? '›' : ' '} ${i + 1}. ${label} (${key})\n`));
+    out('\n  Press enter to confirm or esc to cancel\n');
+  }
   if (screen === 'idle') out(`\n› ${typed || 'Ask anything'}`);
 }
 
@@ -143,6 +156,7 @@ function submit(text) {
   said('user', text);
   if (/\bask\b/i.test(text)) {
     screen = 'asking';
+    approvalAt = 0;
     draw();
     return;
   }
@@ -156,10 +170,14 @@ process.stdin.on('data', (chunk) => {
     const c = chunk[i];
     if (c === '\x03') process.exit(0);
     if (c === '\x1b') {
-      // A key's sequence (an arrow, a paste's bracket) is not a lone Esc.
+      // A key's sequence (an arrow, a paste's bracket) is not a lone Esc. ↑ and ↓ move the approval's highlight.
       if (chunk[i + 1] === '[' || chunk[i + 1] === 'O') {
         i += 2;
         while (i < chunk.length && !/[A-Za-z~]/.test(chunk[i])) i++;
+        if (screen === 'asking' && (chunk[i] === 'A' || chunk[i] === 'B')) {
+          approvalAt = Math.max(0, Math.min(APPROVAL.length - 1, approvalAt + (chunk[i] === 'B' ? 1 : -1)));
+          draw();
+        }
         continue;
       }
       if (screen !== 'idle') {
@@ -169,7 +187,10 @@ process.stdin.on('data', (chunk) => {
       continue;
     }
     if (screen === 'asking') {
-      if (c === '\r') work('Run the migration');
+      const picked = c === '\r' ? approvalAt : c === 'y' ? 0 : c === 'a' ? 1 : c === 'n' ? 2 : null;
+      if (picked === 2) {
+        stop({ next: false });
+      } else if (picked !== null) work('Run the migration');
       continue;
     }
     if (screen === 'working' && c === '\r') {

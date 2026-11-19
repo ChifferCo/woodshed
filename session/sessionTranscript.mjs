@@ -58,12 +58,15 @@ function toolLine(input) {
 }
 
 // What claude's AskUserQuestion asks, for the Chat tab to show over the work log: each question and its options' labels.
-// Its answer is typed in the terminal (the Agent tab), the one place claude takes it.
+// claude takes the answer in its terminal: the Agent tab, or the Chat tab's picks, which statusd types there
+// (panePrompt.mjs).
 function askedQuestions(block) {
   const list = block.name === 'AskUserQuestion' && Array.isArray(block.input?.questions) ? block.input.questions : [];
   const questions = list.filter((q) => typeof q?.question === 'string' && q.question.trim()).slice(0, 4).map((q) => ({
     question: q.question.trim().slice(0, 500),
     options: (Array.isArray(q.options) ? q.options : []).map((o) => String(o?.label ?? '').trim().slice(0, 200)).filter(Boolean).slice(0, 8),
+    // A question that takes several options is picked in the terminal: the Chat tab answers one option a question.
+    ...(q.multiSelect === true && { multiSelect: true }),
   }));
   return questions.length ? questions : null;
 }

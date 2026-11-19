@@ -201,7 +201,7 @@
     const out = [];
     entries.forEach((entry, index) => {
       if (entry.role === 'tool' && entry.questions) {
-        out.push({ kind: 'ask', questions: entry.questions, answered: !!entry.answered, declined: !!entry.error, at: entry.at });
+        out.push({ kind: 'ask', key: index, questions: entry.questions, answered: !!entry.answered, declined: !!entry.error, at: entry.at });
       } else if (entry.role === 'tool') {
         const last = out[out.length - 1];
         if (last?.kind === 'work') {
@@ -287,5 +287,40 @@
     return !!last && last.role === 'user' && INTERRUPTED.test(String(last.text ?? '').trim());
   }
 
-  return { markdown, inline, items, toolKind, workSummary, stillPending, elapsed, turnStart, midTurn, endedByStop };
+  // ---- Answering from the page: claude's AskUserQuestion, and an approval the pane shows.
+
+  /**
+   * @param {{kind: 'ask', questions: {question: string, options: string[], multiSelect?: boolean}[], answered: boolean,
+   *   declined: boolean}} item
+   * @returns {boolean}  whether the page can answer it: still open, and one option a question (a multi-select one is
+   *   picked in the terminal)
+   */
+  function canAnswer(item) {
+    return !!item && item.kind === 'ask' && !item.answered && !item.declined
+      && item.questions.every((q) => !q.multiSelect && q.options.length > 0);
+  }
+
+  /**
+   * POST /answer's body for the person's picks, once each question has one.
+   * @param {{questions: {question: string, options: string[]}[]}} item
+   * @param {(number|null|undefined)[]} picks  the option picked for each question, by index
+   * @returns {object|null}  null while a question has no pick
+   */
+  function answerBody(item, picks) {
+    if (!item.questions.every((q, i) => Number.isInteger(picks[i]) && picks[i] >= 0 && picks[i] < q.options.length)) return null;
+    return { kind: 'question', questions: item.questions.map((q, i) => ({ question: q.question, options: q.options, pick: picks[i] })) };
+  }
+
+  /**
+   * What the Needs you line says of an approval the pane shows (GET /prompt).
+   * @param {{what: string|null, title: string, detail: string[]}} prompt
+   * @returns {{asks: string, lines: string[]}}  asks: the agent's own question; lines: what it would run or change
+   */
+  function approvalText(prompt) {
+    const lines = (prompt.detail ?? []).filter((l) => !/^Reason:/i.test(l)).slice(0, 4);
+    const reason = (prompt.detail ?? []).find((l) => /^Reason:/i.test(l));
+    return { asks: prompt.what ? `${prompt.what}: ${prompt.title}` : prompt.title, lines: reason ? [...lines, reason] : lines };
+  }
+
+  return { markdown, inline, items, toolKind, workSummary, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
 });

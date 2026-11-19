@@ -4,8 +4,11 @@
 // and each run of tool calls between them as one work log that folds open (chatThread.cjs). The composer under it
 // types a message into the live agent (POST …/send, as the phone's message box does), with files from the picker or
 // dropped or pasted, and Stop sends it Esc (POST …/interrupt). The agent still runs in its terminal, which stays on the
-// Agent tab: a question it can only ask there (a permission prompt, a menu) shows here as Needs you, with a button to
-// it. session.js makes the Chat tab the one a running session opens on.
+// Agent tab. claude's questions (AskUserQuestion) are answered here: one option picked for each, then Send answers
+// (POST …/answer), which the session types into the picker once its pane shows that same question. An approval the
+// pane shows (claude's permission dialog, codex's approval; GET …/prompt) is on the Needs you line with Approve and
+// Deny, under the same check. Anything else it asks there shows as Needs you, with a button to the Agent tab.
+// session.js makes the Chat tab the one a running session opens on.
 (function () {
   'use strict';
   const W = window.Woodshed;
@@ -113,6 +116,13 @@
     const sending = new Set();
     // The work logs a person opened or closed, by session and key, so a redraw keeps them as they were left.
     const folds = new Map();
+    // Per question card (session and key): the option picked for each question, and where its answer stands:
+    // {state: 'sending'|'sent'|'refused', error?}.
+    const picks = new Map();
+    const answers = new Map();
+    // What the pane asks while the session needs the person (GET …/prompt), and an approval's answer on its way.
+    let prompt = null;
+    let approval = null;
     let recognition = null;
 
     const thread = h('div', { class: 'chat-col chat-thread', role: 'log', 'aria-live': 'polite', 'aria-label': 'Conversation' });
@@ -316,14 +326,90 @@
       return details;
     }
 
-    // What the agent asked, with its options: answered in its terminal, which the Needs you line opens.
-    function askCard(item) {
-      const said = item.answered ? 'Answered' : item.declined ? 'Not answered' : 'Waiting for your answer';
-      return h('div', { class: 'chat-ask' },
+    // What the agent asked, with its options. The open one takes the person's picks, one a question, and Send answers
+    // has the session type them into the agent's picker; a question that takes several options is the Agent tab's.
+    function askCard(item, open) {
+      const key = `${session.id}:${item.key}`;
+      const sent = answers.get(key);
+      const live = open && T.canAnswer(item) && sent?.state !== 'sending' && sent?.state !== 'sent';
+      const chosen = picks.get(key) ?? [];
+      const said = item.answered ? 'Answered' : item.declined ? 'Not answered'
+        : sent?.state === 'sending' ? 'Sending your answers…' : sent?.state === 'sent' ? `Sent, waiting for ${agent()}` : 'Waiting for your answer';
+      const pick = (qi, oi) => {
+        const next = [...chosen];
+        next[qi] = oi;
+        picks.set(key, next);
+        if (answers.get(key)?.state === 'refused') answers.delete(key);
+        drawThread(false);
+      };
+      const optionList = (q, qi) => {
+        if (!live) {
+          return q.options.length > 0 && h('ol', null, ...q.options.map((o, oi) => h('li', { class: sent && chosen[qi] === oi ? 'is-picked' : null }, o)));
+        }
+        return h('div', { class: 'chat-opts', role: 'group', 'aria-label': q.question },
+          ...q.options.map((o, oi) => h('button', {
+            type: 'button', class: 'chat-opt', 'aria-pressed': chosen[qi] === oi ? 'true' : 'false', onclick: () => pick(qi, oi),
+          }, h('span', { class: 'chat-opt-n' }, `${oi + 1}.`), h('span', { class: 'chat-opt-label' }, o),
+          chosen[qi] === oi && h('span', { class: 'chat-opt-mark', 'aria-hidden': 'true' }, '✓'))));
+      };
+      const body = T.answerBody(item, chosen);
+      const several = item.questions.length > 1;
+      const agentTab = (text) => h('button', { type: 'button', class: 'chat-link', onclick: openTerminal }, text);
+      let foot = null;
+      if (live) {
+        foot = h('div', { class: 'chat-ask-foot' },
+          h('button', { type: 'button', class: 'btn btn-sm btn-plain chat-ask-send', disabled: !body, onclick: () => sendAnswers(item, key) }, several ? 'Send answers' : 'Send answer'),
+          h('span', { class: 'chat-ask-note' }, body ? `${agent()} gets ${several ? 'them' : 'it'} in its terminal` : several ? 'Pick one for each question' : 'Pick one',
+            ' · to type your own, use the ', agentTab('Agent tab')));
+      } else if (open && !item.answered && !item.declined && item.questions.some((q) => q.multiSelect)) {
+        foot = h('div', { class: 'chat-ask-foot' }, h('span', { class: 'chat-ask-note' }, 'This takes several options: pick them in the ', agentTab('Agent tab')));
+      }
+      const refused = sent?.state === 'refused' && !item.answered && !item.declined
+        && h('p', { class: 'chat-ask-error', role: 'alert' }, `Not answered: ${sent.error}. `, agentTab('Answer in the Agent tab'));
+      return h('div', { class: `chat-ask${live ? ' is-open' : ''}` },
         h('div', { class: 'chat-ask-head' }, h('b', null, `${agent()} asks`), h('span', { class: 'chat-ask-state' }, said)),
-        ...item.questions.map((q) => h('div', { class: 'chat-ask-q' },
-          h('p', null, q.question),
-          q.options.length > 0 && h('ol', null, ...q.options.map((o) => h('li', null, o))))));
+        ...item.questions.map((q, qi) => h('div', { class: 'chat-ask-q' }, h('p', null, q.question), optionList(q, qi))),
+        refused, foot);
+    }
+
+    async function sendAnswers(item, key) {
+      const id = session?.id;
+      const body = T.answerBody(item, picks.get(key) ?? []);
+      if (!id || !body) return;
+      answers.set(key, { state: 'sending' });
+      drawThread(false);
+      try {
+        await W.postJson(`/api/sessions/${id}/answer`, body, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
+        answers.set(key, { state: 'sent' });
+      } catch (err) {
+        answers.set(key, { state: 'refused', error: err.name === 'TimeoutError' ? `no answer in ${SEND_TIMEOUT_MS / 1000} s` : err.message });
+      } finally {
+        if (id === session?.id) {
+          drawThread(false);
+          schedule(0);
+        }
+      }
+    }
+
+    async function answerApproval(decision) {
+      const id = session?.id;
+      const shown = prompt?.id === id ? prompt.prompt : null;
+      if (!shown || approval?.busy) return;
+      approval = { busy: decision, error: null };
+      drawStatus();
+      try {
+        await W.postJson(`/api/sessions/${id}/answer`, { kind: 'approval', decision, title: shown.title, detail: shown.detail }, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
+        approval = null;
+        prompt = null;
+        W.shell.toast(decision === 'approve' ? `Approved: ${agent()} carries on` : `Denied: ${agent()} was told no`);
+      } catch (err) {
+        approval = { busy: null, error: err.name === 'TimeoutError' ? `no answer in ${SEND_TIMEOUT_MS / 1000} s` : err.message };
+      } finally {
+        if (id === session?.id) {
+          drawStatus();
+          schedule(0);
+        }
+      }
     }
 
     function messageNodes() {
@@ -340,11 +426,12 @@
           h('span', null, 'Write one below. What it does shows here as it works; its terminal is on the Agent tab.')));
       }
       const live = working();
+      const lastAsk = list.findLastIndex((item) => item.kind === 'ask');
       list.forEach((item, i) => {
         if (item.kind === 'user') nodes.push(h('div', { class: 'chat-user' }, h('div', { class: 'chat-bubble' }, item.text)));
         else if (item.kind === 'assistant') nodes.push(h('div', { class: 'chat-said' }, markdownNodes(item.text)));
         else if (item.kind === 'note') nodes.push(h('p', { class: 'chat-note' }, item.text));
-        else if (item.kind === 'ask') nodes.push(askCard(item));
+        else if (item.kind === 'ask') nodes.push(askCard(item, i === lastAsk && i === list.length - 1));
         else nodes.push(workLog(item, live && i === list.length - 1));
       });
       for (const p of waiting) {
@@ -371,9 +458,26 @@
       const state = session.state;
       if (state === 'needs-you') {
         status.className = 'chat-status is-needs';
+        const shown = !asking() && prompt?.id === session.id && prompt.prompt?.kind === 'approval' ? prompt.prompt : null;
+        if (shown) {
+          const { asks, lines } = T.approvalText(shown);
+          const busy = approval?.busy;
+          status.classList.add('is-approval');
+          status.replaceChildren(
+            h('span', { class: 'chat-needs-text' }, h('b', null, 'Needs you'), ` · ${agent()} asks: ${asks}`),
+            lines.length > 0 && h('pre', { class: 'chat-approval' }, lines.join('\n')),
+            approval?.error && h('p', { class: 'chat-needs-error', role: 'alert' }, `Not answered: ${approval.error}. Answer in the Agent tab.`),
+            h('span', { class: 'chat-needs-actions' },
+              h('button', { type: 'button', class: 'btn btn-sm btn-plain', onclick: openTerminal }, 'Agent tab'),
+              h('button', { type: 'button', class: 'btn btn-sm btn-plain', disabled: Boolean(busy), title: shown.deny, onclick: () => answerApproval('deny') }, busy === 'deny' ? 'Denying…' : 'Deny'),
+              h('button', { type: 'button', class: 'btn btn-sm chat-answer', disabled: Boolean(busy), title: shown.approve, onclick: () => answerApproval('approve') }, busy === 'approve' ? 'Approving…' : 'Approve')));
+          return;
+        }
+        const open = asking() && T.canAnswer(T.items(ownRecord()?.entries ?? []).pop());
         status.replaceChildren(
-          h('span', null, h('b', null, 'Needs you'), asking() ? ` · ${agent()} asks above; it takes the answer in its terminal` : ` · ${agent()} is asking something it shows in its terminal`),
-          h('button', { type: 'button', class: 'btn btn-sm chat-answer', onclick: openTerminal }, 'Answer in the Agent tab'));
+          h('span', null, h('b', null, 'Needs you'), open ? ` · ${agent()} asks above: pick your answers there`
+            : asking() ? ` · ${agent()} asks above; it takes the answer in its terminal` : ` · ${agent()} is asking something it shows in its terminal`),
+          h('button', { type: 'button', class: 'btn btn-sm chat-answer', onclick: openTerminal }, open ? 'Agent tab' : 'Answer in the Agent tab'));
         return;
       }
       if (working()) {
@@ -390,6 +494,32 @@
       }
       status.className = 'chat-status';
       status.replaceChildren();
+    }
+
+    // While the session needs the person and the record holds no question of claude's: what its pane asks, read from
+    // the screen, so an approval shows on the Needs you line with its own buttons.
+    async function readPrompt(id) {
+      if (id !== session?.id) return;
+      if (session.state !== 'needs-you' || asking()) {
+        if (prompt) {
+          prompt = null;
+          approval = null;
+          drawStatus();
+        }
+        return;
+      }
+      try {
+        const read = await W.getJson(`/api/sessions/${id}/prompt`);
+        if (id !== session?.id) return;
+        const before = JSON.stringify(prompt?.id === id ? prompt.prompt : null);
+        prompt = { id, prompt: read.prompt ?? null };
+        if (JSON.stringify(prompt.prompt) !== before) {
+          if (!approval?.busy) approval = null;
+          drawStatus();
+        }
+      } catch {
+        // A console or session from before /prompt: the line keeps its button to the Agent tab.
+      }
     }
 
     async function read() {
@@ -413,6 +543,7 @@
         readError = err.message;
         if (!record) drawThread(false);
       } finally {
+        await readPrompt(id);
         reading = false;
         if (id === session?.id) schedule(again ? 0 : undefined);
         again = false;
@@ -459,6 +590,8 @@
         recognition = null;
         record = null;
         readError = null;
+        prompt = null;
+        approval = null;
         const label = `Message ${agent()}`;
         field.placeholder = label;
         field.setAttribute('aria-label', label);

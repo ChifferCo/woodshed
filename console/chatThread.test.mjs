@@ -42,7 +42,7 @@ test('a question the agent asked is its own item, out of the work log around it'
     { role: 'tool', tool: 'Read', text: 'a.js' },
   ]);
   assert.deepEqual(list.map((i) => i.kind), ['work', 'ask', 'work']);
-  assert.deepEqual(list[1], { kind: 'ask', questions: q, answered: true, declined: false, at: undefined });
+  assert.deepEqual(list[1], { kind: 'ask', key: 1, questions: q, answered: true, declined: false, at: undefined });
 });
 
 test('markdown reads into blocks: paragraphs, headings, lists, quotes, tables, rules and fenced code', () => {
@@ -131,4 +131,26 @@ test('a record that moved in the last 90 s and ends on the person or a tool is a
   assert.equal(chat.endedByStop(null), false);
   assert.equal(chat.midTurn(null, 0, now), false);
   assert.equal(chat.midTurn({ entries: [], writtenAt: now }, 0, now), false);
+});
+
+test('a question is answered from the page while it is open and each takes one option, with a pick for every question', () => {
+  const two = { kind: 'ask', answered: false, declined: false, questions: [
+    { question: 'Which colour?', options: ['Red', 'Blue'] }, { question: 'Which size?', options: ['S', 'M', 'L'] },
+  ] };
+  assert.equal(chat.canAnswer(two), true);
+  assert.equal(chat.canAnswer({ ...two, answered: true }), false);
+  assert.equal(chat.canAnswer({ ...two, declined: true }), false);
+  assert.equal(chat.canAnswer({ ...two, questions: [{ question: 'Toppings?', options: ['Cheese'], multiSelect: true }] }), false);
+  assert.equal(chat.answerBody(two, [1]), null, 'the second has no pick yet');
+  assert.equal(chat.answerBody(two, [1, 3]), null);
+  assert.deepEqual(chat.answerBody(two, [1, 0]), { kind: 'question', questions: [
+    { question: 'Which colour?', options: ['Red', 'Blue'], pick: 1 }, { question: 'Which size?', options: ['S', 'M', 'L'], pick: 0 },
+  ] });
+});
+
+test('an approval reads as what is asked, then what would run, the reason last', () => {
+  assert.deepEqual(chat.approvalText({ what: 'Bash command', title: 'Do you want to proceed?', detail: ['Write the date', 'date > now.txt'] }),
+    { asks: 'Bash command: Do you want to proceed?', lines: ['Write the date', 'date > now.txt'] });
+  assert.deepEqual(chat.approvalText({ what: null, title: 'Would you like to run the following command?', detail: ['Reason: migrate first', '$ npm run migrate'] }),
+    { asks: 'Would you like to run the following command?', lines: ['$ npm run migrate', 'Reason: migrate first'] });
 });
