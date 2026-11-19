@@ -605,10 +605,12 @@ async function poll() {
     if (mainWindow?.isFocused() && mainWindow.webContents.getURL().includes(`/s/${n.id}`)) continue;
     const shown = new Notification({ title: n.title, body: n.body, icon, silent: false });
     shown.on('click', () => {
-      if (!mainWindow) createMainWindow();
       // The console this read came from: a notification from before Change console… does not open on the new one.
       if (base !== consoleUrl) return;
-      mainWindow.loadURL(new URL(`s/${encodeURIComponent(n.id)}`, base).href);
+      if (!mainWindow) createMainWindow();
+      // Through loadConsole, as File → Sessions: the console's ready answer first, so a signed-out redirect to its
+      // sign-in goes to the browser.
+      loadConsole(mainWindow, new URL(`s/${encodeURIComponent(n.id)}`, base).href);
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
       mainWindow.focus();

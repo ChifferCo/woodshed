@@ -1581,13 +1581,14 @@
   /**
    * One line of text from the person, in the console's own dialog: window.prompt is missing where the page runs in the
    * desktop app (Electron has none, and returns nothing), and looks like the browser's rather than the console's.
-   * @param {{title: string, label: string, value?: string, goLabel: string, maxLength?: number, mono?: boolean}} opts
+   * @param {{title: string, label: string, value?: string, goLabel: string, maxLength?: number|null, mono?: boolean}} opts
+   *   `maxLength: null` sets no limit on the field, for a caller that cuts what it keeps itself
    * @returns {Promise<string|null>}  what was typed, trimmed, or null on Cancel, Escape or an empty field
    */
   function askText({ title, label, value = '', goLabel, maxLength = 500, mono = false }) {
     return new Promise((resolve) => {
       let answer = null;
-      const input = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', maxlength: String(maxLength), class: mono ? 'field mono' : 'field' });
+      const input = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', ...(maxLength ? { maxlength: String(maxLength) } : {}), class: mono ? 'field mono' : 'field' });
       input.value = value;
       const go = h('button', { type: 'submit', class: 'btn btn-open' }, goLabel);
       const form = h('form', { method: 'dialog' },
