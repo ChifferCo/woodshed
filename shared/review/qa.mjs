@@ -306,10 +306,28 @@ export function snapshotTreeish(review) {
 // other review there.
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
+// The total is for every copy this process has on disk at once, not each one:
+// several sessions' reviews asking together would otherwise each take it. And a
+// copy is refused when the disk would be left with less than this free, which
+// covers what other processes write there.
+const MIN_FREE_AFTER_BYTES = 512 * 1024 * 1024;
+let reservedBytes = 0;
+/** copy folder -> the bytes it reserved, until removeSnapshot deletes it */
+const reservations = new Map();
+
+function freeBytes(dir) {
+  try {
+    const st = fs.statfsSync(dir);
+    return st.bavail * st.bsize;
+  } catch {
+    return Infinity;
+  }
+}
 
 export async function makeSnapshot({
   repoDir, treeish, session, listMaxBytes = 64 * 1024 * 1024,
   maxFileBytes = MAX_FILE_BYTES, maxTotalBytes = MAX_TOTAL_BYTES,
+  minFreeAfterBytes = MIN_FREE_AFTER_BYTES, free = freeBytes,
 }) {
   sweepStaleSnapshots();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `woodshed-qa-${session}-`));
@@ -354,17 +372,27 @@ export async function makeSnapshot({
       }
     }
   }
+  const mb = (n) => Math.round(n / 1048576);
   if (total > maxTotalBytes) {
-    return failed(`its files come to ${Math.round(total / 1048576)} MB, past the ${Math.round(maxTotalBytes / 1048576)} MB a copy may take`);
+    return failed(`its files come to ${mb(total)} MB, past the ${mb(maxTotalBytes)} MB a copy may take`);
   }
-  for (const note of notes) {
-    fs.mkdirSync(parentOf(note.target), { recursive: true });
-    fs.writeFileSync(note.target, `(Not copied for the Q&A: ${Math.round(note.bytes / 1024)} KB, past its ${Math.round(maxFileBytes / 1048576)} MB limit per file.)\n`);
+  if (reservedBytes + total > maxTotalBytes) {
+    return failed(`other Q&A copies on this machine hold ${mb(reservedBytes)} MB; try again when they finish`);
   }
+  if (free(dir) - total < minFreeAfterBytes) {
+    return failed(`the disk under ${os.tmpdir()} has too little room left for ${mb(total)} MB`);
+  }
+  // Held for as long as the copy is on disk: removeSnapshot gives it back.
+  reservedBytes += total;
+  reservations.set(dir, total);
   try {
+    for (const note of notes) {
+      fs.mkdirSync(parentOf(note.target), { recursive: true });
+      fs.writeFileSync(note.target, `(Not copied for the Q&A: ${Math.round(note.bytes / 1024)} KB, past its ${mb(maxFileBytes)} MB limit per file.)\n`);
+    }
     await writeBlobs({ repoDir, blobs });
   } catch (err) {
-    return failed(`cat-file: ${String(err?.message || err).slice(0, 200)}`);
+    return failed(`writing it: ${String(err?.message || err).slice(0, 200)}`);
   }
   return { ok: true, dir, files: blobs.length, skipped: notes.length };
 }
@@ -479,7 +507,15 @@ function writeBlobs({ repoDir, blobs }) {
           open(blobs[next], Number(m[1]));
         }
         const n = Math.min(left, chunk.length - at);
-        if (n > 0) fs.writeSync(fd, chunk, at, n);
+        // writeSync may write fewer bytes than asked (a full disk among the
+        // causes); what it did not write is written again, not skipped, so a
+        // file is never left shorter than its blob.
+        let done = 0;
+        while (done < n) {
+          const wrote = fs.writeSync(fd, chunk, at + done, n - done);
+          if (!wrote) throw new Error(`no bytes written to a ${left}-byte file`);
+          done += wrote;
+        }
         at += n;
         left -= n;
         if (left === 0) {
@@ -531,7 +567,16 @@ export function sweepStaleSnapshots({ now = Date.now(), tmp = os.tmpdir() } = {}
   return removed;
 }
 
+/** Bytes the copies on disk now have reserved, for tests. */
+export function reservedSnapshotBytes() {
+  return reservedBytes;
+}
+
 export function removeSnapshot(dir) {
+  if (dir && reservations.has(dir)) {
+    reservedBytes -= reservations.get(dir);
+    reservations.delete(dir);
+  }
   if (dir) fs.rmSync(dir, { recursive: true, force: true });
 }
 

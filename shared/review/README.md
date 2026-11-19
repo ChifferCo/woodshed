@@ -403,7 +403,7 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
   scratch index's `write-tree` for a worktree review, or the head commit), whose blobs are written as git stores them
   (`ls-tree` and one `cat-file --batch`) into a scratch folder for the run: not `git archive`, whose `export-ignore`
   could drop a file the diff shows, nor `checkout-index`, whose line-ending and filter conversions could change one.
-  The folder is deleted after the run, and the startup sweep removes any a restart left, so its answers never quote code the diff beside them
+  The folder is deleted after the run, and the next copy removes any a restart left (more than 3 hours old), so its answers never quote code the diff beside them
   lacks; the newcomer reads
   each answer and asks about what it did not follow, at most two per answer, and so on to three levels. A round with
   no follow-ups ends it, so most runs are four to six calls. Tools on the newcomer would defeat it: it would read the

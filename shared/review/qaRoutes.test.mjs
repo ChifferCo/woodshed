@@ -41,7 +41,7 @@ process.env.WOODSHED_REVIEWS = path.join(DIR, 'reviews');
 
 const { handleReviewRequest, failedQaRecord } = await import('./index.mjs');
 const { writeSessionReview, writeDiff, readQa } = await import('./store.mjs');
-const { makeSnapshot, removeSnapshot, sweepStaleSnapshots } = await import('./qa.mjs');
+const { makeSnapshot, removeSnapshot, sweepStaleSnapshots, reservedSnapshotBytes } = await import('./qa.mjs');
 
 // A worktree review of a real checkout, whose snapshot is the commit made here: what the diff was taken from.
 function makeReview(session, worktree, createdAt = '2026-11-19T10:00:00.000Z', { aTxt, attributes } = {}) {
@@ -296,6 +296,60 @@ test('file names that are not UTF-8 are copied by their bytes, each to its own f
     assert.equal(snap.files, 2);
     assert.equal(fs.readFileSync(Buffer.concat([Buffer.from(snap.dir + '/'), nameA]), 'utf8'), 'first\n');
     assert.equal(fs.readFileSync(Buffer.concat([Buffer.from(snap.dir + '/'), nameB]), 'utf8'), 'second\n');
+  } finally {
+    removeSnapshot(snap.dir);
+  }
+});
+
+// The total is for every copy on disk at once, not each: several sessions asking together would otherwise each take
+// it. And a copy that would leave the disk too little room is refused, whatever else is writing there.
+test('copies on disk together stay within the total, and a copy needs room left on the disk', async () => {
+  const repo = path.join(DIR, 'shared-budget');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  fs.writeFileSync(path.join(repo, 'part.bin'), Buffer.alloc(700 * 1024, 2));
+  git('add', '-A');
+  git('commit', '-q', '-m', 'tree');
+  const tree = git('rev-parse', 'HEAD^{tree}');
+  const opts = { repoDir: repo, treeish: tree, session: 'claude-a1a1a1a1', maxTotalBytes: 1024 * 1024 };
+  const first = await makeSnapshot(opts);
+  assert.equal(first.ok, true, first.error);
+  const second = await makeSnapshot(opts);
+  assert.deepEqual([second.ok, /other Q&A copies on this machine hold/.test(second.error)], [false, true]);
+  removeSnapshot(first.dir);
+  assert.equal(reservedSnapshotBytes(), 0, 'the deleted copy gave its room back');
+  const third = await makeSnapshot(opts);
+  assert.equal(third.ok, true, third.error);
+  removeSnapshot(third.dir);
+  // 100 KB above the 512 MB that must stay free: this 700 KB copy would go below it.
+  const cramped = await makeSnapshot({ ...opts, free: () => 512 * 1024 * 1024 + 100 * 1024 });
+  assert.deepEqual([cramped.ok, /too little room left/.test(cramped.error)], [false, true]);
+  assert.equal(reservedSnapshotBytes(), 0);
+});
+
+// writeSync may write fewer bytes than asked. What it leaves must be written again, not skipped, or a file in a copy
+// reported whole is shorter than its blob.
+test('a short write is finished, not skipped: every file comes out whole', async () => {
+  const repo = path.join(DIR, 'short-writes');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  const body = Buffer.from('0123456789abcdef'.repeat(4096));
+  fs.writeFileSync(path.join(repo, 'a.txt'), body);
+  git('add', '-A');
+  git('commit', '-q', '-m', 'tree');
+  const realWriteSync = fs.writeSync;
+  fs.writeSync = (fd, buf, offset, length, ...rest) => realWriteSync(fd, buf, offset, Math.min(length, 7), ...rest);
+  let snap;
+  try {
+    snap = await makeSnapshot({ repoDir: repo, treeish: git('rev-parse', 'HEAD^{tree}'), session: 'claude-b2b2b2b2' });
+  } finally {
+    fs.writeSync = realWriteSync;
+  }
+  assert.equal(snap.ok, true, snap.error);
+  try {
+    assert.ok(fs.readFileSync(path.join(snap.dir, 'a.txt')).equals(body), 'the file is as long as its blob');
   } finally {
     removeSnapshot(snap.dir);
   }
