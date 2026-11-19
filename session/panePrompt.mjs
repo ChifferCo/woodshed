@@ -483,21 +483,26 @@ export function undimmed(line) {
 }
 
 const PLAIN = (line) => line.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
-const BOX_MARK = /^\s*[❯›]\s?/;
+// Each agent's own mark: claude's `❯` sits right under a rule; codex's `›`. A line of another's (the session's status
+// line starts `›` under claude's box) is not the box.
+const BOX_MARKS = { claude: /^\s*❯\s?/, codex: /^\s*›\s?/ };
 const BOX_RULE = /^\s*─{10,}\s*$/;
 
 /**
  * Whether the agent's input box is empty, from a capture with colours.
  * @param {string} colored  `tmux capture-pane -e -p`
+ * @param {'claude'|'codex'} agent
  * @returns {boolean|null}  null when no input box is on screen (a menu, a screen of another program)
  */
-export function composerEmpty(colored) {
+export function composerEmpty(colored, agent) {
+  const mark = BOX_MARKS[agent];
   const lines = linesOf(colored);
   for (let i = lines.length - 1; i >= 0; i--) {
     const plain = PLAIN(lines[i]);
-    if (!BOX_MARK.test(plain) || HIGHLIGHTED_ROW.test(plain)) continue;
+    if (!mark.test(plain) || HIGHLIGHTED_ROW.test(plain)) continue;
+    if (agent === 'claude' && !(i > 0 && BOX_RULE.test(PLAIN(lines[i - 1])))) continue;
     // Its draft, to the rule under it (claude) or the first blank line (codex): every line with no dim text left.
-    let text = undimmed(lines[i]).replace(BOX_MARK, '');
+    let text = undimmed(lines[i]).replace(mark, '');
     for (let j = i + 1; j < lines.length; j++) {
       const next = PLAIN(lines[j]);
       if (BOX_RULE.test(next) || !next.trim()) break;

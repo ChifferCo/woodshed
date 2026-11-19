@@ -880,7 +880,7 @@ process.stdout.write(${JSON.stringify(screen)});
 process.stdin.setRawMode(true);
 let shown = false;
 let line = '';
-const draw = () => process.stdout.write('\\x1b[2J\\x1b[H' + ${JSON.stringify(screen)} + '❯ ' + line + (shown ? '\\n\\n  Pick one\\n  ❯ 1. Yes\\n    2. No\\n  Enter to confirm · Esc to cancel\\n' : '\\n'));
+const draw = () => process.stdout.write('\\x1b[2J\\x1b[H' + ${JSON.stringify(screen)} + '${'─'.repeat(40)}\\n❯ ' + line + (shown ? '\\n\\n  Pick one\\n  ❯ 1. Yes\\n    2. No\\n  Enter to confirm · Esc to cancel\\n' : '\\n'));
 process.stdin.on('data', (d) => {
   for (const ch of d.toString()) {
     if (ch === '\\r') { fs.appendFileSync(${JSON.stringify(lines)}, line + '\\n'); line = ''; }

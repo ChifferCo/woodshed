@@ -361,14 +361,16 @@ test('the input box is empty when only dim text follows its mark, as claude and 
   // From real captures with colours (tmux capture-pane -e -p), claude 2.1.328 and codex 0.167.
   const rule = `\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m`;
   const footer = '\x1b[39m  \x1b[38;5;220m⏵⏵\x1b[39m \x1b[38;5;220mauto mode on\x1b[38;5;246m (shift+tab to cycle)\x1b[39m';
-  const claude = (box) => [rule, box, `\x1b[0m${rule}`, footer].join('\n');
-  assert.equal(composerEmpty(claude('\x1b[39m❯ \x1b[2mTry\x1b[0m\x1b[39m\x1b[49m \x1b[2m"fix typecheck errors"')), true, 'its suggestion, dim');
-  assert.equal(composerEmpty(claude('\x1b[39m❯ hello draft')), false, 'a draft');
-  assert.equal(composerEmpty(claude('\x1b[39m❯ hello \x1b[2mand a dim tail')), false, 'a draft with a suggestion after it');
+  // The session's status line under claude's box starts with codex's mark: it is not the box.
+  const status = '\x1b[39m  \x1b[38;5;246m› \x1b[36m/tmp/fx/repo\x1b[38;5;246m ⎇ [\x1b[35mwoodshed/x\x1b[38;5;246m]';
+  const claude = (box) => [rule, box, `\x1b[0m${rule}`, status, footer].join('\n');
+  assert.equal(composerEmpty(claude('\x1b[39m❯ \x1b[2mTry\x1b[0m\x1b[39m\x1b[49m \x1b[2m"fix typecheck errors"'), 'claude'), true, 'its suggestion, dim');
+  assert.equal(composerEmpty(claude('\x1b[39m❯ hello draft'), 'claude'), false, 'a draft');
+  assert.equal(composerEmpty(claude('\x1b[39m❯ hello \x1b[2mand a dim tail'), 'claude'), false, 'a draft with a suggestion after it');
   const codex = (box) => [box, '\x1b[0m\x1b[39m\x1b[49m', '  \x1b[38;5;223mGPT-6.2-Sol default\x1b[39m · /tmp/fx/repo'].join('\n');
-  assert.equal(composerEmpty(codex('\x1b[1m›\x1b[0m\x1b[39m\x1b[49m \x1b[2mAsk Codex to do anything')), true, 'its placeholder, dim');
-  assert.equal(composerEmpty(codex('\x1b[1m›\x1b[0m\x1b[39m\x1b[49m hello draft')), false);
+  assert.equal(composerEmpty(codex('\x1b[1m›\x1b[0m\x1b[39m\x1b[49m \x1b[2mAsk Codex to do anything'), 'codex'), true, 'its placeholder, dim');
+  assert.equal(composerEmpty(codex('\x1b[1m›\x1b[0m\x1b[39m\x1b[49m hello draft'), 'codex'), false);
   // codex's folder-trust menu: a highlighted row, no input box.
   const trust = ['  decision will be saved.', '\x1b[1;7m› 1. Trust and continue', '\x1b[0m\x1b[39m\x1b[49m  2. Back to Agent Command Center', '  \x1b[1menter\x1b[0;2m continue · \x1b[0;1mesc\x1b[0;2m back'].join('\n');
-  assert.equal(composerEmpty(trust), null);
+  assert.equal(composerEmpty(trust, 'codex'), null);
 });

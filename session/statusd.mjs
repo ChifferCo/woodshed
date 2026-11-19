@@ -942,7 +942,7 @@ async function boxEmpty() {
   const colored = (await run('tmux', ['capture-pane', '-e', '-p', '-t', TMUX_TARGET])).stdout;
   // A prompt on screen is typeMessage's to refuse, as the prompt it is; no box found, the pane checks decide.
   if (readPrompt(colored.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, ''))) return true;
-  return composerEmpty(colored) !== false;
+  return composerEmpty(colored, CODEX ? 'codex' : 'claude') !== false;
 }
 
 // At its prompt between turns: its state says done, and, for claude, whose state is its hooks', its screen agrees. A
