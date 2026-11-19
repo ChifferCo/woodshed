@@ -43,9 +43,14 @@ npm run dist -- --linux       # AppImage and .deb
 ```
 
 They land in `dist/`. The builds are unsigned: macOS Gatekeeper and Windows SmartScreen warn on first open until the
-installation signs them (electron-builder's `CSC_LINK` and `CSC_KEY_PASSWORD`, and Apple's notarization). The icon
-(`icon.png`) is written from the console's own mark in `shared/pwa.mjs` by `icon.mjs` before each start and build, so
-the app and an installed web app look the same.
+installation signs them (electron-builder's `CSC_LINK` and `CSC_KEY_PASSWORD`, and Apple's notarization).
+
+The icon, `icon.png`, is the console's mark (`shared/pwa.mjs`) on Apple's icon grid: a rounded tile with a margin and
+a shadow, since the Dock shows a PNG as it is and the web app's full-bleed square sits there as a box.
+`renderIcon.mjs` draws it; run `npx electron renderIcon.mjs` here after the mark changes, and commit the file.
+
+Run from a checkout (`npm start`), macOS names the app Electron in the Dock's tooltip and the app menu: that name comes
+from Electron's own bundle, and only a built app (`npm run dist`) is called Woodshed there.
 
 ## Where links go
 

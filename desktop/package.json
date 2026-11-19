@@ -8,9 +8,8 @@
   "type": "module",
   "main": "main.mjs",
   "scripts": {
-    "icon": "node icon.mjs",
-    "start": "node icon.mjs && electron .",
-    "dist": "node icon.mjs && electron-builder",
+    "start": "electron .",
+    "dist": "electron-builder",
     "test": "node --test"
   },
   "devDependencies": {
@@ -21,7 +20,7 @@
     "appId": "run.woodshed.desktop",
     "productName": "Woodshed",
     "directories": { "output": "dist" },
-    "files": ["*.mjs", "*.cjs", "setup.html", "setup.js", "icon.png", "!*.test.mjs", "!icon.mjs"],
+    "files": ["*.mjs", "*.cjs", "setup.html", "setup.js", "icon.png", "!*.test.mjs", "!renderIcon.mjs"],
     "icon": "icon.png",
     "mac": { "category": "public.app-category.developer-tools", "target": ["dmg", "zip"] },
     "win": { "target": ["nsis"] },

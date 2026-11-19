@@ -478,18 +478,6 @@ for (const [name, b64] of Object.entries(ICON_PNG_BASE64)) {
 ASSETS.set('/favicon.svg', { type: 'image/svg+xml', body: Buffer.from(WOODSHED_MARK_SVG) });
 
 /**
- * One of the rendered icons by its ICON_SIZES name, for a program that needs the mark as a file rather than as a
- * route: the desktop app's window and installer icons (desktop/icon.mjs).
- * @param {keyof typeof ICON_SIZES} name
- * @returns {Buffer}
- */
-export function iconPng(name) {
-  const asset = ASSETS.get(`/${name}`);
-  if (!asset) throw new Error(`no icon named ${name}`);
-  return asset.body;
-}
-
-/**
  * The PWA routes: the manifest, the icons, and the SVG favicon.
  *
  * Same contract as handleReviewRequest and handleTerminalProxy — returns
