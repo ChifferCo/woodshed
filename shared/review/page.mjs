@@ -1975,6 +1975,11 @@ ${DARK_PALETTE}
       // the draft, the answer, which panel is open — lives in the askState
       // object, written as it happens rather than scraped back out here.
       // Scraping is what filed a draft under the wrong anchor twice.
+      // A Q&A question holding the focus gets it back on its new button,
+      // whether this render is its own toggle or a poll of a run still going:
+      // otherwise a keyboard reader starts again from the top of the page.
+      var focusedQa = document.activeElement && document.activeElement.dataset
+        ? document.activeElement.dataset.qa : null;
       content.replaceChildren();
       if (!state.meta) return;
 
@@ -2007,6 +2012,12 @@ ${DARK_PALETTE}
       }
       if (state.tab === 'qa') {
         renderQa(content);
+        if (focusedQa) {
+          var again = content.querySelectorAll('.qa-q');
+          for (var k = 0; k < again.length; k++) {
+            if (again[k].dataset.qa === focusedQa) { again[k].focus({ preventScroll: true }); break; }
+          }
+        }
         keepScroll();
         return;
       }
@@ -3109,13 +3120,6 @@ ${DARK_PALETTE}
         if (qaView.open[item.id]) delete qaView.open[item.id];
         else qaView.open[item.id] = true;
         render();
-        // The render built a new button for this question: give it the focus
-        // the old one had, so a keyboard reader goes on from here into the
-        // answer and its follow-ups rather than from the top of the page.
-        var again = document.querySelectorAll('.qa-q');
-        for (var k = 0; k < again.length; k++) {
-          if (again[k].dataset.qa === item.id) { again[k].focus({ preventScroll: true }); break; }
-        }
       });
       li.appendChild(q);
       if (open) {
