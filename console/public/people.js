@@ -3,6 +3,8 @@
 // request shows without a reload; the invite field keeps what is typed.
 // Behind a hosting proxy whose program hands over its list (`hosted` in /api/people), it is a tab of Settings: the
 // program keeps who is in and each role, so Add someone takes a role, the Admin column is the role, and nobody asks to join.
+// The program may say what it did on an add (`told`, an email sent), said in place of the hint that nothing is sent, and
+// note something beside each person (`note`). Both are its plain text, drawn as text.
 window.Woodshed.settingsPage('/people', (app, life) => {
   'use strict';
   const W = window.Woodshed;
@@ -16,6 +18,8 @@ window.Woodshed.settingsPage('/people', (app, life) => {
   let hosted = false;
   // The member whose Slack link is being typed, and what is typed: kept across the 30-second refresh.
   let editing = null;
+  // What the program said it did on the last add here, until the next one.
+  let told = null;
   const invite = h('input', { id: 'invite', class: 'field', placeholder: '@handle', autocomplete: 'off', spellcheck: 'false' });
   const inviteError = h('p', { class: 'form-error', role: 'alert', hidden: true });
   const addRole = h('select', { id: 'add-role', class: 'field', 'aria-label': 'Role' },
@@ -42,11 +46,17 @@ window.Woodshed.settingsPage('/people', (app, life) => {
     if (button) button.disabled = true;
     try {
       data = await W.postJson(`/api/people/${action}`, { login, ...extra });
+      if (action === 'add') told = typeof data.told === 'string' && data.told ? data.told : null;
       W.shell?.toast({ invite: `@${login} can sign in now`, add: `@${login} can sign in now`, accept: `@${login} is in`, decline: 'Declined', remove: `@${login} removed` }[action]);
     } catch (err) {
       if (action === 'invite' || action === 'add') {
         inviteError.textContent = err.message;
         inviteError.hidden = false;
+        // The last add's sentence is not this one's: the hint goes back to core's own beside the error.
+        if (action === 'add' && told) {
+          told = null;
+          render();
+        }
       } else {
         window.alert(`Not done: ${err.message}`);
       }
@@ -83,7 +93,8 @@ window.Woodshed.settingsPage('/people', (app, life) => {
       h('label', { class: 'field-label', for: 'invite' }, 'Add someone by GitHub handle'),
       h('div', { class: 'invite-row' }, invite, addRole, button),
       inviteError,
-      h('p', { class: 'foot' }, 'They can sign in straight away. An owner is an admin here. Nothing is sent to them: tell them the link.'));
+      h('p', { class: 'foot', id: 'add-hint' }, told ? `They can sign in straight away. An owner is an admin here. ${told}`
+        : 'They can sign in straight away. An owner is an admin here. Nothing is sent to them: tell them the link.'));
   }
 
   function inviteCard() {
@@ -106,7 +117,7 @@ window.Woodshed.settingsPage('/people', (app, life) => {
   }
 
   function addedLine(m) {
-    if (hosted) return null;
+    if (hosted) return m.note || null;
     if (m.how === 'first to sign in') return 'the first to sign in';
     if (m.how === 'already using the console') return `already using the console when the list started, ${day(m.addedAt)}`;
     const by = isMe(m.addedBy) ? 'you' : W.personText(m.addedBy);

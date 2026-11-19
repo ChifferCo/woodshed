@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createHandler } from './server.mjs';
-import { createHostedMembers } from './hostedMembers.mjs';
+import { NOTE_CHARS, TOLD_CHARS, createHostedMembers } from './hostedMembers.mjs';
 import { createInstallation } from './installation.mjs';
 import { createFleet } from './fleet.mjs';
 import { IDENTITY_HEADER, createTrustedIdentity, signIdentity } from './trustedIdentity.mjs';
@@ -26,12 +26,18 @@ const identity = (login, role) => ({ [IDENTITY_HEADER]: signIdentity({ secret: S
 const OWNER = () => identity('ana-owner', 'owner');
 const MEMBER = () => identity('sam-member', 'member');
 
-/** The program: its list, and every call made to it. `refuse` makes the next change fail as the program would. */
+/**
+ * The program: its list, and every call made to it. `refuse` makes the next change fail as the program would, and `told`
+ * is what its add says it did.
+ */
 function fakeProgram(people = [{ login: 'ana-owner', role: 'owner' }, { login: 'Sam-Member', role: 'member' }]) {
   const program = {
-    people: people.map((p) => ({ ...p })), calls: [], refuse: null, lists: 0,
+    people: people.map((p) => ({ ...p })), calls: [], refuse: null, lists: 0, told: undefined,
     async list() { program.lists += 1; return program.people.map((p) => ({ ...p })); },
-    async add(args) { program.calls.push(['add', args]); program.fail(); program.people.push({ login: args.login, role: args.role }); },
+    async add(args) {
+      program.calls.push(['add', args]); program.fail(); program.people.push({ login: args.login, role: args.role });
+      return program.told === undefined ? undefined : { told: program.told };
+    },
     async remove(args) { program.calls.push(['remove', args]); program.fail(); program.people = program.people.filter((p) => p.login.toLowerCase() !== args.login.toLowerCase()); },
     async setRole(args) { program.calls.push(['setRole', args]); program.fail(); program.people.find((p) => p.login.toLowerCase() === args.login.toLowerCase()).role = args.role; },
     fail() {
@@ -357,4 +363,39 @@ test('a list that cannot be read is tried again by itself, backing off, until th
   const pending = timers.at(-1);
   members.stop();
   assert.equal(pending.cleared, true);
+});
+
+test('an add answers what the program says it did, as one line of text cut to its length, or null when it says nothing', async (t) => {
+  const { program, post } = await hostedPeople(t);
+  program.told = 'We emailed them a link.';
+  assert.equal((await post('/api/people/add', { login: 'lee-dev', role: 'member' })).body.told, 'We emailed them a link.');
+  program.told = '  <b>Sent</b>\n to them  ';
+  assert.equal((await post('/api/people/add', { login: 'bo-dev', role: 'member' })).body.told, '<b>Sent</b> to them', 'text as it is, on one line');
+  program.told = 'x'.repeat(500);
+  assert.equal((await post('/api/people/add', { login: 'cy-dev', role: 'member' })).body.told, 'x'.repeat(TOLD_CHARS));
+  for (const [login, told] of [['di-dev', undefined], ['ed-dev', 42], ['fe-dev', '   ']]) {
+    program.told = told;
+    assert.equal((await post('/api/people/add', { login, role: 'member' })).body.told, null, String(told));
+  }
+  program.told = 'We emailed them a link.';
+  assert.equal('told' in (await post('/api/people/role', { login: 'lee-dev', role: 'owner' })).body, false, 'only an add says');
+});
+
+test('a note from the program is listed beside the person, as text cut to its length; one that is not text is left out, the person kept', async (t) => {
+  const warned = t.mock.method(console, 'warn', () => {});
+  const program = fakeProgram([
+    { login: 'ana-owner', role: 'owner' },
+    { login: 'lee-dev', role: 'member', note: 'hasn\'t signed in yet' },
+    { login: 'bo-dev', role: 'member', note: '<img src=x onerror=alert(1)>' },
+    { login: 'cy-dev', role: 'member', note: 'n'.repeat(300) },
+    { login: 'di-dev', role: 'member', note: { html: 'no' } },
+    { login: 'ed-dev', role: 'member', note: '  ' },
+  ]);
+  const { port } = await hostedPeople(t, { program });
+  const people = (await send(port, { path: '/api/people', headers: OWNER() })).body;
+  assert.deepEqual(people.members.map((m) => [m.login, m.note]), [
+    ['ana-owner', undefined], ['lee-dev', 'hasn\'t signed in yet'], ['bo-dev', '<img src=x onerror=alert(1)>'],
+    ['cy-dev', 'n'.repeat(NOTE_CHARS)], ['di-dev', undefined], ['ed-dev', undefined],
+  ]);
+  assert.equal(warned.mock.calls.length, 0, 'a bad note drops no entry');
 });

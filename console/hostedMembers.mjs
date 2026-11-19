@@ -32,9 +32,20 @@ function shown(message) {
 }
 
 const ROLES = new Set(['owner', 'member']);
+// What the program may say in People's own words: a note beside a person (list) and what it did on an add (`told`).
+// Plain text, cut to these lengths; People draws it as text, never as markup.
+export const NOTE_CHARS = 80;
+export const TOLD_CHARS = 200;
+
+// A program's text as People shows it: one line, trimmed and cut, or null for anything that is not text.
+function programText(value, chars) {
+  if (typeof value !== 'string') return null;
+  const line = value.replace(/\s+/g, ' ').trim();
+  return line ? line.slice(0, chars) : null;
+}
 
 /**
- * @param {{hook: {list: () => Promise<{login: string, role: string}[]>, add: Function, remove: Function, setRole: Function},
+ * @param {{hook: {list: () => Promise<{login: string, role: string, note?: string}[]>, add: Function, remove: Function, setRole: Function},
  *          store: {state: object, save: () => void}, ttlMs?: number, now?: () => number,
  *          onGone?: ((login: string) => void)|null}} deps
  *   `onGone` gives back the shared sessions of someone the program's list does not have (or set it later, whenGone)
@@ -68,7 +79,9 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
     for (const entry of list) {
       const login = parseHandle(entry?.login);
       if (!login || !ROLES.has(entry?.role) || seen.has(login.toLowerCase())) { dropped += 1; continue; }
-      const person = { login, role: entry.role };
+      // A note that is not text is left out, and the person kept.
+      const note = programText(entry.note, NOTE_CHARS);
+      const person = { login, role: entry.role, ...(note ? { note } : {}) };
       next.push(person);
       seen.set(login.toLowerCase(), person);
     }
@@ -253,10 +266,11 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
     console.log('members: can be assigned changed', { login: person.login, on: Boolean(on), by });
   }
 
-  // The program's refusal is shown as it is; anything else it throws is logged here and fails the call.
+  // The program's refusal is shown as it is; anything else it throws is logged here and fails the call. Resolves to
+  // what the program answered.
   async function ask(what, args) {
     try {
-      await hook[what](args);
+      return await hook[what](args);
     } catch (err) {
       if (err?.shown) throw shown(String(err.message));
       console.error('members: the program failed a change', { what, login: args.login, message: String(err?.message ?? err).split('\n')[0] });
@@ -266,17 +280,21 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
 
   const owners = () => [...current().values()].filter((p) => p.role === 'owner');
 
-  /** The caller checks that `by` is an admin. */
+  /**
+   * The caller checks that `by` is an admin.
+   * @returns {Promise<{login: string, told: string|null}>}  `told`: what the program says it did, such as an email sent
+   */
   async function add({ login, role, by }) {
     const handle = parseHandle(login);
     if (!handle) throw shown('that is not a GitHub handle');
     if (!ROLES.has(role)) throw shown('the role is owner or member');
     await load();
     if (isMember(handle)) throw shown(`@${handle} is already a member`);
-    await ask('add', { login: handle, role, by });
-    console.log('members: added', { login: handle, role, by });
+    const answer = await ask('add', { login: handle, role, by });
+    const told = programText(answer?.told, TOLD_CHARS);
+    console.log('members: added', { login: handle, role, by, told: Boolean(told) });
     await reread();
-    return handle;
+    return { login: handle, told };
   }
 
   /** The caller checks that `by` is an admin. Nobody removes themselves, and the last owner stays. */
@@ -304,14 +322,14 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
     await reread();
   }
 
-  /** @returns {{members: object[], requests: []}}  what the People page lists, in the program's order */
+  /** @returns {{members: object[], requests: []}}  what the People page lists, in the program's order, with each note */
   function view() {
     current();
     return {
       members: (roster ?? []).map((p) => {
         const own = switchesOf(p.login);
         return {
-          login: p.login, role: p.role, admin: p.role === 'owner',
+          login: p.login, role: p.role, admin: p.role === 'owner', ...(p.note ? { note: p.note } : {}),
           githubSessions: !own.githubSessionsOff,
           ...(own.githubSessionsOff ? { githubSessionsOffBy: own.githubSessionsOff.by, githubSessionsOffAt: own.githubSessionsOff.at } : {}),
           assignable: isAssignable(p.login),
