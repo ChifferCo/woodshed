@@ -427,6 +427,9 @@ export function statusUpdate(session, status, nowIso) {
     branch: status.branch || session.branch,
     head: status.head || session.head,
     prUrl: prUrl || session.prUrl || null,
+    // The pull request statusd reported last, on any repo: a session that moved to another one is no longer watched on
+    // its old one (fleet.mjs, prListening), though `prUrl` keeps the last on its own repo.
+    reportedPrUrl: typeof status.prUrl === 'string' && status.prUrl ? status.prUrl.slice(0, 300) : session.reportedPrUrl ?? null,
     // Every pull request the session has reported, oldest first: a session can open another after one merged.
     prUrls: withPrUrl(session, prUrl),
     app: APP_STATES.has(status.app) ? status.app : null,
@@ -459,7 +462,7 @@ export function statusUpdate(session, status, nowIso) {
  * @param {object} session
  * @returns {object}  the session as the browser sees it: no token, no endpoint
  */
-export function publicSession({ token, terminalToken, endpoint, pendingMessages, ...rest }) {
+export function publicSession({ token, terminalToken, endpoint, pendingMessages, reportedPrUrl, ...rest }) {
   // A session whose image predates the Terminal tab has no shell ttyd to open.
   return { ...rest, pendingMessages: pendingMessages?.length ?? 0, hasShell: Boolean(endpoint?.shellPort) };
 }

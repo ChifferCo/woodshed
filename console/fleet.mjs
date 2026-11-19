@@ -1070,7 +1070,8 @@ export function createFleet({
   function prListening(item) {
     const session = find(item.sessionId);
     const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
-    return ownListening(session) && pullNumber(session.prUrl) === item.number && onProjectRepo(session.prUrl, project);
+    const current = session?.reportedPrUrl ?? session?.prUrl;
+    return ownListening(session) && pullNumber(current) === item.number && onProjectRepo(current, project);
   }
 
   // Whether a pull request URL is on a project's repo.
