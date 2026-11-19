@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { attention, enabledKinds, NOTIFICATION_KINDS } from './attention.mjs';
 import { consoleUrlFrom, destination, isConsoleMe, consolePath } from './links.mjs';
-import { APP_PAGE_CHROME_CSS, CONSOLE_CHROME_CSS, TRAFFIC_LIGHTS } from './windowChrome.mjs';
+import { APP_PAGE_CHROME_CSS, consoleChromeCss, TRAFFIC_LIGHTS } from './windowChrome.mjs';
 import { CONSOLE_SIGN_IN_PATHS, PROTOCOL, browserUrl, createPending, linkInArgs, parseSetCookie, parseSignedInLink, signInPathsFrom, signInStep } from './signIn.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -131,13 +131,28 @@ const MAC_MIN_WIDTH = 900;
 const chromeRules = macChrome || process.argv.includes('--mac-chrome');
 
 // The header's rules on each page of the main window: the console's own, or the app's setup and sign-in pages'.
+// The lights stay the same size whatever the page's zoom, so the room left for them is worked out at the zoom in use, and
+// worked out again whenever it changes (the View menu's zoom, below).
+const chromeKeys = new WeakMap();
+async function applyChrome(contents) {
+  if (!chromeRules || contents.isDestroyed()) return;
+  const url = contents.getURL();
+  const css = url.startsWith('file:') ? APP_PAGE_CHROME_CSS : where(url) === 'console' ? consoleChromeCss(contents.getZoomFactor()) : null;
+  const old = chromeKeys.get(contents);
+  chromeKeys.delete(contents);
+  if (old) await contents.removeInsertedCSS(old).catch(() => {});
+  if (css) chromeKeys.set(contents, await contents.insertCSS(css).catch(() => null));
+}
 function addChrome(contents) {
   if (!chromeRules) return;
-  contents.on('dom-ready', () => {
-    const url = contents.getURL();
-    const css = url.startsWith('file:') ? APP_PAGE_CHROME_CSS : where(url) === 'console' ? CONSOLE_CHROME_CSS : null;
-    if (css) contents.insertCSS(css).catch(() => {});
-  });
+  contents.on('dom-ready', () => { chromeKeys.delete(contents); applyChrome(contents); });
+}
+// Zoom in, out or back, and the header's room with it.
+function zoomBy(step) {
+  const contents = BrowserWindow.getFocusedWindow()?.webContents;
+  if (!contents) return;
+  contents.setZoomLevel(step === 0 ? 0 : Math.max(-3, Math.min(5, contents.getZoomLevel() + step * 0.5)));
+  applyChrome(contents);
 }
 
 function createMainWindow() {
@@ -216,12 +231,13 @@ ipcMain.handle('console:connect', async (event, typed) => {
   // A sign-in started on the console before is not this one's.
   pending.take();
   signInAttempt += 1;
+  // What was seen and the badge are the old console's: they go now, with it, whatever happens to the page after.
+  startWatching();
   // Known before the console's first page, which a hosted console redirects to its own sign-in: only its answer names
   // that path, so the redirect can go to the browser.
   await readyBeforeLoading();
   if (!stillAsked()) return { ok: true };
   win.loadURL(url);
-  startWatching();
   return { ok: true };
 });
 
@@ -509,7 +525,11 @@ function buildMenu() {
         { label: 'Back', accelerator: 'CmdOrCtrl+[', click: () => BrowserWindow.getFocusedWindow()?.webContents.navigationHistory.goBack() },
         { label: 'Forward', accelerator: 'CmdOrCtrl+]', click: () => BrowserWindow.getFocusedWindow()?.webContents.navigationHistory.goForward() },
         { type: 'separator' },
-        { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' },
+        { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', click: () => zoomBy(0) },
+        { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', click: () => zoomBy(1) },
+        { label: 'Zoom In', accelerator: 'CmdOrCtrl+=', visible: false, acceleratorWorksWhenHidden: true, click: () => zoomBy(1) },
+        { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', click: () => zoomBy(-1) },
+        { type: 'separator' }, { role: 'togglefullscreen' },
       ],
     },
     { role: 'windowMenu' },

@@ -452,3 +452,13 @@ test('the desktop app\'s session keeps the browser\'s last access check, and a s
   other.auth.signOut(signedIn);
   assert.equal(other.auth.claimDesktopCode({ code, verifier: pair.verifier }), null);
 });
+
+test('the desktop codes refuse a code that is not a string, and do not throw on it', async () => {
+  const { createDesktopCodes } = await import('./auth.mjs');
+  const codes = createDesktopCodes();
+  const { verifier, challenge } = await desktopPair();
+  const code = codes.issue({ login: 'octo' }, challenge);
+  assert.deepEqual(codes.claim({ toString: 1 }, verifier), { refused: { known: false, verified: false } });
+  assert.deepEqual(codes.claim(undefined, verifier), { refused: { known: false, verified: false } });
+  assert.deepEqual(codes.claim(code, verifier), { data: { login: 'octo' } }, 'the real code still works after');
+});

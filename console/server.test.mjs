@@ -2346,6 +2346,10 @@ test('a browser signed in to the console signs the desktop app in, through the c
 
   const claim = (body, headers = { 'x-woodshed': '1' }) => fetch(`${base}/auth/desktop/claim`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
   assert.equal((await claim({ code, verifier }, {})).status, 403, 'only the app sends the header');
+  // A malformed claim is refused, never thrown on: an object whose toString is not a function, a number, nothing.
+  for (const bad of [{ code: { toString: 1 }, verifier }, { code, verifier: { toString: 1 } }, { code: 7, verifier }, {}, null]) {
+    assert.equal((await claim(bad)).status, 400, JSON.stringify(bad));
+  }
   const claimed = await claim({ code, verifier });
   assert.equal(claimed.status, 200);
   assert.deepEqual(await claimed.json(), { login: 'octo' });

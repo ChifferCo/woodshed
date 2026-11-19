@@ -75,8 +75,10 @@ export function createDesktopCodes({ now = Date.now } = {}) {
      *   its challenge was made from; `refused` for a used, expired or unknown code, or another verifier
      */
     claim(code, verifier) {
-      const claimed = codes.get(String(code));
-      codes.delete(String(code));
+      // Strings alone: a JSON object whose `toString` is not a function would make String() throw.
+      if (typeof code !== 'string') return { refused: { known: false, verified: false } };
+      const claimed = codes.get(code);
+      codes.delete(code);
       forget();
       const verified = Boolean(claimed && typeof verifier === 'string' && verifier.length >= 43 && verifier.length <= 128
         && crypto.createHash('sha256').update(verifier).digest('base64url') === claimed.challenge);

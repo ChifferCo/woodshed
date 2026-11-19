@@ -199,7 +199,12 @@ export async function handleDesktopSignIn({
       json(res, 400, { error: 'send {code, verifier} as JSON' });
       return true;
     }
-    const claimed = await auth.claimDesktopCode({ code: body?.code, verifier: body?.verifier });
+    // Two strings, or nothing reaches the codes: a JSON object in their place is refused here, never thrown on.
+    if (typeof body?.code !== 'string' || typeof body?.verifier !== 'string') {
+      json(res, 400, { error: 'send {code, verifier} as JSON' });
+      return true;
+    }
+    const claimed = await auth.claimDesktopCode({ code: body.code, verifier: body.verifier });
     if (!claimed) {
       json(res, 401, { error: 'That sign-in has expired or was already used. Sign in again from the app.' });
       return true;
