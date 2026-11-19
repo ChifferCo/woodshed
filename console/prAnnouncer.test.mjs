@@ -778,13 +778,33 @@ for (const [what, pull, watched] of [
   ['a teammate\'s pull request opened after the session started', { user: { login: 'ana-dev' }, body: 'Started by @ana-dev via Woodshed.' }, false],
   ['a teammate\'s pull request whose body names the owner', { user: { login: 'ana-dev' }, body: 'Started by @joel via Woodshed.' }, false],
   ['a pull request the App opened from the session\'s branch after it started', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' } }, true],
+  ['a pull request another app opened from the session\'s branch', { user: { login: 'other-bot[bot]', type: 'Bot' } }, false],
+  ['a pull request the App opened from a fork\'s branch of the same name', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/joel-1', repo: { full_name: 'someone/app' } } }, false],
   ['a pull request the App opened from another branch', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/other' } }, false],
   ['a pull request the App opened before the session started', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, created_at: '2026-10-26T10:00:00Z' }, false],
 ]) {
   test(`a My Woodshed session watches ${what}: ${watched}`, async () => {
-    const { store, session, github } = setup({ pull: { head: { sha: 'abc', ref: 'woodshed/joel-1' }, ...pull } });
-    const watcher = createPrAnnouncer({ store, github, slack: null, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z') });
+    const repo = { full_name: 'acme/app' };
+    const { store, session, github } = setup({ pull: { head: { sha: 'abc', ref: 'woodshed/joel-1', repo }, base: { repo }, ...pull } });
+    const watcher = createPrAnnouncer({
+      store, github, slack: null, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z'), ownApp: () => ({ slug: 'woodshed-cloud', login: 'woodshed-cloud[bot]' }),
+    });
     assert.equal(await watcher.track({ ...session, owner: 'joel', branch: 'woodshed/joel-1' }, null, { watch: true }), watched);
     assert.equal((store.state.slackPending ?? []).length, watched ? 1 : 0);
   });
 }
+
+test('a watch tracked again, as by a resumed session, starts its wait over', async () => {
+  const { store, session, told, dropped, github } = setup({ reviews: [verdict('CHANGES_REQUESTED')] });
+  let clock = Date.parse('2026-10-26T12:00:00.000Z');
+  const watcher = createPrAnnouncer({
+    store, github, slack: null, gates: async () => GATES, now: () => clock, giveUpMs: () => 60 * MINUTE,
+    events: { feedback: (item, text) => { told.push(text); return true; }, dropped: (item, why) => { dropped.push(why); } },
+  });
+  await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
+  clock += 61 * MINUTE;
+  await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
+  await watcher.check();
+  assert.deepEqual([store.state.slackPending.length, dropped], [1, []]);
+  assert.match(told[0], /asks for changes/);
+});

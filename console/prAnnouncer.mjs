@@ -31,13 +31,17 @@ function firstLine(err) {
 }
 
 // A My Woodshed session's pull request is its owner's when they opened it, or, since a session that pushes as the App
-// opens it as the App, when an app opened it from the session's own branch after the session started. Nothing a
-// teammate writes in a body counts.
-function ownersPull(pull, session) {
+// opens it as the App, when the console's App (any app, while its login is not known yet) opened it from the
+// session's own branch, in the repo itself and not a fork, after the session started. Nothing a teammate writes in a
+// body counts.
+function ownersPull(pull, session, app) {
   const login = String(session.owner ?? '').toLowerCase();
   if (!login) return false;
-  if (String(pull.user?.login ?? '').toLowerCase() === login) return true;
-  return pull.user?.type === 'Bot' && Boolean(session.branch) && pull.head?.ref === session.branch
+  const author = String(pull.user?.login ?? '').toLowerCase();
+  if (author === login) return true;
+  const fromTheApp = app?.login ? author === String(app.login).toLowerCase() : pull.user?.type === 'Bot';
+  const sameRepo = Boolean(pull.base?.repo?.full_name) && pull.head?.repo?.full_name === pull.base.repo.full_name;
+  return fromTheApp && sameRepo && Boolean(session.branch) && pull.head?.ref === session.branch
     && Date.parse(pull.created_at) >= Date.parse(session.createdAt);
 }
 
@@ -115,7 +119,7 @@ export function createPrAnnouncer({
     if (!number) return false;
     const other = project && !project.default ? project.name : null;
     const pull = await gh({ project: other }).pull(number);
-    if (watch && !ownersPull(pull, session)) {
+    if (watch && !ownersPull(pull, session, ownApp())) {
       console.log('slack: someone else\'s pull request, not watched', { id: session.id, number, author: pull.user?.login ?? null });
       return false;
     }
@@ -124,7 +128,14 @@ export function createPrAnnouncer({
       return false;
     }
     const same = (p) => p.number === number && (p.project ?? null) === other && (watch ? p.watch && p.sessionId === session.id : !p.watch);
-    if (!pending().some(same)) {
+    const known = pending().find(same);
+    // A resumed session tracks its pull request again before its last run's watch was dropped: that watch starts its
+    // wait over, rather than running out on the old run's clock.
+    if (known && watch) {
+      known.since = new Date(now()).toISOString();
+      store.save();
+    }
+    if (!known) {
       pending().push({ number, sessionId: session.id, since: new Date(now()).toISOString(), ...(other ? { project: other } : {}), ...(watch ? { watch: true } : {}) });
       store.save();
       console.log(watch ? 'slack: pull request watched for its session, until its review and suites pass' : 'slack: pull request waiting for its review and suites', { id: session.id, number });
