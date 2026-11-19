@@ -53,8 +53,10 @@ export function passedNotesFor({ number, sha, review, suites = [], gates }) {
       + `Fix what is real with a commit${rerunTags(gates) ? ` whose subject has ${rerunTags(gates)}` : ''}, which is watched again to its own verdict, `
       + 'and answer what you decline in a PR comment with the reason. If there is nothing to act on, '
     : 'If there is nothing left to do, ';
-  return `PR #${number} at ${short} passed: ${passed}. ${notes}run \`gh pr checks ${number}\`: wait for any other check still pending `
-    + 'and handle a failed one as the rules say for CI. Once none is pending or failed through your change, say in one line that the PR passed its review and checks, and stop.';
+  const gatesSaid = gates.review ? 'its review and suites' : 'its suites';
+  return `PR #${number} at ${short} passed ${gatesSaid}: ${passed}. ${notes}run \`gh pr checks ${number}\`: wait for any other check still pending `
+    + 'and handle a failed one as the rules say for CI. Once none is pending, say in one line what passed, name each check that still fails '
+    + 'and why it is not your change\'s, and stop.';
 }
 
 function suiteFailed({ number, short, suite, runs }) {

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createPrAnnouncer } from './prAnnouncer.mjs';
+import { passedNotesFor } from './prMessages.mjs';
 import { reviewVerdict, suiteNeverRuns, suiteOutcome } from './pullGates.mjs';
 import { pullRequestFilters } from '../shared/workflowFile.mjs';
 
@@ -709,7 +710,7 @@ test('a watched pull request is never posted, hears its pass once per commit, an
   clock += MINUTE;
   await watcher.check();
   assert.equal(told.length, 1, 'the second read of the same commit says nothing');
-  assert.match(told[0], /^PR #7 at abc passed: the review verdict is APPROVE \(https:.*\), and e2e suite passed\. .*\[review\]\[e2e\].*`gh pr checks 7`: wait for any other check still pending .*and stop\.$/);
+  assert.match(told[0], /^PR #7 at abc passed its review and suites: the review verdict is APPROVE \(https:.*\), and e2e suite passed\. .*\[review\]\[e2e\].*`gh pr checks 7`: wait for any other check still pending .*name each check that still fails and why it is not your change.s, and stop\.$/);
   assert.deepEqual(slack.posts, []);
   assert.deepEqual(github.comments, []);
   listening = false;
@@ -868,4 +869,10 @@ test('a watch whose wait runs out while GitHub is read tells the session nothing
   clock += 59 * MINUTE;
   await watcher.check();
   assert.deepEqual([told, dropped], [[], ['watched as long as a pull request may wait']]);
+});
+
+test('the pass note of a pull request with no review says only its suites passed', () => {
+  const text = passedNotesFor({ number: 7, sha: 'abcdef1', review: null, suites: [{ name: 'e2e suite' }], gates: { ...GATES, review: null } });
+  assert.match(text, /^PR #7 at abcdef1 passed its suites: e2e suite passed\. If there is nothing left to do, run `gh pr checks 7`/);
+  assert.doesNotMatch(text, /review/);
 });

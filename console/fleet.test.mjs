@@ -1334,7 +1334,7 @@ test('a My Woodshed session\'s pull request is watched until it passes, and neve
   github.checkRuns = async () => e2eRuns();
   advance(60_000);
   await fleet.tick();
-  assert.match(sent()[1], /^PR #7 at def passed: the review verdict is APPROVE/);
+  assert.match(sent()[1], /^PR #7 at def passed its review and suites: the review verdict is APPROVE/);
   advance(60_000);
   await fleet.tick();
   assert.equal(sent().length, 2, 'the pass is told once for its commit');
