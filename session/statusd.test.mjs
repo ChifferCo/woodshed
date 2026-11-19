@@ -35,11 +35,15 @@ test('paneState reads a claude sitting at its prompt as done', () => {
   assert.equal(paneState(`output\n${RULE}\n❯ \n${RULE}\n  ? for shortcuts`), 'done');
 });
 
-test('paneState reads a finished turn with a suggested prompt as done, in whichever mode', () => {
+test('paneState reads a finished turn with a suggested prompt as done, in whichever mode', async () => {
   for (const mode of ['auto mode on', 'bypass permissions on', 'accept edits on']) {
     const pane = `output\n${RULE}\n❯ rerun it but wait for the page to load first\n${RULE}\n  ⏵⏵ ${mode} (shift+tab to cycle)`;
     assert.equal(paneState(pane), 'done', mode);
   }
+  // Captured live from claude 2.1.328 started with --permission-mode default: its footer says manual mode, and the
+  // greyed suggestion fills the composer. Read as not-running, the Chat tab said `Claude exited`.
+  const manual = await fs.readFile(new URL('../shared/__fixtures__/pane-done-manual-mode.txt', import.meta.url), 'utf8');
+  assert.equal(paneState(manual), 'done');
 });
 
 test('paneState still reads a working turn in auto mode as working', () => {

@@ -195,9 +195,9 @@ const HOME_SAVE_TIMEOUT_MS = 30_000;
 // A task that ends without a checkpoint (a crash, Fargate taking it back) loses at most this much of the home.
 // Keep it above HOME_SAVE_TIMEOUT_MS: periodicSave tracks one periodic save, so two must never overlap.
 const HOME_SAVE_EVERY_MS = 5 * 60_000;
-// Sessions start in auto mode, so a mode footer is on screen while claude is open, whichever mode
-// someone has cycled to since.
-const MODE_FOOTER = /(auto mode|bypass permissions|accept edits|plan mode) on/;
+// A mode footer is on screen while claude is open, whichever mode the session started in or someone has cycled to
+// since: default mode's reads `⏸ manual mode on` (Claude Code 2.1.328).
+const MODE_FOOTER = /(auto mode|bypass permissions|accept edits|plan mode|manual mode) on/;
 // cgroup v2 names it memory.peak; v1, which Fargate uses, memory.max_usage_in_bytes. Both count file
 // cache the kernel can reclaim, so this is an upper bound on what the session needs.
 const MEMORY_PEAK_FILES = ['/sys/fs/cgroup/memory.peak', '/sys/fs/cgroup/memory/memory.max_usage_in_bytes'];
