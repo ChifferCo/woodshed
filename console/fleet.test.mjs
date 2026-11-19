@@ -3392,3 +3392,24 @@ test('a My Woodshed session that reports a pull request on another repo stops he
   assert.deepEqual(store.state.slackPending.map((p) => p.number), [9], 'watched again once it is back on its own');
   assert.match(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id).at(-1)?.body.text ?? '', /e2e suite failed on PR #9/);
 });
+
+test('a My Woodshed session that moves to a branch with no pull request stops hearing about its old one', async () => {
+  const { fleet, github, statuses, calls, store, advance } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
+  await fleet.tick();
+  statuses[session.id] = { state: 'done', prUrl: null };
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending, []);
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id), []);
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
+  advance(60_000);
+  await fleet.tick();
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending.map((p) => p.number), [9], 'watched again once back on its branch');
+});

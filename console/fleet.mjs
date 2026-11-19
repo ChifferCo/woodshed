@@ -708,9 +708,9 @@ export function createFleet({
   // Slack. A GitHub that cannot be read is tried again on the next tick. Each pull request a session reports is tracked
   // once, so a session that closes its pull request and opens another from a new branch gets the new one too.
   async function announcePull(session) {
-    // A My Woodshed session reporting a pull request on another repo has left its own (prListening ends that watch):
-    // it is tracked again once it reports its own once more.
-    if (session.owner && session.reportedPrUrl && session.reportedPrUrl !== session.prUrl) {
+    // A My Woodshed session reporting a pull request on another repo, or none, has left its own (prListening ends that
+    // watch): it is tracked again once it reports its own once more.
+    if (session.owner && session.reportedPrUrl !== undefined && session.reportedPrUrl !== session.prUrl) {
       if (session.announcedPrUrl) update(session, { announcedPrUrl: null });
       return;
     }
@@ -1076,7 +1076,7 @@ export function createFleet({
   function prListening(item) {
     const session = find(item.sessionId);
     const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
-    const current = session?.reportedPrUrl ?? session?.prUrl;
+    const current = session?.reportedPrUrl === undefined ? session?.prUrl : session.reportedPrUrl;
     return ownListening(session) && pullNumber(current) === item.number && onProjectRepo(current, project);
   }
 

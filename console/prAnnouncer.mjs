@@ -159,7 +159,7 @@ export function createPrAnnouncer({
     const fedSuites = broken.length > 0 && item.fedSuite !== suiteKey;
     if (!asks && !fedSuites) return;
     const text = feedbackFor({ number: item.number, sha, review: asks ? review : null, broken: fedSuites ? broken : [], runs, gates });
-    const before = { fedReview: item.fedReview, fedSuite: item.fedSuite };
+    const before = { fedReview: item.fedReview, fedSuite: item.fedSuite, run: item.run ?? 0 };
     if (asks) item.fedReview = review.id;
     if (fedSuites) item.fedSuite = suiteKey;
     store.save();
@@ -173,7 +173,9 @@ export function createPrAnnouncer({
 
   // A watched session that could not be typed into just now (claude not open, or statusd not answering) is told again
   // at the next check: nothing is held for it, which a later Resume would type in long after.
-  function untold(item, before) {
+  function untold(item, { run, ...before }) {
+    // A resume while the session was being told has already started the watch over: its reset stands.
+    if ((item.run ?? 0) !== run) return;
     const said = item.untoldSaid;
     Object.assign(item, before, { untoldSaid: true });
     store.save();
@@ -186,7 +188,7 @@ export function createPrAnnouncer({
   async function tellPassed(item, pull, review, suites, gates) {
     const sha = pull.head.sha;
     if (item.passedSha === sha) return undefined;
-    const before = { passedSha: item.passedSha };
+    const before = { passedSha: item.passedSha, run: item.run ?? 0 };
     item.passedSha = sha;
     store.save();
     console.log('slack: watched pull request passed its review and suites', { number: item.number, sessionId: item.sessionId, sha: sha.slice(0, 7) });

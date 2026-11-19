@@ -1681,7 +1681,7 @@ its session hears each verdict asking for changes and each failed or skipped sui
 on a head commit, a note to read the review's notes, fix what is real and stop, once for each commit. It stays watched
 while the session runs, so a fix pushed after the approval is followed to its own verdict, and is dropped when the
 pull request closes, the session stops (nothing resumes a My Woodshed session but its owner) or reports another pull
-request, the week runs out (checked again after GitHub's reads, before the session is told)
+request or none (a branch with no pull request), the week runs out (checked again after GitHub's reads, before the session is told)
 (passed or not), or the project file has no review or suite (`slack: pull request no longer waiting` with why), with
 nothing written on GitHub. Each watch is its session's own: two sessions on one pull request are each told, and a
 shared session's post on it still goes out. A review-only session (no prompt) is never watched, and a pull request
