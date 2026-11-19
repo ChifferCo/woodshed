@@ -1154,6 +1154,8 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 .slack-matches .foot { margin: 0; padding: 8px 12px; }
 .invite-row { display: flex; flex-wrap: wrap; gap: 8px; max-width: 560px; }
 .invite-row .field { flex: 1 1 220px; font-family: var(--mono); }
+/* A role picked beside the handle (People behind a hosting proxy): as wide as its words. */
+.invite-row select.field { flex: 0 0 auto; font-family: inherit; }
 
 /* The Slack card (Console settings): a row each for the bot, pull requests and questions, and their Limits folded
    under them. The Set up Slack dialog and the channel picker are public/slackSetup.js. */

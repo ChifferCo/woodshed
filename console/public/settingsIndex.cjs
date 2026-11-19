@@ -72,9 +72,9 @@
 
     // People (admins)
     { page: '/people', id: 'invite-card', title: 'Invite someone', note: 'Let a GitHub user sign in.',
-      words: 'add member user person engineer access join sign in handle github login invite link' },
-    { page: '/people', id: 'members', title: 'Members and what each can do', note: 'Admin, can be assigned, sessions from GitHub, Slack link.',
-      words: 'people team users admin permissions access assign assignable sessions from github slack link remove member role who can' },
+      words: 'add someone member user person engineer access join sign in handle github login invite link role owner' },
+    { page: '/people', id: 'members', title: 'Members and what each can do', note: 'Admin or role, can be assigned, sessions from GitHub, Slack link.',
+      words: 'people team users admin owner permissions access assign assignable sessions from github slack link remove member role who can' },
     { page: '/people', id: 'requests', title: 'Asking to join', note: 'Accept or decline people who asked in.',
       words: 'request accept decline approve join pending access' },
 

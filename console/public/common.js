@@ -1164,11 +1164,16 @@
     { href: '/console-settings', label: 'General' },
     { href: '/secrets', label: 'Secrets & webhooks' },
   ];
+  // Behind a hosting proxy whose program hands over its list of who is in (server.mjs, `people`), People is one of
+  // Settings' own tabs rather than a page of its own: who is in is the program's, beside its own tabs.
+  const PEOPLE_TAB = { href: '/people', label: 'People' };
+  const peopleTab = (me) => Boolean(me?.hosted && me.people);
+  const ownTabs = (me) => (peopleTab(me) ? [...SETTINGS_TABS, PEOPLE_TAB] : SETTINGS_TABS);
   // Then the tabs of a program embedding the console (server.mjs, settingsTabsOf), its own pages: those are for whoever
   // it gives them to, so someone who is not an admin sees them alone. Until /api/me answers, the console's own.
   function tabsOf(me) {
     const host = me?.settingsTabs ?? [];
-    return [...(!me || me.admin || !host.length ? SETTINGS_TABS : []), ...host];
+    return [...(!me || me.admin || !host.length ? ownTabs(me) : []), ...host];
   }
   // The row on the page shown, filled again once /api/me answers, so a host's tabs join it without the page redrawing.
   let tabRow = null;
@@ -1196,12 +1201,14 @@
   const hostEntries = (me) => [...(me?.menuYou ?? []), ...(me?.menuSections ?? []).flatMap((section) => section.items)];
   const entryOpen = (entry, current) => entry.href === current || Boolean(entry.items?.some((sub) => sub.href === current));
   const entryMark = (entry, current) => (entry.items?.some((sub) => sub.href === current) ? 'true' : entry.href === current ? 'page' : null);
-  // Behind a hosting proxy the host keeps who is in (and signs people in and out): there is no People page. Settings
-  // also stays current on a host's tabs, and someone who is not an admin, given tabs, has Settings alone, opening the first.
+  // Behind a hosting proxy the host keeps who is in (and signs people in and out): People is no entry of its own, only
+  // Settings' tab when the program hands over its list. Settings also stays current on that tab and on a host's, and
+  // someone who is not an admin, given tabs, has Settings alone, opening the first.
   function consoleLinks(me) {
     const host = me?.settingsTabs ?? [];
     // `icon` keeps Settings' own in the side list when it opens a host's tab.
-    const settings = { ...CONSOLE_LINKS[0], icon: CONSOLE_LINKS[0].href, also: [...CONSOLE_LINKS[0].also, ...host.map((tab) => tab.href)] };
+    const also = [...CONSOLE_LINKS[0].also, ...(peopleTab(me) && me.admin ? [PEOPLE_TAB.href] : []), ...host.map((tab) => tab.href)];
+    const settings = { ...CONSOLE_LINKS[0], icon: CONSOLE_LINKS[0].href, also };
     if (!me?.admin) return host.length ? [{ ...settings, href: host[0].href }] : [];
     return [settings, ...CONSOLE_LINKS.slice(1)].filter((link) => !(me.hosted && link.href === '/people'));
   }

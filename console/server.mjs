@@ -84,6 +84,9 @@
 //   POST /api/people/github-sessions  {"login": "<handle>", "on": true|false}   who starts sessions from GitHub and sees shared ones
 //   POST /api/people/assignable  {"login": "<handle>", "on": true|false}   who may be assigned a shared session (needs the above)
 //   POST /api/people/admin      {"login": "<handle>", "admin": true|false}   who is an admin; the last one keeps it
+//   POST /api/people/add|role   {"login": "<handle>", "role": "owner"|"member"}   behind a hosting proxy with the program's
+//                                list (hostedMembers.mjs): add someone, or change their role, through the program; remove
+//                                takes them off there. Invite, accept, decline and admin are not there
 //   POST /api/sessions/<id>/assign  {"to": "<handle>"|null}   a change of who has a shared session, by someone who can be assigned
 //   POST /api/people/slack       {"login": "<handle>", "slack": "U01ABC2DEF3" | "@handle" | ""}   links a member's Slack user by hand (slackPeople.mjs)
 //   POST /api/access/ask|withdraw  a visitor, signed in but not on the list, asks to join or takes it back
@@ -237,7 +240,7 @@ const STATIC_FILES = {
 const MAX_BODY_BYTES = 16 * 1024;
 // A whole .env file, JSON-escaped, under Secrets Manager's 64 KB.
 const MAX_SECRET_BODY_BYTES = 160 * 1024;
-const PEOPLE_RE = /^\/api\/people\/(invite|accept|decline|remove|slack|assignable|github-sessions|admin)$/;
+const PEOPLE_RE = /^\/api\/people\/(invite|accept|decline|remove|slack|assignable|github-sessions|admin|add|role)$/;
 const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 // A repo's settings page: its project's name, as Console settings' Repos card links it.
 const REPO_SETTINGS_PAGE_RE = /^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -634,7 +637,7 @@ export function createAppUpgrade({ config, fleet, auth = null, members = null, a
         socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
         return;
       }
-      const targetFor = appTarget({ fleet, login: viewer.login, members: auth ? members : null, shares: appShares, link: viewer.link });
+      const targetFor = appTarget({ fleet, login: viewer.login, members: accessList(auth, members), shares: appShares, link: viewer.link });
       handleAppUpgrade(req, socket, head, { id, targetFor, dropCookie: [auth?.appCookie, appShares?.cookieName] });
     }, () => socket.destroy());
   };
@@ -648,7 +651,7 @@ export function createAppUpgrade({ config, fleet, auth = null, members = null, a
         socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
         return;
       }
-      handleEditorUpgrade(req, socket, head, { id, target: editorTarget({ fleet, login: viewer.login, members: auth ? members : null, id }) });
+      handleEditorUpgrade(req, socket, head, { id, target: editorTarget({ fleet, login: viewer.login, members: accessList(auth, members), id }) });
     }, () => socket.destroy());
   }
 }
@@ -673,7 +676,7 @@ export function createHandler({
   // A config made in a test or by a program embedding the console may not have been through loadConfig.
   const consoleName = config.consoleName || DEFAULT_CONSOLE_NAME;
   // Who may open a shared session is the People list's to say, once sign-in tells people apart.
-  const access = auth ? members : null;
+  const access = accessList(auth, members);
   // Each project's skills, by project name: one read of GitHub at a time for each, since every keystroke after `/` asks.
   const skillsCaches = new Map();
   const skillsReadings = new Map();
@@ -711,7 +714,8 @@ export function createHandler({
   function onePersonConsole() {
     if (typeof config.onePerson === 'boolean') return config.onePerson;
     if (!signInOn()) return true;
-    return Boolean(members) && members.view().members.length === 1;
+    // A program's own list (hostedMembers.mjs) is not counted: the program says it, as without one.
+    return Boolean(members) && !members.hosted && members.view().members.length === 1;
   }
 
   // Who is signed in to the console: the hosting proxy's identity, or the browser's session cookie.
@@ -754,6 +758,8 @@ export function createHandler({
       reply(res, 200, {
         supported: true, signIn: true, available: true, hosted: true, login: user?.login ?? null, visitor: null, asked: null,
         admin: Boolean(user) && isAdmin(user), asking: 0, names: namesFor([user?.login]),
+        // People, as a tab of Settings, when the program hands over its list of who is in (hostedMembers.mjs).
+        people: Boolean(members?.hosted),
         ...(woodshedUpdate && { updates: user && isAdmin(user) ? woodshedUpdate.behindBy() : 0 }),
         repo: user ? defaultProject(config).repo : null, workflows: user ? await menuWorkflows() : [],
         ...(user && userMenu ? menuOf(userMenu, req.headers) : {}),
@@ -858,11 +864,22 @@ export function createHandler({
     return reply(res, 200, { member: false, asked: members.requestOf(visitor.login)?.askedAt ?? null });
   }
 
-  function peopleReply(res) {
+  async function peopleReply(res) {
     if (!members) return reply(res, 404, { error: 'this console has no list of people' });
+    // A program's list is read fresh for the page, so it shows who the program has now.
+    if (members.hosted) {
+      try {
+        await members.load();
+      } catch (err) {
+        console.error('console: the program\'s list of people not read', { message: String(err?.message ?? err).split('\n')[0] });
+        return reply(res, 500, { error: 'the list of people could not be read; try again' });
+      }
+    }
     const view = members.view();
     const logins = [...view.members, ...view.requests].flatMap((p) => [p.login, p.addedBy]).filter(Boolean);
-    return reply(res, 200, { ...view, names: namesFor(logins), slack: slackPeople ? slackPeople.links(view.members.map((m) => m.login)) : null });
+    return reply(res, 200, {
+      ...view, hosted: Boolean(members.hosted), names: namesFor(logins), slack: slackPeople ? slackPeople.links(view.members.map((m) => m.login)) : null,
+    });
   }
 
   async function slackSearchReply(res, query) {
@@ -914,6 +931,28 @@ export function createHandler({
     return peopleReply(res);
   }
 
+  // Behind a hosting proxy with the program's list, the program adds, removes and sets each role (hostedMembers.mjs).
+  // Its refusal is shown as it said it; any other failure was logged there, and is a 500 here.
+  async function hostedPeopleWrite(res, { action, handle, body, by }) {
+    const call = {
+      add: () => members.add({ login: handle, role: body?.role, by }),
+      remove: () => members.remove({ login: handle, by }),
+      role: () => members.setRole({ login: handle, role: body?.role, by }),
+    }[action];
+    if (!call) return reply(res, 404, { error: 'the program embedding this console keeps who is in: People adds, removes and sets each role here' });
+    try {
+      await call();
+    } catch (err) {
+      if (err.shown) return reply(res, 409, { error: err.message });
+      return reply(res, 500, { error: 'not done: try again' });
+    }
+    if (action === 'remove') {
+      fleet.releaseAssignments?.({ login: handle, by });
+      tunnel?.revoke(handle);
+    }
+    return peopleReply(res);
+  }
+
   // An admin invites, accepts, declines and removes: handle() lets nobody else this far.
   async function peopleWrite(req, res, pathname, login) {
     if (!members) return reply(res, 404, { error: 'this console has no list of people' });
@@ -929,6 +968,10 @@ export function createHandler({
     if (action === 'slack') return peopleSlack(res, { handle, value: body?.slack, by: login });
     if (action === 'assignable') return peopleSwitch(res, { handle, on: body?.on, by: login, set: members.setAssignable });
     if (action === 'github-sessions') return peopleSwitch(res, { handle, on: body?.on, by: login, set: members.setGithubSessions });
+    if (members.hosted && ['add', 'remove', 'role', 'admin', 'invite', 'accept', 'decline'].includes(action)) {
+      return hostedPeopleWrite(res, { action, handle, body, by: login });
+    }
+    if (action === 'add' || action === 'role') return reply(res, 404, { error: 'this console keeps its own list: invite instead' });
     if (action === 'admin') return peopleAdmin(res, { handle, admin: body?.admin, by: login });
     if (action === 'invite' && github) {
       // Write access is still what lets someone in, so a handle without it would be invited for nothing.
@@ -2287,6 +2330,15 @@ export function soloLoginOf(config) {
 }
 
 /**
+ * The list that says who may open a shared session: the People list once GitHub sign-in tells people apart, or behind
+ * a hosting proxy the program's own (hostedMembers.mjs). Behind one without it, or with no sign-in, nobody is told apart.
+ * @returns {object|null}
+ */
+function accessList(auth, members) {
+  return auth || members?.hosted ? members : null;
+}
+
+/**
  * Someone else's private session is nobody's to open. A shared one is for members with sessions from GitHub (People);
  * a console with no sign-in or no list has nobody to tell apart.
  * @returns {boolean}
@@ -2399,7 +2451,7 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
         socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
         return;
       }
-      if (!handleTerminalUpgrade(req, socket, head, { targetFor: terminalTarget(fleet, user.login, auth ? members : null) })) socket.destroy();
+      if (!handleTerminalUpgrade(req, socket, head, { targetFor: terminalTarget(fleet, user.login, accessList(auth, members)) })) socket.destroy();
     }, () => socket.destroy());
   };
 }

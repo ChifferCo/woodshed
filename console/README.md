@@ -1336,6 +1336,18 @@ column per switch, each off for a new member and set by an admin:
   to Unassigned. An old `engineer` field in `state.json` is ignored: the
   switch starts off, and sessions already assigned keep their assignee.
 
+**Behind a hosting proxy** there is no People list of the console's own, and no People page, unless the program
+embedding the console hands over its list (`members`, "Embedding the console"). With it, People is a tab of Settings,
+after General and Secrets & webhooks, for owners (the admins there). Who is in and each person's role (Owner or
+Member) are the program's: **Add someone** takes a GitHub handle and a role, Remove and the Role column change them
+there, and core keeps no copy of the list (`console/hostedMembers.mjs`). Nobody asks to join, so there is no Asking to
+join, accept or decline, and no dot. The switches stay the console's, in `state.json` under `memberSwitches` by
+lowercased handle: *Sessions from GitHub* is on for everyone listed (it was never asked behind a proxy, and it also
+gates seeing shared sessions), so only those turned off are kept; *Can be assigned* is off, as above. Someone the list
+no longer has is no member, assignable or not, from the next read, and their switches are cleared then. The Slack link
+works as above. Nobody removes themselves, and the last owner is neither removed nor made a member, before the
+program is asked; the program's own refusal is shown as it says it.
+
 Taking someone off the list shuts them out at once. A console that never had a list starts one from the people signed
 in to it and those with My Woodshed sessions; with nobody to start from, the
 first sign-in is the first member.
@@ -1485,7 +1497,8 @@ that hangs off a login works as signed in, My settings, private sessions and eac
 (`users/<login>/claude-token`) among them. `role: owner` is an admin (Secrets & webhooks, Webhook events, Console
 settings); `member` is not, and gets 403 there. With no People list, nobody can be assigned a shared session, and the
 `woodshed` label and `/woodshed` comments start sessions for anyone with write access to the repo, as the console
-checks them: there is no Sessions from GitHub switch to ask.
+checks them: there is no Sessions from GitHub switch to ask. A program that hands over its own list of who is in (the
+`members` hook, "Embedding the console" below) gets People back, as a tab of Settings, with those switches.
 
 A session's app takes the header on its own name: `/auth/app` on the console sends the browser straight on to the
 app's `/__woodshed/auth`, with no code, and every app request, the editor's and the websockets included, is signed in
@@ -1502,7 +1515,7 @@ which is not refused when the host later lets someone go: it lasts at most 12 ho
 hosted mode` with which of the two are on at start.
 
 **One person's console** (`WOODSHED_ONE_PERSON=1`, or `config.onePerson: true` for an embedding program). With no
-People list a hosted console cannot count who uses it, so the host says when it is one person's own, such as a
+People list of its own (a program's is not counted) a hosted console cannot count who uses it, so the host says when it is one person's own, such as a
 personal workspace: the rail then shows one list of every session, with no Mine | Everyone switch. Without it, Mine
 still lists the shared sessions each person started, since nobody can be assigned one here.
 
@@ -1542,6 +1555,24 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   stylesheets (paths), loaded after the console's, so its rules use the design system's variables and follow the
   theme; it scopes them to `.host-page`, which holds its part. Its forms and links stay the program's. Someone who is not an admin sees the program's tabs alone, and Settings in the Console group opens the
   first of them; with no tabs, nothing changes for them.
+- `members: {list(), add({login, role, by}), remove({login, by}), setRole({login, role, by})}`, with `trusted` only
+  (given without it, `createInstallation` throws): the program's own list of who is in, for the People page (above,
+  "Sign-in", behind a hosting proxy). `list()` answers `[{login, role}]`, `role` `owner` or `member` (an
+  entry with another role, or that is no GitHub handle, is left out and logged); the others change it, `by` being the
+  owner who did, and resolve once done. Owners are the admins, as the proxy's header says. Core keeps no copy of the
+  list: it reads it at start, and keeps the answer 5 seconds. The fleet asks who may start a session from a label or be
+  assigned one as it goes, without waiting, so it is answered from the list as last read, which is read again in the
+  background once it is older; People's own reads, and each change made there, wait for a fresh one. Until a first
+  list is read nobody is in (`members: the program's list not read at start`). Core keeps each person's switches:
+  *Sessions from GitHub* on and *Can be assigned* off for someone new, cleared when they leave the list. Only someone
+  on the list starts a session from GitHub (a label or `/woodshed`), as intended: the list is who is in. Each read
+  gives the shared sessions of anyone it does not have back to Unassigned, so someone dropped while the console was
+  down is released at the next start. An empty list while core knows of someone (the last list read, a stored switch
+  or an assigned shared session) is kept from: the last list stays, nothing is cleared or released, and it logs
+  `members: the program's list came back empty, kept the last one`; a console that never had anyone takes it as it
+  is. People never empties the list, since nobody removes themselves and the last owner stays. A call that
+  throws an error with `shown: true` shows its message on the page as it is; any other is logged (`members: the
+  program failed a change`) and answered 500. Without the hook a hosted console has no People, as before.
 - `signOut(req)`, with `trusted`: how the program signs someone out, for the user menu's **Sign out**, which a
   hosted console otherwise leaves out since it signs nobody in itself. The menu posts to `/auth/sign-out` as on a
   console of its own; the console refuses a post from another site, then calls `signOut` with the request (its
