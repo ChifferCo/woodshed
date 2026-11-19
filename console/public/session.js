@@ -145,7 +145,7 @@
     // The address keeps a link's ?tab after another tab was picked, so an action asking for that tab (Open the agent,
     // Open the diff, Remote Control's sign-in) can name the very address showing: it still opens that tab, as a new
     // entry, and Back returns to the one picked (sessionTabs.cjs, opensAgain).
-    const again = SessionTabs.opensAgain({ sameAddress: url.href === window.location.href, sameSession: url.pathname === window.location.pathname && Boolean(id), asked: url.searchParams.get('tab'), showing: tab });
+    const again = SessionTabs.opensAgain({ sameAddress: url.href === window.location.href, sameSession: url.pathname === window.location.pathname && Boolean(id), asked: url.searchParams.get('tab'), showing: heldTab || tab });
     if (url.href !== window.location.href || again) {
       // The entry left behind keeps the tab it showed, for Back (sessionTabs.cjs, leftOn).
       if (id) stampEntry();
@@ -172,6 +172,17 @@
   window.addEventListener('pagehide', () => {
     const left = leftTab();
     if (left && !W.signingOut()) SessionTabs.stashLeaving(window.sessionStorage, pageLogin, id, left);
+  });
+  // Back to this page from the browser's back-forward cache runs none of the page's start: the tab put aside as it went
+  // away is taken here instead (the visit was left, not reloaded).
+  window.addEventListener('pageshow', (e) => {
+    if (!e.persisted) return;
+    try {
+      const left = SessionTabs.takeLeaving(window.sessionStorage, pageLogin, false);
+      if (left) tabMemory.remember(left.id, left.tab);
+    } catch {
+      // Storage refused: the memory stays as it was.
+    }
   });
   // Every link to one of these pages, the rail's, the bar's ‹ and New session's among them. A new tab, a modifier
   // click or a link to anywhere else is the browser's.
