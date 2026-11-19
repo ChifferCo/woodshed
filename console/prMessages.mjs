@@ -34,14 +34,19 @@ export function approvalNotesFor({ number, sha, review, gates, graceMinutes }) {
 }
 
 /**
- * @param {{number: number, sha: string, review: object|null, gates: object}} args
+ * @param {{number: number, sha: string, review: object|null, suites: {name: string, notRun?: boolean}[], gates: object}} args
+ *   `suites` each suite's outcome on the commit, all green; `notRun` for one whose path filters leave this change out
  * @returns {string}  what a My Woodshed session hears once its pull request passed its review and suites on a commit
  */
-export function passedNotesFor({ number, sha, review, gates }) {
+export function passedNotesFor({ number, sha, review, suites = [], gates }) {
   const short = sha.slice(0, 7);
+  const names = (list) => list.map((s) => s.name).join(', ');
+  const ran = suites.filter((s) => !s.notRun);
+  const notRun = suites.filter((s) => s.notRun);
   const passed = [
     gates.review && review ? `the review verdict is APPROVE (${review.html_url})` : null,
-    gates.suites.length ? `${gates.suites.map((s) => s.name).join(', ')} passed` : null,
+    ran.length ? `${names(ran)} passed` : null,
+    notRun.length ? `${names(notRun)} does not run for the files this PR changes` : null,
   ].filter(Boolean).join(', and ');
   const notes = gates.review
     ? `Read the review's notes with \`gh pr view ${number} --comments\` and \`gh api repos/{owner}/{repo}/pulls/${number}/comments\`. `

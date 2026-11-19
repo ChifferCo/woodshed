@@ -1068,14 +1068,27 @@ export function createFleet({
   async function prFeedback(item, text) {
     const session = find(item.sessionId);
     if (!session) return false;
-    if (session.owner ? ownListening(session) : ACTIVE_STATUSES.has(session.status)) {
-      const outcome = await send(session, text);
-      console.log('fleet: review feedback typed in', { id: session.id, number: item.number, outcome, owner: Boolean(session.owner) });
+    // A My Woodshed session is typed into now or told again at the next check, never held: a held message would be
+    // typed in at a later Resume, after its watch ended.
+    if (session.owner) {
+      if (!ownListening(session)) {
+        console.log('fleet: review feedback dropped, the My Woodshed session is not running', { id: session.id, number: item.number });
+        return false;
+      }
+      if (!canType(session)) return 'later';
+      try {
+        await statusd(session, 'POST', '/send', { body: { text } });
+      } catch (err) {
+        console.warn('fleet: review feedback not typed in yet', { id: session.id, number: item.number, message: firstLine(err) });
+        return 'later';
+      }
+      console.log('fleet: review feedback typed in', { id: session.id, number: item.number, outcome: 'sent', owner: true });
       return true;
     }
-    if (session.owner) {
-      console.log('fleet: review feedback dropped, the My Woodshed session is not running', { id: session.id, number: item.number });
-      return false;
+    if (ACTIVE_STATUSES.has(session.status)) {
+      const outcome = await send(session, text);
+      console.log('fleet: review feedback typed in', { id: session.id, number: item.number, outcome });
+      return true;
     }
     if (!session.kept) {
       console.log('fleet: review feedback dropped, the session is deleted', { id: session.id, number: item.number });

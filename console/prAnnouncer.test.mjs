@@ -821,3 +821,35 @@ test('an app\'s pull request waits for the App\'s login before it is watched or 
   app = { slug: 'woodshed-cloud', login: 'woodshed-cloud[bot]' };
   assert.equal(await watcher.track(mine, null, { watch: true }), true);
 });
+
+test('the pass note names a suite its path filters leave out as not run, not passed', async () => {
+  const { store, session, told, github } = setup({ runs: [], files: ['docs/readme.md'] });
+  const watcher = createPrAnnouncer({
+    store, github, slack: null, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z'),
+    events: { feedback: (item, text) => { told.push(text); return true; } },
+  });
+  await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
+  await watcher.check();
+  assert.match(told[0], /APPROVE \(https:[^)]*\), and e2e suite does not run for the files this PR changes\./);
+  assert.doesNotMatch(told[0], /e2e suite passed/);
+});
+
+test('a watched session not typed into yet is told again at the next check', async () => {
+  const { store, session, github, dropped } = setup({ reviews: [verdict('CHANGES_REQUESTED')] });
+  let clock = Date.parse('2026-10-26T12:00:00.000Z');
+  let answer = 'later';
+  const told = [];
+  const watcher = createPrAnnouncer({
+    store, github, slack: null, gates: async () => GATES, now: () => clock,
+    events: { feedback: (item, text) => { told.push(text); return answer; }, dropped: (item, why) => { dropped.push(why); } },
+  });
+  await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
+  await watcher.check();
+  answer = true;
+  clock += MINUTE;
+  await watcher.check();
+  clock += MINUTE;
+  await watcher.check();
+  assert.equal(told.length, 2, 'told again once, then not again');
+  assert.deepEqual([dropped, store.state.slackPending.length], [[], 1]);
+});

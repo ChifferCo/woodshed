@@ -54,7 +54,7 @@ const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
  *          ownApp?: () => {slug: string, login: string}|null,
  *          githubOf?: ((project: string) => object)|null, defaultProjectName?: () => string|null, gates?: (project: string|null) => Promise<object|null>, now?: () => number, giveUpMs?: () => number, qaWaitMs?: () => number,
  *          events?: {dropped?: (item: object, why: string) => Promise<void>|void,
- *                    feedback?: (item: object, text: string) => Promise<boolean>|boolean,
+ *                    feedback?: (item: object, text: string) => Promise<boolean|'later'>|boolean|'later',
                     listening?: (item: object) => boolean,
  *                    mention?: (item: object) => Promise<string|null>|string|null}}} deps
  *   `gates` is the project file's `pullRequests` from the default branch (projectFile.mjs) of the pull request's project
@@ -65,7 +65,8 @@ const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
  *   check, both read at each check (the Console settings page's numbers); `events` tells the fleet a pull request stopped
  *   waiting (`why` is `posted` once it is in Slack), hands it what the session should hear, and asks it
  *   whose Slack member ID to mention in the post's thread; `listening` says whether a watched pull request's session
- *   can still be told anything, and `feedback` answers true when it was. While pull request webhooks arrive (`webhooksFlowing`), a
+ *   can still be told anything, and `feedback` answers true when it was, and `later` when a watched one's session
+ *   could not be typed into just now. While pull request webhooks arrive (`webhooksFlowing`), a
  *   webhook marks its pull request due (`stale`) and the rest are read only every `fallbackMs`, except one waiting out
  *   a deadline of its own, which is still read every minute
  */
@@ -153,24 +154,38 @@ export function createPrAnnouncer({
     const fedSuites = broken.length > 0 && item.fedSuite !== suiteKey;
     if (!asks && !fedSuites) return;
     const text = feedbackFor({ number: item.number, sha, review: asks ? review : null, broken: fedSuites ? broken : [], runs, gates });
+    const before = { fedReview: item.fedReview, fedSuite: item.fedSuite };
     if (asks) item.fedReview = review.id;
     if (fedSuites) item.fedSuite = suiteKey;
     store.save();
     console.log('slack: pull request feedback for its session', {
       number: item.number, sessionId: item.sessionId, changesRequested: asks, suites: fedSuites ? broken.map((s) => `${s.name}: ${s.outcome}`) : null,
     });
-    return events.feedback?.(item, text);
+    const heard = await events.feedback?.(item, text);
+    if (heard === 'later') untold(item, before);
+    return heard;
+  }
+
+  // A watched session that could not be typed into just now (claude not open, or statusd not answering) is told again
+  // at the next check: nothing is held for it, which a later Resume would type in long after.
+  function untold(item, before) {
+    Object.assign(item, before);
+    store.save();
+    console.log('slack: watched pull request\'s session not told yet, tried again at the next check', { number: item.number, sessionId: item.sessionId });
   }
 
   // A watched pull request passed its gates on its head commit: the session hears it once for that commit, with the
   // approval's notes to read. It stays watched, so a fix pushed after it is followed to its own verdict.
-  async function tellPassed(item, pull, review, gates) {
+  async function tellPassed(item, pull, review, suites, gates) {
     const sha = pull.head.sha;
     if (item.passedSha === sha) return undefined;
+    const before = { passedSha: item.passedSha };
     item.passedSha = sha;
     store.save();
     console.log('slack: watched pull request passed its review and suites', { number: item.number, sessionId: item.sessionId, sha: sha.slice(0, 7) });
-    return events.feedback?.(item, passedNotesFor({ number: item.number, sha, review, gates }));
+    const heard = await events.feedback?.(item, passedNotesFor({ number: item.number, sha, review, suites, gates }));
+    if (heard === 'later') untold(item, before);
+    return heard;
   }
 
   // A My Woodshed session's pull request: its session hears each verdict and broken suite, and the pass, and nothing
@@ -184,7 +199,7 @@ export function createPrAnnouncer({
     if (pull.state !== 'open') return drop(item, 'closed');
     const runs = await gh(item).checkRuns(pull.head.sha);
     const { passed, review, suites } = await gatesPassed(item, pull, runs, gates);
-    const heard = passed ? await tellPassed(item, pull, review, gates) : await feedBack(item, pull, review, suites, runs, gates);
+    const heard = passed ? await tellPassed(item, pull, review, suites, gates) : await feedBack(item, pull, review, suites, runs, gates);
     if (heard === false) return drop(item, 'its session ended');
   }
 
@@ -260,7 +275,7 @@ export function createPrAnnouncer({
     const outcomes = gates.suites.map((suite) => ({ name: suite.name, suite, outcome: suiteOutcome(runs, suite) }));
     if (!outcomes.some((s) => s.outcome === 'none')) return outcomes;
     const never = await suitesNeverRunning(item, sha, gates);
-    return outcomes.map((s) => (s.outcome === 'none' && never.has(s.name) ? { ...s, outcome: 'green' } : s));
+    return outcomes.map((s) => (s.outcome === 'none' && never.has(s.name) ? { ...s, outcome: 'green', notRun: true } : s));
   }
 
   // The QA check runs once the review approves, on a pull request with its label, and is posted when it has a verdict.

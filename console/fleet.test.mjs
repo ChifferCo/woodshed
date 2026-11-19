@@ -3313,3 +3313,22 @@ test('QA of another console\'s session pull request is neither labelled nor run 
   t.github.pull = async () => ({ ...QA_PULL, user: { login: 'acme-woodshed[bot]' }, head: { ...QA_PULL.head, ref: 'woodshed/ada-0b34fee6' }, labels: [] });
   assert.deepEqual(await t.fleet.qaAutoLabel({ number: 7 }), { unrecorded: true });
 });
+
+test('a My Woodshed session that cannot be typed into is told at a later check, with nothing held for a Resume', async () => {
+  const { fleet, github, statuses, calls, store, advance } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  statuses[session.id] = { state: 'not-running', prUrl: 'https://github.com/o/r/pull/9' };
+  await fleet.tick();
+  await fleet.tick();
+  const sent = () => calls.statusd.filter((c) => c.path === '/send' && c.id === session.id);
+  assert.deepEqual([sent().length, session.pendingMessages], [0, []], 'claude is not open: nothing typed in, nothing held');
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
+  advance(60_000);
+  await fleet.tick();
+  assert.equal(sent().length, 1);
+  assert.match(sent()[0].body.text, /e2e suite failed on PR #9/);
+  assert.deepEqual(session.pendingMessages, []);
+});
