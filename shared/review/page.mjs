@@ -2905,36 +2905,47 @@ ${DARK_PALETTE}
 
     // Reads what there is; starts a run only when asked to, which is when the
     // Q&A tab is open. The tab's count comes from the same read on any tab.
+    function freshQaView(started) {
+      return { session: state.session, data: null, loading: false, error: null, started: started, timer: null, open: {} };
+    }
+
+    // Each load answers into the view it started with. Discard, Re-review and
+    // Ask again put a new one in its place, so a read still on its way when they
+    // did is dropped rather than drawing answers about the diff they replaced.
     async function loadQa(start) {
-      if (!state.session || qaView.loading) return;
-      if (qaView.session !== state.session) {
-        qaView = { session: state.session, data: null, loading: false, error: null, started: false, timer: null, open: {} };
-      }
-      qaView.loading = true;
+      if (!state.session) return;
+      if (qaView.session !== state.session) qaView = freshQaView(false);
+      var view = qaView;
+      if (view.loading) return;
+      view.loading = true;
+      var before = view.data ? view.data.status : null;
       try {
         var got = await api('GET', '/reviews/' + state.session + '/qa');
-        var before = qaView.data ? qaView.data.status : null;
-        qaView.data = got.qa || null;
-        qaView.showCosts = !!got.showCosts;
-        qaView.error = null;
+        if (view !== qaView) return;
+        view.data = got.qa || null;
+        view.showCosts = !!got.showCosts;
+        view.error = null;
         // Nothing asked yet: opening the tab is the ask, as opening the review
-        // is for the analysis. Once per page, so a failure is not retried in a loop.
-        if (!qaView.data && start && !qaView.started) {
-          qaView.started = true;
+        // is for the analysis. Once per view, so a failure is not retried in a loop.
+        if (!view.data && start && !view.started) {
+          view.started = true;
           await api('POST', '/reviews/' + state.session + '/qa');
-          got = await api('GET', '/reviews/' + state.session + '/qa');
-          qaView.data = got.qa || { status: 'running', phase: 'asking', depth: 1, items: [] };
+          if (view !== qaView) return;
+          view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
         }
       } catch (e) {
-        qaView.error = e.message;
+        if (view !== qaView) return;
+        view.error = e.message;
+      } finally {
+        view.loading = false;
       }
-      qaView.loading = false;
-      clearTimeout(qaView.timer);
-      if (qaView.data && qaView.data.status === 'running') {
-        qaView.timer = setTimeout(function again() { loadQa(state.tab === 'qa'); }, 3000);
+      clearTimeout(view.timer);
+      if (view.data && view.data.status === 'running') {
+        view.timer = setTimeout(function again() { if (view === qaView) loadQa(state.tab === 'qa'); }, 3000);
       }
       // Off the tab, only a change of state is worth a rebuild: the tab's count.
-      if (state.tab === 'qa' || before !== (qaView.data ? qaView.data.status : null)) render();
+      // On it, a read that found nothing yet may now be the one that starts the run.
+      if (state.tab === 'qa' || before !== (view.data ? view.data.status : null)) render();
     }
 
     // Discard and Re-review empty the Q&A on the server (it describes the diff
@@ -2942,19 +2953,21 @@ ${DARK_PALETTE}
     // own: a reader who just discarded did not ask for a new paid run.
     function resetQa() {
       clearTimeout(qaView.timer);
-      qaView = { session: state.session, data: null, loading: false, error: null, started: true, timer: null, open: {} };
+      qaView = freshQaView(true);
     }
 
     async function askQaAgain() {
       if (!state.session) return;
-      qaView.open = {};
-      qaView.started = true;
+      clearTimeout(qaView.timer);
+      var view = freshQaView(true);
+      qaView = view;
       try {
         await api('POST', '/reviews/' + state.session + '/qa');
-        qaView.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
-        qaView.error = null;
+        if (view !== qaView) return;
+        view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
       } catch (e) {
-        qaView.error = e.message;
+        if (view !== qaView) return;
+        view.error = e.message;
       }
       render();
       loadQa(true);
@@ -2975,7 +2988,10 @@ ${DARK_PALETTE}
     function renderQa(content) {
       // Once per session: the read comes back through render(), so a condition on
       // what it found would ask again on every render it causes.
-      if (qaView.session !== state.session && !qaView.loading) loadQa(true);
+      // Opened after the tab's count was read from another tab, that read found
+      // nothing and started nothing, so the first run starts here.
+      if (qaView.session !== state.session
+        || (!qaView.data && !qaView.started && !qaView.loading && !qaView.error)) loadQa(true);
       content.appendChild(el('div', 'secthead s-qa first', 'Questions from a newcomer'));
       var box = el('div', 'qa');
       box.appendChild(el('p', 'qa-intro',
