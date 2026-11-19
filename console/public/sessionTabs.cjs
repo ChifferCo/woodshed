@@ -147,6 +147,18 @@
   }
 
   /**
+   * The tab a page asks for: this login's own entry's (its history state, the tab it showed: a reload, Back, Forward)
+   * over its address, which keeps the ?tab the entry arrived with (a link, kept so a reload through the server's sign-in
+   * still carries it) whatever was picked since; else the address's; else the memory's.
+   * @param {{ asked: Function }} memory
+   * @param {string|null} fromEntry  entryTab: the entry's tab, read only by the login that drew it
+   */
+  function ask(memory, id, inAddress, fromEntry) {
+    if (fromEntry && fromEntry !== LANDS_ON_REVIEW) return fromEntry;
+    return memory.asked(id, inAddress, fromEntry);
+  }
+
+  /**
    * The ?tab an entry's address asks for, as `login` reads it. The page writes ?tab into an entry itself (a remembered
    * tab, a click), so on another login's entry the ?tab it arrived with (`linkedTab`, a link followed or typed) asks,
    * whatever the address says now; the rest was that login's choice. An entry with no login (an older page, or a new
@@ -237,6 +249,6 @@
     };
   }
 
-  return { KEY, LEAVING_KEY, stashLeaving, takeLeaving, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, entryTab, withEntryTab, addressTab, linkedTab,
+  return { KEY, LEAVING_KEY, stashLeaving, takeLeaving, ask, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, entryTab, withEntryTab, addressTab, linkedTab,
     leaving, correctsMemory, otherLogin, lookups, memory };
 });

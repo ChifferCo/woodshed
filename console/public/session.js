@@ -49,12 +49,14 @@
     const dropped = Boolean(params.get('tab')) && !inAddress;
     if (inAddress) params.set('tab', inAddress);
     else params.delete('tab');
-    const asked = tabMemory.asked(id, inAddress, SessionTabs.entryTab(state, pageLogin));
+    // This login's own entry shows the tab it showed, over the link its address keeps (sessionTabs.cjs, ask).
+    const fromEntry = SessionTabs.entryTab(state, pageLogin);
+    const asked = SessionTabs.ask(tabMemory, id, inAddress, fromEntry);
     tab = SessionTabs.known(asked);
     landOnReview = !asked;
     heldTab = null;
     // An entry that showed a fallback (a link's tab the session could not show) still does after a reload.
-    fellBack = Boolean(id && state?.fellBack && state.login === pageLogin && !inAddress);
+    fellBack = Boolean(id && state?.fellBack && state.login === pageLogin && fromEntry === tab);
     const query = params.toString();
     const address = `${pathname}${query ? `?${query}` : ''}`;
     if (id && asked) markEntry(address, arrivedWith);
@@ -1862,9 +1864,8 @@
     tabMemory.remember(id, tab);
     const url = new URL(window.location.href);
     if (currentSession) (tab === 'terminal' ? shellPool : agentPool).refit(currentSession, false);
-    // The tab picked lives in the entry's state, not its address: a ?tab is only ever a link's, so nothing this login
-    // picked rides in an address to someone else (a reload after a lost sign-in goes through the server's redirect).
-    url.searchParams.delete('tab');
+    // The tab picked lives in the entry's state, not its address: a ?tab is only ever a link's, kept as it came so a
+    // reload through the server's sign-in still carries the link, and nothing this login picked rides in an address.
     markEntry(url);
     render();
   }
@@ -1999,9 +2000,8 @@
     ({ tab, held: heldTab } = settled);
     if (settled.fellBack) {
       fellBack = true;
-      const url = new URL(window.location.href);
-      url.searchParams.delete('tab');
-      markEntry(url);
+      // The address keeps the link's ?tab (the entry's state says Agent shows), for the way back through sign-in.
+      markEntry(new URL(window.location.href));
       // The memory is corrected only when it is what the session cannot show: a link's tab leaves it as it was,
       // and a remembered one is corrected however it was asked (the memory, or an entry stamped from it before a reload).
       if (SessionTabs.correctsMemory(tabMemory.asked(s.id, null, null), wanted)) tabMemory.remember(s.id, tab);

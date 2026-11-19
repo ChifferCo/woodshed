@@ -328,3 +328,16 @@ test("a page going away puts its tab aside; the next page keeps it unless it is 
   store = storage({ [tabs.LEAVING_KEY]: '{"login":"bob","id":"aaaa1111","tab":"__proto__"}' });
   assert.equal(tabs.takeLeaving(store, 'bob', false), null);
 });
+
+test("this login's own entry shows the tab it showed, over the link its address keeps", () => {
+  const memory = tabs.memory(storage(), 'local');
+  memory.remember('aaaa1111', 'diff');
+  // Opened through ?tab=review, Agent picked: the address keeps the link, the entry says Agent. A reload shows Agent.
+  assert.equal(tabs.ask(memory, 'aaaa1111', 'review', 'agent'), 'agent');
+  // A new entry (a link followed, the way back through sign-in) has no state: its address asks.
+  assert.equal(tabs.ask(memory, 'aaaa1111', 'review', null), 'review');
+  // No address, no entry: the memory.
+  assert.equal(tabs.ask(memory, 'aaaa1111', null, null), 'diff');
+  // An entry still to land on Review asks for nothing.
+  assert.equal(tabs.ask(memory, 'aaaa1111', null, tabs.LANDS_ON_REVIEW), null);
+});
