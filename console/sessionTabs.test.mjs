@@ -112,3 +112,31 @@ test('clicking the tab already showing is a choice when it stands in for another
   assert.equal(tabs.picks({ tab: 'agent', next: 'agent', held: null, landOnReview: true }), true,
     'Agent on a starting review-only session: it no longer switches to Review once it runs');
 });
+
+test('an answer to an older lookup that lands after a newer one is stale', () => {
+  const order = tabs.lookups();
+  const opening = order.start(); // the move's lookup, which saw the session starting
+  const poll = order.start(); // the poll's, which sees it running
+  assert.equal(order.fresh(poll), true, 'the newer answer lands first and is applied');
+  assert.equal(order.fresh(opening), false, 'the older one, landing after, is dropped');
+  const next = order.start();
+  assert.equal(order.fresh(next), true);
+  // In order, every answer is applied.
+  const inOrder = tabs.lookups();
+  const a = inOrder.start();
+  const b = inOrder.start();
+  assert.equal(inOrder.fresh(a), true);
+  assert.equal(inOrder.fresh(b), true);
+});
+
+test('out of order answers never confirm a fallback on the older state', () => {
+  const running = { status: 'running', branch: 'woodshed/x' };
+  const order = tabs.lookups();
+  const opening = order.start();
+  const poll = order.start();
+  // The poll's answer (running) lands first: Diff shows.
+  let at = tabs.settle({ tab: 'agent', held: 'diff', pending: !order.fresh(poll), s: running, hasShell: true });
+  assert.deepEqual(at, { tab: 'diff', held: null, fellBack: false });
+  // The opening one (starting) lands after: dropped, so the page renders nothing new from it and Diff stands.
+  assert.equal(order.fresh(opening), false);
+});

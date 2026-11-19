@@ -2010,15 +2010,18 @@
     }
   }
 
+  // An answer older than one already applied is dropped: it would put back a session's earlier state.
+  const sessionLookups = SessionTabs.lookups();
   async function refresh() {
     const version = routeVersion;
+    const lookup = sessionLookups.start();
     try {
       // My Woodshed's own answer is asked for on /, and once anywhere else, so moving to / has it already.
       // Asked again on every refresh while the setup card shows, so its databases row moves on whichever page is open.
       const askMe = onMy || !me || (railMine() && !W.setupDone(me));
       const answer = await Promise.all([W.fetchSessions(), askMe ? W.getJson('/api/my') : Promise.resolve(me)]);
       // A read started on the previous page must not confirm a session absent from its older list.
-      if (version !== routeVersion) return;
+      if (version !== routeVersion || !sessionLookups.fresh(lookup)) return;
       [data, me] = answer;
       routePending = false;
       routeConfirmed = true;
@@ -2028,7 +2031,7 @@
       fromLast = false;
       keepLast();
     } catch (err) {
-      if (version !== routeVersion) return;
+      if (version !== routeVersion || !sessionLookups.fresh(lookup)) return;
       routePending = false;
       loadError = err.message;
       if (fromLast) {

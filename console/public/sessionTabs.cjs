@@ -61,6 +61,24 @@
   }
 
   /**
+   * Orders the page's list lookups, which a move and the poll can have in flight at once: an answer to an older one
+   * that lands after a newer one's is stale (a session starting that now runs), and must not confirm a tab's fallback.
+   * @returns {{ start(): number, fresh(n: number): boolean }}  `fresh` also records `n` as the newest applied
+   */
+  function lookups() {
+    let started = 0;
+    let applied = 0;
+    return {
+      start: () => ++started,
+      fresh(n) {
+        if (n < applied) return false;
+        applied = n;
+        return true;
+      },
+    };
+  }
+
+  /**
    * The tabs kept for `login` in `storage` (sessionStorage), which may be missing or throw.
    * @returns {{ asked(id: string|null, inAddress: string|null): string|null, remember(id: string, tab: string): void }}
    */
@@ -89,5 +107,5 @@
     };
   }
 
-  return { KEY, TABS, known, shown, settle, picks, memory };
+  return { KEY, TABS, known, shown, settle, picks, lookups, memory };
 });
