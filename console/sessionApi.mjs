@@ -33,6 +33,13 @@
 //   POST /qa-report      {"verdict", "report", "sha", "costUsd"}  ->  204: a QA session's result (session/qa.sh), written
 //                        into the pull request's QA comment, after which the console stops the session
 //                        (qaSessions.mjs). 404 for any other session, 409 for a second report
+//   POST /qa-video       a WebM body  ->  {"n"}: one of a QA session's browser recordings, sent before its report,
+//                        kept by the console for the QA comment to link (fleet.qaVideo, qaRecordings.mjs). 404 for any
+//                        other session, 409 once the report is in, past MAX_QA_VIDEOS or while another of its videos
+//                        is on its way, 413 past MAX_QA_VIDEO_BYTES, 400 for anything but WebM, 502 when the store
+//                        refused it
+//   POST /qa-poster      a PNG body  ->  {"saved": true}: a still from the first video, which the comment shows
+//                        (fleet.qaPoster). The same refusals, past MAX_QA_POSTER_BYTES and for anything but PNG
 //
 // A session's git credential helper and its `gh` wrapper call /github-token, so a
 // session only ever holds a token that expires within hours: an installation
@@ -56,7 +63,8 @@ import { bearerOf, isOpenAiPath } from './openaiProxy.mjs';
 import { MAX_ANSWER_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
 import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
-import { MAX_REPORT_CHARS, parseQaReport } from './qaSessions.mjs';
+import { MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES, MAX_REPORT_CHARS, isWebm, parseQaReport } from './qaSessions.mjs';
+import { MAX_QA_POSTER_BYTES, isPng } from './qaRecordings.mjs';
 import { ACTIVE_STATUSES, START_STEPS, isAsk, isQa, isReview } from './sessions.mjs';
 import { parseReviewReport } from './reviewSessions.mjs';
 
@@ -67,6 +75,10 @@ const MAX_CODEX_AUTH_BYTES = 40_000;
 const MAX_ANSWER_BYTES = MAX_ANSWER_CHARS * 6;
 // The report, cut to MAX_REPORT_CHARS by the console, plus the verdict: the same six-fold for escapes.
 const MAX_QA_REPORT_BYTES = MAX_REPORT_CHARS * 6 + 10_000;
+// The QA sessions with a video or poster on its way: one at a time each, taken before the body is read, so videos sent at once
+// can neither pass MAX_QA_VIDEOS together nor fill the console's memory (a QA session runs the pull request's code,
+// which holds its token).
+const qaVideosSending = new Set();
 
 function reply(res, code, body) {
   res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -164,7 +176,7 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
-    const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/review-report'];
+    const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/qa-video', '/qa-poster', '/review-report'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -177,6 +189,8 @@ export function createSessionApi({
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
     if (pathname === '/answer') return answerReply(req, res, session, asks);
     if (pathname === '/qa-report') return qaReportReply(req, res, session, fleet);
+    if (pathname === '/qa-video') return qaRecordingReply(req, res, session, fleet, VIDEO);
+    if (pathname === '/qa-poster') return qaRecordingReply(req, res, session, fleet, POSTER);
     if (pathname === '/review-report') return reviewReportReply(req, res, session, fleet);
     if (pathname === '/attachments') {
       if (!attachments || !(await attachments.has(session.id))) {
@@ -427,6 +441,50 @@ function qaReportReply(req, res, session, fleet) {
   return reportReply(req, res, session, {
     kind: 'QA', mine: isQa(session), sent: Boolean(session.qa?.conclusion), parse: parseQaReport, finish: fleet.qaFinished,
   });
+}
+
+// One of a QA session's browser recordings, read whole and handed to the fleet, which commits it for the QA comment.
+// What a QA session sends of its recording: its videos, then one still, each read whole and handed to the fleet.
+const VIDEO = { what: 'video', max: () => MAX_QA_VIDEO_BYTES, check: isWebm, type: 'a WebM video', save: 'qaVideo', counts: true };
+const POSTER = { what: 'poster', max: () => MAX_QA_POSTER_BYTES, check: isPng, type: 'a PNG image', save: 'qaPoster', counts: false };
+
+async function qaRecordingReply(req, res, session, fleet, kind) {
+  const refuse = (code, error) => {
+    req.resume();
+    return reply(res, code, { error });
+  };
+  if (!isQa(session) || !fleet[kind.save]) return refuse(404, 'only a QA session has recordings to send');
+  if (session.qa?.conclusion) return refuse(409, 'this session already sent its report');
+  if (kind.counts && (session.qa?.videos?.length ?? 0) >= MAX_QA_VIDEOS) return refuse(409, `a QA run keeps at most ${MAX_QA_VIDEOS} videos`);
+  if (!kind.counts && session.qa?.poster) return refuse(409, 'this session already sent its poster');
+  if (Number(req.headers['content-length']) > kind.max()) return refuse(413, 'too large');
+  if (qaVideosSending.has(session.id)) return refuse(409, 'another recording of this session is on its way: send them one at a time');
+  qaVideosSending.add(session.id);
+  try {
+    const chunks = [];
+    let bytes = 0;
+    for await (const chunk of req) {
+      bytes += chunk.length;
+      if (bytes > kind.max()) return reply(res, 413, { error: 'too large' });
+      chunks.push(chunk);
+    }
+    const body = Buffer.concat(chunks);
+    chunks.length = 0;
+    if (!kind.check(body)) {
+      console.warn(`sessionApi: a QA ${kind.what} refused, not ${kind.type}`, { sessionId: session.id, bytes });
+      return reply(res, 400, { error: `the body must be ${kind.type}` });
+    }
+    // The report may have come in while the body was on its way: its comment is written, and would never link this one.
+    if (session.qa?.conclusion) return reply(res, 409, { error: 'this session already sent its report' });
+    try {
+      return reply(res, 200, await fleet[kind.save](session, body));
+    } catch (err) {
+      console.warn(`sessionApi: a QA ${kind.what} not saved`, { sessionId: session.id, bytes, message: String(err?.message ?? err).split('\n')[0] });
+      return reply(res, 502, { error: `the console did not keep the ${kind.what}` });
+    }
+  } finally {
+    qaVideosSending.delete(session.id);
+  }
 }
 
 function reviewReportReply(req, res, session, fleet) {

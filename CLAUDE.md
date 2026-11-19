@@ -669,6 +669,16 @@ URL on top of each env file's Repo settings values
   lifetime) never sent one: label the pull request again. An approval its review held for it goes out on the next tick,
   saying QA did not finish: the console logs `fleet: held approval released, QA stopped without a report` with the
   `reason`, then `fleet: held approval released` with the verdict.
+- **A QA comment has no recording, or its link or still is broken.** The session's terminal says `Video sent to the
+  console (… KB, status: …)` for each page, or `Video not sent` with why (over 25 MB, past 5), then `Still sent to the
+  console (status: …)` or `No still sent` with why; no video line at all means the browser wrote none (`ls .qa/video` in
+  the checkout, and `qaBrowser: the browser did not close` or `The browser did not close in` in the run's output means
+  it was cut short). A `409` is a second recording sent while one was on its way, or one after the report. The console
+  logs `fleet: QA video saved` and `fleet: QA poster saved`, or `sessionApi: a QA video not saved` with the store's
+  error. A comment with no recording line though the videos were saved means the console has no public address for it
+  (`fleet: comment names no console address`). Recordings are kept 14 days (`qaRecordings: old recordings deleted`):
+  after that the link says so and the still shows as broken. On AWS they are in the homes bucket under `_qa/`
+  (`aws s3 ls s3://<prefix>-homes-<account id>/_qa/`), on a local install in the state folder's `qa-recordings/`.
 - **A QA session finished but its pull request has no QA check.** `fleet: QA finished` says `checkPosted: false`, and
   `fleet: QA check failed` gives GitHub's reply: a 403 means the installation has not accepted the App's Checks: write.
   `fleet: QA check skipped, not the pull request's commit` means the report named a commit that was neither the one the

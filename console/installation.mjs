@@ -12,6 +12,7 @@ import { installationProjectFile } from '../shared/project.mjs';
 import { createAsks } from './asks.mjs';
 import { CLIENT_SECRET, createAuth } from './auth.mjs';
 import { createAttachments } from './attachments.mjs';
+import { createQaRecordings } from './qaRecordings.mjs';
 import { createAutoNamer } from './autoName.mjs';
 import { createProjectPrChips } from './prChips.mjs';
 import { createPullWebhooks } from './pullWebhooks.mjs';
@@ -207,6 +208,7 @@ async function loadAppKey(config, secrets) {
 /**
  * @param {{config: object, store: {state: object, save: () => void}, provider: {name?: string|null, words?: object|null,
  *          launcher: object, secrets: object|null, homes: object|null, dbAdmin: object|null, databases?: string[],
+ *          recordings?: object|null (where QA recordings are kept: qaRecordings.mjs),
  *          webhookUrl?: (() => Promise<string|null>)|null}, trusted?: {userFor: Function}|null, githubSetup?: object|null,
  *          userMenu?: ((headers: object) => object)|null, newId?: () => string, repos?: object|null,
  *          projectReadiness?: ((project: {name: string, repo: string}) => Promise<object|null>)|null,
@@ -315,6 +317,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
       return { claude: Boolean(claude), codex: Boolean(codex) };
     },
   });
+  const qaRecordings = provider.recordings ? createQaRecordings({ store: provider.recordings }) : null;
   const pullWebhooks = createPullWebhooks();
   const prChips = createProjectPrChips({ projects: () => allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs });
   const pings = createAssigneePings({ slack, slackPeople, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
@@ -327,7 +330,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   if (hostApp) console.log('console: GitHub App from the host', { login: hostApp.login() ?? null, reviewer: Boolean(hostApp.reviewer) });
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
-    autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, pullWebhooksFlowing: pullWebhooks.flowing,
+    autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, qaRecordings, pullWebhooksFlowing: pullWebhooks.flowing,
     pullRequests: async (name) => withAppLogins(await readerOf(name).pullRequests(), { reviewerLogin: reviewerApp?.login() ?? null, ownLogin: await appIdentity.login() }),
     projectBlocker: databaseGate.blocker, githubFor,
     consoleLinks: (name) => readerOf(name).consoleLinks(), ...(newId ? { newId } : {}),
@@ -400,7 +403,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   }) : null;
   const handle = createHandler({
     config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
-    consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
+    consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
     prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,
     workflowLinks: () => projectReader.workflowLinks(),
@@ -456,6 +459,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     }
     repoSettings.moveOwnFiles().catch((err) => console.error('repoSettings: own files not moved', { message: String(err?.message ?? err).split('\n')[0] }));
     loops.every(60 * 60_000, 'attachments sweep', () => attachments.sweep());
+    if (qaRecordings) loops.every(60 * 60_000, 'QA recordings sweep', () => qaRecordings.sweep());
     loops.every(EVENTS_SWEEP_MS, 'webhook events sweep', () => events.sweep());
     // Every session someone can still open: a stopped one's pull request still merges or closes.
     // Every 10 seconds, so a chip a webhook marked due changes soon; only due pull requests are asked for.

@@ -4,6 +4,7 @@
 import { createDbAdminRunner } from './dbAdminRunner.mjs';
 import { awsCli, ecsLauncher } from './ecsLauncher.mjs';
 import { createHomeStore } from './homeStore.mjs';
+import { createRecordingStore } from './recordingStore.mjs';
 import { secretSpecs } from '../../console/secrets.mjs';
 import { createSecretStore } from './secretStore.mjs';
 import { serviceUrlReader, sessionServiceEnv } from './services.mjs';
@@ -82,6 +83,8 @@ export function awsProvider(config) {
     launcher: withServices(ecsLauncher(ecs), services),
     secrets: config.secrets ? createSecretStore({ prefix: config.secrets.prefix, aws: awsCli, specs: secretSpecs({ installSecrets: config.installSecrets }) }) : null,
     homes: config.homesBucket ? createHomeStore({ bucket: config.homesBucket, aws: awsCli }) : null,
+    // QA recordings, beside the homes under `_qa/` (console/qaRecordings.mjs).
+    recordings: config.homesBucket ? createRecordingStore({ bucket: config.homesBucket, aws: awsCli }) : null,
     dbAdmin: ecs.dbAdminTaskDefinition ? createDbAdminRunner({ ecs, aws: awsCli, services }) : null,
     webhooks: config.webhookQueue ? createWebhookQueue({ queue: config.webhookQueue, aws: awsCli }) : null,
     webhookUrl: config.webhookFunction ? createWebhookUrl({ functionName: config.webhookFunction, aws: awsCli }) : null,

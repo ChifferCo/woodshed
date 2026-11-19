@@ -10,6 +10,7 @@ own repo, such as in `.woodshed/install/aws/`. `<prefix>` below is its `name_pre
 | Session containers | `ecsLauncher.mjs` | Fargate tasks in the `<prefix>` ECS cluster |
 | Secrets | `secretStore.mjs` | Secrets Manager, under `<prefix>/` |
 | Saved Claude homes | `homeStore.mjs` | A private S3 bucket only the console's role reaches |
+| QA recordings | `recordingStore.mjs` | That bucket, under `_qa/`, for 14 days; a browser plays one through a five-minute link the console makes once it has let the person in |
 | Each session's own databases | `dbAdminRunner.mjs` | Those `databases` names: RDS Postgres, and the base box's Mongo, copied by a db-admin Fargate task. None of them, and no task, for `[]` |
 | GitHub and Slack webhooks | `webhooks/` (a Lambda), `webhookQueue.mjs`, `webhookUrl.mjs` | A Lambda Function URL that checks each delivery and queues it in SQS, which the console long-polls |
 | The machine | `terraform/` | The base box (EC2), its data disk, the network, DNS and the IAM roles |

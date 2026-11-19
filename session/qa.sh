@@ -3,6 +3,8 @@
 # and sends the report to the console, which posts it on the pull request (POST /qa-report, console/sessionApi.mjs).
 # The prompts and the verdict are the QA actions' own (shared/qa/qa.mjs), so a repo gets the same QA in its CI or here.
 # Runs in claude's pane, so the session's terminal shows it; statusd calls the session working while /tmp/qa-running is there.
+# The browser the tests drive records a video of each page, which goes to the console (POST /qa-video) before the
+# report, for the QA comment to link.
 #
 #   qa.sh        the whole run, once; the entrypoint starts it after statusd's port is open
 set -uo pipefail
@@ -14,6 +16,15 @@ RUNNING=${QA_RUNNING:-/tmp/qa-running}
 STATUSD=http://127.0.0.1:${STATUSD_PORT:-7682}
 NOTES=${QA_NOTES:-.woodshed/qa.md}
 APP_WAIT_SECONDS=${QA_APP_WAIT_SECONDS:-900}
+PLAYWRIGHT_MCP=${QA_PLAYWRIGHT_MCP:-playwright-mcp}
+QA_BROWSER=${QA_BROWSER:-$SESSION_DIR/qaBrowser.mjs}
+# What the console takes (console/qaSessions.mjs): a bigger video is kept in the session and not sent.
+MAX_VIDEO_BYTES=$((25 * 1024 * 1024))
+# How long the browser may take to close after claude ends: qaBrowser.mjs gives it 30 s.
+BROWSER_CLOSE_WAIT_SECONDS=${QA_BROWSER_CLOSE_WAIT_SECONDS:-40}
+MAX_VIDEOS=5
+# The ffmpeg Playwright records with, for the still the QA comment shows: the image ships it beside its Chromium.
+QA_FFMPEG=${QA_FFMPEG:-$(ls -1d "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"/ffmpeg-*/ffmpeg-linux 2>/dev/null | tail -1)}
 
 say() { printf '\n[qa %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -38,6 +49,68 @@ runClaude() {
 gatherContext() {
   gh pr view "$PR" --json title,body --jq '"# Pull request: \(.title)\n\n\(.body)\n"' > "$DIR/logs/pr-context.md" 2>/dev/null || true
   : > "$DIR/logs/past-fixes.md"
+}
+
+# The tests' own Playwright MCP, as the image adds it for claude (session/Dockerfile) but recording each page into
+# $DIR/video, behind qaBrowser.mjs, which closes the browser when claude ends so that each video is written whole.
+writeMcpConfig() {
+  jq -n --arg dir "$DIR/video" '{browser: {contextOptions: {recordVideo: {dir: $dir, size: {width: 1280, height: 720}}}}}' \
+    > "$DIR/playwright.json"
+  jq -n --arg proxy "$QA_BROWSER" --arg cmd "$PLAYWRIGHT_MCP" --arg config "$DIR/playwright.json" \
+    '{mcpServers: {playwright: {command: "node", args: [$proxy, $cmd, "--headless", "--browser", "chromium", "--config", $config]}}}' \
+    > "$DIR/mcp.json"
+}
+
+# claude can end before qaBrowser.mjs has closed the browser, and Playwright writes a video only at the close: wait for
+# the proxy and its server, the processes that carry this run's Playwright config in their command lines, to be gone.
+waitForBrowser() {
+  local deadline=$((SECONDS + BROWSER_CLOSE_WAIT_SECONDS))
+  while pgrep -f -- "$DIR/playwright.json" > /dev/null; do
+    if [ $SECONDS -ge $deadline ]; then
+      say "The browser did not close in ${BROWSER_CLOSE_WAIT_SECONDS}s, its video may be cut short"
+      return
+    fi
+    sleep 1
+  done
+}
+
+# Each page's video, oldest first, to the console, which keeps them for the pull request's QA comment to link, then a
+# still from the first one's last second, which the comment shows. One at a time: the console takes no more.
+sendVideos() {
+  local file bytes code sent=0 first=''
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    bytes=$(stat -c %s "$file")
+    if [ "$sent" -ge "$MAX_VIDEOS" ]; then say "Video not sent, past $MAX_VIDEOS: $file"; continue; fi
+    if [ "$bytes" -gt "$MAX_VIDEO_BYTES" ]; then say "Video not sent, over $((MAX_VIDEO_BYTES / 1024 / 1024)) MB ($bytes bytes): $file"; continue; fi
+    code=$(sendRecording /qa-video video/webm "$file")
+    say "Video sent to the console ($((bytes / 1024)) KB, status: $code)"
+    if [ "$code" = 200 ]; then
+      sent=$((sent + 1))
+      [ -n "$first" ] || first=$file
+    fi
+  done < <(ls -1tr "$DIR"/video/*.webm 2>/dev/null)
+  [ -n "$first" ] && sendPoster "$first"
+  return 0
+}
+
+sendPoster() {
+  if [ -z "$QA_FFMPEG" ]; then say "No still sent: Playwright's ffmpeg is not in this image"; return; fi
+  if ! "$QA_FFMPEG" -hide_banner -loglevel error -y -sseof -1 -i "$1" -frames:v 1 -vf scale=800:-2 "$DIR/poster.png" \
+    || [ ! -s "$DIR/poster.png" ]; then
+    say "No still sent: ffmpeg made none from $1"
+    return
+  fi
+  say "Still sent to the console (status: $(sendRecording /qa-poster image/png "$DIR/poster.png"))"
+}
+
+# @returns the console's status code, 000 when it was not reached
+sendRecording() {
+  local path=$1 type=$2 file=$3 code
+  code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
+    | curl -sS --max-time 300 -o /tmp/qa-recording-reply.json -w '%{http_code}' -X POST -K - -H "content-type: $type" \
+      --data-binary "@$file" "$WOODSHED_CONSOLE_URL$path") || code=000
+  echo "$code"
 }
 
 waitForApp() {
@@ -79,7 +152,7 @@ finish() {
 
 main() {
   touch "$RUNNING"
-  mkdir -p "$DIR/logs" "$DIR/plan" "$DIR/screenshots"
+  mkdir -p "$DIR/logs" "$DIR/plan" "$DIR/screenshots" "$DIR/video"
   cd "$REPO_DIR" || exit 1
   # The run's files stay out of the Diff tab: they are the run's, not changes to the branch.
   grep -qx '/.qa/' .git/info/exclude 2>/dev/null || echo '/.qa/' >> .git/info/exclude
@@ -116,8 +189,12 @@ main() {
     finish 'the app did not start'
   fi
 
-  say "Running the tests at $appUrl"
-  runClaude "$DIR/test-prompt.md" "$DIR/logs/test.jsonl" 200 --allowedTools "Bash,Read,Write,Edit,Glob,Grep,mcp__playwright"
+  say "Running the tests at $appUrl, recording the browser"
+  writeMcpConfig
+  runClaude "$DIR/test-prompt.md" "$DIR/logs/test.jsonl" 200 --allowedTools "Bash,Read,Write,Edit,Glob,Grep,mcp__playwright" \
+    --mcp-config "$DIR/mcp.json" --strict-mcp-config
+  waitForBrowser
+  sendVideos
   finish ''
 }
 
