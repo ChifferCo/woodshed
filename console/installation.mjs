@@ -210,7 +210,8 @@ async function loadAppKey(config, secrets) {
  *          userMenu?: ((headers: object) => object)|null, newId?: () => string, repos?: object|null,
  *          projectReadiness?: ((project: {name: string, repo: string}) => Promise<object|null>)|null,
  *          hostApp?: object|null, woodshedUpdate?: boolean,
- *          githubConnect?: {clientId: () => string|Promise<string>, clientSecret: () => string|null, href: string}|null}} args
+ *          githubConnect?: {clientId: () => string|Promise<string>, clientSecret: () => string|null, href: string,
+ *                           automatic?: boolean}|null}} args
  *   `config` is in loadConfig()'s shape, before the Console settings page's values go over it; `config.linkQuery`, when
  *   set, is query parameters every link the console hands out carries. `trusted` says who a request is from where
  *   something in front of the console signs people in; `userMenu(headers)` adds to the user menu for that person
@@ -225,6 +226,8 @@ async function loadAppKey(config, secrets) {
  *   `githubConnect`, behind `trusted` only, is Connect GitHub on the host's GitHub App: My settings' Connect sends
  *   people to `href`, where the host signs them in with GitHub and hands the answer to `connectGitHub`; the console
  *   keeps it in `provider.secrets` and refreshes it with the App's `clientId` and `clientSecret` (githubUser.mjs).
+ *   `automatic: true` says the host connects people on its own, so My settings shows it as a status with a way to
+ *   connect again, not as a step to take.
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
@@ -233,8 +236,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
   if (hostApp && (typeof hostApp.login !== 'function' || (hostApp.reviewer != null && ['login', 'configured', 'submitReview'].some((f) => typeof hostApp.reviewer[f] !== 'function')))) {
     throw new Error('hostApp needs login, and a reviewer with login, configured and submitReview when it has one');
   }
-  if (githubConnect && (!trusted || typeof githubConnect.clientId !== 'function' || typeof githubConnect.clientSecret !== 'function' || typeof githubConnect.href !== 'string' || !githubConnect.href.startsWith('/'))) {
-    throw new Error('githubConnect is for a console behind trusted sign-in, and needs clientId, clientSecret and a path for href');
+  if (githubConnect && (!trusted || typeof githubConnect.clientId !== 'function' || typeof githubConnect.clientSecret !== 'function' || typeof githubConnect.href !== 'string' || !githubConnect.href.startsWith('/') || (githubConnect.automatic != null && typeof githubConnect.automatic !== 'boolean'))) {
+    throw new Error('githubConnect is for a console behind trusted sign-in, and needs clientId, clientSecret and a path for href (automatic, when given, true or false)');
   }
   if (repos && (typeof repos.add !== 'function' || typeof repos.remove !== 'function' || (repos.list != null && typeof repos.list !== 'function'))) {
     throw new Error('repos needs add and remove, and list when it has one');
@@ -414,6 +417,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     userMenu,
     appPorts,
     githubConnectHref: hostConnect ? githubConnect.href : null,
+    githubConnectAutomatic: Boolean(hostConnect && githubConnect.automatic),
     woodshedUpdate,
   });
   const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts });

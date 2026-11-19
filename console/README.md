@@ -1480,7 +1480,9 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   always scoped by GitHub: to this console's repos of the session's repo's owner when the project file's `githubAccess`
   is `full` (`sessionApi: github access for a private session` logs `repos`), and to the session's repo alone when it is
   `repo` or the file cannot be read (logs `repo`); a session that gets no scoped token pushes as the App. The
-  installation's `disconnectGitHub(login)` is Disconnect, for when the person leaves. Without a secret store it is off
+  installation's `disconnectGitHub(login)` is Disconnect, for when the person leaves. `automatic: true` says the
+  program connects people on its own (on their first page, say): My settings then shows the connection as a status,
+  "Pushes as @you", or, unconnected, says it did not happen and offers Connect as the way back. Without a secret store it is off
   (`console: Connect GitHub off, the host gave no secret store to keep tokens in`).
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
   such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
