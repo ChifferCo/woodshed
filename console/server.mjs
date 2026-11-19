@@ -61,8 +61,10 @@
 //   GET  /api/pulls?project=<name>   the project's open pull requests, for New session's Work on list
 //   GET  /api/sessions/<id>/applog  the end of the session's app logs: its start, the backend's and the frontend's
 //   GET  /api/sessions/<id>/diff    the Diff tab: the checkout against the default branch, uncommitted work included, as a plain diff
-//   GET  /api/sessions/<id>/transcript?limit=<n>  the conversation so far (what was asked, said and run), for a phone
-//                                   to scroll through by itself (session/sessionTranscript.mjs)
+//   POST /api/sessions/<id>/interrupt  Esc to the session's agent, the Chat tab's Stop: it ends the agent's turn
+//   GET  /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>  the conversation so far (what was asked, said and
+//        run), for the Chat tab; `since` answers {unchanged: true} while the agent wrote nothing newer
+//        (session/sessionTranscript.mjs)
 //   GET  /review?session=claude-<id>, /reviews/claude-<id>/...   the Review tab: the shed's own review page and its calls,
 //                                carried to the session that answers them (reviewProxy.mjs)
 //   GET  /manifest.webmanifest, the icons   install as an app (the shed's pwa.mjs), before sign-in
@@ -182,7 +184,7 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'publ
 // The settings pages are one page too: each address loads every settings page's script, and common.js shows the one the
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
 const SETTINGS_SCRIPTS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
-const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
+const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
   'logins.cjs': 'text/javascript; charset=utf-8',
@@ -203,6 +205,8 @@ const STATIC_FILES = {
   'sharedHome.js': 'text/javascript; charset=utf-8',
   'dictation.js': 'text/javascript; charset=utf-8',
   'messageBox.js': 'text/javascript; charset=utf-8',
+  'chatThread.cjs': 'text/javascript; charset=utf-8',
+  'chat.js': 'text/javascript; charset=utf-8',
   'appShare.js': 'text/javascript; charset=utf-8',
   'session.js': 'text/javascript; charset=utf-8',
   'events.js': 'text/javascript; charset=utf-8',
@@ -255,7 +259,7 @@ const STOP_RE = /^\/api\/sessions\/([0-9a-f]{8})\/stop$/;
 const ASSIGN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/assign$/;
 const SHARED_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(resume|delete|remove)$/;
 const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename)$/;
-const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|applog|diff|transcript)$/;
+const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|interrupt|applog|diff|transcript)$/;
 // The skills in the repo change with a merge; an hour is soon enough for a / list.
 const SKILLS_FRESH_MS = 60 * 60_000;
 // A project's open pull requests, for New session's Work on list: every launcher that opens asks.
@@ -1536,6 +1540,10 @@ export function createHandler({
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }
+    if (action === 'interrupt') {
+      console.log('console: agent interrupted from the page', { id: session.id });
+      return toStatusd(req, res, session, { method: 'POST', path: '/interrupt', body: {} });
+    }
     if (action === 'send') {
       if (typeof body?.text !== 'string' || !body.text.trim()) return reply(res, 400, { error: 'nothing to send' });
       console.log('console: message typed in from the page', { id: session.id, chars: body.text.length });
@@ -1843,7 +1851,7 @@ export function createHandler({
     const repoRoute = repoSettingsApi && repoSettingsRoute(pathname);
     if (repoRoute) return repoSettingsApi(req, res, { route: repoRoute, login });
     const terminalWrite = TERMINAL_RE.exec(pathname);
-    if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
+    if (terminalWrite && ['upload', 'scroll', 'send', 'interrupt'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings/webhooks') return webhookSwitchWrite(req, res, login);
     if (pathname === '/api/my/reviews') return myReviewsWrite(req, res, login);
@@ -2044,7 +2052,12 @@ export function createHandler({
       const session = runningFor(imageMatch[1], user.login);
       if (!session) return reply(res, findFor(imageMatch[1], user.login) ? 409 : 404, { error: 'the session is not running' });
       const limit = imageMatch[2] === 'transcript' ? url.searchParams.get('limit') : null;
-      const query = limit && /^\d{1,4}$/.test(limit) ? `?${new URLSearchParams({ limit })}` : '';
+      const since = imageMatch[2] === 'transcript' ? url.searchParams.get('since') : null;
+      const params = new URLSearchParams({
+        ...(limit && /^\d{1,4}$/.test(limit) && { limit }),
+        ...(since && /^\d{1,16}(\.\d{1,6})?$/.test(since) && { since }),
+      });
+      const query = params.size ? `?${params}` : '';
       return toStatusd(req, res, session, { method: 'GET', path: `/${imageMatch[2]}${query}` });
     }
     if (imageMatch?.[2] === 'image') {

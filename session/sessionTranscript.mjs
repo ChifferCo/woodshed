@@ -2,8 +2,10 @@
 // agent's screen, and its scrollback holds only what came since the browser attached, as terminal output. The
 // agent's own record of the conversation has it all: claude's transcript (~/.claude/projects/<repo>/<id>.jsonl) and
 // codex's rollout ($CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl). Each is read from its end and shaped the same
-// way: what the person asked, what the agent said, and a line for each tool it ran. Thinking and tool output are left
-// out: the terminal and the Diff tab show those.
+// way: what the person asked, what the agent said, and a line for each tool it ran, marked `error` when the run failed.
+// Thinking and tool output are left out: the terminal and the Diff tab show those. The console's Chat tab draws the
+// conversation from this, and asks again with `since` (the last answer's writtenAt): an agent that wrote nothing since
+// costs a stat, not a read.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -21,12 +23,19 @@ const MAX_COMPRESSED_BYTES = 16 * 1024 * 1024;
 // unpacks it in one go.
 export const MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024;
 
-/** @typedef {{role: 'user'|'assistant'|'tool', text: string, tool?: string, at: string|null}} Entry */
+/** @typedef {{role: 'user'|'assistant'|'tool', text: string, tool?: string, error?: true, at: string|null}} Entry */
 
 const cut = (text) => (text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}…` : text);
 
 // What a tool was asked, in a line: the command, the file, the pattern, or what it was for.
+// The files a codex patch (apply_patch's input) changes.
+const PATCH_FILE = /^\*\*\* (?:Update|Add|Delete) File: (.+)$/gm;
+
 function toolLine(input) {
+  if (typeof input === 'string' && input.startsWith('*** Begin Patch')) {
+    const files = [...input.matchAll(PATCH_FILE)].map((m) => m[1].trim());
+    if (files.length) return files.join(' ').slice(0, 300);
+  }
   if (typeof input === 'string') {
     try {
       return toolLine(JSON.parse(input));
@@ -35,6 +44,11 @@ function toolLine(input) {
     }
   }
   if (!input || typeof input !== 'object') return '';
+  // codex runs a shell command as ["bash", "-lc", "<command>"]: the command is what was run.
+  const argv = input.command;
+  if (Array.isArray(argv) && argv.length === 3 && /^(ba|z)?sh$/.test(argv[0]) && /^-l?c$/.test(argv[1]) && typeof argv[2] === 'string') {
+    return argv[2].split('\n')[0].slice(0, 300);
+  }
   for (const key of ['description', 'command', 'cmd', 'file_path', 'path', 'pattern', 'url', 'query', 'prompt', 'skill']) {
     const value = input[key];
     if (typeof value === 'string' && value.trim()) return value.split('\n')[0].slice(0, 300);
@@ -70,6 +84,8 @@ const NOT_TYPED = /^\s*<(command-name|command-message|command-args|local-command
  */
 export function parseClaudeTranscript(text, { partial = false } = {}) {
   const entries = [];
+  // Each tool run by its id, for the result claude files in the next turn: is_error says it failed.
+  const tools = new Map();
   for (const r of records(text, partial)) {
     if ((r.type !== 'user' && r.type !== 'assistant') || r.isSidechain || r.isMeta || !r.message) continue;
     const at = typeof r.timestamp === 'string' ? r.timestamp : null;
@@ -80,7 +96,12 @@ export function parseClaudeTranscript(text, { partial = false } = {}) {
         if (r.type === 'user' && NOT_TYPED.test(block.text)) continue;
         entries.push({ role: r.type, text: cut(block.text.trim()), at });
       } else if (block?.type === 'tool_use' && r.type === 'assistant') {
-        entries.push({ role: 'tool', tool: String(block.name || 'tool'), text: toolLine(block.input), at });
+        const entry = { role: 'tool', tool: String(block.name || 'tool'), text: toolLine(block.input), at };
+        if (typeof block.id === 'string') tools.set(block.id, entry);
+        entries.push(entry);
+      } else if (block?.type === 'tool_result' && block.is_error === true) {
+        const entry = tools.get(block.tool_use_id);
+        if (entry) entry.error = true;
       }
     }
   }
@@ -96,8 +117,24 @@ const CODEX_CONTEXT = /^\s*(<environment_context>|<user_instructions>|<permissio
  * @param {{partial?: boolean}} [opts]  partial: the text starts mid-line
  * @returns {Entry[]}
  */
+// Whether a codex tool's output says it failed: a shell call's output is JSON with its exit code in `metadata`, or text
+// that starts `Exit code: N`.
+function codexFailed(output) {
+  const text = typeof output === 'string' ? output : typeof output?.content === 'string' ? output.content : null;
+  if (text === null) return false;
+  try {
+    const code = JSON.parse(text)?.metadata?.exit_code;
+    if (typeof code === 'number') return code !== 0;
+  } catch {
+    // Plain text.
+  }
+  const match = /^Exit code: (\d+)/.exec(text);
+  return Boolean(match) && match[1] !== '0';
+}
+
 export function parseCodexRollout(text, { partial = false } = {}) {
   const entries = [];
+  const tools = new Map();
   for (const r of records(text, partial)) {
     const item = r.type === 'response_item' ? r.payload : null;
     if (!item) continue;
@@ -112,7 +149,12 @@ export function parseCodexRollout(text, { partial = false } = {}) {
       if (said) entries.push({ role: item.role, text: cut(said), at });
     } else if (item.type === 'function_call' || item.type === 'custom_tool_call' || item.type === 'local_shell_call') {
       const input = item.arguments ?? item.input ?? item.action;
-      entries.push({ role: 'tool', tool: String(item.name || 'shell'), text: toolLine(input), at });
+      const entry = { role: 'tool', tool: String(item.name || 'shell'), text: toolLine(input), at };
+      if (typeof item.call_id === 'string') tools.set(item.call_id, entry);
+      entries.push(entry);
+    } else if ((item.type === 'function_call_output' || item.type === 'custom_tool_call_output') && codexFailed(item.output)) {
+      const entry = tools.get(item.call_id);
+      if (entry) entry.error = true;
     }
   }
   return entries;
@@ -161,16 +203,18 @@ async function newestRollout(codexHome) {
 
 /**
  * The newest conversation of the session's agent, newest entries last.
- * @param {{agent: 'claude'|'codex', claudeDir: string, codexHome: string, limit?: number}} opts
- *   claudeDir: claude's transcript folder for the repo
- * @returns {Promise<{agent: string, entries: Entry[], partial: boolean, writtenAt: number|null}>}
- *   partial: older entries were left out, by the read or by the limit
+ * @param {{agent: 'claude'|'codex', claudeDir: string, codexHome: string, limit?: number, since?: number}} opts
+ *   claudeDir: claude's transcript folder for the repo. since: the writtenAt of the caller's last answer
+ * @returns {Promise<{agent: string, entries: Entry[], partial: boolean, writtenAt: number|null}|{agent: string, unchanged: true, writtenAt: number}>}
+ *   partial: older entries were left out, by the read or by the limit. unchanged: the newest record is still the
+ *   one written at `since`, so the caller's entries stand
  */
-export async function readSessionTranscript({ agent, claudeDir, codexHome, limit = MAX_ENTRIES }) {
+export async function readSessionTranscript({ agent, claudeDir, codexHome, limit = MAX_ENTRIES, since = null }) {
   const newest = agent === 'codex'
     ? await newestRollout(codexHome)
     : await newestIn(claudeDir, (n) => n.endsWith('.jsonl'));
   if (!newest) return { agent, entries: [], partial: false, writtenAt: null };
+  if (since !== null && newest.stat.mtimeMs === since) return { agent, unchanged: true, writtenAt: since };
   let text;
   let partial = false;
   if (newest.file.endsWith('.zst')) {

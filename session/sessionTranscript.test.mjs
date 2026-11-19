@@ -122,3 +122,57 @@ test("codex's newest rollout is found in its newest day folder, compressed or no
   read = await readSessionTranscript({ agent: 'codex', claudeDir: dir, codexHome: dir });
   assert.deepEqual([read.entries, read.partial], [[], true]);
 });
+
+test('a tool run that failed is marked, in claude\'s transcript and in codex\'s rollout', () => {
+  const claude = [
+    line({ type: 'assistant', timestamp: at, message: { role: 'assistant', content: [
+      { type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'npm test' } },
+      { type: 'tool_use', id: 'tu2', name: 'Read', input: { file_path: 'a.js' } },
+    ] } }),
+    line({ type: 'user', timestamp: at, message: { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'tu1', is_error: true, content: 'Exit code 1' },
+      { type: 'tool_result', tool_use_id: 'tu2', content: 'ok' },
+      { type: 'tool_result', tool_use_id: 'cut-off-by-the-read', is_error: true, content: 'x' },
+    ] } }),
+  ].join('\n');
+  assert.deepEqual(parseClaudeTranscript(claude), [
+    { role: 'tool', tool: 'Bash', text: 'npm test', at, error: true },
+    { role: 'tool', tool: 'Read', text: 'a.js', at },
+  ]);
+
+  const item = (payload) => line({ type: 'response_item', timestamp: at, payload });
+  const codex = [
+    item({ type: 'function_call', name: 'shell', call_id: 'c1', arguments: '{"command":["npm","test"]}' }),
+    item({ type: 'function_call_output', call_id: 'c1', output: '{"output":"1 failing","metadata":{"exit_code":1}}' }),
+    item({ type: 'function_call', name: 'shell', call_id: 'c2', arguments: '{"command":["ls"]}' }),
+    item({ type: 'function_call_output', call_id: 'c2', output: '{"output":"a.js","metadata":{"exit_code":0}}' }),
+    item({ type: 'custom_tool_call', name: 'apply_patch', call_id: 'c3', input: '*** Begin Patch' }),
+    item({ type: 'custom_tool_call_output', call_id: 'c3', output: 'Exit code: 1\nverification failed' }),
+    item({ type: 'function_call', name: 'shell', call_id: 'c4', arguments: '{"command":["true"]}' }),
+    item({ type: 'function_call_output', call_id: 'c4', output: 'Exit code: 0' }),
+  ].join('\n');
+  assert.deepEqual(parseCodexRollout(codex).map((e) => [e.text, Boolean(e.error)]), [
+    ['npm test', true], ['ls', false], ['*** Begin Patch', true], ['true', false],
+  ]);
+  const patch = item({ type: 'custom_tool_call', name: 'apply_patch', call_id: 'c6', input: '*** Begin Patch\n*** Update File: a.js\n@@\n-x\n+y\n*** Add File: b.js\n+z\n*** End Patch' });
+  assert.equal(parseCodexRollout(patch)[0].text, 'a.js b.js', 'a patch is named by its files');
+  const wrapped = item({ type: 'function_call', name: 'shell', call_id: 'c5', arguments: '{"command":["bash","-lc","npm test -- --watch"]}' });
+  assert.equal(parseCodexRollout(wrapped)[0].text, 'npm test -- --watch', 'the command bash was given, not bash');
+});
+
+test('with since, a transcript written no later than the last answer is answered as unchanged, unread', async (t) => {
+  const dir = home(t);
+  const claudeDir = path.join(dir, 'claude');
+  fs.mkdirSync(claudeDir);
+  const file = path.join(claudeDir, 'now.jsonl');
+  fs.writeFileSync(file, CLAUDE);
+  const first = await readSessionTranscript({ agent: 'claude', claudeDir, codexHome: dir });
+  assert.ok(first.entries.length > 0);
+  assert.deepEqual(await readSessionTranscript({ agent: 'claude', claudeDir, codexHome: dir, since: first.writtenAt }),
+    { agent: 'claude', unchanged: true, writtenAt: first.writtenAt });
+  fs.appendFileSync(file, `\n${line({ type: 'assistant', timestamp: at, message: { role: 'assistant', content: [{ type: 'text', text: 'One more.' }] } })}`);
+  fs.utimesSync(file, new Date(), new Date(Date.now() + 5000));
+  const next = await readSessionTranscript({ agent: 'claude', claudeDir, codexHome: dir, since: first.writtenAt });
+  assert.equal(next.unchanged, undefined);
+  assert.equal(next.entries.at(-1).text, 'One more.');
+});

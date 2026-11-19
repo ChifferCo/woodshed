@@ -74,6 +74,24 @@ for the session's details, the app, its databases, the key bar's switch and the
 card's own actions; then the tabs.
 The size and the key bar's choice are remembered in the browser.
 
+A running session opens on its **Chat** tab (`public/chat.js`): the conversation as a chat instead of the agent's
+terminal. The thread is read from the agent's own record of it, claude's transcript or codex's rollout, through
+statusd's `GET /transcript` (session/README.md), every 1.5 s while the agent works or a message waits to show and every
+5 s otherwise, with `since` so a record that did not move costs the session a stat. The person's messages are on the
+right; the agent's replies are Markdown, read into a tree and built as DOM nodes, never as HTML, with only http(s)
+and mailto links (`public/chatThread.cjs`); each run of tool calls between them is one work log, summed up in a line
+(`Ran 3 commands, edited 2 files`, `1 failed`) that folds open to the calls, open while it is the turn still running.
+The composer under it sends with Enter (Shift+Enter is a new line; on a phone Return is a new line and the arrow
+sends), takes files from **📎**, a paste or a drop (to `/tmp/uploads`, their paths added to the message), dictation
+where the browser has it, and keeps its draft with the phone's message box. A message shows as sent until the record
+holds it. While the agent works the line over the composer says **Working** with its clock, from the console's state
+or sooner from the record (a turn that ends on the person or a tool, written in the last 90 s and after the console
+last said it settled), and **■** stops the turn: `POST /api/sessions/<id>/interrupt`, which types Esc into the agent's
+pane (`console: agent interrupted from the page`). A question the agent can only ask in its terminal, a permission
+prompt or a menu, shows as **Needs you** with **Answer in the Agent tab**. The agent still runs in its terminal, on
+the **Agent** tab (`?tab=agent`): hooks, Remote Control and Resume work as before. A session that is not running has
+no Chat tab and shows its start or its end there.
+
 Under claude's terminal on the Agent tab, a phone has a message box
 (`public/messageBox.js`): the phone's own keyboard, so autocorrect, dictation
 and paste work, **📎** for photos and files, and **🎤** for the browser's speech
@@ -411,9 +429,10 @@ Agent and Terminal tabs):
   one shown in bright amber and scrolled to; Enter goes to an older one, Shift+Enter a newer one, Esc closes it. The
   marks are xterm decorations, not its selection, since ttyd copies every selection to the clipboard. What scrolled
   off before this browser attached is in tmux's history alone: scroll past the top into copy mode, then `?` searches it.
-- **The conversation so far**, for an app to show and scroll by itself, apart from the terminal:
-  `GET /api/sessions/<id>/transcript?limit=<n>` answers what was asked, what the agent said, and a line for each
-  tool it ran, newest last, from the agent's own record (statusd's `GET /transcript`). Anyone who can open the
+- **The conversation so far**, the Chat tab's thread, for an app to show and scroll by itself, apart from the terminal:
+  `GET /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>` answers what was asked, what the agent said, and a
+  line for each tool it ran (marked when it failed), newest last, from the agent's own record (statusd's `GET
+  /transcript`), or `{unchanged: true}` while nothing was written since the last answer. Anyone who can open the
   session may read it, while it runs.
 
 And what the shed shows about each session:

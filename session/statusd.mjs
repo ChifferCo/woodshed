@@ -30,8 +30,10 @@
 //                     pane's prompt with no Enter (terminalFiles.mjs)
 //   GET  /image?path=<path>   a picture a terminal path names, inside the repo, the uploads or claude's scratchpad
 //   POST /scroll      {"steps": -3, "pane": "agent"}   a swipe or wheel the browser's own scrollback did not take
-//   GET  /transcript?limit=<n>   the conversation so far from the agent's own record of it, for a phone to scroll
-//                     through by itself: what was asked, said and run (sessionTranscript.mjs)
+//   GET  /transcript?limit=<n>&since=<writtenAt>   the conversation so far from the agent's own record of it, for the
+//                     console's Chat tab: what was asked, said and run (sessionTranscript.mjs). With `since`, only
+//                     {unchanged: true} while nothing was written after it
+//   POST /interrupt   Esc typed into the agent's pane: claude and codex both stop their turn on it
 //   ANY  with `x-woodshed-app: Bearer <SESSION_TOKEN>`, any path, websockets too: forwarded to the
 //        app's frontend on 127.0.0.1, at the project file's app.frontendPort (the running app's, of several). The console sends these for `<id>.<app domain>`. The token
 //        has its own header because the app's requests carry an Authorization header of their own
@@ -743,6 +745,11 @@ async function startClaudeLogin() {
   return { where: 'terminal' };
 }
 
+async function interrupt() {
+  await run('tmux', ['send-keys', '-t', TMUX_TARGET, 'Escape']);
+  console.log('statusd: agent interrupted');
+}
+
 async function send(text) {
   // Codex reads a fast run of keys as a paste and swallows an Enter that lands inside it, so a message of about 100
   // characters or more sat unsent (measured on codex 0.167.0). A bracketed paste ends before the Enter arrives.
@@ -1104,6 +1111,10 @@ async function handle(req, res) {
     await send(text);
     return reply(res, 200, { ok: true });
   }
+  if (route === 'POST /interrupt') {
+    await interrupt();
+    return reply(res, 200, { ok: true });
+  }
   if (route === 'POST /claude-login') {
     return reply(res, 200, { ok: true, ...(await startClaudeLogin()) });
   }
@@ -1115,12 +1126,15 @@ async function handle(req, res) {
     return diff.ok ? reply(res, 200, diff) : reply(res, diff.status, { error: diff.error });
   }
   if (route === 'GET /transcript') {
-    const limit = new URL(req.url, 'http://statusd').searchParams.get('limit');
+    const params = new URL(req.url, 'http://statusd').searchParams;
+    const limit = params.get('limit');
+    const since = Number(params.get('since'));
     const read = await readSessionTranscript({
       agent: CODEX ? 'codex' : 'claude',
       claudeDir: transcriptDir(),
       codexHome: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
       ...(limit ? { limit: Number(limit) } : {}),
+      ...(params.get('since') && Number.isFinite(since) ? { since } : {}),
     }).catch((err) => {
       console.warn('statusd: transcript not read', { message: err?.message });
       return null;

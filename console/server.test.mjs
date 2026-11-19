@@ -218,11 +218,49 @@ test('the transcript a phone scrolls is read from the running session\'s statusd
   assert.equal((await res.json()).entries[0].text, 'hi');
   await fetch(`http://127.0.0.1:${port}/api/sessions/0a1b2c3d/transcript?limit=50%26pane%3Dx`);
   await fetch(`http://127.0.0.1:${port}/api/sessions/0a1b2c3d/transcript`);
-  assert.deepEqual(asked.map((a) => a.url), ['/transcript?limit=50', '/transcript', '/transcript']);
+  // The Chat tab's `since`, the last answer's writtenAt (a file's mtimeMs, which can have a fraction), and only that.
+  await fetch(`http://127.0.0.1:${port}/api/sessions/0a1b2c3d/transcript?limit=300&since=1763550000123.456`);
+  await fetch(`http://127.0.0.1:${port}/api/sessions/0a1b2c3d/transcript?since=1%26limit%3D9`);
+  assert.deepEqual(asked.map((a) => a.url), ['/transcript?limit=50', '/transcript', '/transcript', '/transcript?limit=300&since=1763550000123.456', '/transcript']);
   assert.ok(asked.every((a) => a.method === 'GET' && a.authorization === 'Bearer tok'));
   assert.equal((await fetch(`http://127.0.0.1:${port}/api/sessions/1b2c3d4e/transcript`)).status, 409);
   assert.equal((await fetch(`http://127.0.0.1:${port}/api/sessions/ffffffff/transcript`)).status, 404);
-  assert.equal(asked.length, 3, 'nothing asked for a stopped or unknown session');
+  assert.equal(asked.length, 5, 'nothing asked for a stopped or unknown session');
+});
+
+test('the Chat tab\'s Stop is an interrupt sent to the running session\'s statusd, and nothing else', async (t) => {
+  const asked = [];
+  const statusd = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      asked.push({ method: req.method, url: req.url, authorization: req.headers.authorization, body });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+  });
+  const statusPort = await listen(statusd);
+  t.after(() => statusd.close());
+  const running = { id: '0a1b2c3d', status: 'running', title: 't', token: 'tok', endpoint: { host: '127.0.0.1', termPort: 1, statusPort } };
+  const stopped = { id: '1b2c3d4e', status: 'stopped', title: 's', token: 'tok2' };
+  const fleet = { sessions: () => [running, stopped], find: (id) => [running, stopped].find((s) => s.id === id) ?? null, stop: async () => {} };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+  };
+  const server = http.createServer(createHandler({ config, fleet }));
+  const port = await listen(server);
+  t.after(() => server.close());
+  const post = (id, headers = { 'x-woodshed': '1' }) => fetch(`http://127.0.0.1:${port}/api/sessions/${id}/interrupt`, {
+    method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{"keys":"rm -rf /"}',
+  });
+
+  assert.equal((await post('0a1b2c3d')).status, 200);
+  assert.deepEqual(asked, [{ method: 'POST', url: '/interrupt', authorization: 'Bearer tok', body: '{}' }], 'only Esc: no text of the page\'s reaches the session');
+  assert.equal((await post('1b2c3d4e')).status, 409);
+  assert.equal((await post('ffffffff')).status, 404);
+  assert.notEqual((await post('0a1b2c3d', {})).status, 200, 'a cross-site form cannot send it');
+  assert.equal(asked.length, 1);
 });
 
 test('with sign-in on, everything but the sign-in pages needs a session', async (t) => {
@@ -672,7 +710,7 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
     { method: 'POST', path: '/api/sessions/ID/resume' }, { method: 'POST', path: '/api/sessions/ID/delete' },
     { method: 'POST', path: '/api/sessions/ID/pin' }, { method: 'POST', path: '/api/sessions/ID/rename' },
     { method: 'POST', path: '/api/sessions/ID/upload?name=a.png' }, { path: '/api/sessions/ID/image?path=shot.png' }, { method: 'POST', path: '/api/sessions/ID/scroll' },
-    { method: 'POST', path: '/api/sessions/ID/send' },
+    { method: 'POST', path: '/api/sessions/ID/send' }, { method: 'POST', path: '/api/sessions/ID/interrupt' },
     { path: '/api/sessions/ID/applog' }, { path: '/api/sessions/ID/diff' }, { path: '/api/sessions/ID/transcript' }, { method: 'POST', path: '/api/sessions/ID/review/diff' }, { path: '/api/sessions/ID/review/analysis' },
     { method: 'POST', path: '/api/sessions/ID/review/chat' }, { path: '/api/sessions/ID/review/answer/0123456789abcdef' },
     { path: '/api/sessions/ID/github/draft' }, { method: 'POST', path: '/api/sessions/ID/github/merge' }, { method: 'POST', path: '/api/sessions/ID/github/comment' },
@@ -739,10 +777,12 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
     // Whose page it is, so the rail draws from what it kept only for the same person.
     assert.match(await getBody(port, page, as('octocat')), /<meta name="woodshed-login" content="octocat">/, `${page} names who it is for`);
     // The same scripts on each, since session.js moves between them in place.
-    assert.deepEqual(scripts.slice(-7), ['terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'], `${page} is the shell`);
+    assert.deepEqual(scripts.slice(-9), ['terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'], `${page} is the shell`);
   }
   assert.match(await getBody(port, '/static/sharedHome.js', as('octocat')), /createSharedHome/);
   assert.match(await getBody(port, '/static/messageBox.js', as('octocat')), /createMessageBox/);
+  assert.match(await getBody(port, '/static/chatThread.cjs', as('octocat')), /WoodshedChatThread/);
+  assert.match(await getBody(port, '/static/chat.js', as('octocat')), /createChat/);
   assert.match(await getBody(port, '/static/dictation.js', as('octocat')), /W\.dictation = /);
   // The settings pages are one page: each address loads every settings page's script, so common.js moves between
   // them in place. My settings' Repo settings card draws its layers with the repo page's parts, loaded before both.

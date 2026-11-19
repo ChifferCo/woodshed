@@ -192,6 +192,15 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   "Press ? for every shortcut" under it. Never on a phone. It replaces the control's `title`: never both.
 - Keys are written for the computer: `⇧⌘O` on a Mac, `Ctrl` `Shift` `O` elsewhere, one cap per key.
 
+## Chat
+
+- A running session opens on **Chat**, the conversation as a chat (`components/Chat`); its terminal is the **Agent**
+  tab beside it. The agent's replies are text on the ground; only the person's messages are bubbles, on the right.
+- Tool calls are never shown one by one in the thread: each run of them between two messages is one work log, said in
+  words (`Ran 3 commands, edited 2 files`), folded once its turn is over. A failed call is the word `failed` in `bad`.
+- The line over the composer says the agent's state in a word: `Working` in `slate`, `Needs you` in `wait` with a way
+  to the Agent tab, where the agent asks. Send is the view's one orange control; Stop is outlined.
+
 ## Find in a terminal
 
 - ⌘F (Ctrl+Shift+F off a Mac) over a terminal opens a find bar at its top right (`components/TerminalFind`), dark like

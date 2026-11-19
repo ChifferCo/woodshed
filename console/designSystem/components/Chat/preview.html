@@ -1,0 +1,50 @@
+<!-- @dsCard group="Panes" height=620 subtitle="A turn: a message, a folded work log, a reply with code, the live log, Working and the composer" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+ body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font:15px/1.5 "Red Hat Display",system-ui,sans-serif}
+ .col{max-width:640px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+ .user{align-self:flex-end;max-width:85%;display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+ .bubble{padding:9px 14px;border:1px solid var(--line);border-radius:14px 14px 4px 14px;background:var(--slate-tint);font-size:14.5px}
+ .pending .bubble{border-style:dashed}
+ .sent{font:11px "JetBrains Mono",monospace;color:var(--meta)}
+ .said{font-size:14.5px;line-height:1.65}
+ .said p{margin:0 0 .75em}
+ .said code{font:12.5px "JetBrains Mono",monospace;padding:1px 5px;border:1px solid var(--line-soft);border-radius:4px;background:var(--stopped)}
+ .code{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+ .code-head{display:flex;justify-content:space-between;padding:2px 4px 2px 12px;border-bottom:1px solid var(--line);background:var(--stopped);font:11px "JetBrains Mono",monospace;color:var(--meta)}
+ .code-head b{padding:3px 8px;color:var(--slate);font:600 11.5px "Red Hat Display",sans-serif}
+ pre{margin:0;padding:10px 12px;font:12.5px/1.55 "JetBrains Mono",monospace}
+ .work{border:1px solid var(--line);border-radius:8px;background:var(--stopped);font-size:13px}
+ .sum{display:flex;align-items:center;gap:8px;padding:7px 12px}
+ .caret{font-size:10px;color:var(--meta)} .open .caret{transform:rotate(90deg)}
+ .what{flex:1;font-weight:600}
+ .failed{font:11px "JetBrains Mono",monospace;color:var(--bad)}
+ .rows{padding:7px 12px 9px;border-top:1px solid var(--line-soft);display:flex;flex-direction:column;gap:3px;font:12px "JetBrains Mono",monospace}
+ .rows div{display:flex;gap:10px} .rows .n{min-width:5.5em;color:var(--slate)} .rows .t{flex:1;color:var(--sub)}
+ .spin{width:10px;height:10px;border-radius:50%;border:2px solid var(--slate);border-right-color:transparent;display:inline-block}
+ .status{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--sub)} .status b{color:var(--slate);font-weight:600}
+ .clock{font:11.5px "JetBrains Mono",monospace;color:var(--meta)}
+ .needs{border:1px solid var(--wait);border-radius:8px;padding:8px 8px 8px 12px} .needs b{color:var(--wait)}
+ .needs .btn{margin-left:auto;padding:2px 8px;border:1px solid var(--wait);border-radius:4px;color:var(--wait);font-size:11.5px;font-weight:600}
+ .composer{border:1px solid var(--amber);border-radius:12px;padding:10px 8px 8px 14px;display:flex;flex-direction:column;gap:6px}
+ .field{min-height:44px;color:var(--meta)}
+ .tools{display:flex;align-items:center;gap:6px}
+ .agent{padding:1px 8px;border:1px solid var(--line);border-radius:999px;font:11.5px "JetBrains Mono",monospace;color:var(--sub)}
+ .hint{flex:1;font-size:11.5px;color:var(--meta)}
+ .ib{width:32px;height:32px;display:grid;place-items:center;border-radius:8px;color:var(--sub)}
+ .stop{border:1px solid var(--line);color:var(--ink);font-size:11px}
+ .send{background:var(--action);color:var(--action-ink);font-weight:700}
+</style>
+<div class="col">
+ <div class="user"><div class="bubble">Why do webhook deliveries fail after a deploy?</div></div>
+ <div class="work"><div class="sum"><span class="caret">▸</span><span class="what">Read 1 file, ran 3 commands</span><span class="failed">1 failed</span></div></div>
+ <div class="said"><p>The first retry lands while the console is away. The backoff is in <code>webhookDispatch.mjs</code>:</p>
+  <div class="code"><div class="code-head"><span>js</span><b>Copy</b></div><pre>const BACKOFF_MS = [5_000, 15_000, 45_000];</pre></div></div>
+ <div class="user pending"><div class="bubble">Add a test for the 45 s step</div><span class="sent">Sent, waiting for claude</span></div>
+ <div class="work open"><div class="sum"><span class="caret">▸</span><span class="spin"></span><span class="what">Ran 2 commands</span><span class="failed">1 failed</span></div>
+  <div class="rows"><div><span class="n">Bash</span><span class="t">node --test console/webhookDispatch.test.mjs</span><span class="failed">failed</span></div><div><span class="n">Edit</span><span class="t">console/webhookDispatch.test.mjs</span></div></div></div>
+ <div class="status"><span class="spin"></span><b>Working</b><span class="clock">1m 05s</span></div>
+ <div class="status needs"><span><b>Needs you</b> · claude is asking something it shows in its terminal</span><span class="btn">Answer in the Agent tab</span></div>
+ <div class="composer"><div class="field">Message claude</div>
+  <div class="tools"><span class="agent">claude</span><span class="hint">Enter to send · Shift+Enter for a new line</span><span class="ib"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></svg></span><span class="ib stop">■</span><span class="ib send">↑</span></div></div>
+</div>

@@ -4,7 +4,10 @@
 // /s/beadfeed?tab=review is a running session whose Review tab is the shed's real page, over a made-up change with an
 // analysis already written (devReviewSession.mjs). /s/abbaabba is running on a project with two apps, web and admin,
 // behind the real statusd (devAppsSession.mjs): Start app picks one, and Open app opens whichever runs. /s/c0ffee11 has
-// a live Agent terminal, where ttyd and tmux are on the PATH (devTerminalSession.mjs).
+// a live Agent terminal, where ttyd and tmux are on the PATH (devTerminalSession.mjs). /s/c0de5e55 and /s/c1a0de00 open
+// on a Chat tab that works, over a stand-in codex and claude behind the real statusd, where tmux is on the PATH
+// (devChatSession.mjs): a message is answered with a few tool calls and a reply, one that says "fail" has a tool fail,
+// and one that says "ask" puts the codex session at Needs you until Enter in its Agent tab.
 // DEV_CONSOLE_APP_PORTS=7701-7703 puts session apps on those ports of localhost, in place of `<id>.apps.localhost`.
 // DEV_CONSOLE_SESSION_APP=1, in a session (SESSION_ID set), also answers under the session's app name,
 // `<SESSION_ID>.<SESSION_APP_DOMAIN>`, as Woodshed's own app does behind the console's app proxy (scripts/devConsoleApp.sh).
@@ -20,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 
 import { currentName, envValue, isSettingName } from '../../shared/envNames.mjs';
 import { startDevAppsSession } from './devAppsSession.mjs';
+import { startDevChatSession } from './devChatSession.mjs';
 import { writeDevGh } from './devGh.mjs';
 import { startDevReview } from './devReviewSession.mjs';
 import { startDevTerminal } from './devTerminalSession.mjs';
@@ -50,6 +54,10 @@ const APPS_ID = 'abbaabba';
 const twoApps = await startDevAppsSession({ id: APPS_ID, token: `t${APPS_ID}` });
 const TERMINAL_ID = 'c0ffee11';
 const liveTerminal = await startDevTerminal({ id: TERMINAL_ID, terminalToken: `x${TERMINAL_ID}` });
+const CODEX_CHAT_ID = 'c0de5e55';
+const CLAUDE_CHAT_ID = 'c1a0de00';
+const codexChat = await startDevChatSession({ id: CODEX_CHAT_ID, token: `t${CODEX_CHAT_ID}`, agent: 'codex', nextPath: [twoApps.binDir, process.env.PATH].join(path.delimiter) });
+const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, token: `t${CLAUDE_CHAT_ID}`, agent: 'claude', nextPath: '' });
 function session(id, number, title, extra = {}) {
   return {
     id, repo: 'example-org/example-repo', kind: 'pr', number, title, startedBy: 'octocat', trigger: 'console', prompt: '',
@@ -186,6 +194,16 @@ const sessions = [
   ...(liveTerminal ? [session(TERMINAL_ID, 26703, 'A session with a live terminal', {
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
     endpoint: { host: '127.0.0.1', statusPort: liveTerminal.port, termPort: liveTerminal.port },
+  })] : []),
+  // Running on a stand-in codex and claude (devChatSession.mjs), for the Chat tab. The codex one's state is read from
+  // its pane; the claude one keeps this one. Their Agent tab has no ttyd, and their Terminal, Diff and app go nowhere.
+  ...(codexChat ? [session(CODEX_CHAT_ID, 26704, 'Back off webhook retries for longer', {
+    status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', options: { agent: 'codex' },
+    ref: codexChat.ref, endpoint: { host: '127.0.0.1', statusPort: codexChat.port, termPort: codexChat.port },
+  })] : []),
+  ...(claudeChat ? [session(CLAUDE_CHAT_ID, 26705, 'Why webhook deliveries fail after a deploy', {
+    status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
+    endpoint: { host: '127.0.0.1', statusPort: claudeChat.port, termPort: claudeChat.port },
   })] : []),
   // Starting, for the start checklist in the provider's words: its container is up and booting. With no container
   // behind it the start timeout fails it after a while; restart this script to see it again.
@@ -349,7 +367,7 @@ function startConsole() {
   child = spawn(process.execPath, [server], {
     stdio: 'inherit',
     env: {
-      ...inherited, PATH: [devGhDir, twoApps.binDir, process.env.PATH].join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
+      ...inherited, PATH: [devGhDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
       WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev',
       // DEV_CONSOLE_APP_PORTS (such as 7701-7703) puts session apps on ports of localhost instead, as a console reached
       // through Tailscale's serve has them (appPorts.mjs).
@@ -383,6 +401,8 @@ function startConsole() {
     review.close();
     twoApps.close();
     liveTerminal?.close();
+    codexChat?.close();
+    claudeChat?.close();
     fs.rmSync(stateDir, { recursive: true, force: true });
     fs.rmSync(path.dirname(devClone), { recursive: true, force: true });
     process.exit(code ?? 0);

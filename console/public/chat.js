@@ -1,0 +1,467 @@
+// The Chat tab: a running session's conversation as a chat, in place of the agent's terminal. The thread is read from
+// the agent's own record of the conversation (claude's transcript, codex's rollout), through the session's statusd
+// (GET /api/sessions/<id>/transcript), and drawn as messages: the person's on the right, the agent's replies as text,
+// and each run of tool calls between them as one work log that folds open (chatThread.cjs). The composer under it
+// types a message into the live agent (POST …/send, as the phone's message box does), with files from the picker or
+// dropped or pasted, and Stop sends it Esc (POST …/interrupt). The agent still runs in its terminal, which stays on the
+// Agent tab: a question it can only ask there (a permission prompt, a menu) shows here as Needs you, with a button to
+// it. session.js makes the Chat tab the one a running session opens on.
+(function () {
+  'use strict';
+  const W = window.Woodshed;
+  const T = window.WoodshedChatThread;
+  const { h } = W;
+  // How often the thread is read while the agent works or a message waits to show, and otherwise. A read of a record
+  // that has not changed is a stat in the session (`since`).
+  const FAST_MS = 1500;
+  const SLOW_MS = 5000;
+  const LIMIT = 300;
+  const MAX_FILES = 8;
+  const MAX_FILE_MB = 25;
+  const SEND_TIMEOUT_MS = 20_000;
+  // Within this of the foot, the thread follows what comes in; scrolled further up, it stays where it was put.
+  const STICK_PX = 120;
+  // The same draft as the phone's message box (messageBox.js): a draft moves with the person between the two.
+  const DRAFT_KEY = (id) => `woodshed-draft:${id}`;
+  const ICONS = {
+    attach: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></svg>',
+    send: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
+    stop: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
+    mic: W.dictation?.MIC_ICON ?? '',
+  };
+  const narrow = window.matchMedia('(max-width: 720px)');
+
+  function readDraft(id) {
+    try {
+      return window.sessionStorage.getItem(DRAFT_KEY(id)) || '';
+    } catch {
+      return '';
+    }
+  }
+  function keepDraft(id, text) {
+    try {
+      if (text) window.sessionStorage.setItem(DRAFT_KEY(id), text);
+      else window.sessionStorage.removeItem(DRAFT_KEY(id));
+    } catch {
+      // A private window keeps the draft for this page only.
+    }
+  }
+
+  function icon(name, attrs) {
+    const button = h('button', { type: 'button', ...attrs });
+    button.innerHTML = ICONS[name];
+    return button;
+  }
+
+  // ---- Markdown, from chatThread.cjs's tree, as DOM nodes.
+
+  function inlineNodes(tokens) {
+    return tokens.map((t) => {
+      if (t.t === 'code') return h('code', null, t.v);
+      if (t.t === 'b') return h('strong', null, t.v);
+      if (t.t === 'i') return h('em', null, t.v);
+      if (t.t === 'a') return h('a', { href: t.href, target: '_blank', rel: 'noopener noreferrer' }, t.v);
+      return t.v;
+    });
+  }
+
+  function codeBlock(block) {
+    const copy = h('button', {
+      type: 'button', class: 'chat-copy', title: 'Copy the code',
+      onclick: () => navigator.clipboard?.writeText(block.text).then(() => W.shell.toast('Copied'), () => W.shell.toast('Not copied: the browser refused')),
+    }, 'Copy');
+    return h('div', { class: 'chat-code' },
+      h('div', { class: 'chat-code-head' }, h('span', null, block.lang || 'text'), copy),
+      h('pre', null, h('code', null, block.text)));
+  }
+
+  function markdownNodes(text) {
+    return T.markdown(text).map((b) => {
+      if (b.type === 'p') return h('p', null, inlineNodes(b.inline));
+      if (b.type === 'h') return h(`h${Math.min(6, b.level + 2)}`, { class: 'chat-h' }, inlineNodes(b.inline));
+      if (b.type === 'code') return codeBlock(b);
+      if (b.type === 'ul' || b.type === 'ol') return h(b.type, null, b.items.map((item) => h('li', null, inlineNodes(item))));
+      if (b.type === 'quote') return h('blockquote', null, inlineNodes(b.inline));
+      if (b.type === 'hr') return h('hr');
+      if (b.type === 'table') {
+        return h('div', { class: 'chat-table' }, h('table', null,
+          h('thead', null, h('tr', null, b.head.map((c) => h('th', null, inlineNodes(c))))),
+          h('tbody', null, b.rows.map((row) => h('tr', null, row.map((c) => h('td', null, inlineNodes(c))))))));
+      }
+      return null;
+    });
+  }
+
+  function createChat({ openTerminal }) {
+    let session = null;
+    // The last answer for the shown session: { id, agent, entries, partial, writtenAt }.
+    let record = null;
+    let readError = null;
+    let reading = false;
+    // A read asked for while one was on its way: it runs once that one answers.
+    let again = false;
+    let timer = null;
+    let ticker = null;
+    let wasWorking = false;
+    // When the console last said the agent was not working: the record can say a turn runs only if written after it.
+    let settledAt = 0;
+    // How stale the console's state can be: it reads each session every few seconds.
+    const STATE_LAG_MS = 15_000;
+    // Per session: messages sent from here that the record does not hold yet, and the files of the message being written.
+    const pending = new Map();
+    const files = new Map();
+    const sending = new Set();
+    // The work logs a person opened or closed, by session and key, so a redraw keeps them as they were left.
+    const folds = new Map();
+    let recognition = null;
+
+    const thread = h('div', { class: 'chat-col chat-thread', role: 'log', 'aria-live': 'polite', 'aria-label': 'Conversation' });
+    const scroller = h('div', { class: 'chat-scroll' }, thread);
+    const status = h('div', { class: 'chat-status' });
+    const chips = h('div', { class: 'chat-chips', hidden: true });
+    const field = h('textarea', {
+      class: 'chat-field', rows: '1', placeholder: 'Message claude', 'aria-label': 'Message claude', enterkeyhint: 'enter',
+      oninput: changed, onchange: changed, oncompositionend: changed, onkeydown: keydown, onpaste: pasted,
+    });
+    const picker = h('input', { type: 'file', multiple: true, hidden: true, onchange: () => { attach([...picker.files]); picker.value = ''; } });
+    const attachButton = icon('attach', { class: 'chat-icon', title: 'Add a file or a picture', 'aria-label': 'Add a file or a picture', onclick: () => picker.click() });
+    const micButton = icon('mic', { class: 'chat-icon', title: 'Dictate', 'aria-label': 'Dictate', hidden: !W.dictation?.available, onclick: () => (recognition ? recognition.stop() : listen()) });
+    const stopButton = icon('stop', { class: 'chat-stop', title: 'Stop the agent\'s turn (Esc in its terminal)', 'aria-label': 'Stop', onclick: interrupt });
+    const sendButton = icon('send', { class: 'chat-send', title: 'Send', 'aria-label': 'Send', onclick: send });
+    const agentName = h('span', { class: 'chat-agent' });
+    const hint = h('span', { class: 'chat-hint' });
+    const composer = h('div', { class: 'chat-composer', ondragover: (e) => { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault(); }, ondrop: dropped },
+      chips, field,
+      h('div', { class: 'chat-tools' }, agentName, hint, h('span', { class: 'chat-grow' }), attachButton, micButton, stopButton, sendButton), picker);
+    const el = h('div', { class: 'pane-view is-chat', role: 'tabpanel', hidden: true },
+      scroller, h('div', { class: 'chat-foot' }, h('div', { class: 'chat-col' }, status, composer)));
+
+    const mine = () => files.get(session?.id) ?? [];
+    const pendingOf = (id) => pending.get(id) ?? [];
+    const agent = () => W.agentOf(session);
+    // Working: as the console last read the agent, or as its record says, whichever knew first.
+    const working = () => session?.state === 'working' || (session?.state !== 'needs-you' && T.midTurn(record?.id === session?.id ? record : null, settledAt));
+
+    function changed() {
+      if (!session) return;
+      keepDraft(session.id, field.value);
+      fit();
+      drawComposer();
+    }
+
+    function fit() {
+      field.style.height = 'auto';
+      field.style.height = `${Math.min(field.scrollHeight, 240)}px`;
+    }
+
+    // Enter sends and Shift+Enter makes a new line, on a keyboard; a phone's Return is a new line, and its Send sends.
+    function keydown(e) {
+      if (e.key !== 'Enter' || e.shiftKey || e.isComposing || narrow.matches) return;
+      e.preventDefault();
+      send();
+    }
+
+    function pasted(e) {
+      const list = [...(e.clipboardData?.files ?? [])];
+      if (!list.length) return;
+      e.preventDefault();
+      attach(list);
+    }
+
+    function dropped(e) {
+      const list = [...(e.dataTransfer?.files ?? [])];
+      if (!list.length) return;
+      e.preventDefault();
+      attach(list);
+    }
+
+    function drawComposer() {
+      if (!session) return;
+      const id = session.id;
+      chips.replaceChildren(...mine().map((f) => h('span', { class: `chat-chip${f.busy ? ' is-busy' : ''}` },
+        h('span', { class: 'chat-chip-name' }, f.busy ? `${f.name}…` : f.name),
+        h('button', { type: 'button', 'aria-label': `Take off ${f.name}`, onclick: () => { files.set(id, mine().filter((x) => x !== f)); drawComposer(); } }, '×'))));
+      chips.hidden = !mine().length;
+      const busy = working();
+      stopButton.hidden = !busy;
+      sendButton.disabled = sending.has(id) || mine().some((f) => f.busy) || !(field.value.trim() || mine().some((f) => f.path));
+      micButton.classList.toggle('is-live', Boolean(recognition));
+      hint.textContent = narrow.matches ? '' : busy ? `Sent now, ${agent()} reads it after this step` : 'Enter to send · Shift+Enter for a new line';
+    }
+
+    async function attach(list) {
+      const id = session?.id;
+      if (!id) return;
+      if (mine().length + list.length > MAX_FILES) return W.shell.toast(`At most ${MAX_FILES} files in one message`);
+      const big = list.find((f) => f.size > MAX_FILE_MB * 1024 * 1024);
+      if (big) return W.shell.toast(`${big.name || 'That file'} is over ${MAX_FILE_MB} MB`);
+      await Promise.all(list.map(async (file) => {
+        const entry = { name: file.name || `picture.${(file.type.split('/')[1] || 'png').replace(/[^a-z0-9]/g, '')}`, path: null, busy: true };
+        files.set(id, [...(files.get(id) ?? []), entry]);
+        drawComposer();
+        const res = await fetch(`/api/sessions/${id}/upload?${new URLSearchParams({ name: entry.name, pane: 'none' })}`, {
+          method: 'POST', headers: { 'x-woodshed': '1', 'content-type': 'application/octet-stream' }, body: file,
+        }).catch(() => null);
+        const body = await res?.json().catch(() => ({}));
+        if (!res?.ok || !body?.path) {
+          W.shell.toast(`${entry.name} not added: ${body?.error || 'the upload failed'}`);
+          files.set(id, (files.get(id) ?? []).filter((f) => f !== entry));
+        } else Object.assign(entry, { path: body.path, busy: false });
+        if (id === session?.id) drawComposer();
+      }));
+    }
+
+    function listen() {
+      const id = session.id;
+      const live = W.dictation.dictate(field, {
+        heard: () => {},
+        changed: () => { keepDraft(id, field.value); fit(); drawComposer(); },
+        ended: () => { if (recognition === live) recognition = null; drawComposer(); },
+      });
+      recognition = live;
+      drawComposer();
+    }
+
+    async function send() {
+      const id = session?.id;
+      if (!id || sending.has(id)) return;
+      if (recognition) {
+        const words = recognition.abort() ?? '';
+        recognition = null;
+        if (words) field.value = `${field.value.replace(/\s*$/, '')} ${words}`.trimStart();
+      }
+      const paths = mine().filter((f) => f.path).map((f) => f.path);
+      const text = [field.value.trim(), ...paths].filter(Boolean).join('\n');
+      if (!text) return;
+      sending.add(id);
+      const sent = { text, sentAt: Date.now(), state: 'sending' };
+      pending.set(id, [...pendingOf(id), sent]);
+      field.value = '';
+      keepDraft(id, '');
+      files.delete(id);
+      fit();
+      drawComposer();
+      drawThread(true);
+      try {
+        await W.postJson(`/api/sessions/${id}/send`, { text }, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
+        sent.state = 'sent';
+      } catch (err) {
+        // Back in the box, to send again.
+        pending.set(id, pendingOf(id).filter((p) => p !== sent));
+        if (id === session?.id && !field.value) {
+          field.value = text;
+          keepDraft(id, text);
+          fit();
+        }
+        W.shell.toast(err.name === 'TimeoutError'
+          ? `No answer in ${SEND_TIMEOUT_MS / 1000} s: check the Agent tab before sending again`
+          : `Not sent: ${err.message}`, { ms: 6000 });
+      } finally {
+        sending.delete(id);
+        if (id === session?.id) {
+          drawComposer();
+          drawThread(false);
+          schedule(0);
+        }
+      }
+    }
+
+    async function interrupt() {
+      const id = session?.id;
+      if (!id) return;
+      stopButton.disabled = true;
+      try {
+        await W.postJson(`/api/sessions/${id}/interrupt`, {});
+        W.shell.toast(`Stopping ${agent()}'s turn`);
+      } catch (err) {
+        W.shell.toast(`Not stopped: ${err.message}`, { ms: 6000 });
+      } finally {
+        stopButton.disabled = false;
+        schedule(0);
+      }
+    }
+
+    // ---- The thread.
+
+    function nearFoot() {
+      return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < STICK_PX;
+    }
+
+    function foldOf(key, fallback) {
+      const k = `${session.id}:${key}`;
+      return folds.has(k) ? folds.get(k) : fallback;
+    }
+
+    function workLog(item, live) {
+      const open = foldOf(item.key, live);
+      const rows = item.tools.map((tool) => h('li', { class: `chat-tool${tool.error ? ' is-failed' : ''}` },
+        h('span', { class: 'chat-tool-name' }, tool.tool),
+        h('span', { class: 'chat-tool-text', title: tool.text || null }, tool.text || ''),
+        tool.error && h('span', { class: 'chat-tool-failed' }, 'failed')));
+      // A click is the person's choice, kept across redraws; the open the page sets while the log is live is not.
+      const details = h('details', { class: `chat-work${live ? ' is-live' : ''}`, open: open || null },
+        h('summary', { onclick: () => folds.set(`${session.id}:${item.key}`, !details.open) },
+          h('span', { class: 'chat-caret', 'aria-hidden': 'true' }, '▸'),
+          live && h('span', { class: 'spin', 'aria-hidden': 'true' }),
+          h('span', { class: 'chat-work-what' }, T.workSummary(item.tools)),
+          item.failed > 0 && h('span', { class: 'chat-work-failed' }, `${item.failed} failed`)),
+        h('ul', null, rows));
+      return details;
+    }
+
+    function messageNodes() {
+      const nodes = [];
+      if (readError && !record) return [h('p', { class: 'chat-empty' }, `Could not read the conversation: ${readError}`)];
+      if (!record) return [h('p', { class: 'chat-empty' }, h('span', { class: 'spin', 'aria-hidden': 'true' }), 'Reading the conversation…')];
+      const waiting = T.stillPending(pendingOf(session.id), record.entries);
+      pending.set(session.id, waiting);
+      const list = T.items(record.entries);
+      if (record.partial) nodes.push(h('p', { class: 'chat-note' }, 'Older messages are left out: this shows the newest of a long conversation.'));
+      if (!list.length && !waiting.length) {
+        nodes.push(h('div', { class: 'chat-empty' },
+          h('b', null, `No messages with ${agent()} yet`),
+          h('span', null, 'Write one below. What it does shows here as it works; its terminal is on the Agent tab.')));
+      }
+      const live = working();
+      list.forEach((item, i) => {
+        if (item.kind === 'user') nodes.push(h('div', { class: 'chat-user' }, h('div', { class: 'chat-bubble' }, item.text)));
+        else if (item.kind === 'assistant') nodes.push(h('div', { class: 'chat-said' }, markdownNodes(item.text)));
+        else if (item.kind === 'note') nodes.push(h('p', { class: 'chat-note' }, item.text));
+        else nodes.push(workLog(item, live && i === list.length - 1));
+      });
+      for (const p of waiting) {
+        nodes.push(h('div', { class: 'chat-user is-pending' },
+          h('div', { class: 'chat-bubble' }, p.text),
+          h('span', { class: 'chat-sent' }, p.state === 'sending' ? 'Sending…' : `Sent, waiting for ${agent()}`)));
+      }
+      return nodes;
+    }
+
+    function drawThread(follow) {
+      if (!session) return;
+      const stick = follow || nearFoot();
+      const top = scroller.scrollTop;
+      thread.replaceChildren(...messageNodes());
+      if (stick) scroller.scrollTop = scroller.scrollHeight;
+      else scroller.scrollTop = top;
+      drawStatus();
+    }
+
+    // Over the composer: what the agent is doing, as a word. Yellow only when it waits on the person.
+    function drawStatus() {
+      if (!session) return;
+      const state = session.state;
+      if (state === 'needs-you') {
+        status.className = 'chat-status is-needs';
+        status.replaceChildren(
+          h('span', null, h('b', null, 'Needs you'), ` · ${agent()} is asking something it shows in its terminal`),
+          h('button', { type: 'button', class: 'btn btn-sm chat-answer', onclick: openTerminal }, 'Answer in the Agent tab'));
+        return;
+      }
+      if (working()) {
+        const since = T.turnStart(record?.entries ?? []) ?? pendingOf(session.id)[0]?.sentAt ?? null;
+        status.className = 'chat-status is-working';
+        status.replaceChildren(h('span', { class: 'spin', 'aria-hidden': 'true' }),
+          h('b', null, 'Working'), since ? h('span', { class: 'chat-clock' }, T.elapsed(since)) : null);
+        return;
+      }
+      if (state !== 'done' && state !== 'starting' && state) {
+        status.className = 'chat-status';
+        status.replaceChildren(h('span', null, h('b', null, `${W.agentTitle(session)} exited`), ' · the Agent tab shows its terminal'));
+        return;
+      }
+      status.className = 'chat-status';
+      status.replaceChildren();
+    }
+
+    async function read() {
+      if (!session) return;
+      if (reading) {
+        again = true;
+        return;
+      }
+      const id = session.id;
+      reading = true;
+      try {
+        const since = record?.id === id && record.writtenAt ? `&since=${record.writtenAt}` : '';
+        const answer = await W.getJson(`/api/sessions/${id}/transcript?limit=${LIMIT}${since}`);
+        if (id !== session?.id) return;
+        readError = null;
+        if (answer.unchanged && record?.id === id) return;
+        record = { id, ...answer };
+        drawThread(false);
+      } catch (err) {
+        if (id !== session?.id) return;
+        readError = err.message;
+        if (!record) drawThread(false);
+      } finally {
+        reading = false;
+        if (id === session?.id) schedule(again ? 0 : undefined);
+        again = false;
+      }
+    }
+
+    function schedule(ms) {
+      clearTimeout(timer);
+      if (!session) return;
+      const busy = working() || pendingOf(session.id).length > 0;
+      timer = setTimeout(() => (document.hidden ? schedule() : read()), ms ?? (busy ? FAST_MS : SLOW_MS));
+    }
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && session) schedule(0); });
+
+    /** @param {object|null} s  the running session whose Chat tab shows, or null when it is not shown */
+    function show(s) {
+      el.hidden = !s;
+      if (!s) {
+        if (recognition) recognition.abort();
+        recognition = null;
+        session = null;
+        clearTimeout(timer);
+        clearInterval(ticker);
+        ticker = null;
+        return;
+      }
+      // Each second: the working clock moves, and a turn the record says ended (or began) redraws its work log.
+      ticker ??= setInterval(() => {
+        if (!session) return;
+        const now = working();
+        if (now !== wasWorking) {
+          wasWorking = now;
+          drawThread(false);
+          drawComposer();
+        } else if (now) drawStatus();
+      }, 1000);
+      const moved = s.id !== session?.id;
+      const was = session?.state;
+      session = s;
+      if (moved) settledAt = s.state === 'working' ? 0 : Date.now() - STATE_LAG_MS;
+      else if (was !== s.state && s.state !== 'working') settledAt = Date.now();
+      if (moved) {
+        if (recognition) recognition.abort();
+        recognition = null;
+        record = null;
+        readError = null;
+        const label = `Message ${agent()}`;
+        field.placeholder = label;
+        field.setAttribute('aria-label', label);
+        agentName.textContent = agent();
+        field.value = readDraft(s.id);
+        fit();
+        drawThread(true);
+        drawComposer();
+        schedule(0);
+        if (!narrow.matches) setTimeout(() => { if (session?.id === s.id && !el.hidden) field.focus({ preventScroll: true }); }, 0);
+      } else if (was !== s.state) {
+        // The state moved (a turn ended, or started): the live work log and the status line follow, and the thread is
+        // read at once, so a reply lands as the turn ends rather than a slow tick later.
+        drawThread(false);
+        drawComposer();
+        schedule(0);
+      }
+    }
+
+    return { el, show, focus: () => field.focus() };
+  }
+
+  W.createChat = createChat;
+})();

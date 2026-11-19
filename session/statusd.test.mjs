@@ -707,3 +707,22 @@ test('Sign in for Remote Control types /woodshed:remote-control into claude, or 
   assert.equal(await typed('claude'), '/woodshed:remote-control\n');
   assert.equal(await typed('shell'), 'woodshed-login\n', 'nothing more at the Terminal tab');
 });
+
+test('POST /interrupt sends Esc to the agent\'s pane, which ends its turn, with the token only', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-interrupt-'));
+  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
+  t.after(async () => {
+    await tmux('kill-server').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  // Each key the pane gets, one a line, as bash quotes it: Esc is $'\E'.
+  await tmux('new-session', '-d', '-s', 'claude', `bash --norc -c 'stty raw -echo; while IFS= read -r -n1 -d "" c; do printf "%q\\n" "$c" >> ${dir}/keys; done'`);
+  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir } });
+  const keys = () => fs.readFile(path.join(dir, 'keys'), 'utf8').catch(() => '');
+
+  assert.equal((await call('POST', '/interrupt', 'wrong')).status, 401);
+  assert.deepEqual((await call('POST', '/interrupt')).body, { ok: true });
+  for (let i = 0; i < 50 && !(await keys()); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(await keys(), "$'\\E'\n", 'Esc and nothing else');
+});
