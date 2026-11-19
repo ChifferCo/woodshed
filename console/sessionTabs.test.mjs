@@ -354,3 +354,19 @@ test('an action naming the address showing opens its tab again when another tab 
   assert.equal(tabs.opensAgain({ sameAddress: true, sameSession: true, asked: null, showing: 'review' }), false);
   assert.equal(tabs.opensAgain({ sameAddress: true, sameSession: false, asked: 'diff', showing: 'review' }), false);
 });
+
+test('a page kept from earlier writes over nothing another page changed since', () => {
+  const store = storage();
+  // Session A's page, then My settings, then a fresh shell page that moves session B to Review.
+  const pageA = tabs.memory(store, 'local');
+  pageA.remember('aaaa1111', 'diff');
+  const fresh = tabs.memory(store, 'local');
+  fresh.remember('bbbb2222', 'review');
+  // Back to A's page, restored from the back-forward cache with its start not run again: it picks Agent on A.
+  pageA.remember('aaaa1111', 'agent');
+  const now = tabs.memory(store, 'local');
+  assert.equal(now.asked('bbbb2222', null, null), 'review', "B's Review, picked in the other page, stands");
+  assert.equal(now.asked('aaaa1111', null, null), 'agent');
+  // And A's page reads B's change too.
+  assert.equal(pageA.asked('bbbb2222', null, null), 'review');
+});

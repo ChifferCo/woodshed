@@ -228,15 +228,22 @@
    *   remember(id: string, tab: string): void }}
    */
   function memory(storage, login, writable = () => true) {
+    // Read from storage on every ask and every write, not kept from the page's start: another page of the console may
+    // have changed it since (a page the browser restores from its back-forward cache runs none of its start again).
+    // What this page wrote is also kept here, for storage that refuses.
     let kept = {};
-    try {
-      const saved = JSON.parse(storage.getItem(KEY) || 'null');
-      if (saved && saved.login === login && saved.tabs && typeof saved.tabs === 'object') kept = saved.tabs;
-      // Another login's (signed out in another browser tab, which ran no cleanup here) goes, unread.
-      else if (saved) storage.removeItem(KEY);
-    } catch {
-      kept = {};
+    function load() {
+      try {
+        const saved = JSON.parse(storage.getItem(KEY) || 'null');
+        if (saved && saved.login === login && saved.tabs && typeof saved.tabs === 'object') return { ...saved.tabs };
+        // Another login's (signed out in another browser tab, which ran no cleanup here) goes, unread.
+        if (saved) storage.removeItem(KEY);
+        return {};
+      } catch {
+        return { ...kept };
+      }
     }
+    kept = load();
     return {
       // The tab asked for: the address's, else the one this history entry showed when it was left (Back and Forward
       // reach it; Agent has no ?tab), else the one this session was last left on, else none. An entry still to land on
@@ -244,20 +251,26 @@
       asked(id, inAddress, inEntry = null) {
         if (inAddress) return inAddress;
         if (id && inEntry === LANDS_ON_REVIEW) return null;
-        return (id && inEntry) || (id && Object.hasOwn(kept, id) ? kept[id] : null) || null;
+        if (id && inEntry) return inEntry;
+        const tabs = load();
+        return (id && Object.hasOwn(tabs, id) ? tabs[id] : null) || null;
       },
       remember(id, tab) {
-        if (!id || kept[id] === tab) return;
+        if (!id) return;
         kept[id] = tab;
         if (!writable()) return;
+        const tabs = load();
+        if (tabs[id] === tab) return;
+        tabs[id] = tab;
         try {
-          storage.setItem(KEY, JSON.stringify({ login, tabs: kept }));
+          storage.setItem(KEY, JSON.stringify({ login, tabs }));
         } catch {
           // Not kept: the next arrival opens on Agent, as before.
         }
       },
     };
   }
+
 
   return { KEY, LEAVING_KEY, stashLeaving, takeLeaving, ask, opensAgain, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, entryTab, withEntryTab, addressTab, linkedTab,
     leaving, correctsMemory, otherLogin, lookups, memory };
