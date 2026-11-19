@@ -543,6 +543,8 @@
 
   // Private is told apart only where it sits beside a shared session, so a rail of one's own stays quiet.
   function showOwnerTag(s) {
+    // Production data is said on every card that has seen it, whatever else the rail lists.
+    if (s.taintedAt) return true;
     if (!W.isPrivate(s)) return Boolean(s.assignee);
     return railMine() && railListing().some((o) => !W.isPrivate(o));
   }
@@ -965,8 +967,8 @@
     return [
       { group: 'Session', label: 'Open the agent', run: open('') },
       s.status === 'running' && s.hasShell && { group: 'Session', label: 'Open the terminal', run: open('terminal') },
-      s.status === 'running' && s.hasShell && W.isPrivate(s) && W.agentOf(s) === 'claude' && { group: 'Session', label: 'Sign in for Remote Control', run: () => claudeLogin(s) },
-      s.status === 'running' && data.appDomain && !data.appPorts && W.isPrivate(s) && { group: 'App', label: 'Share the app…', run: () => W.shareApp(s) },
+      s.status === 'running' && s.hasShell && W.isPrivate(s) && !s.taintedAt && W.agentOf(s) === 'claude' && { group: 'Session', label: 'Sign in for Remote Control', run: () => claudeLogin(s) },
+      s.status === 'running' && data.appDomain && !data.appPorts && W.isPrivate(s) && !s.taintedAt && { group: 'App', label: 'Share the app…', run: () => W.shareApp(s) },
       s.branch && { group: 'Session', label: 'Open the review', run: open('review') },
       { group: 'Session', label: 'Rename it', run: () => rename(s) },
       { group: 'Session', label: isPinned(s) ? 'Unpin it' : 'Pin it', run: () => setPinned(s, !isPinned(s)) },
@@ -1008,7 +1010,7 @@
     const choices = data.appDomain && !busy && !none && W.appChoices(s) ? W.appChoiceItems(s, refresh, render).map((a) => ({ ...a, group: 'App', label: `Start ${a.label}` })) : [];
     const running = W.runningAppLabel(s);
     return [
-      s.hasShell && W.isPrivate(s) && W.agentOf(s) === 'claude' && {
+      s.hasShell && W.isPrivate(s) && !s.taintedAt && W.agentOf(s) === 'claude' && {
         group: 'Claude', label: 'Sign in for Remote Control', note: 'Asks claude for /woodshed:remote-control: open the link it shows and paste the code in the chat', run: () => claudeLogin(s),
       },
       data.appDomain && up && {
@@ -1024,8 +1026,8 @@
         note: 'Start the app in this session: one to three minutes', working: true, run: app('start'),
       },
       data.appDomain && (up || s.app === 'starting' || s.app === 'frontend-down') && { group: 'App', label: 'Stop app', note: 'Stop the app\'s backend and frontend', working: true, run: app('stop') },
-      data.appDomain && !data.appPorts && W.isPrivate(s) && { group: 'App', label: 'Share the app…', note: 'Let members, or anyone with a link, open the app', run: () => W.shareApp(s) },
-      data.appDomain && s.editor && { group: 'Code', label: 'Editor ↗', note: 'Its checkout in VS Code, in a new tab', href: editorUrl(s) },
+      data.appDomain && !data.appPorts && W.isPrivate(s) && !s.taintedAt && { group: 'App', label: 'Share the app…', note: 'Let members, or anyone with a link, open the app', run: () => W.shareApp(s) },
+      data.appDomain && s.editor && !s.taintedAt && { group: 'Code', label: 'Editor ↗', note: 'Its checkout in VS Code, in a new tab', href: editorUrl(s) },
       ...dataActions(s),
       !PAGE_TABS.has(tab) && {
         label: keyBarShown ? 'Hide the key bar' : 'Show the key bar', note: 'esc, the arrows, tab and ^C above the terminal', run: toggleKeyBar,
@@ -1082,7 +1084,8 @@
       row(W.isLive(s) ? 'Running for' : 'Ran for', s.startedAt && W.duration(s.startedAt, s.stoppedAt)),
       row('Runs on', claude),
       !W.isPrivate(s) && s.kind !== 'ask' && row('Assigned to', assignedLine(s)),
-      row('Visible to', W.isPrivate(s) ? 'Only you' : 'Everyone on the console'));
+      row('Visible to', W.isPrivate(s) ? 'Only you' : 'Everyone on the console'),
+      s.taintedAt && row('Production data', `Since ${W.ago(s.taintedAt)}: it reaches only the console, its databases and your organization's private repos, and all it kept is deleted when it is removed`));
   }
 
   // Who has a shared session and how they got it: by the label, a /woodshed comment, taking it, or a hand over.
@@ -1197,7 +1200,7 @@
       // A phone's two rows: the name over one line of its state, its PR and its usage, with ⋯ for the rest.
       h('div', { class: 'pphone' },
         h('b', { class: 'pphone-title', title: s.title }, s.title),
-        h('span', { class: 'pphone-meta' }, W.statusBadge(s), phoneAppState(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
+        h('span', { class: 'pphone-meta' }, W.statusBadge(s), s.taintedAt && W.productionTag(s), phoneAppState(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
       h('button', {
         type: 'button', class: 'pmore', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === `${s.id}:phone`), 'data-menu-for': `${s.id}:phone`,
         'aria-label': `Actions for ${s.title}`, title: 'Actions',
@@ -1221,6 +1224,7 @@
       h('button', { type: 'button', class: 'ptitle', title: `${s.title}\nClick to rename it`, 'aria-label': `Rename ${s.title}`, onclick: () => rename(s) },
         h('span', { class: 'ptitle-text' }, s.title), h('span', { class: 'prename', 'aria-hidden': 'true' }, '✎')),
       W.statusBadge(s),
+      s.taintedAt && W.productionTag(s, { long: true }),
       s.number && h('a', { class: 'pref', href: W.issueUrl(data.repo, s), target: '_blank', rel: 'noopener', title: s.kind === 'pr' ? 'Open the pull request' : 'Open the issue' }, W.ref(s)),
       pr && s.kind !== 'pr' && W.prChips(s, { asLink: true }),
       barMenuButton(s, {
@@ -1232,7 +1236,7 @@
         plan && planButton(s, plan),
         W.usageBadge(s),
         s.kind !== 'ask' && W.appButton(s, { appDomain: data.appDomain, onDone: refresh, onChange: render, small: true }),
-        tools && data.appDomain && s.editor && h('a', { class: 'pbtn', href: editorUrl(s), target: '_blank', rel: 'noopener', title: 'Open its checkout in VS Code, in a new tab' }, 'Editor ↗'),
+        tools && data.appDomain && s.editor && !s.taintedAt && h('a', { class: 'pbtn', href: editorUrl(s), target: '_blank', rel: 'noopener', title: 'Open its checkout in VS Code, in a new tab' }, 'Editor ↗'),
         tools && dataActions(s).length > 0 && barMenuButton(s, {
           key: 'data', label: 'Data ▾', title: 'Open its databases or Redis in a viewer', open: () => ({ items: dataActions(s) }),
         }),

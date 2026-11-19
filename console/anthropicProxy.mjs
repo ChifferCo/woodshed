@@ -13,6 +13,10 @@
 // claude sends the second form when the entrypoint gives it the session token as CLAUDE_CODE_OAUTH_TOKEN, and keeps
 // the plan's own behaviour, since only the bearer changes. Its connectivity check, HEAD /api/hello, carries no
 // credential and is answered here.
+//
+// A tainted session (prodMcp.mjs) reaches Anthropic only through here, and its calls are read before they go: one that
+// asks Anthropic to reach anywhere on its behalf (web search, web fetch, or an MCP server of the API's own connector)
+// is refused, since those would take what the session saw past its network's lockdown (serverSideReach).
 
 import http from 'node:http';
 import https from 'node:https';
@@ -23,6 +27,26 @@ const TEAM_KEY_SECRET = 'anthropic-api-key';
 const TEAM_KEY_TTL_MS = 5 * 60_000;
 // Ours to set, or the connection's own: never passed on.
 const DROPPED_HEADERS = new Set(['host', 'connection', 'keep-alive', 'proxy-connection', 'authorization', 'x-api-key']);
+// The most of a tainted session's call that is read whole to check it: a long conversation with images fits.
+export const MAX_TAINTED_BODY_BYTES = 64 * 1024 * 1024;
+// Tools Anthropic runs on its own side, out on the internet: web search and fetch, and whatever comes after them.
+const SERVER_REACH_RE = /^(web_search|web_fetch)/;
+
+/**
+ * @param {unknown} body  a call's JSON
+ * @returns {string|null}  what in it would have Anthropic reach the internet for the session, or null
+ */
+export function serverSideReach(body) {
+  if (!body || typeof body !== 'object') return null;
+  const calls = Array.isArray(body.requests) ? body.requests.map((r) => r?.params) : [body];
+  for (const call of calls) {
+    if (!call || typeof call !== 'object') continue;
+    if (call.mcp_servers !== undefined) return 'the API\'s MCP connector';
+    const tool = (Array.isArray(call.tools) ? call.tools : []).find((t) => SERVER_REACH_RE.test(String(t?.type ?? '')));
+    if (tool) return `the ${String(tool.type).replace(/_\d+$/, '')} tool`;
+  }
+  return null;
+}
 
 /** @returns {boolean}  whether a session API path is this proxy's */
 export function isAnthropicPath(pathname) {
@@ -103,10 +127,14 @@ export function createAnthropicProxy({ userSettings = null, secrets = null, team
     return token;
   }
 
-  function forward(req, res, auth) {
+  function forward(req, res, auth, body = null) {
     const headers = {};
     for (const [name, value] of Object.entries(req.headers)) if (!DROPPED_HEADERS.has(name)) headers[name] = value;
     Object.assign(headers, auth, { host: target.host });
+    if (body) {
+      delete headers['transfer-encoding'];
+      headers['content-length'] = String(body.length);
+    }
     const out = transport.request({
       protocol: target.protocol, hostname: target.hostname, port: target.port || undefined,
       method: req.method, path: req.url.slice(PREFIX.length) || '/', headers,
@@ -121,7 +149,38 @@ export function createAnthropicProxy({ userSettings = null, secrets = null, team
     });
     // claude cancels a turn by closing its request: the call to Anthropic goes with it.
     res.on('close', () => { if (!res.writableFinished) out.destroy(); });
-    req.pipe(out);
+    if (body) out.end(body);
+    else req.pipe(out);
+  }
+
+  // A tainted session's call, read whole and checked before it goes: null when it was refused (and answered).
+  async function checkedBody(req, res, session) {
+    if (!session.taintedAt || req.method !== 'POST' || !/json/i.test(String(req.headers['content-type'] ?? ''))) return undefined;
+    const chunks = [];
+    let bytes = 0;
+    for await (const chunk of req) {
+      bytes += chunk.length;
+      if (bytes > MAX_TAINTED_BODY_BYTES) {
+        req.resume();
+        refuse(res, 413, 'this call is larger than the console reads for a session that has seen production data');
+        return null;
+      }
+      chunks.push(chunk);
+    }
+    const body = Buffer.concat(chunks);
+    let parsed = null;
+    try {
+      parsed = JSON.parse(body.toString('utf8'));
+    } catch {
+      // Not JSON after all: Anthropic says so itself.
+    }
+    const reach = serverSideReach(parsed);
+    if (reach) {
+      console.warn('anthropicProxy: refused, a tainted session asked Anthropic to reach the internet', { sessionId: session.id, what: reach });
+      refuse(res, 403, `this session has seen production data, so ${reach} is off: Anthropic would reach the internet for it`);
+      return null;
+    }
+    return body;
   }
 
   async function handle(req, res, session, via) {
@@ -153,8 +212,10 @@ export function createAnthropicProxy({ userSettings = null, secrets = null, team
       console.warn('anthropicProxy: no team key saved', { sessionId: session.id });
       return refuse(res, 503, 'the console has no Anthropic key: set anthropic-api-key on the Secrets page');
     }
+    const body = await checkedBody(req, res, session);
+    if (body === null) return;
     noteFirstCall(req, session, 'teamKey');
-    return forward(req, res, { 'x-api-key': key });
+    return forward(req, res, { 'x-api-key': key }, body);
   }
 
   async function planCall(req, res, session) {
@@ -170,8 +231,10 @@ export function createAnthropicProxy({ userSettings = null, secrets = null, team
       console.warn('anthropicProxy: no Claude token saved for the plan', { sessionId: session.id, plan: login });
       return refuse(res, 401, `@${login} has no Claude token saved on My settings`);
     }
+    const body = await checkedBody(req, res, session);
+    if (body === null) return;
     noteFirstCall(req, session, 'plan', login);
-    return forward(req, res, { authorization: `Bearer ${token}` });
+    return forward(req, res, { authorization: `Bearer ${token}` }, body);
   }
 
   return { isProxyPath: isAnthropicPath, handle, teamCredential };

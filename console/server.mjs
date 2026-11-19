@@ -66,6 +66,9 @@
 //   GET  /review?session=claude-<id>, /reviews/claude-<id>/...   the Review tab: the shed's own review page and its calls,
 //                                carried to the session that answers them (reviewProxy.mjs)
 //   GET  /manifest.webmanifest, the icons   install as an app (the shed's pwa.mjs), before sign-in
+//   GET  /.well-known/openid-configuration, /.well-known/jwks.json   the console as an OpenID Connect issuer, whose
+//                                tokens woodshed-prod-mcp trusts (oidcIssuer.mjs, prodMcp.mjs); before sign-in, 404
+//                                with production access off
 //   POST /api/sessions/<id>/resume  {"message": "..."}  a stopped shared session again, its conversation and all
 //   POST /api/sessions/<id>/delete  a shared session's conversation and databases, deleted now (a running one is stopped first)
 //   POST /api/sessions/<id>/remove  a shared session already deleted, off the list for everyone
@@ -176,6 +179,7 @@ import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from '
 import { readMyPulls } from './myPulls.mjs';
 import { createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
+import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
@@ -564,7 +568,7 @@ export function createHandler({
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
-  openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null,
+  openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, oidc = null,
 }) {
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
   const hosts = knownHosts(config);
@@ -877,6 +881,22 @@ export function createHandler({
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 401, { error: 'sign in first: open the app from the console' });
     console.log('app: sending to the console to sign in', { id });
     return redirect(res, `${config.publicUrl}/auth/app?id=${id}&next=${encodeURIComponent(url.pathname + url.search)}`);
+  }
+
+  // The issuer's discovery document and keys. A key that cannot be read answers 503, which a relying party retries; it
+  // never answers an empty key set, which would read as "trust nothing" until its cache ran out.
+  async function oidcDocument(req, res, pathname) {
+    if (!oidc) return reply(res, 404, { error: 'this console signs no tokens' });
+    if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, { error: 'method not allowed' });
+    let body;
+    try {
+      body = pathname === DISCOVERY_PATH ? oidc.discovery() : await oidc.jwks();
+    } catch (err) {
+      if (!err.shown) throw err;
+      return reply(res, err.status ?? 503, { error: err.message });
+    }
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=300' });
+    return res.end(JSON.stringify(body));
   }
 
   // A request on one of WOODSHED_APP_PORTS: the app of the session the port is lent to (appPorts.mjs).
@@ -1811,6 +1831,8 @@ export function createHandler({
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }
+    // Nobody outside its owner sees a session that has seen production data: its shares ended when it was tainted.
+    if (session.taintedAt && !revoke && (kind !== 'members' || body?.on)) return reply(res, 409, { error: 'this session has seen production data, so its app is not shared' });
     if (kind === 'members') {
       if (typeof body?.on !== 'boolean') return reply(res, 400, { error: 'on must be true or false' });
       if (body.on && session.status !== 'running') return reply(res, 409, { error: 'the session is not running: its app can be shared while it is' });
@@ -1947,6 +1969,8 @@ export function createHandler({
       return reply(res, 421, { error: 'unknown host' });
     }
     const url = new URL(req.url || '/', 'http://console.invalid');
+    // woodshed-prod-mcp fetches these to check a token the relay added: public, on whatever name the issuer is.
+    if (url.pathname === DISCOVERY_PATH || url.pathname === JWKS_PATH) return oidcDocument(req, res, url.pathname);
     // woodshed-db.mjs has no cookie: its token is its sign-in.
     if (url.pathname === CONNECTION_PATH && req.method === 'GET') {
       return tunnel ? tunnel.connection(req, res) : reply(res, 404, { error: 'this console has no tunnel to your databases' });
@@ -2108,6 +2132,8 @@ export function canOpen(session, login, members) {
  */
 export function canOpenApp(session, login, members, sharedWithMembers) {
   if (canOpen(session, login, members)) return true;
+  // A tainted session's app is its owner's alone, whatever was shared before (fleet.taint ends the shares too).
+  if (session.taintedAt) return false;
   return Boolean(sharedWithMembers && session.owner && login && (!members || members.isMember(login)));
 }
 
@@ -2117,6 +2143,7 @@ function appTarget({ fleet, login, members, shares, link }) {
   return function targetFor(id) {
     const session = fleet.find(id);
     if (!session?.endpoint || session.status !== 'running') return null;
+    if (link && session.taintedAt) return null;
     if (!link && !canOpenApp(session, login, members, shares?.membersOpen(id))) return null;
     return { host: session.endpoint.host, statusPort: session.endpoint.statusPort, sessionToken: session.token };
   };
@@ -2129,7 +2156,8 @@ function appTarget({ fleet, login, members, shares, link }) {
  */
 function editorTarget({ fleet, login, members, id }) {
   const session = fleet.find(id);
-  if (!session?.endpoint || session.status !== 'running' || session.editor !== true || !canOpen(session, login, members)) return null;
+  // Off for a tainted session: the editor fetches its extensions and the rest from the internet, which its lockdown refuses.
+  if (!session?.endpoint || session.status !== 'running' || session.editor !== true || session.taintedAt || !canOpen(session, login, members)) return null;
   return { host: session.endpoint.host, statusPort: session.endpoint.statusPort, sessionToken: session.token };
 }
 
@@ -2262,6 +2290,13 @@ export async function startConsole({ provider, config: given = null, repos = nul
   if (installation.sessionApi) {
     const api = listenSessionApi({ config, handle: installation.sessionApi });
     servers.push({ server: api, open: countRequests(api) });
+  }
+  // A tainted session's one way out, beside the session API, on the address only sessions reach (egressProxy.mjs).
+  if (installation.egressProxy) {
+    const { server: egress, port } = installation.egressProxy;
+    egress.on('error', (err) => console.error('egress: could not listen', { port, message: err?.message }));
+    egress.listen(port, config.sessionApi.host, () => console.log('egress: listening', { host: config.sessionApi.host, port }));
+    servers.push({ server: egress, open: countRequests(egress) });
   }
   const tlsAsk = await startTlsAsk({ config, sessions: () => installation.fleet.sessions() });
   if (tlsAsk) servers.push({ server: tlsAsk, open: countRequests(tlsAsk) });

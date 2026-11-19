@@ -149,6 +149,7 @@ data "aws_iam_policy_document" "base_box" {
         aws_secretsmanager_secret.slack_bot_token.arn,
         aws_secretsmanager_secret.slack_signing.arn,
       ],
+      aws_secretsmanager_secret.oidc_signing_key[*].arn,
     )
   }
 
@@ -351,6 +352,9 @@ locals {
     log_group          = aws_cloudwatch_log_group.sessions.name
     webhook_queue      = aws_sqs_queue.webhooks.name
     webhook_function   = aws_lambda_function.webhooks.function_name
+    prod_mcp           = var.prod_mcp
+    guarded_subnets    = join(",", aws_subnet.guarded[*].id)
+    guarded_sg         = join("", aws_security_group.guarded_sessions[*].id)
   })
 }
 

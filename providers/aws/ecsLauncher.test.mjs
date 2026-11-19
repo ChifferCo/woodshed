@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { MAX_CLI_PROCESSES, awsCli, cliError, ecsLauncher, sessionOverrides, taskPrivateIp } from './ecsLauncher.mjs';
+import { MAX_CLI_PROCESSES, awsCli, cliError, ecsLauncher, sessionOverrides, taskPrivateIp, taskSubnet } from './ecsLauncher.mjs';
 
 const ARN = 'arn:aws:ecs:us-east-1:123:task/woodshed-cloud/abc123';
 
@@ -72,7 +72,10 @@ test('every variable the fleet sets for each kind of session reaches an ECS task
     appDomain: 'apps.console.test', sessionEnv: {}, ghToken: null, pollMs: 30_000, fallbackPollMs: 300_000, maxPrivatePerPerson: 3,
   };
   const databases = { available: true, async createForSession() {}, async sweep() {} };
-  const fleet = createFleet({ config, store: { state: { sessions: [], github: null }, save() {} }, launcher, github: {}, databases, statusd: async () => ({}) });
+  const prodMcp = { url: 'https://prod-mcp.test', people: '*', repos: '*', issuer: 'https://console.test', removeAfterMs: 86_400_000 };
+  launcher.guardsEgress = true;
+  const store = { state: { sessions: [], github: null }, save() {} };
+  const fleet = createFleet({ config, store, launcher, github: {}, databases, statusd: async () => ({}), prodMcp, egress: { sessionUrl: 'http://10.42.1.10:7693' } });
   await fleet.createSession({ kind: 'ask', number: null, title: 'q', startedBy: 'slack:U1', trigger: 'slack', prompt: 'why?', slack: { channel: 'C1', threadTs: '1.1', user: 'U1', name: 'Ana' } });
   await fleet.createSession({ kind: 'issue', number: 7, title: 'i', startedBy: 'joel', trigger: 'label', prompt: 'p', options: { model: 'opus', effort: 'high', permissionMode: 'plan' } });
   await fleet.createSession({ kind: 'pr', number: 8, title: 'r', startedBy: 'joel', trigger: 'console', branch: 'a/b', reviewOnly: true });
@@ -81,9 +84,13 @@ test('every variable the fleet sets for each kind of session reaches an ECS task
   await fleet.createSession({ kind: 'task', number: null, title: 'o', startedBy: 'joel', trigger: 'my-woodshed', prompt: 'p', owner: 'joel', project: config.projects[1] });
   await fleet.createSession({ kind: 'pr', number: 9, title: 'QA', startedBy: 'joel', trigger: 'qa', branch: 'a/c', qa: { base: 'main', sha: 'a'.repeat(40), heading: '## QA', commentId: null } });
   await fleet.createSession({ kind: 'pr', number: 10, title: 'Review', startedBy: 'joel', trigger: 'review', branch: 'a/d', review: { base: 'main', sha: 'b'.repeat(40), heading: '## Claude review', author: 'rev[bot]', check: 'Merge risk', commentId: null, agents: ['claude', 'codex'], codexLogin: 'joel', codexVia: 'chatgpt', codexAccount: 'acct-joel' } });
-  assert.equal(started.length, 8);
+  // A tainted private session, resumed: it starts locked down.
+  const tainted = store.state.sessions.find((x) => x.title === 't');
+  Object.assign(tainted, { status: 'stopped', taintedAt: new Date().toISOString() });
+  await fleet.resumePrivate({ owner: 'joel', id: tainted.id });
+  assert.equal(started.length, 9);
   const set = new Set(started.flatMap((env) => Object.keys(env)));
-  for (const name of ['SESSION_MODE', 'ASKED_BY', 'ISSUE', 'PR', 'MODEL', 'REVIEW_ONLY', 'SESSION_KIND', 'ATTACHMENTS', 'AGENT', 'PROJECT_REPO', 'SESSION_APP_DOMAIN', 'QA_BASE', 'REVIEW_BASE', 'REVIEW_AUTHOR', 'REVIEW_AGENTS', 'REVIEW_CODEX_AUTH', 'REVIEW_CODEX_ACCOUNT']) {
+  for (const name of ['WOODSHED_PROD_MCP', 'WOODSHED_TAINTED', 'WOODSHED_EGRESS_PROXY', 'SESSION_MODE', 'ASKED_BY', 'ISSUE', 'PR', 'MODEL', 'REVIEW_ONLY', 'SESSION_KIND', 'ATTACHMENTS', 'AGENT', 'PROJECT_REPO', 'SESSION_APP_DOMAIN', 'QA_BASE', 'REVIEW_BASE', 'REVIEW_AUTHOR', 'REVIEW_AGENTS', 'REVIEW_CODEX_AUTH', 'REVIEW_CODEX_ACCOUNT']) {
     assert.ok(set.has(name), `the sessions above set ${name}`);
   }
   for (const env of started) {
@@ -291,4 +298,35 @@ echo '{"ok": true}'
   await Promise.all(Array.from({ length: MAX_CLI_PROCESSES }, () => awsCli(['ok'])));
   const again = (await fs.readFile(path.join(dir, 'seen'), 'utf8')).trim().split('\n').map(Number);
   assert.equal(Math.max(...again), MAX_CLI_PROCESSES);
+});
+
+const GUARDED = { subnets: ['subnet-guarded-a', 'subnet-guarded-b'], securityGroup: 'sg-guarded' };
+
+function guardedTask(subnet) {
+  return { ...runningTask(), attachments: [{ type: 'ElasticNetworkInterface', details: [{ name: 'privateIPv4Address', value: '10.42.11.7' }, { name: 'subnetId', value: subnet }] }] };
+}
+
+test('a session that may use production starts on the guarded network, with no public address, and says so', async () => {
+  const { aws, calls } = fakeAws({ 'ecs run-task': { tasks: [{ taskArn: ARN }] }, 'ecs describe-tasks': { tasks: [guardedTask('subnet-guarded-a')] } });
+  const l = ecsLauncher({ cluster: 'c', taskDefinition: 'td', subnets: ['subnet-a'], securityGroup: 'sg-sessions', logGroup: 'g', guarded: GUARDED, aws, sleep: async () => {} });
+  assert.equal(l.guardsEgress, true);
+  const started = await l.start('0a1b2c3d', { SESSION_ID: '0a1b2c3d', SESSION_KIND: 'private', WOODSHED_PROD_MCP: '1' });
+  assert.equal(started.guarded, true);
+  const network = JSON.parse(calls[0][calls[0].indexOf('--network-configuration') + 1]).awsvpcConfiguration;
+  assert.deepEqual(network, { subnets: GUARDED.subnets, securityGroups: ['sg-guarded'], assignPublicIp: 'DISABLED' });
+  await l.start('1a1b2c3d', { SESSION_ID: '1a1b2c3d', SESSION_KIND: 'private' });
+  const plain = JSON.parse(calls.filter((c) => c[1] === 'run-task')[1].find((a, i, all) => all[i - 1] === '--network-configuration')).awsvpcConfiguration;
+  assert.deepEqual(plain.securityGroups, ['sg-sessions'], 'any other session as before');
+});
+
+test('lockDown on AWS holds only for a task in a guarded subnet, and a tainted session never starts without the guarded network', async () => {
+  const { aws } = fakeAws({ 'ecs describe-tasks': (args) => ({ tasks: [guardedTask(args.at(-1) === 'in' ? 'subnet-guarded-b' : 'subnet-a')] }) });
+  const l = ecsLauncher({ cluster: 'c', taskDefinition: 'td', subnets: ['subnet-a'], securityGroup: 'sg', logGroup: 'g', guarded: GUARDED, aws, sleep: async () => {} });
+  assert.deepEqual(await l.lockDown('in'), { locked: true });
+  await assert.rejects(l.lockDown('out'), /outside the guarded network/);
+  const bare = ecsLauncher({ cluster: 'c', taskDefinition: 'td', subnets: ['subnet-a'], securityGroup: 'sg', logGroup: 'g', aws, sleep: async () => {} });
+  assert.equal(bare.guardsEgress, false);
+  await assert.rejects(bare.lockDown('in'), /no guarded network/);
+  await assert.rejects(bare.start('0a1b2c3d', { SESSION_ID: '0a1b2c3d', WOODSHED_TAINTED: '1' }), /no guarded network/);
+  assert.equal(taskSubnet(guardedTask('subnet-x')), 'subnet-x');
 });

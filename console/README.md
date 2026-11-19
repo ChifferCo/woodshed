@@ -687,6 +687,46 @@ that it fetches no managed settings or organization policy with a custom base
 URL (`/status` says so). The docker launcher's sessions, which get the team key
 in their env file, use it directly.
 
+### Production access
+
+A My Woodshed session can debug a real production bug through the installation's woodshed-prod-mcp, which masks and
+audits what it returns, and the console makes sure what the session saw stays in it (`../docs/reference.md`,
+"Production access", says what it covers; `../CLAUDE.md`'s Rules, why it is the one exception). Off until
+`WOODSHED_PROD_MCP_URL` is set, and then only for the people and repos `WOODSHED_PROD_MCP_PEOPLE` and `_REPOS` list.
+
+- **The relay** (`prodMcp.mjs`): `/prod-mcp` on the session API, Streamable HTTP, the session's own token as its
+  bearer. Each call goes on to the MCP server with a five-minute token the console signs (`oidcIssuer.mjs`: RS256, the
+  key in the `oidc-signing-key` secret or `oidc-signing-key.pem` in the state folder), `aud` `woodshed-prod-mcp`, `sub`
+  `private:<login>`, with `login`, `session_id`, `session_kind` and `repo`. The discovery document and the keys are at
+  `/.well-known/openid-configuration` and `/.well-known/jwks.json`, before sign-in.
+- **The session.** An eligible session's claude gets `woodshed-prod` from `--mcp-config` (`/tmp/woodshed-prod-mcp.json`),
+  in its `disabledMcpServers` for the checkout: claude makes no call to it until its person turns it on in `/mcp`. It is
+  never started without the machine's Docker socket, which would let it undo a lockdown (its own, under Sysbox, stays).
+- **The taint** (`fleet.taint`): the first relayed call of any kind locks the session down through the launcher
+  (`lockDown`), and only then sets `taintedAt` and forwards the call; the egress proxy holds the session to the
+  lockdown's rules from the moment it starts. A lockdown that fails answers the call 503 and leaves the session as it
+  was. The fleet ends the app's shares, then tells the session's statusd (`POST /taint`), which points every tool at
+  the egress proxy, adds `session/tainted.md` to the rules, stops the settings sync and reopens claude's conversation on
+  the Anthropic proxy with web search and fetch off, typing in what changed (`taint.mjs`'s message). A resumed tainted
+  session starts so (`WOODSHED_TAINTED`). Its card says **Production**, its pane bar **Production data**; it has no Share
+  the app, Editor or Remote Control.
+- **The egress proxy** (`egressProxy.mjs`, `githubEgress.mjs`, `egressCerts.mjs`): on `WOODSHED_EGRESS_PORT`, taking the
+  session's token as its proxy credential. A tainted session reaches GitHub's hosts alone, through TLS the proxy opens
+  with its own authority (made by `openssl` in `egress/` in the state folder, name-constrained to github.com): git and
+  the API on its project's owner's repos that are not public, and the API's pull request writes and GraphQL mutations,
+  each id checked. A guarded session not tainted yet (AWS) goes anywhere, untouched. It logs `egress: refused` with the
+  host and why, never the path.
+- **What it kept** (`sessionApi.mjs`, `fleet.mjs`): its Claude home is saved for its Resume but never copied to the
+  owner's, `/claude-settings` refuses it, and its container's log is never read into the console's. It is removed
+  `WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS` after it stops, home and attachments with it; a home that would not delete is
+  tried again (`taintedHomesPending` in `state.json`). Its record goes with it, statusd's readings and all.
+- **The Anthropic proxy** reads a tainted session's calls and refuses one that would have Anthropic reach the internet
+  for it (`web_search`, `web_fetch`, `mcp_servers`): `anthropicProxy: refused, a tainted session asked Anthropic to reach
+  the internet`.
+
+What woodshed-prod-mcp could add to tie its audit to Woodshed: its audit entries could carry the token's `session_id`
+and `login`, so a call is traced to the session that made it.
+
 ## Setting up the GitHub App from the console
 
 A console with a secret store (AWS, or the local provider's secrets folder) and no GitHub App
@@ -2134,6 +2174,12 @@ Remove My Woodshed.
 | `WOODSHED_LOCAL_WEBHOOK_PORT`, `_WEBHOOK_HOST`, `_WEBHOOK_URL` | none, `127.0.0.1`, none | On the local provider: where its webhook receiver listens (`providers/local/webhookReceiver.mjs`), at the Lambda's paths, `POST /github` and `POST /slack`, checked against `github-webhook-secret` and `slack-signing-secret` in `WOODSHED_LOCAL_SECRETS_DIR`, which it needs. `_WEBHOOK_URL` is the public address a proxy in front of it answers at, and the Secrets & webhooks page sets `<url>/github` on the GitHub App. A message the console fails on is tried three times; one still waiting when the console restarts is lost, and the poll finds it |
 | `WOODSHED_TUNNEL_POSTGRES`, `_TUNNEL_MONGO` | none | Where `woodshed-db.mjs`'s connections go, as `host:port`, each used only for a database the installation runs. Each one is a tunnel of its own, and the script listens for those alone; without either, or without own databases, My settings has no From your computer. Without the Postgres one there is no Restore a dump for Postgres either, and without the Mongo one none for Mongo. Set on the base box, for the databases it runs: RDS and the box's private address |
 | `WOODSHED_SESSION_API_HOST`, `_SESSION_API_PORT` | none, `7691` | With the App: the address the session API listens on (`sessionApi.mjs`). In AWS, the base box's private IP, which only session tasks can reach |
+| `WOODSHED_PROD_MCP_URL` | none | Production debugging (`prodMcp.mjs`, "Production access" above): the installation's woodshed-prod-mcp, which the console's relay at `/prod-mcp` on the session API reaches. None keeps it, the OIDC issuer and every lockdown off. Set on the base box from Terraform's `prod_mcp` |
+| `WOODSHED_PROD_MCP_PEOPLE`, `_PROD_MCP_REPOS` | none | Whose My Woodshed sessions, on which repos, may use it: GitHub logins and `owner/name`, comma-separated, or `*` for all. Empty is nobody |
+| `WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS` | `24` | How long a tainted session is kept, stopped, for its Resume, before it is removed with all it kept |
+| `WOODSHED_OIDC_ISSUER` | `WOODSHED_PUBLIC_URL` | The issuer the relay's tokens name, whose `/.well-known/jwks.json` woodshed-prod-mcp fetches: the console's public address, unless its documents are served from another name |
+| `WOODSHED_EGRESS_PORT`, `WOODSHED_EGRESS_PROXY_URL` | `7693`, the session env's `WOODSHED_CONSOLE_URL` on that port | The egress proxy a tainted session leaves through (`egressProxy.mjs`), on the session API's address, and the URL sessions reach it at (on AWS, the base box's private address, from Terraform) |
+| `WOODSHED_ECS_GUARDED_SUBNETS`, `_ECS_GUARDED_SECURITY_GROUP` | none | For `ecs` with `prod_mcp`: the network a session that may use production starts on (`../providers/aws/README.md`, "Production access"). Both or neither |
 | `GH_TOKEN` | `gh auth token` | Without the App: polls, comments and reacts. Sessions push with it too unless the env file sets its own `GH_TOKEN`, and the console warns at startup when it does not: your own token reaches far more than this repo, which undoes the narrow token "Why permissions are off" in `../session/README.md` relies on |
 
 These had an older prefix until the project became Woodshed; the old names still work and log a deprecation

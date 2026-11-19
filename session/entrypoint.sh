@@ -71,6 +71,14 @@
 #                        local provider's WOODSHED_INSTALL_SECRET_PAIRS): an ask session unsets each
 #   SESSION_MODE=ask     a question from Slack (console/asks.mjs): the default branch, read only, no databases, Redis or app.
 #                        PROMPT is the question and ASKED_BY who asked; claude posts its answer with answer.sh
+#   WOODSHED_PROD_MCP=1  a private session that may use production (console/prodMcp.mjs): claude is given the
+#                        woodshed-prod MCP server, the console's relay, turned off until its person turns it on in /mcp.
+#                        The first call taints the session
+#   WOODSHED_TAINTED=1   a tainted session, resumed: the launcher started it locked down, and it starts as one (taint.mjs):
+#                        its egress through the console's proxy, claude on the console's Anthropic proxy with web search
+#                        and fetch off, woodshed-prod on, no plugin or dependency installs, tainted.md in its rules
+#   WOODSHED_EGRESS_PROXY  the console's egress proxy (console/egressProxy.mjs): a tainted session's way out, and on AWS
+#                        a guarded session's from the start (its network reaches nothing else)
 #   SESSION_MODE=qa      QA of the pull request PR against its base branch QA_BASE (console/qaSessions.mjs): its branch,
 #                        its own databases and app, a read-only GitHub token. session/qa.sh runs in claude's pane in place
 #                        of claude, and sends the report to the console, which posts it on the pull request
@@ -91,6 +99,8 @@ databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }
 
 log() { echo "[woodshed $(date -u +%H:%M:%S)] $*"; }
 die() { log "ERROR: $*"; exit 1; }
+
+tainted() { [ "${WOODSHED_TAINTED:-}" = 1 ] || [ -f /tmp/woodshed-tainted ]; }
 
 # A POST to the console's session API, its answer into <file>, and the status code on stdout: 000 when the console
 # never answered whole. Only for a call that is safe to repeat. The console is away for a few seconds on each
@@ -313,6 +323,46 @@ refreshDeps() {
   log "Dependencies ready" "(seconds: $((SECONDS - start)))"
 }
 
+# The way out of a session whose network reaches only the console (taint.mjs): every tool through the console's egress
+# proxy, and a tainted one trusting the proxy's own authority for GitHub. Before anything reaches GitHub. Also in the
+# Terminal tab's shells and in what claude runs, which start from ~/.profile and ~/.bashrc.
+configureEgress() {
+  [ -n "${WOODSHED_EGRESS_PROXY:-}" ] || return 0
+  local code line='[ -f /tmp/woodshed-egress.env ] && . /tmp/woodshed-egress.env'
+  if [ "${WOODSHED_TAINTED:-}" = 1 ]; then
+    code=$(consoleCall /egress /tmp/woodshed-egress.json --max-time 15)
+    [ "$code" = 200 ] || die "could not get the egress proxy's certificate from the console (status $code)"
+    node "$SESSION_DIR/taint.mjs" apply /tmp/woodshed-egress.json >/dev/null || die "the session's egress could not be set up"
+    rm -f /tmp/woodshed-egress.json
+  else
+    node "$SESSION_DIR/taint.mjs" proxy "$WOODSHED_EGRESS_PROXY" >/dev/null || die "the session's egress could not be set up"
+  fi
+  # shellcheck disable=SC1091
+  . /tmp/woodshed-egress.env
+  local rc
+  for rc in "$HOME/.profile" "$HOME/.bashrc"; do grep -qxF "$line" "$rc" 2>/dev/null || printf '\n%s\n' "$line" >> "$rc"; done
+  log "Egress through the console's proxy" "(tainted: $(tainted && echo yes || echo no))"
+}
+
+# The installation's production MCP server (console/prodMcp.mjs), for claude: the console's relay, with the session's
+# own token, which the server never sees. Off in /mcp until the person turns it on, since its first call of any kind
+# locks the session down for good; on in a session that is tainted already. Only for claude: Codex gets none yet.
+PROD_MCP_CONFIG=/tmp/woodshed-prod-mcp.json
+# taint.mjs's TAINTED_CLAUDE_FLAGS, which statusd adds when the session is tainted while it runs.
+TAINTED_CLAUDE_FLAGS=' --strict-mcp-config --disallowedTools WebSearch,WebFetch'
+configureProdMcp() {
+  [ "${WOODSHED_PROD_MCP:-}" = 1 ] && [ "${AGENT:-claude}" != codex ] && [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
+  (umask 077 && jq -n --arg url "$WOODSHED_CONSOLE_URL/prod-mcp" \
+    '{mcpServers: {"woodshed-prod": {type: "http", url: $url, headers: {Authorization: ("Bearer " + env.SESSION_TOKEN)}}}}' > "$PROD_MCP_CONFIG")
+  if tainted; then
+    node "$SESSION_DIR/taint.mjs" prod-server on
+    log "Production MCP server offered" "(on: the session is tainted)"
+  else
+    node "$SESSION_DIR/taint.mjs" prod-server off
+    log "Production MCP server offered" "(off until turned on in /mcp, which locks the session down)"
+  fi
+}
+
 # Answers the first-run dialogs ahead of time, so claude opens straight into the task.
 configureClaude() {
   local key=${ANTHROPIC_API_KEY:-}
@@ -495,6 +545,7 @@ writeRules() {
     own) docker=$(cat "$SESSION_DIR/ownDocker.md") ;;
   esac
   [ -z "$docker" ] || rules+=$'\n'"$docker"
+  if tainted; then rules+=$'\n'"$(cat "$SESSION_DIR/tainted.md")"; fi
   printf '%s\n' "$rules" > /tmp/woodshed-rules.md
   # The installation's instructions for the repo and the owner's own go after all of it, with which of them win.
   if [ -f "${REPO_SETTINGS_JSON:-}" ]; then
@@ -751,7 +802,11 @@ chooseClaudeAuth() {
   local line="PATH=$SESSION_DIR/bin:\$PATH"
   grep -qxF "$line" "$HOME/.profile" 2>/dev/null || printf '\n%s\n' "$line" >> "$HOME/.profile"
   [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
-  if [ "${SESSION_KIND:-}" = private ] && [ -s "$OWN_CLAUDE_TOKEN_FILE" ]; then
+  # A tainted session reaches Anthropic only through the console, which reads each of its calls (anthropicProxy.mjs).
+  if tainted; then
+    export WOODSHED_CLAUDE_AUTH=plan
+    log "claude runs on the owner's Claude plan, through the console: the session is tainted"
+  elif [ "${SESSION_KIND:-}" = private ] && [ -s "$OWN_CLAUDE_TOKEN_FILE" ]; then
     export WOODSHED_CLAUDE_AUTH=own WOODSHED_CLAUDE_TOKEN_FILE=$OWN_CLAUDE_TOKEN_FILE
     log "claude runs on the owner's own Claude token, directly"
   elif [ "${SESSION_KIND:-}" = private ] || [ -n "${STARTER_PLAN:-}" ]; then
@@ -766,7 +821,7 @@ chooseClaudeAuth() {
 # A private session's owner's shared Claude settings (settingsSync.mjs), over the home just restored, which can be older:
 # a session that stopped before another changed them. statusd keeps them in step from here.
 pullSettings() {
-  [ -n "${WOODSHED_CONSOLE_URL:-}" ] && [ "${SESSION_KIND:-}" = private ] || return 0
+  [ -n "${WOODSHED_CONSOLE_URL:-}" ] && [ "${SESSION_KIND:-}" = private ] && ! tainted || return 0
   node "$SESSION_DIR/settingsSync.mjs" pull || log "WARNING: shared Claude settings not pulled, starting with the home's"
 }
 
@@ -778,7 +833,11 @@ claudeFlags() {
   # the rules, a Read allow for each file outside the repo that Woodshed points claude at (the environment notes,
   # DEPS_STATUS, the docker ports' log, an ask's answer): auto mode asks a person before the first read outside the
   # working directories (Claude Code 2.1.325), which held every private session at Needs you on its notes.
+  # A tainted session's own first: --disallowedTools takes several values, so a flag must come after it, never the prompt.
+  if tainted; then printf '%s' "$TAINTED_CLAUDE_FLAGS"; fi
   printf ' --settings %s' "$SESSION_DIR/claudeHooks.json"
+  # Variadic too, so before the next flag.
+  [ ! -f "$PROD_MCP_CONFIG" ] || printf ' --mcp-config %s' "$PROD_MCP_CONFIG"
   printf ' --append-system-prompt-file %s' /tmp/woodshed-rules.md
   # Files attached to New session and pasted or dropped on a terminal land here, outside the repo: without this claude
   # asks before reading each one.
@@ -805,6 +864,8 @@ resumable() {
 restorePlugins() {
   local list="$HOME/.claude/plugins/installed_plugins.json" missing plugin scope err tried=0 left
   [ -f "$list" ] || return 0
+  # Their marketplaces are on the internet, which a tainted session does not reach.
+  if tainted; then log "Plugins not installed again: the session is tainted"; return 0; fi
   missing=$(node "$SESSION_DIR/missingPlugins.mjs" "$list" "$REPO_DIR")
   [ -n "$missing" ] || return 0
   while read -r plugin scope; do
@@ -825,7 +886,7 @@ restorePlugins() {
 # one off. Each is offered once, in the list the saved home keeps, so one its owner uninstalled stays gone. Best effort,
 # like restorePlugins.
 installDefaultPlugins() {
-  [ "${SESSION_KIND:-}" = private ] || return 0
+  [ "${SESSION_KIND:-}" = private ] && ! tainted || return 0
   local wanted plugin err installed=0 failed=0 offered="$HOME/.claude/woodshed-default-plugins.json"
   if ! wanted=$(node "$SESSION_DIR/defaultPlugins.mjs" "$HOME/.claude/plugins/installed_plugins.json" "$HOME/.claude/settings.json" "$offered"); then
     log "WARNING: the default plugins could not be read, none installed"
@@ -999,6 +1060,8 @@ runSession() {
   requireEnv SESSION_ID SESSION_TOKEN
   [ -n "${ANTHROPIC_API_KEY:-}${WOODSHED_CONSOLE_URL:-}" ] || die "set ANTHROPIC_API_KEY, or WOODSHED_CONSOLE_URL for the console's Anthropic proxy"
   [ -n "${GH_TOKEN:-}${WOODSHED_CONSOLE_URL:-}" ] || die "set WOODSHED_CONSOLE_URL (GitHub App) or GH_TOKEN"
+  # Before anything reaches GitHub, the repo's clone included.
+  configureEgress
   # Before anything reads the project file: on another project it is that repo's.
   useProjectRepo
   # The databases a session needs are the ones its project's env uses: a repo with no Postgres or Mongo is given none.
@@ -1032,6 +1095,7 @@ runSession() {
   chooseClaudeAuth
   writeEnvFiles
   writeOwnFiles
+  configureProdMcp
   configureClaude
   fetchAttachments
   # Resume reopens claude's own conversation, which already holds the task. A Codex session always writes its prompt.
@@ -1057,8 +1121,13 @@ runSession() {
   progress env
   startClaude
   progress claude
-  # Handed to the init like progress's reports: it outlives this shell.
-  ( refreshDeps & )
+  # Handed to the init like progress's reports: it outlives this shell. A tainted session reaches no registry.
+  if tainted; then
+    echo "skipped: this session has seen production data, so nothing is installed again (its network refuses package registries)" > "$DEPS_STATUS"
+    log "Dependencies not refreshed: the session is tainted"
+  else
+    ( refreshDeps & )
+  fi
   export BRANCH
   exec node "$SESSION_DIR/statusd.mjs"
 }

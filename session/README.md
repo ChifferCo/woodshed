@@ -205,6 +205,18 @@ The console's only way into a running session besides the terminal:
 
 Before the first hook, Woodshed's `classifyPane` reads the pane instead.
 
+## A tainted session
+
+A My Woodshed session that may use production has the `woodshed-prod` MCP server, turned off in `/mcp` until its person
+turns it on (`WOODSHED_PROD_MCP`, `configureProdMcp`). Its first call taints it, and the console locks its network down
+from outside (`../docs/reference.md`, "Production access"). Inside, `taint.mjs` makes the session work within that:
+statusd's `POST /taint`, or the entrypoint of a resumed one (`WOODSHED_TAINTED`), writes `/tmp/woodshed-tainted`, points
+every tool at the console's egress proxy (`/tmp/woodshed-egress.env`, sourced by `~/.profile` and `~/.bashrc`), trusts
+the proxy's authority for GitHub, adds `tainted.md` to the rules, and reopens claude on the console's Anthropic proxy
+(`bin/claude`) with web search and fetch off and only `woodshed-prod` among its MCP servers. Nothing here is the
+lockdown: undoing it reaches nothing more. A tainted session installs nothing again (`/tmp/woodshed-deps` says so),
+offers no default plugins, has no Remote Control and syncs no settings.
+
 ## Why permissions are off
 
 The container is the sandbox. It holds no production credentials, its GitHub

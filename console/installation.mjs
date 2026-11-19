@@ -27,6 +27,11 @@ import { createAppApi } from './githubApp.mjs';
 import { appOwnerCheck } from './appOwner.mjs';
 import { createAppIdentity, hostAppIdentity } from './appIdentity.mjs';
 import { createAnthropicProxy } from './anthropicProxy.mjs';
+import { createEgressCerts } from './egressCerts.mjs';
+import { createEgressProxy } from './egressProxy.mjs';
+import { GITHUB_HOSTS } from './githubEgress.mjs';
+import { createOidcIssuer } from './oidcIssuer.mjs';
+import { createProdMcpRelay } from './prodMcp.mjs';
 import { createOpenAiProxy } from './openaiProxy.mjs';
 import { createCodexModels } from './codexModels.mjs';
 import { createSessionApi, sessionForToken } from './sessionApi.mjs';
@@ -205,6 +210,27 @@ async function loadAppKey(config, secrets) {
   };
 }
 
+// Production debugging (prodMcp.mjs), when WOODSHED_PROD_MCP_URL is set: the console as the OIDC issuer whose tokens
+// woodshed-prod-mcp trusts, its key a secret where there is a store and otherwise a file in the state folder, and the
+// certificate authority the egress proxy shows tainted sessions for GitHub.
+function productionAccess({ loaded, secrets }) {
+  const settings = loaded.prodMcp;
+  if (!settings) return null;
+  const issuer = createOidcIssuer({ issuer: settings.issuer, secrets, keyFile: secrets ? null : path.join(loaded.stateDir, 'oidc-signing-key.pem') });
+  const certs = createEgressCerts({ dir: path.join(loaded.stateDir, 'egress'), hosts: GITHUB_HOSTS });
+  const people = settings.people === '*' ? 'everyone' : settings.people.size;
+  const repos = settings.repos === '*' ? 'every repo' : [...settings.repos];
+  console.log('prodMcp: on', { server: new URL(settings.url).host, people, repos, issuer: settings.issuer, egress: loaded.egress.sessionUrl, removeAfterHours: settings.removeAfterMs / 3_600_000 });
+  if (!people || (Array.isArray(repos) && !repos.length)) console.warn('prodMcp: WOODSHED_PROD_MCP_PEOPLE or WOODSHED_PROD_MCP_REPOS lists nobody, so no session gets production access');
+  if (!loaded.egress.sessionUrl) console.warn('prodMcp: no address for the egress proxy (WOODSHED_EGRESS_PROXY_URL, or WOODSHED_CONSOLE_URL in the session env), so a tainted session reaches no GitHub');
+  // Every relying party fetches the keys over https from the issuer's own name.
+  if (!settings.issuer.startsWith('https://')) console.warn('oidcIssuer: the issuer is not https, which woodshed-prod-mcp may refuse', { issuer: settings.issuer });
+  // Made or read now rather than at the first call, so a key or authority that cannot be made shows at start.
+  issuer.load().catch(() => {});
+  certs.caPem().catch((err) => console.error('egress: certificate authority not ready', { message: err.message }));
+  return { issuer, certs, egress: { sessionUrl: loaded.egress.sessionUrl, caPem: () => certs.caPem() } };
+}
+
 /**
  * @param {{config: object, store: {state: object, save: () => void}, provider: {name?: string|null, words?: object|null,
  *          launcher: object, secrets: object|null, homes: object|null, dbAdmin: object|null, databases?: string[],
@@ -308,6 +334,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const codexModels = createCodexModels({ userSettings, teamCredential: openai.teamCredential });
   const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
   const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });
+  const production = productionAccess({ loaded, secrets });
   // Who reviews a pull request in a review session, as its author chose on My settings, from what the team keys and their
   // own sign-ins can run.
   const reviewAgents = createReviewAgents({
@@ -339,7 +366,16 @@ export async function createInstallation({ config: loaded, store, provider, trus
     reviewerApp,
     repoTriggers,
     reviewAgents,
+    prodMcp: loaded.prodMcp,
+    appShares,
+    egress: production?.egress ?? null,
   });
+  // The relay and the egress proxy need the fleet, which locks a session down and says whether it is.
+  const prodMcp = production ? createProdMcpRelay({ settings: loaded.prodMcp, issuer: production.issuer, fleet, repoOf: (session) => projectFor(config, session).repo ?? null }) : null;
+  const egressProxy = production ? createEgressProxy({
+    sessions: () => fleet.sessions(), isLocked: fleet.isLocked, certs: production.certs,
+    orgOf: (session) => projectFor(config, session).repo?.split('/')[0] ?? null,
+  }) : null;
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
   // Questions need the bot token to answer, and the session API to hear the answer.
@@ -404,7 +440,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const handle = createHandler({
     config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
-    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
+    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, oidc: production?.issuer ?? null, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,
     workflowLinks: () => projectReader.workflowLinks(),
     // Behind a hosting proxy nobody's write access is asked: the host says who is in.
@@ -420,7 +456,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
+    prodMcp, egress: production?.egress ?? null,
   }) : null;
+  if (production && !sessionApi) console.warn('prodMcp: no session API (WOODSHED_SESSION_API_HOST), so no session can reach production');
   const webhookDispatch = createWebhookDispatch({ label: config.label, labelOf: (name) => repoTriggers.of(name ?? defaultProject(config).name).label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity, webhookSwitch });
   const loops = createLoops();
 
@@ -484,6 +522,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
     handle,
     upgrade,
     sessionApi,
+    // The port a tainted session leaves through, on the session API's address (server.mjs listens).
+    egressProxy: egressProxy && sessionApi ? { server: egressProxy, port: loaded.egress.port } : null,
     appPorts,
     start,
     /** Stops the loops; requests already in flight finish. */
@@ -497,6 +537,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
       launcher: config.launcher.kind, maxRunning: config.maxRunning, pollGitHub: config.pollGitHub,
       githubApp: Boolean(config.githubApp), githubBroker: Boolean(config.githubBroker), ownDatabases: databases.available, tunnel: tunnel.available,
       appPorts: appPorts ? appPorts.ports.length : 0,
+      prodMcp: Boolean(production),
     }),
   };
 }

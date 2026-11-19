@@ -19,12 +19,20 @@ const PER_SESSION_ENV = [
   'SESSION_ID', 'SESSION_TOKEN', 'TERMINAL_TOKEN', 'STARTED_BY', 'SESSION_URL', 'ISSUE', 'PR', 'BRANCH', 'PROMPT',
   'SESSION_KIND', 'AGENT', 'MODEL', 'EFFORT', 'PERMISSION_MODE', 'RESUME_SESSION', 'ATTACHMENTS', 'REVIEW_ONLY', 'SESSION_MODE', 'ASKED_BY', 'QA_BASE', 'REVIEW_BASE', 'REVIEW_AUTHOR', 'REVIEW_AGENTS', 'REVIEW_CODEX_AUTH', 'REVIEW_CODEX_ACCOUNT', 'PROJECT_REPO',
   'SESSION_APP_DOMAIN',
+  // Production access (console/prodMcp.mjs): whether the session has the MCP server, is tainted, and its egress proxy.
+  'WOODSHED_PROD_MCP', 'WOODSHED_TAINTED', 'WOODSHED_EGRESS_PROXY',
 ];
 const CONTAINER = 'session';
 const IP_WAIT_MS = 90_000;
 const IP_POLL_MS = 3_000;
 const STARTED_BY_PREFIX = 'started-by:';
-const endpointOf = (taskArn, host) => ({ ref: taskArn, host, termPort: 7681, statusPort: 7682, shellPort: 7684 });
+const endpointOf = (taskArn, host, guarded = false) => ({ ref: taskArn, host, termPort: 7681, statusPort: 7682, shellPort: 7684, ...(guarded ? { guarded: true } : {}) });
+
+/** @returns {string|null}  the subnet a task's network interface is in */
+export function taskSubnet(task) {
+  const details = task?.attachments?.find((a) => a.type === 'ElasticNetworkInterface')?.details ?? [];
+  return details.find((d) => d.name === 'subnetId')?.value ?? null;
+}
 // ECS caps a run's overrides at 8192 characters; the prompt, a comment's text, is the only part that can grow.
 const MAX_PROMPT_CHARS = 6000;
 const TRUNCATED_NOTE = '\n\n[Cut short to fit the task. Read the whole comment on the issue or PR.]';
@@ -133,10 +141,16 @@ function serviceOverrides(env) {
 
 /**
  * @param {{cluster: string, taskDefinition: string, subnets: string[], securityGroup: string,
- *          logGroup: string, aws?: typeof awsCli, sleep?: (ms: number) => Promise<void>}} opts
+ *          logGroup: string, guarded?: {subnets: string[], securityGroup: string}|null,
+ *          aws?: typeof awsCli, sleep?: (ms: number) => Promise<void>}} opts
+ *   `guarded` is Terraform's network for sessions that may use production (providers/aws/README.md, "Production
+ *   access"): subnets with no route out and a security group whose only way out is the console's egress proxy. A
+ *   Fargate task's security groups cannot change once it runs, so such a session starts there, before it is tainted,
+ *   and the proxy holds the taint. Without it no session can be locked down.
  */
-export function ecsLauncher({ cluster, taskDefinition, subnets, securityGroup, logGroup, aws = awsCli, sleep }) {
+export function ecsLauncher({ cluster, taskDefinition, subnets, securityGroup, logGroup, guarded = null, aws = awsCli, sleep }) {
   const wait = sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const guardedSubnets = new Set(guarded?.subnets ?? []);
 
   async function describe(taskArn) {
     const out = await aws(['ecs', 'describe-tasks', '--cluster', cluster, '--tasks', taskArn]);
@@ -155,6 +169,8 @@ export function ecsLauncher({ cluster, taskDefinition, subnets, securityGroup, l
 
   return {
     kind: 'ecs',
+    // Its sessions that may use production reach the internet only through the console's egress proxy, from the start.
+    guardsEgress: Boolean(guarded),
 
     // A task's ARN is only known once it runs; until then it is found by the session id it was started with.
     refFor(sessionId) {
@@ -162,7 +178,13 @@ export function ecsLauncher({ cluster, taskDefinition, subnets, securityGroup, l
     },
 
     async start(sessionId, env) {
-      const network = { awsvpcConfiguration: { subnets, securityGroups: [securityGroup], assignPublicIp: 'ENABLED' } };
+      const production = env.WOODSHED_PROD_MCP === '1' || env.WOODSHED_TAINTED === '1';
+      // A tainted session starts nowhere but the guarded network: there is no other way to hold it to the lockdown.
+      if (env.WOODSHED_TAINTED === '1' && !guarded) throw new Error('this session has seen production data, and the console has no guarded network to start it on (Terraform\'s prod_mcp)');
+      const onGuarded = production && Boolean(guarded);
+      const network = onGuarded
+        ? { awsvpcConfiguration: { subnets: guarded.subnets, securityGroups: [guarded.securityGroup], assignPublicIp: 'DISABLED' } }
+        : { awsvpcConfiguration: { subnets, securityGroups: [securityGroup], assignPublicIp: 'ENABLED' } };
       const overrides = { containerOverrides: [{ name: CONTAINER, environment: sessionOverrides(env) }] };
       const out = await aws([
         'ecs', 'run-task', '--cluster', cluster, '--task-definition', taskDefinition, '--launch-type', 'FARGATE',
@@ -172,14 +194,14 @@ export function ecsLauncher({ cluster, taskDefinition, subnets, securityGroup, l
       ]);
       const taskArn = out?.tasks?.[0]?.taskArn;
       if (!taskArn) throw new Error(`run-task started nothing: ${out?.failures?.[0]?.reason ?? 'no reason given'}`);
-      console.log('launcher: task started', { sessionId, taskArn, private: env.SESSION_KIND === 'private' });
+      console.log('launcher: task started', { sessionId, taskArn, private: env.SESSION_KIND === 'private', guarded: onGuarded });
 
       // Once run-task succeeds, any failure here must stop the task: the session is marked failed and nothing else would.
       try {
         for (let waited = 0; waited < IP_WAIT_MS; waited += IP_POLL_MS) {
           const task = await describe(taskArn);
           const host = taskPrivateIp(task);
-          if (host) return endpointOf(taskArn, host);
+          if (host) return endpointOf(taskArn, host, onGuarded);
           if (task?.lastStatus === 'STOPPED') throw new Error(`task stopped before it had an address: ${task.stoppedReason ?? 'no reason given'}`);
           await wait(IP_POLL_MS);
         }
@@ -196,8 +218,22 @@ export function ecsLauncher({ cluster, taskDefinition, subnets, securityGroup, l
     async find(sessionId) {
       const taskArn = (await aws(['ecs', 'list-tasks', '--cluster', cluster, '--started-by', sessionId]))?.taskArns?.[0];
       if (!taskArn) return null;
-      const host = taskPrivateIp(await describe(taskArn));
-      return host ? endpointOf(taskArn, host) : null;
+      const task = await describe(taskArn);
+      const host = taskPrivateIp(task);
+      return host ? endpointOf(taskArn, host, guardedSubnets.has(taskSubnet(task))) : null;
+    },
+
+    /**
+     * A running session's lockdown, which on AWS is already in place or never can be: only a task on the guarded
+     * network, checked by its subnet as ECS describes it, reaches nothing but the console. The egress proxy then holds
+     * it to the tainted rules from the moment the fleet starts locking it (fleet.isLocked).
+     * @returns {Promise<{locked: true}>}
+     */
+    async lockDown(taskArn) {
+      if (!guarded) throw new Error('this console has no guarded network for sessions (Terraform\'s prod_mcp)');
+      const subnet = taskSubnet(await describe(taskArn));
+      if (!guardedSubnets.has(subnet)) throw new Error(`the session runs outside the guarded network (subnet ${subnet ?? 'unknown'}): start a new My Woodshed session, which starts there`);
+      return { locked: true };
     },
 
     async isAlive(taskArn) {

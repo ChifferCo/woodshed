@@ -252,10 +252,23 @@
    * @returns {HTMLElement|null}  the tag after a card's title: Private, or Assigned on a shared session someone has
    */
   function ownerTag(s, { named = false } = {}) {
+    // A session that has seen production data is its owner's alone too, and says so first.
+    if (s.owner && s.taintedAt) return productionTag(s);
     if (s.owner) return h('span', { class: 'otag is-private', title: 'Only you see this session' }, 'Private');
     if (s.assignee && named) return h('span', { class: 'otag is-assigned is-named', title: `Assigned to @${s.assignee}` }, personText(s.assignee));
     if (s.assignee) return h('span', { class: 'otag is-assigned', title: `Assigned to ${personText(s.assignee)}` }, 'Assigned');
     return null;
+  }
+
+  /**
+   * The mark of a session that has seen production data (console/prodMcp.mjs): on its card, in place of Private, and on
+   * its pane bar with the longer word.
+   * @param {object} s
+   * @param {{long?: boolean}} [o]
+   */
+  function productionTag(s, { long = false } = {}) {
+    const title = `Production data since ${new Date(s.taintedAt).toLocaleString()}. Only you see this session; it reaches nothing but the console, its databases and your organization's private repos, for good, and everything it kept is deleted when it is removed.`;
+    return h('span', { class: 'otag is-production', title }, long ? 'Production data' : 'Production');
   }
 
   /**
@@ -1565,7 +1578,7 @@
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
-    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
+    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();

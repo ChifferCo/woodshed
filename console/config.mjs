@@ -8,6 +8,7 @@ import { currentName, envValue } from '../shared/envNames.mjs';
 import { RUNS_ON_NAME } from '../shared/project.mjs';
 import { isSessionVariable } from '../shared/reservedNames.mjs';
 import { parseAppPorts } from './appPorts.mjs';
+import { prodMcpSettings } from './prodMcp.mjs';
 import { defaultProject, loadProjects } from './projects.mjs';
 import { secretSpecs } from './secrets.mjs';
 
@@ -291,8 +292,39 @@ function onePerson(env) {
  * @param {{readGhToken?: boolean}} [opts]  false leaves `gh auth token` unasked, for a caller that takes the defaults
  *   from here and gives the console its GitHub access another way
  */
+/**
+ * The egress proxy a tainted session leaves through (egressProxy.mjs): its port on the session API's address, and the
+ * URL sessions reach it at, which WOODSHED_EGRESS_PROXY_URL gives (AWS: the base box's private address) or else the
+ * session env's WOODSHED_CONSOLE_URL on that port (the local provider's session env file).
+ * @returns {{port: number, sessionUrl: string|null}}
+ */
+export function egressSettings(env, sessionEnv) {
+  const port = number(env.WOODSHED_EGRESS_PORT, 7693);
+  const given = String(env.WOODSHED_EGRESS_PROXY_URL ?? '').trim();
+  if (given) {
+    const url = new URL(given);
+    if (url.protocol !== 'http:' || url.username || url.password || url.pathname !== '/' || url.search) throw new Error('WOODSHED_EGRESS_PROXY_URL must be http://<host>:<port> and nothing else');
+    return { port, sessionUrl: `http://${url.host}` };
+  }
+  const consoleUrl = sessionEnv?.WOODSHED_CONSOLE_URL;
+  if (!consoleUrl) return { port, sessionUrl: null };
+  const url = new URL(consoleUrl);
+  return { port, sessionUrl: `http://${url.hostname.includes(':') ? `[${url.hostname}]` : url.hostname}:${port}` };
+}
+
+// The ECS network for sessions that may use production, which Terraform makes with prod_mcp: both or neither.
+function guardedNetwork(env) {
+  const subnets = (env.WOODSHED_ECS_GUARDED_SUBNETS || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const securityGroup = env.WOODSHED_ECS_GUARDED_SECURITY_GROUP || null;
+  if (!subnets.length && !securityGroup) return null;
+  if (!subnets.length || !securityGroup) throw new Error('WOODSHED_ECS_GUARDED_SUBNETS and WOODSHED_ECS_GUARDED_SECURITY_GROUP go together');
+  return { subnets, securityGroup };
+}
+
 export function loadConfig(env = process.env, { readGhToken = true } = {}) {
   const port = number(envValue(env, 'PORT'), 7690);
+  const publicUrl = (envValue(env, 'PUBLIC_URL') || `http://localhost:${port}`).replace(/\/+$/, '');
+  const sessionEnv = readSessionEnv(envValue(env, 'SESSION_ENV_FILE'));
   const app = githubApp(env);
   const broker = githubBroker(env);
   const identitySecret = trustedIdentitySecret(env);
@@ -306,7 +338,12 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     runsOnName: runsOnName(env),
     host: envValue(env, 'HOST') || '127.0.0.1',
     port,
-    publicUrl: (envValue(env, 'PUBLIC_URL') || `http://localhost:${port}`).replace(/\/+$/, ''),
+    publicUrl,
+    // Production debugging through woodshed-prod-mcp (prodMcp.mjs), with the console as the OIDC issuer its tokens
+    // name; null keeps it, the issuer and every lockdown off.
+    prodMcp: prodMcpSettings(env, publicUrl),
+    // Where a tainted session's egress goes (egressProxy.mjs).
+    egress: egressSettings(env, sessionEnv),
     extraHosts: (envValue(env, 'HOSTS') || '').split(',').map((h) => h.trim()).filter(Boolean),
     // Session apps answer at `<id>.<appDomain>`; empty turns them off.
     appDomain: (envValue(env, 'APP_DOMAIN') || '').trim().toLowerCase(),
@@ -365,12 +402,14 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
         subnets: (envValue(env, 'ECS_SUBNETS') || '').split(',').filter(Boolean),
         securityGroup: envValue(env, 'ECS_SECURITY_GROUP'),
         logGroup: envValue(env, 'ECS_LOG_GROUP'),
+        // Sessions that may use production start here (ecsLauncher.mjs); null without Terraform's prod_mcp.
+        guarded: guardedNetwork(env),
       },
     },
     // In AWS the queue Terraform makes, found by name; `0` turns it off. Elsewhere none, so a dev box only polls.
     webhookQueue: webhookQueue(env),
     fallbackPollMs: number(envValue(env, 'FALLBACK_POLL_SECONDS'), 300) * 1000,
-    sessionEnv: readSessionEnv(envValue(env, 'SESSION_ENV_FILE')),
+    sessionEnv,
     // Where woodshed-db.mjs's connections go (dbTunnel.mjs), as `host:port`; without both, no tunnel.
     tunnelTargets: { pg: envValue(env, 'TUNNEL_POSTGRES') || null, mongo: envValue(env, 'TUNNEL_MONGO') || null },
     // Where each person's Claude home is kept between their private sessions (the aws provider's homeStore.mjs); none turns that off.
