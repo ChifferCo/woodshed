@@ -286,7 +286,7 @@
     const used = new Set();
     return pending.filter((p) => {
       // One the console holds waits as long as the agent's turn runs: it is let go only once the record holds it.
-      if (p.state !== 'held' && now - p.sentAt > PENDING_MS) return false;
+      if (p.state !== 'held' && p.state !== 'in-box' && now - p.sentAt > PENDING_MS) return false;
       const want = squash(p.text);
       const found = entries.findIndex((e, i) => !used.has(i) && e.role === 'user'
         && (!e.at || Date.parse(e.at) >= p.sentAt - 30_000) && squash(e.text).startsWith(want.slice(0, 200)));
@@ -431,6 +431,7 @@
    */
   function pendingLabel(state, agent) {
     if (state === 'sending') return 'Sending…';
+    if (state === 'in-box') return `In ${agent}'s box, not sent: send or clear it in the TUI tab`;
     if (state === 'held') return `Not sent yet: it goes in when ${agent} is back at its prompt`;
     return `Sent, waiting for ${agent}`;
   }
@@ -444,5 +445,23 @@
     return 15_000 + steps * 60;
   }
 
-  return { sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
+  /**
+   * The page's messages after the console said one sits in the agent's box unsent (`leftInBox`: its length and when):
+   * the one of that length sent before then says so; once the box is empty again (no leftInBox) it is let go, since it
+   * was sent from the TUI tab (the record shows it) or cleared.
+   * @param {{text: string, sentAt: number, state: string}[]} pending
+   * @param {{at: string, chars: number}|null} leftInBox
+   */
+  function inBox(pending, leftInBox) {
+    if (!leftInBox) return pending.filter((p) => p.state !== 'in-box');
+    const at = Date.parse(leftInBox.at);
+    let marked = false;
+    return pending.map((p) => {
+      if (marked || p.state === 'sending' || p.text.length !== leftInBox.chars || p.sentAt > at) return p;
+      marked = true;
+      return { ...p, state: 'in-box' };
+    });
+  }
+
+  return { inBox, sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
 });

@@ -536,9 +536,12 @@ export function createFleet({
 
   // A send statusd refused after the text went in (a prompt came up as it was typed): typing it again would put it in
   // the agent's box twice. It is there, for the agent to read once the prompt is answered.
-  function inTheBox(session, err) {
+  // The page is told which of its messages that was, by its length and when, never its text (`leftInBox`), so its bubble
+  // can say it sits in the box; a status read with the box empty again forgets it (readStatus).
+  function inTheBox(session, err, text) {
     if (!(err?.status === 409 && err.body?.typed === true)) return false;
-    console.warn('fleet: message left in the agent\'s box, a prompt came up as it was typed', { id: session.id });
+    console.warn('fleet: message left in the agent\'s box, not sent', { id: session.id, why: err.body?.why ?? null });
+    update(session, { leftInBox: { at: nowIso(), chars: text.length } });
     return true;
   }
 
@@ -569,7 +572,7 @@ export function createFleet({
     try {
       await statusd(session, 'POST', '/send', { body: { text }, timeoutMs: sendTimeoutMs(text) });
     } catch (err) {
-      if (inTheBox(session, err)) return 'in-box';
+      if (inTheBox(session, err, text)) return 'in-box';
       if (unknownOutcome(session, err)) return 'sent';
       // Busy is not a failure: hold() says it is held.
       if (!busyWhy(err)) console.warn('fleet: send failed, holding the message', { id: session.id, message: firstLine(err) });
@@ -593,7 +596,7 @@ export function createFleet({
           update(session, { pendingMessages: withoutFirst(session.pendingMessages, text) });
           continue;
         }
-        boxed = inTheBox(session, err) || unknownOutcome(session, err);
+        boxed = inTheBox(session, err, text) || unknownOutcome(session, err);
         if (!boxed) {
           // Busy is the usual answer mid-turn: said once per reason, not on every status read.
           const why = busyWhy(err) ?? firstLine(err);
@@ -761,6 +764,11 @@ export function createFleet({
       const wasStarting = session.status === 'starting';
       const wasAsking = session.state === 'needs-you';
       update(session, statusUpdate(session, status, nowIso()));
+      // A message left in the box: sent or cleared in the TUI tab once the box is empty again.
+      if (session.leftInBox && status.boxText === false) {
+        update(session, { leftInBox: null });
+        console.log('fleet: the agent\'s box is empty again, the message left in it sent or cleared', { id: session.id });
+      }
       // Once each time it starts to ask: a session still asking on the next read is not told about again.
       if (!wasAsking && session.state === 'needs-you' && pings) await safely('assignee message', () => pings.needsYou(session));
       if (wasStarting) console.log('fleet: session running', { id: session.id, branch: session.branch, seconds: secondsSince(session.startedAt) });

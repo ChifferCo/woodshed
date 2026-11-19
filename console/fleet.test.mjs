@@ -3345,3 +3345,22 @@ test('a send that outlives its deadline may have gone in: it is not held, and ne
   assert.equal(await fleet.send(session, 'refused'), 'queued');
   assert.deepEqual(session.pendingMessages, ['refused']);
 });
+
+test('a queued message left in the agent\'s box is noted for the page, by length, until the box is empty again', async () => {
+  const { fleet, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendTyped = true;
+  assert.equal(await fleet.send(session, 'a held message'), 'in-box');
+  assert.equal(session.leftInBox.chars, 'a held message'.length);
+  assert.equal(JSON.stringify(session.leftInBox).includes('held message'), false, 'its length, never its text');
+  fail.sendTyped = false;
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc', boxText: true };
+  await fleet.tick();
+  assert.ok(session.leftInBox, 'still in the box');
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc', boxText: false };
+  await fleet.tick();
+  assert.equal(session.leftInBox, null, 'sent or cleared in the TUI tab');
+});

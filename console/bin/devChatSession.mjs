@@ -20,6 +20,7 @@
 // pane's, as in a session.
 
 import { execFileSync, spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -97,6 +98,24 @@ async function trustOnce(tmux) {
  *   terminalToken
  * @returns {Promise<{port: number, termPort: number|null, ref: string|null, binDir: string|null, close: () => void}|null>}
  */
+function fileHash(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+/**
+ * The login lent to the dev session's codex, given back to the machine at its close, but only when the copy is the
+ * newer one: codex refreshed it (its copy changed) and the machine's is still the one it was lent (nobody signed in
+ * again, no codex of the machine's refreshed it, since). Otherwise the machine's stays as it is.
+ * @param {{host: string, lent: string, startedAs: string}} files  startedAs: the hash both were at the start
+ * @returns {'copied back'|'unchanged'|'kept the newer one on the machine'}
+ */
+export function returnLogin({ host, lent, startedAs }) {
+  if (fileHash(lent) === startedAs) return 'unchanged';
+  if (fileHash(host) !== startedAs) return 'kept the newer one on the machine';
+  fs.copyFileSync(lent, host);
+  return 'copied back';
+}
+
 export async function startDevChatSession({ id, token, agent, nextPath, real = false, terminalToken = '' }) {
   if (!onPath('tmux') || (real && (!onPath(agent) || !onPath('ttyd')))) return null;
   const ownCodexAuth = path.join(os.homedir(), '.codex', 'auth.json');
@@ -106,6 +125,7 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `woodshed-dev-chat-${real ? 'real-' : ''}${agent}-`));
   const realCodex = real && agent === 'codex';
+  let lentLogin = null;
   const home = real && !realCodex ? os.homedir() : path.join(root, 'home');
   const repo = path.join(root, 'repo');
   if (!real || realCodex) fs.mkdirSync(home);
@@ -127,6 +147,7 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   if (realCodex) {
     fs.mkdirSync(codexHome, { recursive: true, mode: 0o700 });
     fs.copyFileSync(ownCodexAuth, path.join(codexHome, 'auth.json'));
+    lentLogin = { at: fileHash(ownCodexAuth) };
     fs.chmodSync(path.join(codexHome, 'auth.json'), 0o600);
     fs.writeFileSync(path.join(codexHome, 'config.toml'), `[projects."${repo}"]\ntrust_level = "trusted"\n`);
   }
@@ -193,10 +214,11 @@ PATH='${nextPath}' exec docker "$@"
       } catch {
         // Gone already.
       }
-      // codex may have refreshed the login it was lent: the machine keeps the newer one.
+      // codex may have refreshed the login it was lent: the machine keeps the newer one (returnLogin).
       if (realCodex) {
         try {
-          fs.copyFileSync(path.join(codexHome, 'auth.json'), ownCodexAuth);
+          const outcome = returnLogin({ host: ownCodexAuth, lent: path.join(codexHome, 'auth.json'), startedAs: lentLogin.at });
+          console.log('dev console: the real codex\'s login', { outcome });
         } catch (err) {
           console.warn('dev console: the real codex\'s login not copied back', { message: err.message });
         }

@@ -1028,3 +1028,23 @@ test('a message is typed so no agent folds it into a paste: claude in short runs
   const emoji = '🙂'.repeat(60);
   assert.equal(typingSteps(emoji, 'claude').map((s) => s.keys).join(''), emoji);
 });
+
+test('before typing, the box is read on the screen alone: an old frame in the scrollback is not the box', async (t) => {
+  // claude's inline mode leaves earlier frames above the screen. Here an empty box scrolled off the top, and the screen
+  // now shows no box (its footer, nothing to type into): no box, so nothing goes in.
+  const grey = (x) => `\x1b[38;5;244m${x}\x1b[39m`;
+  const old = `${grey('─'.repeat(40))}\n❯ \x1b[2mTry "x"\x1b[0m\n${grey('─'.repeat(40))}\n`;
+  const filler = Array.from({ length: 60 }, (_, i) => `● line ${i} of an answer`).join('\n');
+  const { call, got } = await promptPane(t, 'done', { screen: `${old}${filler}\n  ⏵⏵ auto mode on (shift+tab to cycle)\n` });
+  const sent = await call('POST', '/send', 'sess', JSON.stringify({ text: 'not into nothing' }));
+  assert.equal(sent.status, 409);
+  assert.equal(sent.body.why, 'box-in-use', 'no box on the screen: refused before any key');
+  assert.equal(await got(), '');
+});
+
+test('a typing call that fails after part of the text went in says so, for nothing to send all of it again', () => {
+  const failed = Object.assign(new Error('Command failed: tmux send-keys -l secret'), { code: 1 });
+  assert.equal(typingError(failed, true).partial, true);
+  assert.equal(typingError(failed).partial, false);
+  assert.doesNotMatch(typingError(failed, true).message, /secret/);
+});

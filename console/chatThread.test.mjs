@@ -258,3 +258,13 @@ test('the page waits on a send longer than the console waits on statusd typing i
     assert.ok(chat.sendTimeoutMs(text) > sendTimeoutMs(text), `${text.length} characters`);
   }
 });
+
+test('a message of the page left in the agent\'s box says so, and is let go once the box is empty again', () => {
+  const t0 = Date.parse('2026-11-19T12:00:00.000Z');
+  const pending = [{ text: 'first', sentAt: t0, state: 'sent' }, { text: 'held one', sentAt: t0 + 1000, state: 'held' }];
+  const marked = chat.inBox(pending, { at: '2026-11-19T12:00:05.000Z', chars: 'held one'.length });
+  assert.deepEqual(marked.map((p) => p.state), ['sent', 'in-box']);
+  assert.equal(chat.pendingLabel('in-box', 'codex'), "In codex's box, not sent: send or clear it in the TUI tab");
+  assert.deepEqual(chat.stillPending(marked, [], t0 + 60 * 60_000).map((p) => p.text), ['held one'], 'not let go after ten minutes');
+  assert.deepEqual(chat.inBox(marked, null).map((p) => p.text), ['first'], 'the box empty again: let go');
+});

@@ -687,6 +687,12 @@
       const was = session?.state;
       const wasBox = session?.boxText === true;
       session = s;
+      // A message of the page's left in the agent's box unsent, as the console says: its bubble says so, and goes once
+      // the box is empty again.
+      const before = pendingOf(s.id);
+      const after = T.inBox(before, s.leftInBox ?? null);
+      const boxMoved = after.length !== before.length || after.some((p, i) => p.state !== before[i].state);
+      if (boxMoved) pending.set(s.id, after);
       if (moved) {
         prompt = null;
         approval = null;
@@ -721,9 +727,11 @@
         drawThread(false);
         drawComposer();
         schedule(0);
-      } else if (wasBox !== (s.boxText === true)) {
-        // Text came to wait in the agent's box, or left it: the status line says so.
+      } else if (wasBox !== (s.boxText === true) || boxMoved) {
+        // Text came to wait in the agent's box, or left it: the status line says so, and the bubble of a message of the
+        // page's in it.
         drawStatus();
+        if (boxMoved) drawThread(false);
       }
     }
 

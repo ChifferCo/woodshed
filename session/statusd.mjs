@@ -922,8 +922,8 @@ export function typingSteps(text, agent) {
  * line, and what someone typed never goes in a log or a reply.
  * @returns {Error & {typing: true}}
  */
-export function typingError(err) {
-  return Object.assign(new Error(`tmux could not type the message (exit ${Number.isInteger(err?.code) ? err.code : 'unknown'})`), { typing: true });
+export function typingError(err, partial = false) {
+  return Object.assign(new Error(`tmux could not type the message (exit ${Number.isInteger(err?.code) ? err.code : 'unknown'})`), { typing: true, partial });
 }
 
 // The agent's pane, for typeMessage (panePrompt.mjs): read it, type into it, press Enter.
@@ -932,6 +932,7 @@ const paneIo = {
   async type(text) {
     // A failed call's error quotes its command line, the message's text with it: it is said again without it, since
     // what someone typed never goes in a log.
+    let done = 0;
     try {
       for (const step of typingSteps(text, CODEX ? 'codex' : 'claude')) {
         if (step.paste !== undefined) {
@@ -939,10 +940,12 @@ const paneIo = {
           await run('tmux', ['paste-buffer', '-p', '-d', '-b', 'woodshed-send', '-t', TMUX_TARGET]);
         } else if (step.keys !== undefined) await run('tmux', ['send-keys', '-t', TMUX_TARGET, '-l', step.keys]);
         else await run('tmux', ['send-keys', '-t', TMUX_TARGET, step.key]);
+        done++;
         await new Promise((resolve) => setTimeout(resolve, step.pauseMs));
       }
     } catch (err) {
-      throw typingError(err);
+      // Part of it may be in the box already: said so, for nothing to send the whole of it again.
+      throw typingError(err, done > 0);
     }
   },
   enter: () => run('tmux', ['send-keys', '-t', TMUX_TARGET, 'Enter']),
@@ -979,9 +982,12 @@ let lastSent = null;
 // Enter (a prompt came up, the Enter failed). Its own text would be sent with the message, or the message typed onto
 // its end. The box is read from the screen with its colours (composerEmpty, panePrompt.mjs), so an edited draft still
 // counts and the box's own suggestion, drawn dim, does not.
-// The pane with its colours and `back` lines of scrollback over the screen.
-async function captureBox(back = 200) {
-  return (await run('tmux', ['capture-pane', '-e', '-p', '-S', String(-Math.min(back, 10_000)), '-t', TMUX_TARGET])).stdout;
+// The pane with its colours: the screen alone, or with `back` lines of scrollback over it. Only the read after typing
+// needs scrollback, to see a draft taller than the screen whole; everywhere else the screen alone is read, since the
+// agent's old frames and dialogs above it are not what it shows now.
+async function captureBox(back = 0) {
+  const scroll = back > 0 ? ['-S', String(-Math.min(back, 10_000))] : [];
+  return (await run('tmux', ['capture-pane', '-e', '-p', ...scroll, '-t', TMUX_TARGET])).stdout;
 }
 
 async function boxEmpty() {
@@ -1389,7 +1395,11 @@ async function handle(req, res) {
     } catch (err) {
       const message = String(err?.message ?? err).split('\n')[0];
       if (err?.typing) {
-        console.warn('statusd: text not sent, tmux could not type it', { chars: text.length, message });
+        console.warn('statusd: text not sent, tmux could not type it', { chars: text.length, partial: err.partial, message });
+        // Part of it went in: it is in the box, unsent, like a message a prompt cut off, and is not to be sent again.
+        if (err.partial) {
+          return reply(res, 409, { why: 'partly-typed', typed: true, error: 'part of the message went into the agent\'s box before typing failed: it is not sent. Send or clear it in the TUI tab' });
+        }
         return reply(res, 500, { why: 'not-typed', error: 'the message could not be typed into the agent\'s terminal' });
       }
       console.warn('statusd: text not sent, the pane could not be read', { chars: text.length, message });
