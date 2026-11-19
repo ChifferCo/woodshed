@@ -139,6 +139,7 @@ highlight.mjs  tokenizeLine — also runs in the browser, see below
 analyze.mjs    schema, prompt, NDJSON reducer, reconciliation
 explain.mjs    prompt, validation, answer extraction
 chat.mjs       the conversation about the change as a whole: prompt, history bound
+qa.mjs         the Q&A tab: a newcomer's questions and their answers, as a tree
 jobs.mjs       `claude -p` child lifecycle, concurrency, orphan reaping
 store.mjs      on-disk layout under $REVIEWS_DIR, one directory per session
 github.mjs     the `gh` CLI
@@ -392,6 +393,18 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
   every later prompt. Polling goes through the explain endpoint, so a chat
   job's id is its askId; it has its own breadcrumb kind so an orphaned chat
   cannot clear the analysis's.
+
+- **The Q&A is two voices, and the newcomer cannot read the code.** `POST /reviews/<session>/qa` (the page sends it
+  the first time the Q&A tab opens) runs rounds of `claude -p`: a newcomer, whose whole system prompt is a junior
+  developer new to the codebase who knows none of its jargon (`--system-prompt`, `--tools ''`), asks up to six
+  questions from the title, description, file list and overview; an answerer with the explain's containment (Read,
+  Grep and Glob in the worktree) answers them all in one run, quoting real code where it helps; the newcomer reads
+  each answer and asks about what it did not follow, at most two per answer, and so on to three levels. A round with
+  no follow-ups ends it, so most runs are four to six calls. Tools on the newcomer would defeat it: it would read the
+  checkout and ask what a model that has read it thinks a newcomer should. `qa.json` holds a flat list whose
+  `parent` ids make the tree, written after every step so the page polls it growing; the page folds every question
+  and opens only what is clicked. It describes a diff, so `removeArtifact` drops it with the artifact (a re-review or
+  Discard), and a run the shed restarted under reads back as `interrupted`.
 
 - **An ask panel is a conversation, and the page holds it.** Each question under a file, line or span is still one
   `claude -p` run, but the page sends the earlier turns of that panel in `history` and `buildExplainPrompt` replays the

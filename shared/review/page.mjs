@@ -822,6 +822,42 @@ ${DARK_PALETTE}
     .decisions b { display: block; color: var(--ink); margin-bottom: 0.1rem; }
     .decisions .why { color: var(--muted); }
     .decisions .qacts { margin-top: 0.4rem; }
+    /* --- Q&A: a newcomer's questions, folded into a tree --- */
+    .s-qa { --sec: var(--c-act); }
+    .qa { max-width: var(--prose-measure); }
+    .qa-intro { font-size: 13.5px; line-height: 1.55; color: var(--muted); margin: 0 0 0.8rem; }
+    .qa-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0 0 0.9rem; font-size: 12.5px; color: var(--muted); }
+    .qa-tools button { font-size: 12.5px; padding: 0.25rem 0.65rem; }
+    .qa-tools .grow { flex: 1; }
+    .qa-list { list-style: none; margin: 0; padding: 0; }
+    .qa-list .qa-list { margin: 0.3rem 0 0.2rem 0.55rem; padding-left: 1rem; border-left: 2px solid var(--rule); }
+    .qa-node { margin: 0; }
+    .qa-q {
+      display: flex; align-items: flex-start; gap: 0.5rem; width: 100%; text-align: left;
+      padding: 0.45rem 0.5rem; margin: 0; border: none; border-radius: 5px; background: none;
+      font: 500 14px/1.5 "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--ink); cursor: pointer;
+    }
+    .qa-q:hover { background: var(--sunk); filter: none; }
+    .qa-q:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .qa-list > .qa-node > .qa-q { font-weight: 600; }
+    .qa-list .qa-list > .qa-node > .qa-q { font-weight: 500; font-size: 13.5px; }
+    .qa-q .chev { flex: none; width: 1rem; color: var(--muted); font-size: 11px; line-height: 21px; transition: transform 0.12s; }
+    .qa-q[aria-expanded="true"] .chev { transform: rotate(90deg); }
+    .qa-q .txt { flex: 1; min-width: 0; }
+    .qa-q .kids {
+      flex: none; align-self: center; font: 500 11px/1.6 ui-monospace, monospace; color: var(--muted);
+      border: 1px solid var(--rule-strong); border-radius: 3px; padding: 0 0.35rem;
+    }
+    .qa-q .pending { flex: none; align-self: center; display: inline-flex; align-items: center; gap: 0.3rem; font-size: 12px; color: var(--muted); font-weight: 400; }
+    .qa-body { padding: 0.1rem 0.5rem 0.5rem 2rem; }
+    .qa-a { font-size: 14px; line-height: 1.62; color: var(--ink); }
+    .qa-a p { margin: 0 0 0.6rem; }
+    .qa-a > :last-child { margin-bottom: 0; }
+    .qa-a pre { font-size: 12.5px; }
+    /* Answers bold a word mid-sentence, not a term opening a list item, so the
+       prose rule that puts a leading bold on its own line stays out of them. */
+    .qa-a li > strong:first-child { display: inline; }
+    .qa-foot { margin-top: 1rem; font: 12px/1.5 ui-monospace, monospace; color: var(--faint); }
     .qacts { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin-top: 0.4rem; }
     .qfile, .qask {
       display: inline-flex; align-items: center; gap: 0.3rem; height: 24px; padding: 0 0.5rem;
@@ -1969,6 +2005,11 @@ ${DARK_PALETTE}
         keepScroll();
         return;
       }
+      if (state.tab === 'qa') {
+        renderQa(content);
+        keepScroll();
+        return;
+      }
       if (state.tab !== 'files') {
         renderAnalysis(content);
         keepScroll();
@@ -1993,6 +2034,8 @@ ${DARK_PALETTE}
       var bar = el('div', 'tabbar');
       bar.setAttribute('role', 'tablist');
       bar.appendChild(tabButton('analysis', 'Overview', null));
+      if (qaView.session !== state.session && !qaView.loading && state.tab !== 'qa') loadQa(false);
+      bar.appendChild(tabButton('qa', 'Q&A', qaTabCount()));
       // Only a pull request has a description and a discussion, so a branch
       // with none has no tab rather than an empty one.
       if (state.livePr) {
@@ -2062,7 +2105,7 @@ ${DARK_PALETTE}
     // the page's default changes, and a bare ?session= that means "whichever
     // half is default" is not a link to anything in particular.
     function tabFromUrl(value) {
-      return value === 'files' || value === 'analysis' || value === 'discussion' ? value : null;
+      return value === 'files' || value === 'analysis' || value === 'discussion' || value === 'qa' ? value : null;
     }
 
     function stampTab(push) {
@@ -2840,6 +2883,204 @@ ${DARK_PALETTE}
         jumpToFile(path);
       });
       return link;
+    }
+
+    // --- Q&A ------------------------------------------------------------------
+    //
+    // A model playing a junior developer, new to the codebase and lost in its
+    // jargon, asked about the change; another read the code and answered; the
+    // newcomer then asked about whatever in each answer it did not follow. The
+    // server keeps the result as a flat list whose parent ids make the tree.
+    // Every question starts folded: the reader opens only the ones they have.
+    var qaView = { session: null, data: null, loading: false, error: null, started: false, timer: null, open: {} };
+
+    function qaTabCount() {
+      if (qaView.session !== state.session || !qaView.data) return null;
+      if (qaView.data.status === 'running') return 'loading';
+      var n = 0;
+      var items = qaView.data.items || [];
+      for (var i = 0; i < items.length; i++) if (!items[i].parent) n++;
+      return n || null;
+    }
+
+    // Reads what there is; starts a run only when asked to, which is when the
+    // Q&A tab is open. The tab's count comes from the same read on any tab.
+    async function loadQa(start) {
+      if (!state.session || qaView.loading) return;
+      if (qaView.session !== state.session) {
+        qaView = { session: state.session, data: null, loading: false, error: null, started: false, timer: null, open: {} };
+      }
+      qaView.loading = true;
+      try {
+        var got = await api('GET', '/reviews/' + state.session + '/qa');
+        var before = qaView.data ? qaView.data.status : null;
+        qaView.data = got.qa || null;
+        qaView.showCosts = !!got.showCosts;
+        qaView.error = null;
+        // Nothing asked yet: opening the tab is the ask, as opening the review
+        // is for the analysis. Once per page, so a failure is not retried in a loop.
+        if (!qaView.data && start && !qaView.started) {
+          qaView.started = true;
+          await api('POST', '/reviews/' + state.session + '/qa');
+          got = await api('GET', '/reviews/' + state.session + '/qa');
+          qaView.data = got.qa || { status: 'running', phase: 'asking', depth: 1, items: [] };
+        }
+      } catch (e) {
+        qaView.error = e.message;
+      }
+      qaView.loading = false;
+      clearTimeout(qaView.timer);
+      if (qaView.data && qaView.data.status === 'running') {
+        qaView.timer = setTimeout(function again() { loadQa(state.tab === 'qa'); }, 3000);
+      }
+      // Off the tab, only a change of state is worth a rebuild: the tab's count.
+      if (state.tab === 'qa' || before !== (qaView.data ? qaView.data.status : null)) render();
+    }
+
+    async function askQaAgain() {
+      if (!state.session) return;
+      qaView.open = {};
+      qaView.started = true;
+      try {
+        await api('POST', '/reviews/' + state.session + '/qa');
+        qaView.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
+        qaView.error = null;
+      } catch (e) {
+        qaView.error = e.message;
+      }
+      render();
+      loadQa(true);
+    }
+
+    function qaPhaseText(d) {
+      var open = 0;
+      var items = d.items || [];
+      for (var i = 0; i < items.length; i++) if (!items[i].answer) open++;
+      if (d.phase === 'answering') {
+        return 'Reading the code to answer ' + open + (open === 1 ? ' question' : ' questions')
+          + (d.depth > 1 ? ' (follow-ups, level ' + d.depth + ')' : '') + '…';
+      }
+      if (d.depth > 1) return 'The newcomer is reading the answers for anything they did not follow…';
+      return 'The newcomer is reading the pull request and writing their questions…';
+    }
+
+    function renderQa(content) {
+      if (qaView.session !== state.session || (!qaView.data && !qaView.loading && !qaView.error)) loadQa(true);
+      content.appendChild(el('div', 'secthead s-qa first', 'Questions from a newcomer'));
+      var box = el('div', 'qa');
+      box.appendChild(el('p', 'qa-intro',
+        'A model playing a junior developer who is new to this codebase, and knows none of its jargon, '
+        + 'asked about this change. Another read the code to answer, and the newcomer asked again about '
+        + 'anything in an answer they did not follow. Open only the questions you have.'));
+      var d = qaView.session === state.session ? qaView.data : null;
+      if (qaView.error && !d) {
+        box.appendChild(el('div', 'tabnote', 'The Q&A could not be loaded: ' + qaView.error));
+        box.appendChild(qaAgainButton('Try again'));
+        content.appendChild(box);
+        return;
+      }
+      if (!d) {
+        box.appendChild(loadingNote('Starting the Q&A…'));
+        content.appendChild(box);
+        return;
+      }
+      var items = d.items || [];
+      var tools = el('div', 'qa-tools');
+      if (d.status === 'running') {
+        tools.appendChild(spinner());
+        tools.appendChild(el('span', null, qaPhaseText(d)));
+      }
+      tools.appendChild(el('span', 'grow'));
+      if (items.some(function answered(i) { return i.answer; })) {
+        tools.appendChild(qaToolButton('Open all', function openAll() {
+          for (var i = 0; i < items.length; i++) qaView.open[items[i].id] = true;
+          render();
+        }));
+        tools.appendChild(qaToolButton('Close all', function closeAll() {
+          qaView.open = {};
+          render();
+        }));
+      }
+      if (d.status !== 'running') tools.appendChild(qaAgainButton('Ask again'));
+      box.appendChild(tools);
+
+      if (d.status === 'failed') {
+        box.appendChild(el('div', 'tabnote', 'The Q&A failed: ' + (d.error || 'no reason given')));
+      } else if (d.status === 'interrupted') {
+        box.appendChild(el('div', 'tabnote', 'The Q&A was cut off before it finished. Ask again to start it over.'));
+      } else if (d.status === 'ready' && !items.length) {
+        box.appendChild(el('div', 'tabnote', 'There was nothing to ask about.'));
+      }
+
+      var kids = {};
+      for (var i = 0; i < items.length; i++) {
+        var p = items[i].parent || '';
+        (kids[p] = kids[p] || []).push(items[i]);
+      }
+      if (kids['']) box.appendChild(qaList(kids[''], kids, d.status === 'running'));
+
+      if (qaView.error) box.appendChild(el('div', 'tabnote', qaView.error));
+      var foot = [];
+      if (d.stoppedEarly) foot.push('stopped early: ' + d.stoppedEarly);
+      if (d.generatedAt) foot.push('asked ' + fmtWhen(d.generatedAt));
+      if (qaView.showCosts && typeof d.costUsd === 'number' && d.costUsd > 0) foot.push('$' + d.costUsd.toFixed(3));
+      if (foot.length) box.appendChild(el('div', 'qa-foot', foot.join(' · ')));
+      content.appendChild(box);
+    }
+
+    function qaToolButton(label, onClick) {
+      var b = el('button', 'quiet', label);
+      b.type = 'button';
+      b.addEventListener('click', onClick);
+      return b;
+    }
+
+    function qaAgainButton(label) {
+      return qaToolButton(label, askQaAgain);
+    }
+
+    function qaList(nodes, kids, running) {
+      var list = el('ul', 'qa-list');
+      for (var i = 0; i < nodes.length; i++) list.appendChild(qaNode(nodes[i], kids, running));
+      return list;
+    }
+
+    function qaNode(item, kids, running) {
+      var li = el('li', 'qa-node');
+      var children = kids[item.id] || [];
+      var open = !!qaView.open[item.id] && !!item.answer;
+      var q = el('button', 'qa-q');
+      q.type = 'button';
+      q.setAttribute('aria-expanded', open ? 'true' : 'false');
+      q.appendChild(el('span', 'chev', '▶'));
+      var txt = el('span', 'txt');
+      inline(txt, item.question);
+      q.appendChild(txt);
+      if (!item.answer) {
+        var pending = el('span', 'pending');
+        if (running) pending.appendChild(spinner());
+        pending.appendChild(el('span', null, running ? 'being answered' : 'not answered'));
+        q.appendChild(pending);
+        q.disabled = true;
+      } else if (!open && children.length) {
+        q.appendChild(el('span', 'kids', children.length + (children.length === 1 ? ' follow-up' : ' follow-ups')));
+      }
+      q.addEventListener('click', function toggle() {
+        if (!item.answer) return;
+        if (qaView.open[item.id]) delete qaView.open[item.id];
+        else qaView.open[item.id] = true;
+        render();
+      });
+      li.appendChild(q);
+      if (open) {
+        var body = el('div', 'qa-body');
+        var a = el('div', 'qa-a prose');
+        renderMarkdown(a, item.answer);
+        body.appendChild(a);
+        if (children.length) body.appendChild(qaList(children, kids, running));
+        li.appendChild(body);
+      }
+      return li;
     }
 
     // A numbered list of a bold title, a sentence of why, and the way to its

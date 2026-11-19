@@ -34,6 +34,9 @@ const MAX_QUEUED = 4;
 
 const ANALYSIS_TIMEOUT_MS = 10 * 60_000;
 const EXPLAIN_TIMEOUT_MS = 3 * 60_000;
+// A Q&A answer round reads code for up to eight questions in one run, so it gets
+// longer than an explain; its newcomer rounds read nothing and finish in seconds.
+const QA_TIMEOUT_MS = 6 * 60_000;
 
 // Below this the box is already in trouble and spawning a ~400 MB model
 // process is the wrong thing to do. Surfaced as a 503, not a silent stall.
@@ -84,7 +87,7 @@ export function availableBytes(readMeminfo) {
 /**
  * Queue or start a `claude -p` run.
  *
- * @param {{kind: 'analysis'|'explain', session: string, argv: string[], cwd: string,
+ * @param {{kind: 'analysis'|'explain'|'chat'|'qa', session: string, argv: string[], cwd: string,
  *          log: Function, onLine?: Function}} spec
  * @returns {{ok: true, job: object} | {ok: false, status: number, error: string}}
  */
@@ -194,7 +197,7 @@ function launch(job) {
     jobId: job.jobId, kind: job.kind, session: job.session, pid: child.pid, cwd: job.cwd,
   });
 
-  const timeoutMs = job.kind === 'analysis' ? ANALYSIS_TIMEOUT_MS : EXPLAIN_TIMEOUT_MS;
+  const timeoutMs = job.kind === 'analysis' ? ANALYSIS_TIMEOUT_MS : job.kind === 'qa' ? QA_TIMEOUT_MS : EXPLAIN_TIMEOUT_MS;
   job.timer = setTimeout(function onTimeout() {
     job.timedOut = true;
     job.log('review.job_timeout', { jobId: job.jobId, kind: job.kind, session: job.session, ms: timeoutMs });

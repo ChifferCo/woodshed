@@ -39,7 +39,7 @@ import {
   readDiff, writeDiff, readArtifact, writeArtifact,
   writeSessionReview, readSessionReview, hasSessionReview, listReviewSessions,
   removeReviewState, hasJobBreadcrumb, answerKey, isSessionName, legacyStatePaths,
-  removeArtifact, readChat, appendChat, discardReviewWork,
+  removeArtifact, readChat, appendChat, discardReviewWork, readQa, writeQa,
 } from './store.mjs';
 import {
   startJob, findJob, sweepOrphans, cancelJobsForSession, availableBytes, MIN_AVAILABLE_BYTES,
@@ -51,6 +51,10 @@ import {
   validateExplainRequest, explainArgv, buildExplainPrompt, extractAnswer,
 } from './explain.mjs';
 import { validateChatRequest, buildChatPrompt } from './chat.mjs';
+import {
+  MAX_DEPTH as QA_MAX_DEPTH, juniorArgv, seniorArgv, buildTopQuestionsPrompt, buildFollowupsPrompt,
+  buildAnswersPrompt, extractStructured, topQuestions, followupQuestions, applyAnswers,
+} from './qa.mjs';
 import { enqueuePr, fetchMergeReadiness, mergeBlocker, mergePr } from './merge.mjs';
 import { pullRequestsFor, schedulePrRefresh } from '../prStatus.mjs';
 
@@ -148,6 +152,10 @@ const EXPLAIN_JOB_TTL_MS = 2 * 60_000;
 /** session -> the chat turn in flight. One at a time: a turn replays the
  *  transcript, so two at once would each answer without the other. */
 const chatJobs = new Map();
+/** session -> {gen} of the Q&A run going for it. Deleted wherever reviewState
+ *  is, so a run unwinding after a discard or re-review writes nothing. */
+const qaRuns = new Map();
+let qaGen = 0;
 
 // --- what server.mjs calls at launch ----------------------------------------
 
@@ -701,6 +709,7 @@ export async function removeReviewSession({ ctx, sessionName }) {
   // during the await below and runAnalysis resumes, guarded by these maps.
   reviewState.delete(sessionName);
   progressBySession.delete(sessionName);
+  qaRuns.delete(sessionName);
 
   // A review of a session's OWN worktree owns nothing. The worktree and the
   // branch are the user's work, and the review is a read of them — taking
@@ -913,6 +922,14 @@ export async function handleReviewRequest(req, res, ctx) {
     handleDiscardReview(res, ctx, session);
     return true;
   }
+  if (req.method === 'GET' && section === '/qa') {
+    handleQaRead(res, ctx, session);
+    return true;
+  }
+  if (req.method === 'POST' && section === '/qa') {
+    await gated(res, ctx, 'qa', () => handleQaStart(res, ctx, session));
+    return true;
+  }
   if (req.method === 'GET' && section === '/chat') {
     handleChatRead(res, ctx, session);
     return true;
@@ -1070,6 +1087,7 @@ function handleDiscardReview(res, ctx, session) {
   const killed = cancelJobsForSession(session);
   reviewState.delete(session);
   progressBySession.delete(session);
+  qaRuns.delete(session);
   discardReviewWork(session);
   log('review.discarded', { reqId, session, jobsKilled: killed, kind: review?.kind });
   json(res, 200, { ok: true });
@@ -1344,6 +1362,7 @@ async function handleWorktreeReview(res, ctx, session) {
   // silently keeps the stale one and the user is told it worked.
   reviewState.delete(session);
   progressBySession.delete(session);
+  qaRuns.delete(session);
   beginAnalysis({ ctx, session, review: made.review });
 
   log('review.worktree_started', { reqId, session, cancelled, files: made.review.meta.changedFiles });
@@ -1388,6 +1407,7 @@ async function handleRefreshReview(res, ctx, session) {
   }
   reviewState.delete(session);
   progressBySession.delete(session);
+  qaRuns.delete(session);
   beginAnalysis({ ctx, session, review: done.review });
 
   log('review.refresh_started', {
@@ -1992,6 +2012,156 @@ async function handleChat(payload, res, ctx, session) {
     });
 
   return json(res, 200, { ok: true, askId: job.jobId, status: 'running' });
+}
+
+// --- Q&A ----------------------------------------------------------------------
+
+function qaIsLive(session, gen) {
+  return qaRuns.get(session)?.gen === gen;
+}
+
+// What is on disk, said honestly: a run that was going when the shed restarted
+// is not going now, and saying 'running' would leave the page waiting forever.
+function handleQaRead(res, ctx, session) {
+  const { json } = ctx;
+  if (!readSessionReview(session)) return json(res, 404, { ok: false, error: 'no review for this session' });
+  const qa = readQa(session);
+  if (qa && qa.status === 'running' && !qaRuns.has(session)) {
+    return json(res, 200, { ok: true, qa: { ...qa, status: 'interrupted', phase: null }, showCosts: SHOW_COSTS });
+  }
+  return json(res, 200, { ok: true, qa, showCosts: SHOW_COSTS });
+}
+
+function handleQaStart(res, ctx, session) {
+  const { json, log, reqId } = ctx;
+  const review = readSessionReview(session);
+  if (!review) return json(res, 404, { ok: false, error: 'no review for this session' });
+  if (qaRuns.has(session)) return json(res, 200, { ok: true, status: 'running' });
+  qaGen += 1;
+  const gen = qaGen;
+  qaRuns.set(session, { gen });
+  log('review.qa_started', { reqId, session, gen });
+  runQa({ ctx, session, review, gen })
+    .catch(function unexpected(err) {
+      log('review.qa_crashed', { session, error: err?.message });
+      if (qaIsLive(session, gen)) {
+        const qa = readQa(session);
+        writeQa({ session, qa: { ...(qa || { items: [] }), status: 'failed', phase: null, error: err?.message || 'the Q&A failed' } });
+      }
+    })
+    .finally(function release() {
+      if (qaIsLive(session, gen)) qaRuns.delete(session);
+    });
+  return json(res, 200, { ok: true, status: 'running' });
+}
+
+const QA_START_RETRIES = 10;
+const QA_START_RETRY_MS = 15_000;
+
+/** One run of either voice: started (waiting out memory pressure), awaited, and read. */
+async function qaRun({ ctx, session, review, gen, argv }) {
+  for (let tries = 0; tries < QA_START_RETRIES; tries += 1) {
+    if (!qaIsLive(session, gen)) return null;
+    const started = startJob({ kind: 'qa', session, argv, cwd: review.worktree, log: ctx.log, readMeminfo: ctx.readMeminfo });
+    if (started.ok) {
+      const job = await started.job.done;
+      if (!qaIsLive(session, gen)) return null;
+      return { ...extractStructured(job), ms: (job.endedAt || Date.now()) - (job.startedAt || Date.now()) };
+    }
+    if (started.status !== 503 && started.status !== 429) return { ok: false, error: started.error };
+    await delay(QA_START_RETRY_MS);
+  }
+  return { ok: false, error: 'the box stayed too busy to run the Q&A' };
+}
+
+/**
+ * The rounds: the newcomer asks, the answerer answers, the newcomer asks about
+ * what it did not follow in those answers, down to QA_MAX_DEPTH levels. Written
+ * to disk after every step, so the page shows the tree as it grows. A failure
+ * after the first answers keeps what was answered and says it stopped early.
+ */
+async function runQa({ ctx, session, review, gen }) {
+  const { log } = ctx;
+  const diff = readDiff(session);
+  const files = diff?.files || [];
+  const overview = readArtifact(session)?.overview || '';
+  const qa = {
+    status: 'running', phase: 'asking', depth: 1, items: [], error: null, stoppedEarly: null,
+    startedAt: new Date().toISOString(), generatedAt: null, costUsd: 0, headSha: review.headSha || null,
+  };
+  const save = () => { if (qaIsLive(session, gen)) writeQa({ session, qa }); };
+  const fail = (error) => {
+    qa.status = 'failed'; qa.phase = null; qa.error = error;
+    save();
+    log('review.qa_failed', { session, depth: qa.depth, error });
+  };
+  const spent = (r) => { if (typeof r?.costUsd === 'number') qa.costUsd += r.costUsd; };
+  save();
+  if (!files.length) {
+    qa.status = 'ready'; qa.phase = null; qa.generatedAt = new Date().toISOString();
+    save();
+    return;
+  }
+
+  const asked = await qaRun({
+    ctx, session, review, gen,
+    argv: juniorArgv({ prompt: buildTopQuestionsPrompt({ meta: review.meta, files, overview }), followups: false }),
+  });
+  if (!asked) return;
+  spent(asked);
+  if (!asked.ok) return fail(asked.error);
+  let open = topQuestions(asked.value);
+  if (!open.length) return fail('the newcomer asked no questions');
+  qa.items.push(...open);
+
+  for (let depth = 1; depth <= QA_MAX_DEPTH; depth += 1) {
+    qa.phase = 'answering'; qa.depth = depth;
+    save();
+    const answered = await qaRun({
+      ctx, session, review, gen,
+      argv: seniorArgv({ prompt: buildAnswersPrompt({ meta: review.meta, files, overview, items: qa.items, open }) }),
+    });
+    if (!answered) return;
+    spent(answered);
+    const landed = answered.ok ? applyAnswers(open, answered.value) : 0;
+    // A question with no answer goes: the tree only holds answered ones.
+    qa.items = qa.items.filter((i) => i.answer);
+    if (!landed) {
+      if (depth === 1) return fail(answered.ok ? 'the answers did not match the questions' : answered.error);
+      qa.stoppedEarly = answered.ok ? 'the follow-ups were not answered' : answered.error;
+      break;
+    }
+    log('review.qa_answered', { session, depth, asked: open.length, answered: landed, costUsd: answered.costUsd, ms: answered.ms });
+    if (depth === QA_MAX_DEPTH) break;
+
+    const frontier = open.filter((i) => i.answer);
+    qa.phase = 'asking'; qa.depth = depth + 1;
+    save();
+    const more = await qaRun({
+      ctx, session, review, gen,
+      argv: juniorArgv({
+        prompt: buildFollowupsPrompt({ meta: review.meta, files, overview, items: qa.items, frontier }),
+        followups: true,
+      }),
+    });
+    if (!more) return;
+    spent(more);
+    if (!more.ok) {
+      qa.stoppedEarly = more.error;
+      break;
+    }
+    open = followupQuestions(more.value, frontier);
+    log('review.qa_followups', { session, depth: depth + 1, asked: open.length });
+    if (!open.length) break;
+    qa.items.push(...open);
+  }
+
+  qa.status = 'ready'; qa.phase = null; qa.generatedAt = new Date().toISOString();
+  save();
+  log('review.qa_done', {
+    session, items: qa.items.length, deepest: Math.max(...qa.items.map((i) => i.depth)),
+    stoppedEarly: qa.stoppedEarly, costUsd: Number(qa.costUsd.toFixed(4)),
+  });
 }
 
 // --- startup ----------------------------------------------------------------
