@@ -3,6 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -279,4 +280,48 @@ test('an empty list is taken as it is on a console that never had anyone, but no
   await kept.refresh();
   assert.equal(kept.isMember('lee-dev'), false);
   assert.ok(stored.state.memberSwitches['lee-dev'], 'the switch is kept for when the program lists them again');
+});
+
+test('behind a proxy, a person the program drops loses their database tunnel token and open tunnels at the next read', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-people-'));
+  t.after(() => fs.rmSync(stateDir, { recursive: true, force: true }));
+  const SAM_TOKEN = `wt_${'a'.repeat(64)}`;
+  const LEE_TOKEN = `wt_${'b'.repeat(64)}`;
+  const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
+  const later = new Date(Date.now() + 3_600_000).toISOString();
+  // Sam has a token, and so does Lee, whom the program took off while the console was down.
+  const store = {
+    state: { tunnelTokens: { 'sam-member': { hash: sha(SAM_TOKEN), expiresAt: later }, 'lee-dev': { hash: sha(LEE_TOKEN), expiresAt: later } } },
+    save() {},
+  };
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const program = fakeProgram();
+  const memory = { read: async () => null, save: async () => {}, remove: async () => {} };
+  const installation = await createInstallation({
+    config: { ...CONFIG, stateDir, sessionEnv: {}, sessionApi: {}, tunnelTargets: { pg: '127.0.0.1:1', mongo: null } }, store,
+    provider: { name: 'test', launcher: {}, secrets: memory, dbAdmin: {}, databases: ['postgres'] },
+    trusted: createTrustedIdentity({ secret: SECRET }), members: program,
+  });
+  const { tunnel } = installation;
+  const asks = async (token) => {
+    let status = null;
+    const res = { writeHead: (s) => { status = s; }, end() {}, setHeader() {} };
+    await tunnel.connection({ headers: { authorization: `Bearer ${token}`, host: 'x' }, method: 'GET', url: '/api/tunnel/connection', socket: { remoteAddress: '127.0.0.1' } }, res);
+    return status;
+  };
+  assert.equal(tunnel.available, true);
+  assert.equal(store.state.tunnelTokens['lee-dev'], undefined, 'the one dropped while the console was down is revoked at start');
+  assert.equal(await asks(SAM_TOKEN), 409, 'a listed person\'s token is accepted (409: their databases are not made here)');
+  const closed = [];
+  tunnel.revoke = ((revoke) => (login) => { closed.push(login); revoke(login); })(tunnel.revoke);
+  program.people = program.people.filter((p) => p.login !== 'Sam-Member');
+  // The program's list is read again once it is older than 5 s, when something asks (here, the token's person).
+  t.mock.timers.tick(5_001);
+  await asks(SAM_TOKEN);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(store.state.tunnelTokens['sam-member'], undefined, 'the token is gone with the next read');
+  assert.equal(await asks(SAM_TOKEN), 401);
+  assert.deepEqual(closed, ['sam-member'], 'revoke, which closes open tunnels, ran for the one who left');
 });

@@ -45,8 +45,12 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
   // The program's list as last read, in its order: [{login, role}], and by lowercased login.
   let roster = null;
   let byLogin = new Map();
+  let previous = null;
   let readAt = -Infinity;
   let reading = null;
+  // Watchers of anyone leaving the list: each gets every login that was listed before a read, or that its own `also`
+  // names (tokens kept from before a restart), and is not now.
+  const leavers = [];
 
   function switches() {
     store.state.memberSwitches ??= {};
@@ -70,6 +74,7 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
       console.warn('members: the program\'s list came back empty, kept the last one', { members: roster?.length ?? 0 });
       return;
     }
+    previous = roster;
     roster = next;
     byLogin = seen;
     // Switches of anyone no longer listed: the program took them off in its own pages.
@@ -80,6 +85,8 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
       console.log('members: switches cleared, no longer on the program\'s list', { logins: left });
     }
     sweep();
+    const was = previous;
+    for (const w of leavers) notifyLeft(w, was);
   }
 
   // Who holds a shared session now, from the fleet's own records in the same state.
@@ -96,6 +103,23 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
     for (const login of unlisted.values()) {
       try { release(login); } catch (err) { console.error('members: release after leaving failed', { login, message: String(err?.message ?? err).split('\n')[0] }); }
     }
+  }
+
+  function notifyLeft(w, was) {
+    const names = new Map();
+    for (const p of was ?? []) names.set(p.login.toLowerCase(), p.login);
+    for (const login of w.also()) names.set(String(login).toLowerCase(), login);
+    for (const [key, login] of names) {
+      if (byLogin.has(key)) continue;
+      try { w.fn(login); } catch (err) { console.error('members: leaving handler failed', { login, message: String(err?.message ?? err).split('\n')[0] }); }
+    }
+  }
+
+  /** `fn(login)` for each login that leaves the list at a read, and for those of `also()` the list does not have, now for the list already read */
+  function whenLeft(fn, { also = () => [] } = {}) {
+    const w = { fn, also };
+    leavers.push(w);
+    if (roster) notifyLeft(w, null);
   }
 
   /** Who gives back the sessions of those the list does not have: from now on, and at once for the list already read. */
@@ -272,7 +296,7 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
   }
 
   return {
-    hosted: true, refresh, load, whenGone, isMember, isAdmin, hasAdmin, hasGithubSessions, setGithubSessions, isAssignable, assignables,
+    hosted: true, refresh, load, whenGone, whenLeft, isMember, isAdmin, hasAdmin, hasGithubSessions, setGithubSessions, isAssignable, assignables,
     setAssignable, add, remove, setRole, view, requestOf: () => null,
   };
 }
