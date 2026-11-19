@@ -312,7 +312,8 @@ test('copies on disk together stay within the total, and a copy needs room left 
   git('add', '-A');
   git('commit', '-q', '-m', 'tree');
   const tree = git('rev-parse', 'HEAD^{tree}');
-  const opts = { repoDir: repo, treeish: tree, session: 'claude-a1a1a1a1', maxTotalBytes: 1024 * 1024 };
+  // free is stubbed, so the budget checks do not depend on the disk the tests run on.
+  const opts = { repoDir: repo, treeish: tree, session: 'claude-a1a1a1a1', maxTotalBytes: 1024 * 1024, free: () => Infinity };
   const first = await makeSnapshot(opts);
   assert.equal(first.ok, true, first.error);
   const second = await makeSnapshot(opts);
@@ -325,6 +326,17 @@ test('copies on disk together stay within the total, and a copy needs room left 
   // 100 KB above the 512 MB that must stay free: this 700 KB copy would go below it.
   const cramped = await makeSnapshot({ ...opts, free: () => 512 * 1024 * 1024 + 100 * 1024 });
   assert.deepEqual([cramped.ok, /too little room left/.test(cramped.error)], [false, true]);
+  assert.equal(reservedSnapshotBytes(), 0);
+
+  // A copy that could not be deleted still fills the disk: its share stays reserved, and removeSnapshot does not throw.
+  const stuck = await makeSnapshot(opts);
+  assert.equal(stuck.ok, true, stuck.error);
+  const held = reservedSnapshotBytes();
+  assert.ok(held > 0);
+  assert.equal(removeSnapshot(stuck.dir, { rm: () => { throw new Error('EBUSY'); } }), false);
+  assert.equal(reservedSnapshotBytes(), held, 'still reserved while the copy is on disk');
+  assert.equal((await makeSnapshot(opts)).ok, false, 'so the next copy is refused');
+  assert.equal(removeSnapshot(stuck.dir), true);
   assert.equal(reservedSnapshotBytes(), 0);
 });
 

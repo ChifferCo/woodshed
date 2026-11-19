@@ -559,6 +559,8 @@ export function sweepStaleSnapshots({ now = Date.now(), tmp = os.tmpdir() } = {}
     try {
       if (now - fs.statSync(full).mtimeMs < STALE_SNAPSHOT_MS) continue;
       fs.rmSync(full, { recursive: true, force: true });
+      // A copy whose own delete failed kept its share reserved; it is gone now.
+      release(full);
       removed += 1;
     } catch {
       // Gone already, or not ours to remove: either way, nothing to do.
@@ -572,12 +574,29 @@ export function reservedSnapshotBytes() {
   return reservedBytes;
 }
 
-export function removeSnapshot(dir) {
-  if (dir && reservations.has(dir)) {
-    reservedBytes -= reservations.get(dir);
-    reservations.delete(dir);
+/**
+ * Delete a copy, and only then give back the room it held: one that could not
+ * be deleted still fills the disk, so its share stays reserved until a later
+ * sweep removes it. Never throws: it runs in runQa's `finally`, where a throw
+ * would turn a finished Q&A into a failed one.
+ *
+ * @returns {boolean} whether the copy is gone
+ */
+export function removeSnapshot(dir, { rm = fs.rmSync } = {}) {
+  if (!dir) return true;
+  try {
+    rm(dir, { recursive: true, force: true });
+  } catch {
+    return false;
   }
-  if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  release(dir);
+  return true;
+}
+
+function release(dir) {
+  if (!reservations.has(dir)) return;
+  reservedBytes -= reservations.get(dir);
+  reservations.delete(dir);
 }
 
 /** The chain of items from the top-level question down to `id`, inclusive. */
