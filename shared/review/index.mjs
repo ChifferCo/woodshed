@@ -2091,7 +2091,9 @@ async function runQa({ ctx, session, review, gen }) {
   const { log } = ctx;
   const diff = readDiff(session);
   const files = diff?.files || [];
-  const overview = readArtifact(session)?.overview || '';
+  // Read again for each prompt: a Q&A asked for while the analysis is still
+  // going gets the overview in its later rounds, once there is one.
+  const overviewNow = () => readArtifact(session)?.overview || '';
   const qa = {
     status: 'running', phase: 'asking', depth: 1, items: [], error: null, stoppedEarly: null,
     startedAt: new Date().toISOString(), generatedAt: null, costUsd: 0, headSha: review.headSha || null,
@@ -2112,7 +2114,7 @@ async function runQa({ ctx, session, review, gen }) {
 
   const asked = await qaRun({
     ctx, session, review, gen,
-    argv: juniorArgv({ prompt: buildTopQuestionsPrompt({ meta: review.meta, files, overview }), followups: false }),
+    argv: juniorArgv({ prompt: buildTopQuestionsPrompt({ meta: review.meta, files, overview: overviewNow() }), followups: false }),
   });
   if (!asked) return;
   spent(asked);
@@ -2126,7 +2128,7 @@ async function runQa({ ctx, session, review, gen }) {
     save();
     const answered = await qaRun({
       ctx, session, review, gen,
-      argv: seniorArgv({ prompt: buildAnswersPrompt({ meta: review.meta, files, overview, items: qa.items, open }) }),
+      argv: seniorArgv({ prompt: buildAnswersPrompt({ meta: review.meta, files, overview: overviewNow(), items: qa.items, open }) }),
     });
     if (!answered) return;
     spent(answered);
@@ -2147,7 +2149,7 @@ async function runQa({ ctx, session, review, gen }) {
     const more = await qaRun({
       ctx, session, review, gen,
       argv: juniorArgv({
-        prompt: buildFollowupsPrompt({ meta: review.meta, files, overview, items: qa.items, frontier }),
+        prompt: buildFollowupsPrompt({ meta: review.meta, files, overview: overviewNow(), items: qa.items, frontier }),
         followups: true,
       }),
     });

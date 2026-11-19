@@ -2933,7 +2933,12 @@ ${DARK_PALETTE}
       try {
         var got = await api('GET', '/reviews/' + state.session + '/qa');
         if (view !== qaView) return;
+        var had = !!view.data;
         view.data = got.qa || null;
+        // Gone while this page had one: emptied from elsewhere, a Discard or
+        // Re-review in another tab. That is not a Q&A nobody has asked for, and
+        // starting one here would spend a run its reader just threw away.
+        if (had && !view.data) view.started = true;
         view.showCosts = !!got.showCosts;
         view.error = null;
         // Nothing asked yet: opening the tab is the ask, as opening the review
