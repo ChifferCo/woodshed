@@ -159,6 +159,16 @@ function readReview(lines, head) {
 // claude's `Tip: …` lines over its permission dialog, with the lines a narrow pane wrapped them onto (a 80-column pane
 // puts the auto mode tip's last word, `below`, on a line of its own). A line is wrapped onto the next when the next's
 // first word would not have fitted after it in the pane's width, which the rule over the dialog spans.
+// A block as the agent drew it, for the page to show what it asks faithfully: each line's own indentation and the blank
+// lines between kept, only the indentation all of them share taken off, and blank lines at either end dropped.
+function asDrawn(raw) {
+  const lines = raw.map((l) => l.replace(/\s+$/, ''));
+  while (lines.length && !lines[0].trim()) lines.shift();
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  const indent = Math.min(...lines.filter((l) => l.trim()).map((l) => l.match(/^\s*/)[0].length));
+  return lines.map((l) => (l.trim() ? l.slice(indent) : ''));
+}
+
 function dropTips(raw, width) {
   const out = [];
   for (let i = 0; i < raw.length; i++) {
@@ -197,14 +207,13 @@ export function readApproval(pane) {
       const head = lines.slice(rule + 1, title).map((l) => l.trim());
       // claude's question picker has its tabs here; it is not an approval, whatever its question says.
       if (rule === -1 || head.some((l) => TABS.test(l))) continue;
-      const kept = dropTips(lines.slice(rule + 1, title), lines[rule].trimEnd().length)
-        .map((l) => l.trim())
-        .filter((l) => l && !/^╌+$/.test(l) && l !== 'This command requires approval');
-      what = kept.shift() ?? null;
-      detail = kept;
+      const kept = asDrawn(dropTips(lines.slice(rule + 1, title), lines[rule].trimEnd().length)
+        .filter((l) => !/^\s*╌+\s*$/.test(l) && l.trim() !== 'This command requires approval'));
+      what = kept.shift()?.trim() ?? null;
+      detail = asDrawn(kept);
     } else {
       // codex draws what it asks between the title and its options: the reason, the command.
-      detail = lines.slice(title + 1, rows[0].line).map((l) => l.trim()).filter(Boolean);
+      detail = asDrawn(lines.slice(title + 1, rows[0].line));
     }
     const options = rows.map((r) => ({ n: r.n, label: r.text.replace(SHORTCUT, '').slice(0, MAX_LINE), highlighted: r.highlighted }));
     // Just this once: never a `Yes, and …` row, which allows it for good or switches the mode. With none, no approval.
@@ -502,6 +511,21 @@ export function undimmed(line) {
   return out.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
 }
 
+// Whether a line's first visible character, its mark, is drawn bold (SGR 1), as codex draws its box's `›`.
+function markInBold(line) {
+  let bold = false;
+  let at = 0;
+  for (const m of line.matchAll(SGR)) {
+    if (line.slice(at, m.index).trim()) return bold;
+    for (const c of (m[1] === '' ? [0] : m[1].split(';').map(Number))) {
+      if (c === 1) bold = true;
+      else if (c === 0 || c === 22) bold = false;
+    }
+    at = m.index + m[0].length;
+  }
+  return line.slice(at).trim() ? bold : false;
+}
+
 const PLAIN = (line) => line.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
 // Each agent's own mark: claude's `❯` sits right under a rule; codex's `›`. A line of another's (the session's status
 // line starts `›` under claude's box) is not the box.
@@ -530,18 +554,24 @@ export function composerText(colored, agent) {
   // codex's box runs down to its footer, the last line on screen with anything on it.
   let footer = plain.length - 1;
   while (footer > 0 && !plain[footer].trim()) footer--;
-  for (let i = lines.length - 1; i >= 0; i--) {
+  // Where the box starts, by how the agent draws its mark, never by what a line says: claude's `❯` right under a rule,
+  // codex's `›` in bold. A draft's own line that starts with either mark is plain text. Two such starts, or none, and
+  // the screen says nothing certain about the box: no box.
+  const starts = [];
+  for (let i = 0; i < lines.length; i++) {
     if (!mark.test(plain[i])) continue;
-    if (agent === 'claude' && !(i > 0 && BOX_RULE.test(plain[i - 1]))) continue;
+    if (agent === 'claude' ? !(i > 0 && BOX_RULE.test(plain[i - 1])) : !markInBold(lines[i])) continue;
     // A menu's highlighted row, with its key hint under it, is not the box. A draft that starts `1. ` is.
     if (HIGHLIGHTED_ROW.test(plain[i]) && plain.slice(i + 1, i + 10).some((l) => MENU_HINT.test(l))) continue;
-    // The whole draft, blank lines in it too: to the rule under it (claude), or to the footer (codex).
-    let text = undimmed(lines[i]).replace(mark, '');
-    for (let j = i + 1; j < lines.length; j++) {
-      if (agent === 'claude' ? BOX_RULE.test(plain[j]) : j >= footer) break;
-      text += undimmed(lines[j]);
-    }
-    return text.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+    starts.push(i);
   }
-  return null;
+  if (starts.length !== 1) return null;
+  const [i] = starts;
+  // The whole draft, blank lines in it too: to the rule under it (claude), or to the footer (codex).
+  let text = undimmed(lines[i]).replace(mark, '');
+  for (let j = i + 1; j < lines.length; j++) {
+    if (agent === 'claude' ? BOX_RULE.test(plain[j]) : j >= footer) break;
+    text += undimmed(lines[j]);
+  }
+  return text.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
 }

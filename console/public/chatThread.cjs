@@ -373,10 +373,12 @@
     const detail = prompt.detail ?? [];
     const at = detail.findIndex((l) => /^Reason:/i.test(l));
     let end = at + 1;
-    while (at !== -1 && end < detail.length && !/^\$ /.test(detail[end]) && !/^[A-Z][\w ]{0,20}:/.test(detail[end])) end++;
-    const reason = at === -1 ? null : detail.slice(at, end).join(' ');
-    // Every line: an approval the page answers is one it shows whole (panePrompt.mjs, `complete`).
-    const lines = at === -1 ? detail : [...detail.slice(0, at), ...detail.slice(end)];
+    while (at !== -1 && end < detail.length && detail[end].trim() && !/^\$ /.test(detail[end]) && !/^[A-Z][\w ]{0,20}:/.test(detail[end])) end++;
+    const reason = at === -1 ? null : detail.slice(at, end).map((l) => l.trim()).join(' ');
+    // Every line, as drawn, indentation and blank lines kept: an approval the page answers is one it shows whole
+    // (panePrompt.mjs, `complete`). One blank where the reason stood, none at either end.
+    const lines = (at === -1 ? detail : [...detail.slice(0, at), ...detail.slice(end)])
+      .filter((l, i, all) => l.trim() || (i > 0 && i < all.length - 1 && all[i - 1].trim()));
     return { asks: prompt.what ? `${prompt.what}: ${prompt.title}` : prompt.title, lines: reason ? [...lines, reason] : lines };
   }
 

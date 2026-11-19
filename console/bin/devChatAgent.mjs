@@ -167,7 +167,7 @@ function draw() {
   if (screen === 'idle' && format === 'claude') {
     const rule = '─'.repeat(60);
     out(`\n${rule}\n❯\u00a0${typed || hint('Try "fix lint errors"')}\n${rule}\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`);
-  } else if (screen === 'idle') out(`\n› ${typed || hint('Ask anything')}\n\n  stand-in codex · /tmp/fx/repo\n`);
+  } else if (screen === 'idle') out(`\n\x1b[1m›\x1b[0m ${typed || hint('Ask anything')}\n\n  stand-in codex · /tmp/fx/repo\n`);
 }
 
 function after(ms, step) {

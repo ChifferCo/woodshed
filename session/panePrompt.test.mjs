@@ -107,7 +107,7 @@ test('an approval: claude\'s permission dialogs, old and new, with what is asked
 
   const writeNarrow = readApproval(pane('pane-permission-write-narrow.txt'));
   assert.equal(writeNarrow.what, 'Create file');
-  assert.deepEqual(writeNarrow.detail, ['notes2.txt', '1 hello']);
+  assert.deepEqual(writeNarrow.detail, ['notes2.txt', ' 1 hello'], 'as drawn: the line\'s number column keeps its place');
   assert.equal(writeNarrow.options[writeNarrow.approve].label, 'Yes', 'not the wrapped "Yes, and switch to accept edits" row');
   assert.equal(writeNarrow.options[writeNarrow.deny].label, 'No');
   assert.equal(writeNarrow.deny, 2);
@@ -140,7 +140,7 @@ test('codex\'s approval, as codex 0.167 words it, with the shortcut after each o
   const approval = readApproval(screen);
   assert.equal(approval.agent, 'codex');
   assert.equal(approval.what, null);
-  assert.deepEqual(approval.detail, ['Reason: run the migrations before the tests', '$ npm run migrate']);
+  assert.deepEqual(approval.detail, ['Reason: run the migrations before the tests', '', '$ npm run migrate'], 'as drawn, its blank line kept');
   assert.deepEqual([approval.options[approval.approve].label, approval.options[approval.deny].label], ['Yes, just this once', 'No, and tell Codex what to do differently']);
   assert.ok(matchApproval(approval, { key: approval.key }).ok);
   assert.equal(matchApproval(approval, { key: readApproval(screen.replace('npm run migrate', 'rm -rf /')).key }).why, 'other-approval');
@@ -279,6 +279,7 @@ test("real codex 0.167's approval reads with its own options, and the page keeps
   assert.equal(screen.highlighted, 0);
   assert.deepEqual(chat.approvalText(screen).lines, [
     'Environment: local',
+    '',
     '$ echo hi > hello-from-chat.txt',
     'Reason: May I run the requested command outside the sandbox to create hello-from-chat.txt?',
   ]);
@@ -385,9 +386,15 @@ test('a draft that starts with a number, or has a blank line in it, still counts
   assert.equal(composerEmpty([rule, '❯ \x1b[2mTry "x"\x1b[0m', rule, footer].join('\n'), 'claude'), true);
   // codex's box, to its footer: a blank line in the draft does not end it.
   const codexFooter = '  GPT-6.2-Sol default · /tmp/fx/repo';
-  assert.equal(composerEmpty(['› 1. first point', '', '  second point', '', codexFooter].join('\n'), 'codex'), false);
-  assert.equal(composerEmpty(['› ', '', 'more of it', '', codexFooter].join('\n'), 'codex'), false);
-  assert.equal(composerEmpty(['› \x1b[2mAsk Codex to do anything\x1b[0m', '', codexFooter].join('\n'), 'codex'), true);
+  const box = '\x1b[1m›\x1b[0m ';
+  assert.equal(composerEmpty([`${box}1. first point`, '', '  second point', '', codexFooter].join('\n'), 'codex'), false);
+  assert.equal(composerEmpty([box, '', 'more of it', '', codexFooter].join('\n'), 'codex'), false);
+  assert.equal(composerEmpty([`${box}\x1b[2mAsk Codex to do anything\x1b[0m`, '', codexFooter].join('\n'), 'codex'), true);
+  // The review's case: a draft whose own line is a bare `›`. Only the bold mark starts the box, so the draft counts.
+  assert.equal(composerEmpty([`${box}first line`, '›', '', codexFooter].join('\n'), 'codex'), false);
+  // A plain `›` that is no box at all, and two boxes at once: nothing certain, so no box.
+  assert.equal(composerEmpty(['› looks like one', '', codexFooter].join('\n'), 'codex'), null);
+  assert.equal(composerEmpty([`${box}one`, `${box}two`, '', codexFooter].join('\n'), 'codex'), null);
   // A screen with no box at all.
   assert.equal(composerEmpty('stand-in\n\nnothing here', 'claude'), null);
 });
@@ -404,4 +411,29 @@ test('a message gets its Enter only if the box holds just its text: someone typi
   // Their half-typed note, then the message: both in the box, so no Enter, which would send their note.
   assert.deepEqual(await run('my note ship it now'), { result: { sent: false, kind: 'box', typed: true }, done: ['type'] });
   assert.deepEqual(await run(null), { result: { sent: false, kind: 'box', typed: true }, done: ['type'] }, 'no box found: no Enter');
+});
+
+test('Chat shows a command as drawn: two that differ only in their indentation look different, as they are', async () => {
+  const chat = (await import('../console/public/chatThread.cjs')).default;
+  // The review's case: a quoted Python program whose body is indented differently.
+  const codex = (body) => [
+    'Would you like to run the following command?', '',
+    '  Reason: check the counts',
+    '',
+    `  $ python3 -c "`,
+    '  for n in range(3):',
+    ...body,
+    '  "',
+    '',
+    '› 1. Yes, proceed (y)',
+    '  3. No, and tell Codex what to do differently (esc)', '',
+    '  Press enter to confirm or esc to cancel',
+  ].join('\n');
+  const inLoop = readApproval(codex(['      print(n)', '      run(n)']));
+  const after = readApproval(codex(['      print(n)', '  run(n)']));
+  assert.notEqual(inLoop.key, after.key);
+  const shown = (a) => chat.approvalText(a).lines.join('\n');
+  assert.notEqual(shown(inLoop), shown(after), 'the person sees which one they approve');
+  assert.match(shown(inLoop), /for n in range\(3\):\n {4}print\(n\)\n {4}run\(n\)/);
+  assert.match(shown(after), /for n in range\(3\):\n {4}print\(n\)\nrun\(n\)/);
 });
