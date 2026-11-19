@@ -73,7 +73,7 @@ test('own databases need each database\'s settings and the secrets folder; witho
   assert.deepEqual([mongoOnly.databases, mongoOnly.words.databasesPlace], [['mongo'], 'Mongo']);
 });
 
-test('webhooks need the secrets folder; the Settings page\'s URL is the public one, at /github', async () => {
+test('webhooks need the secrets folder; the Settings page\'s URL is the public one, at /github, and Slack\'s at /slack', async () => {
   const { loadConfig } = await import('../../console/config.mjs');
   const { localProvider } = await import('./index.mjs');
   const hooks = { WOODSHED_LOCAL_WEBHOOK_PORT: '7697', WOODSHED_LOCAL_WEBHOOK_URL: 'https://woodshed.example.com/hooks/' };
@@ -83,6 +83,8 @@ test('webhooks need the secrets folder; the Settings page\'s URL is the public o
   const provider = localProvider(loadConfig({ GH_TOKEN: 'x', ...hooks, WOODSHED_LOCAL_SECRETS_DIR: '/tmp/never-written', WOODSHED_LOCAL_SECRETS_KEY_FILE: keyFile() }));
   assert.equal(typeof provider.webhooks.run, 'function');
   assert.equal(await provider.webhookUrl(), 'https://woodshed.example.com/hooks/github');
+  assert.equal(await provider.slackEventsUrl(), 'https://woodshed.example.com/hooks/slack', 'Slack\'s Request URL is the receiver\'s /slack');
+  assert.equal(localProvider(loadConfig({ GH_TOKEN: 'x' })).slackEventsUrl, null);
 });
 
 test('a secrets folder needs its key, from a file only its owner reads and kept outside the folder', async () => {

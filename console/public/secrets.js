@@ -10,14 +10,12 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
   const CLIENT_SECRET_EFFECT = 'Sign-in with GitHub becomes available. The first sign-in that works makes it required on every page; '
     + 'until then nothing changes, so a wrong Callback URL in the App’s settings locks nobody out.';
 
-  const SLACK_EFFECT = 'The next pull request a session opens is posted with this bot, to the channel on the Settings page.';
-
   const RECEIVER = W.providerWords.webhookReceiver ?? 'the webhook receiver';
-  const SLACK_SIGNING_EFFECT = `${W.capitalised(RECEIVER)} checks each Slack event with it, from its next request: a mention of the bot then asks a question.`;
+  // Slack's two keys are set on Settings' Slack card, which checks the token with Slack first (slackSetup.mjs). They
+  // keep their names and their place in the secret store, so what reads them is unchanged.
+  const ON_SLACK_CARD = new Set(['slack-bot-token', 'slack-signing-secret']);
 
   function effectOf(name) {
-    if (name === 'slack-bot-token') return SLACK_EFFECT;
-    if (name === 'slack-signing-secret') return SLACK_SIGNING_EFFECT;
     if (name === 'github-reviewer-app-key') return 'The next review a session finishes is submitted as the reviewer App.';
     return name === 'github-app-client-secret' ? CLIENT_SECRET_EFFECT : SESSION_EFFECT;
   }
@@ -227,6 +225,12 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
     return h('span', { class: 'warn' }, `Not subscribed yet: ${missing.join(', ')}. Tick them under Permissions & events in the GitHub App’s settings.`);
   }
 
+  // Webhook events, the log of what came in, is reached from here rather than the menus: from the webhook card, or, on a
+  // console with no App webhook (Slack's events still land in it), from the page's note.
+  function eventsLink() {
+    return [h('a', { href: '/events' }, 'Webhook events'), ' lists what came in and what the console did with each.'];
+  }
+
   // The card says where the setup stands; the setup itself is the modal in webhookSetup.js.
   function webhookCard() {
     const c = W.webhookChecks(data);
@@ -239,7 +243,8 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
       h('span', { class: 'check-mark', 'aria-hidden': 'true' }, ok ? '✓' : '✗'), h('span', null, text));
     return h('section', { class: 'settings-card', 'aria-labelledby': 'hook-title' },
       h('h2', { id: 'hook-title', class: 'label' }, 'GitHub webhook'),
-      h('p', { class: 'sub' }, 'Labels and /woodshed comments reach the console in a second or two. Without it, the console only finds them on its 5-minute poll.'),
+      h('p', { class: 'sub' }, 'Labels and /woodshed comments reach the console in a second or two. Without it, the console only finds them on its 5-minute poll. ',
+        eventsLink()),
       c.githubError
         ? h('p', { class: 'warn' }, `GitHub’s side cannot be read: ${c.githubError}`)
         : h('ul', { class: 'checks' },
@@ -351,7 +356,8 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
       h('div', null,
         h('h1', { class: 'title' }, 'Settings ', W.scopePill('/secrets')),
         W.settingsTabs('/secrets'),
-        h('p', { class: 'sub' }, `Values stay hidden until you press Show. Every change asks you to confirm it first${keepsPrevious() ? ', and the value before it stays restorable in AWS' : ''}.`)));
+        h('p', { class: 'sub' }, `Values stay hidden until you press Show. Every change asks you to confirm it first${keepsPrevious() ? ', and the value before it stays restorable in AWS' : ''}.`,
+          data && !data.webhook && [' ', eventsLink()])));
     if (!data) {
       const waiting = loadError && manager?.canChoose ? `${manager.configured ? 'The other secrets are listed here once the GitHub App is set up.' : 'Choose where to keep secrets first.'}` : null;
       app.replaceChildren(h('div', { class: 'page' }, life.nav('/secrets'), head, managerCard(),
@@ -368,7 +374,9 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
         .map(([g, rows]) => h('section', { class: 'secret-group', 'aria-labelledby': `group-${g.id}` },
           h('h2', { id: `group-${g.id}`, class: 'label' }, g.title),
           h('p', { class: 'sub' }, g.note),
-          h('div', { class: 'secret-list' }, rows.map(secretRow)))),
+          h('div', { class: 'secret-list' }, rows.filter((s) => !ON_SLACK_CARD.has(s.name)).map(secretRow)),
+          g.id === 'console' && rows.some((s) => ON_SLACK_CARD.has(s.name))
+            && h('p', { class: 'sub slack-moved' }, 'Slack\'s bot token and signing secret are set on ', h('a', { href: '/console-settings#slack' }, 'Settings → Slack'), '.'))),
       h('p', { class: 'foot' }, 'The Postgres password is not here: RDS keeps and rotates it.')));
   }
 

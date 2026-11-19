@@ -9,7 +9,9 @@
 //
 // That token reaches every repo the App is installed on that the person can write to. A session on a project other
 // than the installation's default gets a copy GitHub scopes down to that project's repo alone (scopedTokenFor), so it
-// still pushes and opens pull requests as its owner without reaching the installation's other repos.
+// still pushes and opens pull requests as its owner without reaching the installation's other repos. A console behind
+// a host whose App is on other consoles' repos too has every private session's token scoped, to its project's repo or
+// to the console's repos of that owner (sessionApi.mjs, `ownerTokenRepos`).
 
 import logins from './public/logins.cjs';
 const { loginKey, sameLogin } = logins;
@@ -145,14 +147,14 @@ export function createGitHubUser({
     return held;
   }
 
-  async function makeScoped(login, from, { repo, permissions }) {
+  async function makeScoped(login, from, { repo, names, permissions }) {
     const secret = clientSecret();
     if (!secret) {
       console.warn('githubUser: no scoped token, the console has no client secret', { login, repo });
       return null;
     }
     const id = await clientId();
-    const [owner, name] = repo.split('/');
+    const [owner] = repo.split('/');
     let res;
     try {
       res = await fetchImpl(`${githubApi}/applications/${id}/token/scoped`, {
@@ -162,7 +164,7 @@ export function createGitHubUser({
           accept: 'application/vnd.github+json',
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ access_token: from.token, target: owner, repositories: [name], permissions }),
+        body: JSON.stringify({ access_token: from.token, target: owner, repositories: names, permissions }),
       });
     } catch (err) {
       if (!(err instanceof TypeError)) throw err;
@@ -175,15 +177,17 @@ export function createGitHubUser({
       return null;
     }
     const expiresAt = Date.parse(answer.expires_at ?? '') || from.expiresAt;
-    console.log('githubUser: scoped token made', { login, repo });
+    console.log('githubUser: scoped token made', { login, repo, repos: names.length });
     return { from: from.token, token: answer.token, expiresAt };
   }
 
   /**
-   * The person's own token, scoped by GitHub to one repo and to `permissions`, for their sessions on a project other
-   * than the default.
+   * The person's own token, scoped by GitHub to one repo (or a few of one owner's) and to `permissions`, for their
+   * sessions on a project other than the default, or on any project of a console behind a host.
    * @param {string} login
-   * @param {{repo: string, permissions: Record<string, 'read'|'write'>}} scope  `repo` is owner/name
+   * @param {{repo: string, repos?: string[], permissions: Record<string, 'read'|'write'>}} scope  `repo` is owner/name;
+   *   `repos`, more owner/name repos the same token reaches beside it. GitHub scopes a token to one owner's repos, so
+   *   any of another owner's are left out
    * @returns {Promise<{token: string, expiresAt: number}|null>}  null when they have not connected GitHub, or GitHub
    *   (or a console with no client secret) made none: the caller falls back to the App's token for that repo
    * @throws {Error}  `shown`, as tokenFor, when they had connected and GitHub refuses them now
@@ -199,12 +203,16 @@ export function createGitHubUser({
       forgetScoped(login);
       return null;
     }
-    const key = `${loginKey(login)}\n${scope.repo.toLowerCase()}`;
+    const owner = scope.repo.split('/')[0].toLowerCase();
+    const names = [...new Set([scope.repo, ...(scope.repos ?? [])]
+      .filter((r) => r.split('/')[0].toLowerCase() === owner)
+      .map((r) => r.split('/')[1].toLowerCase()))].sort();
+    const key = `${loginKey(login)}\n${owner}/${names.join(',')}`;
     const held = scoped.get(key);
     if (held && held.from === from.token && held.expiresAt - now() >= REFRESH_MARGIN_MS) return { token: held.token, expiresAt: held.expiresAt };
     if (!scoping.has(key)) {
       // A Disconnect while GitHub was answering: the new token is ended, not kept, as a refresh's is.
-      const making = makeScoped(login, from, scope).then(async (made) => {
+      const making = makeScoped(login, from, { ...scope, names }).then(async (made) => {
         if (!made || (disconnectsOf(login) === since && !disconnecting.has(loginKey(login)) && userSettings.view(login).github.connected)) return made;
         console.log('githubUser: disconnected while a scoped token was made, ending it', { login, repo: scope.repo });
         await revoke(login, made.token);

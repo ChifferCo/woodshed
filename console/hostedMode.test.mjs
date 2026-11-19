@@ -9,7 +9,7 @@ import net from 'node:net';
 
 import { loadConfig, requireClosedWhenReachable } from './config.mjs';
 import { applyStored } from './githubAppSetup.mjs';
-import { createConsoleUpgrade, createHandler, pageShell } from './server.mjs';
+import { createConsoleUpgrade, createHandler, pageShell, settingsFrame } from './server.mjs';
 import { createUserSettings } from './userSettings.mjs';
 import { createSettings } from './settings.mjs';
 import { IDENTITY_HEADER, createTrustedIdentity, signIdentity } from './trustedIdentity.mjs';
@@ -179,6 +179,30 @@ test('a console that borrows its GitHub access has no /setup/github, and My sett
   assert.equal((await send(port, { method: 'POST', path: '/api/setup/github/restart', headers: WRITE, body: {} })).status, 404);
   assert.deepEqual(asked, [], 'the setup was never reached');
   assert.equal((await send(port, { path: '/api/my' })).body.githubConnect, false, 'no App sign-in to connect through');
+  assert.equal((await send(port, { path: '/api/my' })).body.githubConnectHref, '/auth/connect', 'the console\'s own, unused');
+  assert.equal((await send(port, { path: '/api/my' })).body.githubConnectAutomatic, false, 'a console on its own connects nobody by itself');
+});
+
+test('a console the host lends Connect GitHub to sends My settings\' Connect to the host\'s page, and its Disconnect works', async (t) => {
+  const disconnected = [];
+  const userSettings = {
+    view: () => ({ claudeToken: { set: false }, codexAuth: { set: false }, github: { connected: false }, files: {}, setUp: false, available: true }),
+  };
+  const githubUser = { tokenFor: async () => null, disconnect: async (login) => { disconnected.push(login); } };
+  const fleet = { sessions: () => [], find: () => null };
+  const config = { ...CONFIG, trustedIdentitySecret: null, githubBroker: { url: 'https://host.example/t', tokenFile: '/nonexistent' } };
+  const handle = createHandler({ config, fleet, userSettings, githubUser, githubConnectHref: '/host/github/connect', githubConnectAutomatic: true });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  const me = (await send(port, { path: '/api/my' })).body;
+  assert.equal(me.githubConnect, true);
+  assert.equal(me.githubConnectHref, '/host/github/connect', 'the host runs the sign-in, not /auth/connect');
+  assert.equal(me.githubConnectAutomatic, true, 'the host connects people on its own');
+  assert.equal((await send(port, { path: '/auth/connect', headers: { accept: 'text/html' } })).status, 404, 'the console has no sign-in of its own to connect with');
+  await send(port, { method: 'POST', path: '/api/my/github/disconnect', headers: WRITE, body: {} });
+  assert.equal(disconnected.length, 1, 'Disconnect ends the token through the host-lent githubUser');
 });
 
 test('the header signs a terminal websocket in, and never reaches the session', async (t) => {
@@ -325,13 +349,123 @@ test('a program embedding the console adds to the user menu, and only links a pa
   assert.equal(me.menuSubtitle, 'Platform team');
   assert.deepEqual(me.menuGroups, [
     { label: 'Workspace', items: [{ label: 'Platform team', href: null, current: true, note: 'Admin' }, { label: 'Mobile team', href: '/switch?to=mobile', current: false, note: null }] },
-    { label: null, items: [{ label: 'Billing', href: 'https://billing.example/', note: null }] },
   ]);
+  assert.deepEqual(me.menuYou, [{ label: 'Billing', href: 'https://billing.example/' }], 'a group of links with no label is read as the person\'s own');
   const signedOut = (await send(port, { path: '/api/me' })).body;
   assert.equal(signedOut.menuGroups, undefined, 'nothing for someone not signed in');
   t.mock.method(console, 'warn', () => {});
   const failed = (await send(port, { path: '/api/me', headers: { ...MEMBER(), 'x-boom': '1' } })).body;
   assert.deepEqual([failed.login, failed.menuGroups], ['sam-member', undefined], 'a menu that throws leaves /api/me as it was');
+});
+
+test('a program embedding the console adds the person\'s own pages and sections of its own, with only links a page may hold', async (t) => {
+  const many = (n, at) => Array.from({ length: n }, (_, i) => ({ label: `Page ${i}`, href: `${at}/${i}` }));
+  const userMenu = () => ({
+    you: [{ label: 'Your workspaces', href: '/account' }, { label: 'Bad', href: 'javascript:alert(1)' }, { label: 'Odd', href: '//elsewhere.example' }, { href: '/no-label' }],
+    groups: [{ label: 'Workspace', items: [{ label: 'Platform team', current: true }] }, { items: [{ label: 'Docs', href: 'https://docs.example/' }] }],
+    sections: [
+      { label: 'Service', items: [
+        { label: 'Admin', href: '/admin', items: [{ label: 'Overview', href: '/admin' }, { label: 'Pool', href: '/admin/pool' }, { label: 'Tab', href: '/\t/elsewhere.example' }] },
+        { label: 'Gone', href: 'javascript:void(0)', items: [{ label: 'Under it', href: '/under' }] },
+      ] },
+      { items: [{ label: 'No heading', href: '/x' }] },
+      { label: 'Empty', items: [{ label: 'Bad', href: 'data:text/html,x' }] },
+      { label: 'Many', items: [{ label: 'Lots', href: '/lots', items: many(60, '/lots') }] },
+    ],
+  });
+  const { port } = await hostedConsole(t, { extra: { userMenu } });
+  const me = (await send(port, { path: '/api/me', headers: MEMBER() })).body;
+  assert.deepEqual(me.menuYou, [{ label: 'Your workspaces', href: '/account' }, { label: 'Docs', href: 'https://docs.example/' }],
+    'the program\'s own first, then an old group of links');
+  assert.deepEqual(me.menuGroups, [{ label: 'Workspace', items: [{ label: 'Platform team', href: null, current: true, note: null }] }]);
+  assert.deepEqual(me.menuSections[0], { label: 'Service', items: [
+    { label: 'Admin', href: '/admin', items: [{ label: 'Overview', href: '/admin' }, { label: 'Pool', href: '/admin/pool' }] },
+  ] }, 'a bad link goes with what is under it, and a section with no heading or nothing left is dropped');
+  assert.deepEqual(me.menuSections.map((s) => s.label), ['Service', 'Many']);
+  const count = me.menuYou.length + me.menuGroups[0].items.length + me.menuSections.flatMap((s) => s.items).reduce((n, i) => n + 1 + i.items.length, 0);
+  assert.equal(count, 50, 'fifty links in all');
+  assert.equal((await send(port, { path: '/api/me' })).body.menuSections, undefined, 'nothing for someone not signed in');
+});
+
+test('a program embedding the console adds tabs to Settings, each a path on the console', async (t) => {
+  const settingsTabs = (headers) => (headers['x-boom'] ? JSON.parse('{') : [
+    { label: 'Members', href: '/orgs/acme/members' },
+    { label: 'Away', href: 'https://billing.example/' }, { label: 'Odd', href: '//elsewhere.example' },
+    { label: 'Bad', href: 'javascript:alert(1)' }, { label: 'Slash', href: '/\\elsewhere.example' }, { href: '/no-label' },
+    // A browser drops the tab and the newline, which leaves `//elsewhere.example` and `//x`: another site.
+    { label: 'Tab', href: '/\t/elsewhere.example' }, { label: 'Newline', href: '/\n/x' },
+    ...Array.from({ length: 12 }, (_, i) => ({ label: `Tab ${i}`, href: `/t/${i}` })),
+  ]);
+  const { port } = await hostedConsole(t, { extra: { settingsTabs } });
+  const me = (await send(port, { path: '/api/me', headers: MEMBER() })).body;
+  assert.deepEqual(me.settingsTabs.slice(0, 2), [{ label: 'Members', href: '/orgs/acme/members' }, { label: 'Tab 0', href: '/t/0' }]);
+  assert.equal(me.settingsTabs.length, 8, 'eight at most');
+  assert.equal((await send(port, { path: '/api/me' })).body.settingsTabs, undefined, 'nothing for someone not signed in');
+  t.mock.method(console, 'warn', () => {});
+  const failed = (await send(port, { path: '/api/me', headers: { ...MEMBER(), 'x-boom': '1' } })).body;
+  assert.deepEqual([failed.login, failed.settingsTabs], ['sam-member', undefined], 'tabs that throw leave /api/me as it was');
+});
+
+test('behind a hosting proxy, Sign out is the program\'s: it ends the sign-in, and the console answers where it says', async (t) => {
+  const asked = [];
+  let answer = { location: '/account', setCookie: 'host_session=; Max-Age=0' };
+  const signOut = async (req) => {
+    asked.push(req.headers.cookie ?? null);
+    if (answer === 'boom') throw new Error('database gone');
+    return answer;
+  };
+  const { port } = await hostedConsole(t, { extra: { signOut } });
+  assert.equal((await send(port, { path: '/api/me', headers: MEMBER() })).body.signOut, true, 'the menu offers it');
+  assert.equal((await send(port, { path: '/api/me' })).body.signOut, undefined, 'not to someone not signed in');
+  const post = (headers) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/auth/sign-out', headers: { host: 'console.example', cookie: 'host_session=abc', ...headers } }, (res) => {
+      res.resume();
+      res.on('end', () => resolve({ status: res.statusCode, location: res.headers.location, cookies: res.headers['set-cookie'] ?? [] }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+  const out = await post({ ...MEMBER(), origin: 'https://console.example' });
+  assert.deepEqual([out.status, out.location, out.cookies], [303, '/account', ['host_session=; Max-Age=0']]);
+  assert.deepEqual(asked, ['host_session=abc'], 'the program got the request, with its cookie');
+  assert.equal((await post({ ...MEMBER(), origin: 'https://elsewhere.example' })).status, 403, 'from another site: refused');
+  assert.equal(asked.length, 1, 'without asking the program');
+  answer = { location: 'https://elsewhere.example/' };
+  const away = await post({ ...MEMBER(), origin: 'https://console.example' });
+  assert.deepEqual([away.location, away.cookies], ['https://elsewhere.example/', []], 'an https address is the program\'s to name, as its menu links are');
+  answer = { location: '//elsewhere.example' };
+  assert.equal((await post({ ...MEMBER(), origin: 'https://console.example' })).location, '/', 'anything else goes home');
+  answer = { location: '/\t/elsewhere.example' };
+  assert.equal((await post({ ...MEMBER(), origin: 'https://console.example' })).location, '/', 'a tab in the path goes home: a browser drops it');
+  answer = 'boom';
+  t.mock.method(console, 'error', () => {});
+  assert.equal((await post({ ...MEMBER(), origin: 'https://console.example' })).status, 500);
+});
+
+test('behind a hosting proxy with no sign-out of the program\'s, there is no Sign out', async (t) => {
+  const { port } = await hostedConsole(t);
+  assert.equal((await send(port, { path: '/api/me', headers: MEMBER() })).body.signOut, undefined);
+});
+
+test('a program\'s page in the settings frame: its part in a template hostSettings.js shows, which it cannot close early', () => {
+  const page = settingsFrame({ title: 'Acme', current: '/orgs/acme/credits"x', body: '<h2>Credits</h2></template><script>alert(1)</script>' });
+  assert.match(page, /<template id="woodshed-host-page" data-current="\/orgs\/acme\/credits&#34;x"><h2>Credits<\/h2>&lt;\/template><script>alert\(1\)<\/script><\/template>/);
+  assert.match(page, /<script src="\/static\/hostSettings\.js\?v=[0-9a-f]{12}"><\/script>/);
+  assert.match(page, /<script src="\/static\/common\.js\?v=/, 'with the console\'s own scripts, as on its settings pages');
+  const styled = settingsFrame({ title: 'Acme', current: '/x', body: '', styles: ['/assets/frame.css?v="1', 'https://elsewhere.example/a.css', '//x.example/b.css'] });
+  assert.match(styled, /<link rel="stylesheet" href="\/static\/style\.css\?v=[0-9a-f]{12}">\n<link rel="stylesheet" href="\/assets\/frame\.css\?v=&#34;1">\n<\/head>/,
+    'the program\'s stylesheet after the console\'s, escaped, and nothing from elsewhere');
+});
+
+test('a program\'s own page in the settings frame has its own heading, and the row of its own pages or none', () => {
+  const own = settingsFrame({ title: 'Acme', current: '/admin/pool', heading: 'Admin', body: '<p>Pool</p>',
+    tabs: [{ label: 'Overview', href: '/admin' }, { label: 'Pool', href: '/admin/pool' }, { label: 'Away', href: 'https://elsewhere.example/' }, { label: 'Odd', href: '//x.example' }] });
+  assert.match(own, /<template id="woodshed-host-page" data-current="\/admin\/pool" data-heading="Admin" data-tabs="\[\{&#34;label&#34;:&#34;Overview&#34;,&#34;href&#34;:&#34;\/admin&#34;\},\{&#34;label&#34;:&#34;Pool&#34;,&#34;href&#34;:&#34;\/admin\/pool&#34;\}\]"><p>Pool<\/p><\/template>/,
+    'paths on the console alone, as Settings\' tabs');
+  const plain = settingsFrame({ title: 'Acme', current: '/account', heading: 'Your <workspaces>', body: '' });
+  assert.match(plain, /data-heading="Your &#60;workspaces&#62;" data-tabs="\[\]">/, 'escaped, with no row');
+  assert.match(settingsFrame({ title: 'Acme', current: '/x', body: '', tabs: [{ label: 'T', href: '/t' }] }), /<template id="woodshed-host-page" data-current="\/x">/,
+    'with no heading it is one of Settings\' tabs, as before');
 });
 
 test('a page carries the console\'s link query for the links it copies, escaped as a query', () => {

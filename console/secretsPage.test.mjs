@@ -27,7 +27,7 @@ function walk(el, out = []) {
 
 const row = (name, fields) => ({ name, group: 'session', kind: 'line', readable: true, exists: true, set: true, description: '', changedAt: '2026-10-01T00:00:00Z', ...fields });
 
-async function loadPage(secrets) {
+async function loadPage(secrets, webhook = null) {
   const app = element('div');
   const h = (tag, attrs, ...children) => {
     const el = element(tag);
@@ -40,11 +40,12 @@ async function loadPage(secrets) {
     for (const c of children.flat(Infinity)) if (c !== null && c !== undefined && c !== false) el.append(typeof c === 'object' ? c : String(c));
     return el;
   };
-  const answers = { '/api/secrets-manager': { canChoose: false, configured: true, kind: 'aws' }, '/api/secrets': { repo: 'acme/app', secrets, webhook: null } };
+  const answers = { '/api/secrets-manager': { canChoose: false, configured: true, kind: 'aws' }, '/api/secrets': { repo: 'acme/app', secrets, webhook }, '/api/webhook/deliveries': { deliveries: [] } };
   const W = {
     h, nav: () => element('nav'), settingsTabs: () => element('nav'), scopePill: () => element('span'), when: (iso) => `at ${iso}`, providerWords: {}, capitalised: (s) => s,
     settingsPage: (_match, start) => start(app, { nav: () => element('nav'), interval: (fn, ms) => context.setInterval?.(fn, ms), timeout: (fn, ms) => context.setTimeout(fn, ms), on: (target, type, fn) => target.addEventListener?.(type, fn) }),
     getJson: async (path) => answers[path],
+    webhookChecks: () => ({ active: true, secret: true, url: true, missingEvents: [] }), eventName: (e) => e,
   };
   const context = vm.createContext({ window: { Woodshed: W }, document: { getElementById: () => app }, setTimeout });
   vm.runInContext(source, context);
@@ -79,4 +80,33 @@ test('a missing secret shows Set where the store makes it on its first write, an
   const terraform = await loadPage([row('openai-api-key', { kind: 'line', readable: false, exists: false, set: false, changedAt: null })]);
   assert.deepEqual(buttonsOf(terraform, 'openai-api-key'), []);
   assert.match(textOf(terraform), /Missing in AWS: apply Terraform to create it/);
+});
+
+test('Slack\'s two keys are not listed: one line points to the Slack card, where they are set', async () => {
+  const app = await loadPage([
+    row('github-app-key', { group: 'console', kind: 'pem', readable: false }),
+    row('slack-bot-token', { group: 'console', readable: false }),
+    row('slack-signing-secret', { group: 'console', readable: false }),
+  ]);
+  const group = section(app, 'Console only');
+  assert.deepEqual(walk(group).filter((e) => e.className === 'secret-name').map(textOf), ['github-app-key']);
+  const note = walk(group).find((e) => e.className === 'sub slack-moved');
+  assert.equal(textOf(note), 'Slack\'s bot token and signing secret are set on Settings → Slack.');
+  assert.equal(walk(note).find((e) => e.tag === 'a').attrs.href, '/console-settings#slack');
+});
+
+test('Webhook events is linked from the GitHub webhook card, or from the page\'s note when there is no webhook', async () => {
+  const eventsLinks = (app) => walk(app).filter((e) => e.tag === 'a' && e.attrs.href === '/events');
+  const noHook = await loadPage([row('API_KEY')]);
+  const [inNote] = eventsLinks(noHook);
+  assert.equal(textOf(inNote), 'Webhook events');
+  assert.equal(eventsLinks(noHook).length, 1, 'once');
+  const note = walk(noHook).find((e) => e.tag === 'header').children[0].children.find((e) => e.tag === 'p');
+  assert.ok(eventsLinks(note).length === 1, 'in the note under the tabs');
+
+  const hooked = await loadPage([row('API_KEY')], { events: ['issues'], github: {}, expectedUrl: 'https://hooks.test/' });
+  assert.equal(eventsLinks(hooked).length, 1, 'once, on the card alone');
+  const card = walk(hooked).find((e) => e.tag === 'section' && e.attrs['aria-labelledby'] === 'hook-title');
+  assert.equal(eventsLinks(card).length, 1, 'on the GitHub webhook card');
+  assert.match(textOf(card), /Webhook events lists what came in and what the console did with each\./);
 });

@@ -7,8 +7,10 @@
   const Index = window.WoodshedSettingsIndex;
 
   // A page the person cannot open is left out: the console's own pages are an admin's, and People is not there behind a
-  // hosting proxy.
-  const allowed = (page) => !Index.PAGES[page].admin || (W.isAdmin() && W.consoleLinks().some((link) => link.href === page));
+  // hosting proxy unless the program hands over its list. A page under Settings (its tabs, People behind a proxy among
+  // them, Webhook events) is in its entry's `also`.
+  const allowed = (page) => !Index.PAGES[page].admin
+    || (W.isAdmin() && W.consoleLinks().some((link) => link.href === page || Boolean(link.also?.includes(page))));
 
   /**
    * Scrolls to a section's card and outlines it for a moment; once the page has drawn it, since its cards come late. A

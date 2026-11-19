@@ -84,11 +84,23 @@
 //   POST /api/people/github-sessions  {"login": "<handle>", "on": true|false}   who starts sessions from GitHub and sees shared ones
 //   POST /api/people/assignable  {"login": "<handle>", "on": true|false}   who may be assigned a shared session (needs the above)
 //   POST /api/people/admin      {"login": "<handle>", "admin": true|false}   who is an admin; the last one keeps it
+//   POST /api/people/add|role   {"login": "<handle>", "role": "owner"|"member"}   behind a hosting proxy with the program's
+//                                list (hostedMembers.mjs): add someone, or change their role, through the program; remove
+//                                takes them off there. Invite, accept, decline and admin are not there
 //   POST /api/sessions/<id>/assign  {"to": "<handle>"|null}   a change of who has a shared session, by someone who can be assigned
 //   POST /api/people/slack       {"login": "<handle>", "slack": "U01ABC2DEF3" | "@handle" | ""}   links a member's Slack user by hand (slackPeople.mjs)
 //   POST /api/access/ask|withdraw  a visitor, signed in but not on the list, asks to join or takes it back
 //   POST /api/console-settings   {"values": {"maxRunning": 6, ...}, "slackChannel": "C..."}   one card's changes, all or none
 //   POST /api/console-settings/webhooks  {"source": "github"|"slack", "off": true|false}   drop that source's webhooks (webhookSwitch.mjs)
+//   GET  /api/console-settings/slack   the Slack card: who the bot is (never a key), the channel, the events Request URL,
+//                                the app manifest and the embedding program's install option (slackSetup.mjs)
+//   POST /api/console-settings/slack   {"botToken"?, "signingSecret"?, "channel"?}   the Set up Slack dialog's save: an empty
+//                                field keeps its value, and a token is checked with Slack's auth.test before anything is kept
+//   POST /api/console-settings/slack/check   {"botToken"}   who a pasted token is, by auth.test, keeping nothing
+//   POST /api/console-settings/slack/recheck  {}   the saved token asked about again (its scopes after a reinstall), as GET answers
+//   GET  /api/console-settings/slack/channels?q=   the channel picker: channels whose name has that text, and whether the bot
+//                                is in each; POST with {"q", "botToken"} lists them with a token pasted but not saved yet
+//   POST /api/console-settings/slack/disconnect  {"confirm": "slack"}   both Slack secrets deleted, where the store can make them again
 //   POST /api/console-settings/projects         {"repo": "owner/name", "name": "optional"}   add a repo sessions can start on (addedProjects.mjs)
 //   GET  /api/console-settings/projects/repos   the repos the GitHub App may reach that are not projects yet, for Add a repo
 //   POST /api/console-settings/projects/remove  {"name": "<project>"}   take an added repo off, with its repo settings
@@ -111,7 +123,8 @@
 //   *    /shell/<id>/...         its second ttyd, on a plain shell in the repo (the Terminal tab)
 //   *    /redis/<id>/...         the session's redis-commander, through its statusd
 //   *    /pg/<id>/..., /mongo/<id>/...   a session's pgweb and mongo-express, on the databases the console made for it
-//   GET  /login, /auth/start, /auth/callback, POST /auth/sign-out   sign-in with GitHub (auth.mjs)
+//   GET  /login, /auth/start, /auth/callback, POST /auth/sign-out   sign-in with GitHub (auth.mjs); behind a hosting
+//                                proxy, POST /auth/sign-out alone, which the program embedding the console answers
 //   GET  /api/me                 who is signed in, and whether sign-in is on
 //   POST /api/sessions/<id>/app/start  start the session's app: {"app": "<name>"} picks one of several
 //   POST /api/sessions/<id>/app/stop   stop it
@@ -183,7 +196,7 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'publ
 // /, /all and a session's page are one page, session.js last.
 // The settings pages are one page too: each address loads every settings page's script, and common.js shows the one the
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
-const SETTINGS_SCRIPTS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
+const SETTINGS_SCRIPTS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
 const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
@@ -198,6 +211,7 @@ const STATIC_FILES = {
   'common.js': 'text/javascript; charset=utf-8',
   'theme.js': 'text/javascript; charset=utf-8',
   'shell.js': 'text/javascript; charset=utf-8',
+  'hostSettings.js': 'text/javascript; charset=utf-8',
   'terminalCache.js': 'text/javascript; charset=utf-8',
   'terminalScroll.cjs': 'text/javascript; charset=utf-8',
   'terminalFind.cjs': 'text/javascript; charset=utf-8',
@@ -210,6 +224,7 @@ const STATIC_FILES = {
   'events.js': 'text/javascript; charset=utf-8',
   'secrets.js': 'text/javascript; charset=utf-8',
   'webhookSetup.js': 'text/javascript; charset=utf-8',
+  'slackSetup.js': 'text/javascript; charset=utf-8',
   'githubSetup.js': 'text/javascript; charset=utf-8',
   'login.js': 'text/javascript; charset=utf-8',
   'launcher.js': 'text/javascript; charset=utf-8',
@@ -227,7 +242,7 @@ const STATIC_FILES = {
 const MAX_BODY_BYTES = 16 * 1024;
 // A whole .env file, JSON-escaped, under Secrets Manager's 64 KB.
 const MAX_SECRET_BODY_BYTES = 160 * 1024;
-const PEOPLE_RE = /^\/api\/people\/(invite|accept|decline|remove|slack|assignable|github-sessions|admin)$/;
+const PEOPLE_RE = /^\/api\/people\/(invite|accept|decline|remove|slack|assignable|github-sessions|admin|add|role)$/;
 const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 // A repo's settings page: its project's name, as Console settings' Repos card links it.
 const REPO_SETTINGS_PAGE_RE = /^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -241,6 +256,8 @@ const UPDATES_CHECK_PATH = `${UPDATES_PATH}/check`;
 const UPDATES_UPDATE_PATH = `${UPDATES_PATH}/update`;
 const PROJECT_COLOR_PATH = '/api/console-settings/projects/color';
 const PROJECT_CHANNEL_PATH = `${PROJECTS_PATH}/slack-channel`;
+const SLACK_SETUP_PATH = '/api/console-settings/slack';
+const SLACK_SETUP_WRITE_RE = /^\/api\/console-settings\/slack(?:\/(check|recheck|channels|disconnect))?$/;
 const PROJECT_TRIGGERS_PATH = `${PROJECTS_PATH}/triggers`;
 const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
 const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
@@ -292,6 +309,8 @@ const SETUP_PATH_RE = /^\/(?:api\/)?setup\/github(?:\/|$)/;
 // What a program embedding the console may add to the user menu (menuOf): how much of it, and how long each text.
 const MENU_TEXT_CHARS = 100;
 const MENU_ITEMS = 50;
+// The most tabs a program embedding the console may add beside Settings' own (settingsTabsOf).
+const SETTINGS_TABS = 8;
 const APP_SHARE_RE = /^\/api\/sessions\/([0-9a-f]{8})\/app-share(?:\/(members|links)(?:\/([0-9a-f]{8})\/(revoke))?)?$/;
 
 /**
@@ -307,8 +326,11 @@ export function knownHosts({ host, publicUrl, extraHosts }) {
 // A link from a program embedding the console goes into an href: a path on the console's own name, or the web.
 function menuHref(href) {
   if (typeof href !== 'string' || href.length > 2000) return null;
+  // A browser drops tabs and newlines from a URL and trims control characters and spaces, so `/\t/host` is `//host`.
+  if (/[\u0000-\u001f\u007f\s]/.test(href)) return null;
   if (/^https?:\/\//i.test(href)) return href;
-  return href.startsWith('/') && !href.startsWith('//') ? href : null;
+  // `//host` and `/\\host` are both another site to a browser.
+  return href.startsWith('/') && !href.startsWith('//') && !href.startsWith('/\\') ? href : null;
 }
 
 function menuText(value) {
@@ -316,15 +338,41 @@ function menuText(value) {
 }
 
 /**
- * What a program embedding the console adds to the user menu (createInstallation's `userMenu`), as /api/me sends it:
- * text cut short, each link a path or an http(s) address, and the rest dropped. common.js draws it
- * (designSystem/components/MenuGroups).
- * @param {(headers: object) => {subtitle?: string, groups?: {label?: string, items: {label: string, href?: string,
- *          current?: boolean, note?: string}[]}[]}|null} userMenu
- *   `subtitle` goes under the person's name on the user button; each group is a `label` and its items at the top of
- *   the menu. An item with `current` is one of a set of choices, `current: true` the one in use (it needs no `href`)
+ * The tabs a program embedding the console adds to Settings (createInstallation's `settingsTabs`), as /api/me sends
+ * them: each a label and a path on the console's own name, drawn after General and Secrets & webhooks (common.js,
+ * settingsTabs). A tab is the program's own page, which shows in the settings frame by `settingsFrame`; anything that is
+ * not a path is dropped, since a tab never leaves the console.
+ * @param {(headers: object) => {label: string, href: string}[]|null} settingsTabs
  * @param {object} headers  the request's
- * @returns {{menuSubtitle?: string, menuGroups?: object[]}}
+ * @returns {{settingsTabs?: {label: string, href: string}[]}}
+ */
+export function settingsTabsOf(settingsTabs, headers) {
+  let given;
+  try {
+    given = settingsTabs(headers) ?? [];
+  } catch (err) {
+    console.warn('console: settings tabs not given', { message: String(err?.message ?? err).split('\n')[0] });
+    return {};
+  }
+  const tabs = (Array.isArray(given) ? given : []).map((tab) => ({ label: menuText(tab?.label), href: menuHref(tab?.href) }))
+    .filter((tab) => tab.label && tab.href?.startsWith('/')).slice(0, SETTINGS_TABS);
+  return tabs.length ? { settingsTabs: tabs } : {};
+}
+
+/**
+ * What a program embedding the console adds to the user menu and the settings list (createInstallation's `userMenu`),
+ * as /api/me sends it: text cut short, each link a path or an http(s) address, and the rest dropped, fifty links in all.
+ * common.js draws it (designSystem/components/MenuGroups).
+ * @param {(headers: object) => {subtitle?: string, you?: {label: string, href: string}[],
+ *          groups?: {label?: string, items: {label: string, href?: string, current?: boolean, note?: string}[]}[],
+ *          sections?: {label: string, items: {label: string, href: string, items?: {label: string, href: string}[]}[]}[]}|null} userMenu
+ *   `subtitle` goes under the person's name on the user button. `you` are the person's own pages, after My settings
+ *   under their name and in the settings list's You group. `groups` are the switcher, after those: a `label` and its
+ *   items, each with `current`, `current: true` the one in use (it needs no `href`). `sections` follow the Console
+ *   group, each a heading and its pages, a page with its own pages under it (`items`) as Settings has its tabs. A group
+ *   with no label and no choices in it is read as `you` links, which it was drawn as before there were any
+ * @param {object} headers  the request's
+ * @returns {{menuSubtitle?: string, menuYou?: object[], menuGroups?: object[], menuSections?: object[]}}
  */
 export function menuOf(userMenu, headers) {
   let given;
@@ -335,18 +383,43 @@ export function menuOf(userMenu, headers) {
     return {};
   }
   let room = MENU_ITEMS;
-  const groups = (Array.isArray(given.groups) ? given.groups : []).map((group) => {
-    const items = (Array.isArray(group?.items) ? group.items : []).map((item) => ({
+  const listOf = (value) => (Array.isArray(value) ? value : []);
+  const take = (items) => {
+    const kept = items.slice(0, Math.max(room, 0));
+    room -= kept.length;
+    return kept;
+  };
+  const link = (item) => ({ label: menuText(item?.label), href: menuHref(item?.href) });
+  const links = (items) => take(listOf(items).map(link).filter((item) => item.label && item.href));
+  const you = links(given.you);
+  const groups = listOf(given.groups).map((group) => {
+    const items = take(listOf(group?.items).map((item) => ({
       label: menuText(item?.label),
       href: item?.current === true ? null : menuHref(item?.href),
       ...(typeof item?.current === 'boolean' ? { current: item.current } : {}),
       note: menuText(item?.note) || null,
-    })).filter((item) => item.label && (item.href || item.current === true)).slice(0, Math.max(room, 0));
-    room -= items.length;
+    })).filter((item) => item.label && (item.href || item.current === true)));
     return { label: menuText(group?.label) || null, items };
-  }).filter((group) => group.items.length);
+  }).filter((group) => {
+    if (!group.items.length) return false;
+    // The old way to put links under the name: a group of plain links with no label of its own.
+    if (group.label || group.items.some((item) => typeof item.current === 'boolean')) return true;
+    you.push(...group.items.map(({ label, href }) => ({ label, href })));
+    return false;
+  });
+  // A section with no heading takes no room from those after it.
+  const sections = listOf(given.sections).filter((section) => menuText(section?.label)).map((section) => ({
+    label: menuText(section.label),
+    items: listOf(section.items).map((item) => {
+      const [entry] = links([item]);
+      return entry && { ...entry, items: links(item?.items) };
+    }).filter(Boolean),
+  })).filter((section) => section.items.length);
   const subtitle = menuText(given.subtitle);
-  return { ...(subtitle ? { menuSubtitle: subtitle } : {}), ...(groups.length ? { menuGroups: groups } : {}) };
+  return {
+    ...(subtitle ? { menuSubtitle: subtitle } : {}), ...(you.length ? { menuYou: you } : {}),
+    ...(groups.length ? { menuGroups: groups } : {}), ...(sections.length ? { menuSections: sections } : {}),
+  };
 }
 
 // A static file's URL carries a hash of its contents, so the browser keeps it until a deploy changes it rather than
@@ -373,14 +446,15 @@ function staticUrl(file) {
 
 /**
  * @param {{title: string, script: string|string[], login?: string|null, provider?: {name: string, words?: object}|null,
- *          linkQuery?: Record<string, string>|null}} args
+ *          linkQuery?: Record<string, string>|null, hostPage?: string, styles?: string[]}} args
  *   `title` is the console's name (config.consoleName): the page's title, the installed app's on a home screen, and
  *   what the scripts call the console (common.js, W.consoleName); `script` is the page's scripts, loaded in order
  *   after common.js; `provider`'s words are what the page says about where sessions run (providerWords.mjs), the
- *   defaults where it has none; `linkQuery` is config.linkQuery
+ *   defaults where it has none; `linkQuery` is config.linkQuery; `hostPage` is settingsFrame's template, after #app, and
+ *   `styles` its program's stylesheets, after the console's
  * @returns {string}  the page shell; the script renders everything from /api/sessions
  */
-export function pageShell({ title, script, login = null, provider = null, linkQuery = null }) {
+export function pageShell({ title, script, login = null, provider = null, linkQuery = null, hostPage = '', styles = [] }) {
   // Whose page it is, for session.js to draw from what it kept only for the same person. A GitHub login, or nothing.
   const who = /^[A-Za-z0-9-]{1,39}$/.test(String(login ?? '')) ? `\n<meta name="woodshed-login" content="${login}">` : '';
   // What the links a page copies carry (config.linkQuery). URLSearchParams leaves nothing an attribute needs escaped.
@@ -406,10 +480,10 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <script src="${staticUrl('theme.js')}"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Red+Hat+Display:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="${staticUrl('style.css')}">
+<link rel="stylesheet" href="${staticUrl('style.css')}">${styles.map((href) => `\n<link rel="stylesheet" href="${escapeHtml(href)}">`).join('')}
 </head>
 <body>
-<div id="app"></div>
+<div id="app"></div>${hostPage}
 <script src="${staticUrl('logins.cjs')}"></script>
 <script src="${staticUrl('setupSteps.cjs')}"></script>
 <script src="${staticUrl('inviteLink.cjs')}"></script>
@@ -424,6 +498,36 @@ ${[script].flat().map((s) => `<script src="${staticUrl(s)}"></script>`).join('\n
 </body>
 </html>
 `;
+}
+
+/**
+ * A page of a program embedding the console, in the settings pages' frame: the side list, the avatar menu, and the title
+ * Settings over its tabs, with `current` marked (a tab `settingsTabs` gave). The program renders `body` itself, as HTML
+ * it has escaped; it is shown as it is, under the tabs (public/hostSettings.js). Its forms and links are the program's,
+ * so a click on another tab loads that page.
+ * A page that is one of the program's own entries in the menu (`userMenu`'s `you` or `sections`) rather than a tab of
+ * Settings gives its own `heading`, and `tabs`, the row under it (its entry's own pages), or none: `current` then marks
+ * its entry, and the tab of that row it is.
+ * @param {{title: string, body: string, current: string, heading?: string|null, tabs?: {label: string, href: string}[]|null,
+ *          login?: string|null, linkQuery?: object|null, styles?: string[]}} page
+ *   `title` is the browser tab's (the console's name, as on its own pages); `styles` are the program's stylesheets for
+ *   its part, each a path on the console's name (anything else is dropped), loaded after the console's, so its rules
+ *   can use the design system's colours (`var(--ink)` and the rest) and follow the theme; `tabs` are paths on the
+ *   console's name too, as Settings' are
+ * @returns {string}  the whole page
+ */
+export function settingsFrame({ title, body, current, heading = null, tabs = null, login = null, linkQuery = null, styles = [] }) {
+  // A template is never drawn by the browser, and its contents are not run: hostSettings.js moves them into the frame.
+  // "</template" in the body would end it early, so the body cannot hold one.
+  const html = String(body ?? '').replace(/<\/template/gi, '&lt;/template');
+  const own = menuText(heading);
+  const row = (Array.isArray(tabs) ? tabs : []).map((tab) => ({ label: menuText(tab?.label), href: menuHref(tab?.href) }))
+    .filter((tab) => tab.label && tab.href?.startsWith('/')).slice(0, SETTINGS_TABS);
+  const attrs = [`data-current="${escapeHtml(String(current ?? ''))}"`,
+    ...(own ? [`data-heading="${escapeHtml(own)}"`, `data-tabs="${escapeHtml(JSON.stringify(row))}"`] : [])].join(' ');
+  const hostPage = `\n<template id="woodshed-host-page" ${attrs}>${html}</template>`;
+  const sheets = styles.filter((href) => typeof href === 'string' && href.startsWith('/') && !href.startsWith('//'));
+  return pageShell({ title, script: 'hostSettings.js', login, linkQuery, hostPage, styles: sheets });
 }
 
 /**
@@ -535,7 +639,7 @@ export function createAppUpgrade({ config, fleet, auth = null, members = null, a
         socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
         return;
       }
-      const targetFor = appTarget({ fleet, login: viewer.login, members: auth ? members : null, shares: appShares, link: viewer.link });
+      const targetFor = appTarget({ fleet, login: viewer.login, members: accessList(auth, members), shares: appShares, link: viewer.link });
       handleAppUpgrade(req, socket, head, { id, targetFor, dropCookie: [auth?.appCookie, appShares?.cookieName] });
     }, () => socket.destroy());
   };
@@ -549,7 +653,7 @@ export function createAppUpgrade({ config, fleet, auth = null, members = null, a
         socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
         return;
       }
-      handleEditorUpgrade(req, socket, head, { id, target: editorTarget({ fleet, login: viewer.login, members: auth ? members : null, id }) });
+      handleEditorUpgrade(req, socket, head, { id, target: editorTarget({ fleet, login: viewer.login, members: accessList(auth, members), id }) });
     }, () => socket.destroy());
   }
 }
@@ -565,8 +669,8 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
-  openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
+  openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false,
 }) {
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
   const hosts = knownHosts(config);
@@ -574,7 +678,7 @@ export function createHandler({
   // A config made in a test or by a program embedding the console may not have been through loadConfig.
   const consoleName = config.consoleName || DEFAULT_CONSOLE_NAME;
   // Who may open a shared session is the People list's to say, once sign-in tells people apart.
-  const access = auth ? members : null;
+  const access = accessList(auth, members);
   // Each project's skills, by project name: one read of GitHub at a time for each, since every keystroke after `/` asks.
   const skillsCaches = new Map();
   const skillsReadings = new Map();
@@ -612,7 +716,8 @@ export function createHandler({
   function onePersonConsole() {
     if (typeof config.onePerson === 'boolean') return config.onePerson;
     if (!signInOn()) return true;
-    return Boolean(members) && members.view().members.length === 1;
+    // A program's own list (hostedMembers.mjs) is not counted: the program says it, as without one.
+    return Boolean(members) && !members.hosted && members.view().members.length === 1;
   }
 
   // Who is signed in to the console: the hosting proxy's identity, or the browser's session cookie.
@@ -642,7 +747,8 @@ export function createHandler({
     return (await workflowLinks?.()) ?? config.actionsWorkflows ?? [];
   }
 
-  // The sign-in routes, open to anyone who reaches the console. Answers and returns true for its own paths.
+  // The sign-in and sign-out routes, open to anyone who reaches the console: GitHub's, or behind a hosting proxy the
+  // program's sign-out. Answers and returns true for its own paths.
   async function authRoute(req, res, url) {
     const { pathname } = url;
     if (pathname === '/login' && req.method === 'GET') {
@@ -654,9 +760,14 @@ export function createHandler({
       reply(res, 200, {
         supported: true, signIn: true, available: true, hosted: true, login: user?.login ?? null, visitor: null, asked: null,
         admin: Boolean(user) && isAdmin(user), asking: 0, names: namesFor([user?.login]),
+        // People, as a tab of Settings, when the program hands over its list of who is in (hostedMembers.mjs).
+        people: Boolean(members?.hosted),
         ...(woodshedUpdate && { updates: user && isAdmin(user) ? woodshedUpdate.behindBy() : 0 }),
         repo: user ? defaultProject(config).repo : null, workflows: user ? await menuWorkflows() : [],
         ...(user && userMenu ? menuOf(userMenu, req.headers) : {}),
+        ...(user && settingsTabs ? settingsTabsOf(settingsTabs, req.headers) : {}),
+        // The user menu's Sign out, which only the program can do behind its proxy (signOut, below).
+        ...(user && signOut ? { signOut: true } : {}),
       });
       return true;
     }
@@ -677,6 +788,7 @@ export function createHandler({
         repo: user || !auth?.enabled() ? defaultProject(config).repo : null,
         workflows: user || !auth?.enabled() ? await menuWorkflows() : [],
         ...((user || !auth?.enabled()) && userMenu ? menuOf(userMenu, req.headers) : {}),
+        ...((user || !auth?.enabled()) && settingsTabs ? settingsTabsOf(settingsTabs, req.headers) : {}),
       });
       return true;
     }
@@ -684,7 +796,29 @@ export function createHandler({
       await accessRequest(req, res, pathname);
       return true;
     }
-    // Behind a hosting proxy there is no GitHub sign-in to start, finish or end: the proxy's header is the sign-in.
+    // Behind a hosting proxy the program signs people in, so it signs them out: it ends its own sign-in and says where
+    // to go, and the console answers as for its own (createInstallation's `signOut`).
+    if (pathname === '/auth/sign-out' && req.method === 'POST' && trusted && signOut) {
+      if (!isSameOrigin(req.headers)) {
+        reply(res, 403, { error: 'sign out from the console itself' });
+        return true;
+      }
+      let out;
+      try {
+        out = (await signOut(req)) ?? {};
+      } catch (err) {
+        console.error('console: sign-out failed', { message: String(err?.message ?? err).split('\n')[0] });
+        reply(res, 500, { error: 'could not sign out' });
+        return true;
+      }
+      const location = typeof out.location === 'string' && menuHref(out.location) ? out.location : '/';
+      const setCookie = [out.setCookie].flat().filter((c) => typeof c === 'string' && c);
+      res.writeHead(303, { location, 'cache-control': 'no-store', ...(setCookie.length ? { 'set-cookie': setCookie } : {}) });
+      res.end();
+      return true;
+    }
+    // Behind a hosting proxy there is no GitHub sign-in to start or finish: the proxy's header is the sign-in. What
+    // follows is the console's own GitHub sign-in.
     if (!auth || trusted) return false;
     // The desktop app's sign-in through the person's browser (desktopSignIn.mjs).
     if (pathname.startsWith('/auth/desktop') && auth.desktopCode && await handleDesktopSignIn({ req, res, url, auth, consoleName })) return true;
@@ -734,11 +868,23 @@ export function createHandler({
     return reply(res, 200, { member: false, asked: members.requestOf(visitor.login)?.askedAt ?? null });
   }
 
-  function peopleReply(res) {
+  // `extra` is what a change has to say beside the list: an add's `told`.
+  async function peopleReply(res, extra = {}) {
     if (!members) return reply(res, 404, { error: 'this console has no list of people' });
+    // A program's list is read fresh for the page, so it shows who the program has now.
+    if (members.hosted) {
+      try {
+        await members.load();
+      } catch (err) {
+        console.error('console: the program\'s list of people not read', { message: String(err?.message ?? err).split('\n')[0] });
+        return reply(res, 500, { error: 'the list of people could not be read; try again' });
+      }
+    }
     const view = members.view();
     const logins = [...view.members, ...view.requests].flatMap((p) => [p.login, p.addedBy]).filter(Boolean);
-    return reply(res, 200, { ...view, names: namesFor(logins), slack: slackPeople ? slackPeople.links(view.members.map((m) => m.login)) : null });
+    return reply(res, 200, {
+      ...view, hosted: Boolean(members.hosted), names: namesFor(logins), slack: slackPeople ? slackPeople.links(view.members.map((m) => m.login)) : null, ...extra,
+    });
   }
 
   async function slackSearchReply(res, query) {
@@ -790,6 +936,30 @@ export function createHandler({
     return peopleReply(res);
   }
 
+  // Behind a hosting proxy with the program's list, the program adds, removes and sets each role (hostedMembers.mjs).
+  // Its refusal is shown as it said it; any other failure was logged there, and is a 500 here.
+  async function hostedPeopleWrite(res, { action, handle, body, by }) {
+    const call = {
+      add: () => members.add({ login: handle, role: body?.role, by }),
+      remove: () => members.remove({ login: handle, by }),
+      role: () => members.setRole({ login: handle, role: body?.role, by }),
+    }[action];
+    if (!call) return reply(res, 404, { error: 'the program embedding this console keeps who is in: People adds, removes and sets each role here' });
+    let done;
+    try {
+      done = await call();
+    } catch (err) {
+      if (err.shown) return reply(res, 409, { error: err.message });
+      return reply(res, 500, { error: 'not done: try again' });
+    }
+    if (action === 'remove') {
+      fleet.releaseAssignments?.({ login: handle, by });
+      tunnel?.revoke(handle);
+    }
+    // What the program did about the add (an email sent, say), for People to say in place of its own hint.
+    return peopleReply(res, action === 'add' ? { told: done?.told ?? null } : {});
+  }
+
   // An admin invites, accepts, declines and removes: handle() lets nobody else this far.
   async function peopleWrite(req, res, pathname, login) {
     if (!members) return reply(res, 404, { error: 'this console has no list of people' });
@@ -805,6 +975,10 @@ export function createHandler({
     if (action === 'slack') return peopleSlack(res, { handle, value: body?.slack, by: login });
     if (action === 'assignable') return peopleSwitch(res, { handle, on: body?.on, by: login, set: members.setAssignable });
     if (action === 'github-sessions') return peopleSwitch(res, { handle, on: body?.on, by: login, set: members.setGithubSessions });
+    if (members.hosted && ['add', 'remove', 'role', 'admin', 'invite', 'accept', 'decline'].includes(action)) {
+      return hostedPeopleWrite(res, { action, handle, body, by: login });
+    }
+    if (action === 'add' || action === 'role') return reply(res, 404, { error: 'this console keeps its own list: invite instead' });
     if (action === 'admin') return peopleAdmin(res, { handle, admin: body?.admin, by: login });
     if (action === 'invite' && github) {
       // Write access is still what lets someone in, so a handle without it would be invited for nothing.
@@ -1210,6 +1384,10 @@ export function createHandler({
       reviewerSetupNeeded: Boolean(config.githubApp && secrets && reviewerApp && !reviewerApp.configured() && isAdmin({ login })),
       // Whether My settings offers Connect GitHub: only with the App's own sign-in to connect through.
       githubConnect: Boolean(githubUser),
+      // Where Connect GitHub starts: the console's own sign-in, or the host's page for a console behind one.
+      githubConnectHref: githubConnectHref ?? '/auth/connect',
+      // The host connects people on its own (installation.mjs's githubConnect.automatic): Connect is a way back, not a step.
+      githubConnectAutomatic: Boolean(githubConnectAutomatic),
       // Who sessions push as without the person's own GitHub, `<slug>[bot]`: each installation names its App.
       app: appIdentity?.known() ?? null,
       // With no App, sessions push with this machine's gh login, as its owner.
@@ -1661,6 +1839,65 @@ export function createHandler({
     }
   }
 
+  // When the bot was last mentioned, from the Webhook events log (kept a week): the first thing to look at when
+  // questions go quiet.
+  function lastMentionAt() {
+    let last = null;
+    for (const e of events.list()) if (e.type === 'mention' && (!last || e.handledAt > last)) last = e.handledAt;
+    return last;
+  }
+
+  async function slackSetupReply(res) {
+    if (!slackSetup) return reply(res, 404, { error: 'this console posts nothing to Slack' });
+    return reply(res, 200, { ...(await slackSetup.view()), lastMention: lastMentionAt() });
+  }
+
+  // A pasted token goes in a POST's body, never in a URL, so the channel list with one is a POST too.
+  async function slackChannelsReply(res, { query, botToken = null }) {
+    if (!slackSetup) return reply(res, 404, { error: 'this console posts nothing to Slack' });
+    try {
+      const found = await slackSetup.channels({ query: String(query ?? '').slice(0, 80), botToken });
+      if (!found) return reply(res, 409, { error: 'Paste the bot token first: the channels are listed with it.' });
+      if (found.error) return reply(res, 400, { error: `Slack would not list the channels (${found.error}).` });
+      return reply(res, 200, found);
+    } catch (err) {
+      if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
+      console.error('console: Slack channels not listed', { message: String(err?.message ?? err).split('\n')[0] });
+      return reply(res, 502, { error: 'Slack did not answer; try again' });
+    }
+  }
+
+  async function slackSetupWrite(req, res, action, login) {
+    if (!slackSetup) return reply(res, 404, { error: 'this console posts nothing to Slack' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) return reply(res, 400, { error: 'body must be a JSON object' });
+    const by = login ?? 'console';
+    try {
+      if (action === 'channels') return await slackChannelsReply(res, { query: body.q, botToken: body.botToken ?? null });
+      if (action === 'check') return reply(res, 200, await slackSetup.check(body.botToken));
+      if (action === 'recheck') return reply(res, 200, { ...(await slackSetup.recheck({ by })), lastMention: lastMentionAt() });
+      if (action === 'disconnect') {
+        if (body.confirm !== 'slack') return reply(res, 400, { error: 'type slack to confirm' });
+        await slackSetup.disconnect({ by });
+      } else {
+        for (const key of ['botToken', 'signingSecret', 'channel']) {
+          if (body[key] !== undefined && typeof body[key] !== 'string') return reply(res, 400, { error: `${key} must be text` });
+        }
+        await slackSetup.save({ botToken: body.botToken, signingSecret: body.signingSecret, channel: body.channel, by });
+      }
+    } catch (err) {
+      if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
+      console.error('console: Slack setup failed', { action: action ?? 'save', message: String(err?.message ?? err).split('\n')[0] });
+      return reply(res, 502, { error: 'Slack or the secret store did not answer; nothing more was changed. The console log says why' });
+    }
+    return slackSetupReply(res);
+  }
+
   // `receiving`: whether webhooks reach this console at all, by a queue or from the program it is embedded in. Each
   // source's switch is null where there is none: Slack's only where Slack questions are answered at all.
   function webhookState() {
@@ -1850,6 +2087,8 @@ export function createHandler({
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings/webhooks') return webhookSwitchWrite(req, res, login);
+    const slackWrite = SLACK_SETUP_WRITE_RE.exec(pathname);
+    if (slackWrite) return slackSetupWrite(req, res, slackWrite[1] ?? null, login);
     if (pathname === '/api/my/reviews') return myReviewsWrite(req, res, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH || pathname === PROJECT_TRIGGERS_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
@@ -2000,6 +2239,8 @@ export function createHandler({
     if (pathname === '/api/setup/github') return githubSetup ? reply(res, 200, await githubSetup.view()) : reply(res, 404, { error: 'this console has no secret store, so it cannot keep a GitHub App' });
     if (pathname === '/api/console-settings') return consoleSettingsReply(res);
     if (pathname === UPDATES_PATH) return woodshedUpdateReply(res);
+    if (pathname === SLACK_SETUP_PATH) return slackSetupReply(res);
+    if (pathname === `${SLACK_SETUP_PATH}/channels`) return slackChannelsReply(res, { query: url.searchParams.get('q') });
     if (pathname === `${PROJECTS_PATH}/repos`) return repoChoicesReply(res);
     if (pathname === '/api/people') return peopleReply(res);
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
@@ -2093,6 +2334,15 @@ export function createHandler({
  */
 export function soloLoginOf(config) {
   return config.launcher?.kind === 'docker' && !config.githubApp && !config.trustedIdentitySecret ? config.localLogin ?? null : null;
+}
+
+/**
+ * The list that says who may open a shared session: the People list once GitHub sign-in tells people apart, or behind
+ * a hosting proxy the program's own (hostedMembers.mjs). Behind one without it, or with no sign-in, nobody is told apart.
+ * @returns {object|null}
+ */
+function accessList(auth, members) {
+  return auth || members?.hosted ? members : null;
 }
 
 /**
@@ -2208,7 +2458,7 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
         socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
         return;
       }
-      if (!handleTerminalUpgrade(req, socket, head, { targetFor: terminalTarget(fleet, user.login, auth ? members : null) })) socket.destroy();
+      if (!handleTerminalUpgrade(req, socket, head, { targetFor: terminalTarget(fleet, user.login, accessList(auth, members)) })) socket.destroy();
     }, () => socket.destroy());
   };
 }
