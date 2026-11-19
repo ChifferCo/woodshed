@@ -151,7 +151,8 @@
 
   // ---- The thread.
 
-  // What claude writes in the person's turn when Esc cut the agent's short.
+  // What claude writes in the person's turn when Esc cut the agent's short, and statusd writes for codex's turn_aborted
+  // (session/sessionTranscript.mjs).
   const INTERRUPTED = /^\[Request interrupted by user[^\]]*\]$/;
 
   // Each tool, by what it did, for the work log's line. claude's names and codex's.
@@ -210,7 +211,8 @@
           last.until = entry.at;
         } else out.push({ kind: 'work', key: index, tools: [entry], failed: entry.error ? 1 : 0, at: entry.at, until: entry.at });
       } else if (entry.role === 'user' && INTERRUPTED.test(entry.text.trim())) {
-        out.push({ kind: 'note', text: 'Interrupted', at: entry.at });
+        // codex's interrupt note names the command when the turn ended at its approval, refused.
+        out.push({ kind: 'note', text: entry.denied ? `Denied: ${entry.denied}` : 'Interrupted', at: entry.at });
       } else if (entry.role === 'user' || entry.role === 'assistant') {
         out.push({ kind: entry.role, text: entry.text, at: entry.at });
       }

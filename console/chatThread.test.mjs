@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
 import chat from './public/chatThread.cjs';
+import { parseCodexRollout } from '../session/sessionTranscript.mjs';
 
 const at = '2026-11-19T10:00:00.000Z';
 
@@ -32,6 +34,20 @@ test('a work log is summed up by what its tools did, claude\'s names and codex\'
   assert.equal(chat.workSummary(tools), 'Ran 3 commands, edited 2 files, read 1 file, searched 1 time, updated the plan, used 1 other tool');
   assert.equal(chat.workSummary([{ tool: 'exec_command' }]), 'Ran 1 command');
   assert.equal(chat.workSummary([]), '');
+});
+
+test("codex's turn cut short is a note, Denied with the command for a refused approval, and ends Working", () => {
+  // statusd's reading of a real codex 0.167 rollout: No at an approval, then ■ Stop mid-reply.
+  const entries = parseCodexRollout(fs.readFileSync(new URL('../shared/__fixtures__/rollout-codex-interrupted.jsonl', import.meta.url), 'utf8'));
+  assert.deepEqual(chat.items(entries).filter((i) => i.kind === 'note').map((i) => i.text),
+    ['Denied: echo hi > hello-codexfix.txt', 'Interrupted', 'Interrupted']);
+  const now = Date.parse('2026-11-19T17:15:25.000Z');
+  const denied = { entries: entries.slice(0, 4), writtenAt: now - 1000 };
+  assert.equal(chat.endedByStop(denied), true, 'the page stops saying Working before the console reads the state');
+  assert.equal(chat.midTurn(denied, 0, now), false);
+  const before = { entries: entries.slice(0, 3), writtenAt: now - 1000 };
+  assert.equal(chat.midTurn(before, 0, now), true, 'the record ends on the call that asks: still its turn, as the record says');
+  assert.equal(chat.endedByStop({ entries: entries.slice(0, 5), writtenAt: now }), false, 'a new message starts a turn again');
 });
 
 test('a question the agent asked is its own item, out of the work log around it', () => {
