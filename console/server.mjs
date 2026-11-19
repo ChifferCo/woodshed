@@ -321,7 +321,8 @@ export function knownHosts({ host, publicUrl, extraHosts }) {
 function menuHref(href) {
   if (typeof href !== 'string' || href.length > 2000) return null;
   if (/^https?:\/\//i.test(href)) return href;
-  return href.startsWith('/') && !href.startsWith('//') ? href : null;
+  // `//host` and `/\\host` are both another site to a browser.
+  return href.startsWith('/') && !href.startsWith('//') && !href.startsWith('/\\') ? href : null;
 }
 
 function menuText(value) {
@@ -621,7 +622,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, woodshedUpdate = null, codexModels = null, appPorts = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false,
 }) {
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
@@ -714,6 +715,8 @@ export function createHandler({
         repo: user ? defaultProject(config).repo : null, workflows: user ? await menuWorkflows() : [],
         ...(user && userMenu ? menuOf(userMenu, req.headers) : {}),
         ...(user && settingsTabs ? settingsTabsOf(settingsTabs, req.headers) : {}),
+        // The user menu's Sign out, which only the program can do behind its proxy (signOut, below).
+        ...(user && signOut ? { signOut: true } : {}),
       });
       return true;
     }
@@ -743,6 +746,27 @@ export function createHandler({
       return true;
     }
     // Behind a hosting proxy there is no GitHub sign-in to start, finish or end: the proxy's header is the sign-in.
+    // Behind a hosting proxy the program signs people in, so it signs them out: it ends its own sign-in and says where
+    // to go, and the console answers as for its own (createInstallation's `signOut`).
+    if (pathname === '/auth/sign-out' && req.method === 'POST' && trusted && signOut) {
+      if (!isSameOrigin(req.headers)) {
+        reply(res, 403, { error: 'sign out from the console itself' });
+        return true;
+      }
+      let out;
+      try {
+        out = (await signOut(req)) ?? {};
+      } catch (err) {
+        console.error('console: sign-out failed', { message: String(err?.message ?? err).split('\n')[0] });
+        reply(res, 500, { error: 'could not sign out' });
+        return true;
+      }
+      const location = typeof out.location === 'string' && menuHref(out.location) ? out.location : '/';
+      const setCookie = [out.setCookie].flat().filter((c) => typeof c === 'string' && c);
+      res.writeHead(303, { location, 'cache-control': 'no-store', ...(setCookie.length ? { 'set-cookie': setCookie } : {}) });
+      res.end();
+      return true;
+    }
     if (!auth || trusted) return false;
     if (pathname === '/auth/start' && req.method === 'GET') {
       if (!auth.available()) {

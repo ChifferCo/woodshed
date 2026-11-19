@@ -1526,6 +1526,11 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   stylesheets (paths), loaded after the console's, so its rules use the design system's variables and follow the
   theme; it scopes them to `.host-page`, which holds its part. Its forms and links stay the program's. Someone who is not an admin sees the program's tabs alone, and Settings in the Console group opens the
   first of them; with no tabs, nothing changes for them.
+- `signOut(req)`, with `trusted`: how the program signs someone out, for the user menu's **Sign out**, which a
+  hosted console otherwise leaves out since it signs nobody in itself. The menu posts to `/auth/sign-out` as on a
+  console of its own; the console refuses a post from another site, then calls `signOut` with the request (its
+  cookies are the program's) and answers 303 to the `location` it returns (a path or an https address, else `/`)
+  with its `setCookie` (one or a list). One that throws answers 500 and logs `console: sign-out failed`.
 - `config.linkQuery`: query parameters every link the console hands out carries (GitHub comments, Slack posts,
   `SESSION_URL`, the copied New session link), for the program to route them.
 - `newId`: how session ids are made, when they must be unique beyond the installation.
