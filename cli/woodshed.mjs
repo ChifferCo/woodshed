@@ -185,8 +185,13 @@ export async function main(argv, deps = {}) {
   }
 
   function consoleNoCli(origin, status) {
+    if (status >= 500) return new CliError(`${origin} answered ${status}: the console failed. Try again, or ask whoever runs it to look at its log`);
     return new CliError(`${origin} answered ${status}: it is not a Woodshed console, or one from before the command line could sign in`);
   }
+
+  // What the console says goes to a terminal: only printable text of it, so a console cannot move the cursor or retitle
+  // the window with escape codes.
+  const plain = (text) => (text === null || text === undefined ? null : String(text).replace(/[^\x20-\x7e]/g, '').slice(0, 100));
 
   function signedIn(origin) {
     const config = readConfig(dir);
@@ -217,7 +222,14 @@ export async function main(argv, deps = {}) {
     for (;;) {
       await sleep(wait);
       if (now() >= expiresAt) break;
-      const polled = await call(origin, '/api/cli/token', { method: 'POST', body: { deviceCode } });
+      let polled;
+      try {
+        polled = await call(origin, '/api/cli/token', { method: 'POST', body: { deviceCode } });
+      } catch (err) {
+        // A network that drops while the person approves (a laptop's Wi-Fi) is asked again until the code expires.
+        if (!json) stderr.write(`woodshed: ${err.message}; trying again\n`);
+        continue;
+      }
       if (polled.status === 202) continue;
       if (polled.status === 429) {
         wait += 5000;
@@ -226,22 +238,28 @@ export async function main(argv, deps = {}) {
       if (polled.status === 403) throw new CliError('The sign-in was denied in the browser.', { code: EXIT.refused, status: 'denied' });
       if (polled.status === 410) break;
       if (polled.status !== 200 || !polled.body?.token) throw consoleNoCli(origin, polled.status);
-      const { token, login: who, org, console: name, expiresAt: tokenExpiresAt, id } = polled.body;
+      const { token, id } = polled.body;
+      const [who, org, name, tokenExpiresAt] = [polled.body.login, polled.body.org, polled.body.console, polled.body.expiresAt].map(plain);
       const store = credentials.save(origin, token);
       const config = readConfig(dir);
       config.current = origin;
       config.consoles[origin] = { login: who ?? null, store: store.kind, tokenId: id, signedInAt: new Date(now()).toISOString() };
       writeConfig(dir, config);
       // The token this computer held before is ended at the console, so My settings lists one sign-in for it.
-      if (before.token && before.token !== token) await call(origin, '/api/cli/logout', { method: 'POST', token: before.token }).catch(() => {});
+      let earlierEnded = null;
+      if (before.token && before.token !== token) {
+        const out = await call(origin, '/api/cli/logout', { method: 'POST', token: before.token }).catch(() => null);
+        earlierEnded = out?.status === 200 || out?.status === 401;
+      }
       if (before.store && before.store.kind !== store.kind) before.store.remove(origin);
       const result = {
         event: 'signed-in', console: origin, name: name ?? null, org: org ?? null, login: who ?? null, expiresAt: tokenExpiresAt ?? null,
-        store: store.kind, ...(store.file ? { credentialsFile: store.file } : {}),
+        store: store.kind, ...(store.file ? { credentialsFile: store.file } : {}), ...(earlierEnded === false ? { earlierSignInEnded: false } : {}),
       };
       if (json) emit(result);
       say(`Signed in to ${name ?? origin}${who ? ` as @${who}` : ''}.`);
       say(`The token is kept in ${store.label}.`);
+      if (earlierEnded === false) say('This computer\'s earlier sign-in could not be ended: revoke it on My settings, under Command line.');
       return EXIT.done;
     }
     throw new CliError('The code expired before anyone approved it. Run woodshed login again.', { code: EXIT.waiting, status: 'expired' });
@@ -285,7 +303,8 @@ export async function main(argv, deps = {}) {
       return EXIT.waiting;
     }
     if (me.status !== 200 || !me.body) throw consoleNoCli(origin, me.status);
-    const { login: who, org, console: name, token: about } = me.body;
+    const [who, org, name] = [me.body.login, me.body.org, me.body.console].map(plain);
+    const about = { name: plain(me.body.token?.name), expiresAt: plain(me.body.token?.expiresAt) };
     if (json) {
       emit({
         console: origin, name: name ?? null, org: org ?? null, signedIn: true, login: who ?? null, store: entry.store,

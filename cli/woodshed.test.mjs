@@ -181,3 +181,24 @@ test('the page opened is built from the code on the console named, never taken f
   assert.equal(code, EXIT.failed);
   assert.deepEqual(opened, []);
 });
+
+test('a network that drops while the person approves is asked again, and console text reaches the terminal printable only', async (t) => {
+  const answers = [
+    () => new Response(JSON.stringify({ deviceCode: 'd'.repeat(64), userCode: 'BCDF-GHJK', expiresIn: 600, interval: 5 }), { status: 200 }),
+    () => { throw new TypeError('fetch failed'); },
+    () => new Response(JSON.stringify({ status: 'pending' }), { status: 202 }),
+    () => new Response(JSON.stringify({ status: 'approved', token: `wsc_${'e'.repeat(64)}`, id: 'f'.repeat(16), login: 'mia-dev', console: 'Acme\u001b]0;pwned\u0007', org: 'acme' }), { status: 200 }),
+  ];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-cli-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let out = '';
+  let err = '';
+  const code = await main(['login', '--console', 'https://c.example', '--no-browser'], {
+    env: { XDG_CONFIG_HOME: dir }, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
+    fetch: async () => answers.shift()(), sleep: async () => {}, platform: 'test', credentials: createCredentials({ platform: 'test', dir }),
+  });
+  assert.equal(code, EXIT.done);
+  assert.match(err, /could not reach https:\/\/c\.example: fetch failed; trying again/);
+  assert.match(out, /Signed in to Acme\]0;pwned as @mia-dev\./);
+  assert.ok(!/[\u0000-\u001f\u007f]/.test(out.replace(/\n/g, '')), 'no control characters');
+});

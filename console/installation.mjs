@@ -605,6 +605,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     config,
     fleet,
     tunnel,
+    cli,
     tokens,
     handle,
     upgrade,
