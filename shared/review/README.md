@@ -418,6 +418,16 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
   and opens only what is clicked. It describes a diff, so `removeArtifact` drops it with the artifact (a re-review or
   Discard), and a run the shed restarted under reads back as `interrupted`.
 
+  The reader asks too. `POST /reviews/<session>/qa/ask` (`{ parent, question, forDiff }`) takes a follow-up under any
+  answered item, or with `parent` null a question of their own at the top, down to `MAX_ASK_DEPTH` levels. The same
+  answerer answers it alone, on a fresh copy of the diff's tree, with the questions and answers above it in its prompt;
+  there is no newcomer round after it. It runs as a `qa-ask` job, in the explain's slot rather than the Q&A's, since
+  someone is waiting on it. The item is written at once, `asking` and `mine`, and the answer lands on it; a failure
+  takes it out and leaves its question and reason in `askErrors` under its parent's id, and the page puts them back in
+  that box. Each write re-reads `qa.json` and changes only its own item, so asks never drop each other; they are
+  refused while a run is writing the tree, and one whose file is gone or replaced (Discard, Re-review, Ask again)
+  writes nothing. A read finds an `asking` item no ask is answering (the shed restarted) and hands it back the same way.
+
 - **An ask panel is a conversation, and the page holds it.** Each question under a file, line or span is still one
   `claude -p` run, but the page sends the earlier turns of that panel in `history` and `buildExplainPrompt` replays the
   tail of them through `trimHistory`, as the chat does. The thread lives in `askState` per anchor, and only an answered

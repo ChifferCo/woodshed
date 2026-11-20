@@ -1,4 +1,4 @@
-<!-- @dsCard group="Review" height=360 subtitle="A newcomer's questions about a change, folded, with follow-ups nested under each answer" -->
+<!-- @dsCard group="Review" height=440 subtitle="A newcomer's questions about a change, folded, with follow-ups nested under each answer" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
 <style>
  body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
@@ -15,7 +15,10 @@
  .a{padding:2px 8px 8px 32px;font-size:14px;line-height:1.62}
  .a p{margin:0 0 8px}
  code{font:500 .85em "JetBrains Mono",ui-monospace,monospace;background:var(--line-soft);border-radius:4px;padding:1px 4px}
- .pending{flex:none;align-self:center;font-weight:400;font-size:12px;color:var(--meta)}
+ .pending,.mine{flex:none;align-self:center;font-weight:400;font-size:12px;color:var(--meta)}
+ .ask{display:flex;gap:6px;margin:8px 0 2px}
+ .ask input{flex:1;min-width:0;padding:6px 8px;font:13px "Red Hat Display",system-ui,sans-serif;border:1px solid var(--line);border-radius:4px;background:var(--ground);color:var(--ink)}
+ .ask button{font:500 13px "Red Hat Display",system-ui,sans-serif;padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--slate)}
 </style>
 <div class="tools"><button>Open all</button><button>Close all</button><button>Ask again</button></div>
 <ul>
@@ -24,7 +27,9 @@
   <div class="a"><p>They are the failures worth trying again. <b>Only the listed codes are retried</b>: <code>RETRYABLE</code> in <code>src/webhooks/retry.mjs</code>.</p>
    <ul>
     <li><button class="q"><span class="chev">▶</span><span class="txt">Would a 501 be retried?</span><span class="kids">1 follow-up</span></button></li>
+    <li><button class="q"><span class="chev">▶</span><span class="txt">Does a retry wait longer each time?</span><span class="mine">you asked</span></button></li>
    </ul>
+   <div class="ask"><input placeholder="Ask a follow-up about this answer…"><button>Ask</button></div>
   </div>
  </li>
  <li><button class="q"><span class="chev">▶</span><span class="txt">What is the Retry-After header, and what does honouring it mean?</span><span class="pending">being answered</span></button></li>

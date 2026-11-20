@@ -25,6 +25,10 @@ else {
   const prompt = argv[argv.indexOf('-p') + 1];
   const ids = [...prompt.matchAll(/^--- id: (\\S+)$/gm)].map((m) => m[1]);
   let out;
+  if (!argv.includes('--system-prompt') && prompt.includes('please fail')) {
+    process.stdout.write(JSON.stringify({ type: 'result', is_error: true, result: 'the stand-in refused', total_cost_usd: 0.001 }));
+    process.exit(0);
+  }
   if (!argv.includes('--system-prompt')) {
     // The answerer quotes a.txt from the folder it runs in, so a test can see which copy of the code it read.
     let seen = '';
@@ -53,7 +57,7 @@ exec ${REAL_GIT} "$@"
 process.env.PATH = `${BIN}:${process.env.PATH}`;
 process.env.WOODSHED_REVIEWS = path.join(DIR, 'reviews');
 
-const { handleReviewRequest, failedQaRecord, removeReviewSession, pullRequestDiff } = await import('./index.mjs');
+const { handleReviewRequest, failedQaRecord, removeReviewSession, pullRequestDiff, withoutLostAsks } = await import('./index.mjs');
 const { writeSessionReview, writeDiff, readQa } = await import('./store.mjs');
 const { makeSnapshot, removeSnapshot, sweepStaleSnapshots, reservedSnapshotBytes } = await import('./qa.mjs');
 
@@ -82,6 +86,20 @@ async function call(method, url) {
     json: (_res, status, body) => { res.status = status; res.body = body; },
   };
   await handleReviewRequest({ method, url, headers: {} }, {}, ctx);
+  return res;
+}
+
+// A POST with a JSON body, as the page sends one.
+async function callWith(method, url, payload) {
+  const { Readable } = await import('node:stream');
+  const req = Readable.from([JSON.stringify(payload)]);
+  Object.assign(req, { method, url, headers: { 'content-type': 'application/json' } });
+  const res = { status: 0, body: null };
+  const ctx = {
+    reqId: 'test', log: () => {},
+    json: (_res, status, body) => { res.status = status; res.body = body; },
+  };
+  await handleReviewRequest(req, {}, ctx);
   return res;
 }
 
@@ -768,3 +786,89 @@ test('a worktree review with no snapshot fails before anything is asked', async 
 });
 
 test.after(() => fs.rmSync(DIR, { recursive: true, force: true }));
+
+test('a reader asks a follow-up under an answer, and one of their own: each is written waiting, then answered', async () => {
+  const session = 'claude-7a7a7a7a';
+  const createdAt = '2026-11-19T10:00:00.000Z';
+  makeReview(session, path.join(DIR, 'asks'), createdAt, { aTxt: 'the reviewed copy\n' });
+  await call('POST', `/reviews/${session}/qa`);
+  await until(() => readQa(session)?.status === 'ready');
+
+  const asked = await callWith('POST', `/reviews/${session}/qa/ask`, { parent: 'q1', question: '  And who calls it?  ', forDiff: createdAt });
+  assert.equal(asked.status, 200);
+  assert.deepEqual(
+    [asked.body.item.id, asked.body.item.parent, asked.body.item.depth, asked.body.item.question, asked.body.item.asking, asked.body.item.mine],
+    ['q1.u1', 'q1', 2, 'And who calls it?', true, true],
+  );
+  // Written at once, so a reload shows it waiting where it was asked.
+  assert.equal(readQa(session).items.find((i) => i.id === 'q1.u1').asking, true);
+  const top = await callWith('POST', `/reviews/${session}/qa/ask`, { parent: null, question: 'Is this safe to ship?', forDiff: createdAt });
+  assert.deepEqual([top.status, top.body.item.id, top.body.item.depth], [200, 'u1', 1]);
+
+  const qa = await until(() => {
+    const q = readQa(session);
+    return q.items.every((i) => !i.asking) ? q : null;
+  });
+  const mine = qa.items.filter((i) => i.mine).map((i) => [i.id, i.answer, 'asking' in i]);
+  // Answered from the copy of the reviewed tree, as the newcomer's questions are.
+  assert.deepEqual(mine, [
+    ['q1.u1', 'Answer to q1.u1. a.txt: the reviewed copy', false],
+    ['u1', 'Answer to u1. a.txt: the reviewed copy', false],
+  ]);
+  assert.equal(qa.items.length, 6, 'the newcomer\'s tree is kept');
+
+  // A follow-up on the reader's own answer goes a level further down, past the newcomer's three.
+  const deeper = await callWith('POST', `/reviews/${session}/qa/ask`, { parent: 'q1.1.1', question: 'And then?', forDiff: createdAt });
+  assert.deepEqual([deeper.status, deeper.body.item.id, deeper.body.item.depth], [200, 'q1.1.1.u1', 4]);
+  await until(() => readQa(session).items.find((i) => i.id === 'q1.1.1.u1')?.answer);
+  const second = await callWith('POST', `/reviews/${session}/qa/ask`, { parent: 'q1', question: 'One more?', forDiff: createdAt });
+  assert.equal(second.body.item.id, 'q1.u2');
+  await until(() => readQa(session).items.every((i) => !i.asking));
+});
+
+test('a reader\'s question is refused when it cannot be answered where it was asked', async () => {
+  const session = 'claude-7b7b7b7b';
+  const createdAt = '2026-11-19T10:00:00.000Z';
+  const ask = (payload) => callWith('POST', `/reviews/${session}/qa/ask`, { forDiff: createdAt, ...payload });
+  makeReview(session, path.join(DIR, 'refusals'), createdAt);
+  assert.deepEqual([(await ask({ question: 'Why?' })).status, (await ask({ question: 'Why?' })).body.code], [409, 'no-qa']);
+  await call('POST', `/reviews/${session}/qa`);
+  await until(() => readQa(session)?.status === 'ready');
+
+  assert.deepEqual([(await ask({ question: '   ' })).status, (await ask({ question: '   ' })).body.error], [400, 'the question is empty']);
+  assert.equal((await ask({ question: 'x'.repeat(1001) })).status, 400);
+  assert.equal((await ask({ parent: 'q9', question: 'Why?' })).body.error, 'the answer it follows up on is no longer there');
+  assert.equal((await ask({ question: 'Why?', forDiff: '2026-01-01T00:00:00.000Z' })).body.code, 'other-diff');
+  assert.equal(readQa(session).items.length, 4, 'nothing was added');
+});
+
+test('a reader\'s question whose answer fails is taken out, and its question kept with the reason under its box', async () => {
+  const session = 'claude-7c7c7c7c';
+  const createdAt = '2026-11-19T10:00:00.000Z';
+  makeReview(session, path.join(DIR, 'fails'), createdAt);
+  await call('POST', `/reviews/${session}/qa`);
+  await until(() => readQa(session)?.status === 'ready');
+  const asked = await callWith('POST', `/reviews/${session}/qa/ask`, { parent: 'q2', question: 'please fail', forDiff: createdAt });
+  assert.equal(asked.status, 200);
+  const qa = await until(() => { const q = readQa(session); return q.askErrors ? q : null; });
+  assert.equal(qa.items.find((i) => i.id === 'q2.u1'), undefined);
+  assert.deepEqual(qa.askErrors, { q2: { question: 'please fail', error: 'the stand-in refused' } });
+  // Asking again in that box clears it.
+  await callWith('POST', `/reviews/${session}/qa/ask`, { parent: 'q2', question: 'Why retry?', forDiff: createdAt });
+  assert.equal(readQa(session).askErrors, undefined);
+  await until(() => readQa(session).items.find((i) => i.id === 'q2.u1')?.answer);
+});
+
+test('a reader\'s question being answered when the shed restarted reads back as not answered, with the question', () => {
+  const qa = {
+    items: [
+      { id: 'q1', parent: null, depth: 1, question: 'What?', answer: 'This.' },
+      { id: 'q1.u1', parent: 'q1', depth: 2, question: 'Who calls it?', answer: null, asking: true, mine: true },
+      { id: 'u1', parent: null, depth: 1, question: 'Safe?', answer: null, asking: true, mine: true },
+    ],
+  };
+  const read = withoutLostAsks(qa, new Set(['u1']));
+  assert.deepEqual(read.items.map((i) => i.id), ['q1', 'u1'], 'the one still going stays');
+  assert.equal(read.askErrors.q1.question, 'Who calls it?');
+  assert.equal(withoutLostAsks(qa, new Set(['q1.u1', 'u1'])), qa, 'nothing lost, the same object');
+});

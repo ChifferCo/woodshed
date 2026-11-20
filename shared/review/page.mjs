@@ -30,6 +30,7 @@
 import { tokenizeLine } from './highlight.mjs';
 import { createAskState } from './askState.mjs';
 import { layoutDiagram } from './diagram.mjs';
+import { MAX_ASK_DEPTH, MAX_USER_QUESTION } from './qa.mjs';
 
 // The dark palette, written once here and interpolated into both blocks that
 // need it — the device query and the explicit [data-theme="dark"] stamp. Two
@@ -848,6 +849,10 @@ ${DARK_PALETTE}
       flex: none; align-self: center; font: 500 11px/1.6 ui-monospace, monospace; color: var(--muted);
       border: 1px solid var(--rule-strong); border-radius: 3px; padding: 0 0.35rem;
     }
+    .qa-q .mine { flex: none; align-self: center; font-size: 12px; color: var(--muted); font-weight: 400; }
+    .qa-ask { margin: 0.6rem 0 0.2rem; }
+    .qa-ask .askerr { flex-basis: 100%; margin: 0; font-size: 12.5px; }
+    .qa > .qa-ask { margin-top: 1rem; }
     .qa-q .pending { flex: none; align-self: center; display: inline-flex; align-items: center; gap: 0.3rem; font-size: 12px; color: var(--muted); font-weight: 400; }
     .qa-body { padding: 0.1rem 0.5rem 0.5rem 2rem; }
     .qa-a { font-size: 14px; line-height: 1.62; color: var(--ink); }
@@ -1988,6 +1993,11 @@ ${DARK_PALETTE}
       // otherwise a keyboard reader starts again from the top of the page.
       var focusedQa = document.activeElement && document.activeElement.dataset
         ? document.activeElement.dataset.qa : null;
+      // A Q&A ask box being typed in keeps the focus and the caret the same way.
+      var focusedAsk = document.activeElement && document.activeElement.dataset
+        && document.activeElement.dataset.qaAsk !== undefined
+        ? { key: document.activeElement.dataset.qaAsk, from: document.activeElement.selectionStart, to: document.activeElement.selectionEnd }
+        : null;
       content.replaceChildren();
       if (!state.meta) return;
 
@@ -2024,6 +2034,15 @@ ${DARK_PALETTE}
           var again = content.querySelectorAll('.qa-q');
           for (var k = 0; k < again.length; k++) {
             if (again[k].dataset.qa === focusedQa) { again[k].focus({ preventScroll: true }); break; }
+          }
+        }
+        if (focusedAsk) {
+          var boxes = content.querySelectorAll('.qa-ask input');
+          for (var b = 0; b < boxes.length; b++) {
+            if (boxes[b].dataset.qaAsk !== focusedAsk.key || boxes[b].disabled) continue;
+            boxes[b].focus({ preventScroll: true });
+            try { boxes[b].setSelectionRange(focusedAsk.from, focusedAsk.to); } catch (e) { /* not a text box */ }
+            break;
           }
         }
         keepScroll();
@@ -2917,7 +2936,10 @@ ${DARK_PALETTE}
     // newcomer then asked about whatever in each answer it did not follow. The
     // server keeps the result as a flat list whose parent ids make the tree.
     // Every question starts folded: the reader opens only the ones they have.
-    var qaView = { session: null, data: null, loading: false, error: null, started: false, timer: null, open: {} };
+    // A reader asks their own questions too: a follow-up under any answer, or a
+    // question of theirs under the tree. The answerer answers it as it answered
+    // the newcomer's; it is written to the tree at once, waiting, and answered there.
+    var qaView = { session: null, data: null, loading: false, error: null, started: false, timer: null, open: {}, drafts: {}, sending: {}, refilled: {} };
 
     function qaTabCount() {
       if (qaView.session !== state.session || !qaView.data) return null;
@@ -2937,7 +2959,7 @@ ${DARK_PALETTE}
     }
 
     function freshQaView(started) {
-      return { session: state.session, data: null, loading: false, error: null, started: started, timer: null, open: {} };
+      return { session: state.session, data: null, loading: false, error: null, started: started, timer: null, open: {}, drafts: {}, sending: {}, refilled: {} };
     }
 
     // Each load answers into the view it started with. Discard, Re-review and
@@ -2994,7 +3016,7 @@ ${DARK_PALETTE}
         view.loading = false;
       }
       clearTimeout(view.timer);
-      if (view.data && view.data.status === 'running') {
+      if (view.data && (view.data.status === 'running' || qaAsking(view.data))) {
         view.timer = setTimeout(function again() { if (view === qaView) loadQa(state.tab === 'qa'); }, 3000);
       }
       // On the tab, the tree is redrawn: a read that found nothing yet may now
@@ -3003,6 +3025,12 @@ ${DARK_PALETTE}
       // comment being written on Files changed among them.
       if (state.tab === 'qa') render();
       else if (before !== (view.data ? view.data.status : null)) redrawQaTab();
+    }
+
+    function qaAsking(d) {
+      var items = (d && d.items) || [];
+      for (var i = 0; i < items.length; i++) if (items[i].asking) return true;
+      return false;
     }
 
     function redrawQaTab() {
@@ -3028,6 +3056,8 @@ ${DARK_PALETTE}
     async function askQaAgain(replace) {
       if (!state.session) return;
       var was = qaView;
+      var mine = was.data && (was.data.items || []).some(function own(i) { return i.mine; });
+      if (replace && mine && !window.confirm('Ask again writes a new Q&A, without the questions you asked. Ask again?')) return;
       var asked;
       try {
         asked = await api('POST', qaStartUrl() + (replace ? '' : '&first=1'));
@@ -3128,6 +3158,7 @@ ${DARK_PALETTE}
         (kids[p] = kids[p] || []).push(items[i]);
       }
       if (kids['']) box.appendChild(qaList(kids[''], kids, d.status === 'running'));
+      if (d.status !== 'running' && items.length) box.appendChild(qaAskBox('', d));
 
       if (qaView.error) box.appendChild(el('div', 'tabnote', qaView.error));
       var foot = [];
@@ -3168,13 +3199,15 @@ ${DARK_PALETTE}
       q.appendChild(txt);
       if (!item.answer) {
         var pending = el('span', 'pending');
-        if (running) pending.appendChild(spinner());
-        pending.appendChild(el('span', null, running ? 'being answered' : 'not answered'));
+        var waiting = running || item.asking;
+        if (waiting) pending.appendChild(spinner());
+        pending.appendChild(el('span', null, waiting ? 'being answered' : 'not answered'));
         q.appendChild(pending);
         q.disabled = true;
       } else if (!open && children.length) {
         q.appendChild(el('span', 'kids', children.length + (children.length === 1 ? ' follow-up' : ' follow-ups')));
       }
+      if (item.mine && item.answer) q.appendChild(el('span', 'mine', 'you asked'));
       q.dataset.qa = item.id;
       q.addEventListener('click', function toggle() {
         if (!item.answer) return;
@@ -3189,9 +3222,92 @@ ${DARK_PALETTE}
         renderMarkdown(a, item.answer);
         body.appendChild(a);
         if (children.length) body.appendChild(qaList(children, kids, running));
+        if (!running && item.depth < QA_MAX_ASK_DEPTH) body.appendChild(qaAskBox(item.id, qaView.data));
         li.appendChild(body);
       }
       return li;
+    }
+
+    var QA_MAX_ASK_DEPTH = ${MAX_ASK_DEPTH};
+    var QA_MAX_USER_QUESTION = ${MAX_USER_QUESTION};
+
+    // The box a reader asks in: under an answer (\`parent\` its id), or under
+    // the tree (\`parent\` ''). Its draft lives in qaView, written as it is
+    // typed, since every poll redraws the tab; render() gives it the focus back.
+    // A question that came back unanswered is put back in it, with why.
+    function qaAskBox(parent, d) {
+      var row = el('div', 'qa-ask askrow');
+      var failed = d && d.askErrors ? d.askErrors[parent] : null;
+      if (failed && qaView.refilled[parent] !== failed.question) {
+        qaView.refilled[parent] = failed.question;
+        if (!qaView.drafts[parent]) qaView.drafts[parent] = failed.question;
+      }
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.maxLength = QA_MAX_USER_QUESTION;
+      input.placeholder = parent ? 'Ask a follow-up about this answer\\u2026' : 'Ask a question of your own about this change\\u2026';
+      input.setAttribute('aria-label', parent ? 'Your follow-up about this answer' : 'Your own question about this change');
+      input.dataset.qaAsk = parent;
+      input.value = qaView.drafts[parent] || '';
+      // Quiet, like the tab's other controls: a box under every open answer
+      // would otherwise put an orange button beside each one.
+      var go = el('button', 'quiet', 'Ask');
+      go.type = 'button';
+      var sending = !!qaView.sending[parent];
+      input.disabled = sending;
+      go.disabled = sending;
+      input.addEventListener('input', function onEdit() { qaView.drafts[parent] = input.value; });
+      input.addEventListener('keydown', function onKey(ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); sendQaQuestion(parent); }
+      });
+      go.addEventListener('click', function onAsk() { sendQaQuestion(parent); });
+      row.appendChild(input);
+      row.appendChild(go);
+      var note = qaView.askError && qaView.askError.parent === parent ? qaView.askError.error
+        : (failed ? 'Not answered: ' + failed.error : null);
+      if (note) row.appendChild(el('p', 'askerr', note));
+      return row;
+    }
+
+    async function sendQaQuestion(parent) {
+      var view = qaView;
+      var question = (view.drafts[parent] || '').trim();
+      if (!question || view.sending[parent]) return;
+      view.sending[parent] = true;
+      view.askError = null;
+      render();
+      var got;
+      try {
+        got = await api('POST', '/reviews/' + state.session + '/qa/ask', {
+          parent: parent || null, question: question, forDiff: state.diffAt || '',
+        });
+      } catch (e) {
+        if (view !== qaView) return;
+        view.sending[parent] = false;
+        view.askError = { parent: parent, error: 'Not asked: ' + e.message };
+        render();
+        focusQaAsk(parent);
+        return;
+      }
+      if (view !== qaView) return;
+      view.sending[parent] = false;
+      view.drafts[parent] = '';
+      if (view.data) {
+        view.data.items = (view.data.items || []).concat([got.item]);
+        if (view.data.askErrors) delete view.data.askErrors[parent];
+      }
+      if (parent) view.open[parent] = true;
+      render();
+      focusQaAsk(parent);
+      clearTimeout(view.timer);
+      view.timer = setTimeout(function again() { if (view === qaView) loadQa(false); }, 3000);
+    }
+
+    function focusQaAsk(parent) {
+      var boxes = document.querySelectorAll('.qa-ask input');
+      for (var i = 0; i < boxes.length; i++) {
+        if (boxes[i].dataset.qaAsk === parent) { boxes[i].focus({ preventScroll: true }); return; }
+      }
     }
 
     // A numbered list of a bold title, a sentence of why, and the way to its
