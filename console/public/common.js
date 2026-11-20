@@ -460,9 +460,12 @@
         // What it would run on after the save: the hours entered, or what an empty field falls back to.
         const lifetime = Number(values.lifetimeHours || fallback.lifetimeHours) || 0;
         const key = String(values.lifetimeHours ?? '');
+        // An Extend from this run holds the stop back to its end, as the console has it (sessions.mjs pauseAt).
+        const heldTo = Date.parse(s.extendedAt) >= Date.parse(s.startedAt) ? Date.parse(s.extendedUntil) : NaN;
+        const held = Number.isFinite(heldTo) && heldTo > Date.now();
         if (lifetime && lifetime * 3_600_000 <= ranMs && warnedFor !== key) {
           warnedFor = key;
-          error.textContent = `It has already run for ${span(ranMs)}, past ${hoursText(lifetime)}, so it would stop within seconds: it tries to push its work first. Save again to stop it now.`;
+          error.textContent = `It has already run for ${span(ranMs)}, past ${hoursText(lifetime)}, so it would stop ${held ? `when its Extend runs out, in ${span(heldTo - Date.now())}` : 'within seconds'}: it tries to push its work first. Save again to ${held ? 'keep these hours' : 'stop it now'}.`;
           error.hidden = false;
           return;
         }
