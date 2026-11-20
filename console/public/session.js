@@ -174,7 +174,10 @@
   // Going away altogether (My settings, another page of the console, a reload, closing the browser tab) puts the tab
   // aside for the next shell page, which keeps it unless that was a reload (sessionTabs.cjs, takeLeaving). After a
   // sign-out or an account change nothing is put aside (W.signingOut).
-  window.addEventListener('pagehide', () => {
+  window.addEventListener('pagehide', (e) => {
+    // Going into the back-forward cache, the whole document is hidden (dialogs under body too, such as Machine), so a
+    // restore shows nothing of it until pageshow below has checked who is signed in.
+    if (e.persisted) document.documentElement.style.visibility = 'hidden';
     const left = leftTab();
     if (left && !W.signingOut()) SessionTabs.stashLeaving(window.sessionStorage, pageLogin, id, left);
   });
@@ -185,12 +188,14 @@
   // the page went away is taken (the visit was left, not reloaded), and the page is shown and refreshed.
   window.addEventListener('pageshow', async (e) => {
     if (!e.persisted) return;
-    const app = document.getElementById('app');
-    if (app) app.style.visibility = 'hidden';
+    document.documentElement.style.visibility = 'hidden';
     let who = null;
     try {
-      // /api/my names the login whether or not the console has sign-in (/api/me names none without it).
-      who = (await W.getJson('/api/my'))?.login ?? null;
+      // /api/my names the login whether or not the console has sign-in (/api/me names none without it). No answer in
+      // 10 s counts as none: the page loads again rather than stay hidden.
+      const answer = W.getJson('/api/my');
+      const late = new Promise((resolve, reject) => setTimeout(() => reject(new Error('no answer')), 10_000));
+      who = (await Promise.race([answer, late]))?.login ?? null;
     } catch {
       who = undefined;
     }
@@ -205,7 +210,7 @@
     } catch {
       // Storage refused: the memory stays as it was.
     }
-    if (app) app.style.visibility = '';
+    document.documentElement.style.visibility = '';
     refresh();
   });
   // Every link to one of these pages, the rail's, the bar's ‹ and New session's among them. A new tab, a modifier
