@@ -9,7 +9,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
   const { h } = W;
   const DATA_REFRESH_MS = 60_000;
   // Which rows are open is kept for the page's life, since it is drawn again on each answer.
-  const { open, row, line, group, follow } = window.WoodshedSettingsRows.create({ render });
+  const { open, row, line, group, follow, reveal } = window.WoodshedSettingsRows.create({ render });
   // The numbers, in the blocks they are saved by: a block is one row's fields and its Save. The two limits on how many
   // run at once are a row of their own; whatever else the sessions group holds is its timeouts.
   const RUNNING_KEYS = ['maxRunning', 'maxPrivatePerPerson'];
@@ -597,7 +597,14 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       const text = `${name} ${f.editing ? 'saved' : 'added'}.${how} Sessions started from now on get it.${server.production ? ' Its first call locks a session down for good.' : ''}`;
       // The form starts again: a saved server's from what is saved now, Add a server's empty.
       mcpForms.delete(f.editing ?? '');
-      return { form: mcpFormFor(f.editing ? mcp.servers.find((s) => s.name === f.editing) : null), text };
+      // Said on the saved server's own row, under the name it has now, which is opened if the save renamed it. Only
+      // an added server's is said on Add a server.
+      const saved = f.editing ? mcp.servers.find((s) => s.name === name) : null;
+      if (saved) {
+        mcpForms.delete(name);
+        open.add(mcpRowId(name));
+      }
+      return { form: mcpFormFor(saved ?? null), text };
     });
   }
 
@@ -1366,11 +1373,9 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     // A link to the repos is most often followed to add one.
     if (asked === 'card-projects') open.add('repo-add');
   }
+  // Called after each of the load's draws: a group drawn later above the target would push it down the page again.
   function showAsked() {
-    const target = asked && document.getElementById(asked);
-    if (!target) return;
-    asked = null;
-    target.scrollIntoView?.({ block: 'start' });
+    if (asked) document.getElementById(asked)?.scrollIntoView?.({ block: 'start' });
   }
 
   async function load() {
@@ -1392,6 +1397,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     await loadUpdates();
     render();
     showAsked();
+    asked = null;
     scheduleUpdates();
   }
 
@@ -1410,6 +1416,13 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
 
   // The search opens the row it found, and a link to a row followed while the page is shown opens it (settingsRows.js).
   follow(life);
+  // The names links used before the rows, followed while the page is shown, land on their rows too.
+  life.on(window, 'hashchange', () => {
+    const id = ALIASES[location.hash.slice(1)];
+    if (!id) return;
+    reveal(id);
+    document.getElementById(id)?.scrollIntoView?.({ block: 'start' });
+  });
 
   // Drawn at once, saying it loads, so the page never sits empty while the settings are on its way.
   render();

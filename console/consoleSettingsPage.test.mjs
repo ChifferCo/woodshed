@@ -110,17 +110,19 @@ async function loadPage(answer, { repos, updates = null, clock = null, timers = 
     errorParts: (err) => [err.message, ...(err.link ? [' ', h('a', { href: err.link.href, target: '_blank' }, `${err.link.text} ↗`)] : [])],
   };
   const location = { hash, reload: () => {} };
+  const events = {};
+  const lookups = [];
   const context = vm.createContext({
-    window: { Woodshed: W, location }, location, console, URL, setInterval: () => 0, setTimeout: (fn) => { timers?.push(fn); return 0; }, clearTimeout: () => {},
+    window: { Woodshed: W, location, addEventListener: (type, fn) => { (events[type] ??= []).push(fn); } }, location, console, URL, setInterval: () => 0, setTimeout: (fn) => { timers?.push(fn); return 0; }, clearTimeout: () => {},
     Date: clock ? Object.assign(class extends Date {}, { now: () => clock.now }) : Date,
-    document: { getElementById: () => app, activeElement: null },
+    document: { getElementById: (id) => { lookups.push(id); return app; }, activeElement: null },
   });
   vm.runInContext(rowsSource, context);
   vm.runInContext(source, context);
   await tick();
   await tick();
   if (opened) openAll(app);
-  return { app, posted, confirms, dialogs, pickers };
+  return { app, posted, confirms, dialogs, pickers, location, events, lookups };
 }
 
 const ANSWER = {
@@ -752,6 +754,15 @@ test('Running at once and Timeouts each save their own numbers, and leave the ot
   byId(app, 'set-maxRunning').listeners.input({ target: { value: '99' } });
   assert.match(textOf(byId(app, 'sessions-running')), /Must be from 1 to 20 sessions\./);
   assert.equal(buttonIn(byId(app, 'sessions-running'), 'Save').attrs.disabled, '');
+});
+
+test('the old #slack, followed while the page is shown, lands on the Slack group', async () => {
+  const { app, location, events, lookups } = await loadPage(WITH_SLACK, { slack: SLACK_ON, opened: false });
+  app.scrollIntoView = () => {};
+  lookups.length = 0;
+  location.hash = '#slack';
+  for (const fn of events.hashchange) fn();
+  assert.ok(lookups.includes('card-slack'), 'the group is looked for under the name it has now');
 });
 
 test('a link that names a row opens it: the repos open on Add a repo, and the old #slack lands on Slack', async () => {
