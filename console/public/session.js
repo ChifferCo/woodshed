@@ -714,7 +714,8 @@
   function extendButton(s, { bar = false } = {}) {
     const pauses = W.pausesIn(s, data);
     return h('button', {
-      type: 'button', class: 'btn btn-plain btn-sm extend-btn',
+      // The pane bar's buttons are pbtn type; the rail card's are the console's small plain button.
+      type: 'button', class: bar ? 'pbtn pextend' : 'btn btn-plain btn-sm extend-btn',
       title: `${pauses ? `It ${pauses}. ` : ''}Put it off by an hour`,
       onclick: async (e) => {
         e.preventDefault();
@@ -1490,7 +1491,7 @@
       // A phone's two rows: the name over one line of its state, its PR and its usage, with ⋯ for the rest.
       h('div', { class: 'pphone' },
         h('b', { class: 'pphone-title', title: s.title }, s.title),
-        h('span', { class: 'pphone-meta' }, W.statusBadge(s), s.taintedAt && W.productionTag(s), phoneAppState(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
+        h('span', { class: 'pphone-meta' }, W.statusBadge(s), s.taintedAt && W.productionTag(s), W.canExtend(s, data) && h('span', { class: 'ptimer' }, W.pausesIn(s, data)), phoneAppState(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
       h('button', {
         type: 'button', class: 'pmore', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === `${s.id}:phone`), 'data-menu-for': `${s.id}:phone`,
         'aria-label': `Actions for ${s.title}`, title: 'Actions',

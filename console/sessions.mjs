@@ -306,6 +306,8 @@ export function sharedRunningCount(sessions) {
 
 /** How long one Extend pushes a session's pause or stop back. */
 export const EXTEND_MS = 60 * 60_000;
+/** How close a pause or stop must be for Extend: the page shows the countdown and the button from then. */
+export const EXTEND_WINDOW_MS = 15 * 60_000;
 
 /**
  * When a running session pauses or stops by itself, and why: the sooner of its idle pause and its lifetime, each held
@@ -329,7 +331,10 @@ export function pauseAt(session, limits) {
     Number.isFinite(activeAt) && { at: Math.max(activeAt + idleMs, hold), why: 'idle', ms: idleMs },
   ].filter((end) => end && Number.isFinite(end.at));
   if (!ends.length) return null;
-  return ends.reduce((a, b) => (b.at < a.at ? b : a));
+  // Held to the same time by an Extend, the one that was due first says why: an idle session extended past its
+  // lifetime still pauses for being idle.
+  const due = (end) => (end.why === 'lifetime' ? startedAt + lifetimeMs : activeAt + idleMs);
+  return ends.reduce((a, b) => (b.at < a.at || (b.at === a.at && due(b) < due(a)) ? b : a));
 }
 
 /**

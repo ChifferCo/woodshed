@@ -749,6 +749,8 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
     stop: async (s) => { reached.push(`stop ${s.id}`); },
     startApp: async (s) => { reached.push(`startApp ${s.id}`); return s; },
     stopApp: async (s) => { reached.push(`stopApp ${s.id}`); return s; },
+    extend: (s) => { reached.push(`extend ${s.id}`); return s; },
+    setLimits: (s) => { reached.push(`setLimits ${s.id}`); return s; },
   };
   const review = async (s) => { reached.push(`review ${s.id}`); return {}; };
   const loginOf = (cookie) => /woodshed_session=([\w-]+)/.exec(String(cookie))?.[1] ?? null;
@@ -786,6 +788,7 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
     { method: 'POST', path: '/api/sessions/ID/stop' }, { method: 'POST', path: '/api/sessions/ID/app/start' }, { method: 'POST', path: '/api/sessions/ID/app/stop' },
     { method: 'POST', path: '/api/sessions/ID/resume' }, { method: 'POST', path: '/api/sessions/ID/delete' },
     { method: 'POST', path: '/api/sessions/ID/pin' }, { method: 'POST', path: '/api/sessions/ID/rename' },
+    { method: 'POST', path: '/api/sessions/ID/extend' }, { method: 'POST', path: '/api/sessions/ID/limits' },
     { method: 'POST', path: '/api/sessions/ID/upload?name=a.png' }, { path: '/api/sessions/ID/image?path=shot.png' }, { method: 'POST', path: '/api/sessions/ID/scroll' },
     { method: 'POST', path: '/api/sessions/ID/send' }, { method: 'POST', path: '/api/sessions/ID/interrupt' }, { method: 'POST', path: '/api/sessions/ID/answer' }, { path: '/api/sessions/ID/prompt' },
     { path: '/api/sessions/ID/applog' }, { path: '/api/sessions/ID/diff' }, { path: '/api/sessions/ID/transcript' }, { method: 'POST', path: '/api/sessions/ID/review/diff' }, { path: '/api/sessions/ID/review/analysis' },
@@ -810,7 +813,9 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
   assert.equal((await answer('octocat', mine.id, { path: '/api/sessions/ID/review' })).status, 200);
   assert.equal((await answer('octocat', mine.id, { path: '/auth/app?id=ID&next=/' })).status, 302);
   assert.notEqual((await answer('octocat', mine.id, { path: '/term/ID/' })).status, 404, 'the owner reaches the terminal');
-  assert.deepEqual(reached, ['stop 3f9a1c20', 'review 3f9a1c20', 'appCode']);
+  assert.equal((await answer('octocat', mine.id, { method: 'POST', path: '/api/sessions/ID/extend' })).status, 200);
+  assert.equal((await answer('octocat', mine.id, { method: 'POST', path: '/api/sessions/ID/limits' })).status, 200);
+  assert.deepEqual(reached, ['stop 3f9a1c20', 'review 3f9a1c20', 'appCode', 'extend 3f9a1c20', 'setLimits 3f9a1c20']);
 });
 
 test('pins are the signed-in person\'s, a rename is the session\'s, and the app\'s icons need no sign-in', async (t) => {
@@ -821,6 +826,16 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
     rename(s, title) {
       if (!String(title ?? '').trim()) throw Object.assign(new Error('a name cannot be empty'), { shown: true });
       s.title = title;
+      return s;
+    },
+    extend(s, by) {
+      if (s.extendedBy) throw Object.assign(new Error('Extend is offered in the last 15 min before it pauses'), { shown: true });
+      s.extendedBy = by;
+      return s;
+    },
+    setLimits(s, values) {
+      if (values.idleHours > 24) throw Object.assign(new Error('must be from 0.25 to 24 hours'), { shown: true });
+      s.limits = values;
       return s;
     },
   };
@@ -847,6 +862,15 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.equal(session.title, 'New name');
   assert.equal((await post(port, '/api/sessions/0a1b2c3d/rename', { title: '  ' }, as('mia-dev'))).status, 400);
   assert.equal((await post(port, '/api/sessions/0a1b2c3d/rename', { title: 'x' })).status, 401, 'signed out');
+
+  // Extend and a session's own limits are the session's too, for whoever can open it; the fleet's refusals are 400s.
+  assert.equal((await post(port, '/api/sessions/0a1b2c3d/extend', {}, as('mia-dev'))).status, 200);
+  assert.equal(session.extendedBy, 'mia-dev');
+  assert.equal((await post(port, '/api/sessions/0a1b2c3d/extend', {}, as('mia-dev'))).status, 400);
+  assert.equal((await post(port, '/api/sessions/0a1b2c3d/limits', { idleHours: 3 }, as('octocat'))).status, 200);
+  assert.deepEqual(session.limits, { idleHours: 3 });
+  assert.equal((await post(port, '/api/sessions/0a1b2c3d/limits', { idleHours: 30 }, as('octocat'))).status, 400);
+  assert.equal((await post(port, '/api/sessions/0a1b2c3d/extend', {})).status, 401, 'signed out');
 
   // Shared and My Woodshed are the rail's two tabs, each its own page of the same shell as a session's.
   for (const page of ['/', '/all', '/s/0a1b2c3d']) {

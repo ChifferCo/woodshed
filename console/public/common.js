@@ -428,7 +428,7 @@
       const life = field('lifetimeHours', 'Stop it after it has run for (hours)', { min: '1', max: '24', step: '1', id: 'session-limit-lifetime' });
       const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
       const form = h('form', { method: 'dialog' },
-        h('p', null, `For this session alone. Empty is what it runs on otherwise: ${fallback.idleHours ? hoursText(fallback.idleHours) : '—'} waiting, ${fallback.lifetimeHours ? hoursText(fallback.lifetimeHours) : '—'} in all. Its work is pushed first either way, and Resume picks it up.`),
+        h('p', null, `For this session alone. Empty is what it runs on otherwise: ${fallback.idleHours ? hoursText(fallback.idleHours) : '—'} waiting, ${fallback.lifetimeHours ? hoursText(fallback.lifetimeHours) : '—'} in all. ${s.qa || s.review ? 'A QA or review run is not resumed once it stops.' : 'It tries to push its work first, and Resume picks it up.'}`),
         idle.row, life.row, error,
         h('div', { class: 'dialog-actions' },
           h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel'),

@@ -23,7 +23,7 @@ import { checkLimits } from './userSettings.mjs';
 import {
   ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, isQa, isReview, keptIds, newSessionId, newSessionToken, sessionLink,
   parseWorkOn, pullNumber, QA_ALREADY_RUNNING, routeQa, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitProgressFrom, waitsForRetry,
-  EXTEND_MS, pauseAt, withSessionLimits,
+  EXTEND_MS, EXTEND_WINDOW_MS, pauseAt, withSessionLimits,
 } from './sessions.mjs';
 import logins from './public/logins.cjs';
 const { findLogin, sameLogin } = logins;
@@ -1621,11 +1621,6 @@ export function createFleet({
   }
 
   /**
-   * A new name for a session, the one every page shows. A shared session's is everyone's, as its title is.
-   * @param {object} session
-   * @param {string} title
-   */
-  /**
    * The idle pause and lifetime a session runs on: the console's, then its owner's own from My settings for a private
    * session, then the session's own, set on its page.
    */
@@ -1641,14 +1636,16 @@ export function createFleet({
   }
 
   /**
-   * Extend: the session's pause or stop, whichever comes first, an hour later than it would be. Pressed again, it adds
-   * another hour.
+   * Extend: the session's pause or stop, whichever comes first, an hour later than it would be, in its last 15 minutes.
    */
   function extend(session, by) {
     if (session.status !== 'running') throw shown('only a running session can be extended');
     if (isAsk(session)) throw shown('a question from Slack cannot be extended');
     const end = pauseAt(session, limitsOf(session));
     if (!end) throw shown('this session has no pause to put off yet');
+    // Only in the last 15 minutes, as the page offers it: an Extend is a person there to say so, not a way round the
+    // limits, which the session's own Pause and stop sets.
+    if (end.at - now() > EXTEND_WINDOW_MS) throw shown(`Extend is offered in the last ${spanText(EXTEND_WINDOW_MS)} before it ${end.why === 'lifetime' ? 'stops' : 'pauses'}`);
     const until = new Date(Math.max(end.at, now()) + EXTEND_MS).toISOString();
     update(session, { extendedUntil: until, extendedAt: nowIso() });
     console.log('fleet: session extended', { id: session.id, by, why: end.why, until });
@@ -1667,6 +1664,11 @@ export function createFleet({
     return session;
   }
 
+  /**
+   * A new name for a session, the one every page shows. A shared session's is everyone's, as its title is.
+   * @param {object} session
+   * @param {string} title
+   */
   function rename(session, title) {
     const next = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, TITLE_CHARS);
     if (!next) throw shown('a name cannot be empty');

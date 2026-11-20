@@ -482,11 +482,15 @@ test('Extend puts an idle pause off by an hour, and a session\'s own limits repl
   statuses[second.id] = { state: 'done' };
   await fleet.tick();
   const pause = Date.parse(fleet.pauseOf(first).at);
-  advance(2 * HOUR - 5 * 60_000);
+  advance(2 * HOUR - 20 * 60_000);
+  assert.throws(() => fleet.extend(first, 'joel'), /last 15 min before it pauses/, 'not before its last 15 minutes');
+  advance(10 * 60_000);
   fleet.extend(first, 'joel');
   assert.equal(Date.parse(fleet.pauseOf(first).at), pause + HOUR);
+  assert.throws(() => fleet.extend(first, 'joel'), /last 15 min/, 'pressed again at once, it is an hour off');
+  advance(60 * 60_000);
   fleet.extend(first, 'joel');
-  assert.equal(Date.parse(fleet.pauseOf(first).at), pause + 2 * HOUR, 'pressed again, another hour');
+  assert.equal(Date.parse(fleet.pauseOf(first).at), pause + 2 * HOUR, 'in its last 15 minutes again, another hour');
   fleet.setLimits(second, { idleHours: 6, lifetimeHours: null }, 'joel');
   assert.deepEqual(second.limits, { idleHours: 6 });
   assert.throws(() => fleet.setLimits(second, { idleHours: 30 }, 'joel'), /0.25 to 24/);

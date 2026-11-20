@@ -136,6 +136,13 @@ test('an Extend holds the pause and the lifetime back, only for the run it was p
   assert.equal(pauseAt(session({ ...base, status: 'stopped' }), LIMITS), null);
 });
 
+test('an idle session extended past its lifetime still pauses for being idle', () => {
+  // Idle due 17:30, lifetime 18:00, both held to 18:30: the one due first says why.
+  const held = session({ startedAt: '2026-10-21T10:00:00.000Z', lastActiveAt: '2026-10-21T15:30:00.000Z', extendedAt: '2026-10-21T17:20:00.000Z', extendedUntil: '2026-10-21T18:30:00.000Z' });
+  assert.equal(pauseAt(held, LIMITS).why, 'idle');
+  assert.equal(pauseAt(held, LIMITS).at, Date.parse('2026-10-21T18:30:00.000Z'));
+});
+
 test('a session\'s own limits replace the ones it runs on, a key at a time', () => {
   const limits = withSessionLimits(LIMITS, { idleHours: 0.5 });
   assert.deepEqual([limits.idleMs, limits.lifetimeMs, limits.startTimeoutMs], [30 * 60_000, LIMITS.lifetimeMs, LIMITS.startTimeoutMs]);
