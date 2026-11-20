@@ -194,6 +194,10 @@ const QA_RUNNING = '/tmp/qa-running';
 // The entrypoint starts Redis and its viewer only for a project whose env mentions REDIS_URL (startRedisIfUsed), so
 // Open ▾ offers Redis only then.
 const REDIS = !ASK && PROJECT !== null && usesVariable(PROJECT, 'REDIS_URL');
+// The engines whose viewers the entrypoint started (startDbViewers), so Open ▾ offers this session's own: none for a
+// session with no database, null where no entrypoint said (an ask session, a test), which reports nothing.
+const DB_VIEWERS = process.env.WOODSHED_DB_VIEWERS == null ? null
+  : process.env.WOODSHED_DB_VIEWERS.split(/\s+/).filter((name) => ENGINE_NAMES.includes(name));
 const CODEX = process.env.AGENT === 'codex';
 const CODEX_AUTH_FILE = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'auth.json');
 // The copy the entrypoint was given, to tell whether this session refreshed the login.
@@ -905,6 +909,7 @@ async function status() {
     state,
     editor: hasEditor(),
     redis: REDIS,
+    ...(DB_VIEWERS ? { viewers: DB_VIEWERS } : {}),
     // Only a finished turn has shells that matter: they are what it is still waiting on.
     shells: state === 'done' ? hook?.shells ?? 0 : 0,
     lastMessage: tail ? parseTranscriptTail(tail.text, { partial: tail.partial }).message : null,

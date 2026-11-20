@@ -5,6 +5,7 @@
 import { randomBytes } from 'node:crypto';
 
 import { ASK_DEFAULTS, spanText } from './consoleSettings.mjs';
+import { ENGINE_NAMES } from '../shared/databases/index.mjs';
 
 /** Sessions that still hold, or are waiting for, one of the slots. */
 export const ACTIVE_STATUSES = new Set(['queued', 'starting', 'running', 'stopping']);
@@ -456,7 +457,7 @@ function withPrUrl(session, prUrl) {
  *
  * @param {object} session
  * @param {{state: string, lastMessage?: object|null, branch?: string, head?: string, prUrl?: string|null, app?: string, appServers?: {frontend: boolean, backend: boolean, frontendPort?: number|null, backendPort?: number|null},
- *          editor?: boolean, redis?: boolean,
+ *          editor?: boolean, redis?: boolean, viewers?: string[],
  *          usage?: {cpuPercent: number|null, memoryBytes: number|null, memoryLimitBytes: number|null, memoryPeakBytes?: number|null,
  *                   cores: number|null, diskUsedBytes?: number|null, diskTotalBytes?: number|null},
  *          planUsage?: object}} status
@@ -502,6 +503,9 @@ export function statusUpdate(session, status, nowIso) {
     // The project uses Redis, so the session started one: Open ▾ offers it. An image from before statusd said so
     // still ran it.
     redis: status.redis !== false,
+    // The engines whose viewers the session runs (its entrypoint's startDbViewers), which Open ▾ offers. Null from an
+    // image before statusd said so: the page falls back to the databases the console makes.
+    viewers: Array.isArray(status.viewers) ? ENGINE_NAMES.filter((name) => status.viewers.includes(name)) : null,
     usage: usageFrom(status.usage),
     // Only a private session's plan is its viewer's own. The last reading stays after the session stops, for the
     // owner's other sessions to show until a newer one comes.

@@ -188,7 +188,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { viewersOf } from '../shared/databases/index.mjs';
+import { ENGINE_NAMES, viewersOf } from '../shared/databases/index.mjs';
 import { handlePwaRequest, MANIFEST } from '../shared/pwa.mjs';
 import { createReviewProxy, isReviewPath } from './reviewProxy.mjs';
 import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
@@ -1206,9 +1206,11 @@ export function createHandler({
       appDomain: config.appDomain || (appPorts ? new URL(config.publicUrl).hostname : null),
       // With app ports each running session carries its `appUrl`, and an app is not shared: nobody signs in to it.
       appPorts: Boolean(appPorts),
-      // What Open ▾ offers: the viewers of the databases each session has a copy of.
+      // The databases the console makes each session a copy of, and every engine's viewers. Open ▾ offers a session
+      // the viewers it says it runs (its `viewers`, statusd's), which is also how a session given its databases by
+      // its environment gets them; one from an image before statusd said so gets those of `databases`.
       databases: databases?.available ? databases.engines : [],
-      viewers: databases?.available ? viewersOf(databases.engines).filter((v) => !v.own).map(({ route, name, program }) => ({ route, name, program })) : [],
+      viewers: viewersOf(ENGINE_NAMES).filter((v) => !v.own).map(({ route, name, program, engine }) => ({ route, name, program, engine })),
       idleHours: config.limits.idleMs / 3_600_000,
       askIdleHours: config.limits.askIdleMs / 3_600_000,
       lifetimeHours: config.limits.lifetimeMs / 3_600_000,

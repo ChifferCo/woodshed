@@ -138,6 +138,9 @@ usesVariable() {
 requireDatabases() {
   local problem
   problem=$(databases check 2>&1) || die "${problem#databases: }"
+  # Asked here, before writeEnvFiles exports every engine's variables: after it, a database the console made looks
+  # given too. startDbViewers reads it.
+  DATABASES_GIVEN=$(databases given) || DATABASES_GIVEN=
 }
 
 requireEnv() {
@@ -583,14 +586,24 @@ startRedisViewer() {
     --url-prefix "/redis/$SESSION_ID" --nosave >/tmp/redis-commander.log 2>&1 &
 }
 
-# Open ▾'s viewers: each engine's (pgweb, mongo-express) on the databases the console made for the session (its own,
-# or its owner's), as their own user, so they reach nothing else. Loopback only: statusd forwards to them after
-# checking the session token. Logs in /tmp/<viewer>.log.
+# Open ▾'s viewers: each engine's (pgweb, mongo-express) on the session's databases, as their own user, so they reach
+# nothing else: the ones the console made for it (its own, or its owner's), or the ones its environment names (the
+# docker launcher, a host that runs each session's own). Loopback only: statusd forwards to them after checking the
+# session token. Logs in /tmp/<viewer>.log.
+#
+# DB_VIEWERS, the engines whose viewers started, is for statusd alone to report (runSession hands it over as
+# WOODSHED_DB_VIEWERS), so Open ▾ offers this session's and no other: empty for a session with no database of its own.
+# Not exported: claude and the app have no use for it.
 startDbViewers() {
-  [ -n "${CONSOLE_DATABASES:-}" ] || return 0
+  DB_VIEWERS=
+  [ -n "${CONSOLE_DATABASES:-}${DATABASES_GIVEN:-}" ] || return 0
   local started
-  started=$(databases viewers) || { log "WARNING: the database viewers did not start"; return 0; }
-  log "Database viewers started" "(db: ${WOODSHED_DB_NAME:-none}, $started)"
+  # Only a database the console made has a restore copy beside it (My settings' Restore a dump), which a private
+  # session's viewers open too.
+  started=$(WOODSHED_DB_RESTORE_COPY=${CONSOLE_DATABASES:-} databases viewers) || { log "WARNING: the database viewers did not start"; return 0; }
+  DB_VIEWERS=$(sed -n 's/^started: //p' <<< "$started" | tail -n 1)
+  [ "$DB_VIEWERS" != none ] || DB_VIEWERS=
+  log "Database viewers started" "(db: ${WOODSHED_DB_NAME:-from the environment}, $(tail -n 1 <<< "$started"))"
 }
 
 # The databases the console made for this session, from a /settings answer: their user, password and name, the same
@@ -1125,7 +1138,8 @@ runSession() {
     ( refreshDeps & )
   fi
   export BRANCH
-  exec node "$SESSION_DIR/statusd.mjs"
+  # Which database viewers run is statusd's to say (startDbViewers), and nothing else's to read.
+  WOODSHED_DB_VIEWERS=${DB_VIEWERS:-} exec node "$SESSION_DIR/statusd.mjs"
 }
 
 # The next database templates, for the db-admin task: `seed` migrates and seeds empty ones, `migrate` only migrates

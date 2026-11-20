@@ -14,7 +14,8 @@
 //                                               list's order: engine, dir and command, each ended by a NUL
 //   node databases/index.mjs secret-vars        every engine's variables that hold a password, one a line
 //   node databases/index.mjs paths              every database's `paths`, one a line: what the templates are built from
-//   node databases/index.mjs viewers            starts each hosted database's viewers, in the background
+//   node databases/index.mjs viewers            starts each hosted database's viewers, in the background, and says
+//                                               which engines' as its last line, `started: postgres mongo` (or `none`)
 //
 // The repo is REPO_DIR, read as project.mjs reads it.
 import { spawn } from 'node:child_process';
@@ -83,6 +84,14 @@ function credentialsFrom(env) {
   return user && password && name ? { user, password, name } : null;
 }
 
+/**
+ * Whether a session's viewers also open its restore copy: a private session's, on the databases the console made for
+ * its owner (WOODSHED_DB_RESTORE_COPY, the entrypoint's). A database the environment names has no copy beside it.
+ */
+export function viewsRestoreCopy(env) {
+  return env.SESSION_KIND === 'private' && Boolean(env.WOODSHED_DB_RESTORE_COPY);
+}
+
 // A viewer outlives this process: the entrypoint goes on to become statusd.
 function startDetached({ name, command, args, env, cwd }) {
   const out = fs.openSync(`/tmp/${name}.log`, 'a');
@@ -115,7 +124,7 @@ function main([command, arg]) {
   } else if (command === 'viewers') {
     const engines = projectEngines(project).filter((name) => hosted.includes(name));
     const log = (...parts) => process.stdout.write(`${parts.join(' ')}\n`);
-    for (const name of engines) engine(name).startViewers({ env, sessionId: env.SESSION_ID, own: env.SESSION_KIND === 'private', start: startDetached, log });
+    for (const name of engines) engine(name).startViewers({ env, sessionId: env.SESSION_ID, own: viewsRestoreCopy(env), start: startDetached, log });
     out([`started: ${engines.join(' ') || 'none'}`]);
   } else {
     throw new Error(`unknown command: ${command} (expected env, check, hosted, engines, given, commands, paths, secret-vars or viewers)`);
