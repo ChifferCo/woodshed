@@ -35,7 +35,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { REVIEW_MODEL, clamp } from './analyze.mjs';
+import { REVIEW_MODEL, clamp, describedAs } from './analyze.mjs';
 
 // The review's own model, so the one setting that picks it (WOODSHED_REVIEW_MODEL, read by the shed's host) picks this too.
 const QA_MODEL = REVIEW_MODEL;
@@ -51,7 +51,6 @@ const MAX_FOLLOWUPS_PER_ROUND = 8;
 const MAX_FOLLOWUPS_PER_ANSWER = 2;
 const MAX_QUESTION = 300;
 const MAX_ANSWER = 4_000;
-const MAX_BODY_CHARS = 4_000;
 const MAX_NOTE_CHARS = 1_600;
 const MAX_FILES_LISTED = 150;
 
@@ -161,9 +160,10 @@ export function seniorArgv({ prompt }) {
 // are the author's and a fixed tag could be closed from inside them.
 function pullRequestBlock({ meta, files, overview, tag }) {
   const lines = [`<${tag}>`];
-  lines.push(`title: ${String(meta?.title || '').slice(0, 300)}`);
-  lines.push('description (written by the author):');
-  lines.push(String(meta?.body || '').slice(0, MAX_BODY_CHARS) || '(no description)');
+  const { title, description, authored } = describedAs(meta);
+  lines.push(`title: ${title}`);
+  lines.push(authored ? 'description (written by the author):' : 'description:');
+  lines.push(description || '(no description)');
   if (overview) {
     lines.push('');
     lines.push('a summary someone wrote of the change:');
@@ -194,8 +194,11 @@ export function buildTopQuestionsPrompt({ meta, files, overview }) {
     '',
     `Ask between 3 and ${MAX_TOP_QUESTIONS} questions about it, in the order you would want them answered: the`,
     'most basic first (what is this, and why was it needed), then how it works, then what it changes for',
-    'people and how you could see it working. Ask about the words in the title and description you do',
-    'not understand. Do not ask two questions that would get the same answer.',
+    'people and how you could see it working.',
+    describedAs(meta).authored
+      ? 'Ask about the words in the title and description you do not understand.'
+      : 'It has no title or description yet: ask about what it changes, not about them.',
+    'Do not ask two questions that would get the same answer.',
   ].join('\n');
 }
 

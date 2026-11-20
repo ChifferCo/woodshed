@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { buildAnalysisPrompt } from './analyze.mjs';
 import {
-  JUNIOR_SYSTEM_PROMPT, juniorArgv, seniorArgv, buildFollowupsPrompt, buildAnswersPrompt,
+  JUNIOR_SYSTEM_PROMPT, juniorArgv, seniorArgv, buildTopQuestionsPrompt, buildFollowupsPrompt, buildAnswersPrompt,
   topQuestions, followupQuestions, applyAnswers, pathTo, extractStructured,
 } from './qa.mjs';
 
@@ -73,6 +74,32 @@ test('a follow-up carries the questions and answers above it into both prompts',
   items[1].answer = 'A protocol.';
   const followups = buildFollowupsPrompt({ meta, files: [], overview: '', items, frontier: [items[1]] });
   assert.match(followups, /\(earlier, you asked: What does the relay do\?\)\nyou asked: What is MCP\?\nanswer:\nA protocol\./);
+});
+
+// A worktree review has no pull request: its title ("Work in progress on <branch>") and body (a count of commits)
+// are the shed's, made for the page's header. Put to the newcomer as the author's, every Q&A opened by asking what
+// the change was for, "since the title just says Work in progress and the description only counts commits".
+test('a worktree review\'s made-up title and body are not handed over as the author\'s', () => {
+  const meta = {
+    state: 'WORKTREE', title: 'Work in progress on feature-x', headRefName: 'feature-x',
+    body: 'This worktree is 2 commits and 1 uncommitted file ahead of main.',
+  };
+  const files = [{ path: 'a.mjs', additions: 1, deletions: 0, status: 'modified' }];
+  const top = buildTopQuestionsPrompt({ meta, files, overview: '' });
+  const answers = buildAnswersPrompt({ meta, files, overview: '', items: [], open: [] });
+  const analysis = buildAnalysisPrompt({ meta, files });
+  for (const prompt of [top, answers, analysis]) {
+    assert.doesNotMatch(prompt, /Work in progress on/);
+    assert.doesNotMatch(prompt, /written by the author\):/);
+    assert.match(prompt, /title: \(none: the change is still being made on feature-x/);
+    assert.match(prompt, /do\s+not ask about or remark on them/);
+  }
+  assert.doesNotMatch(top, /Ask about the words in the title/);
+
+  const pr = { state: 'OPEN', title: 'Add the relay', body: 'It forwards calls.', number: 7 };
+  const prTop = buildTopQuestionsPrompt({ meta: pr, files, overview: '' });
+  assert.match(prTop, /title: Add the relay\ndescription \(written by the author\):\nIt forwards calls\./);
+  assert.match(prTop, /Ask about the words in the title/);
 });
 
 test('a run that failed or answered in no structure is a failure with its reason', () => {
