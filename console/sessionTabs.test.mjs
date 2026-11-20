@@ -72,8 +72,11 @@ test('a remembered tab the session cannot show now falls back to TUI', () => {
   assert.equal(tabs.shown('applog', stopped, true), 'tui');
   assert.equal(tabs.shown('diff', { ...running, kind: 'ask' }, true), 'tui', 'a question has no diff');
   assert.equal(tabs.shown('review', stopped, false), 'review', 'a stopped session with a branch keeps its review');
-  assert.equal(tabs.shown('review', { status: 'running' }, true), 'tui', 'no branch, no review');
-  assert.equal(tabs.shown('terminal', running, false), 'tui', 'no shell');
+  assert.equal(tabs.shown('review', { status: 'running' }, true), 'diff', 'no branch: Review\'s other view, as the bar\'s tab opens');
+  assert.equal(tabs.shown('review', { status: 'stopped' }, true), 'tui', 'no branch and no checkout to diff');
+  assert.equal(tabs.shown('review', { status: 'running', kind: 'ask' }, true), 'tui', 'a question has neither');
+  assert.equal(tabs.shown('terminal', running, false), 'applog', 'no shell: Terminal\'s other view, as the bar\'s tab opens');
+  assert.equal(tabs.shown('terminal', stopped, false), 'tui', 'no shell and no app running');
   assert.equal(tabs.shown('terminal', running, true), 'terminal');
 });
 

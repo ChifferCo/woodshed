@@ -1369,6 +1369,8 @@
   function meterBody(s) {
     const el = h('div', { class: 'pmeter-body' });
     const draw = (now) => {
+      // Not while the keyboard is on its link: drawing it again would drop the focus. The next refresh catches up.
+      if (el.contains(document.activeElement)) return;
       const plan = W.planUsageOf(now, data.sessions);
       el.replaceChildren(...[
         plan && W.planUsageDetails(plan),
