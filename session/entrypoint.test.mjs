@@ -647,6 +647,55 @@ test('a project with no databases needs no engine to start, and one with databas
   assert.match(given.stdout, /app=app_user\/app/);
 });
 
+test('the database viewers start for the databases the console made and for the ones the environment names', (t) => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-viewers-'));
+  t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
+  t.after(() => fs.rmSync('/tmp/woodshed-pgweb-bookmarks', { recursive: true, force: true }));
+  fs.mkdirSync(path.join(repoDir, '.woodshed'));
+  fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), fixtureProject({ databases: [PG] }));
+  // A pgweb that only says how it was started.
+  fs.mkdirSync(path.join(repoDir, 'bin'));
+  fs.writeFileSync(path.join(repoDir, 'bin/pgweb'), '#!/bin/sh\necho "$@" > "$PGWEB_SAID"\n', { mode: 0o755 });
+  // runSession's order: the check (which asks whether the environment names a database), the console's answer, the
+  // env files, then the viewers.
+  const run = (env, { consoleMade = false } = {}) => {
+    const said = path.join(repoDir, `pgweb-${Math.random().toString(16).slice(2)}`);
+    const out = spawnSync('bash', ['-c', [
+      'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
+      'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
+      fn('usesVariable'), fn('requireDatabases'), fn('useDatabaseFrom'), fn('writeEnvFiles'), fn('startDbViewers'),
+      'requireDatabases',
+      consoleMade ? 'useDatabaseFrom \'{"database":{"user":"woodshed_mia","password":"secret","name":"woodshed_mia"}}\'' : ':',
+      'writeEnvFiles', 'startDbViewers',
+      'for _ in $(seq 50); do [ -s "$PGWEB_SAID" ] && break; sleep 0.1; done',
+      'echo "viewers=[${DB_VIEWERS-unset}]"',
+    ].join('\n')], {
+      encoding: 'utf8', cwd: repoDir,
+      env: { PATH: `${path.join(repoDir, 'bin')}:${process.env.PATH}`, SHARED_DIR, REPO_DIR: repoDir, SESSION_ID: '0a1b2c3d', SESSION_KIND: 'private', PGWEB_SAID: said, ...env },
+    });
+    return { ...out, pgweb: fs.existsSync(said) ? fs.readFileSync(said, 'utf8').trim() : null };
+  };
+  // A host that runs each session's own databases, or the docker launcher: no console answer, the login in the environment.
+  const given = run({ PGHOST: 'postgres', PGUSER: 'woodshed__ab12cd34', PGPASSWORD: 'secret', PGDATABASE: 'woodshed__ab12cd34' });
+  assert.equal(given.status, 0, given.stdout + given.stderr);
+  assert.match(given.stdout, /Database viewers started \(db: from the environment, started: postgres\)/);
+  assert.match(given.stdout, /viewers=\[postgres\]/, 'what statusd is told runs');
+  assert.match(given.pgweb, /--prefix=pg\/0a1b2c3d\/ --lock-session/, 'on its one database: nothing made it a restore copy');
+  assert.doesNotMatch(given.stdout + given.pgweb, /secret/);
+  // The console's own: a private session's also opens its owner's restore copy, by bookmark.
+  const made = run({ PGHOST: 'pg' }, { consoleMade: true });
+  assert.equal(made.status, 0, made.stdout + made.stderr);
+  assert.match(made.stdout, /Database viewers started \(db: woodshed_mia, started: postgres\)/);
+  assert.match(made.stdout, /viewers=\[postgres\]/);
+  assert.match(made.pgweb, /--bookmarks-only --bookmark=your-database/);
+  // An engine the installation hosts, but no database of the session's own: nothing to open.
+  const none = run({ PGHOST: 'pg' });
+  assert.equal(none.status, 0, none.stdout + none.stderr);
+  assert.doesNotMatch(none.stdout, /Database viewers started/);
+  assert.match(none.stdout, /viewers=\[\]/, 'said to statusd as none, not left unsaid');
+  assert.equal(none.pgweb, null);
+});
+
 // A console with no db-admin (a hosted pool, or a project with no Postgres or Mongo) makes no databases, but a session
 // started from GitHub still runs on its starter's plan when the console says so: it asks /settings for that alone.
 function sharedWithoutDatabases(t, { answer, env = {}, project = {} }) {

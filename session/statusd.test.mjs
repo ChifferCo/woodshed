@@ -518,6 +518,16 @@ test('an app written into the project file after the start is read at the next S
   assert.deepEqual(await calls(), ['start']);
 });
 
+test('statusd reports the engines whose viewers the entrypoint started, and nothing when it was not told', async (t) => {
+  const told = await statusdWithApp(t, { env: { WOODSHED_DB_VIEWERS: 'postgres mongo mysql' } });
+  assert.deepEqual((await told.call('GET', '/status')).body.viewers, ['postgres', 'mongo']);
+  const none = await statusdWithApp(t, { env: { WOODSHED_DB_VIEWERS: '' } });
+  assert.deepEqual((await none.call('GET', '/status')).body.viewers, [], 'a session with no database of its own');
+  // Taken out of this test's own environment: run in a session, it would be that session's.
+  const untold = await statusdWithApp(t, { env: { WOODSHED_DB_VIEWERS: undefined } });
+  assert.equal('viewers' in (await untold.call('GET', '/status')).body, false);
+});
+
 test('Redis is offered only when the project uses REDIS_URL, as the entrypoint starts it', async (t) => {
   const uses = await statusdWithApp(t, { project: { env: { REDIS_URL: 'redis://127.0.0.1:6379' } } });
   assert.equal((await uses.call('GET', '/status')).body.redis, true);

@@ -98,6 +98,8 @@ change to the stage by the workflow's run, about the time the build takes.
    and statusd reports `redis: false`, so Open ▾ has no Redis. A shared Redis
    would let one session's worker run another session's jobs when the app's queues
    have no key prefix. The image keeps `redis-server` either way.
+   It also starts its databases' viewers (pgweb, mongo-express) on loopback, on the databases the console made it or
+   the ones its environment names, and statusd reports whose (`viewers`, the engines), so Open ▾ offers those.
 4. Starts `claude --permission-mode auto` in tmux, through `session/bin/claude`, inline (never Claude Code's full-screen
    renderer, nor codex's alternate screen, so the conversation stays in tmux's history and the browser's scrollback), with the task as its first message and the rules
    in `prompt.md` with `appAddress.md` (the app's `https://<SESSION_ID>.<SESSION_APP_DOMAIN>/` address, since the person

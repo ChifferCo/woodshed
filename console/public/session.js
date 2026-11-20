@@ -1233,14 +1233,16 @@
   }
 
   // The session's databases and Redis, each in its viewer: a shared session's own, a private session's owner's. Only
-  // the viewers of the databases the installation hosts (data.viewers, each engine's), and Redis only when the project
-  // uses it (statusd's `redis`).
+  // the viewers the session runs (its `viewers`, the engines statusd names: the databases the console made it, or the
+  // ones its environment gave it), and Redis only when the project uses it (statusd's `redis`). A session from an
+  // image before statusd named them runs those of the databases the console makes (data.databases).
   function dataActions(s) {
     if (s.status !== 'running') return [];
     const whose = W.isPrivate(s) ? 'Your own' : 'This session\'s own';
     const href = (path) => `/${path}/${s.id}/`;
+    const engines = s.viewers ?? data.databases ?? [];
     return [
-      ...(data.viewers ?? []).map((v) => ({ group: 'Data', label: `${v.name} ↗`, note: `${whose} ${v.name} database, in ${v.program}`, href: href(v.route) })),
+      ...(data.viewers ?? []).filter((v) => engines.includes(v.engine)).map((v) => ({ group: 'Data', label: `${v.name} ↗`, note: `${whose} ${v.name} database, in ${v.program}`, href: href(v.route) })),
       s.redis !== false && { group: 'Data', label: 'Redis ↗', note: `${whose} Redis, in redis-commander`, href: href('redis') },
     ].filter(Boolean);
   }

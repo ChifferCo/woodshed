@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ENGINES, ENGINE_NAMES, databaseCommands, databaseEnv, engine, hostedEngines, notHostedReason, viewersOf } from './index.mjs';
+import { ENGINES, ENGINE_NAMES, databaseCommands, databaseEnv, engine, hostedEngines, notHostedReason, viewersOf, viewsRestoreCopy } from './index.mjs';
 
 const PG = { engine: 'postgres', dir: 'api', migrate: 'make migrate', seed: 'make seed', envFiles: [], paths: [], migrations: null, user: 'app_user', name: 'app' };
 const MONGO = { ...PG, engine: 'mongo', migrate: null, seed: 'make seed-mongo', user: null, name: null };
@@ -76,6 +76,13 @@ test('each engine\'s viewers start on the session\'s own database, with the pass
   engine('mongo').startViewers({ env, sessionId: '0a1b2c3d', own: true, start: (v) => own.push(v), log: () => {} });
   assert.deepEqual(own.map((v) => v.env.ME_CONFIG_MONGODB_URL), [env.MONGODB_URI, 'mongodb://u:secret@m:27017/d__restore?authSource=d'],
     'a private session\'s second viewer is on its restore copy');
+});
+
+test('only a private session on the databases the console made opens a restore copy', () => {
+  assert.equal(viewsRestoreCopy({ SESSION_KIND: 'private', WOODSHED_DB_RESTORE_COPY: '1' }), true);
+  assert.equal(viewsRestoreCopy({ SESSION_KIND: 'private', WOODSHED_DB_RESTORE_COPY: '' }), false, 'a database its environment names has no copy beside it');
+  assert.equal(viewsRestoreCopy({ SESSION_KIND: 'private' }), false);
+  assert.equal(viewsRestoreCopy({ SESSION_KIND: 'shared', WOODSHED_DB_RESTORE_COPY: '1' }), false);
 });
 
 test('pgweb\'s connection string encodes the user, password and database, so a password with @, / or # still connects', () => {

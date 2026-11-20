@@ -175,6 +175,13 @@ test('statusUpdate says the session has an editor only when statusd says true', 
   assert.equal(statusUpdate(session({}), { state: 'done' }, 'now').editor, false, 'an image from before the editor');
 });
 
+test('statusUpdate keeps the engines whose viewers statusd says the session runs, and null when it says nothing', () => {
+  assert.deepEqual(statusUpdate(session({}), { state: 'done', viewers: ['mongo', 'postgres', 'mysql', 7] }, 'now').viewers, ['postgres', 'mongo']);
+  assert.deepEqual(statusUpdate(session({}), { state: 'done', viewers: [] }, 'now').viewers, [], 'a session with no database of its own');
+  assert.equal(statusUpdate(session({}), { state: 'done' }, 'now').viewers, null, 'an image from before statusd said');
+  assert.equal(statusUpdate(session({}), { state: 'done', viewers: 'postgres' }, 'now').viewers, null);
+});
+
 test('statusUpdate says the session has Redis unless statusd says it has none', () => {
   assert.equal(statusUpdate(session({}), { state: 'done', redis: true }, 'now').redis, true);
   assert.equal(statusUpdate(session({}), { state: 'done', redis: false }, 'now').redis, false);

@@ -1136,7 +1136,8 @@ Which database engines an installation hosts is its own: Postgres, Mongo, both, 
 in Terraform, which sets `WOODSHED_DATABASES`; on the local provider, the `WOODSHED_LOCAL_DB_*` it sets). Each
 engine is a module in `shared/databases/` (docs/reference.md, "Databases"). Everything below is for the project file's
 databases on the engines it hosts: without Mongo there is no Mongo copy, viewer, tunnel or restore, and with no database
-there is no db-admin task, Open ▾ has Redis alone, and My settings has no Your databases. The console logs `console:
+there is no db-admin task and My settings has no Your databases. Open ▾ still has the viewers of a session whose
+environment names its databases (below): only a session with no database of its own has Redis alone. The console logs `console:
 databases` once at start, with `made`, the `engines` it makes a copy on, the ones sessions are `hosted` on and the ones
 its `tunnel` reaches.
 
@@ -1243,8 +1244,13 @@ A session's databases open from the session's page, under **Open ▾** with
 **Redis**. The session runs its own pgweb
 (`/pg/<id>/`) and mongo-express (`/mongo/<id>/`) on loopback, as its databases'
 user, so they reach those and nothing else (`startDbViewers` in
-`session/entrypoint.sh`). A shared session's pgweb is locked to its database (`--lock-session`). A private
-session's has two bookmarks instead, `your-database` and `restored-copy` (the copy Restore a Postgres dump makes,
+`session/entrypoint.sh`): on the databases the console made for it, or on the ones its environment names (the docker
+launcher, a host that runs each session's own), which have no restore copy. Its statusd reports the engines whose
+viewers it started (`viewers`), and Open ▾ offers those: an installation that makes no databases still shows each
+session's own, and a session on a project with Postgres alone is offered no Mongo. A session from an image before
+statusd said so is offered the viewers of the databases the console makes. A shared session's pgweb is locked to its
+database (`--lock-session`), and so is a private session's on a database its environment names. A private
+session's on its owner's own has two bookmarks instead, `your-database` and `restored-copy` (the copy Restore a Postgres dump makes,
 below), with `--bookmarks-only`: its Connect button offers those two and refuses any other host, and its database
 list switches only to where the owner's own user may connect. Like Redis, they go through the console to the
 session's statusd; for a private session the console answers anyone but the

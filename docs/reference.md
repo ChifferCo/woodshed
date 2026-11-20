@@ -579,7 +579,9 @@ is a module there with its entry in `ENGINES`, and its server in each provider (
   libpq's `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` and `PGSSLMODE` (so the image's `psql`, Postgres
   16's, connects with no setup) and `PG_URL`; mongo gives `MONGODB_URI`. Woodshed names no app's variable.
 - **Its viewers** (pgweb at `/pg/<id>/`; mongo-express at `/mongo/<id>/`, and on a private session's restore copy at
-  `/mongo-copy/<id>/`), which Open ▾, statusd and the console's proxy list from the modules.
+  `/mongo-copy/<id>/`), which Open ▾, statusd and the console's proxy list from the modules. A session runs the
+  viewers of its own databases, whether the console made them or its environment names them, and its statusd says
+  which (`viewers`), so Open ▾ offers each session its own.
 
 Every owner has the same user name and password on each engine (`woodshed_<login>`, `woodshed__<session id>`), and
 one record and one db-admin run cover them all (`console/databases.mjs`). The templates are built together, since one
