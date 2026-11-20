@@ -46,8 +46,13 @@ if (sessionApp && !appDomain) console.warn('dev console: no SESSION_APP_DOMAIN, 
 const tlsAskPort = process.argv[3] ? { WOODSHED_TLS_ASK_PORT: process.argv[3] } : {};
 // The console as its image starts it, on the local provider (the docker launcher). DEV_CONSOLE_HOST_REPOS=1 starts it as
 // an embedding program would, with a made-up repos hook, for Console settings' Repos card (scripts/devHostConsole.mjs).
+// DEV_CONSOLE_REVIEW_SETUP=1 starts it on a made-up GitHub and App for turning on a repo's review, with a made-up
+// Anthropic key in a local secret store (scripts/devReviewSetupConsole.mjs): POST /api/review-setup asks, and
+// /review-setup/<id> approves.
 const woodshed = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const server = process.env.DEV_CONSOLE_HOST_REPOS === '1' ? path.join(woodshed, 'scripts', 'devHostConsole.mjs') : path.join(woodshed, 'providers', 'console.mjs');
+const reviewSetupDev = process.env.DEV_CONSOLE_REVIEW_SETUP === '1';
+const server = path.join(woodshed, ...(process.env.DEV_CONSOLE_HOST_REPOS === '1' ? ['scripts', 'devHostConsole.mjs']
+  : reviewSetupDev ? ['scripts', 'devReviewSetupConsole.mjs'] : ['providers', 'console.mjs']));
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-console-'));
 
 const now = new Date().toISOString();
@@ -463,6 +468,8 @@ function startConsole() {
       // DEV_CONSOLE_WEBHOOKS=1 names a webhook receiver, so Console settings shows its GitHub webhooks switch.
       // Polling is off here, so the receiver never listens and nothing arrives.
       ...(webhookPort ? { WOODSHED_LOCAL_WEBHOOK_PORT: String(webhookPort), ...(repoSettingsDev ? {} : devSecrets(path.join(stateDir, 'webhook-secrets'))) } : {}),
+      // The made-up team key needs a secret store to be kept in, as the console's own is.
+      ...(reviewSetupDev && !repoSettingsDev && !webhookPort ? devSecrets(path.join(stateDir, 'review-setup-secrets')) : {}),
     },
   });
   child.on('exit', (code) => {

@@ -69,6 +69,7 @@ import { createProjectColors } from './projectColors.mjs';
 import { createAppPorts } from './appPorts.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
 import { createReviewerApp } from './reviewerApp.mjs';
+import { appGitHub, createReviewSetup } from './reviewSetup.mjs';
 import { withAppLogins } from './reviewLogins.mjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 
@@ -291,10 +292,12 @@ function mcpAccess({ loaded: given, secrets, launcher }) {
  *   `slackEventsUrl` is the Slack events Request URL the Set up Slack dialog and its manifest show, over the
  *   provider's; `slackInstall` is the program's own way to put a Slack app in a workspace, offered beside "Use your
  *   own Slack app" (slackSetup.mjs, README.md "Embedding the console").
+ *   `reviewSetupGitHub` stands in for the console's own App when turning on a repo's review (reviewSetup.mjs
+ *   `appGitHub`'s shape): the dev console's made-up GitHub (console/bin/devReviewSetup.mjs). The image passes none.
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null, mcpServers: mcpServersHook = null }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null, mcpServers: mcpServersHook = null, reviewSetupGitHub = null }) {
   checkMembersHook(memberList, trusted);
   if (mcpServersHook && ['list', 'save', 'remove'].some((f) => typeof mcpServersHook[f] !== 'function')) throw new Error('mcpServers needs list, save and remove');
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
@@ -450,6 +453,12 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // Questions need the bot token to answer, and the session API to hear the answer.
   const asks = slack.canReply && config.sessionApi.host ? createAsks({ store, fleet, slack, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null }) : null;
   console.log('console: Slack questions', { available: Boolean(asks) });
+  // Turning on a repo's review by an approved request, with the console's own App and key: a host's lent GitHub access
+  // (a broker) mints no token with the permissions it needs, so a console on one has none. The dev console's GitHub
+  // stand-in comes in its place (reviewSetupGitHub).
+  const reviewGitHub = reviewSetupGitHub ?? (appKey ? appGitHub({ appId: config.githubApp.appId, privateKey: () => appKey.current() }) : null);
+  const reviewSetup = reviewGitHub ? createReviewSetup({ store, github: reviewGitHub, teamKey: anthropic.teamCredential, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null }) : null;
+  console.log('console: review setup requests', { available: Boolean(reviewSetup) });
   const events = createWebhookEvents({ file: path.join(loaded.stateDir, 'webhookEvents.jsonl'), store });
   const webhookSwitch = createWebhookSwitch({ store, onOff: (source) => { if (source === 'github') pullWebhooks.forget(); } });
   // Borrowed GitHub access has no App to ask about a repo, nor a gh login of its own: the broker's answer is the check.
@@ -537,13 +546,14 @@ export async function createInstallation({ config: loaded, store, provider, trus
     woodshedUpdate,
     slackSetup,
     cli,
+    reviewSetup,
   });
   const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
-    mcpRelay, egress: access.egress,
+    mcpRelay, egress: access.egress, reviewSetup,
     ownerTokenRepos: hostConnect ? () => allProjects(config).map((p) => p.repo).filter(Boolean) : null,
   }) : null;
   const webhookDispatch = createWebhookDispatch({ label: config.label, labelOf: (name) => repoTriggers.of(name ?? defaultProject(config).name).label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity, webhookSwitch });

@@ -222,6 +222,7 @@ import projectColorsShared from './public/projectColors.cjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 import { readMyPulls } from './myPulls.mjs';
 import { createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
+import { REVIEW_SETUP_PAGE_RE, createReviewSetupApi, reviewSetupRoute } from './reviewSetup.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
 import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
 import { createMcpTester } from './mcpTest.mjs';
@@ -275,6 +276,7 @@ const STATIC_FILES = {
   'repoLayers.js': 'text/javascript; charset=utf-8',
   'myRepoSettings.js': 'text/javascript; charset=utf-8',
   'people.js': 'text/javascript; charset=utf-8',
+  'reviewSetup.js': 'text/javascript; charset=utf-8',
   // Run on people's own computers, so it is served before sign-in; it holds nothing secret.
   'woodshed-db.mjs': 'text/javascript; charset=utf-8',
 };
@@ -718,10 +720,13 @@ export function createHandler({
   projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
   cli = null,
+  reviewSetup = null,
 }) {
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
   const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
+  // Turning on a repo's review by an approved request (reviewSetup.mjs): null on a console with no GitHub App of its own.
+  const reviewSetupApi = reviewSetup ? createReviewSetupApi({ reviewSetup }) : null;
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
   // A config made in a test or by a program embedding the console may not have been through loadConfig.
@@ -2474,6 +2479,14 @@ export function createHandler({
       console.log('console: admin call refused', { login: user.login, pathname, method: req.method });
       return reply(res, 403, { error: 'only an admin can do this' });
     }
+    // Anyone signed in may ask for a repo's review and read the requests; GitHub says who may approve one.
+    const reviewRoute = reviewSetupRoute(pathname);
+    if (reviewRoute) {
+      if (req.method === 'POST' && req.headers['x-woodshed'] !== '1') return reply(res, 403, { error: 'missing x-woodshed header' });
+      if (req.method === 'POST' && !isSameOrigin(req.headers)) return reply(res, 403, { error: 'cross-origin request refused' });
+      if (!reviewSetupApi) return reply(res, 404, { error: 'this console has no GitHub App of its own to turn on a repo\'s review with' });
+      return reviewSetupApi(req, res, { route: reviewRoute, login: user.login, admin: isAdmin(user) });
+    }
     if (req.method === 'POST') return write(req, res, pathname, user.login);
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, { error: 'method not allowed' });
     const repoRead = repoSettingsApi && repoSettingsRoute(pathname);
@@ -2482,6 +2495,7 @@ export function createHandler({
     if (pathname === '/' || pathname === '/all' || SESSION_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SHELL_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
     if (pathname === '/settings' || SETTINGS_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SETTINGS_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
     if (pathname === '/setup/github') return html(res, pageShell({ title: consoleName, script: 'githubSetup.js' }));
+    if (REVIEW_SETUP_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: 'reviewSetup.js', login: user.login, provider, linkQuery: config.linkQuery }));
     if (pathname === '/setup/github/created') return githubSetupCreated(res, url);
     if (pathname === '/setup/github/reviewer-created') return reviewerSetupCreated(res, url);
     if (pathname === REVIEWER_SETUP_PATH) return reviewerApp ? reply(res, 200, await reviewerApp.view()) : reply(res, 404, { error: 'this console cannot make a reviewer App' });
@@ -2741,7 +2755,7 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
  *   `repos` and `projectReadiness` are an embedding program's hooks, passed on to createInstallation (installation.mjs):
  *   only the dev console's stand-in (scripts/devHostConsole.mjs) passes them here
  */
-export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null }) {
+export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null, reviewSetupGitHub = null }) {
   const first = given ?? loadConfig();
   const store = openStore(first.stateDir);
   // An App saved on the setup page is the console's own from the next start.
@@ -2751,7 +2765,7 @@ export async function startConsole({ provider, config: given = null, repos = nul
   const trusted = loaded.trustedIdentitySecret ? createTrustedIdentity({ secret: loaded.trustedIdentitySecret }) : null;
   console.log('console: hosted mode', { githubBroker: Boolean(loaded.githubBroker), trustedIdentity: Boolean(trusted) });
   await checkGh();
-  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness });
+  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness, reviewSetupGitHub });
   const { config, handle } = installation;
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {

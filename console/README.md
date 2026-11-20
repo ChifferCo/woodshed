@@ -2254,6 +2254,46 @@ Request URL (on AWS, the `slack_events_url` Terraform output; Slack checks it at
 `app_mention`; paste its **Signing Secret** in the dialog's third step. An app made by hand needs the same, then
 Replace keys with its signing secret. Invite the bot to the channels where people should ask.
 
+## Turning on a repo's review
+
+What `scripts/enable-review.sh` does with a person's `gh` and their pasted key, the console does with its own GitHub App
+and its own `anthropic-api-key`, once an admin of the repo approves it (`reviewSetup.mjs`). Something in a session asks,
+and is handed a link and a status, never a credential:
+
+1. **Ask.** A session calls the session API's `POST /review-setup` with its `SESSION_TOKEN` (`{"repo": "acme/game",
+   "qa": true}`, or `"qaRunner": "woodshed"`, and `"ref"` to pin a commit of Woodshed's workflows; without one the
+   console pins Woodshed's main as it is then). Anyone signed in asks with `POST /api/review-setup`. The answer is the
+   request: its `id`, `status: "pending"` and `url`, its approval page, `/review-setup/<id>`. Asking again for the same
+   repo answers the request already waiting; each session or person has at most 5 waiting. A question from Slack, a QA
+   run, a review and a tainted session may not ask: they run code their pull request wrote, or hold production data.
+2. **Approve.** The page shows who asked (the session, linked, and whose it is), each step against the repo as GitHub
+   has it now, and each file in full: the review workflow (and CI's QA workflow), the `woodshed-qa` label, letting
+   Actions create and approve pull requests (keeping the repo's default workflow permissions), and `ANTHROPIC_API_KEY`
+   from the console's key, unless the repo has one, which is left as it is. Only an admin of the repo on GitHub
+   approves (`collaborators/<login>/permission`), and when the console's own key would be copied into the repo, where
+   every workflow can read it, a console admin as well. Whoever asked can withdraw it, and an approver refuse it.
+3. **Apply.** Each file is a commit to the default branch, as the script makes it, whose message names the approver and
+   the request. The key is sealed to the repo's public key (`sealedBox.mjs`, libsodium's sealed box) and never logged
+   or shown. A step GitHub refuses stops the rest: the request is `failed` with the step and GitHub's reason (a branch
+   rule that refuses the App's commits says so), and the steps done stay done.
+4. **Follow.** The session polls `POST /review-setup/status` with `{"id"}` (its own requests only); a person reads
+   `GET /api/review-setup/<id>`. `status` is `pending`, `applying`, `applied`, `refused` or `failed`, with `why` and
+   each step's outcome. A request nobody decides in 24 hours is refused as expired.
+
+Each step needs a permission of the App's installation on the repo, read from GitHub (`GET /repos/<repo>/installation`)
+before anything is asked of the approver: Workflows: write for the workflow files (with Contents: write),
+Administration: write for the Actions setting, Secrets: write for the key, Issues: write for the label. **An App made
+from the console's own manifest (`githubAppSetup.mjs`) has none of the first three**: the page names what is missing and
+the request waits, until they are added in the App's settings on GitHub (Permissions & events) and accepted on its
+installation. Nothing falls back to anyone's own token. A console on a host's borrowed GitHub access has no App of its
+own, and answers 404.
+
+Requests are kept in `state.json` under `reviewSetups`, the newest 200, each with its history (asked, approved, applied,
+failed, refused, by whom). The console logs `reviewSetup: request made`, `approval refused` with `why`, `approved` with
+the steps, `step done`, `step failed` with GitHub's reason, `Anthropic key set as an Actions secret` (its name only),
+`applied`, `failed`, `refused` and `expired`. The dev console runs it on a made-up GitHub with
+`DEV_CONSOLE_REVIEW_SETUP=1` (`scripts/devReviewSetupConsole.mjs`).
+
 ## QA sessions
 
 A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here rather than in its CI

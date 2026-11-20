@@ -782,6 +782,16 @@ button.set-fold-head:hover { background: var(--slate-tint); }
 .restore-step-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .restore-current { font-weight: 400; color: var(--sub); }
 .is-failed .start-mark { background: var(--bad); color: var(--ground); }
+/* A request to turn on a repo's review (reviewSetup.js): its steps as a checklist, each file it writes folded under its row. */
+.review-setup-steps { max-width: none; margin: 0; }
+.review-setup-steps li { flex-direction: column; align-items: stretch; justify-content: center; gap: 6px; padding: 6px 0; }
+.review-setup-row { display: flex; align-items: center; gap: 10px; }
+.review-setup-file { margin-left: 26px; font-weight: 400; color: var(--ink); }
+.review-setup-file summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--slate); }
+.review-setup-file .layer-pre { margin-top: 6px; }
+.review-setup-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.review-setup-history { margin: 0; padding-left: 18px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+.review-setup-when { font-family: var(--mono); font-size: 11px; color: var(--meta); }
 .is-failed .start-secs { color: var(--bad); }
 .restore-bar { margin-left: 26px; height: 4px; border-radius: 999px; background: var(--line-soft); overflow: hidden; }
 .restore-bar span { display: block; height: 100%; background: var(--slate); border-radius: inherit; }

@@ -45,6 +45,12 @@
 //                        the server takes, which the session never holds (mcpRelay.mjs); /prod-mcp is the environment's
 //                        woodshed-prod. A production server's first call taints the session: it is locked down before
 //                        the call goes on, or refused (503) and left untainted when the lockdown fails
+//   POST /review-setup   {"repo", "qa"?, "qaRunner"?, "ref"?}  ->  201 {"id", "status": "pending", "url", ...}: asks for
+//                        Woodshed's review (and QA) to be turned on for a repo, which an admin of the repo approves at
+//                        `url`; the console applies it with its own App and Anthropic key, which the session never holds
+//                        (reviewSetup.mjs). 403 for a question, a QA run, a review or a tainted session
+//   POST /review-setup/status  {"id"}  ->  {"id", "status": "pending"|"applying"|"applied"|"refused"|"failed", "why",
+//                        "steps"}: one of this session's own requests, 404 for any other
 //   POST /egress         ->  {"proxy", "ca"}: a tainted session's way out, the console's egress proxy (egressProxy.mjs),
 //                        and the certificate authority it shows for GitHub. 404 for a session that is not tainted
 //
@@ -79,6 +85,7 @@ import { MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES, MAX_REPORT_CHARS, isWebm, parseQaRep
 import { MAX_QA_POSTER_BYTES, isPng } from './qaRecordings.mjs';
 import { ACTIVE_STATUSES, START_STEPS, isAsk, isQa, isReview } from './sessions.mjs';
 import { parseReviewReport } from './reviewSessions.mjs';
+import { sessionReviewSetupReply } from './reviewSetup.mjs';
 
 // A step name is a word; the body is never more than a few of them.
 const MAX_PROGRESS_BYTES = 256;
@@ -148,7 +155,9 @@ export function sessionForToken(given, sessions) {
  *          repoSettings?: {forSession: (session: object) => Promise<object|null>,
  *                          filesForSession: (session: object) => Promise<Record<string, string>>}|null,
  *          mcpRelay?: ReturnType<typeof import('./mcpRelay.mjs').createMcpRelay>|null,
- *          egress?: {sessionUrl: string|null, caPem: () => Promise<string>}|null}} opts
+ *          egress?: {sessionUrl: string|null, caPem: () => Promise<string>}|null,
+ *          reviewSetup?: ReturnType<typeof import('./reviewSetup.mjs').createReviewSetup>|null}} opts
+ *   `reviewSetup` takes a session's request to turn on a repo's review (reviewSetup.mjs)
  *   `mcpRelay` relays sessions' calls to the console's MCP servers, and `egress` is the proxy a tainted session leaves through
   *   `githubAccess` reads a project's `githubAccess` (null when its file could not be read)
  *   `ownerTokenRepos`, for a console whose GitHub App is installed beyond its own repos (a host's, installation.mjs's
@@ -162,7 +171,7 @@ export function sessionForToken(given, sessions) {
 export function createSessionApi({
   fleet, tokens, userSettings = null, githubUser = null, homes = null, databases = null, claudeSettings = null, anthropic = null, openai = null,
   attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, repoSettings = null,
-  ownerTokenRepos = null, mcpRelay = null, egress = null,
+  ownerTokenRepos = null, mcpRelay = null, egress = null, reviewSetup = null,
 }) {
   // The access last logged for each session: a session asks for a token on every git and gh call, so the decision is
   // logged when it is first made and when it changes, not each time. Ended sessions are dropped once it grows.
@@ -207,7 +216,7 @@ export function createSessionApi({
       }
       return mcpRelay.handle(req, res, sessionForAuthorization(req.headers.authorization, fleet.sessions()));
     }
-    const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/qa-video', '/qa-poster', '/review-report', '/egress'];
+    const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/qa-video', '/qa-poster', '/review-report', '/egress', '/review-setup', '/review-setup/status'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -224,6 +233,7 @@ export function createSessionApi({
     if (pathname === '/qa-poster') return qaRecordingReply(req, res, session, fleet, POSTER);
     if (pathname === '/review-report') return reviewReportReply(req, res, session, fleet);
     if (pathname === '/egress') return egressReply(req, res, session, egress);
+    if (pathname.startsWith('/review-setup')) return sessionReviewSetupReply(req, res, session, reviewSetup, pathname);
     if (pathname === '/attachments') {
       if (!attachments || !(await attachments.has(session.id))) {
         res.writeHead(204).end();

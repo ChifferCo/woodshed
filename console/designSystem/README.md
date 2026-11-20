@@ -127,6 +127,14 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - Console settings' Repos card says **Ready** (`pill is-ok`) or **Needs setup** on each row, with the card's reason and
   fix under a row that needs it.
 
+## Approving a change
+
+- A change something asked for and a person approves (turning on a repo's review) is a page of its own
+  (`components/ApprovalRequest`): what approving does as the `title`, who asked and when it expires under it, then its
+  steps as a checklist with each file it writes folded under its row, so the approver reads exactly what will change.
+- What it gives away (a key copied into a repo) is said in plain words, and why it cannot be approved now is a
+  `form-error` that says what to do. **Approve and apply** is the one orange button; Refuse is outline.
+
 ## Checklists
 
 - A job a person waits on, made of steps (a session's start, Restore a dump), is a checklist: done, now, next and

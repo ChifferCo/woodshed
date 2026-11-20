@@ -226,6 +226,14 @@ URL on top of each env file's Repo settings values
   they did. On the box, `sudo docker system df`, then `sudo docker image prune -af`
   (running containers keep theirs) and re-run the job. The console keeps running on
   its old image meanwhile.
+- **A request to turn on a repo's review cannot be approved, or failed.** Its page (`/review-setup/<id>`) says why in
+  one sentence. `it lacks Workflows: write, Administration: write, Secrets: write` is the console's GitHub App without
+  those permissions, which an App made from its manifest lacks: add them in the App's settings on GitHub and accept
+  them on the installation. `Only an admin of <repo>` is GitHub's answer for the viewer; `a console admin approves it`
+  means the console's own Anthropic key would be copied into the repo. The console logs `reviewSetup: approval refused`
+  with `why`, then `step failed` with GitHub's reason: `Repository rule violations found` or a 409 on a workflow file is
+  a branch rule refusing the App's commits. `reviewSetup: left applying by a stop, failed` is a console restarted
+  mid-apply; the steps marked done were done. A 404 on `/api/review-setup` is a console with no GitHub App of its own.
 - **A label or `/woodshed` comment does nothing.** A label on a pull request
   never starts a session (console/README.md, "How sessions start"): the console logs
   `fleet: trigger routed` with `action: ignore`. Otherwise `docker compose logs

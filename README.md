@@ -131,6 +131,10 @@ branch in the repository, not forks). QA starts the app the way [the project fil
 says, so there is nothing in the workflow to edit. Already running a Woodshed console? `--qa-runner woodshed` runs QA as
 a [session](docs/reference.md#qa-in-a-woodshed-session) there instead of in CI.
 
+With a console, nobody needs the admin token or the key: a session (or anyone signed in) asks the console to turn review
+on for a repo, an admin of the repo approves it on the console, and the console applies it with its own GitHub App and
+Anthropic key ([Turning on a repo's review](console/README.md#turning-on-a-repos-review)).
+
 See the [review](docs/reference.md#the-review-in-another-repo) and [QA](docs/reference.md#qa-in-another-repo) in another
 repo to wire them by hand and for every option.
 

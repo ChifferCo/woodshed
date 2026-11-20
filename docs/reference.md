@@ -430,6 +430,10 @@ Still specific to one repo, and not yet settings:
 
 ## The review in another repo
 
+`scripts/enable-review.sh` writes the calling workflow below and sets what it needs, with a person's `gh` and key; a
+console does the same once an admin of the repo approves a request for it (console/README.md, "Turning on a repo's
+review").
+
 `.github/workflows/review.yml` reviews Woodshed's own pull requests, and any repo can run the same review on its own by
 calling it. A workflow of the repo's, with a `pull_request` trigger, calls it pinned to a commit:
 
