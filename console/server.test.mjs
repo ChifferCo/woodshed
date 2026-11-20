@@ -218,11 +218,126 @@ test('the transcript a phone scrolls is read from the running session\'s statusd
   assert.equal((await res.json()).entries[0].text, 'hi');
   await fetch(`http://127.0.0.1:${port}/api/sessions/0a1b2c3d/transcript?limit=50%26pane%3Dx`);
   await fetch(`http://127.0.0.1:${port}/api/sessions/0a1b2c3d/transcript`);
-  assert.deepEqual(asked.map((a) => a.url), ['/transcript?limit=50', '/transcript', '/transcript']);
+  // The Chat tab's `since`, the last answer's writtenAt (a file's mtimeMs, which can have a fraction), and only that.
+  await fetch(`http://127.0.0.1:${port}/api/sessions/0a1b2c3d/transcript?limit=300&since=1763550000123.456`);
+  await fetch(`http://127.0.0.1:${port}/api/sessions/0a1b2c3d/transcript?since=1%26limit%3D9`);
+  assert.deepEqual(asked.map((a) => a.url), ['/transcript?limit=50', '/transcript', '/transcript', '/transcript?limit=300&since=1763550000123.456', '/transcript']);
   assert.ok(asked.every((a) => a.method === 'GET' && a.authorization === 'Bearer tok'));
   assert.equal((await fetch(`http://127.0.0.1:${port}/api/sessions/1b2c3d4e/transcript`)).status, 409);
   assert.equal((await fetch(`http://127.0.0.1:${port}/api/sessions/ffffffff/transcript`)).status, 404);
-  assert.equal(asked.length, 3, 'nothing asked for a stopped or unknown session');
+  assert.equal(asked.length, 5, 'nothing asked for a stopped or unknown session');
+});
+
+test('the Chat tab\'s Stop is an interrupt sent to the running session\'s statusd, and nothing else', async (t) => {
+  const asked = [];
+  const statusd = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      asked.push({ method: req.method, url: req.url, authorization: req.headers.authorization, body });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+  });
+  const statusPort = await listen(statusd);
+  t.after(() => statusd.close());
+  const running = { id: '0a1b2c3d', status: 'running', title: 't', token: 'tok', endpoint: { host: '127.0.0.1', termPort: 1, statusPort } };
+  const stopped = { id: '1b2c3d4e', status: 'stopped', title: 's', token: 'tok2' };
+  const fleet = { sessions: () => [running, stopped], find: (id) => [running, stopped].find((s) => s.id === id) ?? null, stop: async () => {} };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+  };
+  const server = http.createServer(createHandler({ config, fleet }));
+  const port = await listen(server);
+  t.after(() => server.close());
+  const post = (id, headers = { 'x-woodshed': '1' }) => fetch(`http://127.0.0.1:${port}/api/sessions/${id}/interrupt`, {
+    method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{"keys":"rm -rf /"}',
+  });
+
+  assert.equal((await post('0a1b2c3d')).status, 200);
+  assert.deepEqual(asked, [{ method: 'POST', url: '/interrupt', authorization: 'Bearer tok', body: '{}' }], 'only Esc: no text of the page\'s reaches the session');
+  assert.equal((await post('1b2c3d4e')).status, 409);
+  assert.equal((await post('ffffffff')).status, 404);
+  assert.notEqual((await post('0a1b2c3d', {})).status, 200, 'a cross-site form cannot send it');
+  assert.equal(asked.length, 1);
+});
+
+test('the Chat tab\'s answer goes to the running session\'s statusd with only the fields it checks, and its prompt is read there', async (t) => {
+  const asked = [];
+  let answerStatus = 200;
+  const statusd = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      asked.push({ method: req.method, url: req.url, authorization: req.headers.authorization, body });
+      if (req.url === '/prompt') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end('{"prompt":{"kind":"approval","title":"Do you want to proceed?","detail":["ls"]}}');
+      }
+      res.writeHead(answerStatus, { 'content-type': 'application/json' });
+      res.end(answerStatus === 200 ? '{"ok":true}' : '{"error":"the agent\'s terminal shows another question","why":"other-question"}');
+    });
+  });
+  const statusPort = await listen(statusd);
+  t.after(() => statusd.close());
+  const running = { id: '0a1b2c3d', status: 'running', title: 't', token: 'tok', endpoint: { host: '127.0.0.1', termPort: 1, statusPort } };
+  const stopped = { id: '1b2c3d4e', status: 'stopped', title: 's', token: 'tok2' };
+  const fleet = { sessions: () => [running, stopped], find: (id) => [running, stopped].find((s) => s.id === id) ?? null, stop: async () => {} };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+  };
+  const server = http.createServer(createHandler({ config, fleet }));
+  const port = await listen(server);
+  t.after(() => server.close());
+  const post = (id, body, headers = { 'x-woodshed': '1' }) => fetch(`http://127.0.0.1:${port}/api/sessions/${id}/answer`, {
+    method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body),
+  });
+  const question = { kind: 'question', questions: [{ question: 'Which colour?', options: ['Red', 'Blue'], pick: 1, keys: 'x' }], text: 'rm' };
+  const lines = [];
+  const log = console.log;
+  console.log = (...args) => { lines.push(args); };
+  let first;
+  try {
+    first = await post('0a1b2c3d', question);
+  } finally {
+    console.log = log;
+  }
+  assert.equal(first.status, 200);
+  assert.deepEqual(JSON.parse(asked[0].body), { kind: 'question', questions: [{ question: 'Which colour?', options: ['Red', 'Blue'], pick: 1 }] }, 'nothing else of the page\'s reaches the session');
+  assert.equal(asked[0].url, '/answer');
+  assert.equal(asked[0].authorization, 'Bearer tok');
+  const logged = JSON.stringify(lines);
+  assert.match(logged, /answer typed in from the page/);
+  assert.doesNotMatch(logged, /Which colour|Blue/, 'the log says which pick, never its text');
+
+  const approval = { kind: 'approval', decision: 'deny', key: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' };
+  answerStatus = 409;
+  const refused = await post('0a1b2c3d', approval);
+  assert.equal(refused.status, 409, 'statusd\'s refusal reaches the page as it said it');
+  assert.match((await refused.json()).error, /another question/);
+  assert.deepEqual(JSON.parse(asked[1].body), approval);
+  // Only the key: what the page showed is no part of the answer, the pane's own text is.
+  await post('0a1b2c3d', { ...approval, title: 'Do you want to proceed?', detail: ['ls'] });
+  assert.deepEqual(JSON.parse(asked[2].body), approval);
+
+  assert.equal((await post('0a1b2c3d', { kind: 'approval', decision: 'yes', key: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' })).status, 400);
+  assert.equal((await post('0a1b2c3d', { kind: 'approval', decision: 'deny', title: 'Do you want to proceed?', detail: ['ls'] })).status, 400, 'no key');
+  assert.equal((await post('0a1b2c3d', { kind: 'approval', decision: 'deny', key: 'abc' })).status, 400, 'not a key');
+  assert.equal((await post('0a1b2c3d', { kind: 'question', questions: [{ question: 'q', options: ['a'], pick: 3 }] })).status, 400);
+  assert.equal((await post('1b2c3d4e', approval)).status, 409);
+  assert.equal((await post('ffffffff', approval)).status, 404);
+  assert.notEqual((await post('0a1b2c3d', approval, {})).status, 200, 'a cross-site form cannot send it');
+  assert.equal(asked.length, 3);
+
+  const prompt = await fetch(`http://127.0.0.1:${port}/api/sessions/0a1b2c3d/prompt`);
+  assert.equal(prompt.status, 200);
+  assert.equal((await prompt.json()).prompt.kind, 'approval');
+  assert.deepEqual(asked[3], { method: 'GET', url: '/prompt', authorization: 'Bearer tok', body: '' });
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/sessions/1b2c3d4e/prompt`)).status, 409);
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/sessions/ffffffff/prompt`)).status, 404);
+  assert.equal(asked.length, 4);
 });
 
 test('with sign-in on, everything but the sign-in pages needs a session', async (t) => {
@@ -672,7 +787,7 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
     { method: 'POST', path: '/api/sessions/ID/resume' }, { method: 'POST', path: '/api/sessions/ID/delete' },
     { method: 'POST', path: '/api/sessions/ID/pin' }, { method: 'POST', path: '/api/sessions/ID/rename' },
     { method: 'POST', path: '/api/sessions/ID/upload?name=a.png' }, { path: '/api/sessions/ID/image?path=shot.png' }, { method: 'POST', path: '/api/sessions/ID/scroll' },
-    { method: 'POST', path: '/api/sessions/ID/send' },
+    { method: 'POST', path: '/api/sessions/ID/send' }, { method: 'POST', path: '/api/sessions/ID/interrupt' }, { method: 'POST', path: '/api/sessions/ID/answer' }, { path: '/api/sessions/ID/prompt' },
     { path: '/api/sessions/ID/applog' }, { path: '/api/sessions/ID/diff' }, { path: '/api/sessions/ID/transcript' }, { method: 'POST', path: '/api/sessions/ID/review/diff' }, { path: '/api/sessions/ID/review/analysis' },
     { method: 'POST', path: '/api/sessions/ID/review/chat' }, { path: '/api/sessions/ID/review/answer/0123456789abcdef' },
     { path: '/api/sessions/ID/github/draft' }, { method: 'POST', path: '/api/sessions/ID/github/merge' }, { method: 'POST', path: '/api/sessions/ID/github/comment' },
@@ -739,10 +854,12 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
     // Whose page it is, so the rail draws from what it kept only for the same person.
     assert.match(await getBody(port, page, as('octocat')), /<meta name="woodshed-login" content="octocat">/, `${page} names who it is for`);
     // The same scripts on each, since session.js moves between them in place.
-    assert.deepEqual(scripts.slice(-7), ['terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'], `${page} is the shell`);
+    assert.deepEqual(scripts.slice(-9), ['terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'], `${page} is the shell`);
   }
   assert.match(await getBody(port, '/static/sharedHome.js', as('octocat')), /createSharedHome/);
   assert.match(await getBody(port, '/static/messageBox.js', as('octocat')), /createMessageBox/);
+  assert.match(await getBody(port, '/static/chatThread.cjs', as('octocat')), /WoodshedChatThread/);
+  assert.match(await getBody(port, '/static/chat.js', as('octocat')), /createChat/);
   assert.match(await getBody(port, '/static/dictation.js', as('octocat')), /W\.dictation = /);
   // The settings pages are one page: each address loads every settings page's script, so common.js moves between
   // them in place. My settings' Repo settings card draws its layers with the repo page's parts, loaded before both.
@@ -1732,8 +1849,12 @@ test('the message box types its text into the owner\'s session, and its files ar
   });
   const statusPort = await listen(statusd);
   t.after(() => statusd.close());
-  const mine = { id: '3f9a1c20', status: 'running', title: 'mine', owner: 'octocat', startedBy: 'octocat', token: 'tok', terminalToken: 'tt', endpoint: { host: '127.0.0.1', termPort: 1, statusPort, shellPort: 1 } };
-  const fleet = { sessions: () => [mine], find: (id) => (id === mine.id ? mine : null) };
+  const mine = { id: '3f9a1c20', status: 'running', safeSend: true, title: 'mine', owner: 'octocat', startedBy: 'octocat', token: 'tok', terminalToken: 'tt', endpoint: { host: '127.0.0.1', termPort: 1, statusPort, shellPort: 1 } };
+  // The fleet sends it, or holds it in the session's saved pendingMessages while the agent is busy (fleet.mjs).
+  const sent = [];
+  let outcome = 'sent';
+  const ids = [];
+  const fleet = { sessions: () => [mine], find: (id) => (id === mine.id ? mine : null), send: async (session, text, opts) => { sent.push({ id: session.id, text }); ids.push(opts?.id); return outcome; } };
   const auth = { enabled: () => true, available: () => true, sessionFor: async () => ({ login: 'octocat' }) };
   const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
   const server = http.createServer(createHandler({ config, fleet, auth }));
@@ -1743,17 +1864,55 @@ test('the message box types its text into the owner\'s session, and its files ar
   const post = (path, body, type) => fetch(`http://localhost:${port}${path}`, { method: 'POST', headers: { ...headers, 'content-type': type }, body });
 
   const text = 'Both. Polling for the watcher\n\nand the app only on Start app';
-  assert.equal((await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text }), 'application/json')).status, 200);
-  assert.deepEqual(seen[0], { method: 'POST', url: '/send', auth: 'Bearer tok', body: JSON.stringify({ text }) }, 'the whole text, newlines kept, as one message');
+  const first = await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text }), 'application/json');
+  assert.equal(first.status, 200);
+  assert.deepEqual(await first.json(), { ok: true, held: false });
+  assert.deepEqual(sent, [{ id: mine.id, text }], 'the whole text, newlines kept, as one message, through the fleet');
+  assert.match(ids[0], /^[0-9a-f-]{36}$/, 'a message with no id of the page\'s (the phone\'s box) gets one: it is a person\'s');
+  await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'mine', id: 'page-id-0042' }), 'application/json');
+  assert.equal(ids[1], 'page-id-0042');
+  sent.pop();
+  ids.pop();
+  outcome = 'queued';
+  assert.deepEqual(await (await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'later' }), 'application/json')).json(), { ok: true, held: true }, 'held while the agent is busy');
+  // A statusd from before the guarded send types blind: the page's message is refused, not typed or held, and not
+  // passed to the fleet.
+  mine.safeSend = false;
+  const blind = await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'yes do it' }), 'application/json');
+  assert.equal(blind.status, 409);
+  assert.match((await blind.json()).error, /started before Chat could send safely: type it in the TUI tab/);
+  assert.equal(sent.length, 2, 'never reached the fleet');
+  // Not read since the console started: said as not known yet, not as an old session.
+  delete mine.safeSend;
+  const unread = await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'yes do it' }), 'application/json');
+  assert.equal(unread.status, 409);
+  assert.match((await unread.json()).error, /has not read this session since it started: try again in a few seconds/);
+  assert.equal(sent.length, 2);
+  mine.safeSend = true;
+  // No answer in time: it may have gone in, said as not known.
+  outcome = 'unknown';
+  assert.deepEqual(await (await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'maybe' }), 'application/json')).json(), { ok: true, held: false, unknown: true });
+  // Typed with no Enter, a prompt having come up: not sent, said so, for the page not to put it back in its own box.
+  outcome = 'in-box';
+  const inBox = await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'boxed' }), 'application/json');
+  assert.equal(inBox.status, 409);
+  const said = await inBox.json();
+  assert.equal(said.typed, true);
+  assert.match(said.error, /not sent/);
 
   assert.equal((await post(`/api/sessions/${mine.id}/send`, '{"text":"  "}', 'application/json')).status, 400);
-  assert.equal(seen.length, 1, 'nothing to send reaches nothing');
+  // Over statusd's own limit: said now, never queued to fail and hold every message behind it.
+  const long = await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'x'.repeat(8001) }), 'application/json');
+  assert.equal(long.status, 400);
+  assert.match((await long.json()).error, /at most 8000 characters/);
+  assert.equal(sent.length, 4, 'nothing to send, or too much, reaches nothing');
+  assert.equal(seen.length, 0, 'the page never types into statusd itself');
 
   const up = await post(`/api/sessions/${mine.id}/upload?name=shot.png&pane=none`, 'png', 'application/octet-stream');
   assert.equal((await up.json()).path, '/tmp/uploads/1-shot.png');
-  assert.equal(seen[1].url, '/upload?name=shot.png', 'no pane, so statusd types nothing');
+  assert.equal(seen[0].url, '/upload?name=shot.png', 'no pane, so statusd types nothing');
   await post(`/api/sessions/${mine.id}/upload?name=shot.png`, 'png', 'application/octet-stream');
-  assert.equal(seen[2].url, '/upload?name=shot.png&pane=agent', 'a paste on the terminal still types its path, as before');
+  assert.equal(seen[1].url, '/upload?name=shot.png&pane=agent', 'a paste on the terminal still types its path, as before');
 });
 
 test('a member links a member to a Slack user on the People page, and the page lists the link', async (t) => {
@@ -2358,4 +2517,10 @@ test('a browser signed in to the console signs the desktop app in, through the c
   const sessions = await fetch(`${base}/api/sessions`, { headers: { cookie: app } });
   assert.equal(sessions.status, 200, 'the app is signed in');
   assert.equal((await claim({ code, verifier })).status, 401, 'a code works once');
+});
+
+test('the console\'s limit on one message is statusd\'s own, so nothing it accepts is refused for good later', async () => {
+  const { MAX_MESSAGE_CHARS } = await import('./server.mjs');
+  const statusdSource = await (await import('node:fs/promises')).readFile(new URL('../session/statusd.mjs', import.meta.url), 'utf8');
+  assert.match(statusdSource, new RegExp(`const MAX_SEND_CHARS = ${MAX_MESSAGE_CHARS};`));
 });

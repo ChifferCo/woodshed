@@ -61,8 +61,14 @@
 //   GET  /api/pulls?project=<name>   the project's open pull requests, for New session's Work on list
 //   GET  /api/sessions/<id>/applog  the end of the session's app logs: its start, the backend's and the frontend's
 //   GET  /api/sessions/<id>/diff    the Diff tab: the checkout against the default branch, uncommitted work included, as a plain diff
-//   GET  /api/sessions/<id>/transcript?limit=<n>  the conversation so far (what was asked, said and run), for a phone
-//                                   to scroll through by itself (session/sessionTranscript.mjs)
+//   POST /api/sessions/<id>/interrupt  Esc to the session's agent, the Chat tab's Stop: it ends the agent's turn
+//   GET  /api/sessions/<id>/prompt  what the agent's pane asks now (a question picker, an approval), for the Chat tab
+//   POST /api/sessions/<id>/answer  the Chat tab's answer to it, which the session types only once its pane shows that
+//        same prompt: {"kind": "question", "questions": [{question, options, pick}]} or {"kind": "approval",
+//        "decision": "approve"|"deny", "key": <GET /prompt's key, the hash of exactly what it asks>} (session/panePrompt.mjs)
+//   GET  /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>  the conversation so far (what was asked, said and
+//        run), for the Chat tab; `since` answers {unchanged: true} while the agent wrote nothing newer
+//        (session/sessionTranscript.mjs)
 //   GET  /review?session=claude-<id>, /reviews/claude-<id>/...   the Review tab: the shed's own review page and its calls,
 //                                carried to the session that answers them (reviewProxy.mjs)
 //   GET  /manifest.webmanifest, the icons   install as an app (the shed's pwa.mjs), before sign-in
@@ -135,7 +141,7 @@
 //   POST /api/webhook/rotate     {"confirm": "github-webhook-secret"}
 //   POST /api/webhook/apply      {"confirm": "webhook"}   the Lambda's URL and the stored secret, set on the App
 //   POST /api/webhook/url        {"url": "https://...", "confirm": "webhook"}
-//   *    /term/<id>/...          the session's ttyd on claude's tmux (the Agent tab), proxied with its credentials
+//   *    /term/<id>/...          the session's ttyd on claude's tmux (the TUI tab), proxied with its credentials
 //   *    /shell/<id>/...         its second ttyd, on a plain shell in the repo (the Terminal tab)
 //   *    /redis/<id>/...         the session's redis-commander, through its statusd
 //   *    /pg/<id>/..., /mongo/<id>/...   a session's pgweb and mongo-express, on the databases the console made for it
@@ -171,7 +177,7 @@
 // A session started from My Woodshed is private: every route that reaches it (its page's data, terminal,
 // Redis, app, review, Stop, the websockets) answers anyone but its owner as it would an id that does not exist.
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -214,8 +220,10 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'publ
 // /, /all and a session's page are one page, session.js last.
 // The settings pages are one page too: each address loads every settings page's script, and common.js shows the one the
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
+// The most one message to an agent may be: statusd's own limit (session/statusd.mjs, MAX_SEND_CHARS).
+export const MAX_MESSAGE_CHARS = 8000;
 const SETTINGS_SCRIPTS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
-const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
+const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
   'logins.cjs': 'text/javascript; charset=utf-8',
@@ -237,6 +245,8 @@ const STATIC_FILES = {
   'sharedHome.js': 'text/javascript; charset=utf-8',
   'dictation.js': 'text/javascript; charset=utf-8',
   'messageBox.js': 'text/javascript; charset=utf-8',
+  'chatThread.cjs': 'text/javascript; charset=utf-8',
+  'chat.js': 'text/javascript; charset=utf-8',
   'appShare.js': 'text/javascript; charset=utf-8',
   'session.js': 'text/javascript; charset=utf-8',
   'events.js': 'text/javascript; charset=utf-8',
@@ -295,7 +305,7 @@ const STOP_RE = /^\/api\/sessions\/([0-9a-f]{8})\/stop$/;
 const ASSIGN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/assign$/;
 const SHARED_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(resume|delete|remove)$/;
 const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename)$/;
-const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|applog|diff|transcript)$/;
+const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|interrupt|answer|prompt|applog|diff|transcript)$/;
 // The skills in the repo change with a merge; an hour is soon enough for a / list.
 const SKILLS_FRESH_MS = 60 * 60_000;
 // A project's open pull requests, for New session's Work on list: every launcher that opens asks.
@@ -1732,6 +1742,23 @@ export function createHandler({
     req.pipe(upstream);
   }
 
+  // The Chat tab's answer, with only the fields statusd reads: it checks them against the pane before typing.
+  function answerBody(body) {
+    const str = (v) => typeof v === 'string' && v.length <= 1000;
+    if (body?.kind === 'question' && Array.isArray(body.questions) && body.questions.length >= 1 && body.questions.length <= 4) {
+      const descriptionsOf = (q) => (Array.isArray(q.descriptions) && q.descriptions.length === q.options.length
+        && q.descriptions.every((d) => typeof d === 'string' && d.length <= 300) ? { descriptions: q.descriptions } : {});
+      const questions = body.questions.map((q) => (str(q?.question) && Array.isArray(q.options) && q.options.length <= 8 && q.options.every(str)
+        && Number.isInteger(q.pick) && q.pick >= 0 && q.pick < q.options.length ? { question: q.question, options: q.options, ...descriptionsOf(q), pick: q.pick } : null));
+      return questions.every(Boolean) ? { kind: 'question', questions } : null;
+    }
+    if (body?.kind === 'approval' && (body.decision === 'approve' || body.decision === 'deny')
+      && typeof body.key === 'string' && /^[0-9a-f]{64}$/.test(body.key)) {
+      return { kind: 'approval', decision: body.decision, key: body.key };
+    }
+    return null;
+  }
+
   function runningFor(id, login) {
     const session = findFor(id, login);
     return session?.status === 'running' && session.endpoint ? session : null;
@@ -1757,10 +1784,45 @@ export function createHandler({
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }
+    if (action === 'interrupt') {
+      console.log('console: agent interrupted from the page', { id: session.id });
+      return toStatusd(req, res, session, { method: 'POST', path: '/interrupt', body: {} });
+    }
+    if (action === 'answer') {
+      const sent = answerBody(body);
+      if (!sent) return reply(res, 400, { error: 'not an answer: a question\'s picks, or approve or deny' });
+      // Which picks, never their text: an answer can say anything.
+      console.log('console: answer typed in from the page', {
+        id: session.id, kind: sent.kind,
+        ...(sent.kind === 'question' ? { questions: sent.questions.length, picks: sent.questions.map((q) => q.pick + 1) } : { decision: sent.decision }),
+      });
+      return toStatusd(req, res, session, { method: 'POST', path: '/answer', body: sent });
+    }
     if (action === 'send') {
-      if (typeof body?.text !== 'string' || !body.text.trim()) return reply(res, 400, { error: 'nothing to send' });
+      if (typeof body?.text !== 'string' || !body.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f\s]/g, '')) return reply(res, 400, { error: 'nothing to send' });
+      // statusd takes no more (session/statusd.mjs, MAX_SEND_CHARS): said now, not queued to fail behind the others.
+      if (body.text.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in one message` });
+      // A statusd from before the guarded send types blind, Enter and all: a message from here could answer an approval
+      // that came up after the last status read. The person's own words never go that way; the TUI tab shows the screen.
+      if (session.safeSend !== true) {
+        // Not read since the console started (an upgrade, a restart): not known yet, which a status read says soon.
+        const unread = session.safeSend === undefined;
+        console.log('console: message from the page refused, the session cannot send safely', { id: session.id, unread });
+        return reply(res, 409, { error: unread
+          ? 'the console has not read this session since it started: try again in a few seconds'
+          : 'this session started before Chat could send safely: type it in the TUI tab' });
+      }
       console.log('console: message typed in from the page', { id: session.id, chars: body.text.length });
-      return toStatusd(req, res, session, { method: 'POST', path: '/send', body: { text: body.text } });
+      // Through the fleet, which holds it in the session's saved pendingMessages while the agent is busy (mid-turn, at a
+      // prompt) and sends it once it is back at its prompt: kept across a console restart and a stop mid-turn.
+      // The page's own id for it, which the console gives back when it sends a message it held (deliveredIds). One made
+      // here when the page sent none (the phone's message box): a held message with an id is a person's, which the fleet
+      // never types through a statusd that types blind.
+      const id = typeof body.id === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(body.id) ? body.id : randomUUID();
+      const outcome = await fleet.send(session, body.text, { id });
+      // Typed with no Enter: not sent, and not to send again, since it is in the agent's box.
+      if (outcome === 'in-box') return reply(res, 409, { typed: true, error: 'it went into the agent\'s box but was not sent: a prompt came up as it was typed. Answer it, then send or clear the box in the TUI tab' });
+      return reply(res, 200, { ok: true, held: outcome === 'queued', ...(outcome === 'unknown' && { unknown: true }) });
     }
     return toStatusd(req, res, session, { method: 'POST', path: '/scroll', body: { steps: body?.steps, pane: body?.pane } });
   }
@@ -2157,7 +2219,7 @@ export function createHandler({
     const repoRoute = repoSettingsApi && repoSettingsRoute(pathname);
     if (repoRoute) return repoSettingsApi(req, res, { route: repoRoute, login });
     const terminalWrite = TERMINAL_RE.exec(pathname);
-    if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
+    if (terminalWrite && ['upload', 'scroll', 'send', 'interrupt', 'answer'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings/webhooks') return webhookSwitchWrite(req, res, login);
     if (MCP_SERVERS_WRITES.has(pathname)) return mcpServersWrite(req, res, pathname, login);
@@ -2362,11 +2424,16 @@ export function createHandler({
     const shareRead = APP_SHARE_RE.exec(pathname);
     if (shareRead && !shareRead[2]) return appShareAction(req, res, shareRead, user.login);
     const imageMatch = TERMINAL_RE.exec(pathname);
-    if (imageMatch?.[2] === 'applog' || imageMatch?.[2] === 'diff' || imageMatch?.[2] === 'transcript') {
+    if (imageMatch?.[2] === 'applog' || imageMatch?.[2] === 'diff' || imageMatch?.[2] === 'transcript' || imageMatch?.[2] === 'prompt') {
       const session = runningFor(imageMatch[1], user.login);
       if (!session) return reply(res, findFor(imageMatch[1], user.login) ? 409 : 404, { error: 'the session is not running' });
       const limit = imageMatch[2] === 'transcript' ? url.searchParams.get('limit') : null;
-      const query = limit && /^\d{1,4}$/.test(limit) ? `?${new URLSearchParams({ limit })}` : '';
+      const since = imageMatch[2] === 'transcript' ? url.searchParams.get('since') : null;
+      const params = new URLSearchParams({
+        ...(limit && /^\d{1,4}$/.test(limit) && { limit }),
+        ...(since && /^\d{1,16}(\.\d{1,6})?$/.test(since) && { since }),
+      });
+      const query = params.size ? `?${params}` : '';
       return toStatusd(req, res, session, { method: 'GET', path: `/${imageMatch[2]}${query}` });
     }
     if (imageMatch?.[2] === 'image') {

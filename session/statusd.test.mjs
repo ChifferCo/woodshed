@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { AGENT_PANE_FORMAT, sendNotAfter, sendWithinMs, stillThePull, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
+import { AGENT_PANE_FORMAT, sendNotAfter, sendWithinMs, stillThePull, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps, typeableText } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -35,11 +35,15 @@ test('paneState reads a claude sitting at its prompt as done', () => {
   assert.equal(paneState(`output\n${RULE}\n❯ \n${RULE}\n  ? for shortcuts`), 'done');
 });
 
-test('paneState reads a finished turn with a suggested prompt as done, in whichever mode', () => {
+test('paneState reads a finished turn with a suggested prompt as done, in whichever mode', async () => {
   for (const mode of ['auto mode on', 'bypass permissions on', 'accept edits on']) {
     const pane = `output\n${RULE}\n❯ rerun it but wait for the page to load first\n${RULE}\n  ⏵⏵ ${mode} (shift+tab to cycle)`;
     assert.equal(paneState(pane), 'done', mode);
   }
+  // Captured live from claude 2.1.328 started with --permission-mode default: its footer says manual mode, and the
+  // greyed suggestion fills the composer. Read as not-running, the Chat tab said `Claude exited`.
+  const manual = await fs.readFile(new URL('../shared/__fixtures__/pane-done-manual-mode.txt', import.meta.url), 'utf8');
+  assert.equal(paneState(manual), 'done');
 });
 
 test('paneState still reads a working turn in auto mode as working', () => {
@@ -686,11 +690,16 @@ test('Sign in for Remote Control types /woodshed:remote-control into claude, or 
     await tmux('kill-server').catch(() => {});
     await fs.rm(dir, { recursive: true, force: true });
   });
-  for (const name of ['claude', 'shell']) {
-    await tmux('new-session', '-d', '-s', name, `bash --norc -c 'while IFS= read -r l; do echo "$l" >> ${dir}/${name}.typed; done'`);
-  }
+  // claude's pane: claude at its prompt (standInClaude); the shell's: each line it is sent, written down.
+  await fs.writeFile(path.join(dir, 'claude.cjs'), standInClaude(path.join(dir, 'claude.typed')));
+  await tmux('new-session', '-d', '-s', 'claude', `${process.execPath} ${path.join(dir, 'claude.cjs')}`);
+  await tmux('new-session', '-d', '-s', 'shell', `bash --norc -c 'while IFS= read -r l; do echo "$l" >> ${dir}/shell.typed; done'`);
+  for (let i = 0; i < 50 && !/auto mode on/.test((await tmux('capture-pane', '-p', '-t', 'claude')).stdout); i++) await new Promise((r) => setTimeout(r, 100));
   const flags = path.join(dir, 'flags');
-  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, WOODSHED_CLAUDE_FLAGS_FILE: flags } });
+  const stateFile = path.join(dir, 'state.json');
+  const setState = (state) => fs.writeFile(stateFile, JSON.stringify({ state, event: state === 'done' ? 'Stop' : 'PreToolUse', at: Date.now(), shells: 0 }));
+  await setState('done');
+  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, WOODSHED_CLAUDE_FLAGS_FILE: flags, WOODSHED_CLAUDE_STATE_FILE: stateFile } });
   const typed = (name) => fs.readFile(path.join(dir, `${name}.typed`), 'utf8').catch(() => '');
   const until = async (name, text) => {
     for (let i = 0; i < 50 && !(await typed(name)).includes(text); i++) await new Promise((resolve) => setTimeout(resolve, 100));
@@ -702,10 +711,381 @@ test('Sign in for Remote Control types /woodshed:remote-control into claude, or 
   assert.equal(await typed('shell'), 'woodshed-login\n');
 
   await fs.writeFile(flags, ' --settings /x/claudeHooks.json --plugin-dir /x/claudePlugin');
+  // Mid-turn, a prompt could open under the command's Enter: it waits for the turn's end, typing nothing.
+  await setState('working');
+  const busy = await call('POST', '/claude-login');
+  assert.equal(busy.status, 409);
+  assert.match(busy.body.error, /claude is working: sign in once its turn ends/);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(await typed('claude'), '', 'nothing typed mid-turn');
+  await setState('done');
   assert.deepEqual((await call('POST', '/claude-login')).body, { ok: true, where: 'agent' });
   await until('claude', '/woodshed:remote-control');
   assert.equal(await typed('claude'), '/woodshed:remote-control\n');
   assert.equal(await typed('shell'), 'woodshed-login\n', 'nothing more at the Terminal tab');
+});
+
+test('POST /interrupt sends Esc to the agent\'s pane, which ends its turn, with the token only', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-interrupt-'));
+  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
+  t.after(async () => {
+    await tmux('kill-server').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  // Each key the pane gets, one a line, as bash quotes it: Esc is $'\E'.
+  await tmux('new-session', '-d', '-s', 'claude', `bash --norc -c 'stty raw -echo; while IFS= read -r -n1 -d "" c; do printf "%q\\n" "$c" >> ${dir}/keys; done'`);
+  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir } });
+  const keys = () => fs.readFile(path.join(dir, 'keys'), 'utf8').catch(() => '');
+
+  assert.equal((await call('POST', '/interrupt', 'wrong')).status, 401);
+  assert.deepEqual((await call('POST', '/interrupt')).body, { ok: true });
+  for (let i = 0; i < 50 && !(await keys()); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(await keys(), "$'\\E'\n", 'Esc and nothing else');
+});
+
+test('parseAnswerBody takes a question\'s picks or an approval\'s decision, and nothing else', () => {
+  const q = { question: 'Which colour?', options: ['Red', 'Blue'], pick: 1 };
+  assert.deepEqual(parseAnswerBody(JSON.stringify({ kind: 'question', questions: [q], extra: 'x' })), { kind: 'question', questions: [q] });
+  assert.deepEqual(parseAnswerBody(JSON.stringify({ kind: 'approval', decision: 'deny', key: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', title: 'Do you want to proceed?' })),
+    { kind: 'approval', decision: 'deny', key: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' });
+  for (const bad of [
+    'nope', '{}', JSON.stringify({ kind: 'question', questions: [] }),
+    JSON.stringify({ kind: 'question', questions: [{ ...q, pick: 2 }] }),
+    JSON.stringify({ kind: 'question', questions: [{ ...q, pick: '1' }] }),
+    JSON.stringify({ kind: 'question', questions: Array(5).fill(q) }),
+    JSON.stringify({ kind: 'approval', decision: 'yes', key: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }),
+    JSON.stringify({ kind: 'approval', decision: 'approve', title: 't', detail: [] }),
+    JSON.stringify({ kind: 'approval', decision: 'approve', key: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }),
+    JSON.stringify({ kind: 'keys', keys: 'Enter' }),
+  ]) assert.throws(() => parseAnswerBody(bad), undefined, bad);
+});
+
+// The stand-in picker (shared/__fixtures__/claudePicker.mjs) in a tmux pane of the test's own, where statusd reads
+// and types as in a session: what it picked is written to a file once the picker closes.
+async function pickerPane(t, spec) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-answer-'));
+  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
+  t.after(async () => {
+    await tmux('kill-server').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  await fs.writeFile(path.join(dir, 'spec.json'), JSON.stringify(spec));
+  const picker = fileURLToPath(new URL('../shared/__fixtures__/claudePicker.mjs', import.meta.url));
+  await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '40', `${process.execPath} ${picker} ${dir}/spec.json ${dir}/answers.json`);
+  const shown = async () => (await tmux('capture-pane', '-p', '-t', 'claude')).stdout;
+  for (let i = 0; i < 50 && !/Esc to cancel/.test(await shown()); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  // claude's hooks say it asks, in a state file of the test's own: the default one is the machine's own claude's.
+  await fs.writeFile(path.join(dir, 'state.json'), JSON.stringify({ state: 'needs-you', event: 'PermissionRequest', at: Date.now(), shells: 0 }));
+  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, WOODSHED_CLAUDE_STATE_FILE: path.join(dir, 'state.json') } });
+  return {
+    call, tmux,
+    answers: async () => JSON.parse(await fs.readFile(path.join(dir, 'answers.json'), 'utf8').catch(() => 'null')),
+  };
+}
+
+test('GET /prompt says a pane it could not read is unread, not one that asks nothing', async (t) => {
+  const { call, tmux } = await pickerPane(t, { questions: [{ question: 'Which colour?', header: 'Colour', options: ['Red', 'Green'] }] });
+  assert.equal((await call('GET', '/prompt')).body.prompt?.kind, 'question');
+  await tmux('kill-server');
+  const unread = await call('GET', '/prompt');
+  assert.equal(unread.status, 503);
+  assert.equal(unread.body.why, 'pane-unread');
+  assert.equal(unread.body.prompt, undefined);
+});
+
+test('POST /answer picks each question\'s option and submits, in a real tmux pane, with the token only', async (t) => {
+  const spec = { questions: [
+    { question: 'Which colour do you prefer?', header: 'Colour', options: ['Red', 'Green', 'Blue'] },
+    { question: 'Which size do you want?', header: 'Size', options: ['Small', 'Medium', 'Large'] },
+  ] };
+  const { call, tmux, answers } = await pickerPane(t, spec);
+  const prompt = (await call('GET', '/prompt')).body.prompt;
+  assert.deepEqual(prompt, { kind: 'question', step: 'question', question: 'Which colour do you prefer?', multiSelect: false, options: ['Red', 'Green', 'Blue'], questions: 2 });
+  const body = (picks) => JSON.stringify({ kind: 'question', questions: spec.questions.map((q, i) => ({ question: q.question, options: q.options, descriptions: q.options.map((o) => `${o} is one of the options`), pick: picks[i] })) });
+
+  assert.equal((await call('POST', '/answer', 'wrong', body([1, 2]))).status, 401);
+  assert.equal((await call('GET', '/prompt', 'wrong')).status, 401);
+  // The person moved the highlight in the TUI tab first: the moves count from where it is.
+  await tmux('send-keys', '-t', 'claude', 'Down', 'Down');
+  const wrong = await call('POST', '/answer', 'sess', JSON.stringify({ kind: 'question', questions: [{ question: 'Which size do you want?', options: ['Small', 'Medium', 'Large'], pick: 0 }] }));
+  assert.equal(wrong.status, 409);
+  assert.equal(wrong.body.why, 'other-question');
+  assert.equal(await answers(), null, 'nothing picked');
+
+  assert.deepEqual((await call('POST', '/answer', 'sess', body([1, 2]))).body, { ok: true });
+  assert.deepEqual(await answers(), { answers: ['Green', 'Large'] });
+  assert.deepEqual((await call('GET', '/prompt')).body, { prompt: null });
+
+  const again = await call('POST', '/answer', 'sess', body([1, 2]));
+  assert.equal(again.status, 409, 'answered already: the pane has no question');
+  assert.equal(again.body.why, 'no-picker');
+});
+
+test('POST /answer approves or denies the approval on screen, and refuses one the page did not show', async (t) => {
+  const spec = { approval: { title: 'Do you want to proceed?', what: 'Write the date', command: 'date > now.txt' } };
+  const { call, answers } = await pickerPane(t, spec);
+  const prompt = (await call('GET', '/prompt')).body.prompt;
+  const { key, ...shown } = prompt;
+  assert.match(key, /^[0-9a-f]{64}$/);
+  assert.deepEqual(shown, { kind: 'approval', agent: 'claude', complete: true, what: 'Bash command', title: 'Do you want to proceed?', detail: ['Write the date', 'date > now.txt'], approve: 'Yes', deny: 'No' });
+  // Another approval's key: what the page showed when the pane asked something else.
+  const other = await call('POST', '/answer', 'sess', JSON.stringify({ kind: 'approval', decision: 'approve', key: 'b'.repeat(64) }));
+  assert.equal(other.status, 409);
+  assert.equal(other.body.why, 'other-approval');
+  assert.equal(await answers(), null);
+  assert.equal((await call('POST', '/answer', 'sess', '{"kind":"keys"}')).status, 400);
+  assert.deepEqual((await call('POST', '/answer', 'sess', JSON.stringify({ kind: 'approval', decision: 'deny', key }))).body, { ok: true });
+  assert.deepEqual(await answers(), { approval: 'No' });
+});
+
+test('POST /send types nothing while the pane shows an approval or a question: its Enter would answer it', async (t) => {
+  // Found with the real codex 0.167: a message sent while it showed its approval was swallowed, and its Enter approved
+  // the command, the highlighted Yes.
+  const { call, answers } = await pickerPane(t, { approval: { title: 'Do you want to proceed?', what: 'Write the date', command: 'date > now.txt' } });
+  const sent = await call('POST', '/send', 'sess', JSON.stringify({ text: 'run the tests next' }));
+  assert.equal(sent.status, 409);
+  assert.equal(sent.body.why, 'prompt-open');
+  assert.match(sent.body.error, /waiting for an approval/);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(await answers(), null, 'nothing approved');
+  assert.equal((await call('GET', '/prompt')).body.prompt?.kind, 'approval', 'still asking');
+});
+
+test('POST /send refuses while claude\'s question picker is open', async (t) => {
+  const { call, answers } = await pickerPane(t, { questions: [{ question: 'Which colour do you prefer?', header: 'Colour', options: ['Red', 'Green'] }] });
+  const sent = await call('POST', '/send', 'sess', JSON.stringify({ text: 'Red please' }));
+  assert.equal(sent.status, 409);
+  assert.match(sent.body.error, /asking a question/);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(await answers(), null, 'nothing picked');
+});
+
+test('POST /send types nothing when the pane cannot be read, which may be showing a prompt', async (t) => {
+  // No tmux server in this TMUX_TMPDIR: capture-pane fails, as it would for a moment while tmux is busy.
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-unread-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir } });
+  const sent = await call('POST', '/send', 'sess', JSON.stringify({ text: 'go on' }));
+  assert.equal(sent.status, 503);
+  assert.equal(sent.body.why, 'pane-unread');
+  assert.doesNotMatch(JSON.stringify(sent.body), /go on/, 'the reply carries no text of the message');
+});
+
+// A stand-in claude at its prompt: its mode footer, and each line it is sent written to a file.
+// A stand-in claude at its prompt, in raw mode as claude is: its box between rules, what is typed shown in it (its hint
+// dim when empty), each Enter writing the box's line to `file`. `screen` draws a fixed screen instead. `menuOnInput`
+// brings a menu up as soon as text goes in, before its Enter, as a prompt opening mid-typing would.
+function standInClaude(file, { screen = null, menuOnInput = false } = {}) {
+  return `const fs = require('fs');
+const custom = ${JSON.stringify(screen)};
+let line = '';
+let shown = false;
+const rule = '\\x1b[38;5;244m${'─'.repeat(40)}\\x1b[39m';
+const draw = () => process.stdout.write('\\x1b[2J\\x1b[H' + (custom ?? ('stand-in claude\\n' + rule + '\\n❯\\u00a0' + (line || '\\x1b[2mTry "fix lint"\\x1b[0m') + '\\n' + rule + '\\n  ⏵⏵ auto mode on (shift+tab to cycle)\\n' + (shown ? '\\n  Pick one\\n  ❯ 1. Yes\\n    2. No\\n  Enter to confirm · Esc to cancel\\n' : ''))));
+process.stdin.setRawMode(true);
+draw();
+process.stdin.on('data', (d) => {
+  for (const ch of d.toString()) {
+    if (ch === '\\r') { fs.appendFileSync(${JSON.stringify(file)}, line + '\\n'); line = ''; }
+    else if (ch === '\\x15') { line = ''; shown = false; }
+    else { line += ch; if (${menuOnInput}) shown = true; }
+  }
+  draw();
+});
+`;
+}
+
+// claude at its prompt: its box between two rules, the box's hint dim, and its mode footer.
+const CLAUDE_IDLE = `\n\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m\n❯\u00a0\x1b[2mTry "fix lint errors"\x1b[0m\n\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`;
+
+async function promptPane(t, state, { screen = CLAUDE_IDLE, menuOnInput = false, env = {}, asClaude = false, inShell = false } = {}) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-held-'));
+  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
+  t.after(async () => {
+    await tmux('kill-server').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const lines = path.join(dir, 'lines.txt');
+  const script = path.join(dir, 'claude.cjs');
+  await fs.writeFile(script, standInClaude(lines, { screen: screen === CLAUDE_IDLE ? null : screen, menuOnInput }));
+  // asClaude: run as a program named claude, as the real agent's pane shows it to tmux (pane_current_command).
+  const program = asClaude ? path.join(dir, 'claude') : process.execPath;
+  if (asClaude) await fs.symlink(process.execPath, program);
+  // inShell: claude as the child of the pane's shell, which stays when it stops, as in a session.
+  const command = inShell ? `bash --norc -c '${program} ${script}; exec bash --norc'` : `${program} ${script}`;
+  await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '20', command);
+  const stateFile = path.join(dir, 'state.json');
+  const setState = (s) => fs.writeFile(stateFile, JSON.stringify({ state: s, event: s === 'done' ? 'Stop' : 'PreToolUse', at: Date.now(), shells: 0 }));
+  await setState(state);
+  for (let i = 0; i < 50 && !/auto mode on|esc to interrupt/.test((await tmux('capture-pane', '-p', '-t', 'claude')).stdout); i++) await new Promise((r) => setTimeout(r, 100));
+  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, WOODSHED_CLAUDE_STATE_FILE: stateFile, ...env } });
+  return { call, setState, tmux, dir, program, script, stateFile, got: async () => (await fs.readFile(lines, 'utf8').catch(() => '')) };
+}
+
+
+test('a failed typing call is said again without the message it typed', async () => {
+  // As execFile rejects: its message quotes the whole command line, the private draft with it.
+  const failed = await promisify(execFile)('tmux', ['-S', '/nonexistent/socket', 'send-keys', '-t', 'claude', '-l', 'my secret draft']).catch((err) => err);
+  assert.match(failed.message, /my secret draft/, 'the raw error has it');
+  const said = typingError(failed);
+  assert.equal(said.typing, true);
+  assert.doesNotMatch(said.message, /secret|draft|send-keys/);
+  assert.match(said.message, /^tmux could not type the message \(exit \d+\)$/);
+  assert.doesNotMatch(JSON.stringify({ ...said, message: said.message }), /secret/);
+});
+
+
+
+
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(check, tries = 60) {
+  for (let i = 0; i < tries && !(await check()); i++) await pause(100);
+}
+
+test('POST /send types nothing while the agent works, and says busy for the console to send it later', async (t) => {
+  // A prompt opens only mid-turn, between any last look at the pane and an Enter: so mid-turn, no Enter at all. The
+  // console holds it in its saved pendingMessages (fleet.mjs), kept across a stop mid-turn.
+  const { call, setState, got } = await promptPane(t, 'working');
+  const sent = await call('POST', '/send', 'sess', JSON.stringify({ text: 'hello busy' }));
+  assert.equal(sent.status, 409);
+  assert.equal(sent.body.why, 'working');
+  assert.equal(sent.body.busy, true);
+  await pause(1000);
+  assert.equal(await got(), '', 'nothing typed while it works');
+  await setState('done');
+  assert.equal((await call('POST', '/send', 'sess', JSON.stringify({ text: 'hello again' }))).status, 200);
+  await until(async () => (await got()) === 'hello again\n');
+  assert.equal(await got(), 'hello again\n');
+});
+
+test('a second message before the agent took the first is busy, rather than landing in the turn the first began', async (t) => {
+  const { call, setState, got } = await promptPane(t, 'done');
+  const send = (text) => call('POST', '/send', 'sess', JSON.stringify({ text }));
+  assert.equal((await send('one')).status, 200);
+  const second = await send('two');
+  assert.equal(second.status, 409);
+  assert.equal(second.body.why, 'working');
+  await until(async () => (await got()) === 'one\n');
+  // The agent took it, a turn that ends: back at its prompt, the next goes in.
+  await setState('working');
+  await pause(300);
+  await setState('done');
+  assert.equal((await send('two')).status, 200);
+  await until(async () => (await got()) === 'one\ntwo\n');
+  assert.equal(await got(), 'one\ntwo\n');
+});
+
+test('a stale hook that says done is not enough when claude\'s screen shows its turn running: busy, nothing typed', async (t) => {
+  const rule = '─'.repeat(60);
+  const running = `\n${rule}\n❯ \n${rule}\n  ✻ Working… (12s · esc to interrupt)\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`;
+  const { call, got } = await promptPane(t, 'done', { screen: running });
+  const sent = await call('POST', '/send', 'sess', JSON.stringify({ text: 'not into this turn' }));
+  assert.equal(sent.status, 409);
+  assert.equal(sent.body.why, 'working');
+  await pause(1000);
+  assert.equal(await got(), '', 'no text, no Enter, while the screen shows the turn');
+});
+
+test('text left in the box with no Enter blocks the next message until the agent takes it, so two never join', async (t) => {
+  // A menu comes up as the text goes in: no Enter, the text sits in the box (typed), and the next send is busy.
+  const { call, setState, got } = await promptPane(t, 'done', { menuOnInput: true });
+  const first = await call('POST', '/send', 'sess', JSON.stringify({ text: 'first' }));
+  assert.equal(first.status, 409);
+  assert.equal(first.body.typed, true, 'it went in, with no Enter');
+  const second = await call('POST', '/send', 'sess', JSON.stringify({ text: 'second' }));
+  assert.equal(second.status, 409);
+  assert.equal(second.body.why, 'box-in-use', 'not typed onto the end of the first');
+  await pause(500);
+  assert.equal(await got(), '', 'no Enter for either');
+  // A hook firing does not empty the box: an edited or kept draft still blocks, until the box is empty.
+  await setState('working');
+  await pause(300);
+  await setState('done');
+  assert.equal((await call('POST', '/send', 'sess', JSON.stringify({ text: 'third' }))).body.why, 'box-in-use');
+});
+
+test('a draft emptied in the TUI tab no longer blocks the next message', async (t) => {
+  // No hook fires and no turn starts when someone clears the box: the box read empty from the screen is the sign.
+  const { call, tmux, got } = await promptPane(t, 'done', { menuOnInput: true });
+  assert.equal((await call('POST', '/send', 'sess', JSON.stringify({ text: 'first' }))).body.typed, true);
+  assert.equal((await call('POST', '/send', 'sess', JSON.stringify({ text: 'second' }))).body.why, 'box-in-use');
+  await tmux('send-keys', '-t', 'claude', 'C-u');
+  await pause(300);
+  const after = await call('POST', '/send', 'sess', JSON.stringify({ text: 'second' }));
+  assert.equal(after.status, 409, 'its menu came up again as this went in: no Enter');
+  assert.equal(after.body.typed, true, 'the box empty: typed this time');
+  assert.equal(await got(), '', 'and no Enter for any of them');
+});
+
+test('the status says when text waits in the agent\'s box at its prompt, for Chat to say so', async (t) => {
+  const idle = await promptPane(t, 'done');
+  assert.equal((await idle.call('GET', '/status')).body.boxText, false, 'only its dim hint: empty');
+  const rule = '─'.repeat(60);
+  const draft = await promptPane(t, 'done', { screen: `\n${rule}\n❯ half a note\n${rule}\n  ⏵⏵ auto mode on (shift+tab to cycle)\n` });
+  assert.equal((await draft.call('GET', '/status')).body.boxText, true);
+});
+
+test('a message is typed so no agent folds it into a paste: claude in short runs with Ctrl-J between lines, codex in short pastes', () => {
+  const long = 'abcdefghij'.repeat(120);
+  const claude = typingSteps(`${long}\nsecond line\n\nlast`, 'claude');
+  assert.ok(claude.every((s) => s.keys === undefined || [...s.keys].length <= 50), 'never more than 50 characters at once');
+  assert.equal(claude.filter((s) => s.key === 'C-j').length, 3, 'a newline for each line after the first, an empty one too');
+  assert.ok(!claude.some((s) => s.key === 'Enter'), 'no Enter while typing');
+  assert.equal(claude.filter((s) => s.keys).map((s) => s.keys).join(''), `${long}second linelast`);
+  assert.ok(claude.every((s) => s.pauseMs >= 20));
+  const codex = typingSteps(long, 'codex');
+  assert.deepEqual(codex.map((s) => [...s.paste].length), [400, 400, 400]);
+  assert.equal(codex.map((s) => s.paste).join(''), long);
+  // A character outside the basic plane is never split across two runs.
+  const emoji = '🙂'.repeat(60);
+  assert.equal(typingSteps(emoji, 'claude').map((s) => s.keys).join(''), emoji);
+});
+
+test('before typing, the box is read on the screen alone: an old frame in the scrollback is not the box', async (t) => {
+  // claude's inline mode leaves earlier frames above the screen. Here an empty box scrolled off the top, and the screen
+  // now shows no box (its footer, nothing to type into): no box, so nothing goes in.
+  const grey = (x) => `\x1b[38;5;244m${x}\x1b[39m`;
+  const old = `${grey('─'.repeat(40))}\n❯ \x1b[2mTry "x"\x1b[0m\n${grey('─'.repeat(40))}\n`;
+  const filler = Array.from({ length: 60 }, (_, i) => `● line ${i} of an answer`).join('\n');
+  const { call, got } = await promptPane(t, 'done', { screen: `${old}${filler}\n  ⏵⏵ auto mode on (shift+tab to cycle)\n` });
+  const sent = await call('POST', '/send', 'sess', JSON.stringify({ text: 'not into nothing' }));
+  assert.equal(sent.status, 409);
+  assert.equal(sent.body.why, 'box-in-use', 'no box on the screen: refused before any key');
+  assert.equal(await got(), '');
+});
+
+test('a typing call that fails after part of the text went in says so, for nothing to send all of it again', () => {
+  const failed = Object.assign(new Error('Command failed: tmux send-keys -l secret'), { code: 1 });
+  assert.equal(typingError(failed, true).partial, true);
+  assert.equal(typingError(failed).partial, false);
+  assert.doesNotMatch(typingError(failed, true).message, /secret/);
+});
+
+test('a message\'s control characters are not typed: an ESC would be the Escape key, a NUL cannot pass tmux', () => {
+  assert.equal(typeableText('line one\r\nline two\rthree'), 'line one\nline two\nthree');
+  assert.equal(typeableText('a\u0000b\u001b[2Jc\u007fd\te'), 'ab[2Jcd\te');
+  assert.equal(parseSendBody(JSON.stringify({ text: 'hi\u0000 there' })), 'hi there');
+  assert.throws(() => parseSendBody(JSON.stringify({ text: '\u0000\u001b' })), /non-empty/, 'nothing left to type: refused, and the fleet drops it');
+});
+
+test('parseAnswerBody keeps the options\' descriptions, which tell a wrapped label from its description', () => {
+  const q = { question: 'Which?', options: ['A long label', 'B'], descriptions: ['what A does', ''], pick: 0 };
+  assert.deepEqual(parseAnswerBody(JSON.stringify({ kind: 'question', questions: [q] })).questions[0].descriptions, ['what A does', '']);
+  const mismatched = { ...q, descriptions: ['only one'] };
+  assert.equal(parseAnswerBody(JSON.stringify({ kind: 'question', questions: [mismatched] })).questions[0].descriptions, undefined, 'not one each: left out');
+});
+
+test('the status says nothing of the box it cannot see: mid-turn, under a dialog, never taken as emptied', async (t) => {
+  const working = await promptPane(t, 'working');
+  const busy = (await working.call('GET', '/status')).body;
+  assert.equal(busy.boxText, null, 'mid-turn: not looked at');
+  assert.equal(busy.safeSend, true, 'it says it sends with the guards');
+  // A screen with a dialog and no box on it: nothing known of the box under it.
+  const dialog = await promptPane(t, 'done', { screen: '\n  Pick one\n  ❯ 1. Yes\n    2. No\n  Enter to confirm · Esc to cancel\n  ⏵⏵ auto mode on (shift+tab to cycle)\n' });
+  assert.equal((await dialog.call('GET', '/status')).body.boxText, null);
 });
 
 test('the pull request lookup is kept per branch, and a checkout during it leaves nothing kept', async () => {
@@ -809,54 +1189,79 @@ test('tmux\'s test of the pane, which types only into claude or codex, is true f
   for (const name of ['claude', 'codex']) assert.ok(AGENT_PANE_FORMAT.includes(`#{==:#{pane_current_command},${name}}`), name);
 });
 
-test('POST /send with agentOnly types into a running agent and never into a shell, with the token only', { skip: spawnSync('tmux', ['-V']).status !== 0 && 'no tmux here' }, async (t) => {
-  // A tmux server of the test's own, never the session's.
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-send-'));
-  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
-  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
-  t.after(async () => {
-    await tmux('kill-server').catch(() => {});
-    await fs.rm(dir, { recursive: true, force: true });
+test('a Chat message sent while the lockdown restarts claude is refused as busy, and goes in once, after claude is back', async (t) => {
+  const taintDir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-taint-'));
+  t.after(() => fs.rm(taintDir, { recursive: true, force: true }));
+  // What the reopen types in place of session/bin/claude: the stand-in again, and its hooks as claude's fire on the
+  // lockdown's message: working a moment after it opens, then done.
+  const launcher = path.join(taintDir, 'claude-launch');
+  const flags = path.join(taintDir, 'flags');
+  const { call, tmux, got, program, script, stateFile, setState } = await promptPane(t, 'done', {
+    asClaude: true, inShell: true, env: { WOODSHED_TAINT_DIR: taintDir, WOODSHED_CLAUDE_BIN: launcher, WOODSHED_CLAUDE_FLAGS_FILE: flags },
   });
-  // Each pane writes down what it reads. tmux names a pane's command after its program: bash for the shell, and
-  // claude for a copy of bash named claude, as the real agent's pane shows.
-  const reader = (name) => `--norc -c 'while IFS= read -r l; do echo "$l" >> ${dir}/${name}.typed; done'`;
-  const agent = path.join(dir, 'claude');
-  await fs.copyFile('/bin/bash', agent);
-  await fs.chmod(agent, 0o755);
-  const pane = async (program, name) => {
-    await tmux('kill-session', '-t', 'claude').catch(() => {});
-    await tmux('new-session', '-d', '-s', 'claude', `${program} ${reader(name)}`);
-    for (let i = 0; i < 50; i++) {
-      if ((await tmux('display', '-p', '-t', 'claude', '#{pane_current_command}')).stdout.trim() === path.basename(program)) return;
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-  };
-  const typed = (name) => fs.readFile(path.join(dir, `${name}.typed`), 'utf8').catch(() => '');
+  const hook = (state) => `${process.execPath} -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({ state: process.argv[2], event: "x", at: Date.now(), shells: 0 }))' ${stateFile} ${state}`;
+  await fs.writeFile(launcher, `#!/bin/sh\n( sleep 1.5; ${hook('working')}; sleep 1.5; ${hook('done')} ) &\nexec ${program} ${script}\n`, { mode: 0o755 });
+  const send = () => call('POST', '/send', 'sess', JSON.stringify({ text: 'during the restart' }));
+  const paneCommand = async () => (await tmux('display', '-p', '-t', 'claude', '#{pane_current_command}')).stdout.trim();
+  await setState('done');
+
+  assert.deepEqual((await call('POST', '/taint', 'sess', '{}')).body, { tainted: true, egress: false });
+  // The old claude is stopped: the pane is its shell, and the reopen holds the pane from before that.
+  for (let i = 0; i < 100 && (await paneCommand()) === 'claude'; i++) await new Promise((r) => setTimeout(r, 50));
+  const during = await send();
+  assert.deepEqual([during.status, during.body.why, during.body.busy], [409, 'typing', true], 'busy: the console holds it');
+  assert.doesNotMatch((await tmux('capture-pane', '-p', '-t', 'claude')).stdout, /during the restart/, 'nothing typed into the shell');
+
+  // The console tries again after each status read: busy until the new claude has taken the lockdown's message and
+  // finished its turn, then typed in, once.
+  let answer = during;
+  const tries = [];
+  for (let i = 0; i < 60 && answer.status !== 200; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    answer = await send();
+    tries.push(answer.body.why ?? answer.status);
+  }
+  assert.equal(answer.status, 200, `typed in at last (tries: ${tries.join(', ')})`);
+  assert.equal(await paneCommand(), 'claude', 'into the new claude');
+  for (let i = 0; i < 50 && !(await got()).includes('during the restart'); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.equal((await got()).match(/during the restart/g)?.length, 1, 'once');
+  assert.match(await fs.readFile(path.join(taintDir, 'tainted'), 'utf8'), /"at"/, 'the taint\'s files in the test\'s folder');
+});
+
+test('POST /send with agentOnly types into a running agent and never into a shell, with the token only', { skip: spawnSync('tmux', ['-V']).status !== 0 && 'no tmux here' }, async (t) => {
   // A stand-in gh answering `gh pr view` with the pull request in the file it names, for the check just before typing.
-  const bin = path.join(dir, 'bin');
+  const ghDir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-gh-'));
+  t.after(() => fs.rm(ghDir, { recursive: true, force: true }));
+  const bin = path.join(ghDir, 'bin');
   await fs.mkdir(bin);
-  const current = path.join(dir, 'current-pr');
+  const current = path.join(ghDir, 'current-pr');
   const onPull = (url, { state = 'OPEN', head = 'abc1234def' } = {}) => fs.writeFile(current, JSON.stringify({ url, state, headRefOid: head }));
   await onPull('https://github.com/o/r/pull/9');
   await fs.writeFile(path.join(bin, 'gh'), `#!/bin/sh\ncat ${current}\n`, { mode: 0o755 });
-  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, PATH: `${bin}:${process.env.PATH}` } });
+  // The stand-in claude at its prompt, named claude as the real one's pane shows it; its hooks say it is done.
+  const { call, tmux, setState, got, program, script } = await promptPane(t, 'done', { asClaude: true, env: { PATH: `${bin}:${process.env.PATH}` } });
   const send = (body, token) => call('POST', '/send', token, JSON.stringify(body));
+  // Taken: a hook since its Enter, as claude's own would fire, so the next one may go in.
+  const taken = async () => { await new Promise((r) => setTimeout(r, 20)); await setState('done'); };
 
-  await pane('bash', 'shell');
+  // The agent exited: its pane is a shell, which would run the text.
+  await tmux('respawn-pane', '-k', '-t', 'claude', 'bash --norc');
+  for (let i = 0; i < 50 && (await tmux('display', '-p', '-t', 'claude', '#{pane_current_command}')).stdout.trim() !== 'bash'; i++) await new Promise((r) => setTimeout(r, 50));
   assert.equal((await send({ text: 'git push', agentOnly: true }, 'wrong')).status, 401);
   const refused = await send({ text: 'git push', agentOnly: true });
   assert.deepEqual([refused.status, refused.body.error], [409, 'the agent is not running in its pane']);
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.equal(await typed('shell'), '', 'the shell got nothing');
-  assert.equal((await tmux('list-buffers')).stdout.trim(), '', 'no buffer left behind');
+  assert.doesNotMatch((await tmux('capture-pane', '-p', '-t', 'claude')).stdout, /git push/, 'the shell got nothing');
 
-  await pane(agent, 'agent');
+  // claude again, at its prompt: typed in, as any message, between turns.
+  await tmux('respawn-pane', '-k', '-t', 'claude', `${program} ${script}`);
+  for (let i = 0; i < 50 && !/auto mode on/.test((await tmux('capture-pane', '-p', '-t', 'claude')).stdout); i++) await new Promise((r) => setTimeout(r, 100));
+  await setState('done');
   const sent = await send({ text: 'The review asks for changes', agentOnly: true });
   assert.deepEqual([sent.status, sent.body], [200, { ok: true }]);
-  for (let i = 0; i < 50 && !(await typed('agent')); i++) await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.equal(await typed('agent'), 'The review asks for changes\n');
+  for (let i = 0; i < 50 && !(await got()).includes('The review asks'); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(await got(), 'The review asks for changes\n');
   assert.equal((await call('GET', '/status')).body.agentOnlySend, true);
+  await taken();
 
   // About a pull request: typed only while the branch checked out is on it, open and on the same commit, read afresh.
   const forNine = { text: 'Fix PR 9', agentOnly: true, prUrl: 'https://github.com/o/r/pull/9', headSha: 'abc1234def' };
@@ -866,8 +1271,8 @@ test('POST /send with agentOnly types into a running agent and never into a shel
     ['closed', 'https://github.com/o/r/pull/9', { state: 'CLOSED' }],
   ]) {
     await onPull(url, opts);
-    const refused = await send(forNine);
-    assert.deepEqual([refused.status, refused.body.error], [409, 'the branch checked out is not on that pull request now'], why);
+    const refusedPr = await send(forNine);
+    assert.deepEqual([refusedPr.status, refusedPr.body.error], [409, 'the branch checked out is not on that pull request now'], why);
   }
   // GitHub slower than the caller waits: nothing typed, so its try again cannot type it twice.
   await fs.writeFile(path.join(bin, 'gh'), `#!/bin/sh\nsleep 1\ncat ${current}\n`, { mode: 0o755 });
@@ -883,18 +1288,23 @@ test('POST /send with agentOnly types into a running agent and never into a shel
   assert.deepEqual([raced.status, raced.body.error], [409, 'the branch checked out is not on that pull request now']);
   await fs.writeFile(path.join(bin, 'gh'), `#!/bin/sh\ncat ${current}\n`, { mode: 0o755 });
   await onPull('https://github.com/O/R/pull/9');
+  // Mid-turn it waits, as any message: busy, for the console to try again at its next check.
+  await setState('working');
+  const busy = await send(forNine);
+  assert.deepEqual([busy.status, busy.body.why], [409, 'working']);
+  await setState('done');
   assert.equal((await send(forNine)).status, 200);
-  for (let i = 0; i < 50 && !(await typed('agent')).includes('Fix PR 9'); i++) await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.equal(await typed('agent'), 'The review asks for changes\nFix PR 9\n', 'only the one on its pull request');
+  for (let i = 0; i < 50 && !(await got()).includes('Fix PR 9'); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(await got(), 'The review asks for changes\nFix PR 9\n', 'only the one on its pull request, once');
+  await taken();
 
   // Once the stop's checkpoint has started, nothing guarded is typed.
   await call('POST', '/checkpoint');
   const stopping = await send(forNine);
   assert.deepEqual([stopping.status, stopping.body.error], [409, 'the session is stopping']);
   await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.equal(await typed('agent'), 'The review asks for changes\nFix PR 9\n');
+  assert.equal(await got(), 'The review asks for changes\nFix PR 9\n');
 });
-
 test('a branch pointed at another pull request\'s ref, which @{u} cannot name, is another lookup key', async (t) => {
   // A real repository, configured as gh pr checkout leaves a pull request's branch.
   const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-prkey-'));

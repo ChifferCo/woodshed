@@ -1,0 +1,30 @@
+ ▐▛███▛█   Claude Code v2.1.328
+▝▜██████▀  Opus 5.5 · Claude API
+ ▝▝   ▝▝   /tmp/fx/repo
+
+
+❯ Use the AskUserQuestion tool once, with two questions: first "Which colour do you prefer?" (header Colour) with
+  options Red, Green, Blue; second "Which size do you want?" (header Size) with options Small, Medium, Large. Then tell
+  me what I picked.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Colour  ☒ Size  ✔ Submit  →
+
+Review your answers
+
+ ● Which colour do you prefer?
+   → Green
+ ● Which size do you want?
+   → Large
+
+❯ 1. Submit answers
+  2. Cancel
+
+
+
+
+
+
+
+
+

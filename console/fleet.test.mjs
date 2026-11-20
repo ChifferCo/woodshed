@@ -90,10 +90,9 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     calls.statusd.push({ id: session.id, method, path, body: opts?.body });
     if (path === '/status') {
       if (!statuses[session.id]) throw new Error('connection refused');
-      // Today's statusd types only into a running agent when asked; a test of an older image says false.
-      const status = statuses[session.id];
-      const today = (value) => ({ agentOnlySend: true, ...value });
-      return typeof status.then === 'function' ? status.then(today) : today(status);
+      // Today's statusd: the guarded send, and typing only into a running agent when asked. A test of an older one
+      // says safeSend or agentOnlySend false. A test may hold the answer back (a promise): it is awaited first.
+      return Promise.resolve(statuses[session.id]).then((status) => ({ safeSend: true, agentOnlySend: true, ...status }));
     }
     return { ok: true, committed: false, head: 'abc' };
   }
@@ -117,7 +116,19 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
       isMember: (login) => (memberList ?? writers).some((e) => e.toLowerCase() === String(login).toLowerCase()),
     },
     statusd: (session, method, path, opts) => {
-      if (path === '/send' && fail.send) return Promise.reject(new Error('statusd /send timed out'));
+      if (path === '/send' && fail.send) return Promise.reject(Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } }));
+      if (path === '/send' && fail.sendTyped) return Promise.reject(Object.assign(new Error('statusd /send answered 409'), { status: 409, body: { why: 'prompt-open', typed: true } }));
+      // A test's own answer for one send: an error to refuse it with, or a promise to wait on before it goes.
+      if (path === '/send' && fail.sendFor) {
+        fail.lastSendOpts = opts;
+        const answer = fail.sendFor(opts?.body?.text);
+        if (answer instanceof Error) return Promise.reject(answer);
+        if (answer) return answer.then(() => statusd(session, method, path, opts));
+      }
+      if (path === '/send' && fail.sendBusy) {
+        calls.statusd.push({ path, body: opts?.body, refused: 'busy' });
+        return Promise.reject(Object.assign(new Error('statusd /send answered 409'), { status: 409, body: { why: 'working', busy: true } }));
+      }
       return statusd(session, method, path, opts);
     },
   });
@@ -658,6 +669,47 @@ test('a session this console is still launching is not looked for: its own start
   finish();
   await starting;
   assert.equal(session.ref, `c-${session.id}`);
+});
+
+test('a send whose connection drops after it reached statusd is unknown and never sent again; one never connected is held', async () => {
+  const { fleet, calls, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  const sends = () => calls.statusd.filter((c) => c.path === '/send').length;
+  fail.sendFor = () => Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
+  assert.equal(await fleet.send(session, 'reset', { id: 'page-id-0010' }), 'unknown');
+  assert.deepEqual(session.pendingMessages, [], 'not held to type again');
+  fail.sendFor = () => new SyntaxError('Unexpected end of JSON input');
+  assert.equal(await fleet.send(session, 'cut off'), 'unknown', 'a reply cut off after statusd took it');
+  fail.sendFor = () => Object.assign(new Error('statusd /send answered 409'), { status: 409, body: null });
+  assert.equal(await fleet.send(session, 'cut 409'), 'unknown', 'a refusal whose body was lost may have said typed');
+  fail.sendFor = () => Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+  assert.equal(await fleet.send(session, 'refused'), 'queued', 'never reached statusd: held to try again');
+  fail.sendFor = null;
+  const before = sends();
+  await fleet.tick();
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send').slice(before).map((c) => c.body.text), ['refused']);
+});
+
+test('a Chat message held across a resume onto a statusd that types blind is dropped and the page told; the console\'s own goes', async () => {
+  const { fleet, calls, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendBusy = true;
+  assert.equal(await fleet.send(session, 'from chat', { id: 'page-id-0011' }), 'queued');
+  assert.equal(await fleet.send(session, 'review feedback'), 'queued');
+  fail.sendBusy = false;
+  const typed = () => calls.statusd.filter((c) => c.path === '/send' && !c.refused);
+  assert.deepEqual(typed(), []);
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc', safeSend: false };
+  await fleet.tick();
+  assert.deepEqual(typed().map((c) => c.body.text), ['review feedback']);
+  assert.deepEqual(session.pendingMessages, []);
+  assert.deepEqual(session.refusedIds, ['page-id-0011']);
 });
 
 test('a message whose send fails is held, not lost, and goes out on a later tick', async () => {
@@ -3315,6 +3367,220 @@ test('QA of another console\'s session pull request is neither labelled nor run 
   const t = qaSetup({ gates: AUTO_GATES, ownApp: () => APP });
   t.github.pull = async () => ({ ...QA_PULL, user: { login: 'acme-woodshed[bot]' }, head: { ...QA_PULL.head, ref: 'woodshed/ada-0b34fee6' }, labels: [] });
   assert.deepEqual(await t.fleet.qaAutoLabel({ number: 7 }), { unrecorded: true });
+});
+
+test('a message statusd typed before a prompt came up is not typed again: it is in the agent\'s box', async () => {
+  const { fleet, calls, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendTyped = true;
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'comment', text: 'option 2', commentId: 79 });
+  assert.equal(session.pendingMessages.length, 0, 'not held for a second try');
+  fail.sendTyped = false;
+  await fleet.tick();
+  assert.equal(calls.statusd.filter((c) => c.path === '/send').length, 0, 'never typed again');
+});
+
+test('a message statusd says busy for is kept in the session\'s saved pendingMessages, and goes in order once it can', async () => {
+  // Mid-turn statusd types nothing (a prompt could open under the Enter): the console keeps it, saved, so a stop
+  // mid-turn does not lose it, and a later message waits behind it.
+  const { fleet, calls, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendBusy = true;
+  assert.equal(await fleet.send(session, 'first'), 'queued');
+  assert.deepEqual(session.pendingMessages, ['first']);
+  assert.equal(await fleet.send(session, 'second'), 'queued', 'behind the one waiting, not tried before it');
+  assert.deepEqual(session.pendingMessages, ['first', 'second']);
+  await fleet.tick();
+  assert.deepEqual(session.pendingMessages, ['first', 'second'], 'still busy: kept');
+  fail.sendBusy = false;
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && !c.refused).map((c) => c.body.text), ['first', 'second']);
+  assert.deepEqual(session.pendingMessages, []);
+});
+
+test('a message held while another goes in stays, and one the session refuses for good does not hold the rest', async () => {
+  const { fleet, calls, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendBusy = true;
+  await fleet.send(session, 'too long', { id: 'page-id-0400' });
+  await fleet.send(session, 'first');
+  fail.sendBusy = false;
+  // statusd refuses the first for good (over its length), and takes 'first' slowly: 'late' comes in meanwhile.
+  let release;
+  fail.sendFor = (text) => {
+    if (text === 'too long') return Object.assign(new Error('statusd /send answered 400'), { status: 400, body: { error: 'text must be at most 8000 characters' } });
+    if (text === 'first') return new Promise((resolve) => { release = resolve; });
+    return null;
+  };
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  const ticking = fleet.tick();
+  for (let i = 0; i < 50 && !release; i++) await new Promise((r) => setImmediate(r));
+  assert.ok(release, 'first is on its way');
+  assert.deepEqual(session.pendingMessages, ['first'], 'the one the session refuses for good is dropped, not held for ever');
+  assert.deepEqual(session.refusedIds, ['page-id-0400'], 'and the page told, by its id');
+  assert.equal(await fleet.send(session, 'late'), 'queued', 'behind the one going in');
+  release();
+  await ticking;
+  assert.ok(session.pendingMessages.includes('late') || calls.statusd.some((c) => c.path === '/send' && c.body?.text === 'late' && !c.refused),
+    'late is kept, or sent after first: never erased by first\'s acknowledgement');
+  assert.ok(!session.pendingMessages.includes('first'));
+});
+
+test('a send that outlives its deadline may have gone in: it is not held, and never typed a second time', async () => {
+  const { sendTimeoutMs } = await import('./fleet.mjs');
+  const { fleet, calls, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  // 150 short lines, as the review measured: statusd types them a run at a time, longer than the old 5 s.
+  const many = Array.from({ length: 150 }, (_, i) => `l${i}`).join('\n');
+  assert.ok(sendTimeoutMs(many) > 5000 + 150 * 40, 'the deadline covers typing it');
+  const timedOut = () => Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+  const asked = [];
+  fail.sendFor = (text) => { asked.push(text); return timedOut(); };
+  assert.equal(await fleet.send(session, many), 'unknown', 'it may have gone in: not held to send again, and not said to be sent');
+  assert.equal(fail.lastSendOpts.timeoutMs, sendTimeoutMs(many), 'the deadline sized to the message, not the 5 s default');
+  assert.deepEqual(session.pendingMessages, []);
+  // A held one whose send times out is let go too, not typed again on the next status read.
+  fail.sendBusy = true;
+  fail.sendFor = null;
+  await fleet.send(session, 'held then timed out');
+  fail.sendBusy = false;
+  fail.sendFor = (text) => { asked.push(text); return timedOut(); };
+  await fleet.tick();
+  assert.deepEqual(session.pendingMessages, []);
+  fail.sendFor = null;
+  await fleet.tick();
+  assert.deepEqual(asked, [many, 'held then timed out'], 'each tried once');
+  void calls;
+  // A connection refused never reached statusd: held, to try again.
+  fail.sendFor = () => Object.assign(new Error('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+  assert.equal(await fleet.send(session, 'refused'), 'queued');
+  assert.deepEqual(session.pendingMessages, ['refused']);
+});
+
+test('a queued message left in the agent\'s box is noted for the page, by length, until the box is empty again', async () => {
+  const { fleet, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendTyped = true;
+  assert.equal(await fleet.send(session, 'a held message', { id: 'page-id-0001' }), 'in-box');
+  assert.equal(session.leftInBox.id, 'page-id-0001', 'the page\'s own id for it');
+  assert.equal(JSON.stringify(session.leftInBox).includes('held message'), false, 'never its text');
+  fail.sendTyped = false;
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc', boxText: true };
+  await fleet.tick();
+  assert.ok(session.leftInBox, 'still in the box');
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc', boxText: false };
+  await fleet.tick();
+  assert.equal(session.leftInBox, null, 'sent or cleared in the TUI tab');
+});
+
+test('a message is held as statusd can type it: no control characters to block the queue, an empty one dropped', async () => {
+  const { fleet, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendBusy = true;
+  assert.equal(await fleet.send(session, 'fix it\u0000 now\r\nplease'), 'queued');
+  assert.deepEqual(session.pendingMessages, ['fix it now\nplease']);
+  assert.equal(await fleet.send(session, '\u0000\u001b'), 'sent', 'nothing to type: not held to block the rest');
+  assert.deepEqual(session.pendingMessages, ['fix it now\nplease']);
+});
+
+test('a held message the console sends is named by the page\'s id, so its bubble turns sent on that alone', async () => {
+  const { fleet, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendBusy = true;
+  assert.equal(await fleet.send(session, 'go on', { id: 'page-id-0002' }), 'queued');
+  assert.deepEqual(session.pendingMessages, [{ id: 'page-id-0002', text: 'go on' }]);
+  assert.equal(await fleet.send(session, 'from a comment'), 'queued', 'one with no id, as a comment\'s');
+  fail.sendBusy = false;
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  assert.deepEqual(session.pendingMessages, []);
+  assert.deepEqual(session.deliveredIds, ['page-id-0002']);
+});
+
+test('a held message whose send gets no answer in time is named for the page by its id, and never sent again', async () => {
+  const { fleet, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendBusy = true;
+  await fleet.send(session, 'go on', { id: 'page-id-0003' });
+  fail.sendBusy = false;
+  const tried = [];
+  fail.sendFor = (text) => { tried.push(text); return Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }); };
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  assert.deepEqual(session.pendingMessages, [], 'out of the queue');
+  assert.deepEqual(session.unknownIds, ['page-id-0003'], 'the page is told, by its id');
+  assert.equal(session.deliveredIds, undefined, 'not said to be sent');
+  fail.sendFor = null;
+  await fleet.tick();
+  assert.deepEqual(tried, ['go on'], 'tried once');
+});
+
+test('through a statusd from before the guarded send, a message goes in only while the agent is plainly idle', async () => {
+  // A session started before the upgrade: its statusd types blind, Enter and all, so a prompt on screen would take it.
+  const { fleet, calls, statuses } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'needs-you', branch: session.branch, head: 'abc', safeSend: false };
+  await fleet.tick();
+  assert.equal(await fleet.send(session, 'approve it please'), 'queued', 'held, not typed into the approval');
+  assert.equal(calls.statusd.filter((c) => c.path === '/send').length, 0);
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc', safeSend: false };
+  await fleet.tick();
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send').map((c) => c.body.text), ['approve it please'], 'sent once it is idle');
+});
+
+test('through a statusd from before the guarded send, nothing is typed on an old idle read, and a queue goes one a read', async () => {
+  // Its idle state is only as fresh as the last read: an approval may be up by now, and the first message sets it working.
+  const { fleet, calls, statuses } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc', safeSend: false };
+  await fleet.tick();
+  const sends = () => calls.statusd.filter((c) => c.path === '/send').map((c) => c.body.text);
+  assert.equal(await fleet.send(session, 'one'), 'queued', 'held for the next read, not typed on the last one');
+  assert.equal(await fleet.send(session, 'two'), 'queued');
+  assert.deepEqual(sends(), []);
+  await fleet.tick();
+  assert.deepEqual(sends(), ['one'], 'one message for one read');
+  await fleet.tick();
+  assert.deepEqual(sends(), ['one', 'two']);
+  assert.deepEqual(session.pendingMessages, []);
+});
+
+test('a direct send with no answer in time is said to be unknown, not sent, and not held', async () => {
+  const { fleet, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendFor = () => Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+  assert.equal(await fleet.send(session, 'go on', { id: 'page-id-0004' }), 'unknown');
+  assert.deepEqual(session.pendingMessages, []);
 });
 
 test('a My Woodshed session that cannot be typed into is told at a later check, with nothing held for a Resume', async () => {
