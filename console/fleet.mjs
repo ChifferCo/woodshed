@@ -1636,11 +1636,25 @@ export function createFleet({
   }
 
   /**
+   * Whose call when a session pauses and stops: a private session's owner (nobody else can open it), and a shared
+   * session's assignee alone, since it is their work the change holds open or cuts short. An unassigned one is taken
+   * first.
+   */
+  function refuseUnlessLimitsAreTheirs(session, by) {
+    if (session.owner) return;
+    if (sameLogin(session.assignee, by)) return;
+    throw Object.assign(shown(session.assignee
+      ? `only ${session.assignee}, who has this session, can change when it pauses or stops`
+      : 'nobody has this session: take it to change when it pauses or stops'), { forbidden: true });
+  }
+
+  /**
    * Extend: the session's pause or stop, whichever comes first, an hour later than it would be, in its last 15 minutes.
    */
   function extend(session, by) {
     if (session.status !== 'running') throw shown('only a running session can be extended');
     if (isAsk(session)) throw shown('a question from Slack cannot be extended');
+    refuseUnlessLimitsAreTheirs(session, by);
     const end = pauseAt(session, limitsOf(session));
     if (!end) throw shown('this session has no pause to put off yet');
     // Only in the last 15 minutes, as the page offers it: an Extend is a person there to say so, not a way round the
@@ -1658,6 +1672,7 @@ export function createFleet({
    */
   function setLimits(session, values, by) {
     if (isAsk(session)) throw shown('a question from Slack runs on the console\'s limits for questions');
+    refuseUnlessLimitsAreTheirs(session, by);
     const limits = checkLimits(values);
     update(session, { limits: Object.keys(limits).length ? limits : null });
     console.log('fleet: session limits changed', { id: session.id, by, ...limits });

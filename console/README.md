@@ -2270,11 +2270,12 @@ card's:
 | Slack, Questions' Limits | Stop a question's session when idle for | 1 to 120 minutes | 5 |
 | Slack, Questions' Limits | Stop a question's session after | 0.5 to 8 hours | 2 |
 
-The two Sessions limits can be changed for one session alone, on its ⋯ menu's **Pause and stop…**, by anyone who
-can open it (`POST /api/sessions/<id>/limits`, in the same ranges; an empty field goes back to its owner's from My
+The two Sessions limits can be changed for one session alone, on its ⋯ menu's **Pause and stop…**, by whoever has it:
+a shared session's assignee (an unassigned one is taken first) or a private session's owner. Anyone else is refused
+with 403 (`POST /api/sessions/<id>/limits`, in the same ranges; an empty field goes back to its owner's from My
 settings, then the console's). In a session's last 15 minutes before it pauses or stops by itself, its rail card and
-pane bar offer **Extend**, which puts that an hour later each press (`POST /api/sessions/<id>/extend`); a resume
-forgets it. The console logs `fleet: session extended` with `why` (`idle` or `lifetime`) and `until`, and `fleet:
+pane bar offer **Extend** to that same person, which puts that an hour later each press (`POST
+/api/sessions/<id>/extend`); a resume forgets it. The console logs `fleet: session extended` with `why` (`idle` or `lifetime`) and `until`, and `fleet:
 session limits changed` with who changed them. A question from Slack has neither.
 
 The Slack card's Limits are shown once Slack is set up (above, "Setting it up: the Slack card"); each Limits saves its

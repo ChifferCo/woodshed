@@ -483,6 +483,9 @@ test('Extend puts an idle pause off by an hour, and a session\'s own limits repl
   await fleet.tick();
   const pause = Date.parse(fleet.pauseOf(first).at);
   advance(2 * HOUR - 20 * 60_000);
+  assert.throws(() => fleet.extend(first, 'joel'), (err) => err.forbidden && /nobody has this session: take it/.test(err.message), 'an unassigned one is taken first');
+  first.assignee = 'joel';
+  second.assignee = 'Joel';
   assert.throws(() => fleet.extend(first, 'joel'), /last 15 min before it pauses/, 'not before its last 15 minutes');
   advance(10 * 60_000);
   fleet.extend(first, 'joel');
@@ -491,6 +494,9 @@ test('Extend puts an idle pause off by an hour, and a session\'s own limits repl
   advance(60 * 60_000);
   fleet.extend(first, 'joel');
   assert.equal(Date.parse(fleet.pauseOf(first).at), pause + 2 * HOUR, 'in its last 15 minutes again, another hour');
+  for (const call of [() => fleet.extend(first, 'mia'), () => fleet.setLimits(second, { idleHours: 6 }, 'mia')]) {
+    assert.throws(call, (err) => err.forbidden && /only joel, who has this session/i.test(err.message), 'someone else on a shared session');
+  }
   fleet.setLimits(second, { idleHours: 6, lifetimeHours: null }, 'joel');
   assert.deepEqual(second.limits, { idleHours: 6 });
   assert.throws(() => fleet.setLimits(second, { idleHours: 30 }, 'joel'), /0.25 to 24/);

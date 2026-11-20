@@ -134,9 +134,12 @@ const sessions = [
   // Running, for the top bar's buttons. With no container behind it the app's links and the terminal go nowhere.
   session('dddd4444', 26328, 'Keep background shell alive for cap', { status: 'running', stoppedAt: null, stopReason: null, app: 'stopped', appServers: { frontend: false, backend: false, frontendPort: 5173, backendPort: 8080 }, hasShell: true, editor: true,
     usage: { cpuPercent: 37.5, memoryBytes: 1.6 * GB, memoryLimitBytes: 8 * GB, memoryPeakBytes: 3.1 * GB, cores: 2, diskUsedBytes: 6.2 * GB, diskTotalBytes: 20 * GB } }),
-  // Waiting for input for 50 minutes, so it pauses in 10 at the console's hour: the timer and its Extend show.
+  // Waiting for input for 50 minutes, so it pauses in 10 at the console's hour: the timer shows, and Extend for the one
+  // the viewer (local) has. Only a shared session's assignee may extend it or change its hours.
   session('e7e7e7e7', 26340, 'Pause the importer when the queue drains', { status: 'running', state: 'done', stoppedAt: null, stopReason: null, app: 'stopped', hasShell: true,
-    lastActiveAt: new Date(Date.parse(now) - 50 * 60_000).toISOString() }),
+    assignee: 'local', lastActiveAt: new Date(Date.parse(now) - 50 * 60_000).toISOString() }),
+  session('e8e8e8e8', 26341, 'Retry the export on a timeout', { status: 'running', state: 'done', stoppedAt: null, stopReason: null, app: 'stopped', hasShell: true,
+    assignee: 'ana-dev', lastActiveAt: new Date(Date.parse(now) - 50 * 60_000).toISOString() }),
   // Running on a project whose file has no app: Set up app in place of Start app.
   session('a0a0b1b1', 26329, 'A project with no app yet', { status: 'running', stoppedAt: null, stopReason: null, app: 'none', appServers: { frontend: false, backend: false, frontendPort: null, backendPort: null }, hasShell: true }),
   // The rail's names: one started and assigned to octocat, one handed to him, one someone else has, and a private

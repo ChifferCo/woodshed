@@ -538,7 +538,7 @@
       ...assignActions(s),
       { label: 'Rename…', note: 'Give it a new name, the one the rail and its page show', run: () => rename(s) },
       live && s.kind !== 'ask' && W.canExtend(s, data) && { label: 'Extend 1 hour', note: `${W.pausesIn(s, data)}: put it off by an hour`, run: async () => { await W.extendSession(s); refresh(); } },
-      s.kind !== 'ask' && { label: 'Pause and stop…', note: 'How long this session alone waits for input before it pauses, and runs before it stops', run: () => editLimits(s) },
+      W.ownsLimits(s, data) && { label: 'Pause and stop…', note: 'How long this session alone waits for input before it pauses, and runs before it stops', run: () => editLimits(s) },
       { label: isPinned(s) ? 'Unpin' : 'Pin', note: 'Keep it at the top of its group. Only you see your pins', run: () => setPinned(s, !isPinned(s)) },
       !live && W.needsYou(s) && {
         label: 'Move to Stopped', note: 'Nothing to do on it now: take it out of Needs you. Resume still picks it up', end: true,
@@ -1145,7 +1145,7 @@
       s.branch && { group: 'Session', label: 'Open the review', run: open('review') },
       { group: 'Session', label: 'Rename it', run: () => rename(s) },
       s.status === 'running' && W.canExtend(s, data) && { group: 'Session', label: 'Extend it by an hour', run: async () => { await W.extendSession(s); refresh(); } },
-      s.kind !== 'ask' && { group: 'Session', label: 'Change when it pauses and stops…', run: () => editLimits(s) },
+      W.ownsLimits(s, data) && { group: 'Session', label: 'Change when it pauses and stops…', run: () => editLimits(s) },
       { group: 'Session', label: isPinned(s) ? 'Unpin it' : 'Pin it', run: () => setPinned(s, !isPinned(s)) },
       s.prUrl && { group: 'Elsewhere', label: 'Open its pull request ↗', run: () => window.open(s.prUrl, '_blank', 'noopener') },
       !W.isLive(s) && W.needsYou(s) && { group: 'Session', label: 'Move it to Stopped', run: () => moveToStopped(s) },

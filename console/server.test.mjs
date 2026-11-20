@@ -829,6 +829,7 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
       return s;
     },
     extend(s, by) {
+      if (by === 'sam-ops') throw Object.assign(new Error('only octocat, who has this session, can change when it pauses or stops'), { shown: true, forbidden: true });
       if (s.extendedBy) throw Object.assign(new Error('Extend is offered in the last 15 min before it pauses'), { shown: true });
       s.extendedBy = by;
       return s;
@@ -871,6 +872,7 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.deepEqual(session.limits, { idleHours: 3 });
   assert.equal((await post(port, '/api/sessions/0a1b2c3d/limits', { idleHours: 30 }, as('octocat'))).status, 400);
   assert.equal((await post(port, '/api/sessions/0a1b2c3d/extend', {})).status, 401, 'signed out');
+  assert.equal((await post(port, '/api/sessions/0a1b2c3d/extend', {}, as('sam-ops'))).status, 403, 'the fleet\'s refusal of someone who does not have it');
 
   // Shared and My Woodshed are the rail's two tabs, each its own page of the same shell as a session's.
   for (const page of ['/', '/all', '/s/0a1b2c3d']) {

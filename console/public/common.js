@@ -385,9 +385,18 @@
     return `${end.why === 'lifetime' ? 'stops' : 'pauses'} in ${span(end.left)}`;
   }
 
-  /** @returns {boolean}  whether a session's pause is close enough to offer Extend: a running one that is not a question */
-  function canExtend(s, data) {
+  /**
+   * @returns {boolean}  whether the viewer may say when the session pauses and stops: a private session's owner, a shared
+   *   one's assignee (the console refuses anyone else), never on a question from Slack
+   */
+  function ownsLimits(s, data) {
     if (s.kind === 'ask') return false;
+    return s.owner ? sameLogin(s.owner, data.login) : sameLogin(s.assignee, data.login);
+  }
+
+  /** @returns {boolean}  whether to offer Extend: the viewer's call, and the pause close enough */
+  function canExtend(s, data) {
+    if (!ownsLimits(s, data)) return false;
     const end = pauseLeft(s, data);
     return Boolean(end) && end.left <= PAUSE_WARN_MS;
   }
@@ -1841,7 +1850,7 @@
     invite, sessionTab, forgetSignedIn, forgetOtherLogins, signingOut, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, pickedLogins, byQuery, peoplePicker,
-    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, canExtend, extendSession, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
+    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
 })();

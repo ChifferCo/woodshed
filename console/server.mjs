@@ -48,7 +48,8 @@
 //   POST /api/sessions/<id>/stop
 //   POST /api/sessions/<id>/pin     {"on": true}   pinned to the top of your rail; yours alone
 //   POST /api/sessions/<id>/rename  {"title": "..."}   the name every page shows
-//   POST /api/sessions/<id>/extend  its pause or stop, whichever comes first, an hour later
+//   POST /api/sessions/<id>/extend  its pause or stop, whichever comes first, an hour later. These two are a private
+//                                session's owner's and a shared one's assignee's alone: 403 for anyone else
 //   POST /api/sessions/<id>/limits  {"idleHours": 2, "lifetimeHours": 12}   this session's own pause and stop; a key
 //                                left out or null goes back to its owner's or the console's
 //   POST /api/my/uploads?name=<file>   one file for your next New session, as the body; {"id"} names it in
@@ -1906,7 +1907,7 @@ export function createHandler({
     }
   }
 
-  // Extend and a session's own limits are the session's, for everyone who can stop it: whoever can open it.
+  // Extend and a session's own limits: the fleet lets a private session's owner and a shared session's assignee alone.
   async function limitAction(req, res, [, id, action], login) {
     const session = findFor(id, login);
     if (!session) return reply(res, 404, { error: 'no such session' });
@@ -1921,7 +1922,7 @@ export function createHandler({
       else fleet.setLimits(session, body ?? {}, login);
       return reply(res, 200, { ...publicSession(session), ...limitView(session) });
     } catch (err) {
-      if (err.shown) return reply(res, 400, { error: err.message });
+      if (err.shown) return reply(res, err.forbidden ? 403 : 400, { error: err.message });
       throw err;
     }
   }
