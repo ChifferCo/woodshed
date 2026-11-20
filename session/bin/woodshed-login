@@ -142,7 +142,10 @@ case "${1:-}" in
       kill -TERM "$CLAUDE_PID" 2>/dev/null || true
       if ! waitFor 100 bash -c "! kill -0 $CLAUDE_PID 2>/dev/null"; then kill -KILL "$CLAUDE_PID" 2>/dev/null || true; sleep 0.5; fi
       since=$(now)
-      agentLine "$BIN_DIR/claude$(cat "$FLAGS_FILE") --resume $CLAUDE_CODE_SESSION_ID" > /dev/null
+      if ! refusal=$(agentLine "$BIN_DIR/claude$(cat "$FLAGS_FILE") --resume $CLAUDE_CODE_SESSION_ID" 2>&1); then
+        say "claude not reopened" "($(printf '%s' "$refusal" | tail -n 1))"
+        exit 1
+      fi
       opened() { read -r at event state < <(lastHook); [ "$event" = SessionStart ] && [ "$at" -gt "$since" ]; }
       if ! waitFor "$START_WAIT" opened; then say "claude did not open again within a minute"; exit 1; fi
       say "claude reopened" "(conversation: $CLAUDE_CODE_SESSION_ID)"

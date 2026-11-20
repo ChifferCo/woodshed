@@ -9,6 +9,10 @@
 
 import path from 'node:path';
 
+import { paneState } from './agentState.mjs';
+import { classifyCodexPane } from './codexState.mjs';
+import { asking } from './panePrompt.mjs';
+
 // What tmux names the pane's command while claude or codex runs in it, and what hc names the program in its terminal.
 export const AGENT_NAMES = Object.freeze(['claude', 'codex']);
 // tmux's own test of the pane's command: 1 while the agent runs in it, read just before an agentOnly send types.
@@ -85,38 +89,44 @@ export function tmuxPane(run, target = 'claude') {
  * @param {{terminal?: string, bin?: string}} [where]
  */
 export function hcPane(run, { terminal = HC_TERMINAL, bin = 'hc' } = {}) {
-  const hc = async (...args) => JSON.parse((await run(bin, [...args, '--json'])).stdout);
-  const get = () => hc('get', terminal);
+  // Options first, then `--`, then the terminal and anything else as it is: a message that starts with a dash (a pasted
+  // Markdown bullet) is the message, never one of hc's options.
+  const hc = async (command, options, ...args) => JSON.parse((await run(bin, [command, ...options, '--json', '--', terminal, ...args])).stdout);
+  const get = () => hc('get', []);
+  const read = async (back = 0) => (await hc('read', ['--lines', String(Math.min(back, 10_000))])).text;
   return {
     terminal: 'herdr',
     // hc reads the screen as text, without its colours, and types text only as a paste with its Enter (`hc send`).
     colours: false,
     typesText: false,
     /** The screen, or with `back` lines of history over it. hc keeps no colours: `ansi` reads the same text. */
-    async capture({ back = 0 } = {}) {
-      return (await hc('read', terminal, '--lines', String(Math.min(back, 10_000)))).text;
-    },
+    capture: ({ back = 0 } = {}) => read(back),
     // Every key named before any is sent: one hc has no name for types nothing.
-    keys: async (...keys) => hc('keys', terminal, ...keys.map(hcKey)),
+    keys: async (...keys) => hc('keys', [], ...keys.map(hcKey)),
     literal: async () => { throw new Error('hc types no text without its Enter: use send or line'); },
     paste: async () => { throw new Error('hc types no text without its Enter: use send or line'); },
     /**
-     * A message, pasted and sent with its Enter, only while the agent says it is idle (hc's own `send --if idle`, which
-     * also waits for a person's unsent draft in an attached client), never into a prompt (hc refuses a blocked program).
-     * @returns {Promise<{sent: true}|{sent: false, why: string}>}
+     * A message, pasted and sent with its Enter, never into a prompt: not while the screen asks a person anything (a
+     * question, an approval, a numbered menu: what typeMessage refuses in tmux), and only while the agent says it is idle
+     * (hc's own `send --if idle`, which also refuses a blocked program and waits for a person's unsent draft in an
+     * attached client). codex sends no 7501 records, so hc never calls it idle: with no record, the screen must show the
+     * agent at its prompt.
+     * @returns {Promise<{sent: true}|{sent: false, why: string, kind?: string|null}>}
      */
     async send(text) {
       try {
-        // codex sends no 7501 records, so hc never calls it idle: statusd has read it at its prompt from its screen.
-        const reported = Boolean((await get()).status);
-        await hc('send', ...(reported ? ['--if', 'idle'] : []), terminal, text);
+        const [screen, { status }] = await Promise.all([read(), get()]);
+        const kind = asking(screen);
+        if (kind) return { sent: false, why: 'prompt-open', kind };
+        if (!status && classifyCodexPane(screen) !== 'done' && paneState(screen) !== 'done') return { sent: false, why: 'not-at-prompt' };
+        await hc('send', status ? ['--if', 'idle'] : [], text);
         return { sent: true };
       } catch (err) {
         return { sent: false, why: refusedSend(err) };
       }
     },
     /** A command at the shell's prompt, once claude is gone from it (the lockdown's reopen, woodshed-login's). */
-    line: (text) => hc('send', terminal, text),
+    line: (text) => hc('send', [], text),
     async agentRunning() {
       return isAgentForeground((await get()).foreground);
     },

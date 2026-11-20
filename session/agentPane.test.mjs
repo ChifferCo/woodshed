@@ -1,7 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { agentPane, hcKey, hcPane, isAgentForeground, tmuxPane } from './agentPane.mjs';
+
+const fixture = (name) => fs.readFileSync(path.join(import.meta.dirname, '../shared/__fixtures__', name), 'utf8');
 
 // A stand-in execFile: records each call, and answers from `answers` by the command line's start. An Error answer is
 // thrown, as execFile rejects.
@@ -69,10 +74,10 @@ test('the Herdr terminal is read as text and pressed keys through hc, and types 
   await assert.rejects(pane.literal('hi'), /no text without its Enter/);
   await assert.rejects(pane.paste('hi'), /no text without its Enter/);
   assert.deepEqual(calls, [
-    ['hc', 'read', 'claude', '--lines', '0', '--json'],
-    ['hc', 'read', 'claude', '--lines', '40', '--json'],
-    ['hc', 'keys', 'claude', 'down', 'enter', '--json'],
-    ['hc', 'send', 'claude', '/opt/woodshed/session/bin/claude --resume x', '--json'],
+    ['hc', 'read', '--lines', '0', '--json', '--', 'claude'],
+    ['hc', 'read', '--lines', '40', '--json', '--', 'claude'],
+    ['hc', 'keys', '--json', '--', 'claude', 'down', 'enter'],
+    ['hc', 'send', '--json', '--', 'claude', '/opt/woodshed/session/bin/claude --resume x'],
   ]);
 });
 
@@ -82,21 +87,57 @@ test('a key hc cannot name types nothing at all', async () => {
   assert.deepEqual(calls, []);
 });
 
+// codex as `hc read` gives it: plain text, the same screen tmux captured.
+const CODEX = { ...CLAUDE_RUNNING, status: null, foreground: { ...CLAUDE_RUNNING.foreground, argv: ['codex'] } };
+const CODEX_AT_PROMPT = ['╭───────────────────────╮', '│ >_ OpenAI Codex       │', '╰───────────────────────╯', '', '› ', '', '  gpt-5.5 · 100% left'].join('\n');
+const read = (text) => ({ text, complete: true, how: 'screen' });
+const sends = (calls) => calls.filter((c) => c[1] === 'send' || c[1] === 'keys');
+
 test('a message goes in through hc only while the agent says it is idle, and codex, which says nothing, by its screen', async () => {
-  let { run, calls } = fakeRun({ 'hc get': CLAUDE_RUNNING });
+  let { run, calls } = fakeRun({ 'hc get': CLAUDE_RUNNING, 'hc read': read(fixture('pane-done.txt')) });
   assert.deepEqual(await hcPane(run).send('fix it\nplease'), { sent: true });
-  assert.deepEqual(calls.at(-1), ['hc', 'send', '--if', 'idle', 'claude', 'fix it\nplease', '--json']);
-  ({ run, calls } = fakeRun({ 'hc get': { ...CLAUDE_RUNNING, status: null, foreground: { ...CLAUDE_RUNNING.foreground, argv: ['codex'] } } }));
+  assert.deepEqual(calls.at(-1), ['hc', 'send', '--if', 'idle', '--json', '--', 'claude', 'fix it\nplease']);
+  ({ run, calls } = fakeRun({ 'hc get': CODEX, 'hc read': read(CODEX_AT_PROMPT) }));
   assert.deepEqual(await hcPane(run).send('go on'), { sent: true });
-  assert.deepEqual(calls.at(-1), ['hc', 'send', 'claude', 'go on', '--json'], 'no record: statusd has read codex at its prompt');
+  assert.deepEqual(calls.at(-1), ['hc', 'send', '--json', '--', 'claude', 'go on'], 'no record: codex read at its prompt');
+});
+
+test('a message that starts with a dash is the message, never one of hc\'s options', async () => {
+  const { run, calls } = fakeRun({ 'hc get': CLAUDE_RUNNING, 'hc read': read(fixture('pane-done.txt')) });
+  assert.deepEqual(await hcPane(run).send('- first\n- second'), { sent: true });
+  const sent = calls.at(-1);
+  assert.equal(sent.at(-1), '- first\n- second');
+  assert.ok(sent.indexOf('--') < sent.indexOf('- first\n- second') && sent.indexOf('--json') < sent.indexOf('--'), 'every option before --');
+});
+
+test('nothing goes in through hc while codex shows an approval, which has no record to say so: no paste, no Enter', async () => {
+  const { run, calls } = fakeRun({ 'hc get': CODEX, 'hc read': read(fixture('pane-codex-approval.txt')) });
+  assert.deepEqual(await hcPane(run).send('looks good'), { sent: false, why: 'prompt-open', kind: 'approval' });
+  assert.deepEqual(sends(calls), []);
+});
+
+test('nothing goes in through hc while claude asks a question or shows a numbered menu, whatever its record says', async () => {
+  // A numbered menu typeMessage refuses in tmux, as panePrompt.test.mjs draws it.
+  const menu = [' Do you trust the files in this folder?', '', ' ❯ 1. Yes, proceed', '   2. No, exit', '', ' Enter to confirm · Esc to exit'].join('\n');
+  for (const [name, kind, screen] of [['question', 'question', fixture('pane-askquestion.txt')], ['approval', 'approval', fixture('pane-permission.txt')], ['menu', 'menu', menu]]) {
+    const { run, calls } = fakeRun({ 'hc get': CLAUDE_RUNNING, 'hc read': read(screen) });
+    assert.deepEqual(await hcPane(run).send('hi'), { sent: false, why: 'prompt-open', kind }, name);
+    assert.deepEqual(sends(calls), [], name);
+  }
+});
+
+test('with no record and neither agent at its prompt on screen, nothing goes in through hc', async () => {
+  const { run, calls } = fakeRun({ 'hc get': CODEX, 'hc read': read(fixture('pane-shell.txt')) });
+  assert.deepEqual(await hcPane(run).send('hi'), { sent: false, why: 'not-at-prompt' });
+  assert.deepEqual(sends(calls), []);
 });
 
 test('hc\'s refusal is said by its kind: a prompt open, or an agent no longer idle', async () => {
-  let { run } = fakeRun({ 'hc get': CLAUDE_RUNNING, 'hc send': refused('blocked') });
+  let { run } = fakeRun({ 'hc get': CLAUDE_RUNNING, 'hc read': read(fixture('pane-done.txt')), 'hc send': refused('blocked') });
   assert.deepEqual(await hcPane(run).send('hi'), { sent: false, why: 'blocked' });
-  ({ run } = fakeRun({ 'hc get': CLAUDE_RUNNING, 'hc send': refused('status_mismatch') }));
+  ({ run } = fakeRun({ 'hc get': CLAUDE_RUNNING, 'hc read': read(fixture('pane-done.txt')), 'hc send': refused('status_mismatch') }));
   assert.deepEqual(await hcPane(run).send('hi'), { sent: false, why: 'status_mismatch' });
-  ({ run } = fakeRun({ 'hc get': CLAUDE_RUNNING, 'hc send': new Error('spawn hc ENOENT') }));
+  ({ run } = fakeRun({ 'hc get': CLAUDE_RUNNING, 'hc read': read(fixture('pane-done.txt')), 'hc send': new Error('spawn hc ENOENT') }));
   assert.deepEqual(await hcPane(run).send('hi'), { sent: false, why: 'not-sent' });
 });
 
@@ -117,7 +158,7 @@ test('hc\'s word on the agent is its terminal\'s status, and the shell under it 
   const pane = hcPane(run, { bin: '/usr/local/bin/hc' });
   assert.deepEqual(await pane.agent(), { app: 'claude-code', state: 'idle' });
   assert.equal(await pane.shellPid(), 4100);
-  assert.deepEqual(calls[0], ['/usr/local/bin/hc', 'get', 'claude', '--json']);
+  assert.deepEqual(calls[0], ['/usr/local/bin/hc', 'get', '--json', '--', 'claude']);
   const { run: quiet } = fakeRun({ 'hc get': SHELL_ONLY });
   assert.equal(await hcPane(quiet).agent(), null, 'nothing reported: the agent\'s own reader stands alone');
 });
@@ -129,5 +170,5 @@ test('the session\'s pane is tmux\'s unless the entrypoint said Herdr', async ()
   const pane = agentPane(run, { terminal: 'herdr', bin: 'hc' });
   assert.equal(pane.terminal, 'herdr');
   await pane.keys('Escape');
-  assert.deepEqual(calls, [['hc', 'keys', 'claude', 'esc', '--json']]);
+  assert.deepEqual(calls, [['hc', 'keys', '--json', '--', 'claude', 'esc']]);
 });

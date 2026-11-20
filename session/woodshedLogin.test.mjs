@@ -173,6 +173,7 @@ cmd=$1; t=$2; shift 2
 echo "$cmd $t $*" >> "$WOODSHED_LOGIN_RUN_DIR/hc-calls"
 case "$cmd" in
   send)
+    if [ -n "\${FAKE_HC_REFUSE_ALL:-}" ]; then echo '{"error":{"kind":"blocked","message":"t1 is blocked (auth)"}}'; exit 9; fi
     # The first /remote-control is refused, as hc refuses a claude whose record says blocked.
     if [ "$1" = /remote-control ] && [ ! -e "$WOODSHED_LOGIN_RUN_DIR/hc-refused" ]; then
       touch "$WOODSHED_LOGIN_RUN_DIR/hc-refused"
@@ -214,4 +215,28 @@ test('in Herdr, a code that works reopens claude and types /remote-control throu
   assert.match(calls, /^keys claude ctrl\+u$/m);
   assert.equal(calls.match(/^send claude \/remote-control$/gm)?.length, 2, 'the refused try, then the one that went in');
   assert.match(fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8'), /Herdr did not type \/remote-control \(\{"error":\{"kind":"blocked"[^\n]*\n[^\n]*\/remote-control typed in \(tries: 2\)/);
+});
+
+test('in Herdr, a reopen hc refuses is said in the log, not left silent', { skip: !hasTmux && 'no tmux' }, async (t) => {
+  const { bin, login, tmux, runDir, until, hook } = setUp(t);
+  fs.writeFileSync(path.join(bin, 'hc'), FAKE_HC, { mode: 0o755 });
+  fs.writeFileSync(path.join(runDir, 'woodshed-claude-flags'), ' --settings /x/hooks.json');
+  tmux('new-session', '-d', '-s', 'claude', '-x', '200', '-y', '50', 'bash --norc');
+  tmux('send-keys', '-t', 'claude', 'sleep 300', 'Enter');
+  const panePid = tmux('display', '-p', '-t', 'claude', '#{pane_pid}').trim();
+  let claudePid = '';
+  await until(() => {
+    try {
+      claudePid = execFileSync('pgrep', ['-P', panePid, 'sleep'], { encoding: 'utf8' }).trim();
+    } catch {}
+    return Boolean(claudePid);
+  }, 'the running claude started');
+  const herdr = { WOODSHED_TERMINAL: 'herdr', FAKE_HC_REFUSE_ALL: '1' };
+  assert.equal((await login(['start'], herdr)).code, 0);
+  assert.equal((await login(['code', 'good-code'], { ...herdr, CLAUDE_PID: claudePid, CLAUDE_CODE_SESSION_ID: 'sess-9' })).code, 0);
+  hook({ state: 'done', event: 'Stop' });
+  const log = () => (fs.existsSync(path.join(runDir, 'woodshed-login.log')) ? fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8') : '');
+  await until(() => /claude not reopened/.test(log()), 'the refusal logged');
+  assert.match(log(), /claude not reopened \(\{"error":\{"kind":"blocked"/);
+  assert.doesNotMatch(log(), /claude reopened/);
 });

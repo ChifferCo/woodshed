@@ -1099,9 +1099,10 @@ async function send(text) {
 async function sendThroughHerdr(text) {
   const done = await agentIo().send(text);
   if (done.sent) return done;
-  console.log('statusd: Herdr did not send the message', { why: done.why });
-  // Blocked is a prompt open; anything else (not idle, a draft held past hc's wait) is nothing typed, said as a prompt
-  // the page shows in its Needs you line or the TUI tab.
+  console.log('statusd: Herdr did not send the message', { why: done.why, kind: done.kind ?? null });
+  // A prompt on screen is said as typeMessage says it, blocked (hc's word for one) as an approval; anything else (not
+  // idle, not at its prompt, a draft held past hc's wait) is nothing typed.
+  if (done.why === 'prompt-open') return { sent: false, kind: done.kind, typed: false };
   return { sent: false, kind: done.why === 'blocked' ? null : 'herdr', typed: false };
 }
 
