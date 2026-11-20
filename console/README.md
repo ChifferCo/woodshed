@@ -981,7 +981,8 @@ The two verdicts become one (`codeReview.mjs merge`):
 
 - The stricter conclusion and the higher merge risk win, so a pull request is approved only when both approve.
 - The comment and summary have a section from each, and each inline comment says whose it is.
-- An earlier comment is resolved only when both found it fixed.
+- An earlier comment is resolved when the reviewer who wrote it (its `**Claude Code:**` or `**Codex:**`) found it fixed;
+  one with no such mark, or whose writer wrote no verdict, only when both found it fixed.
 - When one writes no verdict, the other's goes out alone and says so.
 
 The PR comment says `Reviewing with Claude Code and Codex`.

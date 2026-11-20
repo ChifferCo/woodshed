@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { reviewPrompt, writePrompt, verdictIn, mergeRiskIn, mergeVerdicts } from './codeReview.mjs';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { reviewPrompt, writePrompt, verdictIn, mergeRiskIn, mergeVerdicts, commentAuthorsIn } from './codeReview.mjs';
 import { parseYaml } from '../yamlLite.mjs';
 
 function dir(t) {
@@ -132,7 +134,61 @@ test('two reviews become one: the stricter verdict and the higher merge risk win
   assert.equal(merged.comment, '### Claude Code: APPROVE\n\nAPPROVE comment\n\n### Codex: REQUEST_CHANGES\n\nREQUEST_CHANGES comment');
   assert.match(merged.summary, /### Claude Code: APPROVE\n\nAPPROVE summary/);
   assert.deepEqual(merged.inlineComments, [{ path: 'a.js', line: 1, body: '**Claude Code:** Fine.' }, { path: 'b.js', line: 2, body: '**Codex:** Broken.' }]);
-  assert.deepEqual(merged.resolved, [2], 'an earlier comment is resolved only when both found it fixed');
+  assert.deepEqual(merged.resolved, [2], 'an earlier comment with no known writer is resolved only when both found it fixed');
+});
+
+test('an earlier comment one reviewer wrote is resolved when that one found it fixed, whatever the other listed', () => {
+  const authors = new Map([[10, 'Claude Code'], [20, 'Codex'], [30, 'Codex']]);
+  const merged = mergeVerdicts([
+    { name: 'Claude Code', verdict: verdictOf('APPROVE', { resolved: [10, 30, 40] }) },
+    { name: 'Codex', verdict: verdictOf('APPROVE', { resolved: [20, 40, 50] }) },
+  ], { authors });
+  assert.deepEqual(merged.resolved.sort((a, b) => a - b), [10, 20, 40], '30 is Codex\'s and Codex did not find it fixed; 50 has no writer and Claude did not list it');
+});
+
+test('an earlier comment whose writer wrote no verdict needs every reviewer that did', () => {
+  const merged = mergeVerdicts([
+    { name: 'Claude Code', verdict: verdictOf('APPROVE', { resolved: [20] }) },
+    { name: 'Codex', verdict: verdictOf(null, { tier: null }) },
+  ], { authors: new Map([[20, 'Codex']]) });
+  assert.deepEqual(merged.resolved, [20]);
+});
+
+test('whose each earlier comment is comes from the mark its body opens with in context.md', (t) => {
+  const d = dir(t);
+  fs.writeFileSync(path.join(d, 'context.md'), [
+    '# Inline comments',
+    '[comment 4637720633] reviewer[bot] on console/public/style.css:12: **Claude Code:** Optional. Once the bar is 960px or narrower, Invite disappears.',
+    '',
+    '[comment 4637811413] reviewer[bot] on console/public/session.js:40: **Codex:** On a narrow desktop, the menu lingers.',
+    '',
+    '[comment 4637742005] coderabbitai[bot] on console/public/session.js:9: <!-- coderabbit --> **Minor**',
+    '[comment 77] someone on a.js:1: **Somebody:** not a reviewer',
+    '[comment 88] someone on a.js:2: plain text, then **Codex:** later in the line',
+    '',
+  ].join('\n'));
+  assert.deepEqual([...commentAuthorsIn(d, ['Claude Code', 'Codex'])], [[4637720633, 'Claude Code'], [4637811413, 'Codex']]);
+});
+
+test('merge resolves a fixed comment its writer listed though the other reviewer left it off (the #257 case)', (t) => {
+  const claude = dir(t);
+  const codex = dir(t);
+  fs.writeFileSync(path.join(claude, 'context.md'), [
+    '# Inline comments',
+    '[comment 4637720633] reviewer[bot] on console/public/style.css:12: **Claude Code:** Optional. Invite disappears.',
+    '[comment 4637811413] reviewer[bot] on console/public/session.js:40: **Codex:** The menu lingers.',
+    '',
+  ].join('\n'));
+  for (const [d, resolved] of [[claude, '4637720633\n'], [codex, '']]) {
+    fs.writeFileSync(path.join(d, 'verdict.txt'), 'APPROVE\n');
+    fs.writeFileSync(path.join(d, 'summary.md'), 'Fine.');
+    fs.writeFileSync(path.join(d, 'merge-risk.md'), 'LOW\nSmall.\n');
+    fs.writeFileSync(path.join(d, 'resolved.txt'), resolved);
+  }
+  const script = fileURLToPath(new URL('./codeReview.mjs', import.meta.url));
+  const verdict = JSON.parse(execFileSync(process.execPath, [script, 'merge', claude, codex], { encoding: 'utf8' }));
+  assert.equal(verdict.conclusion, 'APPROVE');
+  assert.deepEqual(verdict.resolved, [4637720633], 'Claude\'s fixed finding is resolved; Codex\'s unfixed one stays open');
 });
 
 test('a pull request is approved only when both approve; COMMENT beats APPROVE', () => {

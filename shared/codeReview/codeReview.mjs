@@ -53,6 +53,20 @@ export function inlineCommentsIn(dir) {
     .map((c) => ({ path: c.path.replace(/^\.\//, ''), line: c.line, body: c.body }));
 }
 
+/**
+ * Whose each earlier inline comment in context.md is, from the `**<name>:**` its body opens with when both reviewed
+ * (mergeVerdicts marks them so). A comment with no such mark, a person's or one from a review by one reviewer, is left out.
+ * @param {string[]} names  the reviewers' names, as mergeVerdicts gets them
+ * @returns {Map<number, string>}  comment id to reviewer name
+ */
+export function commentAuthorsIn(dir, names) {
+  const authors = new Map();
+  for (const m of readFile(dir, 'context.md').matchAll(/^\[comment ([0-9]{1,15})\] \S+ on [^\n]*?: \*\*([^*\n]+):\*\*/gm)) {
+    if (names.includes(m[2])) authors.set(Number(m[1]), m[2]);
+  }
+  return authors;
+}
+
 /** @returns {number[]}  the ids in resolved.txt, one a line, digits only */
 export function resolvedIn(dir) {
   return [...new Set(readFile(dir, 'resolved.txt').split('\n').map((l) => l.trim()).filter((l) => /^[0-9]{1,15}$/.test(l)).map(Number))];
@@ -103,12 +117,15 @@ const MAX_INLINE_COMMENTS = 30;
 /**
  * One review from two reviewers' verdicts, each `{name, verdict}` with a verdict as verdictIn reads it. The strictest
  * conclusion wins (REQUEST_CHANGES, then COMMENT, then APPROVE) and the higher merge risk, so a pull request is approved
- * only when both approve. The comment and summary keep a section from each, the inline comments say whose they are, and
- * an earlier comment is resolved only when both found it fixed. A reviewer that wrote no verdict is left out, and the
- * comment says so; with neither, the conclusion is null.
+ * only when both approve. The comment and summary keep a section from each, and the inline comments say whose they are.
+ * An earlier comment one of them wrote (`authors`) is resolved when that one found it fixed: the other often leaves a
+ * finding that is not its own off its list. One with no known writer, or whose writer wrote no verdict, is resolved only
+ * when every reviewer with a verdict found it fixed. A reviewer that wrote no verdict is left out, and the comment says
+ * so; with neither, the conclusion is null.
  * @param {{name: string, verdict: ReturnType<typeof verdictIn>}[]} reviews
+ * @param {{authors?: Map<number, string>}} [options]  each earlier comment's writer, from commentAuthorsIn
  */
-export function mergeVerdicts(reviews) {
+export function mergeVerdicts(reviews, { authors = new Map() } = {}) {
   const done = reviews.filter((r) => r.verdict.conclusion);
   const missing = reviews.filter((r) => !r.verdict.conclusion).map((r) => r.name);
   if (!done.length) return { ...reviews[0].verdict, conclusion: null };
@@ -124,7 +141,11 @@ export function mergeVerdicts(reviews) {
   const perReviewer = Math.max(1, Math.floor(MAX_INLINE_COMMENTS / done.length));
   const inlineComments = done.flatMap((r) => r.verdict.inlineComments.slice(0, perReviewer)
     .map((c) => ({ ...c, body: done.length > 1 ? `**${r.name}:** ${c.body}` : c.body })));
-  const resolved = done.map((r) => r.verdict.resolved).reduce((a, b) => a.filter((id) => b.includes(id)));
+  const fixedBy = (id) => {
+    const writer = done.find((r) => r.name === authors.get(id));
+    return writer ? writer.verdict.resolved.includes(id) : done.every((r) => r.verdict.resolved.includes(id));
+  };
+  const resolved = [...new Set(done.flatMap((r) => r.verdict.resolved))].filter(fixedBy);
   return { conclusion, summary: sections('summary'), comment: sections('comment'), mergeRisk, inlineComments, resolved };
 }
 
@@ -144,7 +165,9 @@ function main([command, dir, other]) {
     return;
   }
   if (command === 'merge' && dir && other) {
-    const verdict = mergeVerdicts([{ name: 'Claude Code', verdict: verdictIn(dir) }, { name: 'Codex', verdict: verdictIn(other) }]);
+    const names = ['Claude Code', 'Codex'];
+    const verdict = mergeVerdicts([{ name: names[0], verdict: verdictIn(dir) }, { name: names[1], verdict: verdictIn(other) }],
+      { authors: commentAuthorsIn(dir, names) });
     if (!verdict.conclusion) process.exit(3);
     process.stdout.write(`${JSON.stringify(verdict)}\n`);
     return;
