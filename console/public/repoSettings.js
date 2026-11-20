@@ -105,14 +105,16 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
     return key === INSTRUCTIONS ? `${base}/instructions` : `${base}/env/${encodeURIComponent(key)}`;
   }
 
-  async function show(key) {
+  // `focus` puts the caret in the editor, for someone who pressed Show. The page's own read at load leaves it out:
+  // focus brings its field into view, and the page would open scrolled down to Instructions.
+  async function show(key, { focus = true } = {}) {
     await act(key, async () => {
       const { text } = await W.getJson(textPath(key));
       shownText.set(key, text);
       editorFor(key).value = text;
       return null;
     });
-    if (shownText.has(key)) editorFor(key).focus?.();
+    if (focus && shownText.has(key)) editorFor(key).focus?.();
   }
 
   function hide(key) {
@@ -445,7 +447,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
     render();
     if (view && location.hash === SLACK) document.getElementById('slack')?.scrollIntoView?.({ block: 'center' });
     if (view && location.hash === GITHUB) document.getElementById('github')?.scrollIntoView?.({ block: 'start' });
-    if (view?.instructions.installation) await show(INSTRUCTIONS);
+    if (view?.instructions.installation) await show(INSTRUCTIONS, { focus: false });
   }
 
   load();
