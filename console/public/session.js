@@ -57,6 +57,7 @@
     const asked = SessionTabs.ask(tabMemory, id, inAddress, fromEntry);
     tab = W.sessionTab(asked);
     landOnReview = !asked;
+    defaulted = !asked;
     heldTab = null;
     // An entry that showed a fallback (a link's tab the session could not show) still does after a reload.
     fellBack = Boolean(id && state?.fellBack && state.login === pageLogin && fromEntry === tab);
@@ -121,6 +122,10 @@
   let fellBack = false;
   // Set on each arrival at a page without a tab in its address: a review-only session then opens on its Review.
   let landOnReview = false;
+  // Set on the same arrivals, until a tab is picked: the session shows the person's default view (My settings, Display),
+  // Chat or TUI, the phone's under 720px and the desktop's above, and follows the width while nothing was picked.
+  let defaulted = false;
+  const defaultView = () => SessionTabs.defaultView(data?.viewPrefs?.sessionView, narrow.matches);
   // The tabs that show a page of their own rather than a terminal: no key bar and no message box. Chat has a composer
   // of its own.
   const PAGE_TABS = new Set(['chat', 'review', 'diff', 'applog']);
@@ -2081,6 +2086,7 @@
     if (!picked) return;
     tab = next;
     landOnReview = false;
+    defaulted = false;
     tabMemory.remember(id, tab);
     const url = new URL(window.location.href);
     if (currentSession) (tab === 'terminal' ? shellPool : agentPool).refit(currentSession, false);
@@ -2132,7 +2138,7 @@
   }
   window.visualViewport?.addEventListener('resize', fitToKeyboard);
   // A window widened past a phone's shows the Shared page's pane, so it is filled at once.
-  narrow.addEventListener('change', () => { if (onShared) render(); });
+  narrow.addEventListener('change', () => { if (onShared || (id && defaulted)) render(); });
 
   // The session's own id first: moving to another session in place must rebuild its terminal.
   function bodyKey(s) {
@@ -2212,6 +2218,7 @@
       return;
     }
     openReviewWhenRunning(s);
+    if (defaulted && !heldTab) tab = defaultView();
     // A tab the session cannot show falls back to TUI. Until this route's lookup answers, the session may be the kept
     // snapshot's (starting, where it now runs), so the tab asked for is held and tried again; once the answer is in,
     // the fallback stands and the remembered tab says TUI too when it was the one that could not show.
@@ -2271,6 +2278,7 @@
   function openReviewWhenRunning(s) {
     if (!s.reviewOnly || !landOnReview || s.status !== 'running') return;
     landOnReview = false;
+    defaulted = false;
     tab = 'review';
     tabMemory.remember(s.id, tab);
     const url = new URL(window.location.href);

@@ -14,7 +14,7 @@
     { id: 'palette', mod: '⌘K', bare: '/', what: 'Jump to a session, or run a command' },
     { id: 'new', mod: '⇧⌘O', bare: 'N', what: 'New session' },
     { id: 'rail', mod: '⌘.', what: 'Show or hide the rail' },
-    { id: 'settings', mod: '⇧⌘,', what: 'Settings' },
+    { id: 'settings', mod: '⇧⌘,', what: 'Display settings: theme, review files, Chat or TUI' },
     // Read by the New session form itself (launcher.js), from any of its fields: `where` says so on the sheet.
     { id: 'start', mod: '⌘↵', what: 'Start the session', where: 'New session' },
     // Read by terminal.js (terminalFind.cjs's isFindKey). Off a Mac, `modOther`: Ctrl+F in a terminal is the pane's.

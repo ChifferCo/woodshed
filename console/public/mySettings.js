@@ -516,6 +516,90 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       projectStatus);
   }
 
+  // How the console looks to you, once a sheet of its own (⇧⌘, comes here now). The theme and review files are this
+  // browser's (localStorage, as theme.js and the shed's review page read them); the tab a session opens on is yours on
+  // every device (viewPrefs.mjs), one for a desktop and one for a phone, since a phone's narrow screen is where TUI and
+  // Chat differ most. Each pick applies at once.
+  const THEME_KEY = 'woodshed-theme';
+  // Read by the shed's review page, which is framed on this origin: writing it fires a storage event there.
+  const REVIEW_EXPAND_KEY = 'shed.review.expand';
+  let sessionView = null;
+  let viewLoaded = false;
+  const displayStatus = h('p', { class: 'form-note', role: 'status' });
+  const loadSessionView = () => W.getJson('/api/my/session-view').then((answer) => { sessionView = answer; }, (err) => {
+    displayStatus.textContent = `Could not load your session views: ${err.message}`;
+    displayStatus.classList.add('is-error');
+  }).finally(() => { viewLoaded = true; if (me) render(); });
+
+  function currentTheme() {
+    return document.documentElement.dataset.theme || 'system';
+  }
+  function setTheme(theme) {
+    try {
+      if (theme === 'system') window.localStorage.removeItem(THEME_KEY);
+      else window.localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      // A private window keeps it for this page.
+    }
+    if (theme === 'system') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = theme;
+    render();
+  }
+  // Expanded unless folded by choice: the review page reads 'collapsed' as folded and anything else as open.
+  function reviewExpands() {
+    try {
+      return window.localStorage.getItem(REVIEW_EXPAND_KEY) !== 'collapsed';
+    } catch {
+      return true;
+    }
+  }
+  function setReviewExpand(value) {
+    try {
+      if (value === 'collapsed') window.localStorage.setItem(REVIEW_EXPAND_KEY, 'collapsed');
+      else window.localStorage.removeItem(REVIEW_EXPAND_KEY);
+    } catch {
+      // A private window keeps nothing.
+    }
+    render();
+  }
+  function setSessionView(where, view) {
+    const before = sessionView;
+    sessionView = { ...sessionView, [where]: view };
+    return act({ card: 'display', note: displayStatus, done: 'Saved. Sessions you open from now on start there.', call: async () => {
+      try {
+        sessionView = await W.postJson('/api/my/session-view', { [where]: view });
+      } catch (err) {
+        sessionView = before;
+        throw err;
+      }
+    } });
+  }
+
+  function seg(label, options, current, onPick, disabled = false) {
+    return h('div', { class: 'theme-seg', role: 'group', 'aria-label': label }, options.map(([value, text, title]) => h('button', {
+      type: 'button', class: 'theme-opt', title, disabled, 'aria-pressed': String(value === current), onclick: () => { if (value !== current) onPick(value); },
+    }, text)));
+  }
+  function displayRow(name, help, control) {
+    return h('div', { class: 'set-row' }, h('div', null, h('div', { class: 'set-name' }, name), h('div', { class: 'set-help' }, help)), h('div', { class: 'set-value' }, control));
+  }
+
+  function displayCard() {
+    const VIEWS = [['chat', 'Chat', 'The conversation, with a box to type in'], ['tui', 'TUI', 'The agent\u2019s own live terminal']];
+    const viewRow = (where, name, help) => displayRow(name, help, seg(name, VIEWS, sessionView?.[where] ?? 'chat', (view) => setSessionView(where, view), !sessionView || busy.has('display')));
+    return h('section', { class: 'set-card', id: 'my-display' },
+      h('div', { class: 'set-head' }, h('h2', null, 'Display')),
+      h('p', { class: 'sub' }, 'How the console looks to you. The theme and review files are this browser\u2019s; the tab a session opens on follows you to every device. ', W.shell ? h('kbd', null, W.shell.keyText('settings')) : null, W.shell ? ' comes here from anywhere.' : null),
+      h('div', { class: 'set-rows' },
+        displayRow('Theme', 'Follow the device, or pick one and keep it. Terminals stay dark either way: they are a program\u2019s colours, not the page\u2019s.',
+          seg('Theme', [['system', 'device', 'Follow my device'], ['light', 'light', 'Always light'], ['dark', 'dark', 'Always dark']], currentTheme(), setTheme)),
+        displayRow('Review files', 'Whether a review opens with every file\u2019s diff showing or folded. Files you mark as viewed stay folded.',
+          seg('Review files', [['collapsed', 'folded', 'Open a review with every file folded'], ['all', 'expanded', 'Open a review with every file\u2019s diff showing']], reviewExpands() ? 'all' : 'collapsed', setReviewExpand)),
+        viewRow('desktop', 'Sessions on a desktop', 'The tab a running session opens on in a wide window, until you pick another for that session.'),
+        viewRow('phone', 'Sessions on a phone', 'The same for a narrow window, under 720px wide.')),
+      displayStatus);
+  }
+
   // Who reviews the pull requests you open (console/reviewAgents.mjs), as a grid: Claude Code and Codex on their own
   // rows, Off and On across the top (designSystem/components/OnOffGrid). Both on is both, both off is no code review.
   // On is offered only while the team's key or your own sign-in can run it; with nothing saved, the most there is runs.
@@ -523,7 +607,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   let reviews = null;
   const reviewStatus = h('p', { class: 'form-note', role: 'status' });
   const AGENTS_OF = { none: [], claude: ['claude'], codex: ['codex'], both: ['claude', 'codex'] };
-  const loadReviews = () => W.getJson('/api/my/reviews').then((answer) => { reviews = answer; if (me) render(); }, () => {});
+  let reviewsLoaded = false;
+  const loadReviews = () => W.getJson('/api/my/reviews').then((answer) => { reviews = answer; }, () => {}).finally(() => { reviewsLoaded = true; if (me) render(); });
 
   function saveReviews(choice, done) {
     return act({ card: 'reviews', note: reviewStatus, done, call: async () => { reviews = await W.postJson('/api/my/reviews', { choice }); } });
@@ -636,6 +721,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       codexCard(),
       reviewsCard(),
       projectCard(),
+      displayCard(),
       limitsCard(),
       databasesCard(),
       githubCard(),
@@ -651,18 +737,24 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
 
   // The setup card's Claude and Codex go to #claude and #codex: once the cards are there, that one is scrolled to and
   // its box focused, so whichever agent was picked is the one in front of the person. Once per page load.
-  let asked = ({ '#claude': 'claude-token', '#codex': 'codex-auth' })[window.location.hash] ?? null;
+  // ⇧⌘, goes to #my-display, which has no box to focus: the card is scrolled to alone.
+  let asked = ({ '#claude': 'claude-token', '#codex': 'codex-auth', '#my-display': 'my-display' })[window.location.hash] ?? null;
   function showAsked() {
+    // The cards above Display (reviews, the default project) come in their own answers: scrolling before they are drawn
+    // leaves Display pushed down the page once they are.
+    if (asked === 'my-display' && !(reviewsLoaded && projectsLoaded && viewLoaded)) return;
     const input = asked && document.getElementById(asked);
     if (!input) return;
     asked = null;
     input.closest('.set-card')?.scrollIntoView({ block: 'start' });
-    input.focus({ preventScroll: true });
+    if (input.matches('input, textarea')) input.focus({ preventScroll: true });
   }
 
   W.getJson('/api/my').then((answer) => { me = answer; }, (err) => { loadError = err.message; }).then(() => (me ? openFile(fileKey ?? fileKeys()[0]) : render()));
-  W.getJson('/api/my/projects').then((answer) => { projects = answer; if (me) render(); }, () => {});
+  let projectsLoaded = false;
+  W.getJson('/api/my/projects').then((answer) => { projects = answer; }, () => {}).finally(() => { projectsLoaded = true; if (me) render(); });
   loadReviews();
+  loadSessionView();
   render();
   life.on(window, 'woodshed:me', render);
 });

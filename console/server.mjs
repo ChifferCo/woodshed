@@ -296,6 +296,8 @@ const MCP_SERVERS_PATH = '/api/console-settings/mcp-servers';
 const MCP_SERVERS_TEST_PATH = `${MCP_SERVERS_PATH}/test`;
 const MCP_SERVERS_WRITES = new Set([MCP_SERVERS_PATH, `${MCP_SERVERS_PATH}/remove`, `${MCP_SERVERS_PATH}/header`, MCP_SERVERS_TEST_PATH]);
 const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
+// The tab a session opens on when none was picked for it, on a desktop and on a phone (viewPrefs.mjs).
+const MY_SESSION_VIEW_PATH = '/api/my/session-view';
 const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
 const PULLS_FRESH_MS = 60_000;
 const MY_FILE_RE = /^\/api\/my\/files\/([a-z-]+)(\/reset)?$/;
@@ -2087,6 +2089,22 @@ export function createHandler({
     return reply(res, 200, await myReviewsView(login));
   }
 
+  // Kept with the person's pins, so it needs no secret store, and with no sign-in it is the console's one person's.
+  async function mySessionViewWrite(req, res, login) {
+    if (!viewPrefs) return reply(res, 404, { error: 'this console keeps no view preferences' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    try {
+      return reply(res, 200, viewPrefs.setSessionView(login, body));
+    } catch (err) {
+      if (err.shown) return reply(res, 400, { error: err.message });
+      throw err;
+    }
+  }
 
   // The same typed confirm as every other admin change is the page's; the server checks the value's bounds.
   async function consoleSettingsWrite(req, res, pathname, login) {
@@ -2262,6 +2280,7 @@ export function createHandler({
     const slackWrite = SLACK_SETUP_WRITE_RE.exec(pathname);
     if (slackWrite) return slackSetupWrite(req, res, slackWrite[1] ?? null, login);
     if (pathname === '/api/my/reviews') return myReviewsWrite(req, res, login);
+    if (pathname === MY_SESSION_VIEW_PATH) return mySessionViewWrite(req, res, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH || pathname === PROJECT_TRIGGERS_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
     if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
@@ -2433,6 +2452,10 @@ export function createHandler({
       return reply(res, 200, myView(user.login));
     }
     if (pathname === '/api/my/reviews') return reply(res, 200, await myReviewsView(user.login));
+    if (pathname === MY_SESSION_VIEW_PATH) {
+      if (!viewPrefs) return reply(res, 404, { error: 'this console keeps no view preferences' });
+      return reply(res, 200, viewPrefs.sessionView(user.login));
+    }
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
     if (pathname === '/api/my/projects') return reply(res, 200, await projectsView(user.login));
     if (pathname === '/api/my/codex-models') return reply(res, 200, codexModels ? await codexModels.list(user.login) : { models: BUILT_IN_CODEX_MODELS, source: 'built-in', note: null });

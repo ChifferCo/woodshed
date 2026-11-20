@@ -29,6 +29,8 @@
       words: 'review reviewer reviews codex openai claude code both none no off agents second opinion verdict approve merge risk pull request pr' },
     { page: '/settings', id: 'my-project', title: 'My default project', note: 'The repo New session starts on for you.',
       words: 'repo repository default project which repo new session start on pick choose' },
+    { page: '/settings', id: 'my-display', title: 'Display', note: 'Theme, review files folded or expanded, and whether a session opens on Chat or TUI, on a desktop and on a phone.',
+      words: 'theme dark light mode appearance colours colors review files folded expanded collapse chat tui terminal default view tab open mobile phone desktop' },
     { page: '/settings', id: 'my-timeouts', title: 'My session timeouts', note: 'How long your sessions wait for you, and how long they may run. Overrides the console\'s numbers for you.',
       words: 'idle pause paused lifetime stop hours limit time out timeout expire how long wait auto stop sleep override' },
     { page: '/settings', id: 'my-databases', title: 'My databases', note: 'Your own copy of the databases, restore a dump, reset your data.',

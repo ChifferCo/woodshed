@@ -1,4 +1,5 @@
-// Each person's rail: the sessions they pinned, and the project New session opens on. After the shed's
+// Each person's rail: the sessions they pinned, the project New session opens on, and the tab a session opens on when
+// none was picked for it (Chat or TUI, one for a desktop and one for a phone). After the shed's
 // viewPrefs.mjs, but per person, since everyone here sees the same shared sessions. Kept in the console's state, so
 // it is the same in every browser the person signs in from.
 
@@ -18,6 +19,10 @@ function dropFoldedKeys(store) {
   store.save();
   console.log('viewPrefs: dropped the old fold choices', { people: stale.length });
 }
+
+// The views a session can open on by default, and the widths each choice is for (session.js reads `phone` under 720px).
+export const SESSION_VIEWS = ['chat', 'tui'];
+const DEFAULT_SESSION_VIEW = { desktop: 'chat', phone: 'chat' };
 
 function emptyPrefs() {
   return { pinned: [] };
@@ -45,14 +50,39 @@ export function createViewPrefs(store) {
   /**
    * @param {string|null} login
    * @param {Set<string>} [ids]  the sessions the person can see now; a pin of any other is left out
-   * @returns {{pinned: string[]}}
+   * @returns {{pinned: string[], sessionView: {desktop: string, phone: string}}}
    */
   function view(login, ids = null) {
     const prefs = all()[login ?? ''] ?? emptyPrefs();
     const kept = (id) => !ids || ids.has(id);
     return {
       pinned: prefs.pinned.filter(kept),
+      sessionView: sessionView(login),
     };
+  }
+
+  /** @returns {{desktop: string, phone: string}}  the tab a session opens on when none was picked, Chat unless changed */
+  function sessionView(login) {
+    return { ...DEFAULT_SESSION_VIEW, ...all()[login ?? '']?.sessionView };
+  }
+
+  /**
+   * @param {{desktop?: string, phone?: string}} choice  either or both; Chat, the default, is kept as nothing
+   * @returns {{desktop: string, phone: string}}
+   */
+  function setSessionView(login, choice) {
+    const picks = Object.entries(choice ?? {});
+    if (!picks.length || picks.some(([where, view]) => !Object.hasOwn(DEFAULT_SESSION_VIEW, where) || !SESSION_VIEWS.includes(view))) {
+      throw Object.assign(new Error('give desktop or phone, each chat or tui'), { shown: true });
+    }
+    const prefs = prefsOf(login);
+    const next = { ...prefs.sessionView, ...Object.fromEntries(picks) };
+    for (const [where, view] of Object.entries(next)) if (view === DEFAULT_SESSION_VIEW[where]) delete next[where];
+    if (Object.keys(next).length) prefs.sessionView = next;
+    else delete prefs.sessionView;
+    store.save();
+    console.log('viewPrefs: session view changed', { login, ...sessionView(login) });
+    return sessionView(login);
   }
 
   /** @returns {string|null}  the project the person chose to open New session on, whether or not it still exists */
@@ -78,5 +108,5 @@ export function createViewPrefs(store) {
     return view(login);
   }
 
-  return { view, setPinned, defaultProject, setDefaultProject };
+  return { view, setPinned, defaultProject, setDefaultProject, sessionView, setSessionView };
 }
