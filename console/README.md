@@ -2294,7 +2294,8 @@ and is handed a link and a status, never a credential:
    rule that refuses the App's commits says so), and the steps done stay done.
 4. **Follow.** The session polls `POST /review-setup/status` with `{"id"}` (its own requests only); a person reads
    `GET /api/review-setup/<id>`. Which step failed, and why, is shown only to those who can write to the repo (for a
-   session, its owner or whoever started it): anyone else reads `failed` and where to look. `status` is `pending`, `applying`, `applied`, `refused` or `failed`, with `why` and
+   session, only a private one whose owner can: anyone signed in can open a shared session and read what it was
+   told): anyone else reads `failed` and where to look. `status` is `pending`, `applying`, `applied`, `refused` or `failed`, with `why` and
    each step's outcome. A request nobody decides in 24 hours is refused as expired.
 
 Who can write to a repo, and who is its admin, is GitHub's base `permission` for them, whatever custom role they have.

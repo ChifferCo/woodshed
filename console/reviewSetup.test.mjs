@@ -356,6 +356,19 @@ test('a failure\'s detail is for those who can write to the repo: the asker with
   assert.match(catPage.why, /those who can write to the repo see which/);
   assert.doesNotMatch(JSON.stringify(catPage), /main|409|rule|commit/i, 'nor in the history or steps');
   assert.match((await reviewSetup.view(request, 'ann', { consoleAdmin: false })).why, /Repository rule violations found/);
+
+  // A shared session started by someone who can write to the repo: anyone signed in can open it, so no detail.
+  const shared = setup({ repos: { 'acme/game': { admins: ['ann'], protectedBranch: true } } });
+  const r = (await shared.reviewSetup.create(parseRequest({ repo: 'acme/game' }), { session: { id: 'eeee1111', title: 'x', startedBy: 'ann', status: 'running' } })).request;
+  await approveShown(shared.reviewSetup, r, 'ann', { consoleAdmin: true });
+  const forShared = await shared.reviewSetup.sessionStatus(r);
+  assert.deepEqual([forShared.status, forShared.steps], ['failed', []]);
+  assert.match(forShared.why, /those who can write to the repo see which/);
+  // A private session of someone who can write to it gets the detail.
+  const own = setup({ repos: { 'acme/game': { admins: ['ann'], protectedBranch: true } } });
+  const o = (await own.reviewSetup.create(parseRequest({ repo: 'acme/game' }), { session: SESSION })).request;
+  await approveShown(own.reviewSetup, o, 'ann', { consoleAdmin: true });
+  assert.match((await own.reviewSetup.sessionStatus(o)).why, /Repository rule violations found/);
 });
 
 test('a label GitHub refuses for any reason but being there already fails its step', async () => {

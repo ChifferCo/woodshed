@@ -225,9 +225,9 @@ export function appGitHub({ appId, privateKey, fetchImpl = fetch, now = Date.now
   };
 }
 
-/** @returns {string}  what approving would do, as a hash: the steps, each file whole, and whether the key is set */
+/** @returns {string}  what approving would do, as a hash: the steps, each file whole and the one it replaces, and whether the key is set */
 export function planDigest(plan) {
-  const shown = { branch: plan.branch, setsKey: Boolean(plan.setsKey), steps: plan.steps.map((s) => [s.key, s.change, s.path ?? null, s.text ?? null]) };
+  const shown = { branch: plan.branch, setsKey: Boolean(plan.setsKey), steps: plan.steps.map((s) => [s.key, s.change, s.path ?? null, s.text ?? null, s.sha ?? null]) };
   return crypto.createHash('sha256').update(JSON.stringify(shown)).digest('hex').slice(0, 32);
 }
 
@@ -311,10 +311,13 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
     };
   }
 
-  /** A session's view of its own request: the detail when the person it is (its owner, or whoever started it) can write to the repo. */
+  /**
+   * A session's view of its own request: the detail only for a private session, which its owner alone opens, when they
+   * can write to the repo. Anyone signed in can open a shared session and read what it was told, so it gets none.
+   */
   async function sessionStatus(request) {
     const person = request.by.person;
-    const detail = typeof person === 'string' && /^[A-Za-z0-9-]{1,39}$/.test(person) && WRITER_ROLES.has(await repoRole(request.repo, person).catch(() => null));
+    const detail = request.by.private === true && typeof person === 'string' && /^[A-Za-z0-9-]{1,39}$/.test(person) && WRITER_ROLES.has(await repoRole(request.repo, person).catch(() => null));
     return statusOf(request, { detail });
   }
 
