@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildAnalysisPrompt } from './analyze.mjs';
+import { buildChatPrompt } from './chat.mjs';
 import {
   JUNIOR_SYSTEM_PROMPT, juniorArgv, seniorArgv, buildTopQuestionsPrompt, buildFollowupsPrompt, buildAnswersPrompt,
   topQuestions, followupQuestions, applyAnswers, pathTo, extractStructured,
@@ -88,10 +89,13 @@ test('a worktree review\'s made-up title and body are not handed over as the aut
   const top = buildTopQuestionsPrompt({ meta, files, overview: '' });
   const answers = buildAnswersPrompt({ meta, files, overview: '', items: [], open: [] });
   const analysis = buildAnalysisPrompt({ meta, files });
-  for (const prompt of [top, answers, analysis]) {
+  const chat = buildChatPrompt({ meta, artifact: null, files, history: [], question: 'q' });
+  for (const prompt of [top, answers, analysis, chat]) {
     assert.doesNotMatch(prompt, /Work in progress on/);
     assert.doesNotMatch(prompt, /written by the author\):/);
     assert.match(prompt, /title: \(none: the change is still being made on feature-x/);
+  }
+  for (const prompt of [top, answers, analysis]) {
     assert.match(prompt, /do\s+not ask about or remark on them/);
   }
   assert.doesNotMatch(top, /Ask about the words in the title/);

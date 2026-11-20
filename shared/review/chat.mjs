@@ -15,6 +15,8 @@
 
 import { randomBytes } from 'node:crypto';
 
+import { describedAs } from './analyze.mjs';
+
 const MAX_MESSAGE_CHARS = 2_000;
 const MAX_TURNS_IN_PROMPT = 12;
 const MAX_HISTORY_CHARS = 12_000;
@@ -83,7 +85,7 @@ export function buildChatPrompt({ meta, artifact, files, history, question }) {
   );
 
   lines.push(`<${prTag}>`);
-  lines.push(`title: ${String(meta?.title || '').slice(0, 300)}${meta?.number ? ` (#${meta.number})` : ''}`);
+  lines.push(`title: ${describedAs(meta).title}${meta?.number ? ` (#${meta.number})` : ''}`);
   lines.push(`branch: ${meta?.headRefName || '?'} into ${meta?.baseRefName || '?'}`);
   if (artifact?.overview) {
     lines.push('');
