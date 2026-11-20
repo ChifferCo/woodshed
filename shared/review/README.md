@@ -110,8 +110,8 @@ re-analyse — and everything before them is about keeping three things in step.
   nowhere else, so each branch has a test that fails without it: delete the
   dirty-tree guard and two of `worktree.test.mjs`'s cases fail, the own-commits
   guard a third, the no-op case a fourth.
-- **Nothing is written until the diff is in hand.** The fetch and `gh pr diff`
-  come first, so a pull request that cannot be diffed leaves the review exactly
+- **Nothing is written until the diff is in hand.** The fetch and the diff
+  (computed locally from the fetched base and head, `pullRequestDiff`) come first, so a pull request that cannot be diffed leaves the review exactly
   as it was rather than half-refreshed.
 - **The diff is written before the record.** The record names the commit the
   analysis is about: a new diff under an old header is survivable, an old diff
@@ -139,6 +139,7 @@ highlight.mjs  tokenizeLine — also runs in the browser, see below
 analyze.mjs    schema, prompt, NDJSON reducer, reconciliation
 explain.mjs    prompt, validation, answer extraction
 chat.mjs       the conversation about the change as a whole: prompt, history bound
+qa.mjs         the Q&A tab: a newcomer's questions and their answers, as a tree
 jobs.mjs       `claude -p` child lifecycle, concurrency, orphan reaping
 store.mjs      on-disk layout under $REVIEWS_DIR, one directory per session
 github.mjs     the `gh` CLI
@@ -281,7 +282,12 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
   submitted), `DELETE /comments` (removes one or the whole draft), `/viewed`
   (this account's per-file tick, which nobody else sees), `PATCH /title`
   (renames the pull request) and `POST /merge` (squash-merges it, or adds it to the merge queue when its base branch has one). Everything else here reads: `gh pr view`,
-  `gh pr diff`, and a `claude` run over a diff already on disk.
+  a `git diff` of the fetched base and head, and a `claude` run over a diff already on disk.
+
+- **A pull request's diff is computed here, not asked of GitHub.** `gh pr diff` names no commit, so a push between
+  reading the head and fetching the diff (even one pushed back again) could pair another commit's diff with the commit
+  the review checked out, which the analysis and the Q&A read. `pullRequestDiff` diffs the base fetched with the head
+  against that commit, three dots as GitHub shows it; a base that could not be fetched refuses the take.
 
   Submitting posts under whichever account `gh` is signed in as on the box,
   and that is visible to everyone on the pull request.
@@ -392,6 +398,25 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
   every later prompt. Polling goes through the explain endpoint, so a chat
   job's id is its askId; it has its own breadcrumb kind so an orphaned chat
   cannot clear the analysis's.
+
+- **The Q&A is two voices, and the newcomer cannot read the code.** `POST /reviews/<session>/qa` (the page sends it
+  the first time the Q&A tab opens) runs rounds of `claude -p`: a newcomer, whose whole system prompt is a junior
+  developer new to the codebase who knows none of its jargon (`--system-prompt`, `--tools ''`), asks up to six
+  questions from the title, description, file list and overview; an answerer with the explain's containment (Read,
+  Grep and Glob) answers them all in one run, quoting real code where it helps. Unlike every other run here, the
+  answerer does not read the live worktree: it reads a copy of the tree the diff was taken from (`snapshot`, the
+  scratch index's `write-tree` for a worktree review, held from gc by `refs/woodshed-qa/<session>/<tree>` (one ref per tree, pruned to the one the record names) until the review
+  is removed, or the head commit), whose blobs are written as git stores them
+  (`ls-tree` and one `cat-file --batch`) into a scratch folder for the run: not `git archive`, whose `export-ignore`
+  could drop a file the diff shows, nor `checkout-index`, whose line-ending and filter conversions could change one.
+  The folder is deleted after the run, and the next copy removes any a restart left (more than 3 hours old), so its answers never quote code the diff beside them
+  lacks; the newcomer reads
+  each answer and asks about what it did not follow, at most two per answer, and so on to three levels. A round with
+  no follow-ups ends it, so most runs are four to six calls. Tools on the newcomer would defeat it: it would read the
+  checkout and ask what a model that has read it thinks a newcomer should. `qa.json` holds a flat list whose
+  `parent` ids make the tree, written after every step so the page polls it growing; the page folds every question
+  and opens only what is clicked. It describes a diff, so `removeArtifact` drops it with the artifact (a re-review or
+  Discard), and a run the shed restarted under reads back as `interrupted`.
 
 - **An ask panel is a conversation, and the page holds it.** Each question under a file, line or span is still one
   `claude -p` run, but the page sends the earlier turns of that panel in `history` and `buildExplainPrompt` replays the
@@ -517,6 +542,13 @@ and passes for the wrong reason, which has already happened in this directory's
 history. Test the reducer, the extraction and the reconciliation against the
 recorded transcript instead, and verify the live path by driving the real thing
 in a browser.
+
+A stand-in is fine where nothing it says is under test. `jobs.test.mjs` and
+`qaRoutes.test.mjs` put a `claude` first on the PATH that sleeps, or that answers
+every id it is given with fixed text, because what they check is the lifecycle
+around the model: how many run at once, which rounds run in which order, what is
+saved when, and that a cancelled run writes nothing back. None of them asserts
+anything about a question or an answer being good, which only a real run shows.
 
 Two traps when running a test instance:
 `TMUX_TMPDIR` does not isolate anything when the session is itself inside tmux

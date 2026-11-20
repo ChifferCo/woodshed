@@ -24,7 +24,7 @@ import path from 'node:path';
 
 import { parseUnifiedDiff } from './diff.mjs';
 import {
-  originSlug, fetchPrMeta, fetchPrDiff, submitPrReview, fetchViewedFiles, setFileViewed, ghAccount,
+  originSlug, fetchPrMeta, submitPrReview, fetchViewedFiles, setFileViewed, ghAccount,
   setPrTitle, fetchReviewState, addPendingComment, deletePendingComment, discardPendingReview,
   submitPendingReview, postLineComment, deletePostedComment, deleteIssueComment, hideComment,
 } from './github.mjs';
@@ -32,14 +32,14 @@ import { parseTarget, prBranchFor, reviewBranchFor, describeTarget } from './tar
 import {
   createReviewWorktree, removeReviewWorktree, defaultBranch, branchDiff, commitSubject,
   legacyReviewRefs, deleteLegacyRef, worktreeDiff, worktreeState,
-  fetchTargetHead, dropStagingRef, moveReviewWorktree, pullWorktreeBranch,
+  fetchTargetHead, dropStagingRef, moveReviewWorktree, pullWorktreeBranch, holdTree, pruneHeldTrees, releaseTree,
 } from './worktree.mjs';
 import { REVIEW_HTML } from './page.mjs';
 import {
   readDiff, writeDiff, readArtifact, writeArtifact,
   writeSessionReview, readSessionReview, hasSessionReview, listReviewSessions,
   removeReviewState, hasJobBreadcrumb, answerKey, isSessionName, legacyStatePaths,
-  removeArtifact, readChat, appendChat, discardReviewWork,
+  removeArtifact, readChat, appendChat, discardReviewWork, readQa, writeQa,
 } from './store.mjs';
 import {
   startJob, findJob, sweepOrphans, cancelJobsForSession, availableBytes, MIN_AVAILABLE_BYTES,
@@ -51,6 +51,11 @@ import {
   validateExplainRequest, explainArgv, buildExplainPrompt, extractAnswer,
 } from './explain.mjs';
 import { validateChatRequest, buildChatPrompt } from './chat.mjs';
+import {
+  MAX_DEPTH as QA_MAX_DEPTH, juniorArgv, seniorArgv, buildTopQuestionsPrompt, buildFollowupsPrompt,
+  buildAnswersPrompt, extractStructured, topQuestions, followupQuestions, applyAnswers,
+  snapshotTreeish, makeSnapshot, removeSnapshot,
+} from './qa.mjs';
 import { enqueuePr, fetchMergeReadiness, mergeBlocker, mergePr } from './merge.mjs';
 import { pullRequestsFor, schedulePrRefresh } from '../prStatus.mjs';
 
@@ -148,6 +153,33 @@ const EXPLAIN_JOB_TTL_MS = 2 * 60_000;
 /** session -> the chat turn in flight. One at a time: a turn replays the
  *  transcript, so two at once would each answer without the other. */
 const chatJobs = new Map();
+/** session -> {gen} of the Q&A run going for it. Deleted wherever reviewState
+ *  is, so a run unwinding after a discard or re-review writes nothing. */
+const qaRuns = new Map();
+let qaGen = 0;
+
+/**
+ * session -> the take of its review in progress. One at a time per session,
+ * from holding its tree to starting the new analysis: two overlapping takes
+ * could otherwise prune the tree the other is about to record, and a Q&A asked
+ * between a take's new record and its cancelling of old runs would be cancelled
+ * and erased with them. A Q&A asked while a take is in progress is refused.
+ */
+const takes = new Map();
+
+async function oneTakeAtATime(session, take) {
+  const before = takes.get(session) || Promise.resolve();
+  let done;
+  const mine = before.then(() => new Promise((resolve) => { done = resolve; }));
+  takes.set(session, mine);
+  await before;
+  try {
+    return await take();
+  } finally {
+    done();
+    if (takes.get(session) === mine) takes.delete(session);
+  }
+}
 
 // --- what server.mjs calls at launch ----------------------------------------
 
@@ -279,7 +311,7 @@ async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath
   }
 
   const patch = target.kind === 'pr'
-    ? await fetchPrDiff({ pr: target.pr, slug })
+    ? await pullRequestDiff({ repoRoot, baseRef, headSha: created.headSha, baseFetched: created.baseFetched })
     : await branchDiff({ repoRoot, baseRef, headSha: created.headSha });
   if (!patch.ok) {
     await undo(patch.error);
@@ -292,8 +324,8 @@ async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath
     : await branchMeta({ repoRoot, target, baseRef, headSha: created.headSha, diff });
 
   // GitHub's own file count and git's can disagree — rename detection is the
-  // usual reason, and `gh pr diff` and `gh pr view` do not always agree with
-  // each other either. Not worth failing a review over, absolutely worth
+  // usual reason, and the diff here is git's own (pullRequestDiff), not
+  // GitHub's. Not worth failing a review over, absolutely worth
   // knowing about when a file seems to be missing from one.
   if (typeof meta.changedFiles === 'number' && meta.changedFiles !== diff.files.length) {
     log('review.file_count_mismatch', {
@@ -321,7 +353,8 @@ async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath
 
   try {
     writeSessionReview({ session: sessionName, review });
-    writeDiff({ session: sessionName, diff });
+    // Stamped with the take it belongs to: see handleDiff.
+    writeDiff({ session: sessionName, diff: { ...diff, createdAt: review.createdAt } });
   } catch (err) {
     await undo(`could not write review state: ${err?.message}`);
     return { ok: false, status: 500, error: `could not write review state: ${err?.message}` };
@@ -390,10 +423,11 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
       from: pulled.from?.slice(0, 8), to: pulled.to?.slice(0, 8), refused: pulled.refused ?? null,
     });
   }
-  // Unique per call, not per session. Two overlapping reviews of the same
-  // session are reachable — nothing serialises them, and a double-click is
-  // enough — and a shared scratch index means one `add -A` lands in the other's
-  // diff. That failure is silent and produces a plausible wrong answer, which
+  // Unique per call, not per session. Its callers now take a session's review
+  // one at a time (oneTakeAtATime), but this was written when two overlapping
+  // reviews of the same session were reachable — a double-click was enough —
+  // and a shared scratch index meant one `add -A` landed in the other's diff.
+  // Kept unique, so a caller outside the lock cannot bring that back. That failure is silent and produces a plausible wrong answer, which
   // is the worst kind to leave in.
   const indexFile = path.join(
     os.tmpdir(),
@@ -411,6 +445,13 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
     };
   }
 
+  // Held before the record names it: see holdTree for why that order.
+  if (patch.treeSha) {
+    const held = await holdTree({ worktreePath, sessionName, treeSha: patch.treeSha });
+    // Not fatal: the tree is there now, and only gc's grace period later can take it.
+    if (!held.ok) log('review.snapshot_not_held', { reqId, session: sessionName, error: held.error });
+  }
+
   const state = await worktreeState({ worktreePath, baseSha: patch.baseSha });
   const meta = worktreeMeta({ baseRef, state, diff, headSha: patch.headSha });
 
@@ -422,6 +463,10 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
     baseRef,
     headSha: patch.headSha,
     baseSha: patch.baseSha,
+    // The tree this diff was taken from, uncommitted files included: what the
+    // Q&A answers from, so its answers match the diff on screen.
+    snapshot: patch.treeSha,
+    snapshotError: patch.treeError ?? null,
     // Nothing here to take away. removeReviewSession keys off this.
     reviewBranch: null,
     ownsWorktree: false,
@@ -437,7 +482,8 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
 
   try {
     writeSessionReview({ session: sessionName, review });
-    writeDiff({ session: sessionName, diff });
+    // Stamped with the take it belongs to: see handleDiff.
+    writeDiff({ session: sessionName, diff: { ...diff, createdAt: review.createdAt } });
   } catch (err) {
     // No undo in the prepareReview sense: this created no worktree and no
     // branch, so there is nothing to hand back. Clearing the state keeps
@@ -451,9 +497,19 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
     // old record while the new diff may or may not be on disk beside it, which
     // is the pairing this whole path exists to keep straight.
     removeReviewState(sessionName);
+    // And the trees held for it: with no record left, nothing would ever let them
+    // go, and they keep the working tree's files, uncommitted ones included.
+    const released = await releaseTree({ worktreePath, sessionName });
+    if (!released.ok) log('review.snapshot_refs_not_released', { reqId, session: sessionName, error: released.error });
     return { ok: false, status: 500, error: `could not write review state: ${err?.message}` };
   }
 
+  if (patch.treeError) log('review.snapshot_not_recorded', { reqId, session: sessionName, error: patch.treeError });
+  // The trees held for earlier takes go now, all but the one the record names
+  // at this moment: read again rather than taken from this call, since another
+  // Re-review may have written it since (see holdTree).
+  const pruned = await pruneHeldTrees({ worktreePath, sessionName, keep: readSessionReview(sessionName)?.snapshot ?? null });
+  if (!pruned.ok) log('review.snapshot_refs_not_pruned', { reqId, session: sessionName, error: pruned.error });
   log('review.worktree_prepared', {
     reqId,
     session: sessionName,
@@ -482,8 +538,12 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
  */
 export async function ensureWorktreeReview({ ctx, sessionName }) {
   if (readSessionReview(sessionName)) return { ok: true, created: false };
-  const made = await createWorktreeReview({ ctx, sessionName, worktreePath: ctx.worktreePathFor(sessionName) });
-  return made.ok ? { ok: true, created: true } : { ok: false, status: made.status, error: made.error };
+  return oneTakeAtATime(sessionName, async () => {
+    // Asked again inside: another opening of the page may have made it meanwhile.
+    if (readSessionReview(sessionName)) return { ok: true, created: false };
+    const made = await createWorktreeReview({ ctx, sessionName, worktreePath: ctx.worktreePathFor(sessionName) });
+    return made.ok ? { ok: true, created: true } : { ok: false, status: made.status, error: made.error };
+  });
 }
 
 /**
@@ -587,7 +647,7 @@ async function refreshTargetReview({ ctx, sessionName }) {
     }
 
     const patch = target.kind === 'pr'
-      ? await fetchPrDiff({ pr: target.pr, slug })
+      ? await pullRequestDiff({ repoRoot, baseRef, headSha: head.headSha, baseFetched: head.baseFetched })
       : await branchDiff({ repoRoot, baseRef, headSha: head.headSha });
     if (!patch.ok) return { ok: false, status: patch.status, error: patch.error };
 
@@ -630,7 +690,9 @@ async function refreshTargetReview({ ctx, sessionName }) {
     try {
       // The diff before the record, because the record is what says which
       // commit the analysis is about. See the header.
-      writeDiff({ session: sessionName, diff });
+      // Stamped with the take it belongs to, so a record that then fails to save
+      // cannot pair the old take's createdAt with this diff: see handleDiff.
+      writeDiff({ session: sessionName, diff: { ...diff, createdAt: next.createdAt } });
       writeSessionReview({ session: sessionName, review: next });
     } catch (err) {
       // Deliberately NOT removeReviewState: this record is the only thing that
@@ -691,8 +753,14 @@ export function startReviewAnalysisIfNone({ ctx, sessionName }) {
  * the BRANCH has to go with it and only this module knows the branch's name.
  * server.mjs still removes the worktree itself for a non-review session.
  */
-export async function removeReviewSession({ ctx, sessionName }) {
-  if (!isSessionName(sessionName)) return { removed: false };
+export function removeReviewSession({ ctx, sessionName }) {
+  if (!isSessionName(sessionName)) return Promise.resolve({ removed: false });
+  // Under the same lock as a take, so a Re-review in progress cannot hold a tree
+  // or write a record after the removal let them go.
+  return oneTakeAtATime(sessionName, () => removeReviewSessionNow({ ctx, sessionName }));
+}
+
+async function removeReviewSessionNow({ ctx, sessionName }) {
   const review = readSessionReview(sessionName);
   if (!review) return { removed: false };
 
@@ -701,6 +769,12 @@ export async function removeReviewSession({ ctx, sessionName }) {
   // during the await below and runAnalysis resumes, guarded by these maps.
   reviewState.delete(sessionName);
   progressBySession.delete(sessionName);
+  qaRuns.delete(sessionName);
+  // The ref holding the Q&A's tree goes with the review, whoever owns the worktree.
+  if (review.kind === 'worktree') {
+    const released = await releaseTree({ worktreePath: review.worktree, sessionName });
+    if (!released.ok) ctx.log('review.snapshot_refs_not_released', { session: sessionName, error: released.error });
+  }
 
   // A review of a session's OWN worktree owns nothing. The worktree and the
   // branch are the user's work, and the review is a read of them — taking
@@ -755,6 +829,25 @@ export async function removeReviewSession({ ctx, sessionName }) {
 }
 
 // --- HTTP -------------------------------------------------------------------
+
+/**
+ * A pull request's diff, of exactly `headSha`: the commit the review checked
+ * out, and so the one the analysis and the Q&A read. Computed here, from the
+ * pull request's base as fetched with its head and that commit (three dots,
+ * against their merge base, as GitHub shows it), rather than asked of `gh pr
+ * diff`, which names no commit: a push between reading the head and fetching
+ * the diff, even one pushed back again, could pair another commit's diff with
+ * this one. A base that could not be fetched refuses the take rather than
+ * diffing against an old one.
+ *
+ * @returns {Promise<{ok: true, patch: string} | {ok: false, status: number, error: string}>}
+ */
+export async function pullRequestDiff({ repoRoot, baseRef, headSha, baseFetched, diff = branchDiff }) {
+  if (!baseFetched) {
+    return { ok: false, status: 502, error: `could not fetch ${baseRef} from origin to diff the pull request against: take it again` };
+  }
+  return diff({ repoRoot, baseRef, headSha });
+}
 
 /**
  * Handle anything under /review or /reviews. Returns false when the URL is not
@@ -911,6 +1004,14 @@ export async function handleReviewRequest(req, res, ctx) {
   // is still on it afterwards, with the diff and an offer to read it again.
   if (req.method === 'POST' && section === '/discard') {
     handleDiscardReview(res, ctx, session);
+    return true;
+  }
+  if (req.method === 'GET' && section === '/qa') {
+    handleQaRead(res, ctx, session);
+    return true;
+  }
+  if (req.method === 'POST' && section === '/qa') {
+    await gated(res, ctx, 'qa', () => handleQaStart(res, ctx, session, url.searchParams.get('forDiff'), url.searchParams.get('first') === '1'));
     return true;
   }
   if (req.method === 'GET' && section === '/chat') {
@@ -1070,6 +1171,7 @@ function handleDiscardReview(res, ctx, session) {
   const killed = cancelJobsForSession(session);
   reviewState.delete(session);
   progressBySession.delete(session);
+  qaRuns.delete(session);
   discardReviewWork(session);
   log('review.discarded', { reqId, session, jobsKilled: killed, kind: review?.kind });
   json(res, 200, { ok: true });
@@ -1304,7 +1406,11 @@ async function handleViewedWrite(payload, res, ctx, session) {
   json(res, 200, { ok: true, path: filePath, viewed: !!payload.viewed });
 }
 
-async function handleWorktreeReview(res, ctx, session) {
+function handleWorktreeReview(res, ctx, session) {
+  return oneTakeAtATime(session, () => takeWorktreeReview(res, ctx, session));
+}
+
+async function takeWorktreeReview(res, ctx, session) {
   const { json, log, reqId } = ctx;
   // No existence check here: worktreePathFor only computes a path, and whether
   // anything is at it is worktreeDiff's first question — which answers with a
@@ -1344,6 +1450,7 @@ async function handleWorktreeReview(res, ctx, session) {
   // silently keeps the stale one and the user is told it worked.
   reviewState.delete(session);
   progressBySession.delete(session);
+  qaRuns.delete(session);
   beginAnalysis({ ctx, session, review: made.review });
 
   log('review.worktree_started', { reqId, session, cancelled, files: made.review.meta.changedFiles });
@@ -1367,7 +1474,11 @@ async function handleWorktreeReview(res, ctx, session) {
  * touches none of it — there is nothing to replace, so nothing is cancelled and
  * no run is paid for.
  */
-async function handleRefreshReview(res, ctx, session) {
+function handleRefreshReview(res, ctx, session) {
+  return oneTakeAtATime(session, () => takeRefreshReview(res, ctx, session));
+}
+
+async function takeRefreshReview(res, ctx, session) {
   const { json, log, reqId } = ctx;
 
   const done = await refreshTargetReview({ ctx, sessionName: session });
@@ -1388,6 +1499,7 @@ async function handleRefreshReview(res, ctx, session) {
   }
   reviewState.delete(session);
   progressBySession.delete(session);
+  qaRuns.delete(session);
   beginAnalysis({ ctx, session, review: done.review });
 
   log('review.refresh_started', {
@@ -1557,7 +1669,13 @@ function restoreState(session) {
 function handleDiff(res, ctx, session) {
   const diff = readDiff(session);
   if (!diff) return ctx.json(res, 404, { ok: false, error: 'no diff stored for this session' });
-  return ctx.json(res, 200, { ok: true, session, ...diff });
+  // Which take the diff belongs to: its own stamp, written with it, so neither a
+  // status read just before nor a record that failed to save after a refresh
+  // can pair it with another take's (and so with another take's Q&A). A diff
+  // from before the stamp falls back on the record.
+  return ctx.json(res, 200, {
+    ok: true, session, ...diff, createdAt: diff.createdAt ?? readSessionReview(session)?.createdAt ?? null,
+  });
 }
 
 async function handleAnalyze(res, ctx, session) {
@@ -1992,6 +2110,256 @@ async function handleChat(payload, res, ctx, session) {
     });
 
   return json(res, 200, { ok: true, askId: job.jobId, status: 'running' });
+}
+
+// --- Q&A ----------------------------------------------------------------------
+
+function qaIsLive(session, gen) {
+  return qaRuns.get(session)?.gen === gen;
+}
+
+// What is on disk, said honestly: a run that was going when the shed restarted
+// is not going now, and saying 'running' would leave the page waiting forever.
+function handleQaRead(res, ctx, session) {
+  const { json } = ctx;
+  const review = readSessionReview(session);
+  if (!review) return json(res, 404, { ok: false, error: 'no review for this session' });
+  // A Q&A answers about the diff it was asked of. removeArtifact deletes it with
+  // the artifact on a re-review, but a delete can fail and is only logged there;
+  // this is what keeps a left-behind one from being read against the new diff.
+  let qa = readQa(session);
+  if (qa && (qa.forDiff ?? null) !== (review.createdAt ?? null)) qa = null;
+  if (qa && qa.status === 'running' && !qaRuns.has(session)) {
+    return json(res, 200, { ok: true, qa: { ...qa, status: 'interrupted', phase: null }, showCosts: SHOW_COSTS });
+  }
+  return json(res, 200, { ok: true, qa, showCosts: SHOW_COSTS });
+}
+
+// `forDiff` is the diff the asking page shows (the review's createdAt). A page
+// left open across a Re-review elsewhere would otherwise pay for a Q&A about a
+// diff it is not showing, and could not show; a caller that names none (a
+// script) asks about whatever the review is now.
+// `first`: the page asking by itself, on the tab's first opening, rather than a
+// person pressing Ask again. That one never replaces a Q&A this diff already
+// has: a tab that opened late, while another tab's run finished, would
+// otherwise pay to throw that one away.
+function handleQaStart(res, ctx, session, forDiff, first = false) {
+  const { json, log, reqId } = ctx;
+  const review = readSessionReview(session);
+  if (!review) return json(res, 404, { ok: false, error: 'no review for this session' });
+  if (forDiff !== null && forDiff !== (review.createdAt ?? '')) {
+    log('review.qa_refused_other_diff', { reqId, session });
+    return json(res, 409, {
+      ok: false, code: 'other-diff',
+      error: 'this review was taken again since the page loaded: reload it to ask about the newer diff',
+    });
+  }
+  // Before joining a run: during a take, the run going is the old diff's, which
+  // the take is about to cancel, and a request for the new diff would be lost with it.
+  if (takes.has(session)) {
+    log('review.qa_refused_retaking', { reqId, session });
+    return json(res, 409, { ok: false, code: 'retaking', error: 'this review is being taken again: ask once that has finished' });
+  }
+  const going = qaRuns.get(session);
+  if (going) {
+    // Joined only when it is this diff's.
+    if ((going.forDiff ?? null) === (review.createdAt ?? null)) return json(res, 200, { ok: true, status: 'running' });
+    log('review.qa_refused_old_run', { reqId, session });
+    return json(res, 409, { ok: false, code: 'retaking', error: 'a Q&A of the previous diff is still stopping: ask again in a moment' });
+  }
+  if (first) {
+    const had = readQa(session);
+    // Whatever its state: ready, failed, or cut off by a restart (still 'running'
+    // on disk, with no run going; one going was joined above). The page offers
+    // Ask again for each, and a first ask is not a person choosing to pay again.
+    if (had && (had.forDiff ?? null) === (review.createdAt ?? null)) {
+      log('review.qa_first_ask_kept', { reqId, session, status: had.status });
+      return json(res, 200, { ok: true, status: had.status, kept: true });
+    }
+  }
+  qaGen += 1;
+  const gen = qaGen;
+  qaRuns.set(session, { gen, forDiff: review.createdAt ?? null });
+  log('review.qa_started', { reqId, session, gen });
+  runQa({ ctx, session, review, gen })
+    .catch(function unexpected(err) {
+      log('review.qa_crashed', { session, error: err?.message });
+      // The crash is often the disk refusing qa.json, and this write can fail the
+      // same way. Thrown from here it would reject a promise nothing awaits, and
+      // an unhandled rejection ends the process hosting every review.
+      try {
+        if (qaIsLive(session, gen)) {
+          writeQa({ session, qa: failedQaRecord({ saved: readQa(session), review, err }) });
+        }
+      } catch (again) {
+        log('review.qa_failure_not_saved', { session, error: again?.message });
+      }
+    })
+    .finally(function release() {
+      if (qaIsLive(session, gen)) qaRuns.delete(session);
+    });
+  return json(res, 200, { ok: true, status: 'running' });
+}
+
+/**
+ * What a crashed Q&A run leaves on disk: a failure, for the diff it was about.
+ *
+ * What the run saved is kept only when that file is this diff's: one left from
+ * an older diff (its delete failed) would otherwise be relabelled as this one's,
+ * its answers shown against code they are not about. And it always carries
+ * forDiff: a crash before the first save left no file to take it from, and one
+ * without it is read as another diff's, which hides the failure.
+ */
+export function failedQaRecord({ saved, review, err }) {
+  const forDiff = review?.createdAt ?? null;
+  const own = saved && (saved.forDiff ?? null) === forDiff ? saved : { items: [] };
+  return { ...own, forDiff, status: 'failed', phase: null, error: err?.message || 'the Q&A failed' };
+}
+
+const QA_START_RETRIES = 10;
+const QA_START_RETRY_MS = 15_000;
+
+/** One run of either voice: started (waiting out memory pressure), awaited, and read. */
+async function qaRun({ ctx, session, review, gen, argv, cwd = review.worktree }) {
+  for (let tries = 0; tries < QA_START_RETRIES; tries += 1) {
+    if (!qaIsLive(session, gen)) return null;
+    const started = startJob({ kind: 'qa', session, argv, cwd, log: ctx.log, readMeminfo: ctx.readMeminfo });
+    if (started.ok) {
+      const job = await started.job.done;
+      if (!qaIsLive(session, gen)) return null;
+      return { ...extractStructured(job), ms: (job.endedAt || Date.now()) - (job.startedAt || Date.now()) };
+    }
+    if (started.status !== 503 && started.status !== 429) return { ok: false, error: started.error };
+    await delay(QA_START_RETRY_MS);
+  }
+  return { ok: false, error: 'the box stayed too busy to run the Q&A' };
+}
+
+/**
+ * The rounds: the newcomer asks, the answerer answers, the newcomer asks about
+ * what it did not follow in those answers, down to QA_MAX_DEPTH levels. Written
+ * to disk after every step, so the page shows the tree as it grows. A failure
+ * after the first answers keeps what was answered and says it stopped early.
+ */
+async function runQa({ ctx, session, review, gen }) {
+  let snapshotDir = null;
+  try {
+    return await runQaRounds({ ctx, session, review, gen, pin: (dir) => { snapshotDir = dir; } });
+  } finally {
+    // However it ended (done, failed, cancelled, crashed), the copy goes. One
+    // that would not go keeps its room reserved, which can refuse later Q&As
+    // until the stale sweep takes it, so it is said.
+    if (!removeSnapshot(snapshotDir)) {
+      ctx.log('review.qa_copy_not_removed', { session, dir: snapshotDir });
+    }
+  }
+}
+
+async function runQaRounds({ ctx, session, review, gen, pin }) {
+  const { log } = ctx;
+  const diff = readDiff(session);
+  const files = diff?.files || [];
+  // Read again for each prompt: a Q&A asked for while the analysis is still
+  // going gets the overview in its later rounds, once there is one.
+  const overviewNow = () => readArtifact(session)?.overview || '';
+  const qa = {
+    status: 'running', phase: 'asking', depth: 1, items: [], error: null, stoppedEarly: null,
+    startedAt: new Date().toISOString(), generatedAt: null, costUsd: 0, headSha: review.headSha || null,
+    // Which diff it is about: the review's createdAt, which every re-review sets anew.
+    forDiff: review.createdAt ?? null,
+  };
+  const save = () => { if (qaIsLive(session, gen)) writeQa({ session, qa }); };
+  const fail = (error) => {
+    qa.status = 'failed'; qa.phase = null; qa.error = error;
+    save();
+    log('review.qa_failed', { session, depth: qa.depth, error });
+  };
+  const spent = (r) => { if (typeof r?.costUsd === 'number') qa.costUsd += r.costUsd; };
+  save();
+  if (!files.length) {
+    qa.status = 'ready'; qa.phase = null; qa.generatedAt = new Date().toISOString();
+    save();
+    return;
+  }
+
+  // The answers come from the code as this diff has it, not the live tree.
+  // First, so a review that cannot be pinned fails before anything is paid for.
+  const treeish = snapshotTreeish(review);
+  if (!treeish && review.snapshotError) {
+    return fail(`the reviewed code was not recorded when this review was taken (${review.snapshotError})`);
+  }
+  if (!treeish) return fail('this review was taken before the Q&A could pin its code: press Re-review, then ask again');
+  const snapshot = await makeSnapshot({ repoDir: review.worktree, treeish, session });
+  // Handed to runQa's finally before anything else, cancelled or not: one place
+  // removes the copy, and says so when it could not.
+  if (snapshot.ok) pin(snapshot.dir);
+  // Logged before the cancel check: a copy that failed and could not be removed
+  // keeps room reserved, and a Discard meanwhile must not hide that.
+  else log('review.qa_copy_failed', { session, error: snapshot.error });
+  if (!qaIsLive(session, gen)) return;
+  if (!snapshot.ok) return fail(snapshot.error);
+  log('review.qa_pinned', { session, treeish: treeish.slice(0, 12) });
+
+  const asked = await qaRun({
+    ctx, session, review, gen,
+    argv: juniorArgv({ prompt: buildTopQuestionsPrompt({ meta: review.meta, files, overview: overviewNow() }), followups: false }),
+  });
+  if (!asked) return;
+  spent(asked);
+  if (!asked.ok) return fail(asked.error);
+  let open = topQuestions(asked.value);
+  if (!open.length) return fail('the newcomer asked no questions');
+  qa.items.push(...open);
+
+  for (let depth = 1; depth <= QA_MAX_DEPTH; depth += 1) {
+    qa.phase = 'answering'; qa.depth = depth;
+    save();
+    const answered = await qaRun({
+      ctx, session, review, gen,
+      argv: seniorArgv({ prompt: buildAnswersPrompt({ meta: review.meta, files, overview: overviewNow(), items: qa.items, open }) }),
+      cwd: snapshot.dir,
+    });
+    if (!answered) return;
+    spent(answered);
+    const landed = answered.ok ? applyAnswers(open, answered.value) : 0;
+    // A question with no answer goes: the tree only holds answered ones.
+    qa.items = qa.items.filter((i) => i.answer);
+    if (!landed) {
+      if (depth === 1) return fail(answered.ok ? 'the answers did not match the questions' : answered.error);
+      qa.stoppedEarly = answered.ok ? 'the follow-ups were not answered' : answered.error;
+      break;
+    }
+    log('review.qa_answered', { session, depth, asked: open.length, answered: landed, costUsd: answered.costUsd, ms: answered.ms });
+    if (depth === QA_MAX_DEPTH) break;
+
+    const frontier = open.filter((i) => i.answer);
+    qa.phase = 'asking'; qa.depth = depth + 1;
+    save();
+    const more = await qaRun({
+      ctx, session, review, gen,
+      argv: juniorArgv({
+        prompt: buildFollowupsPrompt({ meta: review.meta, files, overview: overviewNow(), items: qa.items, frontier }),
+        followups: true,
+      }),
+    });
+    if (!more) return;
+    spent(more);
+    if (!more.ok) {
+      qa.stoppedEarly = more.error;
+      break;
+    }
+    open = followupQuestions(more.value, frontier);
+    log('review.qa_followups', { session, depth: depth + 1, asked: open.length });
+    if (!open.length) break;
+    qa.items.push(...open);
+  }
+
+  qa.status = 'ready'; qa.phase = null; qa.generatedAt = new Date().toISOString();
+  save();
+  log('review.qa_done', {
+    session, items: qa.items.length, deepest: Math.max(...qa.items.map((i) => i.depth)),
+    stoppedEarly: qa.stoppedEarly, costUsd: Number(qa.costUsd.toFixed(4)),
+  });
 }
 
 // --- startup ----------------------------------------------------------------

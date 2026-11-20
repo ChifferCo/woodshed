@@ -155,6 +155,9 @@ export function removeArtifact(session) {
   if (!isSessionName(session)) return false;
   try {
     fs.rmSync(path.join(sessionDirFor(session), 'review.json'), { force: true });
+    // The Q&A answered questions about the diff being replaced, for the same
+    // reason as the artifact: kept, it would answer about code that is gone.
+    fs.rmSync(path.join(sessionDirFor(session), 'qa.json'), { force: true });
     return true;
   } catch (err) {
     if (err.code === 'ENOENT') return true;
@@ -254,7 +257,7 @@ export function answerKey({ session, filePath, line, side, question }) {
 // single job.json meant the explain overwrote the analysis's entry and then
 // deleted it on finishing — leaving a live analysis child with no breadcrumb at
 // all, which is precisely the orphan the breadcrumb exists to reap.
-const JOB_KINDS = ['analysis', 'explain', 'chat'];
+const JOB_KINDS = ['analysis', 'explain', 'chat', 'qa'];
 
 function breadcrumbName(kind) {
   return `job-${JOB_KINDS.includes(kind) ? kind : 'analysis'}.json`;
@@ -315,6 +318,22 @@ export function appendChat({ session, entries }) {
   const all = readChat(session).concat(entries).slice(-MAX_CHAT_ENTRIES);
   writeJsonAtomic(path.join(ensureSessionDir(session), 'chat.json'), all);
   return all;
+}
+
+// --- the Q&A ------------------------------------------------------------------
+
+// The newcomer's questions and their answers, as a flat list of items whose
+// `parent` makes the tree, with where the run is. Written after every round, so
+// a page polling it sees the tree grow and a restart keeps what was answered.
+// Only index.mjs's one Q&A run per session writes it.
+export function readQa(session) {
+  if (!isSessionName(session)) return null;
+  const got = readJson(path.join(sessionDirFor(session), 'qa.json'));
+  return got && typeof got === 'object' && Array.isArray(got.items) ? got : null;
+}
+
+export function writeQa({ session, qa }) {
+  writeJsonAtomic(path.join(ensureSessionDir(session), 'qa.json'), qa);
 }
 
 // --- migration off the old layout -------------------------------------------

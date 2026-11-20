@@ -397,5 +397,8 @@ test('a note from the program is listed beside the person, as text cut to its le
     ['ana-owner', undefined], ['lee-dev', 'hasn\'t signed in yet'], ['bo-dev', '<img src=x onerror=alert(1)>'],
     ['cy-dev', 'n'.repeat(NOTE_CHARS)], ['di-dev', undefined], ['ed-dev', undefined],
   ]);
-  assert.equal(warned.mock.calls.length, 0, 'a bad note drops no entry');
+  // Only the warning about dropped entries: other parts of the console started here warn too, on their own timing
+  // (a project file gh cannot read on CI), and counting every call made this test fail now and then.
+  const dropped = warned.mock.calls.filter((call) => call.arguments[0] === 'members: entries of the program\'s list left out');
+  assert.equal(dropped.length, 0, 'a bad note drops no entry');
 });

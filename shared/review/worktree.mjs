@@ -41,10 +41,13 @@ function stagingRef(sessionId) {
   return `refs/bridge-session/${sessionId}`;
 }
 
+// What a diff cut off at the runner's cap is refused with, rather than reviewed with files missing.
+const TOO_LARGE = 'the diff is larger than a review reads (64 MiB): it would be shown with files missing';
+
 // `repoRoot` is really "whatever directory to run in" — the worktree review
 // passes a session's own worktree, which is a git directory in its own right.
-function git(repoRoot, args, timeoutMs = GIT_TIMEOUT_MS, env) {
-  return run('git', ['-C', repoRoot, ...args], env ? { timeoutMs, env } : { timeoutMs });
+function git(repoRoot, args, timeoutMs = GIT_TIMEOUT_MS, env, maxBytes) {
+  return run('git', ['-C', repoRoot, ...args], { timeoutMs, ...(env ? { env } : {}), ...(maxBytes ? { maxBytes } : {}) });
 }
 
 /**
@@ -457,12 +460,9 @@ export async function defaultBranch(repoRoot, env = process.env) {
  * head, so commits landing on the base after the branch forked do not turn up
  * as reversed changes in someone's review.
  */
-export async function branchDiff({ repoRoot, baseRef, headSha }) {
-  const result = await git(
-    repoRoot,
-    ['diff', '--no-color', '--find-renames', `refs/remotes/origin/${baseRef}...${headSha}`],
-    GIT_TIMEOUT_MS,
-  );
+export async function branchDiff({ repoRoot, baseRef, headSha, maxBytes }) {
+  const args = ['-C', repoRoot, 'diff', '--no-color', '--find-renames', `refs/remotes/origin/${baseRef}...${headSha}`];
+  const result = await run('git', args, maxBytes ? { timeoutMs: GIT_TIMEOUT_MS, maxBytes } : { timeoutMs: GIT_TIMEOUT_MS });
   if (result.status !== 0) {
     return {
       ok: false,
@@ -471,6 +471,9 @@ export async function branchDiff({ repoRoot, baseRef, headSha }) {
       stderr: (result.stderr || '').trim().slice(0, 400),
     };
   }
+  // Cut off at the runner's cap with a clean exit, a diff would parse as whole
+  // and be reviewed with its last files missing.
+  if (result.truncated) return { ok: false, status: 413, error: TOO_LARGE };
   return { ok: true, patch: result.stdout || '' };
 }
 
@@ -642,10 +645,17 @@ const INDEX_TIMEOUT_MS = 120_000;
  * own changes reversed.
  *
  * @param {{repoRoot: string, worktreePath: string, baseRef: string, indexFile: string}} params
- * @returns {Promise<{ok: true, patch: string, baseSha: string, headSha: string, baseFetched: boolean}
+ * The scratch index is also written out as a tree object (`write-tree`): the
+ * exact tree this diff describes, uncommitted and untracked files included, so
+ * the Q&A can answer from it rather than from a tree that has moved on since.
+ * The caller holds it with a ref (holdTree), so git's gc keeps it while the
+ * review stands; `treeSha` is null, with `treeError` saying why, when it could
+ * not be written, which costs only the Q&A.
+ *
+ * @returns {Promise<{ok: true, patch: string, baseSha: string, headSha: string, treeSha: string|null, treeError: string|null, baseFetched: boolean}
  *                 | {ok: false, status: number, error: string, stderr?: string}>}
  */
-export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile }) {
+export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile, maxBytes }) {
   if (!fs.existsSync(worktreePath)) {
     return { ok: false, status: 409, error: 'this session no longer has a worktree' };
   }
@@ -704,6 +714,7 @@ export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile 
       ['diff', '--cached', '--no-color', '--find-renames', baseSha],
       INDEX_TIMEOUT_MS,
       env,
+      maxBytes,
     );
     if (diffed.status !== 0) {
       return {
@@ -713,7 +724,16 @@ export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile 
         stderr: (diffed.stderr || '').trim().slice(0, 400),
       };
     }
-    return { ok: true, patch: diffed.stdout || '', baseSha, headSha, baseFetched };
+    if (diffed.truncated) return { ok: false, status: 413, error: TOO_LARGE };
+    const written = await git(worktreePath, ['write-tree'], INDEX_TIMEOUT_MS, env);
+    // 40 hex for SHA-1, 64 for a repository on SHA-256.
+    const treeSha = written.status === 0 && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test((written.stdout || '').trim())
+      ? written.stdout.trim() : null;
+    // Why there is no tree, kept with the review: the Q&A says it, rather than
+    // taking the review for one recorded before trees were.
+    const treeError = treeSha ? null
+      : `git write-tree ${written.status === 0 ? 'gave no tree id' : `failed: ${(written.stderr || '').trim().slice(0, 200) || written.status}`}`;
+    return { ok: true, patch: diffed.stdout || '', baseSha, headSha, treeSha, treeError, baseFetched };
   } finally {
     // The scratch index is ours alone and is worthless the moment the diff is
     // taken. Leaving it would cost a few MB per review on a box that runs
@@ -724,6 +744,53 @@ export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile 
       // Nothing useful to do about it, and the diff already succeeded.
     }
   }
+}
+
+/**
+ * Hold a worktree review's tree with a ref, so git's gc cannot prune it while
+ * the review stands: written by no commit and named by nothing else, the tree
+ * would otherwise go after gc's grace period, and the Q&A with it.
+ *
+ * One ref per tree, `refs/woodshed-qa/<session>/<tree>`, made before the review
+ * record names the tree, and pruned after it (pruneHeldTrees) down to the one
+ * the record names then. That is sound only because index.mjs takes a session's
+ * review one at a time (oneTakeAtATime): two takes interleaving could prune the
+ * tree the other was about to record. Outside refs/heads and refs/tags, so no
+ * push carries them.
+ *
+ * @returns {Promise<{ok: boolean, error?: string}>}
+ */
+export async function holdTree({ worktreePath, sessionName, treeSha }) {
+  // A single ref by the session's own name, from before one per tree, would
+  // block every ref under that name: git keeps a ref and a folder of refs apart.
+  await git(worktreePath, ['update-ref', '-d', `refs/woodshed-qa/${sessionName}`], 30_000);
+  const held = await git(worktreePath, ['update-ref', `refs/woodshed-qa/${sessionName}/${treeSha}`, treeSha], 30_000);
+  return held.status === 0 ? { ok: true } : { ok: false, error: (held.stderr || '').trim().slice(0, 200) || `exit ${held.status}` };
+}
+
+/**
+ * Let go of every tree held for the session but `keep` (none, when the review is
+ * being removed).
+ *
+ * @returns {Promise<{ok: boolean, released: number, error?: string}>}
+ */
+export async function pruneHeldTrees({ worktreePath, sessionName, keep = null }) {
+  if (!worktreePath || !fs.existsSync(worktreePath)) return { ok: true, released: 0 };
+  const listed = await git(worktreePath, ['for-each-ref', '--format=%(refname)', `refs/woodshed-qa/${sessionName}/`], 30_000);
+  if (listed.status !== 0) return { ok: false, released: 0, error: (listed.stderr || '').trim().slice(0, 200) };
+  let released = 0;
+  for (const ref of (listed.stdout || '').split('\n').filter(Boolean)) {
+    if (keep && ref === `refs/woodshed-qa/${sessionName}/${keep}`) continue;
+    const gone = await git(worktreePath, ['update-ref', '-d', ref], 30_000);
+    if (gone.status !== 0) return { ok: false, released, error: (gone.stderr || '').trim().slice(0, 200) };
+    released += 1;
+  }
+  return { ok: true, released };
+}
+
+/** Let go of every tree held for the session, as removing its review does. */
+export function releaseTree({ worktreePath, sessionName }) {
+  return pruneHeldTrees({ worktreePath, sessionName, keep: null });
 }
 
 /**

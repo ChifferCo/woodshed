@@ -268,6 +268,14 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - Every match is washed `bar-amber-line` and the one shown `bar-amber`, with the terminal's ground as its text. The
   count says `3 of 12`, or `No match` in words, with the field's border `bar-amber-line`. Never a red.
 
+## The review page's Q&A
+
+The Review tab frames the review page (`shared/review/page.mjs`), which has a palette of its own; what is written here
+holds there too, in its variables. Its **Q&A** tab is a folding tree of a newcomer's questions (`components/QaTree`),
+with no section head or intro above it: it opens with its tools row. Every question starts folded, a folded one says how many follow-ups it holds, and its controls (Open all, Close all,
+Ask again, Ask the questions) are quiet buttons, never orange. A question being answered says so in words beside its
+spinner, and opening one keeps the keyboard focus on it.
+
 ## Iconography
 
 No icon set. The console uses text glyphs (`▾ ▸ ✓ ✗ ⋯ ☆ ↗`) and 6px status dots; a stopped session's dot is a ring. A lock on the Private tag is drawn in CSS, not an image. The phone's message box under the terminal is the one place with drawn icons (📎 and the mic, as round buttons): on a desktop, the same actions are outline buttons with words, Attach files and Dictate (Stop while it listens, with a plain "Listening." line in `sub` under the field, no motion).

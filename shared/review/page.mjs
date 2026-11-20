@@ -822,6 +822,42 @@ ${DARK_PALETTE}
     .decisions b { display: block; color: var(--ink); margin-bottom: 0.1rem; }
     .decisions .why { color: var(--muted); }
     .decisions .qacts { margin-top: 0.4rem; }
+    /* --- Q&A: a newcomer's questions, folded into a tree --- */
+    /* No section label above it: the tab bar names it, so the tree opens with
+       its tools, as far below the bar as the first label sits on other tabs. */
+    .qa { max-width: var(--prose-measure); margin-top: 1.5rem; }
+    .qa-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0 0 0.9rem; font-size: 12.5px; color: var(--muted); }
+    .qa-tools button { font-size: 12.5px; padding: 0.25rem 0.65rem; }
+    .qa-tools .grow { flex: 1; }
+    .qa-list { list-style: none; margin: 0; padding: 0; }
+    .qa-list .qa-list { margin: 0.3rem 0 0.2rem 0.55rem; padding-left: 1rem; border-left: 2px solid var(--rule); }
+    .qa-node { margin: 0; }
+    .qa-q {
+      display: flex; align-items: flex-start; gap: 0.5rem; width: 100%; text-align: left;
+      padding: 0.45rem 0.5rem; margin: 0; border: none; border-radius: 5px; background: none;
+      font: 500 14px/1.5 "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--ink); cursor: pointer;
+    }
+    .qa-q:hover { background: var(--sunk); filter: none; }
+    .qa-q:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .qa-list > .qa-node > .qa-q { font-weight: 600; }
+    .qa-list .qa-list > .qa-node > .qa-q { font-weight: 500; font-size: 13.5px; }
+    .qa-q .chev { flex: none; width: 1rem; color: var(--muted); font-size: 11px; line-height: 21px; transition: transform 0.12s; }
+    .qa-q[aria-expanded="true"] .chev { transform: rotate(90deg); }
+    .qa-q .txt { flex: 1; min-width: 0; }
+    .qa-q .kids {
+      flex: none; align-self: center; font: 500 11px/1.6 ui-monospace, monospace; color: var(--muted);
+      border: 1px solid var(--rule-strong); border-radius: 3px; padding: 0 0.35rem;
+    }
+    .qa-q .pending { flex: none; align-self: center; display: inline-flex; align-items: center; gap: 0.3rem; font-size: 12px; color: var(--muted); font-weight: 400; }
+    .qa-body { padding: 0.1rem 0.5rem 0.5rem 2rem; }
+    .qa-a { font-size: 14px; line-height: 1.62; color: var(--ink); }
+    .qa-a p { margin: 0 0 0.6rem; }
+    .qa-a > :last-child { margin-bottom: 0; }
+    .qa-a pre { font-size: 12.5px; }
+    /* Answers bold a word mid-sentence, not a term opening a list item, so the
+       prose rule that puts a leading bold on its own line stays out of them. */
+    .qa-a li > strong:first-child { display: inline; }
+    .qa-foot { margin-top: 1rem; font: 12px/1.5 ui-monospace, monospace; color: var(--faint); }
     .qacts { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin-top: 0.4rem; }
     .qfile, .qask {
       display: inline-flex; align-items: center; gap: 0.3rem; height: 24px; padding: 0 0.5rem;
@@ -1667,6 +1703,14 @@ ${DARK_PALETTE}
       loadDraft().then(render).catch(function ignore() {});
     });
 
+    // The Q&A can be emptied from another tab (Discard, Re-review), and a
+    // finished one is not polled: read it again when this tab comes back and
+    // shows it, so its answers are not left standing for a diff that is gone.
+    document.addEventListener('visibilitychange', function onBackToQa() {
+      if (document.hidden || !state.session || state.tab !== 'qa' || qaView.session !== state.session) return;
+      loadQa(false);
+    });
+
     // One key out of every transient thing on this page. A composer or a
     // dialog handles its own Escape and stops it here; what reaches this is a
     // selection or an open question with nothing focused, which is exactly the
@@ -1939,6 +1983,11 @@ ${DARK_PALETTE}
       // the draft, the answer, which panel is open — lives in the askState
       // object, written as it happens rather than scraped back out here.
       // Scraping is what filed a draft under the wrong anchor twice.
+      // A Q&A question holding the focus gets it back on its new button,
+      // whether this render is its own toggle or a poll of a run still going:
+      // otherwise a keyboard reader starts again from the top of the page.
+      var focusedQa = document.activeElement && document.activeElement.dataset
+        ? document.activeElement.dataset.qa : null;
       content.replaceChildren();
       if (!state.meta) return;
 
@@ -1969,6 +2018,17 @@ ${DARK_PALETTE}
         keepScroll();
         return;
       }
+      if (state.tab === 'qa') {
+        renderQa(content);
+        if (focusedQa) {
+          var again = content.querySelectorAll('.qa-q');
+          for (var k = 0; k < again.length; k++) {
+            if (again[k].dataset.qa === focusedQa) { again[k].focus({ preventScroll: true }); break; }
+          }
+        }
+        keepScroll();
+        return;
+      }
       if (state.tab !== 'files') {
         renderAnalysis(content);
         keepScroll();
@@ -1993,6 +2053,8 @@ ${DARK_PALETTE}
       var bar = el('div', 'tabbar');
       bar.setAttribute('role', 'tablist');
       bar.appendChild(tabButton('analysis', 'Overview', null));
+      if (qaView.session !== state.session && !qaView.loading && state.tab !== 'qa') loadQa(false);
+      bar.appendChild(tabButton('qa', 'Q&A', qaTabCount()));
       // Only a pull request has a description and a discussion, so a branch
       // with none has no tab rather than an empty one.
       if (state.livePr) {
@@ -2033,6 +2095,7 @@ ${DARK_PALETTE}
     function tabButton(name, label, count) {
       var tab = el('button', 'tab');
       tab.type = 'button';
+      tab.dataset.tab = name;
       tab.setAttribute('role', 'tab');
       tab.setAttribute('aria-selected', state.tab === name ? 'true' : 'false');
       tab.appendChild(el('span', null, label));
@@ -2045,6 +2108,8 @@ ${DARK_PALETTE}
     function showTab(name) {
       if (state.tab === name) return;
       state.tab = name;
+      // Opening the Q&A reads it again, for the reason the visibility handler does.
+      if (name === 'qa' && qaView.session === state.session) loadQa(false);
       // Pressed, so it earns a history entry: the two halves are two places,
       // and back out of the diff should land on the analysis rather than off
       // the page altogether.
@@ -2062,7 +2127,7 @@ ${DARK_PALETTE}
     // the page's default changes, and a bare ?session= that means "whichever
     // half is default" is not a link to anything in particular.
     function tabFromUrl(value) {
-      return value === 'files' || value === 'analysis' || value === 'discussion' ? value : null;
+      return value === 'files' || value === 'analysis' || value === 'discussion' || value === 'qa' ? value : null;
     }
 
     function stampTab(push) {
@@ -2086,6 +2151,9 @@ ${DARK_PALETTE}
       if (wanted !== state.tab) {
         state.tab = wanted;
         render();
+        // Arriving on the Q&A reads it again, as pressing its tab does: what
+        // this page drew before may have been discarded since, elsewhere.
+        if (wanted === 'qa' && qaView.session === state.session) loadQa(false);
       }
       var wantChat = params.get('chat') === '1';
       if (wantChat !== chat.open) setChatOpen(wantChat);
@@ -2842,6 +2910,290 @@ ${DARK_PALETTE}
       return link;
     }
 
+    // --- Q&A ------------------------------------------------------------------
+    //
+    // A model playing a junior developer, new to the codebase and lost in its
+    // jargon, asked about the change; another read the code and answered; the
+    // newcomer then asked about whatever in each answer it did not follow. The
+    // server keeps the result as a flat list whose parent ids make the tree.
+    // Every question starts folded: the reader opens only the ones they have.
+    var qaView = { session: null, data: null, loading: false, error: null, started: false, timer: null, open: {} };
+
+    function qaTabCount() {
+      if (qaView.session !== state.session || !qaView.data) return null;
+      if (qaView.data.status === 'running') return 'loading';
+      var n = 0;
+      var items = qaView.data.items || [];
+      for (var i = 0; i < items.length; i++) if (!items[i].parent) n++;
+      return n || null;
+    }
+
+    // Reads what there is; starts a run only when asked to, which is when the
+    // Q&A tab is open. The tab's count comes from the same read on any tab.
+    // Names the diff this page shows, so the server refuses to start a Q&A for
+    // one that replaced it in another tab.
+    function qaStartUrl() {
+      return '/reviews/' + state.session + '/qa?forDiff=' + encodeURIComponent(state.diffAt || '');
+    }
+
+    function freshQaView(started) {
+      return { session: state.session, data: null, loading: false, error: null, started: started, timer: null, open: {} };
+    }
+
+    // Each load answers into the view it started with. Discard, Re-review and
+    // Ask again put a new one in its place, so a read still on its way when they
+    // did is dropped rather than drawing answers about the diff they replaced.
+    async function loadQa(start) {
+      if (!state.session) return;
+      if (qaView.session !== state.session) qaView = freshQaView(false);
+      var view = qaView;
+      if (view.loading) return;
+      view.loading = true;
+      var before = view.data ? view.data.status : null;
+      try {
+        var got = await api('GET', '/reviews/' + state.session + '/qa');
+        if (view !== qaView) return;
+        var had = !!view.data;
+        view.data = got.qa || null;
+        // A Q&A made for another diff than the one this page shows: the review
+        // was taken again in another tab, and its answers are about code this
+        // page is not showing. Not drawn, and not asked again from here either,
+        // since that would ask about the newer diff too.
+        view.otherDiff = !!(view.data && (view.data.forDiff || null) !== (state.diffAt || null));
+        if (view.otherDiff) view.data = null;
+        // Gone while this page had one: emptied from elsewhere, a Discard or
+        // Re-review in another tab. That is not a Q&A nobody has asked for, and
+        // starting one here would spend a run its reader just threw away.
+        if (had && !view.data) view.started = true;
+        view.showCosts = !!got.showCosts;
+        view.error = null;
+        // Nothing asked yet: opening the tab is the ask, as opening the review
+        // is for the analysis. Once per view, so a failure is not retried in a loop.
+        if (!view.data && start && !view.started && !view.otherDiff) {
+          view.started = true;
+          var asked = await api('POST', qaStartUrl() + '&first=1');
+          if (view !== qaView) return;
+          // Another tab's Q&A was there already: read it rather than drawing a run.
+          if (asked.kept) {
+            var kept = await api('GET', '/reviews/' + state.session + '/qa');
+            if (view !== qaView) return;
+            // Read like any other: one for another diff (a Re-review in between)
+            // is not drawn against this one.
+            view.data = kept.qa || null;
+            view.otherDiff = !!(view.data && (view.data.forDiff || null) !== (state.diffAt || null));
+            if (view.otherDiff) view.data = null;
+          } else {
+            view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
+          }
+        }
+      } catch (e) {
+        if (view !== qaView) return;
+        if (e.code === 'other-diff') view.otherDiff = true;
+        else view.error = e.message;
+      } finally {
+        view.loading = false;
+      }
+      clearTimeout(view.timer);
+      if (view.data && view.data.status === 'running') {
+        view.timer = setTimeout(function again() { if (view === qaView) loadQa(state.tab === 'qa'); }, 3000);
+      }
+      // On the tab, the tree is redrawn: a read that found nothing yet may now
+      // be the one that starts the run. Off it, only the tab's own button: a
+      // whole render would take the focus out of whatever the reader is in, a
+      // comment being written on Files changed among them.
+      if (state.tab === 'qa') render();
+      else if (before !== (view.data ? view.data.status : null)) redrawQaTab();
+    }
+
+    function redrawQaTab() {
+      var old = document.querySelector('.tabbar .tab[data-tab="qa"]');
+      if (old) old.replaceWith(tabButton('qa', 'Q&A', qaTabCount()));
+    }
+
+    // Discard and Re-review empty the Q&A on the server (it describes the diff
+    // they replace), so the page forgets its copy too. Not asked again on its
+    // own: a reader who just discarded did not ask for a new paid run.
+    function resetQa() {
+      clearTimeout(qaView.timer);
+      qaView = freshQaView(true);
+    }
+
+    // The answers on screen stay until the server has taken the new run: a
+    // refused one (the box busy, say) leaves them, with the reason under them,
+    // rather than clearing them for a read to bring back with the reason gone.
+    // Ask again replaces what is there; the empty state's Ask the questions
+    // does not. That one goes as a first ask (first=1), so the server keeps a
+    // Q&A another tab finished meanwhile, in the same call that would start one:
+    // no read beforehand that another tab's run could slip past.
+    async function askQaAgain(replace) {
+      if (!state.session) return;
+      var was = qaView;
+      var asked;
+      try {
+        asked = await api('POST', qaStartUrl() + (replace ? '' : '&first=1'));
+      } catch (e) {
+        if (was !== qaView) return;
+        if (e.code === 'other-diff') {
+          was.data = null;
+          was.otherDiff = true;
+        } else {
+          was.error = 'Not asked again: ' + e.message;
+        }
+        render();
+        return;
+      }
+      if (was !== qaView) return;
+      clearTimeout(was.timer);
+      var view = freshQaView(true);
+      if (!asked.kept) view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
+      qaView = view;
+      render();
+      loadQa(!asked.kept);
+    }
+
+    function qaPhaseText(d) {
+      var open = 0;
+      var items = d.items || [];
+      for (var i = 0; i < items.length; i++) if (!items[i].answer) open++;
+      if (d.phase === 'answering') {
+        return 'Reading the code to answer ' + open + (open === 1 ? ' question' : ' questions')
+          + (d.depth > 1 ? ' (follow-ups, level ' + d.depth + ')' : '') + '…';
+      }
+      if (d.depth > 1) return 'The newcomer is reading the answers for anything they did not follow…';
+      return 'The newcomer is reading the pull request and writing their questions…';
+    }
+
+    function renderQa(content) {
+      // Once per session: the read comes back through render(), so a condition on
+      // what it found would ask again on every render it causes.
+      // Opened after the tab's count was read from another tab, that read found
+      // nothing and started nothing, so the first run starts here.
+      if (qaView.session !== state.session
+        || (!qaView.data && !qaView.started && !qaView.loading && !qaView.error && !qaView.otherDiff)) loadQa(true);
+      var box = el('div', 'qa');
+      var d = qaView.session === state.session ? qaView.data : null;
+      if (qaView.otherDiff && !d) {
+        box.appendChild(el('div', 'tabnote', 'This review was taken again since this page loaded. Reload the page to see the Q&A about the newer diff.'));
+        content.appendChild(box);
+        return;
+      }
+      if (qaView.error && !d) {
+        box.appendChild(el('div', 'tabnote', 'The Q&A could not be loaded: ' + qaView.error));
+        box.appendChild(qaAgainButton('Try again', false));
+        content.appendChild(box);
+        return;
+      }
+      if (!d && qaView.started && !qaView.loading) {
+        box.appendChild(el('div', 'tabnote', 'There is no Q&A for this diff yet.'));
+        box.appendChild(qaAgainButton('Ask the questions', false));
+        content.appendChild(box);
+        return;
+      }
+      if (!d) {
+        box.appendChild(loadingNote('Starting the Q&A…'));
+        content.appendChild(box);
+        return;
+      }
+      var items = d.items || [];
+      var tools = el('div', 'qa-tools');
+      if (d.status === 'running') {
+        tools.appendChild(spinner());
+        tools.appendChild(el('span', null, qaPhaseText(d)));
+      }
+      tools.appendChild(el('span', 'grow'));
+      if (items.some(function answered(i) { return i.answer; })) {
+        tools.appendChild(qaToolButton('Open all', function openAll() {
+          for (var i = 0; i < items.length; i++) qaView.open[items[i].id] = true;
+          render();
+        }));
+        tools.appendChild(qaToolButton('Close all', function closeAll() {
+          qaView.open = {};
+          render();
+        }));
+      }
+      if (d.status !== 'running') tools.appendChild(qaAgainButton('Ask again', true));
+      box.appendChild(tools);
+
+      if (d.status === 'failed') {
+        box.appendChild(el('div', 'tabnote', 'The Q&A failed: ' + (d.error || 'no reason given')));
+      } else if (d.status === 'interrupted') {
+        box.appendChild(el('div', 'tabnote', 'The Q&A was cut off before it finished. Ask again to start it over.'));
+      } else if (d.status === 'ready' && !items.length) {
+        box.appendChild(el('div', 'tabnote', 'There was nothing to ask about.'));
+      }
+
+      var kids = {};
+      for (var i = 0; i < items.length; i++) {
+        var p = items[i].parent || '';
+        (kids[p] = kids[p] || []).push(items[i]);
+      }
+      if (kids['']) box.appendChild(qaList(kids[''], kids, d.status === 'running'));
+
+      if (qaView.error) box.appendChild(el('div', 'tabnote', qaView.error));
+      var foot = [];
+      if (d.stoppedEarly) foot.push('stopped early: ' + d.stoppedEarly);
+      if (d.generatedAt) foot.push('asked ' + fmtWhen(d.generatedAt));
+      if (qaView.showCosts && typeof d.costUsd === 'number' && d.costUsd > 0) foot.push('$' + d.costUsd.toFixed(3));
+      if (foot.length) box.appendChild(el('div', 'qa-foot', foot.join(' · ')));
+      content.appendChild(box);
+    }
+
+    function qaToolButton(label, onClick) {
+      var b = el('button', 'quiet', label);
+      b.type = 'button';
+      b.addEventListener('click', onClick);
+      return b;
+    }
+
+    function qaAgainButton(label, replace) {
+      return qaToolButton(label, function ask() { askQaAgain(replace); });
+    }
+
+    function qaList(nodes, kids, running) {
+      var list = el('ul', 'qa-list');
+      for (var i = 0; i < nodes.length; i++) list.appendChild(qaNode(nodes[i], kids, running));
+      return list;
+    }
+
+    function qaNode(item, kids, running) {
+      var li = el('li', 'qa-node');
+      var children = kids[item.id] || [];
+      var open = !!qaView.open[item.id] && !!item.answer;
+      var q = el('button', 'qa-q');
+      q.type = 'button';
+      q.setAttribute('aria-expanded', open ? 'true' : 'false');
+      q.appendChild(el('span', 'chev', '▶'));
+      var txt = el('span', 'txt');
+      inline(txt, item.question);
+      q.appendChild(txt);
+      if (!item.answer) {
+        var pending = el('span', 'pending');
+        if (running) pending.appendChild(spinner());
+        pending.appendChild(el('span', null, running ? 'being answered' : 'not answered'));
+        q.appendChild(pending);
+        q.disabled = true;
+      } else if (!open && children.length) {
+        q.appendChild(el('span', 'kids', children.length + (children.length === 1 ? ' follow-up' : ' follow-ups')));
+      }
+      q.dataset.qa = item.id;
+      q.addEventListener('click', function toggle() {
+        if (!item.answer) return;
+        if (qaView.open[item.id]) delete qaView.open[item.id];
+        else qaView.open[item.id] = true;
+        render();
+      });
+      li.appendChild(q);
+      if (open) {
+        var body = el('div', 'qa-body');
+        var a = el('div', 'qa-a prose');
+        renderMarkdown(a, item.answer);
+        body.appendChild(a);
+        if (children.length) body.appendChild(qaList(children, kids, running));
+        li.appendChild(body);
+      }
+      return li;
+    }
+
     // A numbered list of a bold title, a sentence of why, and the way to its
     // files and to the conversation.
     function renderDecisions(content, items) {
@@ -3292,6 +3644,7 @@ ${DARK_PALETTE}
             // reloading would redraw the same page and read as a button that
             // did nothing. Say so, and offer the other thing instead.
             if (data && data.unchanged) return offerReanalysis();
+            resetQa();
             // Re-read in place rather than reloading the document. A reload
             // throws away the conversation, the scroll and which files were
             // open, to arrive at the same page with a newer diff in it.
@@ -3347,6 +3700,7 @@ ${DARK_PALETTE}
           // A fresh state object rather than a reset method: every answer this
           // page memoised describes a review that no longer exists.
           ask = createAskState();
+          resetQa();
           renderChat();
           return loadReview(state.session);
         })
@@ -4854,6 +5208,19 @@ ${DARK_PALETTE}
     // returns markdown and this page never uses innerHTML, so without this
     // you read literal asterisks. Everything the model wrote goes through it —
     // overview, architecture, each act's why, each preamble, the answers.
+    // Tag-shaped text out of a line of markdown, but not out of its inline
+    // code spans: split on backticks, the odd pieces are inside a span. An
+    // unclosed backtick opens no span, so a stray one cannot shelter a tag.
+    function stripTagsOutsideCode(line) {
+      var parts = line.split('\\u0060');
+      var closed = parts.length % 2 === 1 ? parts.length : parts.length - 1;
+      for (var k = 0; k < parts.length; k++) {
+        var inCode = k % 2 === 1 && k < closed;
+        if (!inCode) parts[k] = parts[k].replace(/<\\/?[a-zA-Z][^>]*>/g, '');
+      }
+      return parts.join('\\u0060');
+    }
+
     function renderMarkdown(root, text) {
       // Raw HTML and horizontal rules are dropped rather than printed. A
       // GitHub review body is written for GitHub, which renders <details> and
@@ -4862,13 +5229,20 @@ ${DARK_PALETTE}
       // are simply not drawn.
       var lines = [];
       var raw = String(text).split('\\n');
+      // Inside a fence the text is code, drawn as text: JSX and HTML keep their
+      // tags there, or a snippet in an answer loses the very lines it is about.
+      var fenced = false;
       for (var r = 0; r < raw.length; r++) {
+        if (raw[r].slice(0, 3) === '\\u0060\\u0060\\u0060') fenced = !fenced;
+        else if (fenced) { lines.push(raw[r]); continue; }
         // Tags come out wherever they are, not only on lines of their own:
         // GitHub's own review bodies write <summary>Heading</summary> with the
         // words inside, and dropping the whole line would drop the heading
         // with it. Nothing is interpreted as markup either way — every node
         // below is built with textContent.
-        var line = raw[r].replace(/<\\/?[a-zA-Z][^>]*>/g, '');
+        // Except inside inline code: a span like refs/x/<session>/<tree> or
+        // Map<string, number> is text to show, not markup to drop.
+        var line = stripTagsOutsideCode(raw[r]);
         var bare = line.trim();
         if (/^-{3,}$/.test(bare) || /^\\*{3,}$/.test(bare)) continue;
         lines.push(line);
@@ -5125,6 +5499,9 @@ ${DARK_PALETTE}
 
       var diff = await api('GET', '/reviews/' + session + '/diff');
       state.diff = diff;
+      // Which diff is on screen, for the Q&A. Not state.createdAt, which the
+      // status poll moves to a newer review while this one is still drawn.
+      state.diffAt = diff.createdAt || got.createdAt || null;
       render();
       // After the first paint, not before it: the ticks are one more round
       // trip, and a diff that waits on GitHub to draw is a diff that is slower
