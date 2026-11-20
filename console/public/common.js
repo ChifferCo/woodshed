@@ -457,9 +457,12 @@
         if (pending) return;
         const values = { idleHours: idle.input.value || null, lifetimeHours: life.input.value || null };
         const ranMs = s.status === 'running' && s.startedAt ? Date.now() - Date.parse(s.startedAt) : 0;
-        if (values.lifetimeHours && Number(values.lifetimeHours) * 3_600_000 <= ranMs && warnedFor !== values.lifetimeHours) {
-          warnedFor = values.lifetimeHours;
-          error.textContent = `It has already run for ${span(ranMs)}, so it would stop within seconds: its work is pushed first. Save again to stop it now.`;
+        // What it would run on after the save: the hours entered, or what an empty field falls back to.
+        const lifetime = Number(values.lifetimeHours || fallback.lifetimeHours) || 0;
+        const key = String(values.lifetimeHours ?? '');
+        if (lifetime && lifetime * 3_600_000 <= ranMs && warnedFor !== key) {
+          warnedFor = key;
+          error.textContent = `It has already run for ${span(ranMs)}, past ${hoursText(lifetime)}, so it would stop within seconds: it tries to push its work first. Save again to stop it now.`;
           error.hidden = false;
           return;
         }
