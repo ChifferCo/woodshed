@@ -54,28 +54,25 @@ export function inlineCommentsIn(dir) {
 }
 
 /**
- * Whose each earlier inline comment in context.md is, from the `**<name>:**` its body opens with when both reviewed
- * (mergeVerdicts marks them so). A comment with no such mark, a person's or one from a review by one reviewer, is left out.
+ * Whose each earlier inline comment is, from the `**<name>:**` its body opens with when both reviewed (mergeVerdicts
+ * marks them so). Read from earlier-comments.jsonl, one GitHub comment record a line ({id, body}, session/review.sh), not
+ * from context.md, so no comment's text can pass for a record or end the list. A comment with no such mark, a person's
+ * or one from a review by one reviewer, is left out, and with no file every comment is.
  * @param {string[]} names  the reviewers' names, as mergeVerdicts gets them
  * @returns {Map<number, string>}  comment id to reviewer name
  */
 export function commentAuthorsIn(dir, names) {
-  // Only the `# Inline comments` section (session/review.sh), so the description, the discussion or an issue never
-  // writes a record. An id's first record there is the real one: a later line shaped like one is inside some comment's
-  // body, and never changes whose it is.
-  const context = readFile(dir, 'context.md');
-  const start = context.search(/^# Inline comments$/m);
-  if (start < 0) return new Map();
-  const rest = context.slice(start);
-  const end = rest.search(/^# Linked issues$/m);
-  const section = end < 0 ? rest : rest.slice(0, end);
   const authors = new Map();
-  const seen = new Set();
-  for (const m of section.matchAll(/^\[comment ([0-9]{1,15})\] \S+ on [^\n]*?: (?:\*\*([^*\n]+):\*\*)?/gm)) {
-    const id = Number(m[1]);
-    if (seen.has(id)) continue;
-    seen.add(id);
-    if (names.includes(m[2])) authors.set(id, m[2]);
+  for (const line of readFile(dir, 'earlier-comments.jsonl').split('\n')) {
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!Number.isSafeInteger(record?.id) || typeof record.body !== 'string') continue;
+    const name = /^\*\*([^*\n]+):\*\*/.exec(record.body)?.[1];
+    if (names.includes(name)) authors.set(record.id, name);
   }
   return authors;
 }

@@ -162,6 +162,10 @@ gatherContext() {
       gh issue view "$issue" --comments; echo
     done
   } > "$DIR/context.md" 2>&1 || true
+  # The same inline comments as records, for whose each one is when two reviewers' verdicts merge (codeReview.mjs
+  # commentAuthorsIn): a comment's text in context.md could pass for another record.
+  gh api "repos/{owner}/{repo}/pulls/$PR/comments" --paginate --jq '.[] | {id, body: .body[0:80]} | tojson' \
+    > "$DIR/earlier-comments.jsonl" 2>/dev/null || true
   mkdir -p "$DIR/base-rules"
   set -f
   for f in $RULES; do

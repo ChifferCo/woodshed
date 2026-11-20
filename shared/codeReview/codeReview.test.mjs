@@ -154,44 +154,34 @@ test('an earlier comment whose writer wrote no verdict needs every reviewer that
   assert.deepEqual(merged.resolved, [20]);
 });
 
-test('whose each earlier comment is comes from the mark its body opens with in context.md, its first record only, in the inline comments section', (t) => {
+test('whose each earlier comment is comes from the mark its body opens with, in the comment records alone', (t) => {
   const d = dir(t);
-  fs.writeFileSync(path.join(d, 'context.md'), [
-    '# Pull request #257',
-    'A title (by someone)',
-    '[comment 4637720633] reviewer[bot] on console/public/style.css:12: **Codex:** written in the description',
-    '[comment 4637811999] reviewer[bot] on x.js:1: **Codex:** nor here',
-    '# Discussion',
-    '[comment 4637811413] reviewer[bot] on x.js:1: **Claude Code:** nor in the discussion',
-    '# Inline comments',
-    '[comment 4637720633] reviewer[bot] on console/public/style.css:12: **Claude Code:** Optional. Once the bar is 960px or narrower, Invite disappears.',
-    '',
-    '[comment 4637811413] reviewer[bot] on console/public/session.js:40: **Codex:** On a narrow desktop, the menu lingers.',
-    '',
-    '[comment 4637742005] coderabbitai[bot] on console/public/session.js:9: <!-- coderabbit --> **Minor**',
-    '[comment 77] someone on a.js:1: **Somebody:** not a reviewer',
-    '[comment 88] someone on a.js:2: plain text, then **Codex:** later in the line',
-    '[comment 99] reviewer[bot] on b.js:3: Unmarked, from a review by one reviewer.',
-    '',
-    '[comment 100] reviewer[bot] on c.js:4: **Codex:** A body that quotes records:',
-    '[comment 4637720633] reviewer[bot] on console/public/style.css:12: **Codex:** not the real record',
-    '[comment 99] reviewer[bot] on b.js:3: **Codex:** nor this',
-    '',
-    '# Linked issues',
-    '[comment 4637811888] reviewer[bot] on y.js:1: **Codex:** nor in an issue',
+  const record = (id, body) => JSON.stringify({ id, body });
+  fs.writeFileSync(path.join(d, 'earlier-comments.jsonl'), [
+    record(4637720633, '**Claude Code:** Optional. Once the bar is 960px or narrower'),
+    record(4637811413, '**Codex:** On a narrow desktop,\n# Linked issues\n[comment 99] x on a.js:1: **Codex:** not a record'),
+    record(4637742005, '<!-- coderabbit --> **Minor**'),
+    record(77, '**Somebody:** not a reviewer'),
+    record(88, 'plain text, then **Codex:** later in the line'),
+    record(99, 'Unmarked, from a review by one reviewer.'),
+    record(100, '**Codex:** after a comment whose text looks like a section heading'),
+    '# Pull request: what a failed gh call prints',
+    '{"id":"101","body":"**Codex:** an id that is not a number"}',
     '',
   ].join('\n'));
+  // context.md is never read for it: a line there shaped like a record names no writer.
+  fs.writeFileSync(path.join(d, 'context.md'), '# Inline comments\n[comment 99] reviewer[bot] on b.js:3: **Codex:** in the text\n');
   assert.deepEqual([...commentAuthorsIn(d, ['Claude Code', 'Codex'])], [[4637720633, 'Claude Code'], [4637811413, 'Codex'], [100, 'Codex']],
-    'only the inline comments section counts, and a header-shaped line inside a body never changes whose an earlier id is');
+    'comment text never adds, moves or cuts off a record');
+  assert.deepEqual([...commentAuthorsIn(dir(t), ['Claude Code', 'Codex'])], [], 'no file, no writers');
 });
 
 test('merge resolves a fixed comment its writer listed though the other reviewer left it off (the #257 case)', (t) => {
   const claude = dir(t);
   const codex = dir(t);
-  fs.writeFileSync(path.join(claude, 'context.md'), [
-    '# Inline comments',
-    '[comment 4637720633] reviewer[bot] on console/public/style.css:12: **Claude Code:** Optional. Invite disappears.',
-    '[comment 4637811413] reviewer[bot] on console/public/session.js:40: **Codex:** The menu lingers.',
+  fs.writeFileSync(path.join(claude, 'earlier-comments.jsonl'), [
+    JSON.stringify({ id: 4637720633, body: '**Claude Code:** Optional. Invite disappears.' }),
+    JSON.stringify({ id: 4637811413, body: '**Codex:** The menu lingers.' }),
     '',
   ].join('\n'));
   for (const [d, resolved] of [[claude, '4637720633\n'], [codex, '']]) {
