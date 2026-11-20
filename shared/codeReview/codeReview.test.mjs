@@ -26,6 +26,14 @@ test('the prompt fills in the session paths and the pull request facts', (t) => 
   assert.ok(fs.existsSync(path.join(d, 'review-prompt.md')));
 });
 
+test('the comment folds the review under the name of the reviewer that wrote it', () => {
+  const facts = { dir: '/D', pr: 7, head: 'abc123', server: 'https://github.com', repo: 'acme/app' };
+  assert.match(reviewPrompt(facts), /<summary>Claude review<\/summary>/);
+  const codex = reviewPrompt({ ...facts, agent: 'Codex' });
+  assert.match(codex, /<summary>Codex review<\/summary>/);
+  assert.doesNotMatch(codex, /Claude review/);
+});
+
 test('the prompt blocks only on likely, harmful bugs, security, rules and missing tests, and settles on re-reviews', () => {
   const p = reviewPrompt({ dir: '/D', pr: 7, head: 'abc123', server: 'https://github.com', repo: 'acme/app' }).replace(/\s+/g, ' ');
   assert.match(p, /A bug blocks when all of these hold: it happens on a path people actually take/);

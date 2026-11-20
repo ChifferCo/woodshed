@@ -15,6 +15,7 @@ const FAKE_CLAUDE = `#!/bin/bash
 prompt=$4
 if [ -z "$prompt" ]; then echo '{"type":"result","subtype":"error_during_execution","is_error":true}'; exit 1; fi
 case "$prompt" in *Acme/widgets/blob/*) ;; *) echo '{"type":"result","subtype":"wrong_repo","is_error":true}'; exit 1 ;; esac
+case "$prompt" in *"<summary>Claude review</summary>"*) ;; *) echo '{"type":"result","subtype":"wrong_label","is_error":true}'; exit 1 ;; esac
 dir=$(printf '%s' "$prompt" | grep -o '[^ \`]*/context\\.md' | head -1 | sed 's#/context\\.md$##')
 echo APPROVE > "$dir/verdict.txt"
 echo 'Looks right.' > "$dir/summary.md"
@@ -48,6 +49,7 @@ case "$prompt" in "You are Codex"*) ;; *) exit 3 ;; esac
 case "$prompt" in *"Hold to step 6's bar for what blocks"*) ;; *) exit 7 ;; esac
 case "$prompt" in *"do not reword one of them into a blocker"*) ;; *) exit 7 ;; esac
 case "$prompt" in *"give every finding you have in this one review"*) ;; *) exit 7 ;; esac
+case "$prompt" in *"<summary>Codex review</summary>"*) ;; *) exit 7 ;; esac
 dir=$(printf '%s' "$prompt" | grep -o '[^ \`]*/context\\.md' | head -1 | sed 's#/context\\.md$##')
 [ -s "$dir/context.md" ] || exit 4
 echo REQUEST_CHANGES > "$dir/verdict.txt"

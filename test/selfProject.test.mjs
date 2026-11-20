@@ -7,6 +7,7 @@ import path from 'node:path';
 import { parseProject } from '../shared/project.mjs';
 import { parseYaml } from '../shared/yamlLite.mjs';
 import { reviewSummaryOf, reviewVerdict } from '../console/pullGates.mjs';
+import { reviewPrompt } from '../shared/codeReview/codeReview.mjs';
 
 // Woodshed's own .woodshed/: nothing reads it while Woodshed is inside another repo, so this is what keeps it right for when
 // woodshed/ is a repo of its own.
@@ -43,7 +44,7 @@ test('Woodshed\'s pull requests wait for its Claude review, its Check suite\'s t
 
 test('the gates match what Woodshed\'s own review session and workflows post', () => {
   const { review, suites } = selfProject().pullRequests;
-  const prompt = fs.readFileSync(path.join(WOODSHED, 'shared/codeReview/prompt.txt'), 'utf8');
+  const prompt = reviewPrompt({ dir: '/D', pr: 7, head: 'abc', server: 'https://github.com', repo: 'o/r' });
   assert.ok(prompt.includes(reviewSummaryOf(review)), 'the review\'s comment is folded under the heading\'s words');
   // The verdict's first line, as the console's reviewFinished writes it under the project file's heading.
   const verdict = { user: { login: 'woodshed-reviewer[bot]' }, state: 'APPROVED', body: `${review.heading} — APPROVE\n\nLooks right.` };

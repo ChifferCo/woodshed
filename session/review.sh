@@ -118,7 +118,7 @@ runCodex() {
   cp -r "$DIR/context.md" "$CODEX_DIR/" 2>/dev/null
   for f in base-rules instructions.md risk-areas.md; do [ -e "$DIR/$f" ] && cp -r "$DIR/$f" "$CODEX_DIR/"; done
   node "$REVIEW" prompt "$CODEX_DIR" --pr "$PR" --head "$(git rev-parse HEAD)" --server "$SERVER" --repo "$1" \
-    --reviewer "${REVIEW_AUTHOR:-}" || { say "Could not write Codex's review prompt"; return 0; }
+    --reviewer "${REVIEW_AUTHOR:-}" --agent Codex || { say "Could not write Codex's review prompt"; return 0; }
   # The container is the sandbox, as for a Codex session; the review's GitHub token is read-only, and no sign-in is here.
   if [ "$via" = chatgpt ]; then
     say "Codex reviews on the author's ChatGPT login, which the console adds to its calls"

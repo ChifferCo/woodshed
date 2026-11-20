@@ -4,6 +4,7 @@
 // The merge-risk tiers match the Actions review (review.yml), so the tier is the same wherever the review runs.
 //
 //   node codeReview.mjs prompt <dir> --pr <n> --head <sha> --server <url> --repo <owner/name> [--reviewer <login>]
+//       [--agent Codex]
 //       writes <dir>/review-prompt.md, pointing at <dir>/context.md, <dir>/base-rules/, <dir>/instructions.md and
 //       <dir>/risk-areas.md, which session/review.sh fills from the base branch
 //   node codeReview.mjs verdict <dir>
@@ -23,17 +24,20 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CONCLUSIONS = ['APPROVE', 'REQUEST_CHANGES', 'COMMENT'];
 const TIERS = { LOW: 'Low', MEDIUM: 'Medium', HIGH: 'High' };
 
-/** The review prompt, with the session's paths and the pull request's facts filled in. */
-export function reviewPrompt({ dir, pr, head, server, repo, reviewer = '' }) {
+/**
+ * The review prompt, with the session's paths and the pull request's facts filled in. `agent` names the reviewer in the
+ * comment's fold, `<summary>Claude review</summary>` or `<summary>Codex review</summary>`.
+ */
+export function reviewPrompt({ dir, pr, head, server, repo, reviewer = '', agent = 'Claude' }) {
   return fs.readFileSync(path.join(HERE, 'prompt.txt'), 'utf8')
     .replaceAll('{{DIR}}', dir).replaceAll('{{PR}}', String(pr)).replaceAll('{{HEAD_SHA}}', head)
     .replaceAll('{{SERVER}}', server).replaceAll('{{REPO}}', repo)
-    .replaceAll('{{REVIEWER}}', reviewer || 'the review\'s own account');
+    .replaceAll('{{REVIEWER}}', reviewer || 'the review\'s own account').replaceAll('{{AGENT}}', agent);
 }
 
-export function writePrompt({ dir, pr, head, server, repo, reviewer = '' }) {
+export function writePrompt({ dir, pr, head, server, repo, reviewer = '', agent = 'Claude' }) {
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'review-prompt.md'), reviewPrompt({ dir, pr, head, server, repo, reviewer }));
+  fs.writeFileSync(path.join(dir, 'review-prompt.md'), reviewPrompt({ dir, pr, head, server, repo, reviewer, agent }));
 }
 
 /**
@@ -162,10 +166,10 @@ export function mergeVerdicts(reviews, { authors = new Map() } = {}) {
 function main([command, dir, other]) {
   const { values } = command === 'prompt' ? parseArgs({
     args: process.argv.slice(4),
-    options: { pr: { type: 'string' }, head: { type: 'string' }, server: { type: 'string' }, repo: { type: 'string' }, reviewer: { type: 'string' } },
+    options: { pr: { type: 'string' }, head: { type: 'string' }, server: { type: 'string' }, repo: { type: 'string' }, reviewer: { type: 'string' }, agent: { type: 'string' } },
   }) : { values: {} };
   if (command === 'prompt' && dir && values.pr && values.head && values.server && values.repo) {
-    writePrompt({ dir, pr: values.pr, head: values.head, server: values.server, repo: values.repo, reviewer: values.reviewer ?? '' });
+    writePrompt({ dir, pr: values.pr, head: values.head, server: values.server, repo: values.repo, reviewer: values.reviewer ?? '', agent: values.agent ?? 'Claude' });
     return;
   }
   if (command === 'verdict' && dir) {
@@ -182,7 +186,7 @@ function main([command, dir, other]) {
     process.stdout.write(`${JSON.stringify(verdict)}\n`);
     return;
   }
-  throw new Error('usage: codeReview.mjs prompt <dir> --pr --head --server --repo [--reviewer] | verdict <dir> | merge <dir> <codexDir>');
+  throw new Error('usage: codeReview.mjs prompt <dir> --pr --head --server --repo [--reviewer] [--agent] | verdict <dir> | merge <dir> <codexDir>');
 }
 
 if (isMain(import.meta.url)) {

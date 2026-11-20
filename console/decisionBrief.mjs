@@ -7,6 +7,8 @@
 import { reviewSummaryOf } from './pullGates.mjs';
 import { plainText } from './slack.mjs';
 
+const CODEX_SUMMARY = '<summary>Codex review</summary>';
+
 export const BRIEF_HEADING = '## 🧭 Decision brief';
 // The review's own (review.yml) lists what merging accepts and what is untested; a repo whose review is its own may
 // still write the one list it had before.
@@ -123,14 +125,15 @@ export function qaCommentIn(comments, qa) {
  * merging accepts, then what is untested, which the brief quotes as `Not tested: …`. The list may be in an alert, a
  * blockquote.
  * The comment of the run that approved is preferred: the review links that run, and so does the comment.
- * @param {{comments: object[], review: object|null, gate: {heading: string, commentAuthor: string|null}|null}} args
+ * @param {{comments: object[], review: object|null, gate: {heading: string, commentAuthor: string|null, runner?: string|null}|null}} args
  *   `gate` is the project file's `pullRequests.review`
  * @returns {{found: boolean, items: string[]}}  `found` is false when there is no review comment to read them from
  */
 export function riskAreasFrom({ comments, review, gate }) {
   if (!gate?.commentAuthor) return { found: false, items: [] };
-  const summary = reviewSummaryOf(gate);
-  const reviews = (comments ?? []).filter((c) => c.user?.login === gate.commentAuthor && (c.body ?? '').includes(summary));
+  // A review run in a session by Codex alone folds its comment under Codex's name (shared/codeReview/prompt.txt).
+  const summaries = [reviewSummaryOf(gate), ...(gate.runner === 'woodshed' ? [CODEX_SUMMARY] : [])];
+  const reviews = (comments ?? []).filter((c) => c.user?.login === gate.commentAuthor && summaries.some((s) => (c.body ?? '').includes(s)));
   const runId = runIdIn(review?.body);
   // Else the one edited last: each run edits the same comment, which may sit above older ones from before it did.
   const latest = reviews.reduce((a, c) => (!a || (c.updated_at ?? '') >= (a.updated_at ?? '') ? c : a), null);
