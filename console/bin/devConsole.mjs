@@ -169,10 +169,11 @@ const sessions = [
     kind: 'task', trigger: 'my-woodshed', owner: 'octocat', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null,
     planUsage: planReading({ minutesAgo: 1, fiveHour: [42, 132], sevenDay: [78, 2 * 1440 + 600] }),
   }),
-  // A private session with everything the pane bar can hold: its plan, the machine, the editor, the databases and an
-  // unpushed branch, for how the bar fits a long name.
+  // A private session with everything the pane bar can hold: Invite (it has a PR), its plan, the machine, the editor and
+  // Redis, for how the bar fits a long name. Like every made-up session it has no shell, so Terminal opens App log.
   session('ba5eba11', null, 'Crowded pane bar with a long session name to see what gives way', {
-    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true, editor: true,
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, editor: true,
+    prUrl: 'https://github.com/example-org/example-repo/pull/26700',
     app: 'stopped', appServers: { frontend: false, backend: false, frontendPort: 5173, backendPort: 8080 },
     usage: { cpuPercent: 41, memoryBytes: 632 * 1024 * 1024, memoryLimitBytes: 8 * GB, memoryPeakBytes: 1.1 * GB, cores: 2, diskUsedBytes: 4 * GB, diskTotalBytes: 20 * GB },
     planUsage: planReading({ minutesAgo: 2, fiveHour: [12, 200], sevenDay: [68, 3 * 1440] }),

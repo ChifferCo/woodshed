@@ -32,7 +32,8 @@ branch and PR, and the session's buttons. Terminal and Review each hold two view
 the tabs while one shows: **Shell** or **App log**, and **Review** or **Diff**; each tab opens the one last open. On the
 right: **Invite** (below), one meter for the plan and the machine, **Open ▾** (the editor and the databases' viewers),
 the app's button and **Stop**. As the bar narrows the session's name keeps its room: the meter goes first unless
-something runs high, then Invite, then Details and Open fold into **⋯**. On a phone the rail is the page,
+something runs high, then Invite, then Details and Open fold into **⋯**. What the bar leaves out is in Details (the
+meter's readings and Invite) or in ⋯. On a phone the rail is the page,
 after the standalone shed's: sessions are rows with a star and ⋯ big enough for
 a thumb, Shared's status filter is chips above the list, ⋯ opens as a sheet
 from the bottom, and **+ New session** is a screen of its own (`/?new=1`).
@@ -479,7 +480,7 @@ And what the shed shows about each session:
   well, the whole line once one runs high), and after the status word on a phone. Amber past 70% of its memory or
   75% of its cores, red past 90% or 95%, the one over the line first.
 - **Plan**: in a private session's pane bar meter, how much of your session agent's (Claude or Codex) plan is used,
-  its fullest window's share (`Plan 68%`), amber from 70% and `Plan out` at 100%. Click the meter for each
+  its fullest window's share (`Plan 68%`), amber from 70%, red from 90% and `Plan out` at 100%. Click the meter for each
   window's share and when it resets, a tick for how much of it has gone by, how old the reading
   is, and the machine's CPU, memory and disk against their limits (on a phone, the plan under ⋯). Claude Code hands the limits only to its status
   line, after each answer: `session/statusline.sh` saves them to

@@ -1284,24 +1284,45 @@
     return W.invite.inviteTarget(s, W.isPrivate(s) && !s.prUrl && s.branch ? inviteCheck(s) : { pushed: null });
   }
 
-  // Shown only once there is something to link to: until then Details says why there is none.
-  function inviteButton(s) {
+  // What Invite links to, or null until there is something to link to: until then Details says why there is none.
+  function inviteReady(s) {
+    if (!W.isPrivate(s) || s.kind === 'ask' || !s.branch) return null;
     const target = inviteTargetOf(s);
-    if (target.state !== 'pr' && target.state !== 'branch') return null;
-    return h('button', {
+    return target.state === 'pr' || target.state === 'branch' ? target : null;
+  }
+
+  async function copyInvite(s, target) {
+    try {
+      await navigator.clipboard.writeText(W.invite.inviteUrl(window.location.origin, target.on, document.querySelector('meta[name="woodshed-link-query"]')?.content || null, s.project || null));
+      W.shell.toast(`Link copied: opens New session on ${target.on}`);
+    } catch (err) {
+      W.shell.toast(`Not copied: ${err.message}`);
+    }
+  }
+
+  function inviteButton(s) {
+    const target = inviteReady(s);
+    return target && h('button', {
       type: 'button', class: 'pbtn pinvite',
       title: `Copies a link that opens New session on ${target.on}, as the engineer's own private session on their own Claude. Yours stays private: the link holds nothing of it`,
-      onclick: async (e) => {
+      onclick: (e) => {
         e.preventDefault();
         e.stopPropagation();
-        try {
-          await navigator.clipboard.writeText(W.invite.inviteUrl(window.location.origin, target.on, document.querySelector('meta[name="woodshed-link-query"]')?.content || null, s.project || null));
-          W.shell.toast(`Link copied: opens New session on ${target.on}`);
-        } catch (err) {
-          W.shell.toast(`Not copied: ${err.message}`);
-        }
+        copyInvite(s, target);
       },
     }, 'Invite');
+  }
+
+  // Invite as a menu item, for Details and ⋯ when the bar has no room for the button.
+  function inviteItem(s) {
+    const target = inviteReady(s);
+    return target && { label: 'Invite', note: `Copy a link that opens New session on ${target.on}, as the engineer's own private session`, run: () => copyInvite(s, target) };
+  }
+
+  // Whether the bar shows an item now: the narrowing rules in style.css hide some.
+  function barShows(selector) {
+    const el = slots.head?.querySelector(selector);
+    return Boolean(el && el.offsetParent !== null);
   }
 
   // A bar button that opens the page's one menu under its own key.
@@ -1321,9 +1342,10 @@
     const out = plan?.windows.find((w) => w.level === 'out');
     const used = plan?.windows.filter((w) => w.usedPercent !== null) ?? [];
     const fullest = used.reduce((a, w) => (!a || w.usedPercent > a.usedPercent ? w : a), null);
-    const planLevel = !plan ? '' : out ? 'out' : plan.windows.some((w) => w.level === 'hot' || w.level === 'warn') ? 'warn' : '';
+    // Out at 100%, hot (red) from 90%, warn (amber) from 70%, as the plan's own detail colors its windows.
+    const planLevel = !plan ? '' : out ? 'out' : plan.windows.some((w) => w.level === 'hot') ? 'hot' : plan.windows.some((w) => w.level === 'warn') ? 'warn' : '';
     const planText = !plan ? null : out ? 'Plan out' : fullest ? `Plan ${Math.round(fullest.usedPercent)}%` : 'Plan —';
-    const level = planLevel === 'out' || usage?.level === 'hot' ? 'hot' : planLevel || usage?.level || '';
+    const level = planLevel === 'out' || planLevel === 'hot' || usage?.level === 'hot' ? 'hot' : planLevel || usage?.level || '';
     const tip = [
       plan && `Your ${plan.agent === 'codex' ? 'Codex' : 'Claude'} plan: ${used.map((w) => `${w.short} ${Math.round(w.usedPercent)}%`).join(', ') || 'not reported yet'}${out?.resetsAt ? ', out until its reset' : ''}${plan.stale && plan.asOf ? `, read ${W.ago(plan.asOf)}` : ''}`,
       usage?.tip,
@@ -1332,22 +1354,30 @@
     return barMenuButton(s, {
       key: 'meter', className: `pmeter${level ? ` is-${level}` : ''}`, title: tip,
       label: [
-        planText && h('span', { class: `pm-part${planLevel ? ` is-${planLevel === 'out' ? 'hot' : 'warn'}` : ''}` }, planText),
+        planText && h('span', { class: `pm-part${planLevel ? ` is-${planLevel === 'warn' ? 'warn' : 'hot'}` : ''}` }, planText),
         planText && usage && h('span', { class: 'pm-sep', 'aria-hidden': 'true' }, '·'),
         usage && h('span', { class: `pm-part${usage.level ? ` is-${usage.level}` : ''}` }, usage.short),
       ],
-      open: () => {
-        const now = data.sessions.find((x) => x.id === s.id) ?? s;
-        const p = W.planUsageOf(now, data.sessions) ?? plan;
-        return {
-          body: [
-            p && W.planUsageDetails(p),
-            W.usageOf(now) && h('div', { class: 'pmeter-machine' }, h('div', { class: 'card-menu-group' }, 'The session\'s machine'), ...W.machineDetails(now)),
-          ],
-          items: [],
-        };
-      },
+      open: () => ({ body: meterBody(s), items: [] }),
     });
+  }
+
+  // What the meter opens: the plan's windows and the machine's limits. It is drawn again on each refresh while it is
+  // open, as the machine's dialog is, so readings taken while someone watches it stay current.
+  let meterOpen = null;
+  const hasMeter = (s) => s.status === 'running' && Boolean(W.usageOf(s) || W.planUsageOf(s, data.sessions));
+  function meterBody(s) {
+    const el = h('div', { class: 'pmeter-body' });
+    const draw = (now) => {
+      const plan = W.planUsageOf(now, data.sessions);
+      el.replaceChildren(...[
+        plan && W.planUsageDetails(plan),
+        W.usageOf(now) && h('div', { class: 'pmeter-machine' }, h('div', { class: 'card-menu-group' }, 'The session\'s machine'), ...W.machineDetails(now)),
+      ].filter(Boolean));
+    };
+    draw(s);
+    meterOpen = { id: s.id, el, draw };
+    return el;
   }
 
   // Its editor and its databases' viewers, each in a new tab, under one button.
@@ -1410,6 +1440,9 @@
       }, label);
     };
     const group = TAB_GROUPS[groupOf(view)];
+    // However the view was reached (a click, a link's ?tab, the tab remembered for the session), its tab reopens it.
+    if (group) lastInGroup[groupOf(view)] = view;
+    if (meterOpen?.id === s.id && meterOpen.el.isConnected) meterOpen.draw(s);
     const subTabs = group && h('div', { class: 'psubtabs', role: 'tablist', 'aria-label': groupOf(view) === 'terminal' ? 'Terminal' : 'Review' },
       group.map((key) => h('button', {
         type: 'button', class: 'psubtab', role: 'tab', 'aria-selected': String(view === key),
@@ -1427,7 +1460,7 @@
         onclick: (e) => {
           e.preventDefault();
           e.stopPropagation();
-          openCardMenu(e.currentTarget, s, { body: [h('div', { class: 'card-menu-group' }, 'Details'), sessionDetails(s), plan && W.planUsageDetails(plan)], extra: paneActions(s) });
+          openCardMenu(e.currentTarget, s, { body: [h('div', { class: 'card-menu-group' }, 'Details'), sessionDetails(s), hasMeter(s) && meterBody(s)], extra: [inviteItem(s), ...paneActions(s)].filter(Boolean) });
         },
       }, '⋯'),
       typing && h('button', {
@@ -1447,10 +1480,14 @@
       pr && s.kind !== 'pr' && W.prChips(s, { asLink: true }),
       barMenuButton(s, {
         key: 'details', label: 'Details ▾', className: 'pdetails', title: 'Its branch, who started it, how long it has run, whose Claude it runs on and who can see it',
-        open: () => ({ body: sessionDetails(s), items: s.branch ? [copyBranch(s)] : [] }),
+        // What the narrowing rules took off the bar comes here: the meter's readings and Invite.
+        open: () => ({
+          body: [sessionDetails(s), hasMeter(s) && !barShows('.pmeter') && meterBody(s)],
+          items: [s.branch && copyBranch(s), !barShows('.pinvite') && inviteItem(s)].filter(Boolean),
+        }),
       }),
       h('div', { class: 'pright' },
-        W.isPrivate(s) && s.kind !== 'ask' && s.branch && inviteButton(s),
+        inviteButton(s),
         s.status === 'running' && meterButton(s, plan),
         tools && openActions(s).length > 0 && barMenuButton(s, {
           key: 'open', label: 'Open ▾', className: 'popen', title: 'Its checkout in VS Code, or its databases and Redis in a viewer, each in a new tab', open: () => ({ items: openActions(s) }),
@@ -2000,7 +2037,6 @@
     fellBack = false;
     if (!picked) return;
     tab = next;
-    if (TAB_GROUPS[groupOf(next)]) lastInGroup[groupOf(next)] = next;
     landOnReview = false;
     tabMemory.remember(id, tab);
     const url = new URL(window.location.href);
