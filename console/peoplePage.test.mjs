@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const source = fs.readFileSync(new URL('./public/people.js', import.meta.url), 'utf8');
+const rowsSource = fs.readFileSync(new URL('./public/settingsRows.js', import.meta.url), 'utf8');
 
 function element(tag) {
   return {
@@ -29,7 +30,7 @@ function walk(el, out = []) {
 
 const person = (login, role, fields = {}) => ({ login, role, admin: role === 'owner', githubSessions: true, assignable: false, ...fields });
 
-async function loadPage({ members, addReply }) {
+async function loadPage({ members, addReply, hosted = true, requests = [] }) {
   const app = element('div');
   const h = (tag, attrs, ...children) => {
     const el = element(tag);
@@ -43,26 +44,31 @@ async function loadPage({ members, addReply }) {
     for (const c of children.flat(Infinity)) if (c !== null && c !== undefined && c !== false) el.append(typeof c === 'object' ? c : String(c));
     return el;
   };
-  const list = { members, requests: [], hosted: true, names: {}, slack: null };
+  const list = { members, requests, hosted, names: {}, slack: null };
   const posted = [];
+  const heard = {};
   const W = {
     h, settingsTabs: () => element('nav'), scopePill: () => element('span'), sameLogin: (a, b) => String(a).toLowerCase() === String(b).toLowerCase(),
     personText: (l) => `@${l}`, ago: () => 'just now', shell: { toast() {} },
-    settingsPage: (_match, start) => start(app, { nav: () => element('nav'), interval: () => {} }),
+    settingsPage: (_match, start) => start(app, { nav: () => element('nav'), interval: () => {}, on: (_target, name, fn) => { heard[name] = fn; } }),
     getJson: async (path) => (path === '/api/me' ? { login: 'ana-owner' } : list),
     postJson: async (path, body) => { posted.push([path, body]); return addReply(body); },
   };
   const context = vm.createContext({ window: { Woodshed: W, confirm: () => true, alert() {} }, document: { activeElement: null } });
+  vm.runInContext(rowsSource, context);
   vm.runInContext(source, context);
   for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
   const find = (pred) => walk(app).find(pred);
+  // The form is in the box's last row, which opens in place.
+  const openInvite = () => { if (!find((e) => e.attrs.id === 'invite-form')) find((e) => e.attrs.id === 'invite-card-head').listeners.click(); };
   async function add(login) {
+    openInvite();
     find((e) => e.attrs.id === 'invite').value = login;
-    await find((e) => e.attrs.id === 'invite-card').listeners.submit({ preventDefault() {} });
+    await find((e) => e.attrs.id === 'invite-form').listeners.submit({ preventDefault() {} });
   }
-  const hint = () => textOf(find((e) => e.attrs.id === 'add-hint'));
+  const hint = () => { openInvite(); return textOf(find((e) => e.attrs.id === 'add-hint')); };
   const rowOf = (login) => find((e) => e.tag === 'tr' && textOf(e).includes(`@${login}`));
-  return { app, add, hint, rowOf, posted };
+  return { app, add, hint, rowOf, posted, find, heard };
 }
 
 const CORE_HINT = 'They can sign in straight away. An owner is an admin here. Nothing is sent to them: tell them the link.';
@@ -114,4 +120,28 @@ test('after a failed add, the previous add\'s sentence is gone: core\'s hint sho
   assert.equal(hint(), CORE_HINT, 'not the sentence about the add before');
   const error = walk(app).find((e) => e.className === 'form-error');
   assert.deepEqual([error.textContent, error.hidden], ['Your plan has room for 2 people.', false], 'the error shows beside it');
+});
+
+test('the page is groups: a plain row per person asking, the table in Members\' box, and inviting as its last row', async () => {
+  const members = [{ login: 'ana-owner', admin: true, addedBy: null, addedAt: '2026-11-01T00:00:00.000Z', how: 'first to sign in' }];
+  const { app, find, posted, heard } = await loadPage({
+    members, hosted: false, requests: [{ login: 'lee-dev', askedAt: '2026-11-19T00:00:00.000Z' }],
+    addReply: () => ({ members, requests: [], hosted: false, names: {}, slack: null }),
+  });
+  const group = (id) => find((e) => e.attrs.id === id && e.className === 'set-group');
+  assert.match(textOf(group('requests')), /^Asking to join · 1/);
+  const asking = find((e) => e.attrs.id === 'request-lee-dev');
+  assert.equal(asking.className, 'set-fold is-plain', 'nothing to open: its answer is on the row');
+  assert.deepEqual(walk(asking).filter((e) => e.tag === 'button').map(textOf), ['Accept', 'Decline']);
+  const box = walk(group('members')).find((e) => e.className === 'set-rows-box');
+  assert.deepEqual(box.children.map((c) => c.className), ['table-scroll', 'set-fold'], 'the table, then the row that invites');
+  assert.equal(find((e) => e.attrs.id === 'invite-form'), undefined, 'the form is drawn once its row is open');
+  assert.match(textOf(find((e) => e.attrs.id === 'invite-card')), /^Invite someone/);
+  // The search names the row: it opens.
+  heard['woodshed:settings-reveal']({ detail: { id: 'invite-card' } });
+  assert.equal(find((e) => e.attrs.id === 'invite-card').className, 'set-fold is-open');
+  assert.ok(find((e) => e.attrs.id === 'invite-form'));
+  await walk(asking).find((e) => textOf(e) === 'Accept').listeners.click({ currentTarget: {} });
+  assert.equal(JSON.stringify(posted), JSON.stringify([['/api/people/accept', { login: 'lee-dev' }]]));
+  assert.equal(walk(app).find((e) => e.attrs.id === 'requests'), undefined, 'the group goes when nobody asks');
 });

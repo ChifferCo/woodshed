@@ -305,7 +305,18 @@ const mcpServers = [
   { name: 'docs', url: 'https://docs.example.com/mcp', production: false, shared: true, people: '*', repos: '*', auth: 'oidc', audience: 'docs', header: null, headerSavedAt: null, updatedBy: 'local', updatedAt: '2026-11-19T09:00:00.000Z' },
   { name: 'tracker', url: 'https://tracker.example.com/mcp', production: false, shared: false, people: ['local'], repos: '*', auth: 'header', audience: null, header: 'x-api-key', headerSavedAt: null, updatedBy: 'local', updatedAt: '2026-11-19T09:00:00.000Z' },
 ];
-fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null, mcpServers }));
+// DEV_CONSOLE_PEOPLE=1 gives the People page a list to show: made-up members with their switches every way, and two
+// people asking to join. Without it the console starts its list from the sessions' owners, with nobody asking.
+const people = process.env.DEV_CONSOLE_PEOPLE === '1' ? {
+  members: {
+    local: { addedBy: null, addedAt: '2026-10-01T09:00:00.000Z', how: 'first to sign in', admin: true, adminBy: 'local', adminAt: '2026-10-01T09:00:00.000Z', githubSessions: true, githubSessionsBy: 'local', githubSessionsAt: '2026-10-01T09:00:00.000Z', assignable: true, assignableBy: 'local', assignableAt: '2026-10-01T09:00:00.000Z' },
+    octocat: { addedBy: null, addedAt: '2026-10-01T09:00:00.000Z', how: 'already using the console', githubSessions: true, githubSessionsBy: 'local', githubSessionsAt: '2026-10-02T09:00:00.000Z', assignable: true, assignableBy: 'local', assignableAt: '2026-10-02T09:00:00.000Z' },
+    'mia-dev': { addedBy: 'local', addedAt: '2026-11-03T09:00:00.000Z', how: 'invited', githubSessions: true, githubSessionsBy: 'local', githubSessionsAt: '2026-11-03T09:00:00.000Z' },
+    'sam-ops': { addedBy: 'local', addedAt: '2026-11-12T09:00:00.000Z', how: 'accepted' },
+  },
+  memberRequests: { 'lee-new': { askedAt: '2026-11-20T08:00:00.000Z' }, 'kim-design': { askedAt: '2026-11-18T15:30:00.000Z' } },
+} : {};
+fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null, mcpServers, ...people }));
 
 // The shell's own console settings, under either name (shared/envNames.mjs: a GitHub App, required sign-in, the ECS
 // launcher), would turn this back into the real console, so none of them are passed on, but hosted mode's
