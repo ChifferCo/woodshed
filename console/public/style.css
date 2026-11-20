@@ -221,13 +221,20 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 .pane { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; }
 @media (min-width: 900px) { .pane { height: 100vh; } }
 /* After the shed's pane bar: Terminal | Review, the title, what the work is on, and the session's buttons. */
-.pane-bar { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 10px; padding: 4px 8px 4px 6px; background: var(--bar); border-bottom: 1px solid var(--bar-line); font-family: var(--mono); font-size: 11px; color: var(--bar-ink); }
+.pane-bar { container: panebar / inline-size; display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 10px; padding: 4px 8px 4px 6px; background: var(--bar); border-bottom: 1px solid var(--bar-line); font-family: var(--mono); font-size: 11px; color: var(--bar-ink); }
+.pane-bar > * { flex: none; }
 .ptabs { display: flex; flex: none; gap: 2px; padding: 2px; background: var(--bar-well); border: 1px solid var(--bar-well-line); border-radius: 6px; }
 .ptab { display: inline-flex; align-items: center; margin: 0; padding: 2px 11px; border: 0; border-radius: 4px; background: none; cursor: pointer; white-space: nowrap; font-family: "Red Hat Display", system-ui, sans-serif; font-size: 11.5px; font-weight: 600; color: var(--bar-sub); }
 .ptab:hover:not(:disabled) { color: var(--bar-ink); background: var(--bar-hover); }
 .ptab[aria-selected="true"] { color: var(--bar-strong); background: var(--bar-on); }
 .ptab:disabled { color: var(--bar-off); cursor: default; }
-.ptitle { display: inline-flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; margin: 0; padding: 2px 4px; border: 0; border-radius: 4px; background: none; cursor: pointer; font-family: "Red Hat Display", system-ui, sans-serif; font-size: 12px; font-weight: 600; color: var(--bar-strong); }
+/* Terminal's and Review's two views, beside the tabs while one of them shows: smaller, so it reads as under the tab. */
+.psubtabs { display: flex; flex: none; gap: 1px; margin-left: -6px; padding: 1px; border: 1px solid var(--bar-well-line); border-radius: 5px; }
+.psubtab { margin: 0; padding: 1px 8px; border: 0; border-radius: 3px; background: none; cursor: pointer; white-space: nowrap; font-family: "Red Hat Display", system-ui, sans-serif; font-size: 11px; font-weight: 600; color: var(--bar-sub); }
+.psubtab:hover:not(:disabled) { color: var(--bar-ink); background: var(--bar-hover); }
+.psubtab[aria-selected="true"] { color: var(--bar-strong); background: var(--bar-on); }
+.psubtab:disabled { color: var(--bar-off); cursor: default; }
+.pane-bar > .ptitle { display: inline-flex; align-items: center; gap: 2px; min-width: 0; flex: 0 1 auto; margin: 0; padding: 2px 4px; border: 0; border-radius: 4px; background: none; cursor: pointer; font-family: "Red Hat Display", system-ui, sans-serif; font-size: 12px; font-weight: 600; color: var(--bar-strong); }
 .ptitle-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ptitle:hover { background: var(--bar-hover); }
 /* The pencil shows on hover, so the name reads as a name until you reach for it. */
@@ -248,7 +255,7 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 .pmark { color: var(--bar-green); }
 .pref:hover, .pmark:hover { background: var(--bar-hover); }
 .pright { display: flex; align-items: center; gap: 4px; flex: none; margin-left: auto; }
-.pbtn { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid transparent; border-radius: 4px; background: none; cursor: pointer; font: inherit; font-size: 11px; color: var(--bar-sub); text-decoration: none; white-space: nowrap; }
+.pbtn { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border: 1px solid transparent; border-radius: 4px; background: none; cursor: pointer; font-family: "Red Hat Display", system-ui, sans-serif; font-size: 11.5px; font-weight: 600; color: var(--bar-sub); text-decoration: none; white-space: nowrap; }
 .pbtn:hover, .pbtn[aria-expanded="true"] { color: var(--bar-ink); background: var(--bar-hover); }
 .pbtn.is-off { opacity: 0.7; cursor: default; }
 .pane-bar .btn { min-height: 24px; padding: 0 8px; font-size: 11.5px; font-family: "Red Hat Display", system-ui, sans-serif; }
@@ -256,6 +263,16 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 .pane-bar .btn-open { border-color: var(--bar-amber-line); background: var(--bar-amber-well); color: var(--bar-amber); }
 .pane-bar .btn-stop { border-color: var(--bar-well-line); color: var(--bar-ink); }
 .pane-bar .spin { border-color: var(--bar-amber); border-right-color: transparent; }
+/* As the bar narrows, the session's name keeps its room: the meter goes first, coming back once something runs high, then
+   Invite. Past that the name is cut short, never to nothing. */
+@container panebar (max-width: 1080px) { .pane-bar .pmeter:not(.is-warn):not(.is-hot) { display: none; } }
+@container panebar (max-width: 960px) { .pane-bar .pinvite { display: none; } }
+.pane-bar > .ptitle { min-width: min(9em, 22cqi); }
+/* Narrower still, Details and Open fold into the phone's ⋯, which holds both, at the bar's right end. */
+@container panebar (max-width: 780px) {
+  .pane-bar .pdetails, .pane-bar .popen { display: none; }
+  .pane-bar .pmore { display: grid; place-items: center; order: 1; width: 28px; height: 24px; margin: 0; padding: 0; font: inherit; font-size: 14px; color: var(--bar-ink); background: none; border: 1px solid var(--bar-well-line); border-radius: 4px; cursor: pointer; }
+}
 /* Phone only, like the key bar they drive, and the phone's top bar and message box. */
 .pback, .pkeys, .keybar, .pphone, .pmore, .msgbox { display: none; }
 .pkeys { flex: none; min-width: 32px; height: 32px; margin: 0; padding: 0 6px; font: inherit; font-size: 14px; color: var(--bar-ink); background: none; border: 1px solid var(--bar-well-line); border-radius: 4px; cursor: pointer; }
@@ -521,6 +538,8 @@ dialog.wizard:focus { outline: none; }
   .pane-bar .pmore[aria-expanded="true"] { background: var(--bar-on); }
   .pane-bar .ptabs { order: 3; flex: 1 1 100%; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
   .pane-bar .ptab { justify-content: center; padding: 6px 0; font-size: 13px; }
+  .pane-bar .psubtabs { order: 4; flex: 1 1 100%; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); margin: 0; }
+  .pane-bar .psubtab { padding: 5px 0; font-size: 12.5px; }
   .pane-bar > .ptitle, .pane-bar > .status, .pane-bar > .prchip, .pane-bar .pright, .pane-bar .pkeys,
   .pane-bar .pref, .pane-bar .pmark, .pane-bar .pbtn { display: none; }
 
@@ -1127,17 +1146,19 @@ dialog.machine .machine-meter.is-hot .plan-bar i { background: var(--bad); }
 dialog.machine .machine-meter.is-hot .plan-row b { color: var(--bad); }
 dialog.machine dl.machine-facts { margin: 0; }
 dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
-/* The owner's Claude plan in the pane bar, and its detail in the bar's menu (common.js, planUsageFace and planUsageDetails). */
-.pane-bar .pplan { gap: 6px; border-color: var(--bar-well-line); font-family: var(--mono); color: var(--bar-ink); }
-.pane-bar .pplan .plan-lbl { font-family: "Red Hat Display", system-ui, sans-serif; font-weight: 600; color: var(--bar-sub); }
-.pane-bar .pplan .plan-w { display: inline-flex; align-items: center; gap: 4px; }
-.pane-bar .pplan .plan-w.is-warn { color: var(--bar-amber); }
-.pane-bar .pplan .plan-age { color: var(--bar-sub); }
-.pane-bar .pplan.is-warn, .pane-bar .pplan.is-out { border-color: var(--bar-amber-line); }
-.pane-bar .pplan.is-out { background: var(--bar-amber-well); color: var(--bar-amber); }
-.plan-mini { display: inline-block; width: 22px; height: 4px; border-radius: 2px; background: var(--bar-on); overflow: hidden; }
-.plan-mini i { display: block; height: 100%; background: var(--bar-slate); }
-.plan-w.is-warn .plan-mini i { background: var(--bar-amber); }
+/* The pane bar's meter: the owner's plan and the session's machine, quiet until one runs high (session.js, meterButton).
+   Its detail opens in the bar's menu (common.js, planUsageDetails and machineDetails). */
+.pane-bar .pmeter { gap: 5px; font-family: var(--mono); font-size: 10.5px; }
+.pane-bar .pmeter .pm-sep { color: var(--bar-off); }
+.pane-bar .pmeter .pm-part.is-warn { color: var(--bar-amber); }
+.pane-bar .pmeter .pm-part.is-hot { color: #f08b81; }
+.pane-bar .pmeter.is-warn, .pane-bar .pmeter.is-hot { border-color: var(--bar-amber-line); }
+.pmeter-machine { display: flex; flex-direction: column; gap: 10px; padding: 6px 0 4px; }
+.pmeter-machine dl.machine-facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 10px; font-size: 12.5px; }
+.pmeter-machine dl.machine-facts dt { color: var(--meta); }
+.pmeter-machine dl.machine-facts dd { margin: 0; color: var(--ink); }
+.pmeter-machine .machine-meter.is-hot .plan-bar i { background: var(--bad); }
+.pmeter-machine .machine-meter.is-hot .plan-row b { color: var(--bad); }
 .plan-detail { display: flex; flex-direction: column; gap: 10px; padding: 0 0 4px; }
 .plan-meter { display: flex; flex-direction: column; gap: 5px; padding: 0 10px; }
 .plan-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 12.5px; color: var(--ink); }

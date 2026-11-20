@@ -54,6 +54,12 @@
   // The tabs that show a page of their own rather than a terminal: no key bar and no message box. Chat has a composer
   // of its own.
   const PAGE_TABS = new Set(['chat', 'review', 'diff', 'applog']);
+  // The bar's Terminal and Review each hold two views, picked under a switch beside the tabs: the shell or the app's
+  // logs, and the review of what it pushed or the live diff. ?tab= still names each view.
+  const TAB_GROUPS = { terminal: ['terminal', 'applog'], review: ['review', 'diff'] };
+  const SUB_TAB_LABELS = { terminal: 'Shell', applog: 'App log', review: 'Review', diff: 'Diff' };
+  const groupOf = (key) => Object.keys(TAB_GROUPS).find((g) => TAB_GROUPS[g].includes(key)) ?? key;
+  const lastInGroup = { terminal: 'terminal', review: 'review' };
   readRoute();
 
   let data = null;
@@ -1040,9 +1046,8 @@
       },
       data.appDomain && (up || s.app === 'starting' || s.app === 'frontend-down') && { group: 'App', label: 'Stop app', note: 'Stop the app\'s backend and frontend', working: true, run: app('stop') },
       data.appDomain && !data.appPorts && W.isPrivate(s) && !s.taintedAt && { group: 'App', label: 'Share the app…', note: 'Let members, or anyone with a link, open the app', run: () => W.shareApp(s) },
-      data.appDomain && s.editor && !s.taintedAt && { group: 'Code', label: 'Editor ↗', note: 'Its checkout in VS Code, in a new tab', href: editorUrl(s) },
-      ...dataActions(s),
-      !PAGE_TABS.has(tab) && {
+      ...openActions(s),
+      !PAGE_TABS.has(tab) && narrow.matches && {
         label: keyBarShown ? 'Hide the key bar' : 'Show the key bar', note: 'esc, the arrows, tab and ^C above the terminal', run: toggleKeyBar,
       },
     ].filter(Boolean);
@@ -1098,6 +1103,8 @@
       row('Runs on', claude),
       !W.isPrivate(s) && s.kind !== 'ask' && row('Assigned to', assignedLine(s)),
       row('Visible to', W.isPrivate(s) ? 'Only you' : 'Everyone on the console'),
+      W.isPrivate(s) && s.kind !== 'ask' && s.branch && !['pr', 'branch'].includes(inviteTargetOf(s).state)
+        && row('Invite', 'Invite shows in the bar once GitHub has the branch: the session pushes when it commits and when it stops'),
       s.taintedAt && row('Production data', `Since ${W.ago(s.taintedAt)}: it reaches only the console, its databases and your organization's private repos, and all it kept is deleted when it is removed`));
   }
 
@@ -1143,17 +1150,20 @@
     return entry;
   }
 
+  function inviteTargetOf(s) {
+    return W.invite.inviteTarget(s, W.isPrivate(s) && !s.prUrl && s.branch ? inviteCheck(s) : { pushed: null });
+  }
+
+  // Shown only once there is something to link to: until then Details says why there is none.
   function inviteButton(s) {
-    const target = W.invite.inviteTarget(s, W.isPrivate(s) && !s.prUrl && s.branch ? inviteCheck(s) : { pushed: null });
-    const ready = target.state === 'pr' || target.state === 'branch';
+    const target = inviteTargetOf(s);
+    if (target.state !== 'pr' && target.state !== 'branch') return null;
     return h('button', {
-      type: 'button', class: `pbtn${ready ? '' : ' is-off'}`, 'aria-disabled': String(!ready),
-      title: ready ? `Copies a link that opens New session on ${target.on}, as the engineer's own private session on their own Claude. Yours stays private: the link holds nothing of it`
-        : target.state === 'checking' ? 'Checking whether GitHub has the branch…' : 'GitHub has no pull request or branch for this session yet: it pushes when it commits and when it stops',
+      type: 'button', class: 'pbtn pinvite',
+      title: `Copies a link that opens New session on ${target.on}, as the engineer's own private session on their own Claude. Yours stays private: the link holds nothing of it`,
       onclick: async (e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!ready) return W.shell.toast(target.state === 'checking' ? 'Still checking whether GitHub has the branch' : 'Nothing to link yet: push the branch first');
         try {
           await navigator.clipboard.writeText(W.invite.inviteUrl(window.location.origin, target.on, document.querySelector('meta[name="woodshed-link-query"]')?.content || null, s.project || null));
           W.shell.toast(`Link copied: opens New session on ${target.on}`);
@@ -1161,7 +1171,7 @@
           W.shell.toast(`Not copied: ${err.message}`);
         }
       },
-    }, W.invite.inviteLabel(target));
+    }, 'Invite');
   }
 
   // A bar button that opens the page's one menu under its own key.
@@ -1173,14 +1183,49 @@
     }, label);
   }
 
-  // The owner's plan, beside the container's CPU and memory; the detail opens under it.
-  function planButton(s, plan) {
-    const face = W.planUsageFace(plan);
+  // One quiet meter for the owner's plan and the container's CPU and memory: the plan's fullest window and the CPU while
+  // all is well, amber or red once one runs high. Both details open under it.
+  function meterButton(s, plan) {
+    const usage = W.usageOf(s);
+    if (!plan && !usage) return null;
+    const out = plan?.windows.find((w) => w.level === 'out');
+    const used = plan?.windows.filter((w) => w.usedPercent !== null) ?? [];
+    const fullest = used.reduce((a, w) => (!a || w.usedPercent > a.usedPercent ? w : a), null);
+    const planLevel = !plan ? '' : out ? 'out' : plan.windows.some((w) => w.level === 'hot' || w.level === 'warn') ? 'warn' : '';
+    const planText = !plan ? null : out ? 'Plan out' : fullest ? `Plan ${Math.round(fullest.usedPercent)}%` : 'Plan —';
+    const level = planLevel === 'out' || usage?.level === 'hot' ? 'hot' : planLevel || usage?.level || '';
+    const tip = [
+      plan && `Your ${plan.agent === 'codex' ? 'Codex' : 'Claude'} plan: ${used.map((w) => `${w.short} ${Math.round(w.usedPercent)}%`).join(', ') || 'not reported yet'}${out?.resetsAt ? ', out until its reset' : ''}${plan.stale && plan.asOf ? `, read ${W.ago(plan.asOf)}` : ''}`,
+      usage?.tip,
+      'Click for each window, the machine\'s limits and when they reset',
+    ].filter(Boolean).join('\n');
     return barMenuButton(s, {
-      key: 'plan', label: face.nodes, className: `pplan${face.level ? ` is-${face.level}` : ''}`,
-      title: `How much of your ${plan.agent === 'codex' ? 'Codex' : 'Claude'} plan is used, and when it resets`,
-      open: () => ({ body: W.planUsageDetails(W.planUsageOf(s, data.sessions) ?? plan), items: [] }),
+      key: 'meter', className: `pmeter${level ? ` is-${level}` : ''}`, title: tip,
+      label: [
+        planText && h('span', { class: `pm-part${planLevel ? ` is-${planLevel === 'out' ? 'hot' : 'warn'}` : ''}` }, planText),
+        planText && usage && h('span', { class: 'pm-sep', 'aria-hidden': 'true' }, '·'),
+        usage && h('span', { class: `pm-part${usage.level ? ` is-${usage.level}` : ''}` }, usage.short),
+      ],
+      open: () => {
+        const now = data.sessions.find((x) => x.id === s.id) ?? s;
+        const p = W.planUsageOf(now, data.sessions) ?? plan;
+        return {
+          body: [
+            p && W.planUsageDetails(p),
+            W.usageOf(now) && h('div', { class: 'pmeter-machine' }, h('div', { class: 'card-menu-group' }, 'The session\'s machine'), ...W.machineDetails(now)),
+          ],
+          items: [],
+        };
+      },
     });
+  }
+
+  // Its editor and its databases' viewers, each in a new tab, under one button.
+  function openActions(s) {
+    return [
+      data.appDomain && s.editor && !s.taintedAt && { group: 'Code', label: 'Editor ↗', note: 'Its checkout in VS Code, in a new tab', href: editorUrl(s) },
+      ...dataActions(s),
+    ].filter(Boolean);
   }
 
   // A phone's bar has no app button (its app is in the ⋯ sheet), so an app starting or stopping says so on the state line,
@@ -1201,19 +1246,45 @@
 
   function paneBar(s, view) {
     const pr = W.prNumber(s.prUrl);
-    const tabButton = (key, label, disabledWhy, hint) => h('button', {
-      type: 'button',
-      class: 'ptab',
-      role: 'tab',
-      'aria-selected': String(view === key),
-      disabled: Boolean(disabledWhy),
-      title: disabledWhy || hint || null,
-      onclick: () => setTab(key),
-    }, label);
     const typing = s.status === 'running' && !PAGE_TABS.has(view);
     // A question from Slack reads the default branch: it has no branch, app or databases of its own.
     const tools = s.status === 'running' && s.kind !== 'ask';
     const plan = s.status === 'running' ? W.planUsageOf(s, data.sessions) : null;
+    // Why each tab is off, or null when it is on.
+    const off = {
+      chat: null,
+      tui: null,
+      terminal: s.status !== 'running' ? 'The shell is there while the session runs'
+        : s.hasShell ? null : 'This session started from an image without the Terminal tab: a new session has it',
+      applog: tools ? null : s.kind === 'ask' ? 'A question from Slack runs no app' : 'The app\'s logs are there while the session runs',
+      review: s.branch ? null : s.kind === 'ask' ? 'A question from Slack changes no code' : 'This session has no branch yet, so there is nothing to review',
+      diff: s.kind === 'ask' ? 'A question from Slack changes no code'
+        : s.status === 'running' ? null : 'The diff is read from the session while it runs: Review shows what it pushed',
+    };
+    const hints = {
+      tui: 'The agent\'s own screen, live: type to it as in its terminal',
+      terminal: 'A shell in the session, and its app\'s logs',
+      review: 'The review of what it pushed, and the live diff',
+    };
+    // A tab of a group opens the view of it last open, or the other one when that is off.
+    const tabButton = (key, label) => {
+      const members = TAB_GROUPS[key] ?? [key];
+      const on = members.filter((k) => !off[k]);
+      const go = on.includes(lastInGroup[key]) ? lastInGroup[key] : on[0];
+      return h('button', {
+        type: 'button', class: 'ptab', role: 'tab',
+        'aria-selected': String(groupOf(view) === key),
+        disabled: !go,
+        title: (!go ? off[members[0]] : hints[key]) || null,
+        onclick: () => setTab(go),
+      }, label);
+    };
+    const group = TAB_GROUPS[groupOf(view)];
+    const subTabs = group && h('div', { class: 'psubtabs', role: 'tablist', 'aria-label': groupOf(view) === 'terminal' ? 'Terminal' : 'Review' },
+      group.map((key) => h('button', {
+        type: 'button', class: 'psubtab', role: 'tab', 'aria-selected': String(view === key),
+        disabled: Boolean(off[key]), title: off[key] || null, onclick: () => setTab(key),
+      }, SUB_TAB_LABELS[key])));
     return h('div', { class: 'pane-bar' },
       h('a', { class: 'pback', href: railMine() ? '/' : `/all${W.byQuery(picked)}`, 'aria-label': 'Back to sessions' }, '‹'),
       // A phone's two rows: the name over one line of its state, its PR and its usage, with ⋯ for the rest.
@@ -1234,13 +1305,10 @@
       }, '⌨'),
       h('div', { class: 'ptabs', role: 'tablist', 'aria-label': 'View' },
         s.status === 'running' && tabButton('chat', 'Chat'),
-        tabButton('tui', 'TUI', null, 'The agent\'s own screen, live: type to it as in its terminal'),
-        tabButton('terminal', 'Terminal', s.status !== 'running' ? 'The shell is there while the session runs'
-          : s.hasShell ? null : 'This session started from an image without the Terminal tab: a new session has it'),
-        tabButton('review', 'Review', s.branch ? null : s.kind === 'ask' ? 'A question from Slack changes no code' : 'This session has no branch yet, so there is nothing to review'),
-        tabButton('diff', 'Diff', s.kind === 'ask' ? 'A question from Slack changes no code'
-          : s.status === 'running' ? null : 'The diff is read from the session while it runs: Review shows what it pushed'),
-        tabButton('applog', 'App log', tools ? null : s.kind === 'ask' ? 'A question from Slack runs no app' : 'The app\'s logs are there while the session runs')),
+        tabButton('tui', 'TUI'),
+        tabButton('terminal', 'Terminal'),
+        tabButton('review', 'Review')),
+      subTabs,
       h('button', { type: 'button', class: 'ptitle', title: `${s.title}\nClick to rename it`, 'aria-label': `Rename ${s.title}`, onclick: () => rename(s) },
         h('span', { class: 'ptitle-text' }, s.title), h('span', { class: 'prename', 'aria-hidden': 'true' }, '✎')),
       W.statusBadge(s),
@@ -1248,20 +1316,24 @@
       s.number && h('a', { class: 'pref', href: W.issueUrl(data.repo, s), target: '_blank', rel: 'noopener', title: s.kind === 'pr' ? 'Open the pull request' : 'Open the issue' }, W.ref(s)),
       pr && s.kind !== 'pr' && W.prChips(s, { asLink: true }),
       barMenuButton(s, {
-        key: 'details', label: 'Details ▾', title: 'Its branch, who started it, how long it has run, whose Claude it runs on and who can see it',
+        key: 'details', label: 'Details ▾', className: 'pdetails', title: 'Its branch, who started it, how long it has run, whose Claude it runs on and who can see it',
         open: () => ({ body: sessionDetails(s), items: s.branch ? [copyBranch(s)] : [] }),
       }),
       h('div', { class: 'pright' },
         W.isPrivate(s) && s.kind !== 'ask' && s.branch && inviteButton(s),
-        plan && planButton(s, plan),
-        W.usageBadge(s),
-        s.kind !== 'ask' && W.appButton(s, { appDomain: data.appDomain, onDone: refresh, onChange: render, small: true }),
-        tools && data.appDomain && s.editor && !s.taintedAt && h('a', { class: 'pbtn', href: editorUrl(s), target: '_blank', rel: 'noopener', title: 'Open its checkout in VS Code, in a new tab' }, 'Editor ↗'),
-        tools && dataActions(s).length > 0 && barMenuButton(s, {
-          key: 'data', label: 'Data ▾', title: 'Open its databases or Redis in a viewer', open: () => ({ items: dataActions(s) }),
+        s.status === 'running' && meterButton(s, plan),
+        tools && openActions(s).length > 0 && barMenuButton(s, {
+          key: 'open', label: 'Open ▾', className: 'popen', title: 'Its checkout in VS Code, or its databases and Redis in a viewer, each in a new tab', open: () => ({ items: openActions(s) }),
         }),
-        (s.status === 'queued' || s.status === 'starting' || s.status === 'running') && W.stopButton(s, refresh, { label: 'Stop session' }),
+        s.kind !== 'ask' && W.appButton(s, { appDomain: data.appDomain, onDone: refresh, onChange: render, small: true }),
+        (s.status === 'queued' || s.status === 'starting' || s.status === 'running') && stopBarButton(s),
         W.isResumable(s) && W.resumeSharedButton(s, { small: true, onDone: refresh })));
+  }
+
+  function stopBarButton(s) {
+    const button = W.stopButton(s, refresh, { label: 'Stop' });
+    button.title = 'Stop the session: it commits and pushes its work first, and Resume picks it up again';
+    return button;
   }
 
   // The phone's key bar, after the shed's: what an on-screen keyboard lacks and claude's TUI needs. Keys go to the
@@ -1793,6 +1865,7 @@
   function setTab(next) {
     if (tab === next) return;
     tab = next;
+    if (TAB_GROUPS[groupOf(next)]) lastInGroup[groupOf(next)] = next;
     landOnReview = false;
     const url = new URL(window.location.href);
     if (currentSession) (tab === 'terminal' ? shellPool : agentPool).refit(currentSession, false);

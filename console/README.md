@@ -27,16 +27,20 @@ someone who can be assigned commenting on an unassigned session takes it. Assign
 to everyone with Sessions from GitHub, and a private one cannot be assigned. On an issue's session the GitHub issue follows: the assignee is put on
 the issue, a hand over or Unassign takes off the person the console put there, and someone GitHub already had assigned
 stays (`console/issueTracking.mjs`). The console's colors, type and rail rules are written down in `console/designSystem/` (tokens, usage rules and component cards); `console/designSystem.test.mjs` fails when its colors differ from `style.css`. `/s/<id>` opens on the tab the session belongs to, with the shed's session pane: a bar
-with **Chat**, **TUI**, **Terminal**, **Review**, **Diff** and **App log** tabs, the title, status, issue,
-branch and PR, and the session's buttons. On a phone the rail is the page,
+with **Chat**, **TUI**, **Terminal** and **Review** tabs, the title, status, issue,
+branch and PR, and the session's buttons. Terminal and Review each hold two views, picked under a small switch beside
+the tabs while one shows: **Shell** or **App log**, and **Review** or **Diff**; each tab opens the one last open. On the
+right: **Invite** (below), one meter for the plan and the machine, **Open ▾** (the editor and the databases' viewers),
+the app's button and **Stop**. As the bar narrows the session's name keeps its room: the meter goes first unless
+something runs high, then Invite, then Details and Open fold into **⋯**. On a phone the rail is the page,
 after the standalone shed's: sessions are rows with a star and ⋯ big enough for
 a thumb, Shared's status filter is chips above the list, ⋯ opens as a sheet
 from the bottom, and **+ New session** is a screen of its own (`/?new=1`).
 
-**Invite an engineer**, in a private session's bar, copies `/?new=1&on=PR%20%23123` (the session's PR, or its branch
+**Invite**, in a private session's bar, copies `/?new=1&on=PR%20%23123` (the session's PR, or its branch
 while it has none and GitHub has it). Whoever opens it signs in first (`/login?next=` keeps the address) and lands on
 New session with Work on filled in, to start their own private session on their own Claude. The link holds the PR or
-branch alone, so the session stays private. With nothing pushed the button says so and copies nothing.
+branch alone, so the session stays private. With nothing pushed there is no button, and Details says why.
 The settings pages (My settings, Settings with its General and Secrets &
 webhooks tabs and any a program embedding the console adds, and People) keep the same frame: a list of them takes the rail's place,
 with **‹ Back to sessions** and the avatar menu above it. Webhook events, a log rather than a setting, is in neither the
@@ -60,7 +64,8 @@ whose it is: **My repo settings** and **My session timeouts** are yours; Setting
   (`session/sessionDiff.mjs`) builds it with the review's own `worktreeDiff` and `parseUnifiedDiff`, and answers in
   the shape of `console/review.mjs`'s `shapeReview`, so the page draws it with the stopped Review tab's code. Once the
   session stops, Review shows what it pushed.
-- `?tab=terminal` opens on Terminal, `?tab=review` on Review, `?tab=diff` on Diff and `?tab=applog` on App log.
+- `?tab=terminal` opens on Terminal's Shell, `?tab=applog` on its App log, `?tab=review` on Review and `?tab=diff` on
+  Review's Diff.
 
 Both terminals stay connected while another tab shows. A session started from an
 image without the second ttyd has Terminal greyed out.
@@ -462,14 +467,13 @@ And what the shed shows about each session:
   Details lists every one (the 20 newest are kept) with its state. The console reads every session's pull request in one
   GraphQL call a minute with its App token (`console/prChips.mjs`), a merged
   or closed one every 15 minutes.
-- **CPU and memory**: the container's, from statusd's `/status`, after the
-  status word on the card and in the pane bar. Amber past 70% of its memory or
+- **CPU and memory**: the container's, from statusd's `/status`, in the pane bar's meter (`CPU 41%` while all is
+  well, the whole line once one runs high), and after the status word on a phone. Amber past 70% of its memory or
   75% of its cores, red past 90% or 95%, the one over the line first.
-- **Plan**: on a private session's pane bar, how much of your session agent's (Claude or Codex) plan's
-  five-hour and weekly limits is used, as a short bar and a share for each,
-  amber from 70% and `✗ out until` its reset at 100%. Click it for when each
-  window resets, a tick for how much of it has gone by, and how old the reading
-  is (on a phone, under ⋯). Claude Code hands the limits only to its status
+- **Plan**: in a private session's pane bar meter, how much of your session agent's (Claude or Codex) plan is used,
+  its fullest window's share (`Plan 68%`), amber from 70% and `Plan out` at 100%. Click the meter for each
+  window's share and when it resets, a tick for how much of it has gone by, how old the reading
+  is, and the machine's CPU, memory and disk against their limits (on a phone, the plan under ⋯). Claude Code hands the limits only to its status
   line, after each answer: `session/statusline.sh` saves them to
   `~/.claude/woodshed-usage/claude.json` and statusd's `/status` returns them
   (`session/planUsage.mjs`; Codex uses local rollout limits from `session/codexPlanUsage.mjs`). Readings and running counts are shared only between private sessions using the same agent. Every private session on the same agent
@@ -477,7 +481,7 @@ And what the shed shows about each session:
   included, and a window whose reset has passed reads 0%. Claude Code reports
   the all-models week only, not claude.ai's per-model one, and leaves a window
   out at times; `/api/oauth/usage` refuses the setup token a session runs on.
-- **App log**: a tab with the end of the frontend's, the backend's and Start
+- **App log**: Terminal's second view, with the end of the frontend's, the backend's and Start
   app's logs, read every 3 seconds while it is open. The shed's is a
   terminal on the app's tmux; here the dev servers run without one, and a
   third ttyd would need its own port in the security group.
@@ -1114,7 +1118,7 @@ Which database engines an installation hosts is its own: Postgres, Mongo, both, 
 in Terraform, which sets `WOODSHED_DATABASES`; on the local provider, the `WOODSHED_LOCAL_DB_*` it sets). Each
 engine is a module in `shared/databases/` (docs/reference.md, "Databases"). Everything below is for the project file's
 databases on the engines it hosts: without Mongo there is no Mongo copy, viewer, tunnel or restore, and with no database
-there is no db-admin task, Data ▾ has Redis alone, and My settings has no Your databases. The console logs `console:
+there is no db-admin task, Open ▾ has Redis alone, and My settings has no Your databases. The console logs `console:
 databases` once at start, with `made`, the `engines` it makes a copy on, the ones sessions are `hosted` on and the ones
 its `tunnel` reaches.
 
@@ -1217,7 +1221,7 @@ Mongo runs with `--auth`. Its root user is made once on the base box
 (`<prefix>-mongo-root`, through Mongo's localhost exception), and its
 password is written to the secret, which the box may write but not read.
 
-A session's databases open from the session's page, under **Data ▾** with
+A session's databases open from the session's page, under **Open ▾** with
 **Redis**. The session runs its own pgweb
 (`/pg/<id>/`) and mongo-express (`/mongo/<id>/`) on loopback, as its databases'
 user, so they reach those and nothing else (`startDbViewers` in
@@ -1235,7 +1239,7 @@ the container. Sessions started before the image had redis-commander answer
 
 ### The editor
 
-**Editor ↗** in the session's pane bar (and **⋯** on a phone) opens VS Code on its checkout in a new tab, at
+**Editor ↗**, under **Open ▾** in the session's pane bar (and **⋯** on a phone), opens VS Code on its checkout in a new tab, at
 `https://<id>.<app domain>/__woodshed/code/`. The project file's `editor` turns it on and off (README.md, "The project
 file"): with `false` the image is built without it, and a session whose checkout says `false` refuses it. The button
 shows only while the session's statusd reports `editor: true`, which needs both. The session runs openvscode-server, Gitpod's MIT-licensed build of VS

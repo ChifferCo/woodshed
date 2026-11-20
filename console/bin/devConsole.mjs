@@ -145,7 +145,7 @@ const sessions = [
   // {"name":"example-api","repo":"example-org/example-api"},{"name":"example-web","repo":"example-org/example-web"}]'.
   session('beef4242', 26631, 'Rate limit the public API', { project: 'example-api', repo: 'example-org/example-api', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat' }),
   session('beef4343', 26632, 'Show the plan picker on the pricing page', { project: 'example-web', repo: 'example-org/example-web', status: 'running', state: 'needs-you', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat' }),
-  // Its project uses no Redis, so Data ▾ has only the databases.
+  // Its project uses no Redis, so Open ▾ has only the databases.
   session('cdef9999', 26629, 'Retry Xero sync on a 429', { status: 'running', state: 'working', stoppedAt: null, stopReason: null, startedBy: 'priya-dev', assignee: 'priya-dev', redis: false,
     // Near its memory limit, for the badge's red and the machine dialog's: its disk from an image before it was reported.
     usage: { cpuPercent: 162, memoryBytes: 7.5 * GB, memoryLimitBytes: 8 * GB, memoryPeakBytes: 7.9 * GB, cores: 2, diskUsedBytes: null, diskTotalBytes: null } }),
@@ -168,6 +168,14 @@ const sessions = [
   session('fedd1111', null, 'Plan limits in the pane bar', {
     kind: 'task', trigger: 'my-woodshed', owner: 'octocat', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null,
     planUsage: planReading({ minutesAgo: 1, fiveHour: [42, 132], sevenDay: [78, 2 * 1440 + 600] }),
+  }),
+  // A private session with everything the pane bar can hold: its plan, the machine, the editor, the databases and an
+  // unpushed branch, for how the bar fits a long name.
+  session('ba5eba11', null, 'Crowded pane bar with a long session name to see what gives way', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true, editor: true,
+    app: 'stopped', appServers: { frontend: false, backend: false, frontendPort: 5173, backendPort: 8080 },
+    usage: { cpuPercent: 41, memoryBytes: 632 * 1024 * 1024, memoryLimitBytes: 8 * GB, memoryPeakBytes: 1.1 * GB, cores: 2, diskUsedBytes: 4 * GB, diskTotalBytes: 20 * GB },
+    planUsage: planReading({ minutesAgo: 2, fiveHour: [12, 200], sevenDay: [68, 3 * 1440] }),
   }),
   // A private session whose Resume failed at start: Resume stays, and the reason is the entrypoint's ERROR. Owned by
   // `local`, the dev console's viewer, so its page opens.

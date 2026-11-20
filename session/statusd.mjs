@@ -192,7 +192,7 @@ const ASK = process.env.SESSION_MODE === 'ask';
 const QA = process.env.SESSION_MODE === 'qa';
 const QA_RUNNING = '/tmp/qa-running';
 // The entrypoint starts Redis and its viewer only for a project whose env mentions REDIS_URL (startRedisIfUsed), so
-// Data ▾ offers Redis only then.
+// Open ▾ offers Redis only then.
 const REDIS = !ASK && PROJECT !== null && usesVariable(PROJECT, 'REDIS_URL');
 const CODEX = process.env.AGENT === 'codex';
 const CODEX_AUTH_FILE = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'auth.json');

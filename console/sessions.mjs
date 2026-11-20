@@ -452,7 +452,7 @@ export function statusUpdate(session, status, nowIso) {
     // statusd sends with the guards: between turns, into an empty box, never into a prompt. One from before them types
     // blind, so the console sends through it only while its agent is plainly idle (fleet.mjs, canType).
     safeSend: status.safeSend === true,
-    // The project uses Redis, so the session started one: Data ▾ offers it. An image from before statusd said so
+    // The project uses Redis, so the session started one: Open ▾ offers it. An image from before statusd said so
     // still ran it.
     redis: status.redis !== false,
     usage: usageFrom(status.usage),

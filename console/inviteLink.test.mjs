@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { safeNext } from './auth.mjs';
 import { parseWorkOn } from './sessions.mjs';
 
-const { inviteTarget, inviteUrl, inviteLabel } = createRequire(import.meta.url)('./public/inviteLink.cjs');
+const { inviteTarget, inviteUrl } = createRequire(import.meta.url)('./public/inviteLink.cjs');
 
 test('a session with a PR invites on the PR, whether or not the branch was checked', () => {
   const s = { prUrl: 'https://github.com/o/r/pull/123', branch: 'woodshed/x' };
@@ -12,14 +12,12 @@ test('a session with a PR invites on the PR, whether or not the branch was check
   assert.deepEqual(inviteTarget(s, { pushed: false }), { state: 'pr', on: 'PR #123' });
 });
 
-test('with no PR it invites on the branch once GitHub has it, and says so on the button until then', () => {
+test('with no PR it invites on the branch once GitHub has it, and is not offered until then', () => {
   const s = { prUrl: null, branch: 'woodshed/x' };
   assert.deepEqual(inviteTarget(s, { pushed: true }), { state: 'branch', on: 'woodshed/x' });
   assert.equal(inviteTarget(s, { pushed: false }).state, 'unpushed');
   assert.equal(inviteTarget(s, { pushed: null }).state, 'checking');
   assert.equal(inviteTarget({ prUrl: null, branch: null }, { pushed: true }).state, 'unpushed');
-  assert.match(inviteLabel({ state: 'unpushed' }), /push the branch first/);
-  assert.equal(inviteLabel({ state: 'pr' }), 'Invite an engineer');
 });
 
 test('the link holds only the target, survives sign-in, and the form reads it back as the same PR or branch', () => {

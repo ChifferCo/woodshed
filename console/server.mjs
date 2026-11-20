@@ -1198,7 +1198,7 @@ export function createHandler({
       appDomain: config.appDomain || (appPorts ? new URL(config.publicUrl).hostname : null),
       // With app ports each running session carries its `appUrl`, and an app is not shared: nobody signs in to it.
       appPorts: Boolean(appPorts),
-      // What Data ▾ offers: the viewers of the databases each session has a copy of.
+      // What Open ▾ offers: the viewers of the databases each session has a copy of.
       databases: databases?.available ? databases.engines : [],
       viewers: databases?.available ? viewersOf(databases.engines).filter((v) => !v.own).map(({ route, name, program }) => ({ route, name, program })) : [],
       idleHours: config.limits.idleMs / 3_600_000,
