@@ -36,7 +36,24 @@
     if (sendingToSignIn || location.pathname === '/login') return;
     sendingToSignIn = true;
     console.log('signIn: the console needs a sign-in again, going to the login page');
-    location.assign(`/login?next=${encodeURIComponent(location.pathname + location.search)}`);
+    // The sign-in is gone, so what this login kept in the browser tab goes now, and nothing still answering writes it
+    // back; the way back is read first, from the history state the cleanup leaves alone.
+    const back = location.pathname + backSearch();
+    forgetSignedIn();
+    location.assign(`/login?next=${encodeURIComponent(back)}`);
+  }
+  // The address to come back to after signing in, perhaps as someone else: a session page's ?tab is the one its entry
+  // arrived with (a link, its history state's linkedTab, session.js), not one the page wrote from what this login
+  // picked or remembered since. An entry with no state yet came as it is.
+  function backSearch() {
+    const params = new URLSearchParams(location.search);
+    const state = window.history?.state;
+    if (location.pathname.startsWith('/s/') && state) {
+      if (state.linkedTab) params.set('tab', state.linkedTab);
+      else params.delete('tab');
+    }
+    const query = params.toString();
+    return query ? `?${query}` : '';
   }
   if (typeof window.fetch === 'function') {
     const browserFetch = window.fetch.bind(window);
@@ -1291,11 +1308,11 @@
       (me.menuSections ?? []).map((section) => [h('div', { class: 'menu-label' }, section.label), section.items.map(hostEntry)]),
       workflowLinks(me).length > 0 && [h('div', { class: 'menu-label' }, 'GitHub Actions'), workflowLinks(me).map((link) =>
         h('a', { class: 'menu-item', role: 'menuitem', href: link.href, target: '_blank', rel: 'noopener noreferrer' }, link.label))],
-      // Signing out drops what the rail page kept in this tab (session.js), so nobody signing in after sees it. Behind a
-      // hosting proxy, only when the program signs people out (server.mjs, signOut).
+      // Signing out drops what the pages kept in this tab (forgetSignedIn). Behind a hosting proxy, only when the program
+      // signs people out (server.mjs, signOut).
       me.login && (!me.hosted || me.signOut) && h('form', {
         method: 'post', action: '/auth/sign-out', class: 'menu-form',
-        onsubmit: () => { try { window.sessionStorage.removeItem('woodshed-last'); } catch { /* nothing kept */ } },
+        onsubmit: forgetSignedIn,
       },
         h('button', { type: 'submit', class: 'menu-item', role: 'menuitem' }, 'Sign out')));
     function setOpen(open) {
@@ -1696,6 +1713,44 @@
     return { el, update };
   }
 
+  // What a page kept in this browser tab for the person signed in: the rail's snapshot (session.js) and each session's
+  // last tab (sessionTabs.cjs). Every Sign out drops it, the menu's and the visitor page's (login.js), so nobody signing
+  // in after sees it; from then on the page writes none of it back (signingOut), though a lookup still lands. The
+  // sign-in page drops it too, for a sign-in lost elsewhere (another browser tab's Sign out).
+  let signedOut = false;
+  function signingOut() {
+    return signedOut;
+  }
+  const KEPT_KEYS = ['woodshed-last', 'woodshed-session-tabs', 'woodshed-session-leaving'];
+  function forgetSignedIn() {
+    signedOut = true;
+    try {
+      for (const key of KEPT_KEYS) window.sessionStorage.removeItem(key);
+    } catch {
+      // Nothing kept.
+    }
+  }
+  // What another login kept in this browser tab goes, unread: a sign-in lost to another browser tab's Sign out and
+  // replaced by someone else's runs no Sign out here. Every page that knows who is signed in (its woodshed-login meta)
+  // does it as it loads, and the sign-in page before it sends someone back (login.js).
+  function forgetOtherLogins(login) {
+    if (!login) return;
+    try {
+      for (const key of KEPT_KEYS) {
+        let kept = null;
+        try {
+          kept = JSON.parse(window.sessionStorage.getItem(key) || 'null');
+        } catch {
+          kept = { login: undefined };
+        }
+        if (kept && kept.login !== login) window.sessionStorage.removeItem(key);
+      }
+    } catch {
+      // Nothing kept.
+    }
+  }
+  forgetOtherLogins(document.querySelector?.('meta[name="woodshed-login"]')?.content ?? null);
+
   // A session page's tabs, by their ?tab= name. Chat, the default, has none. `agent` is TUI's name from before it was
   // renamed: an old link, a bookmark or a Needs you button made then still opens it.
   const SESSION_TABS = ['tui', 'terminal', 'review', 'diff', 'applog'];
@@ -1707,7 +1762,7 @@
   }
 
   window.Woodshed = {
-    invite, sessionTab, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
+    invite, sessionTab, forgetSignedIn, forgetOtherLogins, signingOut, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,

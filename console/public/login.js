@@ -34,7 +34,7 @@
 
   // Signed in with write access, but not on the console's list: ask to join, then wait here to be let in.
   function visitorCard(me) {
-    const signOut = h('form', { method: 'post', action: '/auth/sign-out', class: 'inline-form' },
+    const signOut = h('form', { method: 'post', action: '/auth/sign-out', class: 'inline-form', onsubmit: W.forgetSignedIn },
       h('button', { type: 'submit', class: 'btn-link' }, 'Sign out'));
     async function send(path, button) {
       button.disabled = true;
@@ -74,9 +74,14 @@
 
   W.getJson('/api/me').then((me) => {
     if (me.login) {
+      // Signed in meanwhile, perhaps as someone else in another browser tab: what the last login kept here goes first.
+      W.forgetOtherLogins(me.login);
       window.location.replace(next);
       return;
     }
+    // Nobody is signed in to the console here: a sign-in lost to another browser tab's Sign out, or an ended one, ran no
+    // cleanup in this tab, so what its pages kept goes now.
+    W.forgetSignedIn();
     if (me.visitor) {
       visitorCard(me);
       return;

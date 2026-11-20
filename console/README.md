@@ -61,6 +61,14 @@ whose it is: **My repo settings** and **My session timeouts** are yours; Setting
   the shape of `console/review.mjs`'s `shapeReview`, so the page draws it with the stopped Review tab's code. Once the
   session stops, Review shows what it pushed.
 - `?tab=terminal` opens on Terminal, `?tab=review` on Review, `?tab=diff` on Diff and `?tab=applog` on App log.
+  With no `?tab`, as from the rail, a session opens on the tab it was last left on in that browser tab
+  (`public/sessionTabs.cjs`: sessionStorage, read only by the login that picked it and dropped at sign-out). The page
+  never writes `?tab` itself: a tab picked lives in the history entry's state, so a reload, Back and Forward keep it
+  (the entry's tab wins over its address), and an address only ever carries a link's tab, kept as it came after a pick
+  or a fallback (it goes through sign-in as it came, and a ?tab nobody linked to never reaches someone else).
+  `?tab=chat` asks for Chat itself, as Open the chat and Resume do; a tab remembered as `agent` before TUI's rename
+  opens TUI. A tab the session cannot show now (Diff once it stopped) opens TUI; a remembered one is then remembered as
+  TUI. Until the route's lookup answers, the list may be the kept snapshot's, so the tab is held and tried again first.
 
 Both terminals stay connected while another tab shows. A session started from an
 image without the second ttyd has Terminal greyed out.

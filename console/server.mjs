@@ -223,7 +223,7 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'publ
 // The most one message to an agent may be: statusd's own limit (session/statusd.mjs, MAX_SEND_CHARS).
 export const MAX_MESSAGE_CHARS = 8000;
 const SETTINGS_SCRIPTS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
-const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
+const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
   'logins.cjs': 'text/javascript; charset=utf-8',
@@ -241,6 +241,7 @@ const STATIC_FILES = {
   'terminalCache.js': 'text/javascript; charset=utf-8',
   'terminalScroll.cjs': 'text/javascript; charset=utf-8',
   'terminalFind.cjs': 'text/javascript; charset=utf-8',
+  'sessionTabs.cjs': 'text/javascript; charset=utf-8',
   'terminal.js': 'text/javascript; charset=utf-8',
   'sharedHome.js': 'text/javascript; charset=utf-8',
   'dictation.js': 'text/javascript; charset=utf-8',
@@ -1445,10 +1446,12 @@ export function createHandler({
   }
 
   // Every repo the person may start on, each on its own project's client; a console without projects asks its one.
+  // Each answer names whose pull requests they are, so a page drawn for someone else (the account changed in another
+  // browser tab) neither draws nor keeps them (session.js).
   async function pullsReply(res, login) {
-    if (!login || !github) return reply(res, 200, { pulls: [] });
+    if (!login || !github) return reply(res, 200, { pulls: [], login: login ?? null });
     const cached = pullsCache.get(login);
-    if (cached && Date.now() - cached.at < PULLS_FRESH_MS) return reply(res, 200, { pulls: cached.pulls });
+    if (cached && Date.now() - cached.at < PULLS_FRESH_MS) return reply(res, 200, { pulls: cached.pulls, login });
     const named = (await projectsView(login)).projects;
     // A name the installation no longer has (removed since the access check was kept) is left out.
     const projects = named.map((p) => projectNamed(config, p.name)).filter(Boolean);
@@ -1456,7 +1459,7 @@ export function createHandler({
     const { pulls, stale } = await readMyPulls({ login, projects, githubFor: clientFor, kept: cached?.pulls ?? [] });
     // Kept for the minute even when a repo failed, with that repo's last rows: every page asks on each refresh.
     pullsCache.set(login, { at: Date.now(), pulls });
-    return reply(res, 200, stale ? { pulls, stale: true } : { pulls });
+    return reply(res, 200, stale ? { pulls, stale: true, login } : { pulls, login });
   }
 
   async function fileReply(res, login, key) {
@@ -2369,7 +2372,7 @@ export function createHandler({
     if (repoRead) return repoSettingsApi(req, res, { route: repoRead, login: user.login });
     // One page for the three: session.js moves between them in place, so each loads what any of them needs.
     if (pathname === '/' || pathname === '/all' || SESSION_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SHELL_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
-    if (pathname === '/settings' || SETTINGS_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SETTINGS_SCRIPTS, provider, linkQuery: config.linkQuery }));
+    if (pathname === '/settings' || SETTINGS_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SETTINGS_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
     if (pathname === '/setup/github') return html(res, pageShell({ title: consoleName, script: 'githubSetup.js' }));
     if (pathname === '/setup/github/created') return githubSetupCreated(res, url);
     if (pathname === '/setup/github/reviewer-created') return reviewerSetupCreated(res, url);
