@@ -3095,8 +3095,8 @@ ${DARK_PALETTE}
         return 'Reading the code to answer ' + open + (open === 1 ? ' question' : ' questions')
           + (d.depth > 1 ? ' (follow-ups, level ' + d.depth + ')' : '') + '…';
       }
-      if (d.depth > 1) return 'The newcomer is reading the answers for anything they did not follow…';
-      return 'The newcomer is reading the pull request and writing their questions…';
+      if (d.depth > 1) return 'Writing follow-up questions about the answers…';
+      return 'Writing the questions someone new to this code would ask…';
     }
 
     function renderQa(content) {

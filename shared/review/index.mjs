@@ -2501,7 +2501,7 @@ async function runQaRounds({ ctx, session, review, gen, pin }) {
   spent(asked);
   if (!asked.ok) return fail(asked.error);
   let open = topQuestions(asked.value);
-  if (!open.length) return fail('the newcomer asked no questions');
+  if (!open.length) return fail('no questions were written about this change');
   qa.items.push(...open);
 
   for (let depth = 1; depth <= QA_MAX_DEPTH; depth += 1) {
