@@ -107,9 +107,11 @@ function writeConfig(dir, config) {
   fs.renameSync(temp, where);
 }
 
+// Only an address this command line built (approvalUrl), and never through a shell: cmd's `start` would read & and | in
+// it as commands of their own.
 function openBrowser(url, platform) {
   const [command, args] = platform === 'darwin' ? ['open', [url]]
-    : platform === 'win32' ? ['cmd', ['/c', 'start', '', url]]
+    : platform === 'win32' ? ['rundll32', ['url.dll,FileProtocolHandler', url]]
       : ['xdg-open', [url]];
   try {
     const child = spawn(command, args, { stdio: 'ignore', detached: true });
@@ -118,6 +120,19 @@ function openBrowser(url, platform) {
   } catch {
     // No browser to open: the address is printed anyway.
   }
+}
+
+/**
+ * The page the code is approved on, on the console the person named. Built here from the code alone, never taken from
+ * the console's answer: what is opened or printed is then always an https (or loopback http) page of that console, never
+ * an option to `open` or another program's address.
+ * @returns {string|null}  null for a code that is not one
+ */
+export function approvalUrl(origin, userCode) {
+  if (!/^[A-Z]{4}-[A-Z]{4}$/.test(String(userCode))) return null;
+  const url = new URL('/cli', origin);
+  url.searchParams.set('code', userCode);
+  return url.href;
 }
 
 /**
@@ -188,7 +203,10 @@ export async function main(argv, deps = {}) {
       if (started.status === 429) throw new CliError(started.body?.error ?? 'the console is busy: try again in a few minutes');
       throw consoleNoCli(origin, started.status);
     }
-    const { deviceCode, userCode, verificationUrl, verificationUrlComplete, expiresIn, interval } = started.body;
+    const { deviceCode, userCode, expiresIn, interval } = started.body;
+    const verificationUrlComplete = approvalUrl(origin, userCode);
+    if (!verificationUrlComplete) throw consoleNoCli(origin, started.status);
+    const verificationUrl = `${origin}/cli`;
     const expiresAt = now() + expiresIn * 1000;
     if (json) emit({ event: 'code', console: origin, userCode, verificationUrl, verificationUrlComplete, expiresAt: new Date(expiresAt).toISOString() });
     say(`Your code: ${userCode}`);

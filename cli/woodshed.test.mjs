@@ -8,7 +8,7 @@ import path from 'node:path';
 import { createCliSignIn } from '../console/cliSignIn.mjs';
 import { createHandler } from '../console/server.mjs';
 import { createCredentials } from './credentials.mjs';
-import { consoleOrigin, DEFAULT_CONSOLE, EXIT, main, parseArgs } from './woodshed.mjs';
+import { approvalUrl, consoleOrigin, DEFAULT_CONSOLE, EXIT, main, parseArgs } from './woodshed.mjs';
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
@@ -164,4 +164,20 @@ test('the arguments: one command, --console, --json, and the default console', (
   assert.deepEqual(parseArgs(['status', '--console=https://c.example', '--json']), { command: 'status', console: 'https://c.example', json: true, browser: true, help: false });
   assert.throws(() => parseArgs(['status', '--colsone', 'x']), /unknown option --colsone/);
   assert.equal(DEFAULT_CONSOLE, 'https://console.woodshed.run');
+});
+
+test('the page opened is built from the code on the console named, never taken from its answer', async (t) => {
+  assert.equal(approvalUrl('https://c.example', 'BCDF-GHJK'), 'https://c.example/cli?code=BCDF-GHJK');
+  assert.equal(approvalUrl('https://c.example', '-a Calculator'), null);
+  // A console that answers with a code that is not one, and an address of somewhere else to open.
+  const opened = [];
+  const fake = async () => new Response(JSON.stringify({ deviceCode: 'd', userCode: '& calc', verificationUrlComplete: 'file:///etc/passwd', expiresIn: 600, interval: 5 }), { status: 200 });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-cli-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const code = await main(['login', '--console', 'https://c.example', '--json'], {
+    env: { XDG_CONFIG_HOME: dir }, stdout: { write() {} }, stderr: { write() {} }, fetch: fake, platform: 'test',
+    credentials: createCredentials({ platform: 'test', dir }), openBrowser: (url) => opened.push(url),
+  });
+  assert.equal(code, EXIT.failed);
+  assert.deepEqual(opened, []);
 });
