@@ -3164,7 +3164,8 @@ ${DARK_PALETTE}
         (kids[p] = kids[p] || []).push(items[i]);
       }
       if (kids['']) box.appendChild(qaList(kids[''], kids, d.status === 'running'));
-      if (d.status !== 'running' && items.length) box.appendChild(qaAskBox('', d));
+      // Whenever no run is going, the tree empty or not: the server takes a question into either.
+      if (d.status !== 'running') box.appendChild(qaAskBox('', d));
 
       if (qaView.error) box.appendChild(el('div', 'tabnote', qaView.error));
       var foot = [];
@@ -3317,7 +3318,7 @@ ${DARK_PALETTE}
         view.sending[parent] = false;
         view.askError = { parent: parent, error: 'Not asked: ' + e.message };
         render();
-        focusQaAsk(parent);
+        if (focusWasLost()) focusQaAsk(parent);
         return;
       }
       if (view !== qaView) return;
@@ -3334,16 +3335,24 @@ ${DARK_PALETTE}
         var had = (view.data.items || []).some(function same(i) { return i.id === got.item.id; });
         var fresh = view.readsDone > sentAfter;
         var failed = view.data.askErrors && view.data.askErrors[parent];
-        var failedHere = fresh && failed && failed.question === got.item.question;
+        // By the attempt, not the text: a retry of the same words is a new ask.
+        var failedHere = fresh && failed && failed.attempt === got.item.attempt;
         if (!had && !failedHere) view.data.items = (view.data.items || []).concat([got.item]);
         if (!fresh && view.data.askErrors) delete view.data.askErrors[parent];
         if (!fresh) view.posted[got.item.id] = { item: got.item, after: view.reads };
       }
       if (parent) view.open[parent] = true;
       render();
-      focusQaAsk(parent);
+      if (focusWasLost()) focusQaAsk(parent);
       clearTimeout(view.timer);
       view.timer = setTimeout(function again() { if (view === qaView) loadQa(false); }, 3000);
+    }
+
+    // The box was disabled while it sent, which drops its focus to the page. It
+    // gets the focus back only then: a reader typing in another box keeps theirs.
+    function focusWasLost() {
+      var active = document.activeElement;
+      return !active || active === document.body;
     }
 
     function focusQaAsk(parent) {

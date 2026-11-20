@@ -2167,7 +2167,7 @@ export function withoutLostAsks(qa, going) {
   if (!lost.length) return qa;
   const askErrors = { ...(qa.askErrors || {}) };
   for (const item of lost) {
-    askErrors[item.parent || ''] = { question: item.question, error: 'the shed restarted before it was answered: ask it again' };
+    askErrors[item.parent || ''] = { question: item.question, attempt: item.attempt, error: 'the shed restarted before it was answered: ask it again' };
   }
   const gone = new Set(lost.map((i) => i.id));
   return { ...qa, items: qa.items.filter((i) => !gone.has(i.id)), askErrors };
@@ -2323,7 +2323,7 @@ function settleUserQuestion({ session, review, item, answer = null, error = null
     qa.items[at] = { ...rest, answer };
   } else {
     const [lost] = qa.items.splice(at, 1);
-    qa.askErrors = { ...(qa.askErrors || {}), [lost.parent || '']: { question: lost.question, error } };
+    qa.askErrors = { ...(qa.askErrors || {}), [lost.parent || '']: { question: lost.question, attempt: lost.attempt, error } };
   }
   writeQa({ session, qa });
 }

@@ -863,7 +863,8 @@ test('a reader\'s question whose answer fails is taken out, and its question kep
   assert.equal(asked.status, 200);
   const qa = await until(() => { const q = readQa(session); return q.askErrors ? q : null; });
   assert.equal(qa.items.find((i) => i.id === 'q2.u1'), undefined);
-  assert.deepEqual(qa.askErrors, { q2: { question: 'please fail', error: 'the stand-in refused' } });
+  // With the attempt it came from, so the page tells this failure from a retry of the same words.
+  assert.deepEqual(qa.askErrors, { q2: { question: 'please fail', attempt: asked.body.item.attempt, error: 'the stand-in refused' } });
   // Asking again in that box clears it.
   await callWith('POST', `/reviews/${session}/qa/ask`, { parent: 'q2', question: 'Why retry?', forDiff: createdAt });
   assert.equal(readQa(session).askErrors, undefined);
@@ -881,6 +882,7 @@ test('a reader\'s question being answered when the shed restarted reads back as 
   const read = withoutLostAsks(qa, new Set(['a2']));
   assert.deepEqual(read.items.map((i) => i.id), ['q1', 'u1'], 'the one still going stays');
   assert.equal(read.askErrors.q1.question, 'Who calls it?');
+  assert.equal(read.askErrors.q1.attempt, 'a1');
   assert.equal(withoutLostAsks(qa, new Set(['a1', 'a2'])), qa, 'nothing lost, the same object');
 });
 
