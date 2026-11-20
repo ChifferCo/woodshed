@@ -2271,13 +2271,18 @@ and is handed a link and a status, never a credential:
 2. **Approve.** The page shows who asked (the session, linked, and whose it is), each step against the repo as GitHub
    has it now, and each file in full: the review workflow (and CI's QA workflow), the `woodshed-qa` label, letting
    Actions create and approve pull requests (keeping the repo's default workflow permissions), and `ANTHROPIC_API_KEY`
-   from the console's key, unless the repo has one, which is left as it is. QA in the repo's CI never gets the
-   console's key: its job starts each pull request's own app on the runner that then holds the key, so a pull request
-   a session opened could read it. Such a request waits for the repo's own `ANTHROPIC_API_KEY`; review alone, or QA as
-   a Woodshed session, does not. A read GitHub did not answer (the Actions setting, whether the secret is there)
+   from the console's key, unless the repo has one, which is left as it is. The console's key and QA in the repo's CI
+   are never in one repo: that job starts each pull request's own app on the runner that then holds the key, so a pull
+   request a session opened could read it. The key is not set where CI's QA workflow is (already, or written by the
+   request), and CI's QA workflow is not written where the key is the console's own: one a request set, and GitHub's
+   `updated_at` says the repo has not replaced since. Either waits for the repo's own `ANTHROPIC_API_KEY`; QA as a
+   Woodshed session removes CI's workflow and needs neither. A QA workflow someone adds by hand later is theirs to
+   weigh. A read GitHub did not answer (the Actions setting, whether the secret is there)
    blocks the approval rather than writing over what may be there. Only an admin of the repo on GitHub
    approves (`collaborators/<login>/permission`), and when the console's own key would be copied into the repo, where
-   every workflow can read it, a console admin as well. Whoever asked can withdraw it, and an admin of the repo or a
+   every workflow can read it, a console admin as well, asked before anything of the repo is read for them. An approval
+   names the plan it was shown (`digest`): one GitHub changed since, such as a key removed, is refused until it is
+   looked at again. Whoever asked can withdraw it, and an admin of the repo or a
    console admin refuse it. Whoever asked sees its status; what it would change (read from GitHub with the App) only
    those who can write to the repo, and console admins; anyone else gets 404. A private session's title shows only to
    its owner and console admins: others see whose session asked. The list (`GET /api/review-setup`) is your own
@@ -2287,7 +2292,8 @@ and is handed a link and a status, never a credential:
    or shown. A step GitHub refuses stops the rest: the request is `failed` with the step and GitHub's reason (a branch
    rule that refuses the App's commits says so), and the steps done stay done.
 4. **Follow.** The session polls `POST /review-setup/status` with `{"id"}` (its own requests only); a person reads
-   `GET /api/review-setup/<id>`. `status` is `pending`, `applying`, `applied`, `refused` or `failed`, with `why` and
+   `GET /api/review-setup/<id>`. Which step failed, and why, is shown only to those who can write to the repo (for a
+   session, its owner or whoever started it): anyone else reads `failed` and where to look. `status` is `pending`, `applying`, `applied`, `refused` or `failed`, with `why` and
    each step's outcome. A request nobody decides in 24 hours is refused as expired.
 
 Each step needs a permission of the App's installation on the repo, read from GitHub (`GET /repos/<repo>/installation`)

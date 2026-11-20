@@ -30,7 +30,7 @@ async function captureLogs(fn) {
 }
 
 function setup({ repos = { 'acme/game': { admins: ['ann'], writers: ['bob'] } }, teamKey = TEAM_KEY, clock = { t: Date.parse('2026-11-20T10:00:00Z') } } = {}) {
-  const gh = fakeGitHub(repos);
+  const gh = fakeGitHub(repos, { now: () => clock.t });
   const store = { state: {}, saves: 0, save() { this.saves += 1; } };
   let n = 0;
   const reviewSetup = createReviewSetup({
@@ -38,6 +38,12 @@ function setup({ repos = { 'acme/game': { admins: ['ann'], writers: ['bob'] } },
     teamKey: async () => teamKey, publicUrl: 'https://console.example', newId: () => `${(n += 1)}`.padStart(12, 'a'), now: () => clock.t,
   });
   return { gh, store, reviewSetup, clock };
+}
+
+// Approves as the page does: with the plan it was shown.
+async function approveShown(reviewSetup, request, login, { consoleAdmin }) {
+  const shown = await reviewSetup.view(request, login, { consoleAdmin }).catch(() => null);
+  return reviewSetup.approve(request, login, { consoleAdmin, digest: shown?.plan?.digest });
 }
 
 const SESSION = { id: 'abcd1234', title: 'Set up acme/game', owner: 'ann', status: 'running', token: 'session-token-1' };
@@ -100,7 +106,7 @@ test('a session asks, an admin of the repo approves, and the console applies it 
   assert.match(page.plan.steps[0].text, new RegExp(`review\\.yml@${WOODSHED_MAIN}`), 'the page shows the exact file, pinned');
   assert.equal(page.plan.setsKey, true);
 
-  const { lines } = await captureLogs(() => reviewSetup.approve(request, 'ann', { consoleAdmin: true }));
+  const { lines } = await captureLogs(() => approveShown(reviewSetup, request, 'ann', { consoleAdmin: true }));
   assert.equal(request.status, 'applied', request.why);
   const repo = gh.repos['acme/game'];
   assert.equal(repo.files.get(REVIEW_WORKFLOW).text, reviewWorkflow(WOODSHED_MAIN));
@@ -133,7 +139,7 @@ test('an App made from the console\'s manifest is told plainly what it lacks, an
   assert.equal(page.canApprove.ok, false);
   assert.match(page.canApprove.why, /lacks Workflows: write, Administration: write, Secrets: write\. Add them in the App's settings on GitHub/);
   assert.deepEqual(page.plan.steps.find((s) => s.key === 'review-workflow').missing, ['Workflows: write']);
-  await assert.rejects(reviewSetup.approve(request, 'ann', { consoleAdmin: true }), (err) => err.status === 409 && /Workflows: write/.test(err.message));
+  await assert.rejects(approveShown(reviewSetup, request, 'ann', { consoleAdmin: true }), (err) => err.status === 409 && /Workflows: write/.test(err.message));
   assert.equal(request.status, 'pending', 'it waits for the App to be given them');
   assert.ok(!gh.calls.some((c) => c.method !== 'GET' && !c.path.endsWith('/access_tokens')), 'no write was tried');
   assert.deepEqual(missingPermissions({ contents: 'read' }, { contents: 'write', metadata: 'read' }), ['Contents: write', 'Metadata: read']);
@@ -146,7 +152,7 @@ test('only an admin of the repo approves, and the team key needs a console admin
   assert.match((await reviewSetup.view(request, 'eve', { consoleAdmin: true })).canApprove.why, /@eve is not one/);
   assert.match((await reviewSetup.view(request, 'ann', { consoleAdmin: false })).canApprove.why, /console's own Anthropic key .* a console admin approves it/);
   assert.match((await reviewSetup.view(request, null, { consoleAdmin: true })).canApprove.why, /no sign-in/);
-  await assert.rejects(reviewSetup.approve(request, 'bob', { consoleAdmin: true }), (err) => err.status === 403);
+  await assert.rejects(approveShown(reviewSetup, request, 'bob', { consoleAdmin: true }), (err) => err.status === 403);
   assert.equal(request.status, 'pending');
 
   // A repo that has its own key keeps it, and then a repo admin alone approves.
@@ -154,7 +160,7 @@ test('only an admin of the repo approves, and the team key needs a console admin
   const page = await reviewSetup.view(keyed, 'ann', { consoleAdmin: false });
   assert.equal(page.plan.setsKey, false);
   assert.match(page.plan.steps.find((s) => s.key === 'secret').what, /already set on acme\/keyed, and is left as it is/);
-  await reviewSetup.approve(keyed, 'ann', { consoleAdmin: false });
+  await approveShown(reviewSetup, keyed, 'ann', { consoleAdmin: false });
   assert.equal(keyed.status, 'applied');
   assert.equal(keyed.steps.find((s) => s.key === 'secret').state, 'kept');
 });
@@ -170,7 +176,7 @@ test('no team key, the App not installed, or a branch rule: each is said, and a 
 
   const ruled = setup({ repos: { 'acme/game': { admins: ['ann'], protectedBranch: true } } });
   const c = (await ruled.reviewSetup.create(parseRequest({ repo: 'acme/game' }), { login: 'ann' })).request;
-  await ruled.reviewSetup.approve(c, 'ann', { consoleAdmin: true });
+  await approveShown(ruled.reviewSetup, c, 'ann', { consoleAdmin: true });
   assert.equal(c.status, 'failed');
   assert.match(c.why, /^Add \.github\/workflows\/woodshed-review\.yml on main: GitHub refused writing .* HTTP 409 Repository rule violations found \(a rule on main may refuse the App's commits\)$/);
   assert.deepEqual(c.steps.map((s) => s.state), ['failed', 'next', 'next']);
@@ -185,7 +191,7 @@ test('the session runner removes CI\'s QA workflow and writes none, and what is 
   assert.deepEqual(page.plan.steps.map((s) => [s.key, s.change]), [
     ['review-workflow', false], ['qa-workflow-removed', true], ['qa-label', false], ['approvals', false], ['secret', true],
   ]);
-  await reviewSetup.approve(request, 'ann', { consoleAdmin: true });
+  await approveShown(reviewSetup, request, 'ann', { consoleAdmin: true });
   assert.equal(request.status, 'applied', request.why);
   assert.ok(!gh.repos['acme/game'].files.has(QA_WORKFLOW));
   assert.ok(!gh.calls.some((c) => c.method === 'PUT' && c.path.includes('/contents/')), 'the review workflow was already this');
@@ -212,7 +218,7 @@ test('a request expires after a day, can be withdrawn, and one cut off mid-apply
   clock.t += REQUEST_TTL_MS + 1;
   assert.equal(reviewSetup.find(request.id).status, 'refused');
   assert.match(request.why, /^expired/);
-  await assert.rejects(reviewSetup.approve(request, 'ann', { consoleAdmin: true }), (err) => err.status === 409);
+  await assert.rejects(approveShown(reviewSetup, request, 'ann', { consoleAdmin: true }), (err) => err.status === 409);
 
   const other = (await reviewSetup.create(parseRequest({ repo: 'acme/other' }), { login: 'ann' })).request;
   reviewSetup.refuse(other, 'ann', 'not yet');
@@ -246,12 +252,12 @@ test('QA in CI never gets the console\'s key, which a pull request\'s own app wo
   const { gh, reviewSetup } = setup({ repos: { 'acme/game': { admins: ['ann'] }, 'acme/keyed': { admins: ['ann'], secrets: ['ANTHROPIC_API_KEY'] } } });
   const bare = (await reviewSetup.create(parseRequest({ repo: 'acme/game', qa: true }), { login: 'ann' })).request;
   const page = await reviewSetup.view(bare, 'ann', { consoleAdmin: true });
-  assert.match(page.canApprove.why, /QA in acme\/game's CI runs each pull request's own app next to ANTHROPIC_API_KEY, so the console's key is not set for it/);
-  await assert.rejects(reviewSetup.approve(bare, 'ann', { consoleAdmin: true }), (err) => err.status === 409);
+  assert.match(page.canApprove.why, /QA in acme\/game's CI runs each pull request's own app next to ANTHROPIC_API_KEY, so the console's key is not set where it runs/);
+  await assert.rejects(approveShown(reviewSetup, bare, 'ann', { consoleAdmin: true }), (err) => err.status === 409);
   assert.equal(gh.openSecret('acme/game', 'ANTHROPIC_API_KEY'), null);
 
   const keyed = (await reviewSetup.create(parseRequest({ repo: 'acme/keyed', qa: true }), { login: 'ann' })).request;
-  await reviewSetup.approve(keyed, 'ann', { consoleAdmin: true });
+  await approveShown(reviewSetup, keyed, 'ann', { consoleAdmin: true });
   assert.equal(keyed.status, 'applied', keyed.why);
   assert.equal(gh.repos['acme/keyed'].files.get(QA_WORKFLOW).text, qaWorkflow(WOODSHED_MAIN));
 });
@@ -266,7 +272,7 @@ test('a read GitHub did not answer blocks its step, rather than overwriting what
     const rs = createReviewSetup({ store, github: appGitHub({ appId: '1', privateKey: APP_KEY, fetchImpl: flaky(path) }), teamKey: async () => TEAM_KEY, publicUrl: 'x' });
     const { request } = await rs.create(parseRequest({ repo: 'acme/game' }), { login: `ann-${path.length}` });
     assert.match((await rs.view(request, 'ann', { consoleAdmin: true })).canApprove.why, /HTTP 502 Server Error\): load this page again/, path);
-    await assert.rejects(rs.approve(request, 'ann', { consoleAdmin: true }), (err) => err.status === 409, path);
+    await assert.rejects(approveShown(rs, request, 'ann', { consoleAdmin: true }), (err) => err.status === 409, path);
   }
   assert.ok(!gh.calls.some((c) => c.method === 'PUT'), 'nothing written');
 });
@@ -294,6 +300,55 @@ test('who sees what: the asker its status, writers and console admins the plan, 
   assert.deepEqual(reviewSetup.list('dee', { consoleAdmin: true })[0].by.title, 'Set up acme/game');
 });
 
+test('the console\'s key and QA in CI are never in one repo, whichever request comes first', async () => {
+  const { gh, reviewSetup } = setup({ repos: { 'acme/game': { admins: ['ann'] }, 'acme/old-qa': { admins: ['ann'], files: { [QA_WORKFLOW]: 'qa' } } } });
+  const review = (await reviewSetup.create(parseRequest({ repo: 'acme/game' }), { login: 'ann' })).request;
+  await approveShown(reviewSetup, review, 'ann', { consoleAdmin: true });
+  assert.equal(gh.openSecret('acme/game', 'ANTHROPIC_API_KEY'), TEAM_KEY);
+  // Then QA in CI, which a repo admin alone could approve, since the key is already there.
+  const qa = (await reviewSetup.create(parseRequest({ repo: 'acme/game', qa: true }), { login: 'ann' })).request;
+  const page = await reviewSetup.view(qa, 'ann', { consoleAdmin: false });
+  assert.match(page.canApprove.why, /ANTHROPIC_API_KEY in acme\/game is the console's own, set by an earlier request/);
+  await assert.rejects(approveShown(reviewSetup, qa, 'ann', { consoleAdmin: true }), (err) => err.status === 409);
+  assert.ok(!gh.repos['acme/game'].files.has(QA_WORKFLOW));
+  // A key the repo set itself since is its own: QA in CI goes ahead.
+  gh.repos['acme/game'].secretUpdatedAt = new Date(Date.parse('2026-11-20T10:00:00Z') + 3_600_000).toISOString();
+  assert.equal((await reviewSetup.view(qa, 'ann', { consoleAdmin: false })).canApprove.ok, true);
+
+  // Review alone in a repo that already runs QA in CI does not get the console's key either.
+  const old = (await reviewSetup.create(parseRequest({ repo: 'acme/old-qa' }), { login: 'ann' })).request;
+  assert.match((await reviewSetup.view(old, 'ann', { consoleAdmin: true })).canApprove.why, /QA in acme\/old-qa's CI runs each pull request's own app/);
+});
+
+test('someone who may not approve learns nothing of the repo from trying, and an approval is of what was shown', async () => {
+  const { gh, reviewSetup } = setup({ repos: { 'acme/game': { admins: ['ann'] } } });
+  const { request } = await reviewSetup.create(parseRequest({ repo: 'acme/game' }), { login: 'eve' });
+  const before = gh.calls.length;
+  await assert.rejects(reviewSetup.approve(request, 'eve', { consoleAdmin: true, digest: 'x' }), (err) => err.status === 403 && !/main|Workflows/.test(err.message));
+  assert.ok(!gh.calls.slice(before).some((c) => /\/contents\/|\/actions\/|\/labels/.test(c.path)), 'no read of the repo for eve');
+
+  // The page showed the key as already there; it was removed before Approve.
+  const keyed = setup({ repos: { 'acme/keyed': { admins: ['ann'], secrets: ['ANTHROPIC_API_KEY'] } } });
+  const r = (await keyed.reviewSetup.create(parseRequest({ repo: 'acme/keyed' }), { login: 'ann' })).request;
+  const shownPlan = (await keyed.reviewSetup.view(r, 'ann', { consoleAdmin: true })).plan;
+  assert.equal(shownPlan.setsKey, false);
+  keyed.gh.repos['acme/keyed'].secrets.delete('ANTHROPIC_API_KEY');
+  await assert.rejects(keyed.reviewSetup.approve(r, 'ann', { consoleAdmin: true, digest: shownPlan.digest }), (err) => err.status === 409 && /look at it again/.test(err.message));
+  assert.equal(keyed.gh.openSecret('acme/keyed', 'ANTHROPIC_API_KEY'), null, 'the key was not set unseen');
+});
+
+test('a failure\'s detail is for those who can write to the repo: the asker without access gets the outcome alone', async () => {
+  const { reviewSetup } = setup({ repos: { 'acme/game': { admins: ['ann'], protectedBranch: true } } });
+  const { request } = await reviewSetup.create(parseRequest({ repo: 'acme/game' }), { session: { ...SESSION, owner: 'cat' } });
+  await approveShown(reviewSetup, request, 'ann', { consoleAdmin: true });
+  assert.equal(request.status, 'failed');
+  const forCat = await reviewSetup.sessionStatus(request);
+  assert.deepEqual([forCat.status, forCat.steps], ['failed', []]);
+  assert.doesNotMatch(forCat.why, /main|409|rule/);
+  assert.match((await reviewSetup.view(request, 'cat', { consoleAdmin: false })).why, /those who can write to the repo see which/);
+  assert.match((await reviewSetup.view(request, 'ann', { consoleAdmin: false })).why, /Repository rule violations found/);
+});
+
 test('the session API: a session asks and follows its own request, and never another\'s', async (t) => {
   const { reviewSetup } = setup();
   const other = { ...SESSION, id: 'ffff0000', token: 'session-token-2' };
@@ -309,7 +364,7 @@ test('the session API: a session asks and follows its own request, and never ano
   assert.equal((await post('/review-setup', { repo: 'acme/game' }, 'nobody')).status, 401);
   assert.equal((await post('/review-setup', { repo: 'nope' })).status, 400);
 
-  await reviewSetup.approve(reviewSetup.find(id), 'ann', { consoleAdmin: true });
+  await approveShown(reviewSetup, reviewSetup.find(id), 'ann', { consoleAdmin: true });
   const answer = await (await post('/review-setup/status', { id })).json();
   assert.equal(answer.status, 'applied');
   assert.ok(!JSON.stringify(answer).includes(TEAM_KEY));
@@ -333,7 +388,9 @@ test('the signed-in API: anyone asks and reads; the page\'s approve answers with
   assert.equal((await call(`/api/review-setup/${id}/refuse`, { method: 'POST', body: {}, login: 'eve', admin: false })).status, 404, 'a stranger is told nothing');
   assert.equal((await call(`/api/review-setup/${id}`, { login: 'eve', admin: false })).status, 404);
   assert.deepEqual((await (await call('/api/review-setup', { login: 'eve', admin: false })).json()).requests, []);
-  const approved = await (await call(`/api/review-setup/${id}/approve`, { method: 'POST', body: {} })).json();
+  assert.equal((await call(`/api/review-setup/${id}/approve`, { method: 'POST', body: {} })).status, 409, 'an approval names the plan it saw');
+  const { plan } = await (await call(`/api/review-setup/${id}`)).json();
+  const approved = await (await call(`/api/review-setup/${id}/approve`, { method: 'POST', body: { digest: plan.digest } })).json();
   assert.equal(approved.status, 'applied');
   assert.equal((await call('/api/review-setup/aaaaaaaaaaa9')).status, 404);
 });

@@ -232,8 +232,10 @@ URL on top of each env file's Repo settings values
   them on the installation. `Only an admin of <repo>` is GitHub's answer for the viewer; `a console admin approves it`
   means the console's own Anthropic key would be copied into the repo. The console logs `reviewSetup: approval refused`
   with `why`, then `step failed` with GitHub's reason: `Repository rule violations found` or a 409 on a workflow file is
-  a branch rule refusing the App's commits. `QA in <repo>'s CI runs each pull request's own app` means the repo needs its
-  own `ANTHROPIC_API_KEY` first: the console's never goes to a repo with QA in CI. `is not a commit of Woodshed's main`
+  a branch rule refusing the App's commits. `QA in <repo>'s CI runs each pull request's own app`, or `is the console's own, set
+  by an earlier request`, means the repo needs its own `ANTHROPIC_API_KEY` first: the console's key and CI's QA are
+  never in one repo. `GitHub has changed since this page showed` (`approval refused, the plan changed since it was
+  shown`) asks the approver to look again. `is not a commit of Woodshed's main`
   (`reviewSetup: ref refused`) is a ref that is a branch or a fork's commit. `reviewSetup: left applying by a stop, failed` is a console restarted
   mid-apply; the steps marked done were done. A 404 on `/api/review-setup` is a console with no GitHub App of its own.
 - **A label or `/woodshed` comment does nothing.** A label on a pull request

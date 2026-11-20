@@ -30,10 +30,11 @@ const sha = (text) => crypto.createHash('sha1').update(text).digest('hex');
 /**
  * @param {Record<string, {permissions?: object, installed?: boolean, admins?: string[], writers?: string[],
  *   files?: Record<string, string>, labels?: string[], canApprove?: boolean, secrets?: string[], protectedBranch?: boolean}>} repos
+ * @param {{now?: () => number}} [opts]  the clock a secret's `updated_at` is set by
  * @returns {{fetch: typeof fetch, repos: Record<string, object>, calls: {method: string, path: string, body: string}[],
  *   openSecret: (repo: string, name: string) => string|null}}
  */
-export function fakeGitHub(repos) {
+export function fakeGitHub(repos, { now = Date.now } = {}) {
   const state = {};
   let installationIds = 100;
   for (const [name, r] of Object.entries(repos)) {
@@ -136,9 +137,10 @@ export function fakeGitHub(repos) {
     m = /^\/actions\/secrets\/([A-Z_]+)$/.exec(rest);
     if (m) {
       if (!can('secrets', method === 'GET' ? 'read' : 'write')) return notAccessible();
-      if (method === 'GET') return repo.secrets.has(m[1]) ? answer(200, { name: m[1] }) : answer(404, { message: 'Not Found' });
+      if (method === 'GET') return repo.secrets.has(m[1]) ? answer(200, { name: m[1], updated_at: repo.secretUpdatedAt ?? '2020-01-01T00:00:00Z' }) : answer(404, { message: 'Not Found' });
       if (body.key_id !== `kid-${repoName}`) return answer(422, { message: 'Bad key_id' });
       repo.secrets.set(m[1], body.encrypted_value);
+      repo.secretUpdatedAt = new Date(now()).toISOString();
       return answer(201);
     }
     m = /^\/collaborators\/([^/]+)\/permission$/.exec(rest);

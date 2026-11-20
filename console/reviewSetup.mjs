@@ -40,6 +40,8 @@ const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const REF_RE = /^(?!.*\.\.)[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 const ID_RE = /^[0-9a-f]{12}$/;
 const WRITER_ROLES = new Set(['admin', 'maintain', 'write']);
+// GitHub's clock and the console's, for telling the console's key from one the repo set after it.
+const KEY_CLOCK_SLACK_MS = 60_000;
 
 export const REVIEW_WORKFLOW = '.github/workflows/woodshed-review.yml';
 export const QA_WORKFLOW = '.github/workflows/woodshed-qa.yml';
@@ -222,6 +224,12 @@ export function appGitHub({ appId, privateKey, fetchImpl = fetch, now = Date.now
   };
 }
 
+/** @returns {string}  what approving would do, as a hash: the steps, each file whole, and whether the key is set */
+export function planDigest(plan) {
+  const shown = { branch: plan.branch, setsKey: Boolean(plan.setsKey), steps: plan.steps.map((s) => [s.key, s.change, s.path ?? null, s.text ?? null]) };
+  return crypto.createHash('sha256').update(JSON.stringify(shown)).digest('hex').slice(0, 32);
+}
+
 function encodePath(path) {
   return path.split('/').map(encodeURIComponent).join('/');
 }
@@ -289,13 +297,24 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
     return `${publicUrl}/review-setup/${id}${query ? `?${query}` : ''}`;
   }
 
-  /** What the one who asked may read: never a credential, and nothing the plan read from GitHub. */
-  function statusOf(request) {
+  /**
+   * What the one who asked may read: never a credential. Each step and why one failed (the repo's branch, its commits,
+   * GitHub's answers) only with `detail`, for someone who can write to the repo.
+   */
+  function statusOf(request, { detail = false } = {}) {
+    const why = request.status === 'failed' && !detail ? 'it failed at one of its steps: those who can write to the repo see which on its page' : request.why ?? null;
     return {
-      id: request.id, repo: request.repo, qa: request.qa, ref: request.ref, status: request.status, why: request.why ?? null,
+      id: request.id, repo: request.repo, qa: request.qa, ref: request.ref, status: request.status, why,
       createdAt: request.createdAt, expiresAt: request.expiresAt, decidedAt: request.decidedAt ?? null, decidedBy: request.decidedBy ?? null,
-      steps: request.steps ?? [], url: link(request.id),
+      steps: detail ? request.steps ?? [] : [], url: link(request.id),
     };
+  }
+
+  /** A session's view of its own request: the detail when the person it is (its owner, or whoever started it) can write to the repo. */
+  async function sessionStatus(request) {
+    const person = request.by.person;
+    const detail = typeof person === 'string' && /^[A-Za-z0-9-]{1,39}$/.test(person) && WRITER_ROLES.has(await repoRole(request.repo, person).catch(() => null));
+    return statusOf(request, { detail });
   }
 
   // The commit of Woodshed's workflows the repo will run, next to the key: Woodshed's main as it is now, or a ref the
@@ -391,9 +410,11 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
     };
     await writeStep('review-workflow', REVIEW_WORKFLOW, reviewWorkflow(ref));
     if (qa === 'actions') await writeStep('qa-workflow', QA_WORKFLOW, qaWorkflow(ref));
+    // CI's QA workflow as the repo has it now: one a request for review alone leaves where it is.
+    const ciQa = qa === 'actions' ? null : await file(QA_WORKFLOW);
     if (qa === 'woodshed') {
       // A repo moved to the session runner still has CI's QA workflow, which would run QA a second time on the label.
-      const old = await file(QA_WORKFLOW);
+      const old = ciQa;
       if (!old.known || old.sha) step('qa-workflow-removed', `Remove ${QA_WORKFLOW} from ${plan.branch}, so QA runs only as a session`, { path: QA_WORKFLOW, sha: old.sha ?? null, change: true, known: old.known });
     }
     if (qa !== 'none') {
@@ -411,9 +432,13 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
     const canApprove = workflowAccess?.can_approve_pull_request_reviews === true;
     step('approvals', canApprove ? 'GitHub Actions may already create and approve pull requests' : 'Let GitHub Actions create and approve pull requests',
       { change: !canApprove, level: workflowAccess?.default_workflow_permissions ?? null, known: Boolean(workflowAccess) });
+    let consoleKey = false;
     if (readable.secrets) {
       const answer = await gh.call('GET', `/repos/${repo}/actions/secrets/${SECRET_NAME}`);
       plan.keySet = answer.ok ? true : answer.status === 404 ? false : null;
+      // The key there is the console's while GitHub says it was last changed no later than when a request here set it.
+      const setAt = consoleKeySetAt(repo);
+      consoleKey = Boolean(answer.ok && setAt && Date.parse(answer.body.updated_at ?? 0) <= Date.parse(setAt) + KEY_CLOCK_SLACK_MS);
       // Only a key GitHub says is not there is set: one it did not answer for may be the repo's own.
       if (plan.keySet === null) plan.blockers.push(`GitHub did not say whether ${repo} has ${SECRET_NAME} (${gitHubReason(answer)}): load this page again.`);
     }
@@ -427,27 +452,38 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
       plan.blockers.push(`The console's GitHub App may not ${missing.length > 1 ? 'do all of this' : 'do this'} on ${repo}: it lacks ${missing.join(', ')}. Add ${missing.length > 1 ? 'them' : 'it'} in the App's settings on GitHub (Permissions & events), then accept the change on its installation for ${repo.split('/')[0]}.`);
     }
     plan.setsKey = plan.steps.some((s) => s.key === 'secret' && s.change);
+    plan.consoleKey = consoleKey;
     // QA in CI starts the pull request's own app on the runner that then holds the key, so a pull request's code (a
-    // session's, say) could read it: the console's key never goes to a repo for that.
-    if (plan.setsKey && qa === 'actions') {
-      plan.blockers.push(`QA in ${repo}'s CI runs each pull request's own app next to ${SECRET_NAME}, so the console's key is not set for it: set the repo's own ${SECRET_NAME} first, or ask for review alone, or QA as a Woodshed session.`);
+    // session's, say) could read it: the console's key and CI's QA are never in one repo. Not set next to a QA workflow
+    // the repo has or this request writes, and no QA workflow written next to the console's key an earlier request set.
+    const qaInCi = qa === 'actions' || (qa === 'none' && (ciQa.known === false || Boolean(ciQa.sha)));
+    if (qaInCi && plan.setsKey) {
+      plan.blockers.push(`QA in ${repo}'s CI runs each pull request's own app next to ${SECRET_NAME}, so the console's key is not set where it runs: set the repo's own ${SECRET_NAME} first, or ask for QA as a Woodshed session, which removes CI's.`);
+    } else if (qaInCi && consoleKey) {
+      plan.blockers.push(`${SECRET_NAME} in ${repo} is the console's own, set by an earlier request, and QA in CI would run each pull request's own app next to it: replace it with the repo's own key first, or ask for QA as a Woodshed session.`);
     } else if (plan.setsKey && !(await teamKey())) {
       plan.blockers.push('The console has no Anthropic key to set: an admin sets anthropic-api-key on the Secrets page first.');
     }
+    plan.digest = planDigest(plan);
     return plan;
+  }
+
+  // The newest time a request here set the console's key on `repo`.
+  function consoleKeySetAt(repo) {
+    return state.reviewSetups.filter((r) => r.repo === repo && r.keySetAt).map((r) => r.keySetAt).sort().at(-1) ?? null;
+  }
+
+  /** @returns {Promise<string|null>}  why `login` may not approve a request on the repo, asked before anything is read of it */
+  async function notAdmin(request, login) {
+    if (!login) return 'Approving needs to know who you are, and this console has no sign-in.';
+    if (await repoRole(request.repo, login) === 'admin') return null;
+    return `Only an admin of ${request.repo} on GitHub may approve this, and @${login} is not one.`;
   }
 
   /** @returns {Promise<{ok: boolean, why: string|null}>}  whether `login` may approve, given the plan */
   async function approverCheck(request, plan, login, { consoleAdmin }) {
-    if (!login) return { ok: false, why: 'Approving needs to know who you are, and this console has no sign-in.' };
-    if (!plan.installed) return { ok: false, why: plan.blockers[0] };
-    const gh = github.as({ repo: request.repo, installationId: plan.installationId, permissions: { metadata: 'read' } });
-    const answer = await gh.call('GET', `/repos/${request.repo}/collaborators/${encodeURIComponent(login)}/permission`);
-    const admin = answer.ok && (answer.body.role_name === 'admin' || answer.body.permission === 'admin');
-    if (!admin) {
-      if (!answer.ok && answer.status !== 404) throw new Error(`GitHub did not say what @${login} may do on ${request.repo}: ${gitHubReason(answer)}`);
-      return { ok: false, why: `Only an admin of ${request.repo} on GitHub may approve this, and @${login} is not one.` };
-    }
+    const why = await notAdmin(request, login);
+    if (why) return { ok: false, why };
     if (plan.setsKey && !consoleAdmin) {
       return { ok: false, why: 'This copies the console\'s own Anthropic key into the repo, where any workflow can read it, so a console admin approves it.' };
     }
@@ -493,7 +529,7 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
     const role = consoleAdmin ? null : await repoRole(request.repo, login);
     const writer = WRITER_ROLES.has(role);
     if (!mine && !consoleAdmin && !writer) throw shown('no such request', 404);
-    const out = { ...statusOf(request), ...shownBy(request, login, consoleAdmin), plan: null, canApprove: { ok: false, why: null }, canRefuse: false, mine };
+    const out = { ...statusOf(request, { detail: consoleAdmin || writer }), ...shownBy(request, login, consoleAdmin), plan: null, canApprove: { ok: false, why: null }, canRefuse: false, mine };
     out.canRefuse = request.status === 'pending' && (consoleAdmin || mine || role === 'admin');
     if (request.status !== 'pending') return out;
     if (!github) {
@@ -507,7 +543,7 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
     try {
       const plan = await readPlan(request);
       out.plan = {
-        branch: plan.branch, installed: plan.installed, blockers: plan.blockers, setsKey: Boolean(plan.setsKey),
+        branch: plan.branch, installed: plan.installed, blockers: plan.blockers, setsKey: Boolean(plan.setsKey), digest: plan.digest,
         steps: plan.steps.map(({ key, what, change, missing, path, text }) => ({ key, what, change, missing, path: path ?? null, text: text ?? null })),
       };
       out.canApprove = plan.blockers.length ? { ok: false, why: plan.blockers[0] } : await approverCheck(request, plan, login, { consoleAdmin });
@@ -552,6 +588,7 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
         const sealed = sealedBox(value, Buffer.from(String(publicKey.body.key ?? ''), 'base64')).toString('base64');
         const answer = await gh.call('PUT', `/repos/${request.repo}/actions/secrets/${SECRET_NAME}`, { encrypted_value: sealed, key_id: publicKey.body.key_id });
         if (!answer.ok) throw new Error(`GitHub refused the secret: ${gitHubReason(answer)}`);
+        request.keySetAt = iso();
         console.log('reviewSetup: Anthropic key set as an Actions secret', { id: request.id, repo: request.repo, name: SECRET_NAME });
         return null;
       },
@@ -590,11 +627,22 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
    * @returns {Promise<object>}  the request after it was applied, or failed
    * @throws {Error}  `shown` with a status, when it may not be approved now
    */
-  async function approve(request, login, { consoleAdmin }) {
+  async function approve(request, login, { consoleAdmin, digest }) {
     if (!github) throw shown('this console has no GitHub App of its own to apply it with', 404);
     if (request.status !== 'pending' || applying.has(request.id)) throw shown(`it is ${request.status === 'pending' ? 'being applied' : request.status} already`, 409);
     applying.add(request.id);
     try {
+      // Nothing of the repo is read for someone who may not approve: what they could learn from a refusal stops here.
+      let why;
+      try {
+        why = await notAdmin(request, login);
+      } catch (err) {
+        throw shown(`GitHub did not answer: ${firstLine(err)}`, 502);
+      }
+      if (why) {
+        console.log('reviewSetup: approval refused', { id: request.id, login, why });
+        throw shown(why, 403);
+      }
       let plan;
       try {
         plan = await readPlan(request);
@@ -609,6 +657,11 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
       if (!check.ok) {
         console.log('reviewSetup: approval refused', { id: request.id, login, why: check.why });
         throw shown(check.why, 403);
+      }
+      // What is applied is what the approver was shown: a key removed, a file changed since, and they look again.
+      if (digest !== plan.digest) {
+        console.log('reviewSetup: approval refused, the plan changed since it was shown', { id: request.id, login });
+        throw shown('GitHub has changed since this page showed what approving does: look at it again, then approve.', 409);
       }
       request.status = 'applying';
       request.history.push({ at: iso(), what: 'approved', by: login });
@@ -643,10 +696,10 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
   /** @returns {object[]}  the requests `login` asked for, every one for a console admin, newest first */
   function list(login, { consoleAdmin }) {
     return state.reviewSetups.map(fresh).filter((r) => consoleAdmin || isMine(r, login)).reverse()
-      .map((r) => ({ ...statusOf(r), by: shownBy(r, login, consoleAdmin).by }));
+      .map((r) => ({ ...statusOf(r, { detail: consoleAdmin }), by: shownBy(r, login, consoleAdmin).by }));
   }
 
-  return { create, find, view, canSee, approve, refuse, list, statusOf, available: () => Boolean(github) };
+  return { create, find, view, canSee, approve, refuse, list, statusOf, sessionStatus, available: () => Boolean(github) };
 }
 
 const API_RE = /^\/api\/review-setup(?:\/([0-9a-f]{12})(?:\/(approve|refuse))?)?$/;
@@ -689,7 +742,8 @@ async function readBody(req, limit = 4096) {
  *   GET  /api/review-setup/<id>            the request, what approving it would change now, and `canApprove`: what
  *                                          it would change only to those who can write to the repo and console admins;
  *                                          404 to anyone else who did not ask
- *   POST /api/review-setup/<id>/approve    applies it  ->  the request, `applied` or `failed` with `why`
+ *   POST /api/review-setup/<id>/approve    {"digest"}: the plan's, as the page showed it  ->  the request, `applied` or
+ *                                          `failed` with `why`; 409 when GitHub changed since
  *   POST /api/review-setup/<id>/refuse     {"reason"?}  ->  the request, `refused`
  * @param {{reviewSetup: ReturnType<typeof createReviewSetup>}} deps
  * @returns {(req, res, who: {route: object, login: string|null, admin: boolean}) => Promise<void>}  `admin`: a console admin
@@ -718,7 +772,7 @@ export function createReviewSetupApi({ reviewSetup }) {
       if (!route.action || req.method !== 'POST') return reply(res, 405, { error: 'method not allowed' });
       const body = await readBody(req);
       if (route.action === 'approve') {
-        const done = await reviewSetup.approve(request, login, { consoleAdmin });
+        const done = await reviewSetup.approve(request, login, { consoleAdmin, digest: body.digest });
         return reply(res, 200, await reviewSetup.view(done, login, { consoleAdmin }));
       }
       const view = await reviewSetup.view(request, login, { consoleAdmin });
@@ -753,7 +807,7 @@ export async function sessionReviewSetupReply(req, res, session, reviewSetup, pa
     }
     const request = reviewSetup.find(body.id);
     if (!request || request.by.session !== session.id) return reply(res, 404, { error: 'no such request of this session\'s' });
-    return reply(res, 200, reviewSetup.statusOf(request));
+    return reply(res, 200, await reviewSetup.sessionStatus(request));
   } catch (err) {
     if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
     console.error('reviewSetup: session request failed', { sessionId: session.id, message: firstLine(err) });

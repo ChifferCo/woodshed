@@ -78,7 +78,7 @@
     return h('div', { class: 'review-setup-actions' },
       h('button', {
         type: 'button', class: 'btn btn-primary', disabled: Boolean(busy) || !data.canApprove.ok,
-        onclick: () => act('approve'),
+        onclick: () => act('approve', { digest: data.plan?.digest }),
       }, busy === 'approve' && h('span', { class: 'spin', 'aria-hidden': 'true' }), busy === 'approve' ? 'Applying…' : 'Approve and apply'),
       data.canRefuse && h('button', {
         type: 'button', class: 'btn btn-plain', disabled: Boolean(busy), onclick: () => act('refuse'),
