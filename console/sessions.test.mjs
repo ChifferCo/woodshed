@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  parseCommand, publicSession, sharedRunningCount, routeQa, routeTrigger, sessionsToStart, statusUpdate, stopReason, canSee, activePrivateCount, parseWorkOn, sessionOptions,
+  parseCommand, publicSession, sharedRunningCount, routeQa, routeTrigger, sessionsToStart, statusUpdate, stopReason, pauseAt, withSessionLimits, canSee, activePrivateCount, parseWorkOn, sessionOptions,
   keptIds, pullNumber, planUsageFrom, sessionLink,
 } from './sessions.mjs';
 
@@ -120,6 +120,28 @@ test('stopReason stops a session idle past the limit', () => {
   const busy = session({ startedAt: '2026-10-21T10:00:00.000Z', lastActiveAt: '2026-10-21T12:59:00.000Z' });
   assert.equal(stopReason(idle, now, LIMITS), 'idle for 2 h');
   assert.equal(stopReason(busy, now, LIMITS), null);
+});
+
+test('an Extend holds the pause and the lifetime back, only for the run it was pressed in', () => {
+  const base = { startedAt: '2026-10-21T10:00:00.000Z', lastActiveAt: '2026-10-21T10:30:00.000Z' };
+  const at = (hhmm) => Date.parse(`2026-10-21T${hhmm}:00.000Z`);
+  assert.deepEqual(pauseAt(session(base), LIMITS), { at: at('12:30'), why: 'idle', ms: LIMITS.idleMs });
+  const extended = session({ ...base, extendedAt: '2026-10-21T12:20:00.000Z', extendedUntil: '2026-10-21T13:30:00.000Z' });
+  assert.equal(stopReason(extended, at('13:00'), LIMITS), null, 'held to 13:30');
+  assert.equal(stopReason(extended, at('13:31'), LIMITS), 'idle for 3 h', 'says how long it really waited');
+  const lifetime = session({ ...base, lastActiveAt: '2026-10-21T17:59:00.000Z', extendedAt: '2026-10-21T17:50:00.000Z', extendedUntil: '2026-10-21T19:00:00.000Z' });
+  assert.equal(stopReason(lifetime, at('18:30'), LIMITS), null, 'past its 8 hours, but extended');
+  const stale = session({ ...base, startedAt: '2026-10-21T12:00:00.000Z', lastActiveAt: '2026-10-21T12:00:00.000Z', extendedAt: '2026-10-21T11:00:00.000Z', extendedUntil: '2026-10-21T20:00:00.000Z' });
+  assert.equal(stopReason(stale, at('14:01'), LIMITS), 'idle for 2 h', 'an Extend from before a resume counts for nothing');
+  assert.equal(pauseAt(session({ ...base, status: 'stopped' }), LIMITS), null);
+});
+
+test('a session\'s own limits replace the ones it runs on, a key at a time', () => {
+  const limits = withSessionLimits(LIMITS, { idleHours: 0.5 });
+  assert.deepEqual([limits.idleMs, limits.lifetimeMs, limits.startTimeoutMs], [30 * 60_000, LIMITS.lifetimeMs, LIMITS.startTimeoutMs]);
+  assert.equal(withSessionLimits(LIMITS, null), LIMITS);
+  const s = session({ startedAt: '2026-10-21T10:00:00.000Z', lastActiveAt: '2026-10-21T10:00:00.000Z' });
+  assert.equal(stopReason(s, Date.parse('2026-10-21T10:31:00.000Z'), limits), 'idle for 30 min');
 });
 
 test('stopReason stops a session past its lifetime, and a start that hangs', () => {

@@ -48,6 +48,9 @@
 //   POST /api/sessions/<id>/stop
 //   POST /api/sessions/<id>/pin     {"on": true}   pinned to the top of your rail; yours alone
 //   POST /api/sessions/<id>/rename  {"title": "..."}   the name every page shows
+//   POST /api/sessions/<id>/extend  its pause or stop, whichever comes first, an hour later
+//   POST /api/sessions/<id>/limits  {"idleHours": 2, "lifetimeHours": 12}   this session's own pause and stop; a key
+//                                left out or null goes back to its owner's or the console's
 //   POST /api/my/uploads?name=<file>   one file for your next New session, as the body; {"id"} names it in
 //                                POST /api/my/sessions's "attachments" (attachments.mjs)
 //   POST /api/sessions/<id>/upload?name=<file>&pane=agent|terminal|none   a file pasted or dropped on a terminal,
@@ -306,6 +309,7 @@ const STOP_RE = /^\/api\/sessions\/([0-9a-f]{8})\/stop$/;
 const ASSIGN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/assign$/;
 const SHARED_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(resume|delete|remove)$/;
 const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename)$/;
+const LIMIT_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(extend|limits)$/;
 const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|interrupt|answer|prompt|applog|diff|transcript)$/;
 // The skills in the repo change with a merge; an hour is soon enough for a / list.
 const SKILLS_FRESH_MS = 60 * 60_000;
@@ -1207,12 +1211,13 @@ export function createHandler({
       lifetimeHours: config.limits.lifetimeMs / 3_600_000,
       // The asker's own, which only their private sessions use.
       myIdleHours: (login && userSettings?.limitsFor(login).idleMs / 3_600_000) || null,
+      myLifetimeHours: (login && userSettings?.limitsFor(login).lifetimeMs / 3_600_000) || null,
       afterCloseDays: (config.retention?.afterCloseMs ?? 3 * 86_400_000) / 86_400_000,
       maxPrivate: config.maxPrivatePerPerson,
       // The slots are shared sessions' alone: My Woodshed's start at once.
       running: sharedRunningCount(all),
       queued: all.filter((s) => s.status === 'queued' && !s.owner).length,
-      sessions: sessions.map((s) => ({ ...publicSession(s), project: projectFor(config, s).name, slackWaiting: slackWaiting.has(s.id), pr: prChips?.view(s.prUrl) ?? null,
+      sessions: sessions.map((s) => ({ ...publicSession(s), ...limitView(s), project: projectFor(config, s).name, slackWaiting: slackWaiting.has(s.id), pr: prChips?.view(s.prUrl) ?? null,
         // A port is lent once the app is up or starting; until then `appUrl` is null and the page opens it through
         // /auth/app, which lends one.
         ...(appPorts && s.status === 'running' && s.kind !== 'ask' ? { appUrl: APP_HOLDS_PORT.has(s.app) ? appPorts.urlFor(s.id) : null } : {}),
@@ -1901,6 +1906,33 @@ export function createHandler({
     }
   }
 
+  // Extend and a session's own limits are the session's, for everyone who can stop it: whoever can open it.
+  async function limitAction(req, res, [, id, action], login) {
+    const session = findFor(id, login);
+    if (!session) return reply(res, 404, { error: 'no such session' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    try {
+      if (action === 'extend') fleet.extend(session, login);
+      else fleet.setLimits(session, body ?? {}, login);
+      return reply(res, 200, { ...publicSession(session), ...limitView(session) });
+    } catch (err) {
+      if (err.shown) return reply(res, 400, { error: err.message });
+      throw err;
+    }
+  }
+
+  // When the session pauses or stops by itself, and the hours it runs on with its own taken into account.
+  function limitView(session) {
+    if (!fleet.limitsOf) return {};
+    const limits = fleet.limitsOf(session);
+    return { pause: fleet.pauseOf(session), runsOn: { idleHours: limits.idleMs / 3_600_000, lifetimeHours: limits.lifetimeMs / 3_600_000 } };
+  }
+
   // A repo's label and its switches for labels and /woodshed comments, for its settings page (repoTriggers.mjs).
   function repoTriggersView(project) {
     if (!repoTriggers) return null;
@@ -2287,6 +2319,8 @@ export function createHandler({
     if (sharedMatch) return sharedAction(req, res, sharedMatch, login);
     const viewMatch = VIEW_ACTION_RE.exec(pathname);
     if (viewMatch) return viewAction(req, res, viewMatch, login);
+    const limitMatch = LIMIT_ACTION_RE.exec(pathname);
+    if (limitMatch) return limitAction(req, res, limitMatch, login);
     const assignMatch = ASSIGN_RE.exec(pathname);
     if (assignMatch) return assignAction(req, res, assignMatch[1], login);
     const stopMatch = STOP_RE.exec(pathname);

@@ -304,6 +304,48 @@ export function sharedRunningCount(sessions) {
   return sessions.filter((s) => takesSharedSlot(s) && SLOT_STATUSES.has(s.status)).length;
 }
 
+/** How long one Extend pushes a session's pause or stop back. */
+export const EXTEND_MS = 60 * 60_000;
+
+/**
+ * When a running session pauses or stops by itself, and why: the sooner of its idle pause and its lifetime, each held
+ * back to `extendedUntil` while that is from this run (an Extend). A question's limits are its own.
+ * @param {object} session
+ * @param {{idleMs: number, lifetimeMs: number, askIdleMs?: number, askLifetimeMs?: number}} limits
+ * @returns {{at: number, why: 'idle'|'lifetime', ms: number}|null}  `ms` is the limit it reaches
+ */
+export function pauseAt(session, limits) {
+  if (session.status !== 'running') return null;
+  const idleMs = isAsk(session) ? limits.askIdleMs ?? ASK_DEFAULTS.idleMs : limits.idleMs;
+  const lifetimeMs = isAsk(session) ? limits.askLifetimeMs ?? ASK_DEFAULTS.lifetimeMs : limits.lifetimeMs;
+  const startedAt = Date.parse(session.startedAt);
+  const activeAt = Date.parse(session.lastActiveAt);
+  // An Extend from an earlier run counts for nothing once the session is resumed.
+  const held = Date.parse(session.extendedUntil);
+  const hold = Number.isFinite(held) && Date.parse(session.extendedAt) >= startedAt ? held : -Infinity;
+  const ends = [
+    { at: Math.max(startedAt + lifetimeMs, hold), why: 'lifetime', ms: lifetimeMs },
+    // A session statusd has not yet reported on has no idle clock.
+    Number.isFinite(activeAt) && { at: Math.max(activeAt + idleMs, hold), why: 'idle', ms: idleMs },
+  ].filter((end) => end && Number.isFinite(end.at));
+  if (!ends.length) return null;
+  return ends.reduce((a, b) => (b.at < a.at ? b : a));
+}
+
+/**
+ * A session's own pause and stop, set on its page, over the limits it would otherwise run on.
+ * @param {{idleMs: number, lifetimeMs: number}} limits
+ * @param {{idleHours?: number, lifetimeHours?: number}|null|undefined} own  the session's `limits`
+ */
+export function withSessionLimits(limits, own) {
+  if (!own) return limits;
+  return {
+    ...limits,
+    ...(own.idleHours ? { idleMs: own.idleHours * 3_600_000 } : {}),
+    ...(own.lifetimeHours ? { lifetimeMs: own.lifetimeHours * 3_600_000 } : {}),
+  };
+}
+
 // The page reads these reasons (public/common.js, PAUSE_REASON_RE and START_TIMEOUT_REASON) to tell a pause from a
 // failed start: change one there too.
 /**
@@ -315,14 +357,14 @@ export function sharedRunningCount(sessions) {
  */
 export function stopReason(session, now, limits) {
   const { startTimeoutMs } = limits;
-  const idleMs = isAsk(session) ? limits.askIdleMs ?? ASK_DEFAULTS.idleMs : limits.idleMs;
-  const lifetimeMs = isAsk(session) ? limits.askLifetimeMs ?? ASK_DEFAULTS.lifetimeMs : limits.lifetimeMs;
   const startedAt = Date.parse(session.startedAt);
   if (session.status === 'starting' && now - startedAt > startTimeoutMs) return 'did not start in time';
-  if (session.status !== 'running') return null;
-  if (now - startedAt > lifetimeMs) return `ran for ${spanText(lifetimeMs)}`;
-  if (now - Date.parse(session.lastActiveAt) > idleMs) return `idle for ${spanText(idleMs)}`;
-  return null;
+  const end = pauseAt(session, limits);
+  if (!end || now <= end.at) return null;
+  // An Extend makes the stop later than the limit: the reason says how long it really ran or waited.
+  const from = end.why === 'lifetime' ? startedAt : Date.parse(session.lastActiveAt);
+  const span = Math.max(end.ms, end.at - from);
+  return end.why === 'lifetime' ? `ran for ${spanText(span)}` : `idle for ${spanText(span)}`;
 }
 
 // A port, or null: a statusd from an image before it reported them gives none.

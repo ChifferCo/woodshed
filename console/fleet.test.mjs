@@ -473,6 +473,36 @@ test('an idle session is checkpointed and stopped', async () => {
   assert.ok(calls.statusd.some((c) => c.path === '/checkpoint'));
 });
 
+test('Extend puts an idle pause off by an hour, and a session\'s own limits replace the console\'s', async () => {
+  const { fleet, statuses, advance } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  await fleet.handleTrigger({ number: 43, login: 'joel', trigger: 'label', title: 'y', kind: 'issue' });
+  const [first, second] = fleet.sessions();
+  statuses[first.id] = { state: 'done' };
+  statuses[second.id] = { state: 'done' };
+  await fleet.tick();
+  const pause = Date.parse(fleet.pauseOf(first).at);
+  advance(2 * HOUR - 5 * 60_000);
+  fleet.extend(first, 'joel');
+  assert.equal(Date.parse(fleet.pauseOf(first).at), pause + HOUR);
+  fleet.extend(first, 'joel');
+  assert.equal(Date.parse(fleet.pauseOf(first).at), pause + 2 * HOUR, 'pressed again, another hour');
+  fleet.setLimits(second, { idleHours: 6, lifetimeHours: null }, 'joel');
+  assert.deepEqual(second.limits, { idleHours: 6 });
+  assert.throws(() => fleet.setLimits(second, { idleHours: 30 }, 'joel'), /0.25 to 24/);
+  advance(10 * 60_000);
+  await fleet.tick();
+  assert.deepEqual([first.status, second.status], ['running', 'running']);
+  advance(2 * HOUR);
+  await fleet.tick();
+  assert.deepEqual([first.status, first.stopReason, second.status], ['stopped', 'idle for 4 h', 'running']);
+  fleet.setLimits(second, {}, 'joel');
+  assert.equal(second.limits, null, 'empty goes back to the console\'s');
+  await fleet.tick();
+  assert.equal(second.status, 'stopped');
+  assert.throws(() => fleet.extend(second, 'joel'), /only a running session/);
+});
+
 test('the first poll only records where GitHub is, so history is never replayed', async () => {
   const { fleet, github, store } = setup();
   github.events = [{ id: 99, event: 'labeled', label: { name: 'woodshed' }, actor: { login: 'joel' }, issue: { number: 1, title: 'old' } }];
