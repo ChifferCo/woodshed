@@ -96,12 +96,15 @@
     const left = leftTab();
     if (left) tabMemory.remember(id, left);
   }
+  // Whether a back-forward cache restore is still checking who is signed in (pageshow): until it says, the page writes
+  // nothing to storage and follows no move, Back included, since it may be drawn for someone else.
+  let restoring = false;
   // The tab each session was last on, for this browser tab and the login signed in.
   const SessionTabs = window.WoodshedSessionTabs;
   const pageLogin = document.querySelector('meta[name="woodshed-login"]')?.content ?? null;
   const tabMemory = (() => {
     try {
-      const memory = SessionTabs.memory(window.sessionStorage, pageLogin, () => !W.signingOut());
+      const memory = SessionTabs.memory(window.sessionStorage, pageLogin, () => !W.signingOut() && !restoring);
       // The tab the last page went away on: the session was left on it, unless this load is a reload of that visit.
       const reloaded = window.performance?.getEntriesByType?.('navigation')?.[0]?.type === 'reload';
       const left = SessionTabs.takeLeaving(window.sessionStorage, pageLogin, reloaded);
@@ -159,6 +162,7 @@
     moved();
   }
   function moved() {
+    if (restoring) return;
     rememberLeaving();
     readRoute();
     routeVersion++;
@@ -179,7 +183,7 @@
     // restore shows nothing of it until pageshow below has checked who is signed in.
     if (e.persisted) document.documentElement.style.visibility = 'hidden';
     const left = leftTab();
-    if (left && !W.signingOut()) SessionTabs.stashLeaving(window.sessionStorage, pageLogin, id, left);
+    if (left && !W.signingOut() && !restoring) SessionTabs.stashLeaving(window.sessionStorage, pageLogin, id, left);
   });
   // Back to this page from the browser's back-forward cache runs none of the page's start, and the page is as it was
   // left, drawn for its login: the account may have changed in another browser tab since. It stays hidden until the
@@ -189,6 +193,8 @@
   window.addEventListener('pageshow', async (e) => {
     if (!e.persisted) return;
     document.documentElement.style.visibility = 'hidden';
+    restoring = true;
+    const shownAt = window.location.href;
     let who = null;
     try {
       // /api/my names the login whether or not the console has sign-in (/api/me names none without it). No answer in
@@ -204,6 +210,7 @@
       window.location.reload();
       return;
     }
+    restoring = false;
     try {
       const left = SessionTabs.takeLeaving(window.sessionStorage, pageLogin, false);
       if (left) tabMemory.remember(left.id, left.tab);
@@ -211,7 +218,9 @@
       // Storage refused: the memory stays as it was.
     }
     document.documentElement.style.visibility = '';
-    refresh();
+    // A move made while it checked (Back again) was not followed: follow it now.
+    if (window.location.href !== shownAt) moved();
+    else refresh();
   });
   // Every link to one of these pages, the rail's, the bar's ‹ and New session's among them. A new tab, a modifier
   // click or a link to anywhere else is the browser's.
@@ -2135,7 +2144,7 @@
     }
   }
   function keepLast() {
-    if (W.signingOut()) return;
+    if (W.signingOut() || restoring) return;
     try {
       window.sessionStorage.setItem(LAST_KEY, JSON.stringify({ login: signedInAs, data, me, pulls }));
     } catch {
