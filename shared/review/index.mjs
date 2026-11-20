@@ -1576,6 +1576,44 @@ function livePrFor(review) {
   return null;
 }
 
+/**
+ * The header a model prompt is given: the review's own, unless the branch has
+ * a pull request the review was not launched from.
+ *
+ * A worktree review records a title and body the shed made up ("Work in
+ * progress on <branch>", "This worktree is 5 commits ahead of main."). The page
+ * already shows the pull request's title over it (prTitle in page.mjs), but the
+ * prompts read `review.meta`, so the Q&A's first question kept asking what a
+ * pull request titled "Work in progress" was for, while its real title sat
+ * above. So the pull request's own title and description go in instead, read
+ * from GitHub and kept a minute: chat and explain build a prompt per message.
+ * Should GitHub not answer, the title from prStatus's cache still beats the
+ * made-up one, and the made-up body is dropped rather than passed off as the
+ * author's.
+ */
+const PROMPT_META_TTL_MS = 60_000;
+const promptMetaCache = new Map();
+
+async function promptMetaFor(ctx, review) {
+  const meta = review?.meta || {};
+  if (review?.kind === 'pr') return meta;
+  const live = livePrFor(review);
+  if (!live?.number) return meta;
+  const key = `${ctx?.repoRoot || ''}#${live.number}`;
+  const kept = promptMetaCache.get(key);
+  if (kept && Date.now() - kept.at < PROMPT_META_TTL_MS) return { ...meta, ...kept.fields };
+  let fields = { number: live.number, url: live.url || null, title: live.title || meta.title, body: '' };
+  const slug = await originSlug(ctx?.repoRoot).catch(() => null);
+  const got = slug ? await fetchPrMeta({ pr: live.number, slug }).catch(() => null) : null;
+  if (got?.ok) {
+    fields = { number: live.number, url: got.meta.url || fields.url, title: got.meta.title || fields.title, body: got.meta.body || '' };
+    promptMetaCache.set(key, { at: Date.now(), fields });
+  } else {
+    ctx?.log?.('review.pr_description_not_read', { pr: live.number, error: got?.error || 'no origin slug' });
+  }
+  return { ...meta, ...fields };
+}
+
 /** The same mapping describePr makes, over what `gh pr view` stored at launch. */
 function prStateFromMeta(meta) {
   const raw = String(meta?.state || '').toUpperCase();
@@ -1752,7 +1790,7 @@ async function runAnalysis({ ctx, session, review, diff, gen }) {
         return;
       }
       const reason = attempt === 0 ? null : reviewState.get(session)?.retryReason || 'no structured output';
-      const prompt = buildAnalysisPrompt({ meta: review.meta, files: diff.files, retryReason: reason });
+      const prompt = buildAnalysisPrompt({ meta: await promptMetaFor(ctx, review), files: diff.files, retryReason: reason });
 
       const started = await startWithBackoff({ ctx, session, review, prompt, gen });
       if (!started) return;
@@ -1926,6 +1964,8 @@ async function handleExplain(payload, res, ctx, session) {
     side: valid.side,
     question: valid.question + '\0' + valid.history.map((m) => m.text).join('\0'),
   });
+  // Before the join check, so nothing is awaited between it and startJob.
+  const meta = await promptMetaFor(ctx, review);
 
   // The same question already running: join it rather than paying twice. With
   // no on-disk answer cache (see store.mjs) this is the only thing standing
@@ -1937,7 +1977,7 @@ async function handleExplain(payload, res, ctx, session) {
   }
 
   const prompt = buildExplainPrompt({
-    meta: review.meta, file: valid.file, filePath: valid.filePath,
+    meta, file: valid.file, filePath: valid.filePath,
     line: valid.line, endLine: valid.endLine, side: valid.side, question: valid.question, history: valid.history,
   });
   const started = startJob({
@@ -2050,12 +2090,14 @@ async function handleChat(payload, res, ctx, session) {
 
   const valid = validateChatRequest({ payload });
   if (!valid.ok) return json(res, 400, { ok: false, error: valid.error });
+  // Before the in-flight check, so nothing is awaited between it and startJob.
+  const meta = await promptMetaFor(ctx, review);
 
   const inFlight = chatInFlight(session);
   if (inFlight) return json(res, 409, { ok: false, error: 'still answering the previous message' });
 
   const prompt = buildChatPrompt({
-    meta: review.meta,
+    meta,
     artifact: readArtifact(session),
     files: diff.files,
     history: readChat(session),
@@ -2262,6 +2304,7 @@ async function runQaRounds({ ctx, session, review, gen, pin }) {
   // Read again for each prompt: a Q&A asked for while the analysis is still
   // going gets the overview in its later rounds, once there is one.
   const overviewNow = () => readArtifact(session)?.overview || '';
+  const meta = await promptMetaFor(ctx, review);
   const qa = {
     status: 'running', phase: 'asking', depth: 1, items: [], error: null, stoppedEarly: null,
     startedAt: new Date().toISOString(), generatedAt: null, costUsd: 0, headSha: review.headSha || null,
@@ -2302,7 +2345,7 @@ async function runQaRounds({ ctx, session, review, gen, pin }) {
 
   const asked = await qaRun({
     ctx, session, review, gen,
-    argv: juniorArgv({ prompt: buildTopQuestionsPrompt({ meta: review.meta, files, overview: overviewNow() }), followups: false }),
+    argv: juniorArgv({ prompt: buildTopQuestionsPrompt({ meta, files, overview: overviewNow() }), followups: false }),
   });
   if (!asked) return;
   spent(asked);
@@ -2316,7 +2359,7 @@ async function runQaRounds({ ctx, session, review, gen, pin }) {
     save();
     const answered = await qaRun({
       ctx, session, review, gen,
-      argv: seniorArgv({ prompt: buildAnswersPrompt({ meta: review.meta, files, overview: overviewNow(), items: qa.items, open }) }),
+      argv: seniorArgv({ prompt: buildAnswersPrompt({ meta, files, overview: overviewNow(), items: qa.items, open }) }),
       cwd: snapshot.dir,
     });
     if (!answered) return;
@@ -2338,7 +2381,7 @@ async function runQaRounds({ ctx, session, review, gen, pin }) {
     const more = await qaRun({
       ctx, session, review, gen,
       argv: juniorArgv({
-        prompt: buildFollowupsPrompt({ meta: review.meta, files, overview: overviewNow(), items: qa.items, frontier }),
+        prompt: buildFollowupsPrompt({ meta, files, overview: overviewNow(), items: qa.items, frontier }),
         followups: true,
       }),
     });
