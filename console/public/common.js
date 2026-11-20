@@ -365,11 +365,28 @@
    * @returns {{left: number, why: 'idle'|'lifetime'}|null}  how long until a running session pauses or stops by itself,
    *   from the console's `pause` (its own limits and any Extend in it), else from the page's idle numbers
    */
+  /** @returns {number|null}  an Extend's end in this run (sessions.mjs pauseAt), while it is still ahead */
+  function heldUntil(s) {
+    const until = Date.parse(s.extendedAt) >= Date.parse(s.startedAt) ? Date.parse(s.extendedUntil) : NaN;
+    return Number.isFinite(until) && until > Date.now() ? until : null;
+  }
+
+  /** @returns {number|null}  when a running session stops at its lifetime, by the hours the console says it runs on */
+  function lifetimeEnd(s, lifetimeHours = s.runsOn?.lifetimeHours) {
+    const startedAt = Date.parse(s.startedAt);
+    if (!lifetimeHours || !Number.isFinite(startedAt)) return null;
+    return Math.max(startedAt + lifetimeHours * 3_600_000, heldUntil(s) ?? -Infinity);
+  }
+
   function pauseLeft(s, { idleHours, askIdleHours, myIdleHours }) {
     if (s.status !== 'running') return null;
     if (s.pause) {
-      // Waiting on claude's work never pauses it; only its lifetime ends a busy session.
-      if (s.pause.why === 'idle' && BUSY_STATES.has(s.state)) return null;
+      // Waiting on claude's work never pauses it; only its lifetime ends a busy session, so the countdown is to that,
+      // even while a last-active time a few seconds old puts the idle pause first.
+      if (s.pause.why === 'idle' && BUSY_STATES.has(s.state)) {
+        const stop = lifetimeEnd(s);
+        return stop === null ? null : { left: stop - Date.now(), why: 'lifetime' };
+      }
       return { left: Date.parse(s.pause.at) - Date.now(), why: s.pause.why };
     }
     if (s.kind === 'ask') idleHours = askIdleHours;
@@ -445,6 +462,15 @@
           cancel,
           save));
       const dialog = h('dialog', { class: 'confirm', 'aria-labelledby': 'limits-title' }, h('h2', { id: 'limits-title' }, 'Pause and stop'), form);
+      // Whether the new hours are already behind the session: its lifetime, or its idle clock while the agent is not
+      // working (a working agent keeps moving that clock).
+      const endAfter = (idleH, lifetimeH) => {
+        const ran = Date.now() - Date.parse(s.startedAt);
+        if (lifetimeH && Number.isFinite(ran) && lifetimeH * 3_600_000 <= ran) return { why: 'lifetime', past: ran, hours: lifetimeH };
+        const waited = Date.now() - Date.parse(s.lastActiveAt);
+        if (idleH && !BUSY_STATES.has(s.state) && Number.isFinite(waited) && idleH * 3_600_000 <= waited) return { why: 'idle', past: waited, hours: idleH };
+        return null;
+      };
       // While a save is on its way the dialog stays: closing it then would say nothing was saved, and the console may
       // still keep the hours.
       let pending = false;
@@ -456,16 +482,18 @@
         e.preventDefault();
         if (pending) return;
         const values = { idleHours: idle.input.value || null, lifetimeHours: life.input.value || null };
-        const ranMs = s.status === 'running' && s.startedAt ? Date.now() - Date.parse(s.startedAt) : 0;
-        // What it would run on after the save: the hours entered, or what an empty field falls back to.
-        const lifetime = Number(values.lifetimeHours || fallback.lifetimeHours) || 0;
-        const key = String(values.lifetimeHours ?? '');
-        // An Extend from this run holds the stop back to its end, as the console has it (sessions.mjs pauseAt).
-        const heldTo = Date.parse(s.extendedAt) >= Date.parse(s.startedAt) ? Date.parse(s.extendedUntil) : NaN;
-        const held = Number.isFinite(heldTo) && heldTo > Date.now();
-        if (lifetime && lifetime * 3_600_000 <= ranMs && warnedFor !== key) {
+        // What it would run on after the save: the hours entered, or what an empty field falls back to. A save that
+        // leaves the session already past its pause or stop ends it at the console's next check (an Extend from this
+        // run holds that back): said once, and a second Save of the same hours goes ahead.
+        const end = s.status === 'running' ? endAfter(Number(values.idleHours || fallback.idleHours) || 0, Number(values.lifetimeHours || fallback.lifetimeHours) || 0) : null;
+        const key = `${values.idleHours ?? ''}/${values.lifetimeHours ?? ''}`;
+        if (end && warnedFor !== key) {
           warnedFor = key;
-          error.textContent = `It has already run for ${span(ranMs)}, past ${hoursText(lifetime)}, so it would stop ${held ? `when its Extend runs out, in ${span(heldTo - Date.now())}` : 'within seconds'}: it tries to push its work first. Save again to ${held ? 'keep these hours' : 'stop it now'}.`;
+          const held = heldUntil(s);
+          const word = end.why === 'lifetime' ? 'stop' : 'pause';
+          const limit = end.hours < 1 ? span(end.hours * 3_600_000) : hoursText(end.hours);
+          const past = end.why === 'lifetime' ? `It has already run for ${span(end.past)}, past ${limit}` : `It has waited for input for ${span(end.past)}, past ${limit}`;
+          error.textContent = `${past}, so it would ${word} ${held ? `when its Extend runs out, in ${span(held - Date.now())}` : 'within seconds'}: it tries to push its work first. Save again to ${held ? 'keep these hours' : `${word} it now`}.`;
           error.hidden = false;
           return;
         }
