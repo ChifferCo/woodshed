@@ -355,12 +355,9 @@ table.events { width: 100%; min-width: 760px; border-collapse: collapse; font-si
 .settings-card, .secret-list { border: 1px solid var(--line); border-radius: 8px; }
 .settings-card { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .settings-card h2, .secret-group h2 { margin: 0; }
-.secret-group { display: flex; flex-direction: column; gap: 8px; }
-.secret-row { padding: 14px 16px; }
-.secret-row + .secret-row { border-top: 1px solid var(--line-soft); }
-.secret-row.is-open { box-shadow: inset 3px 0 0 var(--amber); }
-.secret-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px; }
-.secret-main { flex: 999 1 380px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+/* A secret is a row of its group (SettingsRows): its value and its form are in the open row. */
+.set-fold-body .value-row, .set-fold-body > .secret-form, .set-fold-body > .advanced-body, .set-fold-body > .actions, .set-fold-body > .form-ok, .set-fold-body > .form-error { margin-top: 0; }
+.secret-form-title { margin: 4px 0 -4px; font-size: 13px; font-weight: 600; }
 .secret-name { font-family: var(--mono); font-size: 13.5px; font-weight: 600; }
 .msg-plain { font-size: 13px; color: var(--sub); }
 .field-block { display: flex; flex-direction: column; gap: 4px; }
