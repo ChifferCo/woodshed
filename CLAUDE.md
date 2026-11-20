@@ -1011,7 +1011,9 @@ the shed's real review page over a made-up change it commits to a scratch repo, 
 chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and app go nowhere. Add a session to
 `devConsole.mjs` to cover another state.
 `/s/c0de5e55` (codex) and `/s/c1a0de00` (claude) open on a Chat tab that works: the real statusd over a private tmux,
-whose pane runs a stand-in agent (`devChatAgent.mjs`) writing the agents' real record formats. `/s/c1a0dea1` runs the
+whose pane runs a stand-in agent (`devChatAgent.mjs`) writing the agents' real record formats. `/s/c1a0de02` is that
+claude started from a Claude home holding an earlier session's conversation, as a private session started while another
+runs is: its Chat stays empty until it is sent a message. `/s/c1a0dea1` runs the
 real `claude` instead, in a clone of this checkout with no remote and with its TUI tab live, on this machine's Claude
 credential, with `DEV_CONSOLE_REAL_CLAUDE=1`. It spends that credential's usage, and its session can run commands as
 this machine, so it is never behind Start app's console, which Open app and app shares reach with no sign-in:

@@ -8,6 +8,8 @@
 // on a Chat tab that works, over a stand-in codex and claude behind the real statusd, where tmux is on the PATH
 // (devChatSession.mjs): a message is answered with a few tool calls and a reply, one that says "fail" has a tool fail,
 // and one that says "ask" puts the codex session at Needs you until Enter in its TUI tab.
+// /s/c1a0de02 is the same claude, started from a Claude home that holds an earlier session's conversation, as a private
+// session started while another runs is: its Chat stays empty until it is sent a message.
 // DEV_CONSOLE_APP_PORTS=7701-7703 puts session apps on those ports of localhost, in place of `<id>.apps.localhost`.
 // DEV_CONSOLE_SESSION_APP=1, in a session (SESSION_ID set), also answers under the session's app name,
 // `<SESSION_ID>.<SESSION_APP_DOMAIN>`, as Woodshed's own app does behind the console's app proxy (scripts/devConsoleApp.sh).
@@ -67,6 +69,10 @@ const CODEX_CHAT_ID = 'c0de5e55';
 const CLAUDE_CHAT_ID = 'c1a0de00';
 const codexChat = await startDevChatSession({ id: CODEX_CHAT_ID, ...tokensOf(CODEX_CHAT_ID), agent: 'codex', nextPath: [twoApps.binDir, process.env.PATH].join(path.delimiter) });
 const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, ...tokensOf(CLAUDE_CHAT_ID), agent: 'claude', nextPath: [codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) });
+// A private session just started while another runs: its Claude home, restored from its owner's, holds an earlier
+// session's conversation, and its own claude has written nothing yet. Its Chat is empty until it is sent a message.
+const NEW_CHAT_ID = 'c1a0de02';
+const newChat = await startDevChatSession({ id: NEW_CHAT_ID, ...tokensOf(NEW_CHAT_ID), agent: 'claude', restoredHome: true, nextPath: [claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) });
 // A real agent runs on this machine's credentials, so it is never served behind the session's app name: Open app and
 // app shares reach that console, which has no sign-in. Run it on a port of its own instead, which only this machine
 // reaches: DEV_CONSOLE_REAL_CLAUDE=1 node console/bin/devConsole.mjs 7700.
@@ -78,7 +84,7 @@ const realAllowed = wantsReal && !sessionApp;
 const REAL_ID = 'c1a0dea1';
 const realClaude = realAllowed && process.env.DEV_CONSOLE_REAL_CLAUDE === '1'
   ? await startDevChatSession({ id: REAL_ID, ...tokensOf(REAL_ID), agent: 'claude', real: true,
-    nextPath: [claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) })
+    nextPath: [newChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) })
   : null;
 if (realAllowed && process.env.DEV_CONSOLE_REAL_CLAUDE === '1' && !realClaude) console.warn('dev console: no real claude, it needs claude, ttyd and tmux on the PATH');
 // DEV_CONSOLE_REAL_CODEX=1: /s/c0dea1ed runs the real codex the same way, on this machine's Codex sign-in.
@@ -256,6 +262,10 @@ const sessions = [
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
     ref: claudeChat.ref, endpoint: { host: '127.0.0.1', statusPort: claudeChat.port, termPort: claudeChat.port },
   })] : []),
+  ...(newChat ? [session(NEW_CHAT_ID, null, 'A new session beside a running one', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null,
+    ref: newChat.ref, endpoint: { host: '127.0.0.1', statusPort: newChat.port, termPort: newChat.port },
+  })] : []),
   ...(realClaude ? [session(REAL_ID, null, 'Real claude on a clone of this checkout', {
     kind: 'task', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', hasShell: false,
     ref: realClaude.ref, endpoint: { host: '127.0.0.1', statusPort: realClaude.port, termPort: realClaude.termPort },
@@ -430,7 +440,7 @@ function startConsole() {
   child = spawn(process.execPath, [server], {
     stdio: 'inherit',
     env: {
-      ...inherited, PATH: [devGhDir, realCodex?.binDir, realClaude?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
+      ...inherited, PATH: [devGhDir, realCodex?.binDir, realClaude?.binDir, newChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
       WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev',
       // DEV_CONSOLE_APP_PORTS (such as 7701-7703) puts session apps on ports of localhost instead, as a console reached
       // through Tailscale's serve has them (appPorts.mjs).
@@ -466,6 +476,7 @@ function startConsole() {
     liveTerminal?.close();
     codexChat?.close();
     claudeChat?.close();
+    newChat?.close();
     realClaude?.close();
     realCodex?.close();
     fs.rmSync(stateDir, { recursive: true, force: true });

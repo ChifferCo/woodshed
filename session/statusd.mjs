@@ -57,7 +57,7 @@
 import { createPaneLock, reopenUnderLock } from './paneLock.mjs';
 import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
-import { appendFileSync, createReadStream, existsSync, openSync } from 'node:fs';
+import { appendFileSync, createReadStream, existsSync, openSync, readFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -78,7 +78,7 @@ import { Refusal, answerApproval, answerQuestions, composerEmpty, composerText, 
 import { createReviewHost } from './reviewShed/host.mjs';
 import { createCodeEditor } from './codeEditor.mjs';
 import { readSessionDiff } from './sessionDiff.mjs';
-import { readSessionTranscript } from './sessionTranscript.mjs';
+import { ownClaudeTranscript, readSessionTranscript } from './sessionTranscript.mjs';
 import { ENGINE_NAMES, viewersOf } from '../shared/databases/index.mjs';
 import { expandPath, loadProject, usesVariable } from '../shared/project.mjs';
 import { isMain } from '../shared/isMain.mjs';
@@ -495,17 +495,26 @@ function transcriptDir() {
   return path.join(os.homedir(), '.claude', 'projects', REPO_DIR.replace(/[/.]/g, '-'));
 }
 
-// The transcript claude writes to now. Its name is claude's own session id, which `claude --resume` takes.
-async function newestTranscript() {
-  const dir = transcriptDir();
-  let files;
+// When the entrypoint began restoring the Claude home (restoreHome in entrypoint.sh), in ms: a transcript last written
+// before it came with the home, from an earlier session of the owner's, and is not this one's. 0 when nothing was
+// restored, or the entrypoint wrote no time. WOODSHED_HOME_RESTORED_FILE moves it, for the dev console's chat sessions
+// (console/bin/devChatSession.mjs), each with a statusd of its own; the fleet never sets it, so it is in no
+// PER_SESSION_ENV (providers/aws/ecsLauncher.mjs).
+export const HOME_RESTORED_FILE = process.env.WOODSHED_HOME_RESTORED_FILE || '/tmp/woodshed-home-restored-from';
+export function readHomeRestoredFrom(file = HOME_RESTORED_FILE) {
   try {
-    files = (await fs.readdir(dir)).filter((name) => name.endsWith('.jsonl'));
+    const ms = Number(readFileSync(file, 'utf8').trim());
+    return Number.isFinite(ms) && ms > 0 ? ms : 0;
   } catch {
-    return null;
+    return 0;
   }
-  const stats = await Promise.all(files.map(async (name) => ({ name, stat: await fs.stat(path.join(dir, name)) })));
-  return stats.sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs)[0] ?? null;
+}
+const OWN_TRANSCRIPTS = { writtenFrom: readHomeRestoredFrom(), resume: process.env.RESUME_SESSION || null };
+
+// The transcript claude writes to now, in this session (ownClaudeTranscript). Its name is claude's own session id,
+// which `claude --resume` takes.
+async function newestTranscript() {
+  return ownClaudeTranscript(transcriptDir(), OWN_TRANSCRIPTS);
 }
 
 async function transcriptTail() {
@@ -1766,6 +1775,7 @@ async function handle(req, res) {
     const read = await readSessionTranscript({
       agent: CODEX ? 'codex' : 'claude',
       claudeDir: transcriptDir(),
+      ...OWN_TRANSCRIPTS,
       root: REPO_DIR,
       codexHome: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
       ...(limit ? { limit: Number(limit) } : {}),

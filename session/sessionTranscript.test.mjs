@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
-import { MAX_DECOMPRESSED_BYTES, MAX_TEXT, parseClaudeTranscript, parseCodexRollout, readSessionTranscript } from './sessionTranscript.mjs';
+import { MAX_DECOMPRESSED_BYTES, MAX_TEXT, ownClaudeTranscript, parseClaudeTranscript, parseCodexRollout, readSessionTranscript } from './sessionTranscript.mjs';
 
 const line = (o) => JSON.stringify(o);
 const at = '2026-11-12T10:00:00.000Z';
@@ -95,6 +95,42 @@ test('the newest claude transcript is read, its newest entries kept', async (t) 
   assert.deepEqual(read.entries.map((e) => e.text), ['Also the logout one', 'Done: both fixed.']);
   assert.equal(read.partial, true);
   assert.equal(typeof read.writtenAt, 'number');
+});
+
+// A private session starts from its owner's Claude home, which brings their earlier conversations on the repo, with the
+// times they were last written: another session's, still running, among them.
+test('a conversation the restored home brought is not the session\'s: its Chat is empty until claude writes', async (t) => {
+  const dir = home(t);
+  const claudeDir = path.join(dir, 'claude');
+  fs.mkdirSync(claudeDir);
+  const restoredAt = Date.now() - 60_000;
+  const other = path.join(claudeDir, 'other-session.jsonl');
+  fs.writeFileSync(other, CLAUDE);
+  fs.utimesSync(other, new Date(restoredAt - 5000), new Date(restoredAt - 5000));
+  const before = await readSessionTranscript({ agent: 'claude', claudeDir, codexHome: dir, writtenFrom: restoredAt });
+  assert.deepEqual(before, { agent: 'claude', entries: [], partial: false, writtenAt: null });
+  assert.equal(await ownClaudeTranscript(claudeDir, { writtenFrom: restoredAt }), null, 'no conversation id for Resume either');
+  fs.writeFileSync(path.join(claudeDir, 'mine.jsonl'), line({ type: 'user', timestamp: at, message: { role: 'user', content: 'Add the export button' } }));
+  const after = await readSessionTranscript({ agent: 'claude', claudeDir, codexHome: dir, writtenFrom: restoredAt });
+  assert.deepEqual(after.entries.map((e) => e.text), ['Add the export button']);
+  assert.equal((await ownClaudeTranscript(claudeDir, { writtenFrom: restoredAt })).name, 'mine.jsonl');
+  // Nothing restored (no time written): every transcript counts, as before.
+  assert.equal((await ownClaudeTranscript(claudeDir)).name, 'mine.jsonl');
+});
+
+test('a Resume\'s conversation is the session\'s, though the home brought it', async (t) => {
+  const dir = home(t);
+  const claudeDir = path.join(dir, 'claude');
+  fs.mkdirSync(claudeDir);
+  const restoredAt = Date.now() - 60_000;
+  for (const [name, ago] of [['resumed', 9000], ['newer-other', 1000]]) {
+    const file = path.join(claudeDir, `${name}.jsonl`);
+    fs.writeFileSync(file, CLAUDE);
+    fs.utimesSync(file, new Date(restoredAt - ago), new Date(restoredAt - ago));
+  }
+  assert.equal((await ownClaudeTranscript(claudeDir, { writtenFrom: restoredAt, resume: 'resumed' })).name, 'resumed.jsonl');
+  const read = await readSessionTranscript({ agent: 'claude', claudeDir, codexHome: dir, writtenFrom: restoredAt, resume: 'resumed' });
+  assert.equal(read.entries.at(-1).text, 'Done: both fixed.');
 });
 
 test('no transcript yet answers no entries', async (t) => {

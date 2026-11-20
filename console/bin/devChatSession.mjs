@@ -116,7 +116,27 @@ export function returnLogin({ host, lent, startedAs }) {
   return 'copied back';
 }
 
-export async function startDevChatSession({ id, token, agent, nextPath, real = false, terminalToken = '' }) {
+// An earlier session's conversation on the repo, as a Claude home restored from the owner's brings it: last written
+// before this session started, another session's that may still be running.
+const EARLIER = [
+  { type: 'user', message: { role: 'user', content: 'Why do webhook deliveries fail after a deploy?' } },
+  { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'The receiver restarts mid-delivery: an earlier session\'s answer, which the new one must not show.' }] } },
+];
+function restoreEarlierHome(recordDir, restoredFile) {
+  fs.mkdirSync(recordDir, { recursive: true });
+  const file = path.join(recordDir, `${crypto.randomUUID()}.jsonl`);
+  const at = new Date(Date.now() - 10 * 60_000);
+  fs.writeFileSync(file, EARLIER.map((r) => JSON.stringify({ ...r, timestamp: at.toISOString(), uuid: crypto.randomUUID() })).join('\n') + '\n');
+  fs.utimesSync(file, at, at);
+  // What restoreHome in session/entrypoint.sh writes before it unpacks the home.
+  fs.writeFileSync(restoredFile, `${Date.now() - 60_000}\n`);
+}
+
+/**
+ * restoredHome: the session starts from a Claude home holding an earlier session's conversation (restoreEarlierHome),
+ * as a private session started while another runs does, and its stand-in writes nothing until it is sent a message
+ */
+export async function startDevChatSession({ id, token, agent, nextPath, real = false, terminalToken = '', restoredHome = false }) {
   if (!onPath('tmux') || (real && (!onPath(agent) || !onPath('ttyd')))) return null;
   const ownCodexAuth = path.join(os.homedir(), '.codex', 'auth.json');
   if (real && agent === 'codex' && !fs.existsSync(ownCodexAuth)) {
@@ -155,8 +175,11 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
     fs.writeFileSync(path.join(codexHome, 'config.toml'), `[projects."${repo}"]\ntrust_level = "trusted"\n`);
   }
   const stateFile = path.join(root, 'claude-state.json');
+  const restoredFile = path.join(root, 'home-restored-from');
+  if (restoredHome && agent === 'claude' && !real) restoreEarlierHome(recordDir, restoredFile);
   // A tmux server of its own (TMUX_TMPDIR), so it never meets the session's own claude.
-  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: root, HOME: home, WOODSHED_CLAUDE_STATE_FILE: stateFile,
+  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: root, HOME: home, WOODSHED_CLAUDE_STATE_FILE: stateFile, WOODSHED_HOME_RESTORED_FILE: restoredFile,
+    ...(restoredHome && { DEV_CHAT_AGENT_FRESH: '1' }),
     ...(realCodex && { CODEX_HOME: codexHome }) };
   let paneCommand = `${process.execPath} ${AGENT} ${agent} ${recordDir} ${repo}`;
   if (realCodex) {
