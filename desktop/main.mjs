@@ -492,6 +492,8 @@ async function finishSignIn(link) {
       error = `The sign-in could not be kept: ${err.message}`;
     }
   }
+  // Signed in: no retry is left to go anywhere, so a later error page on this console starts again from its home.
+  if (!error) retryNext = null;
   // The window closed while the session was stored: signed in all the same, with nothing to show it in.
   if (!mainWindow) {
     console.log('woodshed-desktop: a sign-in finished with no window open', { signedIn: !error });
