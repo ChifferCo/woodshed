@@ -213,6 +213,13 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true })
 
   /** Every CLI sign-in of a person's: Remove My Woodshed, or taken off People. */
   function revokeAll(login, by) {
+    // A code approved for them and not collected yet would otherwise sign them in again after this.
+    for (const device of pending.values()) {
+      if (device.approved?.login === login) {
+        device.approved = null;
+        device.denied = true;
+      }
+    }
     const ids = Object.entries(tokens()).filter(([, r]) => r.login === login).map(([id]) => id);
     if (!ids.length) return;
     for (const id of ids) delete tokens()[id];

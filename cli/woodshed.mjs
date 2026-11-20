@@ -19,6 +19,8 @@ import { createCredentials } from './credentials.mjs';
 
 export const VERSION = '0.1.0';
 export const DEFAULT_CONSOLE = 'https://console.woodshed.run';
+// Each call to the console, its answer read included.
+const REQUEST_MS = 20_000;
 export const EXIT = Object.freeze({ done: 0, failed: 1, waiting: 2, refused: 3 });
 
 const USAGE = `Usage: woodshed <command> [--console <url>] [--json]
@@ -171,6 +173,8 @@ export async function main(argv, deps = {}) {
         },
         body: body ? JSON.stringify(body) : undefined,
         redirect: 'manual',
+        // The answer too, read below: a console that stalls never holds a login past its code's expiry.
+        signal: AbortSignal.timeout(REQUEST_MS),
       });
     } catch (err) {
       throw new CliError(`could not reach ${origin}: ${err.cause?.message ?? err.message}`);
@@ -207,7 +211,7 @@ export async function main(argv, deps = {}) {
     const before = signedIn(origin);
     const started = await call(origin, '/api/cli/device', { method: 'POST', body: { name: deps.hostname ?? os.hostname() } });
     if (started.status !== 200 || !started.body?.deviceCode) {
-      if (started.status === 429) throw new CliError(started.body?.error ?? 'the console is busy: try again in a few minutes');
+      if (started.status === 429) throw new CliError(plain(started.body?.error) ?? 'the console is busy: try again in a few minutes');
       throw consoleNoCli(origin, started.status);
     }
     const { deviceCode, userCode, expiresIn, interval } = started.body;

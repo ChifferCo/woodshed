@@ -70,8 +70,11 @@ test('each computer is a sign-in of its own, revoked alone or all together; a pe
   assert.equal(cli.revoke('mia-dev', laptop.id), true);
   assert.equal(cli.tokenFor({ authorization: `Bearer ${laptop.token}` }), null);
   assert.ok(cli.tokenFor({ authorization: `Bearer ${desktop.token}` }));
+  const approved = cli.start({ name: 'not collected yet' });
+  cli.decide({ code: approved.userCode, login: 'mia-dev', approve: true });
   cli.revokeAll('mia-dev', 'test');
   assert.deepEqual(cli.list('mia-dev'), []);
+  assert.equal(cli.poll(approved.deviceCode).status, 'denied', 'an approval not collected yet goes with them');
   assert.equal(cli.list('sam-ops').length, 1);
   for (let i = 0; i < 21; i++) make('ana-k', `box ${i}`);
   const kept = cli.list('ana-k');
