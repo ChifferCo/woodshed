@@ -777,6 +777,50 @@ test('the template commands run each database\'s migrate, then its seed for a ne
   assert.deepEqual(run('migrate'), ['pg migrate in api next mongodb://m/next']);
 });
 
+// The db-admin task's `migrate <login>` and `migrate-session <id>` (entrypoint.sh migrate-own): the same migrate
+// commands, on the owner's databases the variables name, and a log that never speaks of a template or a swap.
+test('migrate-own runs each database\'s migrate on the owner\'s databases, never a seed, and stops at one that fails', (t) => {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-migrate-own-'));
+  t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(repoDir, '.woodshed'));
+  fs.mkdirSync(path.join(repoDir, 'api'));
+  const out = path.join(repoDir, 'ran');
+  const record = (what) => `echo "${what} as $PGUSER on $PGDATABASE \${MONGODB_URI:-}" >> ${out}`;
+  const run = (databases) => {
+    fs.rmSync(out, { force: true });
+    fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), fixtureProject({ databases }));
+    const result = spawnSync('bash', ['-c', [
+      'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
+      'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
+      fn('usesVariable'), fn('startRedisIfUsed'), fn('requireDatabases'), fn('writeEnvFiles'), fn('runTemplateCommands').replaceAll('/tmp/', `${repoDir}/`),
+      'runTemplateCommands migrate own',
+    ].join('\n')], {
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir, PGHOST: 'pg', PGUSER: 'woodshed__0a1b2c3d', PGPASSWORD: 'x', PGDATABASE: 'woodshed__0a1b2c3d', MONGODB_URI: 'mongodb://m/woodshed__0a1b2c3d' },
+    });
+    return { ...result, ran: fs.existsSync(out) ? fs.readFileSync(out, 'utf8').trim().split('\n') : [] };
+  };
+  const both = run([
+    { ...PG, dir: 'api', migrate: record('pg migrate'), seed: record('pg seed') },
+    { ...MONGO, dir: 'api', migrate: record('mongo migrate'), seed: record('mongo seed') },
+  ]);
+  assert.equal(both.status, 0, both.stdout + both.stderr);
+  assert.deepEqual(both.ran, [
+    'pg migrate as woodshed__0a1b2c3d on woodshed__0a1b2c3d mongodb://m/woodshed__0a1b2c3d',
+    'mongo migrate as woodshed__0a1b2c3d on woodshed__0a1b2c3d mongodb://m/woodshed__0a1b2c3d',
+  ]);
+  assert.match(both.stdout, /Owner's databases migrated \(database: woodshed__0a1b2c3d, commands: 2\)/);
+  assert.doesNotMatch(both.stdout, /Templates ready for the swap/);
+  const failed = run([
+    { ...PG, dir: 'api', migrate: 'echo "relation users already exists" >&2; exit 3', seed: record('pg seed') },
+    { ...MONGO, dir: 'api', migrate: record('mongo migrate'), seed: record('mongo seed') },
+  ]);
+  assert.equal(failed.status, 1);
+  assert.match(failed.stdout, /ERROR: `echo "relation users already exists" >&2; exit 3` failed in api \(postgres\)/);
+  assert.deepEqual(failed.ran, [], 'the next database is not migrated after one fails');
+  assert.doesNotMatch(failed.stdout, /migrated|ready for the swap/);
+});
+
 // dbAdmin.mjs's seedWith, but for the path: the repo settings it read for the databases' env files, in a file, and
 // the entrypoint's `seed` writing the env files from them, with the environment seedEnv gives it.
 const SEED_ENV_FILES = [

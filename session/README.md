@@ -142,6 +142,10 @@ opens as soon as claude does.
 `entrypoint.sh seed` migrates and seeds the next database template, as its own
 user. Only the db-admin task runs it (`session/dbAdmin.mjs`), after emptying it. It writes the env files as a shared
 session does, from the repo settings db-admin read for the databases' env files (`WOODSHED_SEED_REPO_SETTINGS`).
+`entrypoint.sh migrate` runs only the `migrate` commands, on a copy of the current template, and `entrypoint.sh
+migrate-own` runs them on an owner's own databases, as the owner's user: the task's `migrate <login>` and
+`migrate-session <session id>`, for a host that changed an owner's databases outside the task and wants the image's
+schema on them. Its log ends `Owner's databases migrated`, never `Templates ready for the swap`.
 
 ## Environment
 
@@ -164,7 +168,7 @@ session does, from the repo settings db-admin read for the databases' env files 
 | `WOODSHED_MONGO_HOST` | both | Mongo's server, as `host:port`, set only where the installation hosts it (`shared/databases/mongo.mjs`); `MONGODB_URI` is made from it and the console's user and password |
 | `PGUSER`, `PGPASSWORD`, `PGDATABASE`; `MONGODB_URI` | both | Optional for a session: a database to use as it is (the docker launcher), `MONGODB_URI` whole. The ECS task definition has none, so the entrypoint asks the session API (`POST /settings`) for the databases the console made: a shared session's own, waiting while the console answers 503, or a private session's owner's, one user, password and name on every engine. Each engine then exports its own variables (`PGHOST` to `PGDATABASE`, `PGSSLMODE`, `PG_URL`; `MONGODB_URI`), which the project file maps to the app's names. That user may create more databases beside its own, such as its tests' |
 | `WOODSHED_SERVICES`, and each variable it lists | both | The installation's shared services: the list of their variables, each set to its URL. An env file line needing one that is not set is a warning in the log, not a stop. db-admin passes them to the seed, and refuses a name not ending in `_URL` or `_ENDPOINT`, or a value that is not a plain http(s) URL |
-| `WOODSHED_SEED_REPO_SETTINGS` | seed | The file of repo settings, in the session API's answer's shape, that `dbAdmin.mjs` read for the databases' env files (the default project's installation values, its entryPoint's `--project`) and deletes after the seed. Unset without `--project`: the env files get the repo's defaults alone |
+| `WOODSHED_SEED_REPO_SETTINGS` | seed, migrate, migrate-own | The file of repo settings, in the session API's answer's shape, that `dbAdmin.mjs` read for the databases' env files (the default project's installation values, its entryPoint's `--project`) and deletes after the seed. Unset without `--project`: the env files get the repo's defaults alone |
 | `ISSUE`, `PR` or `PROMPT` | session | What to work on. `PROMPT` can be combined with the other two |
 | `STARTED_BY`, `BRANCH` | session | The GitHub login credited in the PR body, and an explicit branch name |
 | `SESSION_URL` | session | The session's page on the console (`WOODSHED_PUBLIC_URL`, or localhost for a local console), linked from the PR body. A console from before it sends none, and the line names Woodshed unlinked; `writeRules` drops it too when the project file says `consoleLinks: false` |

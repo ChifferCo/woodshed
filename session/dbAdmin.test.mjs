@@ -38,6 +38,14 @@ test('parseArgs takes the flags from the entryPoint and only an action and an ow
   assert.equal(parseArgs([...FIXED, 'template']).action, 'template');
 });
 
+test('parseArgs takes a migrate of a person\'s or a session\'s databases, each with its own kind of owner', () => {
+  assert.deepEqual([parseArgs([...FIXED, 'migrate', 'mia-dev']).action, parseArgs([...FIXED, 'migrate', 'mia-dev']).owner], ['migrate', 'mia-dev']);
+  assert.deepEqual([parseArgs([...FIXED, 'migrate-session', '0a1b2c3d']).action, parseArgs([...FIXED, 'migrate-session', '0a1b2c3d']).owner], ['migrate-session', '0a1b2c3d']);
+  for (const command of [['migrate'], ['migrate-session'], ['migrate-session', 'mia-dev'], ['migrate', 'woodshed__template'], ['migrate', 'mia', 'x'], ['migrate-session', '0A1B2C3D']]) {
+    assert.throws(() => parseArgs([...FIXED, ...command]), { refused: true }, command.join(' '));
+  }
+});
+
 test('parseArgs takes an installation with no Mongo, and each run then makes Postgres alone', () => {
   const { flags } = parseArgs([...PG_ONLY, 'clone', '0a1b2c3d']);
   assert.equal(flags['mongo-host'], undefined);
@@ -507,4 +515,48 @@ test('the seed is told where its repo settings are from the file it was given al
   });
   assert.equal(env.WOODSHED_SEED_REPO_SETTINGS, '/tmp/woodshed-seed-x/repo-settings.json');
   assert.ok(!('WOODSHED_SEED_REPO_SETTINGS' in seedEnv({ flags: FLAGS, env: {}, databases: [database], user: 'u', name: 'n', password: 'p' })));
+});
+
+test('a migrate runs the project\'s migrate commands on the owner\'s own databases, as the owner, and touches no template', async () => {
+  const { driver, queries } = fakeTemplatePg({ comment: JSON.stringify({ builtFrom: 'abc', readyAt: '2026-11-09T00:00:00.000Z' }) });
+  const flags = { ...parseArgs([...FIXED, 'migrate-session', '0a1b2c3d']).flags, 'pg-ca': 'none' };
+  const read = [];
+  const ran = [];
+  const admin = createDbAdmin({
+    flags, env: { PG_ROOT_PASSWORD: 'x' }, databases: [database, MONGO], drivers: driver, buildSha: 'def',
+    secrets: { get: async (name) => { read.push(name); return PASSWORD; } },
+    seed: async (args) => { ran.push(args); },
+  });
+  await admin.migrateSession('0a1b2c3d');
+  await admin.migrate('Mia-Dev');
+  assert.deepEqual(ran, [
+    { user: 'woodshed__0a1b2c3d', name: 'woodshed__0a1b2c3d', password: PASSWORD, migrateOnly: true, own: true },
+    { user: 'woodshed_mia_dev', name: 'woodshed_mia_dev', password: PASSWORD, migrateOnly: true, own: true },
+  ], 'migrate only, never the seed, with the password the console saved for the owner');
+  assert.deepEqual(read, ['woodshed-cloud/sessions/0a1b2c3d/database', 'woodshed-cloud/users/mia-dev/database']);
+  assert.deepEqual(queries, [], 'no root connection: nothing copied, dropped or swapped, and the template\'s marker is as it was');
+});
+
+test('a migrate with no saved password is refused, one that fails says which databases, and a project with no migrate command runs nothing', async () => {
+  const { driver } = fakeTemplatePg();
+  const flags = { ...parseArgs([...FIXED, 'migrate-session', '0a1b2c3d']).flags, 'pg-ca': 'none' };
+  const make = (over) => createDbAdmin({ flags, env: { PG_ROOT_PASSWORD: 'x' }, databases: [database], drivers: driver, secrets: { get: async () => PASSWORD }, seed: async () => {}, ...over });
+  await assert.rejects(make({ secrets: { get: async () => null } }).migrateSession('0a1b2c3d'), { refused: true, message: /no password in woodshed-cloud\/sessions\/0a1b2c3d\/database/ });
+  await assert.rejects(make({ secrets: { get: async () => 'not hex' } }).migrateSession('0a1b2c3d'), /is not one Woodshed made/);
+  const failing = make({ seed: async ({ name }) => { throw new Error(`migrating ${name} failed (exit 1)`); } });
+  await assert.rejects(failing.migrateSession('0a1b2c3d'), /^Error: migrating woodshed__0a1b2c3d failed \(exit 1\)$/);
+  let ran = 0;
+  const none = make({ databases: [{ ...database, migrate: null }, { ...MONGO, migrate: null }], drivers: { postgres: {}, mongo: {} }, seed: async () => { ran++; } });
+  await none.migrateSession('0a1b2c3d');
+  assert.equal(ran, 0, 'nothing to run, and no error');
+});
+
+test('an owner\'s migrate gets the owner\'s own database on each engine, never the next template\'s', () => {
+  const env = seedEnv({
+    flags: { ...FLAGS, 'pg-ca': 'none' }, env: { PG_ROOT_PASSWORD: 'root', MONGO_ROOT_PASSWORD: 'root' }, databases: [database, MONGO],
+    user: 'woodshed__0a1b2c3d', name: 'woodshed__0a1b2c3d', password: PASSWORD,
+  });
+  assert.deepEqual([env.PGUSER, env.PGDATABASE, env.PGPASSWORD], ['woodshed__0a1b2c3d', 'woodshed__0a1b2c3d', PASSWORD]);
+  assert.equal(env.MONGODB_URI, `mongodb://woodshed__0a1b2c3d:${PASSWORD}@10.0.0.10:27017/woodshed__0a1b2c3d?authSource=woodshed__0a1b2c3d`);
+  assert.ok(!Object.values(env).includes('root'), 'no root password');
 });

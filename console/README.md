@@ -1211,6 +1211,12 @@ password. It can run the task, but only with one of these commands:
 - `reset <login>`: a person's user, and their databases as a fresh copy;
 - `drop <login>`;
 - `clone <session id>`, `drop-session <session id>`: a shared session's.
+- `migrate <login>`, `migrate-session <session id>`: the project's `migrate` commands on a person's or a shared
+  session's databases as they are, as their own user. The console runs neither: they are for a host that runs the
+  task itself and changed an owner's databases outside it (put other data in a copy, say), so they hold the image's
+  schema before anything uses them. Nothing is copied, emptied or seeded, the templates are not touched, and a
+  project whose databases have no `migrate` logs `Nothing to migrate`. A migration that fails ends the run with
+  `ERROR {"message":"migrating <name> failed (exit <code>)"}`.
 
 After each of them, the task also closes every database to the roles that do not own it. Postgres lets every role
 connect to a new database and make temporary tables there, a copy never takes its template's permissions, and a

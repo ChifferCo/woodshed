@@ -12,6 +12,10 @@
 //   drop <login>          a person's databases and user, for Remove My Woodshed
 //   clone <session id>    a shared session's databases, a fresh copy of the templates, with the password in its secret
 //   drop-session <id>     those, once the session has ended
+//   migrate <login>       runs the project's `migrate` commands on a person's databases as they are, for a host that
+//   migrate-session <id>  changed them outside this task (put other data in a copy, say) and wants the image's
+//                         schema on them before anything uses them. Nothing is copied, emptied or seeded, and the
+//                         templates are not touched
 //
 // The task definition's entryPoint fixes the flags, `node dbAdmin.mjs --region ... --`, and a run adds only the
 // command after it. ECS lets whoever runs the task (the console) override the command and the environment but
@@ -52,7 +56,9 @@ import { isMain } from '../shared/isMain.mjs';
 const FLAGS = ['secret-prefix', 'repo'];
 const OPTIONAL_FLAGS = ['project-files-dir', 'project'];
 const SECRET_SOURCES = ['region', 'secrets-dir'];
-const ACTIONS = { template: 'none', reset: 'login', drop: 'login', clone: 'session', 'drop-session': 'session' };
+const ACTIONS = {
+  template: 'none', reset: 'login', drop: 'login', clone: 'session', 'drop-session': 'session', migrate: 'login', 'migrate-session': 'session',
+};
 // A clone started while a refresh swaps the templates in waits for them, as does one before the first template.
 const TEMPLATE_WAIT_MS = 5 * 60_000;
 const TEMPLATE_POLL_MS = 10_000;
@@ -118,7 +124,7 @@ export function parseArgs(argv) {
     throw refuse(`--project must be a project's name, lowercase words joined by single dashes (got: ${flags.project})`);
   }
   const [action, owner = null, ...rest] = argv.slice(end + 1);
-  const usage = 'template | reset <login> | drop <login> | clone <session id> | drop-session <session id>';
+  const usage = 'template | reset <login> | drop <login> | clone <session id> | drop-session <session id> | migrate <login> | migrate-session <session id>';
   if (!(action in ACTIONS) || rest.length) throw refuse(`usage: ${usage} (got: ${argv.slice(end + 1).join(' ')})`);
   if ((ACTIONS[action] === 'none') !== (owner === null)) throw refuse(`${action} ${ACTIONS[action] === 'none' ? 'takes nothing more' : 'needs an owner'}`);
   if (ACTIONS[action] === 'login') ownerName(owner);
@@ -230,9 +236,9 @@ function readProject(flags) {
 
 /**
  * @param {{flags: Record<string, string>, env: Record<string, string|undefined>, secrets?: {get: Function, put: Function},
- *          seed?: (args: {user: string, name: string, password: string, migrateOnly?: boolean}) => Promise<void>,
+ *          seed?: (args: {user: string, name: string, password: string, migrateOnly?: boolean, own?: boolean}) => Promise<void>,
  *          buildSha?: string|null, changedSince?: (sha: string, pathspecs: string[], diffFilter?: string) => Promise<boolean>,
- *          databases?: {engine: string, dir: string, paths: string[], migrations: string|null}[],
+ *          databases?: {engine: string, dir: string, paths: string[], migrations: string|null, migrate?: string|null}[],
  *          drivers?: Record<string, object>|null}} opts
  *   `buildSha` is the commit this image was built from; without it, the templates are always built again. `databases`
  *   are the project file's, read from the image's checkout. `drivers` stand in for each engine's, in tests
@@ -352,6 +358,31 @@ export function createDbAdmin({
     log('Dropped', { session: id });
   }
 
+  /**
+   * The project's `migrate` commands on an owner's databases as they are, with every database's variables set, as the
+   * templates' are run. As the owner's own user, with the password the console saved for it, and no root connection:
+   * the owner owns its databases and everything in them, so its migrations can change what a copy or a restore put
+   * there, and they create only what a session's own `migrate` could (an extension the owner may not create fails
+   * here as it would there). The seeder owns nothing in an owner's database, and could not.
+   */
+  async function migrateOwn(name, password, fields) {
+    const commands = databases.filter((d) => d.migrate).map((d) => d.engine);
+    if (!commands.length) {
+      log('Nothing to migrate', { ...fields, name, reason: 'none of the project file\'s databases has a migrate command' });
+      return;
+    }
+    await seed({ user: name, name, password, migrateOnly: true, own: true });
+    log('Migrate done', { ...fields, name, engines: commands });
+  }
+
+  async function migrate(login) {
+    await migrateOwn(ownerName(login), await passwordFor(secretName(flags['secret-prefix'], login), login), { login });
+  }
+
+  async function migrateSession(id) {
+    await migrateOwn(sessionName(id), await passwordFor(sessionSecretName(flags['secret-prefix'], id), id), { session: id });
+  }
+
   async function prepareNext({ password, fromCurrent }) {
     await withRoots(async (opened) => {
       for (const { db } of opened) await db.prepareNext({ password, fromCurrent });
@@ -422,7 +453,7 @@ export function createDbAdmin({
     return results;
   }
 
-  return { template, reset, drop, clone, dropSession, maintain };
+  return { template, reset, drop, clone, dropSession, migrate, migrateSession, maintain };
 }
 
 /**
@@ -525,12 +556,13 @@ function writeSettingsFile(settings) {
  *   of the env files the project's databases name (seedEnvFiles)
  */
 export function seedWith({ flags, env, databases, envFiles }) {
-  return async ({ user, name, password, migrateOnly = false }) => {
+  return async ({ user, name, password, migrateOnly = false, own = false }) => {
     const { settings } = await envFiles();
     const written = settings && writeSettingsFile(settings);
     try {
       await new Promise((resolve, reject) => {
-        const child = spawn('bash', [ENTRYPOINT, migrateOnly ? 'migrate' : 'seed'], {
+        // `migrate-own` runs what `migrate` does, and says in its log that these are an owner's databases, not templates.
+        const child = spawn('bash', [ENTRYPOINT, own ? 'migrate-own' : migrateOnly ? 'migrate' : 'seed'], {
           stdio: 'inherit',
           env: seedEnv({ flags, env, databases, user, name, password, settingsFile: written?.file ?? null }),
         });
@@ -573,6 +605,8 @@ async function main() {
   if (action === 'drop') await admin.drop(owner);
   if (action === 'clone') await admin.clone(owner);
   if (action === 'drop-session') await admin.dropSession(owner);
+  if (action === 'migrate') await admin.migrate(owner);
+  if (action === 'migrate-session') await admin.migrateSession(owner);
   // After the action, so a failure here never fails a copy a session waits on.
   const results = await admin.maintain().catch((err) => {
     log('WARNING: upkeep failed', { message: err.message });
