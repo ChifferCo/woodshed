@@ -574,7 +574,8 @@ is a module there with its entry in `ENGINES`, and its server in each provider (
   build the next template, swap it in and mark it ready with the commit it was built from (Postgres in the database's
   comment, Mongo in a collection of its own), and its upkeep after each run (Postgres closes databases every user could
   connect to; Mongo gives people's users their restore roles). Its driver comes from the database's `dir`.
-- **The session's variables** (`sessionEnv`, and `seedEnv` for the template's commands), in the engine's own names,
+- **The session's variables** (`sessionEnv`, and `seedEnv` for the template's commands and for an owner's `migrate`
+  run by the task, `migrate <login>` and `migrate-session <session id>`), in the engine's own names,
   which a session exports and the project file maps to the app's in its `env` and env file overrides: postgres gives
   libpq's `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` and `PGSSLMODE` (so the image's `psql`, Postgres
   16's, connects with no setup) and `PG_URL`; mongo gives `MONGODB_URI`. Woodshed names no app's variable.

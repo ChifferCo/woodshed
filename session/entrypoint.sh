@@ -11,6 +11,8 @@
 #   entrypoint.sh seed         migrate and seed the next database templates, as their own user; only the
 #                              db-admin task runs it (dbAdmin.mjs), which makes them empty first
 #   entrypoint.sh migrate      only migrate them, each a copy of the current template
+#   entrypoint.sh migrate-own  run the same `migrate` commands on an owner's own databases, as their own user, where
+#                              they are (the db-admin task's `migrate` and `migrate-session`)
 #
 # Environment (see README.md for the full contract):
 #   SESSION_ID                                                      always
@@ -30,7 +32,7 @@
 #   WOODSHED_SERVICES    the installation's shared services' variables, space-separated, each set to its URL (the
 #                        shared_services Terraform variable, or the local provider's session env). An env file
 #                        line needing one that is not set is logged as a warning when the files are written
-#   WOODSHED_SEED_REPO_SETTINGS  seed and migrate only: the file of repo settings dbAdmin.mjs read for the databases'
+#   WOODSHED_SEED_REPO_SETTINGS  seed, migrate and migrate-own only: the file of repo settings dbAdmin.mjs read for the databases'
 #                        env files (seedEnvFiles), in the session API's answer's shape; without it, the repo's defaults
 #   REPO_DIR             the checkout; the image sets it, and the working folder is used without it
 #   WOODSHED_PROJECT_FILES_DIR  the installation's folder of project files, for a repo with no
@@ -1145,9 +1147,10 @@ runSession() {
 # The next database templates, for the db-admin task: `seed` migrates and seeds empty ones, `migrate` only migrates
 # copies of the current ones. The commands are each of the project file's databases' `migrate` then `seed`, in the
 # list's order, run in its `dir`, with every database's variables set (dbAdmin.mjs, seedWith): one seed may read
-# another's database.
+# another's database. `migrate-own` runs the `migrate` commands the same way on an owner's own databases, which the
+# task's variables then name (its `migrate` and `migrate-session`).
 runTemplateCommands() {
-  local mode=$1 engine dir command ran=0 list=/tmp/woodshed-template-commands
+  local mode=$1 whose=${2:-template} engine dir command ran=0 list=/tmp/woodshed-template-commands
   requireDatabases
   # The default project's repo settings for the databases' env files, in the session API's shape, which dbAdmin.mjs
   # read for the seed (seedEnvFiles) and deletes after it. Without them, the repo's defaults alone.
@@ -1160,12 +1163,15 @@ runTemplateCommands() {
     (cd "$REPO_DIR/$dir" && bash -c "$command" < /dev/null) || die "\`$command\` failed in $dir ($engine)"
     ran=$((ran + 1))
   done < "$list"
-  log "Templates ready for the swap" "(mode: $mode, commands: $ran)"
+  # `own`: an owner's databases, migrated where they are (dbAdmin.mjs, migrateOwn). Nothing is swapped in.
+  if [ "$whose" = own ]; then log "Owner's databases migrated" "(database: ${PGDATABASE:-none}, commands: $ran)"
+  else log "Templates ready for the swap" "(mode: $mode, commands: $ran)"; fi
 }
 
 case "${1:-session}" in
   session) runSession ;;
   seed) runTemplateCommands seed ;;
   migrate) runTemplateCommands migrate ;;
-  *) die "unknown command: $1 (expected session, seed or migrate)" ;;
+  migrate-own) runTemplateCommands migrate own ;;
+  *) die "unknown command: $1 (expected session, seed, migrate or migrate-own)" ;;
 esac

@@ -95,6 +95,9 @@ test('a run sees only the secrets the AWS task role reads: its own database pass
   assert.deepEqual(f.mounted[clone], ['sessions', 'sessions/0a1b2c3d', 'sessions/0a1b2c3d/database.json']);
   assert.deepEqual(f.mounted[drop], []);
   assert.deepEqual(secretsFor(['template']), []);
+  // A migrate runs as the owner, with the password a reset or a clone was given.
+  assert.deepEqual(secretsFor(['migrate', 'Mia']), ['users/mia/database']);
+  assert.deepEqual(secretsFor(['migrate-session', '0a1b2c3d']), ['sessions/0a1b2c3d/database']);
 });
 
 test('with the default project, a run also sees its repo settings for the seed\'s env files, and the entryPoint names it', async () => {
@@ -198,6 +201,8 @@ test('an owner\'s label cannot be another\'s: a login spelled like a session id,
   assert.equal(ownerOf(['drop', 'mia']), 'user:mia');
   assert.equal(ownerOf(['clone', '0a1b2c3d']), 'session:0a1b2c3d');
   assert.equal(ownerOf(['drop-session', '0a1b2c3d']), 'session:0a1b2c3d');
+  assert.equal(ownerOf(['migrate', 'Mia']), 'user:mia');
+  assert.equal(ownerOf(['migrate-session', '0a1b2c3d']), 'session:0a1b2c3d');
   assert.notEqual(ownerOf(['reset', '0a1b2c3d']), ownerOf(['clone', '0a1b2c3d']));
   assert.notEqual(ownerOf(['reset', 'template']), ownerOf(['template']));
 });

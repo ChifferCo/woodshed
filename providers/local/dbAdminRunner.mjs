@@ -6,7 +6,7 @@
 // and the console picks only the command. The root passwords are `db-root/postgres` and `db-root/mongo` in the local
 // secret store, each needed only for a database the console has an address for, handed over by name in the
 // environment, never on a command line. A run sees only the secrets the AWS
-// task role reads: the database password its command makes, and the default project's repo settings for the env files
+// task role reads: the database password its command makes or migrates as, and the default project's repo settings for the env files
 // the project's seed reads (`repos/<project>/env/<key>`). They are copied into a
 // folder of the run's own, mounted read-only, and that folder goes once the run is over.
 //
@@ -45,8 +45,9 @@ export function seedSecretNames({ project, keys }) {
 /** @returns {string[]}  the secrets a command reads, beyond the seed's env files, by dbAdmin.mjs's names for them */
 export function secretsFor(command) {
   const [action, owner] = command;
-  if (action === 'reset') return [`users/${String(owner).toLowerCase()}/database`];
-  if (action === 'clone') return [`sessions/${owner}/database`];
+  // A migrate runs as the owner's own user, so it reads the password a reset or a clone was given.
+  if (action === 'reset' || action === 'migrate') return [`users/${String(owner).toLowerCase()}/database`];
+  if (action === 'clone' || action === 'migrate-session') return [`sessions/${owner}/database`];
   return [];
 }
 
@@ -57,8 +58,8 @@ export function secretsFor(command) {
  */
 export function ownerOf(command) {
   const [action, owner] = command;
-  if (action === 'reset' || action === 'drop') return `user:${String(owner).toLowerCase()}`;
-  if (action === 'clone' || action === 'drop-session') return `session:${owner}`;
+  if (action === 'reset' || action === 'drop' || action === 'migrate') return `user:${String(owner).toLowerCase()}`;
+  if (action === 'clone' || action === 'drop-session' || action === 'migrate-session') return `session:${owner}`;
   return action;
 }
 
