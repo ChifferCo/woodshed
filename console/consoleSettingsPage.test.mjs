@@ -1,4 +1,4 @@
-// The Console settings page's Repos card, run from public/consoleSettings.js the way a page loads it, on a tiny DOM.
+// The Settings page's groups of rows, run from public/consoleSettings.js the way a page loads it, on a tiny DOM.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const source = fs.readFileSync(new URL('./public/consoleSettings.js', import.meta.url), 'utf8');
+const rowsSource = fs.readFileSync(new URL('./public/settingsRows.js', import.meta.url), 'utf8');
 
 // What the page put the focus on, last one last.
 const focused = [];
@@ -34,9 +35,23 @@ function walk(el, out = []) {
 
 const tick = () => new Promise((r) => setImmediate(r));
 
+const byId = (app, id) => walk(app).find((e) => e.attrs.id === id);
+// A row's head, which opens and closes it, and whether the row is open.
+const headOf = (app, id) => byId(app, `${id}-head`);
+const isOpen = (app, id) => headOf(app, id).attrs['aria-expanded'] === 'true';
+// Opens every row there is, as someone reading the whole page would.
+function openAll(app) {
+  for (;;) {
+    const head = walk(app).find((e) => e.className === 'set-fold-head' && e.attrs['aria-expanded'] === 'false');
+    if (!head) return;
+    head.listeners.click();
+  }
+}
+
 // `updates` may be a function, called on each read (throwing as a console that does not answer); `clock.now` stands in
-// for Date.now, and `timers` collects what the page schedules, so a test can run them.
-async function loadPage(answer, { repos, updates = null, clock = null, timers = null, slack = null } = {}) {
+// for Date.now, and `timers` collects what the page schedules, so a test can run them. Every row is opened once the
+// page has loaded, unless `opened` is false; `hash` is the link the page was opened by.
+async function loadPage(answer, { repos, updates = null, clock = null, timers = null, slack = null, opened = true, hash = '' } = {}) {
   const app = element('div');
   const posted = [];
   const confirms = [];
@@ -75,6 +90,9 @@ async function loadPage(answer, { repos, updates = null, clock = null, timers = 
       return structuredClone(answer);
     },
     ago: () => '5 min ago',
+    ref: (r) => `#${r.number}`,
+    resumeSharedButton: () => h('button', { type: 'button' }, 'Resume'),
+    deleteSharedButton: () => h('button', { type: 'button' }, 'Delete now'),
     postJson: async (path, body) => {
       posted.push({ path, body });
       if (posted.hold) await posted.hold;
@@ -91,13 +109,17 @@ async function loadPage(answer, { repos, updates = null, clock = null, timers = 
     },
     errorParts: (err) => [err.message, ...(err.link ? [' ', h('a', { href: err.link.href, target: '_blank' }, `${err.link.text} ↗`)] : [])],
   };
+  const location = { hash, reload: () => {} };
   const context = vm.createContext({
-    window: { Woodshed: W }, console, setInterval: () => 0, setTimeout: (fn) => { timers?.push(fn); return 0; }, clearTimeout: () => {},
+    window: { Woodshed: W, location }, location, console, URL, setInterval: () => 0, setTimeout: (fn) => { timers?.push(fn); return 0; }, clearTimeout: () => {},
     Date: clock ? Object.assign(class extends Date {}, { now: () => clock.now }) : Date,
     document: { getElementById: () => app, activeElement: null },
   });
+  vm.runInContext(rowsSource, context);
   vm.runInContext(source, context);
   await tick();
+  await tick();
+  if (opened) openAll(app);
   return { app, posted, confirms, dialogs, pickers };
 }
 
@@ -113,9 +135,12 @@ const ANSWER = {
 
 // The fields a row had for its channel before it moved to the repo's own page.
 const channelInputs = (app) => walk(app).filter((e) => e.tag === 'input' && (/^channel-/.test(e.attrs.id ?? '') || /^Slack channel for /.test(e.attrs['aria-label'] ?? '')));
+// A group or a row of the page, by a short name.
+const PARTS = { projects: 'card-projects', sessions: 'card-sessions', slack: 'card-slack', questions: 'slack-questions', webhooks: 'card-webhooks', mcp: 'mcp-servers', updates: 'card-updates', data: 'card-data' };
+const cardOf = (app, name) => byId(app, PARTS[name]);
 const channelHints = (app) => walk(cardOf(app, 'projects')).filter((e) => e.tag === 'a' && /^PRs to /.test(textOf(e)));
 
-test('a repo\'s row on the Repos card has no channel field, and says where its pull requests go with a link to change it', async () => {
+test('a repo\'s row has no channel field, and says where its pull requests go with a link to change it', async () => {
   const { app } = await loadPage(ANSWER);
   assert.deepEqual(channelInputs(app), []);
   assert.deepEqual(channelHints(app).map((a) => [textOf(a), a.attrs.href]), [
@@ -123,8 +148,11 @@ test('a repo\'s row on the Repos card has no channel field, and says where its p
     ['PRs to C0APIPRS01', '/console-settings/repos/api#slack'],
   ]);
   const card = cardOf(app, 'projects');
-  assert.deepEqual(walk(card).filter((e) => e.tag === 'button' || (e.tag === 'a' && textOf(e) === 'Settings')).map((e) => textOf(e)).filter((t) => t !== 'Add repo'),
-    ['Settings', 'Settings', 'Remove'], 'each row: Settings, and Remove where it may go');
+  assert.match(textOf(headOf(app, 'repo-r')), /^acme\/app rDefault project · no sessions running · PRs to the console's channel/, 'the closed row says it too');
+  assert.deepEqual(['repo-r', 'repo-api'].map((id) => walk(byId(app, id)).filter((e) => (e.tag === 'button' && e.className !== 'set-fold-head') || (e.tag === 'a' && e.className === 'btn btn-plain')).map((e) => textOf(e))),
+    [['Repo settings ›'], ['Repo settings ›', 'Remove']], 'each row: its settings, and Remove where it may go');
+  assert.match(textOf(byId(app, 'repo-r')), /Set in the installation's configuration, so it is removed there\./);
+  assert.equal(walk(card).filter((e) => e.className === 'set-fold-head').length, 3, 'a row per repo, then Add a repo');
 });
 
 test('Add repo adds on the click, and a refusal shows under the field with the page that fixes it', async () => {
@@ -152,9 +180,8 @@ test('with no Slack on the console, the rows say nothing of a channel', async ()
 const SETTING = { key: 'maxRunning', label: 'Shared sessions at once', help: 'At most this many.', group: 'sessions', min: 1, max: 20, step: 1, unit: 'sessions', defaultValue: 4, value: 4 };
 const WITH_SETTINGS = { ...ANSWER, settings: [SETTING] };
 const sessionsSave = (app) => walk(app).find((e) => e.tag === 'button' && /^(Save|Saving…)$/.test(textOf(e)) && e.className === 'btn btn-open');
-const cardOf = (app, id) => walk(app).find((e) => e.attrs['aria-labelledby'] === `card-${id}`);
 
-test('a settings card saves its values on the click, with no typed confirm, and says what changed', async () => {
+test('a row of numbers saves its values on the click, with no typed confirm, and says what changed', async () => {
   const { app, posted, confirms } = await loadPage(WITH_SETTINGS);
   posted.reply = (path, body) => ({ settings: [{ ...SETTING, value: body.values.maxRunning }] });
   let release;
@@ -188,8 +215,9 @@ const buttonIn = (el, text) => walk(el).find((e) => e.tag === 'button' && textOf
 test('Slack not set up: one sentence and Set up Slack, nothing about questions, and the dialog opens at the own app\'s steps', async () => {
   const { app, dialogs } = await loadPage(WITH_SLACK, { slack: SLACK_OFF });
   const card = cardOf(app, 'slack');
-  assert.match(textOf(card), /^SlackNot set upPost each pull request a shared session opens to a channel, and answer questions people ask the bot\.Set up Slack$/);
-  assert.equal(cardOf(app, 'questions'), undefined, 'the Questions from Slack card is gone');
+  assert.match(textOf(card), /^SlackSlack Not set upPost each pull request a shared session opens to a channel, and answer questions people ask the bot\.Set up Slack$/, 'one line, with its button on it');
+  assert.equal(walk(card).filter((e) => e.className === 'set-fold-head').length, 0, 'nothing to open yet');
+  assert.equal(cardOf(app, 'questions'), undefined, 'no Questions row');
   buttonIn(card, 'Set up Slack').listeners.click();
   assert.equal(dialogs.length, 1);
   assert.equal(dialogs[0].mode, 'own', 'with no install option, straight to the own app');
@@ -215,7 +243,7 @@ test('Slack connected: the bot, the pull requests\' channel and questions, each 
   const text = textOf(card);
   assert.match(text, /Connected to Acme/);
   assert.match(text, /Bot@shed-bot, your own app\. Set by @mia-dev on 2026-11-18\./);
-  assert.match(text, /Pull requestsPosted to #app-prs\./);
+  assert.match(text, /Pull requestsPosted to #app-prs · gives up after 7 days/);
   assert.match(text, /QuestionsMentions of @shed-bot are answered/);
   assert.equal(buttonIn(card, 'Disconnect Slack'), undefined, 'a store that cannot make the secrets again offers no Disconnect');
   const toggle = walk(card).find((e) => e.attrs.role === 'switch');
@@ -224,24 +252,28 @@ test('Slack connected: the bot, the pull requests\' channel and questions, each 
   assert.equal(dialogs[0].mode, 'replace');
 });
 
-test('Limits fold each group\'s settings under its row, and save them as a card did', async () => {
-  const { app, posted } = await loadPage(WITH_SLACK, { slack: SLACK_ON });
+test('a Slack row\'s limits are in the row, with no fold of their own, and save as a row of numbers does', async () => {
+  const { app, posted } = await loadPage(WITH_SLACK, { slack: SLACK_ON, opened: false });
   posted.reply = (path, body) => ({ settings: [SETTING, { ...QUESTION_SETTING, value: body.values.maxAsks }, WAIT_SETTING] });
-  assert.equal(walk(app).find((e) => e.attrs.id === 'set-maxAsks'), undefined, 'folded until Limits is pressed');
-  const limits = walk(cardOf(app, 'slack')).filter((e) => e.tag === 'button' && /^Limits/.test(textOf(e)));
-  assert.equal(limits.length, 2, 'one under Pull requests, one under Questions');
-  limits[1].listeners.click();
+  assert.equal(byId(app, 'set-maxAsks'), undefined, 'not drawn while the row is closed');
+  assert.deepEqual(walk(cardOf(app, 'slack')).filter((e) => e.tag === 'button' && /^Limits/.test(textOf(e))), [], 'no Limits button');
+  headOf(app, 'slack-questions').listeners.click();
   assert.equal(walk(cardOf(app, 'slack')).filter((e) => e.attrs['aria-expanded'] === 'true').length, 1);
-  walk(app).find((e) => e.attrs.id === 'set-maxAsks').listeners.input({ target: { value: '5' } });
-  buttonIn(walk(app).find((e) => e.attrs.id === 'slack-limits-questions'), 'Save').listeners.click();
+  byId(app, 'set-maxAsks').listeners.input({ target: { value: '5' } });
+  assert.match(textOf(headOf(app, 'slack-questions')), /Not saved/, 'the row says a number waits for its Save');
+  buttonIn(byId(app, 'slack-limits-questions'), 'Save').listeners.click();
   await tick();
   assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings', body: { values: { maxAsks: 5 } } }]);
   assert.match(textOf(cardOf(app, 'slack')), /Saved\. Questions running at once: 3 sessions → 5 sessions\./);
+  headOf(app, 'slack-pulls').listeners.click();
+  assert.ok(byId(app, 'set-slackGiveUpDays'), 'the pull requests\' limits are in their row');
 });
 
-test('Change channel opens the picker on the saved channel, and its Save sends the pick alone', async () => {
-  const { app, posted, pickers } = await loadPage(WITH_SLACK, { slack: SLACK_ON });
-  buttonIn(cardOf(app, 'slack'), 'Change channel').listeners.click();
+test('the Pull requests row opens on the picker, on the saved channel, and its Save sends the pick alone', async () => {
+  const { app, posted, pickers } = await loadPage(WITH_SLACK, { slack: SLACK_ON, opened: false });
+  assert.equal(pickers.length, 0, 'no picker while the row is closed');
+  assert.match(textOf(headOf(app, 'slack-pulls')), /Posted to #app-prs.*#app-prs/, 'the closed row names the channel');
+  headOf(app, 'slack-pulls').listeners.click();
   assert.equal(pickers.length, 1);
   assert.equal(pickers[0].opts.value, 'C0CONSOLE01');
   pickers[0].picked = 'C0NEWCHAN01';
@@ -250,10 +282,14 @@ test('Change channel opens the picker on the saved channel, and its Save sends t
   await tick();
   assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings/slack', body: { channel: 'C0NEWCHAN01' } }]);
   assert.match(textOf(cardOf(app, 'slack')), /Posted to #new-prs\./);
-  assert.equal(buttonIn(cardOf(app, 'slack'), 'Save channel'), undefined, 'the picker closes once saved');
+  assert.match(textOf(byId(app, 'slack-pulls')), /Saved\. The next pull request goes to the new channel\./, 'said on the row that changed');
+  assert.equal(pickers.at(-1).opts.value, 'C0NEWCHAN01', 'the picker starts again on the saved channel');
+  // Closing the row is its Cancel: the picker is dropped, and made again on the next open.
+  headOf(app, 'slack-pulls').listeners.click();
+  assert.equal(buttonIn(cardOf(app, 'slack'), 'Save channel'), undefined);
 });
 
-test('the Questions row is only where questions are answered, and its switch is the one the Webhooks card had', async () => {
+test('the Questions row is only where questions are answered, and has their switch', async () => {
   const none = await loadPage({ ...WITH_SLACK, webhooks: { ...WEBHOOKS, slack: null } }, { slack: SLACK_ON });
   assert.doesNotMatch(textOf(cardOf(none.app, 'slack')), /Questions/);
   const { app, posted } = await loadPage(WITH_SLACK, { slack: SLACK_ON });
@@ -264,11 +300,20 @@ test('the Questions row is only where questions are answered, and its switch is 
   assert.match(textOf(cardOf(app, 'slack')), /Off since on 2026-11-19, by mia-dev: the console drops each mention of its Slack bot/);
 });
 
-test('the Webhooks card keeps GitHub\'s switch alone', async () => {
-  const { app } = await loadPage(WITH_SLACK, { slack: SLACK_ON });
-  const card = cardOf(app, 'webhooks');
-  assert.deepEqual(walk(card).filter((e) => e.attrs.role === 'switch').map((e) => e.attrs['aria-labelledby']), ['webhooks-switch-github']);
-  assert.doesNotMatch(textOf(card), /Slack questions/);
+test('GitHub\'s webhooks are a line with the switch on it, applied as it is turned', async () => {
+  const { app, posted } = await loadPage(WITH_SLACK, { slack: SLACK_ON });
+  const line = cardOf(app, 'webhooks');
+  assert.equal(line.className, 'set-line', 'nothing to open: the switch is on the row');
+  assert.deepEqual(walk(line).filter((e) => e.attrs.role === 'switch').map((e) => [e.attrs['aria-label'], e.attrs['aria-checked']]), [['GitHub webhooks', 'true']]);
+  assert.doesNotMatch(textOf(line), /Slack questions/);
+  assert.equal(walk(line).find((e) => e.tag === 'a').attrs.href, '/events');
+  posted.reply = () => ({ webhooks: { ...WEBHOOKS, github: { off: true, at: '2026-11-19T09:00:00.000Z', by: 'mia-dev', dropped: 2 } } });
+  walk(line).find((e) => e.attrs.role === 'switch').listeners.click();
+  await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings/webhooks', body: { source: 'github', off: true } }]);
+  assert.match(textOf(cardOf(app, 'webhooks')), /Off since on 2026-11-19, by mia-dev: the console drops each GitHub delivery \(2 so far\)/);
+  const none = await loadPage({ ...WITH_SLACK, webhooks: { receiving: false, github: { off: false }, slack: null } });
+  assert.equal(cardOf(none.app, 'webhooks'), undefined, 'no line where no webhook reaches the console');
 });
 
 test('Disconnect is offered where the store can make the secrets again, behind the typed confirm', async () => {
@@ -301,7 +346,7 @@ test('Check again says it could not tell when Slack named no scopes, never that 
   assert.doesNotMatch(textOf(cardOf(app, 'slack')), /every scope/);
 });
 
-test('a saved token Slack refuses says so on the card', async () => {
+test('a saved token Slack refuses says so on the Bot row', async () => {
   const { app } = await loadPage(WITH_SLACK, { slack: { ...SLACK_ON, bot: { ok: false, error: 'invalid_auth' } } });
   assert.match(textOf(cardOf(app, 'slack')), /Token refused.*Slack refuses the saved token \(invalid_auth\): nothing is posted\./);
 });
@@ -320,7 +365,7 @@ test('with the App, Add a repo is a list of the repos it may reach, and says whe
     [['', 'Choose a repo'], ['akurilin/social', 'akurilin/social (private)'], ['acme/web', 'acme/web'], [':type', 'Another repo: type owner/name']]);
   const card = cardOf(app, 'projects');
   assert.match(textOf(card), /Not listed\? Give the App access to it on GitHub: acme ↗, akurilin ↗; or install it on another account ↗\. Then List again/);
-  assert.deepEqual(walk(card).filter((e) => e.tag === 'a' && textOf(e) !== 'Settings' && !/^PRs to /.test(textOf(e))).map((a) => [a.attrs.href, a.attrs.target]), [
+  assert.deepEqual(walk(card).filter((e) => e.tag === 'a' && textOf(e) !== 'Repo settings ›' && !/^PRs to /.test(textOf(e))).map((a) => [a.attrs.href, a.attrs.target]), [
     ['https://github.com/organizations/acme/settings/installations/1', '_blank'], ['https://github.com/settings/installations/2', '_blank'], ['https://github.com/apps/w/installations/new', '_blank'],
   ]);
 
@@ -382,11 +427,13 @@ test('where the embedding program names each repo, there is no name field, and i
   const card = textOf(cardOf(app, 'projects'));
   assert.match(card, /Sessions show it by the repo's own name/);
   assert.doesNotMatch(card, /installation's configuration/);
-  assert.match(card, /acme\/apiapiadded/);
+  assert.match(card, /acme\/api apiAdded · no sessions running/);
   posted.reply = () => ({ projects: hosted.projects.slice(0, 1) });
   walk(app).find((e) => e.tag === 'button' && textOf(e) === 'Remove').listeners.click();
   await tick();
   assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings/projects/remove', body: { name: 'api' } }]);
+  assert.equal(byId(app, 'repo-api'), undefined, 'its row is gone');
+  assert.match(textOf(byId(app, 'repo-add')), /acme\/api removed: new sessions can no longer start on it\..*Add it again to undo\./, 'said on Add a repo, which undoes it');
 });
 
 test('with no App to ask, or GitHub not answering, Add a repo takes owner/name typed in', async () => {
@@ -406,9 +453,12 @@ const UPDATES = {
 };
 const button = (app, words) => walk(app).find((e) => e.tag === 'button' && textOf(e) === words);
 
-test('the Woodshed card lists the newer commits, and Update shows the update\'s steps', async () => {
-  const { app, posted } = await loadPage(ANSWER, { updates: UPDATES });
+test('the Woodshed row lists the newer commits, and Update shows the update\'s steps', async () => {
+  const { app, posted } = await loadPage(ANSWER, { updates: UPDATES, opened: false });
   await tick();
+  assert.match(textOf(headOf(app, 'card-updates')), /^WoodshedRunning 0ca189f · checked 5 min ago2 commits behind/, 'closed, the row says the version and how far behind');
+  assert.equal(button(app, 'Update to latest'), undefined);
+  headOf(app, 'card-updates').listeners.click();
   assert.match(textOf(app), /2 commits behind origin\/main\. Running 0ca189f/);
   assert.match(textOf(app), /bbbbbbbnewer.*aaaaaaaolder/, 'newest first');
   posted.reply = () => ({
@@ -429,6 +479,9 @@ test('the Woodshed card lists the newer commits, and Update shows the update\'s 
     ['is-next', 'Restart the console'],
   ]);
   assert.equal(button(app, 'Updating…').attrs.disabled, '', 'no second start while it runs');
+  assert.match(textOf(headOf(app, 'card-updates')), /Updating/);
+  headOf(app, 'card-updates').listeners.click();
+  assert.ok(isOpen(app, 'card-updates'), 'the row stays open while an update runs');
 });
 
 test('a failed update says the console runs as it did, with the build\'s last lines', async () => {
@@ -447,7 +500,7 @@ test('a failed update says the console runs as it did, with the build\'s last li
   assert.equal(button(app, 'Update to latest').attrs.disabled, undefined, 'it can be tried again');
 });
 
-test('the Woodshed card: up to date, a clone of its own, nothing to restart it, and no clone at all', async () => {
+test('the Woodshed row: up to date, a clone of its own, nothing to restart it, and no clone at all', async () => {
   const upToDate = await loadPage(ANSWER, { updates: { ...UPDATES, behindBy: 0, commits: [], last: { from: 'aaaaaaa', to: '0ca189f', by: 'mia-dev', at: '2026-11-12T00:00:00.000Z', imageBuilt: true } } });
   await tick();
   assert.match(textOf(upToDate.app), /Up to date with origin\/main/);
@@ -463,6 +516,7 @@ test('the Woodshed card: up to date, a clone of its own, nothing to restart it, 
   const none = await loadPage(ANSWER);
   await tick();
   assert.ok(!/Woodshed this console runs/.test(textOf(none.app)));
+  assert.equal(cardOf(none.app, 'updates'), undefined);
 });
 
 test('a console that has not come back two minutes after an update\'s restart says so, with the way back', async () => {
@@ -552,9 +606,9 @@ test('one failed read while the image builds is not taken for the restart once t
   assert.doesNotMatch(text, /reset --keep/);
 });
 
-test('each repo on the Repos card links to its own settings page, the installation\'s repos too', async () => {
+test('each repo\'s row links to its own settings page, the installation\'s repos too', async () => {
   const { app } = await loadPage(ANSWER);
-  const links = walk(app).filter((e) => e.tag === 'a' && textOf(e) === 'Settings');
+  const links = walk(app).filter((e) => e.tag === 'a' && textOf(e) === 'Repo settings ›');
   assert.deepEqual(links.map((a) => [a.attrs.href, a.attrs['aria-label']]), [
     ['/console-settings/repos/r', 'Settings of acme/app: env files, instructions and Slack channel'],
     ['/console-settings/repos/api', 'Settings of acme/api: env files, instructions and Slack channel'],
@@ -566,45 +620,74 @@ const MCP_ANSWER = {
   servers: [{ name: 'shop', url: 'https://shop.example.com/mcp', production: false, shared: false, people: '*', repos: ['acme/api', 'acme/gone'], auth: 'header', header: 'x-api-key', headerSet: true, source: 'console', updatedBy: 'mia-dev' }],
   production: { available: false, why: 'it has no session API' }, headers: true, issuer: 'https://c.example', jwks: 'https://c.example/.well-known/jwks.json',
 };
-const byId = (app, id) => walk(app).find((e) => e.attrs.id === id);
-
-test('MCP servers: Kind is two cards, Production off with the reason here, and a header shows in Title-Case', async () => {
-  const { app } = await loadPage(MCP_ANSWER);
+test('MCP servers: a row per server, whose form is its own; Kind is two cards, Production off with the reason here', async () => {
+  const { app } = await loadPage(MCP_ANSWER, { opened: false });
   const card = cardOf(app, 'mcp');
+  assert.deepEqual(walk(card).filter((e) => e.className === 'set-fold-head').map((e) => e.attrs.id), ['mcp-server-shop-head', 'mcp-add-head'], 'Add a server is the last row');
+  assert.match(textOf(headOf(app, 'mcp-server-shop')), /^shopshop\.example\.com · My Woodshed sessions of everyone · repos: acme\/api, acme\/gone · X-Api-Key header · by @mia-devOrdinary/, 'closed, the row says all of it');
+  assert.equal(buttonIn(card, 'Edit'), undefined, 'opening the row is its Edit');
+  assert.equal(byId(app, 'mcp-server-shop-header'), undefined);
+  headOf(app, 'mcp-server-shop').listeners.click();
+  assert.equal(byId(app, 'mcp-server-shop-header').attrs.value, 'X-Api-Key', 'a header shows in Title-Case');
+  assert.equal(byId(app, 'mcp-server-shop-name').attrs.disabled, '', 'a saved server keeps its name');
+  assert.deepEqual(walk(byId(app, 'mcp-server-shop')).filter((e) => e.tag === 'button' && e.className !== 'set-fold-head').map((e) => textOf(e)), ['Save', 'Test', 'Remove']);
+  headOf(app, 'mcp-add').listeners.click();
   assert.equal(byId(app, 'mcp-kind-ordinary').attrs.checked, '');
   assert.equal(byId(app, 'mcp-kind-production').attrs.disabled, '');
-  assert.match(textOf(card), /Not on this console: it cannot lock a session down, since it has no session API\./);
-  assert.match(textOf(card), /X-Api-Key header/);
-  buttonIn(card, 'Edit').listeners.click();
-  assert.equal(byId(app, 'mcp-header').attrs.value, 'X-Api-Key');
+  assert.notEqual(byId(app, 'mcp-kind-ordinary').attrs.name, byId(app, 'mcp-server-shop-kind-ordinary').attrs.name, 'two open forms never share a radio group');
+  assert.match(textOf(cardOf(app, 'mcp')), /Not on this console: it cannot lock a session down, since it has no session API\./);
+});
+
+test('MCP servers: a row closed and opened again starts from what is saved, so closing is its Cancel', async () => {
+  const { app } = await loadPage(MCP_ANSWER);
+  byId(app, 'mcp-server-shop-url').listeners.input({ target: { value: 'https://typed.example.com/mcp' } });
+  headOf(app, 'mcp-server-shop').listeners.click();
+  headOf(app, 'mcp-server-shop').listeners.click();
+  assert.equal(byId(app, 'mcp-server-shop-url').attrs.value, 'https://shop.example.com/mcp');
+});
+
+test('MCP servers: one the installation sets is a line with Test alone, and Remove says so on Add a server', async () => {
+  const fixed = { ...MCP_ANSWER.servers[0], name: 'warehouse', source: 'environment', production: true, auth: 'oidc', audience: 'woodshed-prod-mcp' };
+  const answer = { ...MCP_ANSWER, servers: [MCP_ANSWER.servers[0], fixed] };
+  const { app, posted } = await loadPage(answer);
+  const row = byId(app, 'mcp-server-warehouse');
+  assert.equal(row.className, 'set-line');
+  assert.match(textOf(row), /^warehouse Production.*set in the installation's configurationTest$/);
+  posted.reply = (path) => (path.endsWith('/remove') ? { ...answer, servers: [fixed] } : { ok: true, tools: 3 });
+  buttonIn(row, 'Test').listeners.click();
+  await tick();
+  assert.match(textOf(byId(app, 'mcp-server-warehouse')), /Reached the server, 3 tools\./);
+  buttonIn(byId(app, 'mcp-server-shop'), 'Remove').listeners.click();
+  await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(posted.at(-1))), { path: '/api/console-settings/mcp-servers/remove', body: { name: 'shop' } });
+  assert.equal(byId(app, 'mcp-server-shop'), undefined);
+  assert.match(textOf(byId(app, 'mcp-add')), /shop removed: sessions started from now on do not get it/);
 });
 
 test('MCP servers: Repos is All repos and the console\'s repos, a saved one it does not list stays ticked', async () => {
   const { app } = await loadPage(MCP_ANSWER);
   assert.equal(byId(app, 'mcp-repo-all').attrs.checked, '', 'a new server is for every repo');
   assert.equal(byId(app, 'mcp-repo-0').attrs.disabled, '');
-  buttonIn(cardOf(app, 'mcp'), 'Edit').listeners.click();
-  assert.equal(byId(app, 'mcp-repo-all').attrs.checked, undefined);
-  assert.deepEqual([0, 1].map((i) => byId(app, `mcp-repo-${i}`).attrs.checked), [undefined, '']);
-  assert.equal(byId(app, 'mcp-repo-x0').attrs.checked, '');
+  assert.equal(byId(app, 'mcp-server-shop-repo-all').attrs.checked, undefined);
+  assert.deepEqual([0, 1].map((i) => byId(app, `mcp-server-shop-repo-${i}`).attrs.checked), [undefined, '']);
+  assert.equal(byId(app, 'mcp-server-shop-repo-x0').attrs.checked, '');
   assert.match(textOf(cardOf(app, 'mcp')), /acme\/gonenot a repo of this console/);
 });
 
 test('MCP servers: Save tests the form first, keeps it on a failure, and Save anyway saves untested', async () => {
   const { app, posted } = await loadPage(MCP_ANSWER);
   posted.reply = (path) => (path.endsWith('/test') ? { ok: false, status: 401, error: 'The server answered 401: it did not accept what the console added.' } : MCP_ANSWER);
-  buttonIn(cardOf(app, 'mcp'), 'Edit').listeners.click();
   buttonIn(cardOf(app, 'mcp'), 'Save').listeners.click();
   await tick();
   assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings/mcp-servers/test', body: { server: {
     name: 'shop', url: 'https://shop.example.com/mcp', production: false, shared: false, people: '*', repos: ['acme/api', 'acme/gone'], auth: 'header', header: 'X-Api-Key',
   } } }], 'no value: the console tests with the saved one');
-  assert.match(textOf(cardOf(app, 'mcp')), /Not saved\. The server answered 401/);
-  assert.equal(byId(app, 'mcp-url').attrs.value, 'https://shop.example.com/mcp', 'the form stays as typed');
+  assert.match(textOf(byId(app, 'mcp-server-shop')), /Not saved\. The server answered 401/);
+  assert.equal(byId(app, 'mcp-server-shop-url').attrs.value, 'https://shop.example.com/mcp', 'the form stays as typed');
   buttonIn(cardOf(app, 'mcp'), 'Save anyway').listeners.click();
   await tick();
   assert.deepEqual(posted.slice(1).map((p) => p.path), ['/api/console-settings/mcp-servers']);
-  assert.match(textOf(cardOf(app, 'mcp')), /shop saved\. Not tested\./);
+  assert.match(textOf(byId(app, 'mcp-server-shop')), /shop saved\. Not tested\./);
 });
 
 test('MCP servers: a test that reaches the server saves and says what it found; Test on a row says it there', async () => {
@@ -615,9 +698,71 @@ test('MCP servers: a test that reaches the server saves and says what it found; 
   buttonIn(cardOf(app, 'mcp'), 'Add server').listeners.click();
   await tick();
   assert.deepEqual(posted.map((p) => p.path), ['/api/console-settings/mcp-servers/test', '/api/console-settings/mcp-servers']);
-  assert.match(textOf(cardOf(app, 'mcp')), /docs added\. Reached shop-mcp 2\.0, 12 tools in 40 ms\./);
+  assert.match(textOf(byId(app, 'mcp-add')), /docs added\. Reached shop-mcp 2\.0, 12 tools in 40 ms\./);
+  assert.equal(byId(app, 'mcp-name').attrs.value, '', 'the form starts again');
   buttonIn(cardOf(app, 'mcp'), 'Test').listeners.click();
   await tick();
   assert.deepEqual(JSON.parse(JSON.stringify(posted.at(-1))), { path: '/api/console-settings/mcp-servers/test', body: { name: 'shop' } });
-  assert.match(textOf(cardOf(app, 'mcp')), /Reached shop-mcp 2\.0, 12 tools in 40 ms\./);
+  assert.match(textOf(byId(app, 'mcp-server-shop')), /Reached shop-mcp 2\.0, 12 tools in 40 ms\./);
+});
+
+const NUMBERS = [
+  SETTING,
+  { key: 'maxPrivatePerPerson', label: 'My Woodshed sessions per person', help: 'For each person.', group: 'sessions', min: 1, max: 10, step: 1, unit: 'sessions', defaultValue: 3, value: 1 },
+  { key: 'idleHours', label: 'Pause a session waiting for input after', help: 'Nothing came in.', group: 'sessions', min: 0.25, max: 24, step: 0.25, unit: 'hours', defaultValue: 1, value: 1 },
+  { key: 'lifetimeHours', label: 'Stop a working session after', help: 'A backstop.', group: 'sessions', min: 1, max: 24, step: 1, unit: 'hours', defaultValue: 8, value: 8 },
+  { key: 'keepAfterCloseDays', label: 'Delete a merged or closed session after', help: 'From its merge.', group: 'retention', min: 0, max: 30, step: 1, unit: 'days', defaultValue: 3, value: 3 },
+];
+const HELD = { id: 'aaaa1111', title: 'Fix the export', sessionKind: 'issue', number: 7, stopReason: 'idle for 1 h', database: 'woodshed__aaaa1111', home: true, deletesAt: null };
+const STALLED = { kind: 'databases', id: 'bbbb2222', title: 'Old one', why: 'Its databases could not be dropped.', meta: ['woodshed__bbbb2222'] };
+
+test('the page is groups of rows: a closed row says its value and its status word, and several open at once', async () => {
+  const data = { held: [HELD], stalled: [STALLED], totals: { databases: 1, homes: 1, homeBytes: 2_000_000 } };
+  const { app } = await loadPage({ ...ANSWER, settings: NUMBERS, data }, { opened: false });
+  assert.deepEqual(walk(app).filter((e) => e.className === 'set-group').map((e) => [e.attrs.id, textOf(e.children[0])]),
+    [['card-projects', 'Repos'], ['card-sessions', 'Shared sessions'], ['set-kept', 'Kept sessions']], 'a group with no row is left out');
+  assert.equal(walk(app).filter((e) => e.className === 'settings-card').length, 0, 'no card is left');
+  assert.equal(textOf(headOf(app, 'sessions-running')), 'Running at once4 shared sessions · 1 My Woodshed session per personChanged▸');
+  assert.equal(textOf(headOf(app, 'sessions-timeouts')), 'TimeoutsPause after 1 hour waiting for input · stop after 8 hours workingDefaults▸');
+  assert.equal(textOf(headOf(app, 'card-retention')), 'RetentionDeleted 3 days after mergeDefaults▸');
+  assert.equal(textOf(headOf(app, 'card-data')), 'Sessions holding data1 stopped session keeps its conversation and databases · checked every minute1 stalled▸');
+  assert.equal(byId(app, 'set-idleHours'), undefined, 'a closed row draws no form');
+  headOf(app, 'sessions-timeouts').listeners.click();
+  headOf(app, 'card-data').listeners.click();
+  assert.deepEqual(['sessions-running', 'sessions-timeouts', 'card-data'].map((id) => isOpen(app, id)), [false, true, true]);
+  assert.match(textOf(byId(app, 'card-data')), /Stalled1Old oneIts databases could not be dropped\..*Drop again.*Kept, waiting to be resumed or deleted1Fix the export.*Total kept: /);
+  const empty = await loadPage({ ...ANSWER, data: { held: [], stalled: [], totals: { databases: 0, homes: 0, homeBytes: 0 } } });
+  assert.equal(byId(empty.app, 'card-data').className, 'set-fold is-plain', 'nothing held: a plain line');
+  assert.match(textOf(byId(empty.app, 'card-data')), /^Sessions holding dataNothing is held or stalled\. Total kept: .*None$/);
+});
+
+test('Running at once and Timeouts each save their own numbers, and leave the other row\'s alone', async () => {
+  const { app, posted } = await loadPage({ ...ANSWER, settings: NUMBERS });
+  posted.reply = (path, body) => ({ settings: NUMBERS.map((s) => (s.key in body.values ? { ...s, value: body.values[s.key] } : s)) });
+  byId(app, 'set-maxRunning').listeners.input({ target: { value: '6' } });
+  byId(app, 'set-idleHours').listeners.input({ target: { value: '2' } });
+  byId(app, 'set-lifetimeHours').listeners.input({ target: { value: '6' } });
+  assert.equal(textOf(buttonIn(byId(app, 'sessions-timeouts'), 'Save 2 changes')), 'Save 2 changes');
+  buttonIn(byId(app, 'sessions-timeouts'), 'Save 2 changes').listeners.click();
+  await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings', body: { values: { idleHours: 2, lifetimeHours: 6 } } }]);
+  assert.equal(byId(app, 'set-maxRunning').attrs.value, '6', 'what was typed in the other row is kept');
+  assert.match(textOf(headOf(app, 'sessions-running')), /Not saved/);
+  assert.match(textOf(headOf(app, 'sessions-timeouts')), /Pause after 2 hours waiting for input · stop after 6 hours workingChanged/);
+  byId(app, 'set-maxRunning').listeners.input({ target: { value: '99' } });
+  assert.match(textOf(byId(app, 'sessions-running')), /Must be from 1 to 20 sessions\./);
+  assert.equal(buttonIn(byId(app, 'sessions-running'), 'Save').attrs.disabled, '');
+});
+
+test('a link that names a row opens it: the repos open on Add a repo, and the old #slack lands on Slack', async () => {
+  const repos = await loadPage(ANSWER, { opened: false, hash: '#card-projects' });
+  assert.ok(isOpen(repos.app, 'repo-add'));
+  assert.equal(isOpen(repos.app, 'repo-r'), false);
+  const data = await loadPage({ ...ANSWER, settings: NUMBERS }, { opened: false, hash: '#card-retention' });
+  assert.ok(isOpen(data.app, 'card-retention'));
+  const slack = await loadPage(WITH_SLACK, { slack: SLACK_ON, opened: false, hash: '#slack' });
+  assert.ok(cardOf(slack.app, 'slack'), 'the group the link names is drawn');
+  const none = await loadPage({ ...ANSWER, projects: [] }, { opened: false });
+  assert.ok(isOpen(none.app, 'repo-add'), 'with no repo yet, Add a repo is open');
+  assert.match(textOf(byId(none.app, 'repo-none')), /^No repo yetSo no session can start\. The first one added becomes the default\.$/);
 });

@@ -1,16 +1,25 @@
-// The Settings page: the limits and retention numbers, one save per card; the Slack card, with its Set up Slack
-// dialog (slackSetup.js), its channel and its questions; the webhook switches, each applied as it is turned; then the
-// sessions holding data, and anything stalled, with what fixes it. The data list is read again every minute; the cards are left alone, so a half-typed
-// change survives.
+// The Settings page, as groups of rows that open in place (settingsRows.js): the Woodshed this console runs and its
+// webhook switch, applied as it is turned; the repos; the limits and retention numbers, one Save per row; the sessions
+// holding data, and anything stalled, with what fixes it; Slack, with its Set up Slack dialog (slackSetup.js), its
+// channel and its questions; and the MCP servers. The data list is read again every minute; a row being typed in is
+// left alone, so a half-typed change survives.
 window.Woodshed.settingsPage('/console-settings', (app, life) => {
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
   const DATA_REFRESH_MS = 60_000;
-  const CARDS = [
-    { id: 'sessions', title: 'Sessions', note: 'How many shared sessions run at once, and when one stops by itself. Its work is pushed first, and Resume picks it up where it was.' },
-    { id: 'retention', title: 'Retention', note: 'How long a stopped shared session keeps its conversation and databases, so it can be resumed. After that the branch alone stays, on GitHub, and the card says Deleted until it is taken off the list.' },
-  ];
+  // Which rows are open is kept for the page's life, since it is drawn again on each answer.
+  const { open, row, line, group, follow } = window.WoodshedSettingsRows.create({ render });
+  // The numbers, in the blocks they are saved by: a block is one row's fields and its Save. The two limits on how many
+  // run at once are a row of their own; whatever else the sessions group holds is its timeouts.
+  const RUNNING_KEYS = ['maxRunning', 'maxPrivatePerPerson'];
+  const BLOCKS = {
+    running: (s) => s.group === 'sessions' && RUNNING_KEYS.includes(s.key),
+    timeouts: (s) => s.group === 'sessions' && !RUNNING_KEYS.includes(s.key),
+    retention: (s) => s.group === 'retention',
+    slack: (s) => s.group === 'slack',
+    questions: (s) => s.group === 'questions',
+  };
   const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
   const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
@@ -18,9 +27,9 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
   let loadError = null;
   // What has been typed into each field, by setting key, until it is saved or reloaded.
   const typed = new Map();
-  // What the last save on each settings card said: {text, bad}.
+  // What the last save of each block of numbers said: {text, bad}.
   const notices = new Map();
-  // Each card or row whose save is on its way, so a second click does not send it twice.
+  // Each block or row whose save is on its way, so a second click does not send it twice.
   const saving = new Set();
   // What the last Remove on a repo's row said, by project name, until the page is drawn again.
   const rowNotes = new Map();
@@ -36,11 +45,20 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     return null;
   }
 
-  // The fields of a card that differ from what is saved, and whether any of them is no good.
-  function pending(cardId) {
+  const settingsOf = (block) => data.settings.filter(BLOCKS[block]);
+  const settingOf = (key) => data.settings.find((s) => s.key === key) ?? null;
+  // A saved value with its unit, as a closed row says it: "1 hour", "14 days". Null for a setting the console has not.
+  function qty(key, { unit = true } = {}) {
+    const s = settingOf(key);
+    if (!s) return null;
+    return unit ? `${s.value} ${s.value === 1 ? s.unit.replace(/s$/, '') : s.unit}` : String(s.value);
+  }
+
+  // The fields of a block that differ from what is saved, and whether any of them is no good.
+  function pending(block) {
     const changes = [];
     let bad = false;
-    for (const s of data.settings.filter((x) => x.group === cardId)) {
+    for (const s of settingsOf(block)) {
       if (!typed.has(s.key)) continue;
       const raw = typed.get(s.key);
       if (problem(s, raw)) bad = true;
@@ -68,46 +86,80 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       bad && h('p', { class: 'form-error', role: 'alert' }, bad));
   }
 
-  async function save(card) {
-    const { changes } = pending(card.id);
-    if (saving.has(card.id) || !changes.length) return;
-    saving.add(card.id);
+  // Only what changed is sent, so a row's Save never touches another row's numbers.
+  async function save(block) {
+    const { changes } = pending(block);
+    if (saving.has(block) || !changes.length) return;
+    saving.add(block);
     render();
     try {
       const values = Object.fromEntries(changes.map((c) => [c.key, c.value]));
       data = { ...data, ...(await W.postJson('/api/console-settings', { values })) };
       for (const c of changes) typed.delete(c.key);
-      notices.set(card.id, { text: `Saved. ${changes.map((c) => `${c.label}: ${c.from} → ${c.to}`).join('; ')}. Applies on the next check, with no restart.` });
+      notices.set(block, { text: `Saved. ${changes.map((c) => `${c.label}: ${c.from} → ${c.to}`).join('; ')}. Applies on the next check, with no restart.` });
     } catch (err) {
-      notices.set(card.id, { text: err.message, bad: true });
+      notices.set(block, { text: err.message, bad: true });
     }
-    saving.delete(card.id);
+    saving.delete(block);
     render();
   }
 
-  function settingsCard(card) {
-    return h('section', { class: 'settings-card', 'aria-labelledby': `card-${card.id}` },
-      h('h2', { id: `card-${card.id}`, class: 'label' }, card.title),
-      h('p', { class: 'sub' }, card.note),
-      card.id === 'sessions' && W.providerWords.capacityNote && h('p', { class: 'cap-note' }, W.providerWords.capacityNote),
-      settingsBlock(card));
-  }
-
-  // A group's rows and their Save: a card's whole body, or the Slack card's Limits.
-  function settingsBlock(card) {
-    const rows = data.settings.filter((s) => s.group === card.id);
-    const { changes, bad } = pending(card.id);
+  // A block's fields and their Save: the body of a row of numbers, or a Slack row's Limits.
+  function settingsBlock(block) {
+    const { changes, bad } = pending(block);
     return [
-      h('div', { class: 'set-rows' }, rows.map(settingRow)),
+      h('div', { class: 'set-rows' }, settingsOf(block).map(settingRow)),
       h('div', { class: 'card-foot' },
-        h('button', { type: 'button', class: 'btn btn-open', disabled: bad || !changes.length || saving.has(card.id), onclick: () => save(card) },
-          saving.has(card.id) ? 'Saving…' : changes.length > 1 ? `Save ${changes.length} changes` : 'Save'),
-        notices.get(card.id)?.bad && !bad
-          ? h('span', { class: 'form-error', role: 'alert' }, notices.get(card.id).text)
+        h('button', { type: 'button', class: 'btn btn-open', disabled: bad || !changes.length || saving.has(block), onclick: () => save(block) },
+          saving.has(block) ? 'Saving…' : changes.length > 1 ? `Save ${changes.length} changes` : 'Save'),
+        notices.get(block)?.bad && !bad
+          ? h('span', { class: 'form-error', role: 'alert' }, notices.get(block).text)
           : h('span', { class: 'sub', role: 'status' }, bad ? 'Fix the value in red first.'
             : changes.length ? `${changes.length} changed. Takes effect on the next check, with no restart.`
-              : notices.get(card.id)?.text || 'Saved values. Each change is logged with who made it.')),
+              : notices.get(block)?.text || 'Saved values. Each change is logged with who made it.')),
     ];
+  }
+
+  // What a closed row of numbers says of itself: Not saved while something typed waits for its Save, else whether any
+  // of its numbers differs from the default.
+  function unsavedPill(block) {
+    const { changes, bad } = pending(block);
+    return bad || changes.length ? h('span', { class: 'pill is-warn' }, 'Not saved') : null;
+  }
+
+  function blockPill(block) {
+    if (unsavedPill(block)) return unsavedPill(block);
+    return settingsOf(block).every((s) => s.value === s.defaultValue) ? h('span', { class: 'pill' }, 'Defaults') : h('span', { class: 'pill is-ok' }, 'Changed');
+  }
+
+  /** A row of numbers with its own Save. None where the console names no setting for it. */
+  function numbersRow({ id, title, block, value }, ...intro) {
+    if (!settingsOf(block).length) return null;
+    return row({ id, title, value: value.filter(Boolean).join(' · '), pill: blockPill(block) }, intro, settingsBlock(block));
+  }
+
+  function sessionRows() {
+    const n = (key, words) => { const s = settingOf(key); return s && `${s.value} ${words(s.value === 1)}`; };
+    return [
+      numbersRow({
+        id: 'sessions-running', title: 'Running at once', block: 'running',
+        value: [n('maxRunning', (one) => (one ? 'shared session' : 'shared sessions')), n('maxPrivatePerPerson', (one) => `My Woodshed ${one ? 'session' : 'sessions'} per person`)],
+      }, W.providerWords.capacityNote && h('p', { class: 'cap-note' }, W.providerWords.capacityNote)),
+      numbersRow({
+        id: 'sessions-timeouts', title: 'Timeouts', block: 'timeouts',
+        value: [qty('idleHours') && `Pause after ${qty('idleHours')} waiting for input`, qty('lifetimeHours') && `stop after ${qty('lifetimeHours')} working`],
+      }, h('p', { class: 'sub' }, 'When a shared session stops by itself. Its work is pushed first, and Resume picks it up where it was.')),
+    ];
+  }
+
+  function retentionRow() {
+    return numbersRow({
+      id: 'card-retention', title: 'Retention', block: 'retention',
+      value: [
+        qty('keepAfterCloseDays') && `Deleted ${qty('keepAfterCloseDays')} after merge`, qty('keepOpenPrDays') && `${qty('keepOpenPrDays')} with a PR still open`,
+        qty('keepWithoutPrDays') && `${qty('keepWithoutPrDays')} with none`, qty('removeDeletedDays') && `off the list after ${qty('removeDeletedDays')}`,
+      ],
+    }, h('p', { class: 'sub' }, 'How long a stopped shared session keeps its conversation and databases, so it can be resumed. After that the branch alone stays, on GitHub, and the card says Deleted until it is taken off the list.'));
   }
 
   // The repos sessions can start on: the installation's own (read-only here), and the ones added on this page.
@@ -156,32 +208,57 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     document.querySelector(`input[name="color-${CSS.escape(p.name)}"]:checked`)?.focus();
   }
 
+  // One repo: the closed row says whether sessions can start on it, how it got here, what it holds and where its pull
+  // requests go; opened, it has what is changed here (its colour, Remove) and the way to its own settings page.
   function projectRow(p) {
     const live = p.sessions ? `${p.sessions} ${p.sessions === 1 ? 'session' : 'sessions'} running or kept` : 'no sessions running';
-    return h('div', { class: 'data-row' },
-      h('div', { style: 'min-width: 0' },
-        h('div', { class: 'data-title' }, h('b', null, p.repo), h('span', { class: 'rref' }, p.name),
-          // Whether sessions can start on it (databaseGate.mjs): a word, never a colour alone.
-          p.blocker ? h('span', { class: 'pill is-warn' }, 'Needs setup') : p.blocker === null && h('span', { class: 'pill is-ok' }, 'Ready')),
-        h('div', { class: 'data-meta' },
-          h('span', null, p.default ? 'default project' : p.source === 'host' ? 'added' : p.removable ? `added by @${p.addedBy || 'unknown'}` : 'set in the installation\'s configuration'),
-          h('span', null, live),
-          data.slack && h('span', null, h('a', { href: `/console-settings/repos/${encodeURIComponent(p.name)}#slack`, title: 'Change it on the repo\'s Settings' }, p.slackChannel ? `PRs to ${p.slackChannel}` : 'PRs to the console\'s channel'))),
-        data.palette && colorPicker(p)),
-      h('div', { class: 'data-actions' },
-        h('a', { class: 'btn btn-quiet btn-sm', href: `/console-settings/repos/${encodeURIComponent(p.name)}`, 'aria-label': `Settings of ${p.repo}: env files, instructions and Slack channel` }, 'Settings'),
+    const how = p.default ? 'Default project' : p.source === 'host' ? 'Added' : p.removable ? `Added by @${p.addedBy || 'unknown'}` : 'Set in the installation\'s configuration';
+    const prs = data.slack ? (p.slackChannel ? `PRs to ${p.slackChannel}` : 'PRs to the console\'s channel') : null;
+    const href = `/console-settings/repos/${encodeURIComponent(p.name)}`;
+    const id = `repo-${p.name}`;
+    const note = rowNotes.get(p.name);
+    return row({
+      id,
+      title: [data.palette && p.color && h('span', { class: `proj-dot proj-${p.color}`, 'aria-hidden': 'true' }), p.repo, ' ', h('span', { class: 'rref' }, p.name)],
+      value: [how, live, prs].filter(Boolean).join(' · '),
+      // Whether sessions can start on it (databaseGate.mjs): a word, never a colour alone.
+      pill: p.blocker ? h('span', { class: 'pill is-warn' }, 'Needs setup') : p.blocker === null ? h('span', { class: 'pill is-ok' }, 'Ready') : null,
+    },
+      p.blocker && W.blockerCard(p.blocker, { head: false, admin: true }),
+      h('div', { class: 'set-rows' },
+        p.default && h('div', { class: 'set-row' }, h('div', null,
+          h('div', { class: 'set-name' }, 'Default project'),
+          h('div', { class: 'set-help' }, 'Questions from Slack use it.'))),
+        data.palette && h('div', { class: 'set-row' },
+          h('div', null,
+            h('div', { class: 'set-name' }, 'Colour on the rail'),
+            h('div', { class: 'set-help' }, 'Marks its sessions on the rail. Saved as it is picked; a colour another repo has cannot be picked.')),
+          h('div', { class: 'set-value' }, colorPicker(p))),
+        h('div', { class: 'set-row' },
+          h('div', null,
+            h('div', { class: 'set-name' }, data.slack ? 'Env files, instructions, sessions from GitHub, Slack channel' : 'Env files, instructions, sessions from GitHub'),
+            data.slack && h('div', { class: 'set-help' }, h('a', { href: `${href}#slack`, title: 'Change it on the repo\'s Settings' }, prs))),
+          h('div', { class: 'set-value' },
+            h('a', { class: 'btn btn-plain', href, 'aria-label': `Settings of ${p.repo}: env files, instructions and Slack channel` }, 'Repo settings ›')))),
+      // One the installation's configuration sets, or the program that runs this console keeps, is removed there.
+      (p.removable || p.source !== 'host') && h('div', { class: 'card-foot' },
         p.removable && h('button', {
-          type: 'button', class: 'btn btn-quiet btn-sm', disabled: p.sessions > 0, title: p.sessions ? 'Stop or delete its sessions first' : null,
+          type: 'button', class: 'btn btn-danger', disabled: p.sessions > 0 || saving.has(`row:${p.name}`), title: p.sessions ? 'Stop or delete its sessions first' : null,
           onclick: () => rowAction(p, async () => {
             data = { ...data, ...(await W.postJson('/api/console-settings/projects/remove', { name: p.name })) };
             loadRepoChoices();
+            // Said on Add a repo, which undoes it: the repo's own row is gone.
+            open.delete(id);
+            open.add('repo-add');
             repoForm.error = null;
             repoForm.notice = `${p.repo} removed: new sessions can no longer start on it. Its pull requests and branches on GitHub are not touched. Add it again to undo.`;
             return null;
           }),
-        }, 'Remove')),
-      p.blocker && h('div', { style: 'grid-column: 1 / -1' }, W.blockerCard(p.blocker, { head: false, admin: true })),
-      rowNotes.get(p.name) && h('p', { class: rowNotes.get(p.name).bad ? 'form-error' : 'sub', role: rowNotes.get(p.name).bad ? 'alert' : 'status', style: 'grid-column: 1 / -1; margin: 0' }, rowNotes.get(p.name).text));
+        }, 'Remove'),
+        note ? h('span', { class: note.bad ? 'form-error' : 'sub', role: note.bad ? 'alert' : 'status' }, note.text)
+          : h('span', { class: 'sub' }, !p.removable ? 'Set in the installation\'s configuration, so it is removed there.'
+            : p.sessions ? `Stop or delete its ${p.sessions === 1 ? 'session' : `${p.sessions} sessions`} first.`
+              : 'Remove: new sessions can no longer start on it. Its pull requests and branches on GitHub are not touched.')));
   }
 
   // A save on a repo's row: `run` returns what to say on the row, or throws the console's refusal.
@@ -312,16 +389,17 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     if (data) render();
   }
 
-  function projectsCard() {
-    if (!data.projects) return null;
-    return h('section', { class: 'settings-card', 'aria-labelledby': 'card-projects' },
-      h('h2', { id: 'card-projects', class: 'label' }, 'Repos'),
-      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack use. Each repo\'s own project file says which databases its sessions need, so each is checked on its own: one that cannot start sessions says Needs setup, with why and how to fix it. ', repoChoices?.via === 'gh' ? 'Sessions push with the console\'s gh login, so it must be able to push to a repo added here.' : 'The GitHub App must be given access to a repo before it is added here.', ' An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail: pick one and it is saved at once. Settings has a repo\'s env file values, instructions and the Slack channel its pull requests go to.'),
-      data.projects.length ? h('div', { class: 'data-list' }, data.projects.map(projectRow))
-        : h('p', { class: 'cap-note' }, 'No repo yet, so no session can start. The first one added becomes the default.'),
-      h('div', { class: `set-row${repoForm.error ? ' is-bad' : ''}`, style: 'margin-top: 8px' },
+  // Add a repo, the group's last row: open by itself while the console has none.
+  function addRepoRow() {
+    return row({
+      id: 'repo-add', title: 'Add a repo',
+      value: listing()
+        ? `One of the repos ${repoChoices.via === 'gh' ? 'the console\'s gh login can push to' : 'the GitHub App may reach'}, or another typed as owner/name`
+        : 'As owner/name',
+    },
+      h('div', { class: `set-row${repoForm.error ? ' is-bad' : ''}` },
         h('div', null,
-          h('label', { class: 'set-name', for: 'repo-new' }, 'Add a repo'),
+          h('label', { class: 'set-name', for: 'repo-new' }, 'Repo'),
           h('div', { class: 'set-help' }, listing()
             ? `One of the repos ${repoChoices.via === 'gh' ? 'the console\'s gh login can push to' : 'the GitHub App may reach'}, or Another repo to type one in.`
             : 'As owner/name.',
@@ -341,16 +419,30 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         h('span', { class: 'sub', role: 'status' }, repoForm.notice || 'It applies at once; Remove takes it off again. Each change is logged with who made it.')));
   }
 
-  // The MCP servers card (mcpServers.mjs): what sessions' claude gets through the console's relay, each added, changed
-  // and removed at once. A server's header value is sent once and never shown again. Read on its own: a console that
-  // hands out none answers 404, and the card is left out. Add server and Save test the form with the console first
+  function projectsGroup() {
+    if (!data.projects) return null;
+    return group({
+      id: 'card-projects', label: 'Repos',
+      note: ['The repos sessions can start on. The default one is what questions from Slack use. Each repo\'s own project file says which databases its sessions need, so each is checked on its own: one that cannot start sessions says Needs setup, with why and how to fix it. ', repoChoices?.via === 'gh' ? 'Sessions push with the console\'s gh login, so it must be able to push to a repo added here.' : 'The GitHub App must be given access to a repo before it is added here.', ' An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail. A repo\'s own settings page has its env file values, instructions and the Slack channel its pull requests go to.'],
+    },
+      data.projects.length ? data.projects.map(projectRow)
+        : row({ id: 'repo-none', title: 'No repo yet', value: 'So no session can start. The first one added becomes the default.' }),
+      addRepoRow());
+  }
+
+  // The MCP servers (mcpServers.mjs): what sessions' claude gets through the console's relay, each added, changed and
+  // removed at once. A server's row opens on its form, with Test and Remove beside its Save; Add a server is the last
+  // row. A server's header value is sent once and never shown again. Read on its own: a console that hands out none
+  // answers 404, and the group is left out. Add server and Save test the form with the console first
   // (POST …/mcp-servers/test) and save only once it answered, or on Add anyway.
   let mcp = null;
   // `repos` is '*' or a list of owner/name; `reposOpen` whether its list is unfolded; `busy` 'testing' or 'saving';
   // `failedTest` what the last test of the form said, with Add anyway beside it; `savedProduction` a saved server's
   // kind, which stays on offer on a console that can no longer lock a session down.
   const EMPTY_MCP_FORM = { editing: null, name: '', url: '', production: false, shared: false, people: '*', repos: '*', reposOpen: false, auth: 'none', audience: '', header: 'Authorization', value: '', busy: null, error: null, failedTest: null, notice: null, savedProduction: false };
-  let mcpForm = { ...EMPTY_MCP_FORM };
+  // Each open row's form, by the server's name, and Add a server's under ''. A server's form starts again from what is
+  // saved each time its row is opened, so closing the row is its Cancel.
+  const mcpForms = new Map();
   const AUTH_WORDS = { none: 'Nothing', oidc: 'Signed token', header: 'Header' };
   // What the last Test on a saved server's row said, by name: {text, bad}. Each one testing is in `saving` as test:<name>.
   const mcpRowNotes = new Map();
@@ -399,58 +491,70 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     render();
   }
 
-  function mcpRow(s) {
-    const fixed = s.source === 'environment';
+  function testButton(s) {
     const testing = saving.has(`test:${s.name}`);
-    const note = mcpRowNotes.get(s.name);
-    return h('div', { class: 'data-row' },
-      h('div', { style: 'min-width: 0' },
-        h('div', { class: 'data-title' }, h('b', null, s.name),
-          s.production ? h('span', { class: 'otag is-production', title: 'Its first call locks the session down for good' }, 'Production') : h('span', { class: 'pill' }, 'Ordinary')),
-        h('div', { class: 'data-meta' },
-          h('span', null, (() => { try { return new URL(s.url).host; } catch { return s.url; } })()),
-          h('span', null, whoText(s)),
-          h('span', null, `repos: ${listText(s.repos, 'all')}`),
-          h('span', null, s.auth === 'header' ? `${headerName(s.header)} header${s.headerSet ? '' : ', no value yet'}` : s.auth === 'oidc' ? `signed token for ${s.audience}` : 'nothing added'),
-          h('span', null, fixed ? 'set in the installation\'s configuration' : s.source === 'host' ? 'kept by the program that runs this console' : `by @${s.updatedBy || 'unknown'}`))),
-      h('div', { class: 'data-actions' },
-        h('button', { type: 'button', class: 'btn btn-quiet btn-sm', disabled: testing, 'aria-label': `Test ${s.name}`, onclick: () => testRow(s) }, testing ? 'Testing…' : 'Test'),
-        !fixed && h('button', { type: 'button', class: 'btn btn-quiet btn-sm', onclick: () => editMcp(s) }, 'Edit'),
-        !fixed && h('button', {
-          type: 'button', class: 'btn btn-quiet btn-sm',
-          onclick: () => mcpSave(async () => {
-            mcp = await W.postJson('/api/console-settings/mcp-servers/remove', { name: s.name });
-            mcpRowNotes.delete(s.name);
-            return `${s.name} removed: sessions started from now on do not get it, and running ones' calls to it are refused.`;
-          }),
-        }, 'Remove')),
-      note && h('p', { class: note.bad ? 'form-error' : 'sub', role: note.bad ? 'alert' : 'status', style: 'grid-column: 1 / -1; margin: 0' }, note.text));
+    return h('button', { type: 'button', class: 'btn btn-plain', disabled: testing, 'aria-label': `Test ${s.name}`, onclick: () => testRow(s) }, testing ? 'Testing…' : 'Test');
   }
 
-  function editMcp(s) {
-    mcpForm = {
+  function testNote(s) {
+    const note = mcpRowNotes.get(s.name);
+    return note && h('p', { class: note.bad ? 'form-error' : 'sub', role: note.bad ? 'alert' : 'status', style: 'margin: 0' }, note.text);
+  }
+
+  const mcpRowId = (name) => `mcp-server-${name}`;
+
+  function formOf(s) {
+    return {
       ...EMPTY_MCP_FORM, editing: s.name, name: s.name, url: s.url, production: s.production, shared: s.shared, savedProduction: s.production,
       people: listText(s.people, '*'), repos: s.repos === '*' ? '*' : data.projects ? [...s.repos] : s.repos.join(', '), auth: s.auth, audience: s.audience ?? '', header: headerName(s.header ?? 'authorization'),
     };
-    render();
-    document.getElementById('mcp-name')?.scrollIntoView?.({ block: 'center' });
   }
 
-  async function mcpSave(run) {
-    if (mcpForm.busy) return;
-    mcpForm.busy = 'saving';
-    mcpForm.error = null;
-    mcpForm.failedTest = null;
-    mcpForm.notice = null;
+  // The form of a saved server's row, or of Add a server with none.
+  function mcpFormFor(s) {
+    const key = s?.name ?? '';
+    if (!mcpForms.has(key)) mcpForms.set(key, s ? formOf(s) : { ...EMPTY_MCP_FORM });
+    return mcpForms.get(key);
+  }
+
+  // The ids of a form's fields: Add a server's are mcp-<field>, a saved server's carry its name, since both may be open.
+  const fid = (f, part) => (f.editing ? `${mcpRowId(f.editing)}-${part}` : `mcp-${part}`);
+
+  // One server: the closed row says where it is, who gets it and what the console adds; opened, it is its form. One
+  // the installation's configuration sets cannot be changed here, so its row has Test alone.
+  function mcpRow(s) {
+    const fixed = s.source === 'environment';
+    const id = mcpRowId(s.name);
+    const meta = [
+      (() => { try { return new URL(s.url).host; } catch { return s.url; } })(),
+      whoText(s),
+      `repos: ${listText(s.repos, 'all')}`,
+      s.auth === 'header' ? `${headerName(s.header)} header${s.headerSet ? '' : ', no value yet'}` : s.auth === 'oidc' ? `signed token for ${s.audience}` : 'nothing added',
+      fixed ? 'set in the installation\'s configuration' : s.source === 'host' ? 'kept by the program that runs this console' : `by @${s.updatedBy || 'unknown'}`,
+    ].join(' · ');
+    const pill = s.production ? h('span', { class: 'otag is-production', title: 'Its first call locks the session down for good' }, 'Production')
+      : s.auth === 'header' && !s.headerSet ? h('span', { class: 'pill is-warn' }, 'No value yet')
+        : h('span', { class: 'pill' }, 'Ordinary');
+    if (fixed) return line([s.name, ' ', pill], [meta, testNote(s)], testButton(s), { id });
+    return row({ id, title: s.name, value: meta, pill, opens: true, onOpen: () => { mcpForms.set(s.name, formOf(s)); } },
+      open.has(id) && mcpFormBody(mcpFormFor(s), s));
+  }
+
+  // `run` returns {form, text}: what to say, on the form there is once it is done (a save starts the form again).
+  async function mcpSave(f, run) {
+    if (f.busy) return;
+    f.busy = 'saving';
+    f.error = null;
+    f.failedTest = null;
+    f.notice = null;
     render();
     try {
-      // `run` may start the form again, so the notice goes on the form there is after it.
-      const said = await run();
-      mcpForm.notice = said;
+      const done = await run();
+      if (done) done.form.notice = done.text;
     } catch (err) {
-      mcpForm.error = err;
+      f.error = err;
     }
-    mcpForm.busy = null;
+    f.busy = null;
     render();
   }
 
@@ -466,10 +570,9 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
 
   // Tests the form first unless `untested` (Add anyway): a server that does not answer is not saved, and the form stays
   // as typed. A console from before the test (404) saves as it did.
-  function saveMcp({ untested = false } = {}) {
-    const f = mcpForm;
+  function saveMcp(f, { untested = false } = {}) {
     const server = mcpServerOf(f);
-    return mcpSave(async () => {
+    return mcpSave(f, async () => {
       let tried = null;
       if (!untested) {
         f.busy = 'testing';
@@ -491,48 +594,62 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       const name = server.name.toLowerCase();
       if (f.auth === 'header' && f.value) mcp = await W.postJson('/api/console-settings/mcp-servers/header', { name, value: f.value });
       const how = tried ? ` ${reachedText(tried)}.` : untested ? ' Not tested.' : '';
-      const said = `${name} ${f.editing ? 'saved' : 'added'}.${how} Sessions started from now on get it.${server.production ? ' Its first call locks a session down for good.' : ''}`;
-      mcpForm = { ...EMPTY_MCP_FORM };
-      return said;
+      const text = `${name} ${f.editing ? 'saved' : 'added'}.${how} Sessions started from now on get it.${server.production ? ' Its first call locks a session down for good.' : ''}`;
+      // The form starts again: a saved server's from what is saved now, Add a server's empty.
+      mcpForms.delete(f.editing ?? '');
+      return { form: mcpFormFor(f.editing ? mcp.servers.find((s) => s.name === f.editing) : null), text };
     });
   }
 
-  function mcpField(id, label, help, key, attrs = {}) {
+  function removeMcp(f, s) {
+    return mcpSave(f, async () => {
+      mcp = await W.postJson('/api/console-settings/mcp-servers/remove', { name: s.name });
+      mcpRowNotes.delete(s.name);
+      mcpForms.delete(s.name);
+      // Said on Add a server: the server's own row is gone.
+      open.delete(mcpRowId(s.name));
+      open.add('mcp-add');
+      return { form: mcpFormFor(null), text: `${s.name} removed: sessions started from now on do not get it, and running ones' calls to it are refused.` };
+    });
+  }
+
+  function mcpField(f, part, label, help, key, attrs = {}) {
+    const id = fid(f, part);
     return h('div', { class: 'set-row' },
       h('div', null, h('label', { class: 'set-name', for: id }, label), help && h('div', { class: 'set-help' }, help)),
       h('div', { class: 'set-value' }, h('input', {
-        id, class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', value: mcpForm[key], ...attrs,
-        oninput: (e) => { mcpForm[key] = e.target.value; },
+        id, class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', value: f[key], ...attrs,
+        oninput: (e) => { f[key] = e.target.value; },
       })));
   }
 
-  function mcpSelect(id, label, help, key, options, onchange) {
+  function mcpSelect(f, part, label, help, key, options, onchange) {
+    const id = fid(f, part);
     return h('div', { class: 'set-row' },
       h('div', null, h('label', { class: 'set-name', for: id }, label), help && h('div', { class: 'set-help' }, help)),
       h('div', { class: 'set-value' }, h('select', { id, class: 'field is-text', onchange: (e) => { onchange(e.target.value); render(); } },
-        options.map(([value, text]) => h('option', { value, selected: value === String(mcpForm[key]) ? true : null }, text)))));
+        options.map(([value, text]) => h('option', { value, selected: value === String(f[key]) ? true : null }, text)))));
   }
 
   // Ordinary or Production, as two cards side by side (designSystem/components/ChoiceCards): native radios, so the
   // arrow keys move between them. Production is drawn in the Production tag's colours when picked, with what it does to
   // a session under it, and is off with the reason where this console cannot lock a session down.
-  function mcpKind() {
-    const f = mcpForm;
+  function mcpKind(f) {
     const prodOff = !mcp.production.available && !f.savedProduction;
     const pick = (production) => {
-      mcpForm.production = production;
-      if (production && mcpForm.auth === 'none') mcpForm.auth = 'oidc';
+      f.production = production;
+      if (production && f.auth === 'none') f.auth = 'oidc';
       render();
     };
-    const option = (production, title, line) => {
-      const id = production ? 'mcp-kind-production' : 'mcp-kind-ordinary';
+    const option = (production, title, text) => {
+      const id = fid(f, production ? 'kind-production' : 'kind-ordinary');
       const off = production && prodOff;
       const on = f.production === production;
       return h('label', { class: `choice-card${production ? ' is-production' : ''}${on ? ' is-on' : ''}${off ? ' is-off' : ''}`, for: id },
-        h('input', { id, type: 'radio', name: 'mcp-kind', value: production ? 'production' : 'ordinary', checked: on, disabled: off, 'aria-describedby': `${id}-line`, onchange: () => pick(production) }),
+        h('input', { id, type: 'radio', name: fid(f, 'kind'), value: production ? 'production' : 'ordinary', checked: on, disabled: off, 'aria-describedby': `${id}-line`, onchange: () => pick(production) }),
         h('span', { class: 'radio', 'aria-hidden': 'true' }),
         h('span', { class: 'choice-title' }, title),
-        h('span', { class: 'choice-line', id: `${id}-line` }, line));
+        h('span', { class: 'choice-line', id: `${id}-line` }, text));
     };
     return h('div', { class: 'set-row is-block' },
       h('fieldset', { class: 'choice-set' },
@@ -547,65 +664,75 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         h('ul', null,
           h('li', null, 'Only My Woodshed sessions of the people and repos below get it, and it is off until its person turns it on in /mcp.'),
           h('li', null, 'Its first call locks that session down for good: no internet but its org\'s private repos on GitHub, and no package installs. Nothing undoes it.'),
-          h('li', null, 'The session is removed some time after it stops (Retention, below).'))));
+          h('li', null, 'The session is removed some time after it stops (Retention, under Kept sessions).'))));
   }
 
   // The repos whose sessions get it: All repos, or some of the console's, as checkboxes under a fold. A saved repo the
   // console no longer has stays listed, ticked, so a save never drops it unseen.
-  function mcpRepos() {
-    const f = mcpForm;
+  function mcpRepos(f) {
     const all = f.repos === '*';
     const picked = all ? [] : f.repos;
     const known = (data.projects ?? []).map((p) => p.repo);
     const lower = (r) => r.toLowerCase();
     const extra = picked.filter((r) => !known.some((k) => lower(k) === lower(r)));
     const has = (r) => picked.some((x) => lower(x) === lower(r));
-    const set = (repos) => { mcpForm.repos = repos; render(); };
+    const set = (repos) => { f.repos = repos; render(); };
     const box = (id, text, checked, onchange, { disabled = false, note = null } = {}) => h('label', { class: 'repo-check', for: id },
       h('input', { id, type: 'checkbox', checked, disabled, onchange: (e) => onchange(e.target.checked) }),
       h('span', { class: 'repo-check-name' }, text), note && h('span', { class: 'repo-check-note' }, note));
     const summary = all ? 'All repos' : picked.length ? picked.join(', ') : 'No repo';
+    const label = fid(f, 'repos-label');
     return h('div', { class: 'set-row is-top' },
-      h('div', null, h('span', { class: 'set-name', id: 'mcp-repos-label' }, 'Repos'),
+      h('div', null, h('span', { class: 'set-name', id: label }, 'Repos'),
         h('div', { class: 'set-help' }, 'Whose sessions get it. All repos takes in any added later.')),
       h('div', { class: 'set-value' },
-        h('details', { class: 'repo-pick', open: f.reposOpen, ontoggle: (e) => { mcpForm.reposOpen = e.target.open; } },
-          h('summary', { id: 'mcp-repos', class: 'field', 'aria-labelledby': 'mcp-repos-label mcp-repos' }, h('span', { class: 'repo-pick-text' }, summary)),
-          h('div', { class: 'repo-pick-list', role: 'group', 'aria-labelledby': 'mcp-repos-label' },
-            box('mcp-repo-all', 'All repos', all, (on) => set(on ? '*' : [...known])),
-            known.map((r, i) => box(`mcp-repo-${i}`, r, all || has(r), (on) => set(on ? [...picked, r] : picked.filter((x) => lower(x) !== lower(r))), { disabled: all })),
-            extra.map((r, i) => box(`mcp-repo-x${i}`, r, true, (on) => set(on ? [...picked, r] : picked.filter((x) => x !== r)), { note: 'not a repo of this console' }))))),
+        h('details', { class: 'repo-pick', open: f.reposOpen, ontoggle: (e) => { f.reposOpen = e.target.open; } },
+          h('summary', { id: fid(f, 'repos'), class: 'field', 'aria-labelledby': `${label} ${fid(f, 'repos')}` }, h('span', { class: 'repo-pick-text' }, summary)),
+          h('div', { class: 'repo-pick-list', role: 'group', 'aria-labelledby': label },
+            box(fid(f, 'repo-all'), 'All repos', all, (on) => set(on ? '*' : [...known])),
+            known.map((r, i) => box(fid(f, `repo-${i}`), r, all || has(r), (on) => set(on ? [...picked, r] : picked.filter((x) => lower(x) !== lower(r))), { disabled: all })),
+            extra.map((r, i) => box(fid(f, `repo-x${i}`), r, true, (on) => set(on ? [...picked, r] : picked.filter((x) => x !== r)), { note: 'not a repo of this console' }))))),
       !all && !picked.length && h('p', { class: 'form-error', role: 'status' }, 'No repo picked: no session gets it.'));
   }
 
-  function mcpCard() {
-    if (!mcp) return null;
-    const f = mcpForm;
+  // A row's body: the form of the saved server `s`, with Test and Remove beside its Save, or of Add a server.
+  function mcpFormBody(f, s = null) {
     const verb = f.editing ? 'Save' : 'Add server';
-    return h('section', { class: 'settings-card', id: 'mcp-servers', 'aria-labelledby': 'card-mcp' },
-      h('h2', { id: 'card-mcp', class: 'label' }, 'MCP servers'),
-      h('p', { class: 'sub' }, 'Tools claude gets in sessions, each reached through the console, so no session ever holds what a server takes to let it in: the console adds a token it signs, or a header it keeps, to each call. A change reaches sessions started after it. Test asks a server what it offers, the way the console calls it.'),
-      mcp.servers.length ? h('div', { class: 'data-list' }, mcp.servers.map(mcpRow)) : h('p', { class: 'cap-note' }, 'None yet.'),
-      h('h3', { class: 'label', style: 'margin-top: 16px' }, f.editing ? `Edit ${f.editing}` : 'Add a server'),
-      mcpField('mcp-name', 'Name', 'What claude calls it, such as sentry: lowercase letters, digits and dashes.', 'name', { disabled: f.editing ? true : null }),
-      mcpField('mcp-url', 'URL', 'Its Streamable HTTP endpoint, such as https://mcp.example.com/mcp. The console calls it, so it must answer from the console.', 'url', { placeholder: 'https://' }),
-      mcpKind(),
-      !f.production && mcpSelect('mcp-shared', 'Shared sessions', 'Whether sessions everyone can type into get it too: issues, pull requests and questions from Slack. Never a QA run or a review.', 'shared',
-        [['false', 'No'], ['true', 'Yes']], (v) => { mcpForm.shared = v === 'true'; }),
-      mcpField('mcp-people', 'People', 'GitHub logins whose My Woodshed sessions get it, comma-separated, or * for everyone.', 'people'),
-      data.projects ? mcpRepos() : mcpField('mcp-repos', 'Repos', 'owner/name, comma-separated, or * for every repo.', 'repos'),
-      mcpSelect('mcp-auth', 'What the console adds', 'Signed token: one the console signs as its OpenID Connect issuer, for the server to check. Header: a value the console keeps, such as an API key.', 'auth', Object.entries(AUTH_WORDS), (v) => { mcpForm.auth = v; }),
-      f.auth === 'oidc' && mcpField('mcp-audience', 'Audience', `The token's aud. The server trusts issuer ${mcp.issuer}, keys at ${mcp.jwks}. Empty: ${f.production ? 'woodshed-prod-mcp' : 'the server\'s name'}.`, 'audience'),
-      f.auth === 'header' && mcp.headers && mcpField('mcp-header', 'Header', 'Its name, such as Authorization or X-Api-Key.', 'header'),
-      f.auth === 'header' && mcp.headers && mcpField('mcp-value', 'Value', f.editing ? 'Leave empty to keep the saved one. Never shown again.' : 'Such as Bearer <key>. Kept in the console\'s secret store and never shown again.', 'value', { type: 'password', autocomplete: 'new-password' }),
+    return [
+      h('div', { class: 'set-rows' },
+        mcpField(f, 'name', 'Name', 'What claude calls it, such as sentry: lowercase letters, digits and dashes.', 'name', { disabled: f.editing ? true : null }),
+        mcpField(f, 'url', 'URL', 'Its Streamable HTTP endpoint, such as https://mcp.example.com/mcp. The console calls it, so it must answer from the console.', 'url', { placeholder: 'https://' }),
+        mcpKind(f),
+        !f.production && mcpSelect(f, 'shared', 'Shared sessions', 'Whether sessions everyone can type into get it too: issues, pull requests and questions from Slack. Never a QA run or a review.', 'shared',
+          [['false', 'No'], ['true', 'Yes']], (v) => { f.shared = v === 'true'; }),
+        mcpField(f, 'people', 'People', 'GitHub logins whose My Woodshed sessions get it, comma-separated, or * for everyone.', 'people'),
+        data.projects ? mcpRepos(f) : mcpField(f, 'repos', 'Repos', 'owner/name, comma-separated, or * for every repo.', 'repos'),
+        mcpSelect(f, 'auth', 'What the console adds', 'Signed token: one the console signs as its OpenID Connect issuer, for the server to check. Header: a value the console keeps, such as an API key.', 'auth', Object.entries(AUTH_WORDS), (v) => { f.auth = v; }),
+        f.auth === 'oidc' && mcpField(f, 'audience', 'Audience', `The token's aud. The server trusts issuer ${mcp.issuer}, keys at ${mcp.jwks}. Empty: ${f.production ? 'woodshed-prod-mcp' : 'the server\'s name'}.`, 'audience'),
+        f.auth === 'header' && mcp.headers && mcpField(f, 'header', 'Header', 'Its name, such as Authorization or X-Api-Key.', 'header'),
+        f.auth === 'header' && mcp.headers && mcpField(f, 'value', 'Value', f.editing ? 'Leave empty to keep the saved one. Never shown again.' : 'Such as Bearer <key>. Kept in the console\'s secret store and never shown again.', 'value', { type: 'password', autocomplete: 'new-password' })),
       f.auth === 'header' && !mcp.headers && h('p', { class: 'cap-note' }, 'This console has no secret store, so it cannot keep a header.'),
-      f.error && h('p', { class: 'form-error', role: 'alert' }, W.errorParts(f.error)),
-      f.failedTest && h('p', { class: 'form-error', role: 'alert' }, `Not ${f.editing ? 'saved' : 'added'}. ${f.failedTest} Fix it and try again, or ${f.editing ? 'save' : 'add'} it anyway if the server is not up yet.`),
+      f.error && h('p', { class: 'form-error', role: 'alert', style: 'margin: 0' }, W.errorParts(f.error)),
+      f.failedTest && h('p', { class: 'form-error', role: 'alert', style: 'margin: 0' }, `Not ${f.editing ? 'saved' : 'added'}. ${f.failedTest} Fix it and try again, or ${f.editing ? 'save' : 'add'} it anyway if the server is not up yet.`),
       h('div', { class: 'card-foot' },
-        h('button', { type: 'button', class: 'btn btn-open', disabled: !!f.busy, onclick: () => saveMcp() }, f.busy === 'testing' ? 'Testing…' : f.busy ? 'Saving…' : verb),
-        f.failedTest && h('button', { type: 'button', class: 'btn btn-quiet', disabled: !!f.busy, onclick: () => saveMcp({ untested: true }) }, `${f.editing ? 'Save' : 'Add'} anyway`),
-        f.editing && h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => { mcpForm = { ...EMPTY_MCP_FORM }; render(); } }, 'Cancel'),
-        h('span', { class: 'sub', role: 'status' }, f.notice || `${verb} tests the server first. Each change is logged with who made it.`)));
+        h('button', { type: 'button', class: 'btn btn-open', disabled: !!f.busy, onclick: () => saveMcp(f) }, f.busy === 'testing' ? 'Testing…' : f.busy ? 'Saving…' : verb),
+        f.failedTest && h('button', { type: 'button', class: 'btn btn-quiet', disabled: !!f.busy, onclick: () => saveMcp(f, { untested: true }) }, `${f.editing ? 'Save' : 'Add'} anyway`),
+        s && testButton(s),
+        s && h('button', { type: 'button', class: 'btn btn-danger', disabled: !!f.busy, onclick: () => removeMcp(f, s) }, 'Remove'),
+        h('span', { class: 'sub', role: 'status' }, f.notice || `${verb} tests the server first. Each change is logged with who made it.${s ? ' Closing the row drops what was typed.' : ''}`)),
+      s && testNote(s),
+    ];
+  }
+
+  function mcpGroup() {
+    if (!mcp) return null;
+    return group({
+      id: 'mcp-servers', label: 'MCP servers',
+      note: 'Tools claude gets in sessions, each reached through the console, so no session ever holds what a server takes to let it in: the console adds a token it signs, or a header it keeps, to each call. A change reaches sessions started after it. Test asks a server what it offers, the way the console calls it.',
+    },
+      mcp.servers.length ? mcp.servers.map(mcpRow) : row({ id: 'mcp-none', title: 'None yet' }),
+      row({ id: 'mcp-add', title: 'Add a server', value: 'It is tested first, then reaches sessions started after it', opens: true },
+        open.has('mcp-add') && mcpFormBody(mcpFormFor(null))));
   }
 
   // The Woodshed card: the commit this console runs from its git clone, the newer ones on the branch the clone follows,
@@ -733,19 +860,32 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     scheduleUpdates();
   }
 
-  function updatesCard() {
+  // The row's status word: the update's own while one runs or failed, else how the clone stands against its branch.
+  function updatesPill(u) {
+    if (u.job?.state === 'failed') return h('span', { class: 'pill is-bad' }, 'Failed');
+    if (u.job || awaitingRestart) return h('span', { class: 'pill is-work' }, u.job?.state === 'restarting' || awaitingRestart ? 'Restarting' : 'Updating');
+    if (!u.upstream) return h('span', { class: 'pill' }, 'Follows no branch');
+    if (u.error) return h('span', { class: 'pill is-bad' }, 'Check failed');
+    if (!u.checkedAt) return h('span', { class: 'pill' }, 'Not checked');
+    return u.behindBy ? h('span', { class: 'pill is-warn' }, `${plural(u.behindBy, 'commit', 'commits')} behind`) : h('span', { class: 'pill is-ok' }, 'Up to date');
+  }
+
+  function updatesRow() {
     if (!updates && !updatesError) return null;
     const u = updates;
-    const why = u ? blocked(u) : null;
-    const running = u?.job && ['running', 'restarting'].includes(u.job.state);
-    return h('section', { class: 'settings-card', 'aria-labelledby': 'card-updates' },
-      h('h2', { id: 'card-updates', class: 'label' }, 'Woodshed'),
-      h('p', { class: 'sub' }, u
-        ? `The Woodshed this console runs, from its git clone at ${u.clone}${u.remote ? `, against ${u.remote}` : ''}. Checked every hour. Update pulls the new commits, builds the session image again when what it is made from changed, and restarts the console: running sessions carry on, new ones start on the new image.`
-        : 'The Woodshed this console runs.'),
-      updatesError && h('p', { class: 'form-error', role: 'alert' }, `Could not load it: ${updatesError}`),
-      u && [versionLine(u), commitList(u), lastLine(u), jobBlock(u.job), !u.supervisor && u.behindBy > 0 && byHand(u)],
-      u && h('div', { class: 'card-foot' },
+    if (!u) return row({ id: 'card-updates', title: 'Woodshed', value: h('span', { class: 'form-error', role: 'alert' }, `Could not load it: ${updatesError}`), pill: h('span', { class: 'pill is-bad' }, 'Not loaded') });
+    const why = blocked(u);
+    const running = u.job && ['running', 'restarting'].includes(u.job.state);
+    // An update is a job the person waits on: its row stays open while it runs.
+    if (running || awaitingRestart) open.add('card-updates');
+    return row({
+      id: 'card-updates', title: 'Woodshed', pill: updatesPill(u),
+      value: [u.head && `Running ${u.head}`, u.checkedAt && `checked ${since(u.checkedAt)}`, u.last && `last updated ${since(u.last.at)} by @${u.last.by}`].filter(Boolean).join(' · ') || 'The Woodshed this console runs',
+    },
+      h('p', { class: 'sub' }, `The Woodshed this console runs, from its git clone at ${u.clone}${u.remote ? `, against ${u.remote}` : ''}. Checked every hour. Update pulls the new commits, builds the session image again when what it is made from changed, and restarts the console: running sessions carry on, new ones start on the new image.`),
+      updatesError && h('p', { class: 'form-error', role: 'alert', style: 'margin: 0' }, `Could not load it: ${updatesError}`),
+      versionLine(u), commitList(u), lastLine(u), jobBlock(u.job), !u.supervisor && u.behindBy > 0 && byHand(u),
+      h('div', { class: 'card-foot' },
         u.supervisor && h('button', {
           type: 'button', class: 'btn btn-open', disabled: Boolean(updateForm.busy) || Boolean(why), title: why,
           onclick: () => updateAction('update'),
@@ -801,7 +941,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         restartSince = null;
       }
       if (updates?.job?.state === 'failed') following = false;
-      if (!(document.activeElement?.closest?.('.settings-card') && document.activeElement.matches('input'))) render();
+      if (!typing()) render();
       scheduleUpdates();
     }, following ? 2_000 : DATA_REFRESH_MS);
   }
@@ -881,14 +1021,20 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     return `Total kept: ${copies}, and ${d.totals.homes} saved ${d.totals.homes === 1 ? 'conversation' : 'conversations'} (${mb} MB) in ${homesPlace()}.`;
   }
 
-  function dataCard() {
+  // Sessions holding data: a plain line while nothing is held, else a row whose pill says how many are stalled or kept.
+  function dataRow() {
     const d = data.data;
     if (!d) return null;
-    const nothing = !d.held.length && !d.stalled.length;
-    return h('section', { class: 'settings-card', 'aria-labelledby': 'card-data' },
-      h('h2', { id: 'card-data', class: 'label' }, 'Sessions holding data'),
+    if (!d.held.length && !d.stalled.length) {
+      return row({ id: 'card-data', title: 'Sessions holding data', value: `Nothing is held or stalled. ${totalsLine(d)}`, pill: h('span', { class: 'pill' }, 'None') });
+    }
+    const held = `${d.held.length} stopped ${d.held.length === 1 ? 'session keeps its' : 'sessions keep their'} conversation and databases`;
+    return row({
+      id: 'card-data', title: 'Sessions holding data',
+      value: `${d.held.length ? held : 'No stopped session keeps data'} · checked every minute`,
+      pill: d.stalled.length ? h('span', { class: 'pill is-bad' }, `${d.stalled.length} stalled`) : h('span', { class: 'pill' }, `${d.held.length} kept`),
+    },
       h('p', { class: 'sub' }, 'Shared sessions that are stopped but keep their conversation and databases, and anything left behind or stuck. Checked again every minute.'),
-      nothing && h('p', { class: 'empty-ok' }, 'Nothing is held or stalled.'),
       d.stalled.length > 0 && [
         h('div', { class: 'sub-head' }, 'Stalled', h('span', { class: 'count' }, d.stalled.length)),
         h('div', { class: 'data-list' }, d.stalled.map(stalledRow))],
@@ -898,16 +1044,15 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       h('p', { class: 'sub', style: 'font-size: 12.5px' }, totalsLine(d)));
   }
 
-  // The Slack card: one place for the bot, where pull requests are posted and the questions people ask it
-  // (slackSetup.mjs). Read on its own, since it asks the secret store and Slack. `slackView` is null on a console that
-  // posts nothing to Slack, which has no card.
+  // Slack: the bot, where pull requests are posted and the questions people ask it, a row each (slackSetup.mjs). Read
+  // on its own, since it asks the secret store and Slack. `slackView` is null on a console that posts nothing to
+  // Slack, which has no group.
   let slackView = null;
   let slackError = null;
-  // Which of the card's parts are open: `limits:slack` and `limits:questions` for their Limits, `channel` for Change
-  // channel's picker.
-  const slackOpen = new Set();
+  // The channel picker of the open Pull requests row: made when the row opens, so closing the row is its Cancel.
   let channelPicker = null;
-  const slackNote = { text: null, bad: false };
+  // What the last change said, and the row it is said on: `bot` or `pulls`.
+  const slackNote = { text: null, bad: false, on: 'bot' };
 
   async function loadSlack() {
     try {
@@ -919,17 +1064,22 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     }
   }
 
-  function slackSaved(next, text) {
+  function slackSay(on, text, bad = false) {
+    slackNote.on = on;
+    slackNote.text = text;
+    slackNote.bad = bad;
+  }
+
+  function slackSaved(next, text, on = 'bot') {
     slackView = { ...slackView, ...next };
     if (data?.slack) data = { ...data, slack: { ...data.slack, channel: next.channel ?? '' } };
-    slackOpen.delete('channel');
+    // The picker starts again on what is saved now.
     channelPicker = null;
-    slackNote.text = text;
-    slackNote.bad = false;
+    slackSay(on, text);
     render();
   }
 
-  // Slack keeps an app's token when it is reinstalled with new scopes, so the card asks about the saved one again.
+  // Slack keeps an app's token when it is reinstalled with new scopes, so the row asks about the saved one again.
   async function recheckSlack() {
     if (saving.has('slack-recheck')) return;
     saving.add('slack-recheck');
@@ -942,8 +1092,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
             : 'Checked, but Slack did not say which scopes the app has.';
       slackSaved(next, text);
     } catch (err) {
-      slackNote.text = err.message;
-      slackNote.bad = true;
+      slackSay('bot', err.message, true);
     }
     saving.delete('slack-recheck');
     render();
@@ -961,10 +1110,11 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     });
   }
 
+  const channelName = (v) => (v.channelName ? `#${v.channelName}` : v.channel);
+
   function channelText(v) {
     if (!v.channel) return 'Not posted: no channel. A repo can post to its own channel instead, on its Settings under Repos.';
-    const named = v.channelName ? `#${v.channelName}` : v.channel;
-    return `Posted to ${named}. A repo can post to its own channel instead, on its Settings under Repos.`;
+    return `Posted to ${channelName(v)}. A repo can post to its own channel instead, on its Settings under Repos.`;
   }
 
   function botText(v) {
@@ -978,40 +1128,87 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
   async function saveChannel() {
     const channel = channelPicker.value().trim();
     const bad = channelPicker.problem();
-    if (bad) { slackNote.text = bad; slackNote.bad = true; render(); return; }
+    if (bad) { slackSay('pulls', bad, true); render(); return; }
     if (saving.has('slack-channel')) return;
     saving.add('slack-channel');
     try {
       const next = await W.postJson('/api/console-settings/slack', { channel });
-      slackSaved(next, channel ? 'Saved. The next pull request goes to the new channel. Invite the bot to it first.' : 'Saved. Pull requests of repos without a channel of their own are not posted.');
+      slackSaved(next, channel ? 'Saved. The next pull request goes to the new channel. Invite the bot to it first.' : 'Saved. Pull requests of repos without a channel of their own are not posted.', 'pulls');
     } catch (err) {
-      slackNote.text = err.message;
-      slackNote.bad = true;
+      slackSay('pulls', err.message, true);
       render();
     }
     saving.delete('slack-channel');
   }
 
-  function limitsToggle(group) {
-    const key = `limits:${group}`;
-    const open = slackOpen.has(key);
-    return h('button', {
-      type: 'button', class: 'btn btn-quiet btn-sm', 'aria-expanded': String(open), 'aria-controls': `slack-${key.replace(':', '-')}`,
-      onclick: () => { if (open) slackOpen.delete(key); else slackOpen.add(key); render(); },
-    }, open ? 'Limits ▴' : 'Limits ▾');
+  // What the last change on a row said, under that row's buttons.
+  function slackNoteOn(on) {
+    return slackNote.text && slackNote.on === on && h('p', { class: slackNote.bad ? 'form-error' : 'sub', role: slackNote.bad ? 'alert' : 'status', style: 'margin: 0' }, slackNote.text);
   }
 
-  function limitsBlock(group) {
-    if (!slackOpen.has(`limits:${group}`) || !data.settings.some((s) => s.group === group)) return null;
-    return h('div', { class: 'slack-limits', id: `slack-limits-${group}` }, settingsBlock({ id: group }));
+  // A Slack row's own numbers, under its other controls: shown with the row, with no fold of their own.
+  function limitsBlock(block) {
+    if (!settingsOf(block).length) return null;
+    return [h('h4', { class: 'sub-head' }, 'Limits'), h('div', { class: 'slack-limits', id: `slack-limits-${block}` }, settingsBlock(block))];
   }
 
-  function slackRow(name, text, actions, ...more) {
-    return h('div', { class: 'slack-row' },
-      h('p', { class: 'set-name' }, name),
-      h('p', { class: 'sub' }, text),
-      h('div', { class: 'slack-act' }, actions),
-      more);
+  function botRow(v) {
+    const refused = v.bot && !v.bot.ok;
+    const installed = Boolean(v.install?.installed);
+    const lacks = v.missingScopes?.length > 0;
+    return row({
+      id: 'slack-bot', title: 'Bot', value: botText(v),
+      pill: refused ? h('span', { class: 'pill is-bad' }, 'Token refused')
+        : lacks ? h('span', { class: 'pill is-warn' }, 'Missing scopes')
+          : h('span', { class: 'pill is-ok' }, v.bot?.team ? `Connected to ${v.bot.team}` : 'Connected'),
+    },
+      h('p', { class: 'sub' }, botText(v)),
+      (refused || lacks) && h('p', { class: 'cap-note' },
+        refused ? 'Fixed it in Slack? ' : `The app lacks ${v.missingScopes.join(', ')}. Add ${v.missingScopes.length === 1 ? 'it' : 'them'} on its OAuth & Permissions page and reinstall it, then `,
+        checkAgainButton(), refused ? '' : '. If Slack gave it a new token, Replace keys with that instead.'),
+      h('div', { class: 'card-foot' },
+        installed && v.install.href
+          ? h('a', { class: 'btn btn-plain', href: v.install.href }, 'Reinstall')
+          : h('button', { type: 'button', class: 'btn btn-plain', onclick: () => openSetup('replace') }, 'Replace keys'),
+        v.canDisconnect && h('button', {
+          type: 'button', class: 'btn btn-danger',
+          onclick: () => W.confirmChange({
+            title: 'Disconnect Slack?',
+            before: `the bot${v.bot?.name ? ` @${v.bot.name}` : ''}, with its token and signing secret saved`,
+            after: 'no token and no signing secret',
+            effect: 'Nothing is posted to Slack, and no mention is answered, until Slack is set up again. The channels are kept.',
+            word: 'slack',
+            goLabel: 'Disconnect',
+            run: async () => {
+              slackSaved(await W.postJson('/api/console-settings/slack/disconnect', { confirm: 'slack' }), 'Disconnected. Set up Slack connects it again.');
+            },
+          }),
+        }, 'Disconnect Slack')),
+      slackNoteOn('bot'));
+  }
+
+  function pullsRow(v) {
+    const isOpen = open.has('slack-pulls');
+    if (!isOpen) channelPicker = null;
+    else if (!channelPicker) channelPicker = W.slackChannelPicker({ value: v.channel, name: v.channelName, id: 'slack-channel-search' });
+    return row({
+      id: 'slack-pulls', title: 'Pull requests', opens: true,
+      value: [
+        v.channel ? `Posted to ${channelName(v)}` : 'Not posted: no channel',
+        qty('slackGiveUpDays') && `gives up after ${qty('slackGiveUpDays')}`, qty('qaWaitMinutes') && `waits ${qty('qaWaitMinutes')} for QA`,
+      ].filter(Boolean).join(' · '),
+      pill: unsavedPill('slack') ?? h('span', { class: 'pill' }, v.channel ? channelName(v) : 'No channel'),
+    },
+      isOpen && [
+        h('p', { class: 'sub' }, channelText(v)),
+        h('div', { class: 'slack-more' },
+          channelPicker.el,
+          h('div', { class: 'card-foot' },
+            h('button', { type: 'button', class: 'btn btn-open', onclick: saveChannel }, 'Save channel'),
+            v.channel && h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => { channelPicker = W.slackChannelPicker({ value: '', id: 'slack-channel-search' }); render(); } }, 'No channel'))),
+        slackNoteOn('pulls'),
+        limitsBlock('slack'),
+      ]);
   }
 
   function questionsRow(v) {
@@ -1024,88 +1221,54 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     if (!reaches) text = 'Mentions of the bot do not reach this console: it has no webhook receiver.';
     else if (!on) text = `Off${state.at ? ` since ${W.when(state.at)}${state.by && state.by !== 'console' ? `, by ${state.by}` : ''}` : ''}: ${SLACK_SWITCH.off(state.dropped ? ` (${state.dropped} so far)` : '')}`;
     else text = `${v.bot?.name ? `Mentions of @${v.bot.name}` : 'Mentions of the bot'} are answered, each in a session that reads the default branch and changes nothing.${v.lastMention ? ` Last one ${W.ago(v.lastMention)}.` : ''}`;
-    const labelId = 'webhooks-switch-slack';
-    return slackRow('Questions', text,
-      [limitsToggle('questions'), reaches && h('button', {
-        type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-label': SLACK_SWITCH.label, id: labelId, disabled: Boolean(switching),
-        onclick: () => flipWebhooks('slack', on),
-      })],
-      !v.signingSecret && h('p', { class: 'cap-note' }, 'No signing secret is saved, so every mention is refused before it reaches the console: Replace keys to add it.'),
-      !v.eventsUrl && h('p', { class: 'sub', style: 'grid-column: 1 / -1; margin: 0' }, 'This console does not know its events Request URL: the Set up Slack dialog says where to find it.'),
-      switchError?.source === 'slack' && h('p', { class: 'form-error', role: 'alert' }, switchError.text),
+    return row({
+      id: 'slack-questions', title: 'Questions', value: text,
+      pill: unsavedPill('questions') ?? (!reaches ? h('span', { class: 'pill is-warn' }, 'Not reached') : on ? h('span', { class: 'pill is-ok' }, 'On') : h('span', { class: 'pill' }, 'Off')),
+    },
+      reaches && h('div', { class: `toggle-row webhook-switch${on ? '' : ' is-off'}` },
+        h('button', {
+          type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-labelledby': 'webhooks-switch-slack', disabled: Boolean(switching),
+          onclick: () => flipWebhooks('slack', on),
+        }),
+        h('span', { class: 'toggle-label', id: 'webhooks-switch-slack' }, SLACK_SWITCH.label),
+        h('p', { class: 'sub' }, on ? SLACK_SWITCH.on : text),
+        switchError?.source === 'slack' && h('p', { class: 'form-error', role: 'alert' }, switchError.text)),
+      !reaches && h('p', { class: 'sub' }, text),
+      !v.signingSecret && h('p', { class: 'cap-note' }, 'No signing secret is saved, so every mention is refused before it reaches the console: Replace keys, on the Bot row, to add it.'),
+      !v.eventsUrl && h('p', { class: 'sub' }, 'This console does not know its events Request URL: the Set up Slack dialog says where to find it.'),
       limitsBlock('questions'));
   }
 
-  function slackCard() {
+  function slackGroup() {
     if (!slackView && !slackError) return null;
     const v = slackView;
-    const head = (pill) => h('div', { class: 'card-head' }, h('h2', { id: 'card-slack', class: 'label' }, 'Slack'), pill);
-    const shell = (...body) => h('section', { class: 'settings-card', id: 'slack', 'aria-labelledby': 'card-slack' }, body);
-    if (!v) return shell(head(null), h('p', { class: 'form-error', role: 'alert' }, `Could not load it: ${slackError}`));
-    const note = slackNote.text && h('p', { class: slackNote.bad ? 'form-error' : 'sub', role: slackNote.bad ? 'alert' : 'status' }, slackNote.text);
+    const what = 'Post each pull request a shared session opens to a channel, and answer questions people ask the bot.';
+    const about = { id: 'card-slack', label: 'Slack', note: v?.connected ? what : null };
+    if (!v) return group(about, row({ id: 'slack-setup', title: 'Slack', value: h('span', { class: 'form-error', role: 'alert' }, `Could not load it: ${slackError}`), pill: h('span', { class: 'pill is-bad' }, 'Not loaded') }));
+    // Not set up, it is one line with its button: there is nothing to open yet.
     if (!v.connected) {
-      return shell(
-        head(h('span', { class: 'pill' }, 'Not set up')),
-        h('p', { class: 'sub' }, 'Post each pull request a shared session opens to a channel, and answer questions people ask the bot.'),
-        v.available
-          ? h('div', null, h('button', { type: 'button', class: 'btn btn-open', onclick: () => openSetup(v.install ? 'choose' : 'own') }, 'Set up Slack'))
-          : h('p', { class: 'cap-note' }, 'This console has no secret store to keep Slack\'s keys in. Choose one on ', h('a', { href: '/secrets' }, 'Secrets & webhooks'), ' first.'),
-        note);
+      return group(about, line(['Slack ', h('span', { class: 'pill' }, 'Not set up')],
+        [
+          what,
+          !v.available && [' This console has no secret store to keep Slack\'s keys in. Choose one on ', h('a', { href: '/secrets' }, 'Secrets & webhooks'), ' first.'],
+          slackNoteOn('bot'),
+        ],
+        v.available && h('button', { type: 'button', class: 'btn btn-open', onclick: () => openSetup(v.install ? 'choose' : 'own') }, 'Set up Slack'),
+        { id: 'slack-setup' }));
     }
-    const refused = v.bot && !v.bot.ok;
-    const installed = Boolean(v.install?.installed);
-    const changing = slackOpen.has('channel');
-    if (changing && !channelPicker) channelPicker = W.slackChannelPicker({ value: v.channel, name: v.channelName, id: 'slack-channel-search' });
-    return shell(
-      head(refused ? h('span', { class: 'pill is-bad' }, 'Token refused') : h('span', { class: 'pill is-ok' }, v.bot?.team ? `Connected to ${v.bot.team}` : 'Connected')),
-      h('div', { class: 'slack-rows' },
-        slackRow('Bot', botText(v),
-          installed && v.install.href
-            ? h('a', { class: 'btn btn-plain btn-sm', href: v.install.href }, 'Reinstall')
-            : h('button', { type: 'button', class: 'btn btn-plain btn-sm', onclick: () => openSetup('replace') }, 'Replace keys'),
-          (refused || v.missingScopes?.length > 0) && h('p', { class: 'cap-note', style: 'grid-column: 1 / -1' },
-            refused ? 'Fixed it in Slack? ' : `The app lacks ${v.missingScopes.join(', ')}. Add ${v.missingScopes.length === 1 ? 'it' : 'them'} on its OAuth & Permissions page and reinstall it, then `,
-            checkAgainButton(), refused ? '' : '. If Slack gave it a new token, Replace keys with that instead.')),
-        slackRow('Pull requests', channelText(v),
-          [limitsToggle('slack'), !changing && h('button', { type: 'button', class: 'btn btn-plain btn-sm', onclick: () => { slackOpen.add('channel'); slackNote.text = null; render(); } }, 'Change channel')],
-          changing && h('div', { class: 'slack-more' },
-            channelPicker.el,
-            h('div', { class: 'card-foot' },
-              h('button', { type: 'button', class: 'btn btn-open', onclick: saveChannel }, 'Save channel'),
-              v.channel && h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => { channelPicker = W.slackChannelPicker({ value: '', id: 'slack-channel-search' }); render(); } }, 'No channel'),
-              h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => { slackOpen.delete('channel'); channelPicker = null; render(); } }, 'Cancel'))),
-          limitsBlock('slack')),
-        questionsRow(v)),
-      note,
-      v.canDisconnect && h('div', { class: 'card-foot' },
-        h('button', {
-          type: 'button', class: 'btn btn-quiet',
-          onclick: () => W.confirmChange({
-            title: 'Disconnect Slack?',
-            before: `the bot${v.bot?.name ? ` @${v.bot.name}` : ''}, with its token and signing secret saved`,
-            after: 'no token and no signing secret',
-            effect: 'Nothing is posted to Slack, and no mention is answered, until Slack is set up again. The channels are kept.',
-            word: 'slack',
-            goLabel: 'Disconnect',
-            run: async () => {
-              slackSaved(await W.postJson('/api/console-settings/slack/disconnect', { confirm: 'slack' }), 'Disconnected. Set up Slack connects it again.');
-            },
-          }),
-        }, 'Disconnect Slack')));
+    return group(about, botRow(v), pullsRow(v), questionsRow(v));
   }
 
   // Each source of webhooks, switched off on its own (webhookSwitch.mjs). No typed confirm: a switch is undone by
   // turning it back, and is logged with who turned it. Only where webhooks reach the console at all, or while one is off.
   // What only a GitHub webhook starts: the poll finds none of it (webhookDispatch.pollMisses).
   const WEBHOOK_ONLY = 'QA labels, QA after a review, the automatic QA label, reviews started by a commit\'s tag and Needs a human messages to the assignee';
-  const WEBHOOK_SWITCHES = [
-    {
-      source: 'github', label: 'GitHub webhooks',
-      on: `On: labels, comments and pull request changes reach the console within seconds. Off, it polls GitHub instead, which finds only the session label and /woodshed comments, within a minute. ${WEBHOOK_ONLY} stop until it is on again.`,
-      off: (dropped) => `the console drops each GitHub delivery${dropped} and polls GitHub, so the session label and /woodshed comments take up to a minute. ${WEBHOOK_ONLY} have stopped.`,
-    },
-  ];
-  // The Slack card's Questions switch: the same switch as GitHub's, for mentions of the bot.
+  const GITHUB_SWITCH = {
+    source: 'github', label: 'GitHub webhooks',
+    on: `On: labels, comments and pull request changes reach the console within seconds. Off, it polls GitHub instead, which finds only the session label and /woodshed comments, within a minute. ${WEBHOOK_ONLY} stop until it is on again.`,
+    off: (dropped) => `the console drops each GitHub delivery${dropped} and polls GitHub, so the session label and /woodshed comments take up to a minute. ${WEBHOOK_ONLY} have stopped.`,
+  };
+  // The Slack group's Questions switch: the same switch as GitHub's, for mentions of the bot.
   const SLACK_SWITCH = {
     source: 'slack', label: 'Answer questions',
     on: 'On: the console answers each mention of its Slack bot in a session of its own. Off, it drops them.',
@@ -1127,35 +1290,33 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     render();
   }
 
-  function webhookSwitchRow(s) {
+  // GitHub's webhooks: a line with its switch on it, applied as it is turned. Slack's questions are switched on the
+  // Slack group's Questions row.
+  function webhooksLine() {
+    const s = GITHUB_SWITCH;
     const state = data.webhooks?.[s.source];
     if (!state || (!data.webhooks.receiving && !state.off)) return null;
     const on = !state.off;
     const since = state.at ? ` since ${W.when(state.at)}${state.by && state.by !== 'console' ? `, by ${state.by}` : ''}` : '';
-    const labelId = `webhooks-switch-${s.source}`;
-    return h('div', { class: `toggle-row webhook-switch${on ? '' : ' is-off'}` },
+    return line(s.label,
+      [
+        on ? s.on : `Off${since}: ${s.off(state.dropped ? ` (${state.dropped} so far)` : '')}`, ' ',
+        h('a', { href: '/events' }, 'Webhook events'), ' lists what came in.',
+        switchError?.source === s.source && h('p', { class: 'form-error', role: 'alert', style: 'margin: 4px 0 0' }, switchError.text),
+      ],
       h('button', {
-        type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-labelledby': labelId, disabled: Boolean(switching),
+        type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-label': s.label, disabled: Boolean(switching),
         onclick: () => flipWebhooks(s.source, on),
       }),
-      h('span', { class: 'toggle-label', id: labelId }, s.label),
-      h('p', { class: 'sub' }, on ? s.on : `Off${since}: ${s.off(state.dropped ? ` (${state.dropped} so far)` : '')}`),
-      switchError?.source === s.source ? h('p', { class: 'form-error', role: 'alert' }, switchError.text) : null);
+      { id: 'card-webhooks' });
   }
 
-  function webhooksCard() {
-    const rows = WEBHOOK_SWITCHES.map(webhookSwitchRow).filter(Boolean);
-    if (!rows.length) return null;
-    return h('section', { class: 'settings-card', id: 'webhooks', 'aria-labelledby': 'card-webhooks' },
-      h('h2', { id: 'card-webhooks', class: 'label' }, 'Webhooks'),
-      h('p', { class: 'sub' }, 'What reaches the console from GitHub as it happens. Each change applies at once, and is logged with who made it. Slack\'s questions are switched on the Slack card. ',
-        h('a', { href: '/events' }, 'Webhook events'), ' lists what came in.'),
-      h('div', { class: 'webhook-switches' }, rows));
-  }
+  // Whether a field of the page is being typed in: a draw the person did not ask for would take the caret out of it.
+  const typing = () => Boolean(document.activeElement?.closest?.('.settings-page') && document.activeElement.matches('input, textarea'));
 
   // Fields render as they are typed in, so a Save turns on before the field loses focus: the page is drawn again with
-  // the same field focused, its caret where it was. A render that starts inside another (a blur the swap fired) is
-  // skipped, since the outer one draws the same state.
+  // the same field focused, its caret where it was. A row's head is a new node after the draw, found by its id. A render
+  // that starts inside another (a blur the swap fired) is skipped, since the outer one draws the same state.
   let rendering = false;
   function render() {
     if (rendering) return;
@@ -1181,11 +1342,35 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         W.settingsTabs('/console-settings'),
         h('p', { class: 'sub' }, 'For every shared session on this console, and only admins can change them. A change applies on the console\'s next check, and is logged with who made it. Your own settings, for your My Woodshed sessions, are on ', h('a', { href: '/settings' }, 'My settings'), '.')));
     if (!data) {
-      app.replaceChildren(h('div', { class: 'page' }, life.nav('/console-settings'), head,
+      app.replaceChildren(h('div', { class: 'page settings-page' }, life.nav('/console-settings'), head,
         h('p', { class: 'empty' }, loadError ? `Could not load the settings: ${loadError}` : 'Loading settings…')));
       return;
     }
-    app.replaceChildren(h('div', { class: 'page' }, life.nav('/console-settings'), head, updatesCard(), projectsCard(), mcpCard(), CARDS.map(settingsCard), slackCard(), webhooksCard(), dataCard()));
+    // What the console is, the repos it works on, how its sessions run and what they keep, then what it talks to.
+    app.replaceChildren(h('div', { class: 'page settings-page' }, life.nav('/console-settings'), head,
+      group({ id: 'set-console', label: 'This console' }, updatesRow(), webhooksLine()),
+      projectsGroup(),
+      group({ id: 'card-sessions', label: 'Shared sessions' }, sessionRows()),
+      group({ id: 'set-kept', label: 'Kept sessions' }, retentionRow(), dataRow()),
+      slackGroup(),
+      mcpGroup()));
+  }
+
+  // A link that names a row or a group opens it and lands on it once it is drawn: the groups come in their own
+  // answers, so the browser's own scroll finds nothing. The names links used before the rows still work.
+  const ALIASES = { slack: 'card-slack', webhooks: 'card-webhooks' };
+  let asked = typeof location !== 'undefined' && location.hash ? location.hash.slice(1) : null;
+  if (asked) {
+    asked = ALIASES[asked] ?? asked;
+    open.add(asked);
+    // A link to the repos is most often followed to add one.
+    if (asked === 'card-projects') open.add('repo-add');
+  }
+  function showAsked() {
+    const target = asked && document.getElementById(asked);
+    if (!target) return;
+    asked = null;
+    target.scrollIntoView?.({ block: 'start' });
   }
 
   async function load() {
@@ -1195,19 +1380,22 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     } catch (err) {
       loadError = err.message;
     }
+    // With no repo yet, the one thing to do is add one.
+    if (data?.projects && !data.projects.length) open.add('repo-add');
     await loadMcp();
     render();
+    showAsked();
     if (data?.projects) await loadRepoChoices();
     await loadSlack();
     render();
-    // A link to the card (the Secrets page's, a repo's) lands on it once it is drawn.
-    if (typeof location !== 'undefined' && ['#slack', '#card-slack'].includes(location.hash)) document.getElementById('slack')?.scrollIntoView?.({ block: 'start' });
+    showAsked();
     await loadUpdates();
     render();
+    showAsked();
     scheduleUpdates();
   }
 
-  // Only the list: the cards keep what is typed into them.
+  // Only the list: the rows keep what is typed into them.
   async function refreshData() {
     try {
       const next = await W.getJson('/api/console-settings');
@@ -1216,9 +1404,12 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       return;
     }
     // Redrawing the page would take the caret out of a field being typed in.
-    if (document.activeElement?.closest?.('.settings-card') && document.activeElement.matches('input')) return;
+    if (typing()) return;
     render();
   }
+
+  // The search opens the row it found, and a link to a row followed while the page is shown opens it (settingsRows.js).
+  follow(life);
 
   // Drawn at once, saying it loads, so the page never sits empty while the settings are on its way.
   render();
