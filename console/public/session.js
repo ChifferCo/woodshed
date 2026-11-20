@@ -1269,8 +1269,12 @@
   function limitsLine(s) {
     const hours = (n) => `${n} ${n === 1 ? 'hour' : 'hours'}`;
     const own = s.limits && (s.limits.idleHours || s.limits.lifetimeHours) ? ' (this session\'s own)' : '';
-    const next = s.status === 'running' && s.pause
-      ? `. Next: ${s.pause.why === 'lifetime' ? 'stops' : 'pauses'} at ${new Date(s.pause.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${s.extendedUntil && Date.parse(s.extendedUntil) >= Date.parse(s.pause.at) ? ', extended' : ''}` : '';
+    // While the agent works its idle clock keeps moving, so only a stop at its lifetime has a time to give then.
+    const busy = s.state === 'working' || s.state === 'starting';
+    // An Extend from before a resume counts for nothing, as the console has it (sessions.mjs pauseAt).
+    const extended = s.extendedUntil && Date.parse(s.extendedAt) >= Date.parse(s.startedAt) && Date.parse(s.extendedUntil) >= Date.parse(s.pause?.at);
+    const next = s.status === 'running' && s.pause && !(busy && s.pause.why === 'idle')
+      ? `. Next: ${s.pause.why === 'lifetime' ? 'stops' : 'pauses'} at ${new Date(s.pause.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${extended ? ', extended' : ''}` : '';
     return `After ${hours(s.runsOn.idleHours)} waiting for input, and stops at ${hours(s.runsOn.lifetimeHours)}${own}${next}`;
   }
 
@@ -1491,7 +1495,7 @@
       // A phone's two rows: the name over one line of its state, its PR and its usage, with ⋯ for the rest.
       h('div', { class: 'pphone' },
         h('b', { class: 'pphone-title', title: s.title }, s.title),
-        h('span', { class: 'pphone-meta' }, W.statusBadge(s), s.taintedAt && W.productionTag(s), W.canExtend(s, data) && h('span', { class: 'ptimer' }, W.pausesIn(s, data)), phoneAppState(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
+        h('span', { class: 'pphone-meta' }, W.statusBadge(s), s.taintedAt && W.productionTag(s), W.pausesIn(s, data) && h('span', { class: 'ptimer' }, W.pausesIn(s, data)), phoneAppState(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
       h('button', {
         type: 'button', class: 'pmore', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === `${s.id}:phone`), 'data-menu-for': `${s.id}:phone`,
         'aria-label': `Actions for ${s.title}`, title: 'Actions',

@@ -1,4 +1,4 @@
-<!-- @dsCard group="Dialogs" height=260 subtitle="One line of text: Rename this session, and an address in mono" -->
+<!-- @dsCard group="Dialogs" height=560 subtitle="One line of text: Rename this session, and an address in mono; two numbers: Pause and stop, with its refusal" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600;700&family=JetBrains+Mono&display=swap">
 <style>
  body{margin:0;padding:20px;background:rgba(20,23,31,.5);font-family:"Red Hat Display",system-ui,sans-serif;display:grid;gap:16px;justify-items:start}
@@ -11,6 +11,11 @@
  .btn{min-height:30px;padding:0 12px;border-radius:var(--radius-sm);font:600 13px "Red Hat Display",system-ui,sans-serif;border:1px solid transparent}
  .quiet{background:transparent;color:var(--ink);border-color:var(--line)}
  .open{background:var(--action);color:var(--action-ink);border-color:var(--action)}
+ p{margin:0 0 4px;font-size:14px;line-height:1.45}
+ label+label{margin-top:12px}
+ input::placeholder{color:var(--meta)}
+ .error{margin:10px 0 0;font-size:13px;color:var(--bad)}
 </style>
 <div class="confirm"><h2>Rename this session</h2><label>Name<input value="Speed up Claude sessions"></label><div class="actions"><button class="btn quiet" type="button">Cancel</button><button class="btn open" type="button">Rename</button></div></div>
 <div class="confirm"><h2>Set the GitHub App’s payload URL</h2><label>Payload URL<input class="mono" value="https://woodshed.example.com/webhooks/github"></label><div class="actions"><button class="btn quiet" type="button">Cancel</button><button class="btn open" type="button">Next</button></div></div>
+<div class="confirm"><h2>Pause and stop</h2><p>For this session alone. Empty is what it runs on otherwise: 1 hour waiting, 8 hours in all. It tries to push its work first, and Resume picks it up.</p><label>Pause it after waiting for input for (hours)<input class="mono" type="number" min="0.25" max="24" step="0.25" value="3" placeholder="1"></label><label>Stop it after it has run for (hours)<input class="mono" type="number" min="1" max="24" step="1" placeholder="8"></label><p class="error" role="alert">Pause a session waiting for input after must be from 0.25 to 24 hours.</p><div class="actions"><button class="btn quiet" type="button">Cancel</button><button class="btn open" type="button">Save</button></div></div>
