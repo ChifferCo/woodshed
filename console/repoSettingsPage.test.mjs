@@ -32,7 +32,7 @@ function element(tag) {
     addEventListener(k, fn) { this.listeners[k] = fn; },
     append(c) { this.children.push(c); },
     replaceChildren(...c) { this.children = c; },
-    focus() {},
+    focus() { this.focused = true; },
     scrollIntoView(opts) { this.scrolledTo = opts; },
     get textContent() { return textOf(this); },
     set textContent(v) { this.children = [String(v)]; },
@@ -303,6 +303,7 @@ test('a saved value stays hidden until Show and edit, which reads it from the co
   await settle();
   assert.deepEqual(calls.at(-1), { method: 'GET', path: '/api/console-settings/repos/app/env/api-env' });
   assert.equal(editorOf(app, 'env-api-env').value, `API_TOKEN=${SECRET_MARK}\n`);
+  assert.equal(editorOf(app, 'env-api-env').focused, true, 'Show puts the caret in the editor');
   button(app, 'Hide').listeners.click();
   assert.equal(editorOf(app, 'env-api-env'), undefined);
 });
@@ -406,6 +407,8 @@ test('saved instructions are read when their row opens, by its head or by a link
   await settle();
   assert.deepEqual(calls.map((c) => c.path), ['/api/console-settings/repos/app', '/api/console-settings/repos/app/instructions']);
   assert.equal(editorOf(app, 'instructions-text').value, 'Keep it short.\n');
+  // The read leaves the focus on the row's head: focus would scroll the page to the editor.
+  assert.notEqual(editorOf(app, 'instructions-text').focused, true);
 
   const linked = await loadPage({ before, hash: '#instructions', opened: [] });
   assert.deepEqual(linked.calls.map((c) => c.path), ['/api/console-settings/repos/app', '/api/console-settings/repos/app/instructions']);
