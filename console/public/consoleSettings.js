@@ -316,7 +316,8 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
   function repoSelect() {
     const repos = repoChoices.repos;
     return h('select', {
-      id: 'repo-new', class: 'field is-repo', 'aria-invalid': repoForm.error ? 'true' : null,
+      // Add a repo's field ids hold two underscores, which no project's name has, so a repo's row never has one of them.
+      id: 'repos-add__repo', class: 'field is-repo', 'aria-invalid': repoForm.error ? 'true' : null,
       onchange: (e) => {
         if (e.target.value !== TYPE_ONE) {
           repoForm.repo = e.target.value;
@@ -325,7 +326,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         repoForm.typing = true;
         repoForm.repo = '';
         render();
-        document.getElementById('repo-new')?.focus();
+        document.getElementById('repos-add__repo')?.focus();
       },
     },
     h('option', { value: '', selected: !repoForm.repo }, repos.length ? 'Choose a repo' : 'No repo left in the list'),
@@ -335,7 +336,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
 
   function repoField() {
     return h('input', {
-      id: 'repo-new', class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'owner/name', value: repoForm.repo,
+      id: 'repos-add__repo', class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'owner/name', value: repoForm.repo,
       'aria-invalid': repoForm.error ? 'true' : null,
       oninput: (e) => { repoForm.repo = e.target.value; },
       onkeydown: (e) => { if (e.key === 'Enter') addRepo(); },
@@ -351,7 +352,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         repoForm.typing = false;
         repoForm.repo = '';
         render();
-        document.getElementById('repo-new')?.focus();
+        document.getElementById('repos-add__repo')?.focus();
       },
     }, 'Choose from the list');
   }
@@ -399,7 +400,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     },
       h('div', { class: `set-row${repoForm.error ? ' is-bad' : ''}` },
         h('div', null,
-          h('label', { class: 'set-name', for: 'repo-new' }, 'Repo'),
+          h('label', { class: 'set-name', for: 'repos-add__repo' }, 'Repo'),
           h('div', { class: 'set-help' }, listing()
             ? `One of the repos ${repoChoices.via === 'gh' ? 'the console\'s gh login can push to' : 'the GitHub App may reach'}, or Another repo to type one in.`
             : 'As owner/name.',
@@ -408,7 +409,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
           listing() ? repoSelect() : repoField(),
           backToList(),
           data.repoNames !== false && h('input', {
-            id: 'repo-name', class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'name (optional)', 'aria-label': 'Name (optional)', value: repoForm.name,
+            id: 'repos-add__name', class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'name (optional)', 'aria-label': 'Name (optional)', value: repoForm.name,
             oninput: (e) => { repoForm.name = e.target.value; },
             onkeydown: (e) => { if (e.key === 'Enter') addRepo(); },
           })),

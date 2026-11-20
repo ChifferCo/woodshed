@@ -160,7 +160,7 @@ test('a repo\'s row has no channel field, and says where its pull requests go wi
 test('Add repo adds on the click, and a refusal shows under the field with the page that fixes it', async () => {
   const { app, posted, confirms } = await loadPage(ANSWER);
   const link = { href: 'https://github.com/apps/w/installations/new', text: 'Install w on GitHub' };
-  const field = walk(app).find((e) => e.attrs.id === 'repo-new');
+  const field = walk(app).find((e) => e.attrs.id === 'repos-add__repo');
   field.listeners.input({ target: { value: 'https://github.com/acme/web' } });
   const addOf = () => walk(app).find((e) => e.tag === 'button' && /^(Add repo|Checking with GitHub…)$/.test(textOf(e)));
   posted.refuse = Object.assign(new Error('The GitHub App is not installed on acme/web.'), { link });
@@ -361,7 +361,7 @@ const REPOS = {
 
 test('with the App, Add a repo is a list of the repos it may reach, and says where on GitHub to give it more', async () => {
   const { app, posted } = await loadPage(ANSWER, { repos: REPOS });
-  const select = walk(app).find((e) => e.attrs.id === 'repo-new');
+  const select = walk(app).find((e) => e.attrs.id === 'repos-add__repo');
   assert.equal(select.tag, 'select');
   assert.deepEqual(walk(select).filter((e) => e.tag === 'option').map((o) => [o.attrs.value, textOf(o)]),
     [['', 'Choose a repo'], ['akurilin/social', 'akurilin/social (private)'], ['acme/web', 'acme/web'], [':type', 'Another repo: type owner/name']]);
@@ -376,7 +376,7 @@ test('with the App, Add a repo is a list of the repos it may reach, and says whe
   await tick();
   assert.equal(posted.length, 0, 'nothing picked, nothing sent');
   assert.match(textOf(walk(app).find((e) => e.className === 'form-error')), /Choose a repo first/);
-  walk(app).find((e) => e.attrs.id === 'repo-new').listeners.change({ target: { value: 'akurilin/social' } });
+  walk(app).find((e) => e.attrs.id === 'repos-add__repo').listeners.change({ target: { value: 'akurilin/social' } });
   posted.reply = () => ({ projects: ANSWER.projects });
   addOf().listeners.click();
   await tick();
@@ -387,7 +387,7 @@ test('with the App, Add a repo is a list of the repos it may reach, and says whe
 test('List again reads the App\'s repos again, so one just given on GitHub shows up', async () => {
   let repos = { ...REPOS, repos: [] };
   const { app } = await loadPage(ANSWER, { repos: () => repos });
-  const select = () => walk(app).find((e) => e.attrs.id === 'repo-new');
+  const select = () => walk(app).find((e) => e.attrs.id === 'repos-add__repo');
   assert.equal(textOf(select()), 'No repo left in the listAnother repo: type owner/name', 'one not listed can still be typed in');
   repos = REPOS;
   walk(app).find((e) => e.tag === 'button' && textOf(e) === 'List again').listeners.click();
@@ -397,7 +397,7 @@ test('List again reads the App\'s repos again, so one just given on GitHub shows
 
 test('Another repo swaps the list for a typed owner/name, keeps the links to give the App access, and goes back to the list', async () => {
   const { app, posted } = await loadPage(ANSWER, { repos: REPOS });
-  const field = () => walk(app).find((e) => e.attrs.id === 'repo-new');
+  const field = () => walk(app).find((e) => e.attrs.id === 'repos-add__repo');
   field().listeners.change({ target: { value: ':type' } });
   assert.equal(field().tag, 'input');
   assert.equal(focused.at(-1), app, 'the field takes the focus (the test DOM answers every id with the page)');
@@ -425,7 +425,7 @@ test('where the embedding program names each repo, there is no name field, and i
     ],
   };
   const { app, posted } = await loadPage(hosted, { repos: { ...REPOS, via: 'host' } });
-  assert.equal(walk(app).find((e) => e.attrs.id === 'repo-name'), undefined);
+  assert.equal(walk(app).find((e) => e.attrs.id === 'repos-add__name'), undefined);
   const card = textOf(cardOf(app, 'projects'));
   assert.match(card, /Sessions show it by the repo's own name/);
   assert.doesNotMatch(card, /installation's configuration/);
@@ -440,10 +440,10 @@ test('where the embedding program names each repo, there is no name field, and i
 
 test('with no App to ask, or GitHub not answering, Add a repo takes owner/name typed in', async () => {
   const none = await loadPage(ANSWER, { repos: { repos: null, grant: [], install: null } });
-  assert.equal(walk(none.app).find((e) => e.attrs.id === 'repo-new').tag, 'input');
+  assert.equal(walk(none.app).find((e) => e.attrs.id === 'repos-add__repo').tag, 'input');
   assert.doesNotMatch(textOf(none.app), /Not listed/);
   const down = await loadPage(ANSWER, { repos: new Error('GitHub did not list the App\'s repos. Type the repo instead, or try again; the console log says why.') });
-  assert.equal(walk(down.app).find((e) => e.attrs.id === 'repo-new').tag, 'input');
+  assert.equal(walk(down.app).find((e) => e.attrs.id === 'repos-add__repo').tag, 'input');
   assert.match(textOf(down.app), /GitHub did not list the App's repos\. Type the repo instead/);
 });
 
