@@ -60,11 +60,18 @@ export function inlineCommentsIn(dir) {
  * @returns {Map<number, string>}  comment id to reviewer name
  */
 export function commentAuthorsIn(dir, names) {
-  // An id's first record is the real one: a later line shaped like one is inside some comment's body, and never
-  // changes whose it is.
+  // Only the `# Inline comments` section (session/review.sh), so the description, the discussion or an issue never
+  // writes a record. An id's first record there is the real one: a later line shaped like one is inside some comment's
+  // body, and never changes whose it is.
+  const context = readFile(dir, 'context.md');
+  const start = context.search(/^# Inline comments$/m);
+  if (start < 0) return new Map();
+  const rest = context.slice(start);
+  const end = rest.search(/^# Linked issues$/m);
+  const section = end < 0 ? rest : rest.slice(0, end);
   const authors = new Map();
   const seen = new Set();
-  for (const m of readFile(dir, 'context.md').matchAll(/^\[comment ([0-9]{1,15})\] \S+ on [^\n]*?: (?:\*\*([^*\n]+):\*\*)?/gm)) {
+  for (const m of section.matchAll(/^\[comment ([0-9]{1,15})\] \S+ on [^\n]*?: (?:\*\*([^*\n]+):\*\*)?/gm)) {
     const id = Number(m[1]);
     if (seen.has(id)) continue;
     seen.add(id);

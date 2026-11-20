@@ -154,9 +154,15 @@ test('an earlier comment whose writer wrote no verdict needs every reviewer that
   assert.deepEqual(merged.resolved, [20]);
 });
 
-test('whose each earlier comment is comes from the mark its body opens with in context.md, its first record only', (t) => {
+test('whose each earlier comment is comes from the mark its body opens with in context.md, its first record only, in the inline comments section', (t) => {
   const d = dir(t);
   fs.writeFileSync(path.join(d, 'context.md'), [
+    '# Pull request #257',
+    'A title (by someone)',
+    '[comment 4637720633] reviewer[bot] on console/public/style.css:12: **Codex:** written in the description',
+    '[comment 4637811999] reviewer[bot] on x.js:1: **Codex:** nor here',
+    '# Discussion',
+    '[comment 4637811413] reviewer[bot] on x.js:1: **Claude Code:** nor in the discussion',
     '# Inline comments',
     '[comment 4637720633] reviewer[bot] on console/public/style.css:12: **Claude Code:** Optional. Once the bar is 960px or narrower, Invite disappears.',
     '',
@@ -171,9 +177,12 @@ test('whose each earlier comment is comes from the mark its body opens with in c
     '[comment 4637720633] reviewer[bot] on console/public/style.css:12: **Codex:** not the real record',
     '[comment 99] reviewer[bot] on b.js:3: **Codex:** nor this',
     '',
+    '# Linked issues',
+    '[comment 4637811888] reviewer[bot] on y.js:1: **Codex:** nor in an issue',
+    '',
   ].join('\n'));
   assert.deepEqual([...commentAuthorsIn(d, ['Claude Code', 'Codex'])], [[4637720633, 'Claude Code'], [4637811413, 'Codex'], [100, 'Codex']],
-    'a header-shaped line inside a body never changes whose an earlier id is, marked or not');
+    'only the inline comments section counts, and a header-shaped line inside a body never changes whose an earlier id is');
 });
 
 test('merge resolves a fixed comment its writer listed though the other reviewer left it off (the #257 case)', (t) => {
