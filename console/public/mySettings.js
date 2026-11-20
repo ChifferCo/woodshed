@@ -828,6 +828,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     const id = window.location.hash.slice(1);
     openNamed(id);
     document.getElementById(id)?.scrollIntoView({ block: 'start' });
+    document.getElementById(FOCUS[id])?.focus({ preventScroll: true });
   });
 
   W.getJson('/api/my').then((answer) => { me = answer; }, (err) => { loadError = err.message; }).then(() => (me ? openFile(fileKey ?? fileKeys()[0]) : render()));

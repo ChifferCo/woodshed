@@ -100,8 +100,10 @@
       if (entry.page === window.location.pathname) {
         event?.preventDefault();
         window.history.replaceState(null, '', `#${entry.id}`);
-        setOpen(false);
+        // Revealed first: a page that draws itself again to open the section gives this box its focus back, which
+        // opens the list, and the list is to end shut.
         reveal(entry.id);
+        setOpen(false);
       } else if (!event) {
         setOpen(false);
         W.goToSettings(entry.href);

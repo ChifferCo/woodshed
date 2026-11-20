@@ -1494,8 +1494,16 @@
       ? [hostItem(entry), h('div', { class: 'side-subs' }, entry.items.map((sub) =>
         h('a', { class: 'side-item side-sub', href: sub.href, 'aria-current': sub.href === navCurrent ? 'page' : null }, sub.label)))]
       : hostItem(entry));
-    // A link to a place on the page shown is the browser's to scroll to (settingsLinkClicked).
-    const myGroups = navCurrent === '/settings' ? [h('div', { class: 'side-subs' }, MY_GROUPS.map(([id, label]) => h('a', { class: 'side-item side-sub', href: `/settings#${id}` }, label)))] : [];
+    // A place on the page shown: gone to here, without showing the page again. The address may hold a query by then
+    // (?repo=, once a repo's row was opened), which settingsLinkClicked would take for another page and draw it anew,
+    // shutting every open row.
+    const toGroup = (id) => (e) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || location.pathname !== '/settings') return;
+      e.preventDefault();
+      history.replaceState(null, '', `${location.pathname}${location.search}#${id}`);
+      document.getElementById(id)?.scrollIntoView({ block: 'start' });
+    };
+    const myGroups = navCurrent === '/settings' ? [h('div', { class: 'side-subs' }, MY_GROUPS.map(([id, label]) => h('a', { class: 'side-item side-sub', href: `/settings#${id}`, onclick: toGroup(id) }, label)))] : [];
     youSlot.replaceChildren(h('div', { class: 'side-group' }, 'You'), ...MY_LINKS.map(mine), ...myGroups, ...(meNow?.menuYou ?? []).map(hostItem));
     sectionsSlot.replaceChildren(...(meNow?.menuSections ?? []).flatMap((section) =>
       [h('div', { class: 'side-group' }, section.label), ...section.items.flatMap(hostEntry)]));
