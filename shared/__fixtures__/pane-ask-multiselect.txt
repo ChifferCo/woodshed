@@ -1,0 +1,30 @@
+  ⎿  · Which colour do you prefer? → Green
+     · Which size do you want? → Large
+
+● You picked Green for colour and Large for size.
+
+✻ Sautéed for 2s · done 4:37 PM
+
+❯ Use AskUserQuestion once with two questions: first, multiSelect true, "Which toppings should go on the pizza we are
+  ordering for the team lunch on Friday afternoon at the office?" (header Toppings) options Cheese, Olives, Mushrooms;
+  second, single select, "Which deployment strategy should we use for the console?" (header Deploy) with options
+  "Blue-green deployment behind the load balancer with an automatic rollback when health checks fail" and "Rolling
+  update" each with a one-line description.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☐ Toppings  ☐ Deploy  ✔ Submit  →
+
+│ Which toppings should go on the pizza we are ordering for the team lunch on Friday afternoon at the office?
+
+❯ 1. [ ] Cheese
+         Cheese
+  2. [ ] Olives
+         Olives
+  3. [ ] Mushrooms
+         Mushrooms
+  4. [ ] Type something
+     Next
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
+

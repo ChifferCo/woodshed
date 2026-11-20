@@ -24,6 +24,17 @@ test('the prompt fills in the session paths and the pull request facts', (t) => 
   assert.ok(fs.existsSync(path.join(d, 'review-prompt.md')));
 });
 
+test('the prompt blocks only on likely, harmful bugs, security, rules and missing tests, and settles on re-reviews', () => {
+  const p = reviewPrompt({ dir: '/D', pr: 7, head: 'abc123', server: 'https://github.com', repo: 'acme/app' }).replace(/\s+/g, ' ');
+  assert.match(p, /A bug blocks when all of these hold: it happens on a path people actually take/);
+  assert.match(p, /not one that needs two unlikely things at once/);
+  assert.match(p, /A security problem blocks when you can show how it happens, even when it is unlikely/);
+  assert.match(p, /Everything else is optional/);
+  assert.match(p, /On a re-review, block only on an earlier blocking finding the head does not fix/);
+  assert.match(p, /what triggers it, how often, what it costs/);
+  assert.doesNotMatch(p, /REQUEST_CHANGES: a bug, a security problem/, 'a bug of any size no longer blocks');
+});
+
 test('the verdict reads back the conclusion, summary, comment and merge risk', (t) => {
   const d = dir(t);
   fs.writeFileSync(path.join(d, 'verdict.txt'), 'APPROVE\n');
@@ -83,7 +94,11 @@ test('the session\'s review prompt is the Actions review\'s, apart from where th
     .replaceAll('/D/summary.md', '/tmp/review-summary.md').replaceAll('/D/merge-risk.md', '/tmp/merge-risk.md')
     .replaceAll('/D/resolved.txt', '/tmp/claude-resolved.txt')
     .replace('The console puts it', 'The next step puts it').replace('so the console submits them', 'so the next steps submit them');
-  assert.equal(session, actions);
+  // Step 6's bar for what blocks, and step 9's blocker line, are the session review's alone for now: review.yml, which
+  // only other repos call, keeps its older wording until it is brought over.
+  const bar = (text) => text.replace(/6\. Decide the verdict.*?- COMMENT:/, '6. VERDICT - COMMENT:')
+    .replace(/list each blocking issue as `path\/to\/file\.mjs:123 — [^`]*`/, 'list each blocking issue as BLOCKER');
+  assert.equal(bar(session), bar(actions));
 });
 
 const verdictOf = (conclusion, { tier = 'Low', comments = [], resolved = [], text = conclusion } = {}) => ({

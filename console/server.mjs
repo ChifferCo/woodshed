@@ -61,11 +61,20 @@
 //   GET  /api/pulls?project=<name>   the project's open pull requests, for New session's Work on list
 //   GET  /api/sessions/<id>/applog  the end of the session's app logs: its start, the backend's and the frontend's
 //   GET  /api/sessions/<id>/diff    the Diff tab: the checkout against the default branch, uncommitted work included, as a plain diff
-//   GET  /api/sessions/<id>/transcript?limit=<n>  the conversation so far (what was asked, said and run), for a phone
-//                                   to scroll through by itself (session/sessionTranscript.mjs)
+//   POST /api/sessions/<id>/interrupt  Esc to the session's agent, the Chat tab's Stop: it ends the agent's turn
+//   GET  /api/sessions/<id>/prompt  what the agent's pane asks now (a question picker, an approval), for the Chat tab
+//   POST /api/sessions/<id>/answer  the Chat tab's answer to it, which the session types only once its pane shows that
+//        same prompt: {"kind": "question", "questions": [{question, options, pick}]} or {"kind": "approval",
+//        "decision": "approve"|"deny", "key": <GET /prompt's key, the hash of exactly what it asks>} (session/panePrompt.mjs)
+//   GET  /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>  the conversation so far (what was asked, said and
+//        run), for the Chat tab; `since` answers {unchanged: true} while the agent wrote nothing newer
+//        (session/sessionTranscript.mjs)
 //   GET  /review?session=claude-<id>, /reviews/claude-<id>/...   the Review tab: the shed's own review page and its calls,
 //                                carried to the session that answers them (reviewProxy.mjs)
 //   GET  /manifest.webmanifest, the icons   install as an app (the shed's pwa.mjs), before sign-in
+//   GET  /.well-known/openid-configuration, /.well-known/jwks.json   the console as an OpenID Connect issuer, whose
+//                                tokens its MCP relay adds for a server whose auth is oidc (oidcIssuer.mjs, mcpRelay.mjs),
+//                                such as woodshed-prod-mcp; before sign-in
 //   POST /api/sessions/<id>/resume  {"message": "..."}  a stopped shared session again, its conversation and all
 //   POST /api/sessions/<id>/delete  a shared session's conversation and databases, deleted now (a running one is stopped first)
 //   POST /api/sessions/<id>/remove  a shared session already deleted, off the list for everyone
@@ -111,6 +120,19 @@
 //   POST /api/console-settings/projects/color   {"name": "<project>", "color": "teal"}   a project's colour on the rail, from the palette (projectColors.mjs)
 //   POST /api/console-settings/projects/slack-channel  {"name": "<project>", "channel": "C..."|""}   a repo's own Slack channel, from its settings page
 //   POST /api/console-settings/clean  {"kind": "stuck"|"databases"|"home", "id": "<session id>"}  a stalled row's fix
+//   GET  /api/console-settings/mcp-servers   the MCP servers sessions get through the relay (mcpServers.mjs), never a
+//                                header's value, whether this console can lock a session down for a production one, and
+//                                the issuer and JWKS a server whose auth is oidc trusts
+//   POST /api/console-settings/mcp-servers   {"server": {"name", "url", "production", "shared", "people", "repos", "auth",
+//                                "audience", "header"}}   adds one, or replaces the one of that name; answers the list
+//   POST /api/console-settings/mcp-servers/remove  {"name": "<server>"}
+//   POST /api/console-settings/mcp-servers/header  {"name": "<server>", "value": "..."|""}   the header the console adds
+//                                to a server whose auth is header, kept in the secret store and never shown again
+//   POST /api/console-settings/mcp-servers/test  {"server": {...as above}, "value"?: "..."} or {"name": "<server>"}
+//                                calls the server as the relay would, with the same auth (mcpTest.mjs): initialize, then
+//                                tools/list. `value` is a header value to use instead of the saved one. Answers
+//                                {"ok": true, "status", "serverInfo": {"name", "version"}|null, "tools": <count>|null, "ms"}
+//                                or {"ok": false, "status": <number>|null, "error": "<what to do>"}; never a body or a secret
 //   GET  /api/console-settings/updates         the Woodshed commit this console runs, the newer ones on the branch its
 //                                git clone follows, and an update's steps (woodshedUpdate.mjs)
 //   POST /api/console-settings/updates/check   fetch that branch again, now
@@ -119,7 +141,7 @@
 //   POST /api/webhook/rotate     {"confirm": "github-webhook-secret"}
 //   POST /api/webhook/apply      {"confirm": "webhook"}   the Lambda's URL and the stored secret, set on the App
 //   POST /api/webhook/url        {"url": "https://...", "confirm": "webhook"}
-//   *    /term/<id>/...          the session's ttyd on claude's tmux (the Agent tab), proxied with its credentials
+//   *    /term/<id>/...          the session's ttyd on claude's tmux (the TUI tab), proxied with its credentials
 //   *    /shell/<id>/...         its second ttyd, on a plain shell in the repo (the Terminal tab)
 //   *    /redis/<id>/...         the session's redis-commander, through its statusd
 //   *    /pg/<id>/..., /mongo/<id>/...   a session's pgweb and mongo-express, on the databases the console made for it
@@ -154,7 +176,7 @@
 // A session started from My Woodshed is private: every route that reaches it (its page's data, terminal,
 // Redis, app, review, Stop, the websockets) answers anyone but its owner as it would an id that does not exist.
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -189,13 +211,17 @@ import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from '
 import { readMyPulls } from './myPulls.mjs';
 import { createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
+import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
+import { createMcpTester } from './mcpTest.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
 // The settings pages are one page too: each address loads every settings page's script, and common.js shows the one the
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
+// The most one message to an agent may be: statusd's own limit (session/statusd.mjs, MAX_SEND_CHARS).
+export const MAX_MESSAGE_CHARS = 8000;
 const SETTINGS_SCRIPTS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
-const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
+const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
   'logins.cjs': 'text/javascript; charset=utf-8',
@@ -218,6 +244,8 @@ const STATIC_FILES = {
   'sharedHome.js': 'text/javascript; charset=utf-8',
   'dictation.js': 'text/javascript; charset=utf-8',
   'messageBox.js': 'text/javascript; charset=utf-8',
+  'chatThread.cjs': 'text/javascript; charset=utf-8',
+  'chat.js': 'text/javascript; charset=utf-8',
   'appShare.js': 'text/javascript; charset=utf-8',
   'session.js': 'text/javascript; charset=utf-8',
   'events.js': 'text/javascript; charset=utf-8',
@@ -258,6 +286,9 @@ const PROJECT_CHANNEL_PATH = `${PROJECTS_PATH}/slack-channel`;
 const SLACK_SETUP_PATH = '/api/console-settings/slack';
 const SLACK_SETUP_WRITE_RE = /^\/api\/console-settings\/slack(?:\/(check|recheck|channels|disconnect))?$/;
 const PROJECT_TRIGGERS_PATH = `${PROJECTS_PATH}/triggers`;
+const MCP_SERVERS_PATH = '/api/console-settings/mcp-servers';
+const MCP_SERVERS_TEST_PATH = `${MCP_SERVERS_PATH}/test`;
+const MCP_SERVERS_WRITES = new Set([MCP_SERVERS_PATH, `${MCP_SERVERS_PATH}/remove`, `${MCP_SERVERS_PATH}/header`, MCP_SERVERS_TEST_PATH]);
 const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
 const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
 const PULLS_FRESH_MS = 60_000;
@@ -273,7 +304,7 @@ const STOP_RE = /^\/api\/sessions\/([0-9a-f]{8})\/stop$/;
 const ASSIGN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/assign$/;
 const SHARED_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(resume|delete|remove)$/;
 const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename)$/;
-const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|applog|diff|transcript)$/;
+const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|interrupt|answer|prompt|applog|diff|transcript)$/;
 // The skills in the repo change with a merge; an hour is soon enough for a / list.
 const SKILLS_FRESH_MS = 60 * 60_000;
 // A project's open pull requests, for New session's Work on list: every launcher that opens asks.
@@ -669,8 +700,10 @@ export function createHandler({
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
-  openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false,
+  openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
 }) {
+  // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
+  const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
@@ -1052,6 +1085,22 @@ export function createHandler({
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 401, { error: 'sign in first: open the app from the console' });
     console.log('app: sending to the console to sign in', { id });
     return redirect(res, `${config.publicUrl}/auth/app?id=${id}&next=${encodeURIComponent(url.pathname + url.search)}`);
+  }
+
+  // The issuer's discovery document and keys. A key that cannot be read answers 503, which a relying party retries; it
+  // never answers an empty key set, which would read as "trust nothing" until its cache ran out.
+  async function oidcDocument(req, res, pathname) {
+    if (!oidc) return reply(res, 404, { error: 'this console signs no tokens' });
+    if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, { error: 'method not allowed' });
+    let body;
+    try {
+      body = pathname === DISCOVERY_PATH ? oidc.discovery() : await oidc.jwks();
+    } catch (err) {
+      if (!err.shown) throw err;
+      return reply(res, err.status ?? 503, { error: err.message });
+    }
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=300' });
+    return res.end(JSON.stringify(body));
   }
 
   // A request on one of WOODSHED_APP_PORTS: the app of the session the port is lent to (appPorts.mjs).
@@ -1692,6 +1741,23 @@ export function createHandler({
     req.pipe(upstream);
   }
 
+  // The Chat tab's answer, with only the fields statusd reads: it checks them against the pane before typing.
+  function answerBody(body) {
+    const str = (v) => typeof v === 'string' && v.length <= 1000;
+    if (body?.kind === 'question' && Array.isArray(body.questions) && body.questions.length >= 1 && body.questions.length <= 4) {
+      const descriptionsOf = (q) => (Array.isArray(q.descriptions) && q.descriptions.length === q.options.length
+        && q.descriptions.every((d) => typeof d === 'string' && d.length <= 300) ? { descriptions: q.descriptions } : {});
+      const questions = body.questions.map((q) => (str(q?.question) && Array.isArray(q.options) && q.options.length <= 8 && q.options.every(str)
+        && Number.isInteger(q.pick) && q.pick >= 0 && q.pick < q.options.length ? { question: q.question, options: q.options, ...descriptionsOf(q), pick: q.pick } : null));
+      return questions.every(Boolean) ? { kind: 'question', questions } : null;
+    }
+    if (body?.kind === 'approval' && (body.decision === 'approve' || body.decision === 'deny')
+      && typeof body.key === 'string' && /^[0-9a-f]{64}$/.test(body.key)) {
+      return { kind: 'approval', decision: body.decision, key: body.key };
+    }
+    return null;
+  }
+
   function runningFor(id, login) {
     const session = findFor(id, login);
     return session?.status === 'running' && session.endpoint ? session : null;
@@ -1717,10 +1783,45 @@ export function createHandler({
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }
+    if (action === 'interrupt') {
+      console.log('console: agent interrupted from the page', { id: session.id });
+      return toStatusd(req, res, session, { method: 'POST', path: '/interrupt', body: {} });
+    }
+    if (action === 'answer') {
+      const sent = answerBody(body);
+      if (!sent) return reply(res, 400, { error: 'not an answer: a question\'s picks, or approve or deny' });
+      // Which picks, never their text: an answer can say anything.
+      console.log('console: answer typed in from the page', {
+        id: session.id, kind: sent.kind,
+        ...(sent.kind === 'question' ? { questions: sent.questions.length, picks: sent.questions.map((q) => q.pick + 1) } : { decision: sent.decision }),
+      });
+      return toStatusd(req, res, session, { method: 'POST', path: '/answer', body: sent });
+    }
     if (action === 'send') {
-      if (typeof body?.text !== 'string' || !body.text.trim()) return reply(res, 400, { error: 'nothing to send' });
+      if (typeof body?.text !== 'string' || !body.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f\s]/g, '')) return reply(res, 400, { error: 'nothing to send' });
+      // statusd takes no more (session/statusd.mjs, MAX_SEND_CHARS): said now, not queued to fail behind the others.
+      if (body.text.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in one message` });
+      // A statusd from before the guarded send types blind, Enter and all: a message from here could answer an approval
+      // that came up after the last status read. The person's own words never go that way; the TUI tab shows the screen.
+      if (session.safeSend !== true) {
+        // Not read since the console started (an upgrade, a restart): not known yet, which a status read says soon.
+        const unread = session.safeSend === undefined;
+        console.log('console: message from the page refused, the session cannot send safely', { id: session.id, unread });
+        return reply(res, 409, { error: unread
+          ? 'the console has not read this session since it started: try again in a few seconds'
+          : 'this session started before Chat could send safely: type it in the TUI tab' });
+      }
       console.log('console: message typed in from the page', { id: session.id, chars: body.text.length });
-      return toStatusd(req, res, session, { method: 'POST', path: '/send', body: { text: body.text } });
+      // Through the fleet, which holds it in the session's saved pendingMessages while the agent is busy (mid-turn, at a
+      // prompt) and sends it once it is back at its prompt: kept across a console restart and a stop mid-turn.
+      // The page's own id for it, which the console gives back when it sends a message it held (deliveredIds). One made
+      // here when the page sent none (the phone's message box): a held message with an id is a person's, which the fleet
+      // never types through a statusd that types blind.
+      const id = typeof body.id === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(body.id) ? body.id : randomUUID();
+      const outcome = await fleet.send(session, body.text, { id });
+      // Typed with no Enter: not sent, and not to send again, since it is in the agent's box.
+      if (outcome === 'in-box') return reply(res, 409, { typed: true, error: 'it went into the agent\'s box but was not sent: a prompt came up as it was typed. Answer it, then send or clear the box in the TUI tab' });
+      return reply(res, 200, { ok: true, held: outcome === 'queued', ...(outcome === 'unknown' && { unknown: true }) });
     }
     return toStatusd(req, res, session, { method: 'POST', path: '/scroll', body: { steps: body?.steps, pane: body?.pane } });
   }
@@ -2013,6 +2114,38 @@ export function createHandler({
     return consoleSettingsReply(res);
   }
 
+  // The MCP servers sessions get (mcpServers.mjs): the Console settings page's card, and a hosting program's calls.
+  async function mcpServersWrite(req, res, pathname, login) {
+    if (!mcpServers) return reply(res, 404, { error: 'this console hands its sessions no MCP servers' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) return reply(res, 400, { error: 'body must be a JSON object' });
+    const by = login ?? 'console';
+    if (pathname === MCP_SERVERS_TEST_PATH) {
+      try {
+        return reply(res, 200, await mcpTester.run({ name: body.name, server: body.server, value: body.value, by }));
+      } catch (err) {
+        if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
+        console.error('console: MCP server test failed', { message: String(err?.message ?? err).split('\n')[0] });
+        return reply(res, 502, { error: 'The test failed; the console log says why' });
+      }
+    }
+    try {
+      if (pathname === MCP_SERVERS_PATH) await mcpServers.save({ server: body.server, by });
+      else if (pathname === `${MCP_SERVERS_PATH}/remove`) await mcpServers.remove({ name: body.name, by });
+      else await mcpServers.setHeader({ name: body.name, value: body.value, by });
+    } catch (err) {
+      if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
+      console.error('console: MCP server change failed', { pathname, message: String(err?.message ?? err).split('\n')[0] });
+      return reply(res, 502, { error: 'The change failed; the console log says why' });
+    }
+    return reply(res, 200, mcpServers.view());
+  }
+
   async function woodshedUpdateReply(res, status = 200) {
     const view = woodshedUpdate ? await woodshedUpdate.view() : null;
     if (!view) return reply(res, 404, { error: 'this console does not run from a git clone, so it follows no Woodshed updates' });
@@ -2051,6 +2184,8 @@ export function createHandler({
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }
+    // Nobody outside its owner sees a session that has seen production data: its shares ended when it was tainted.
+    if (session.taintedAt && !revoke && (kind !== 'members' || body?.on)) return reply(res, 409, { error: 'this session has seen production data, so its app is not shared' });
     if (kind === 'members') {
       if (typeof body?.on !== 'boolean') return reply(res, 400, { error: 'on must be true or false' });
       if (body.on && session.status !== 'running') return reply(res, 409, { error: 'the session is not running: its app can be shared while it is' });
@@ -2083,9 +2218,10 @@ export function createHandler({
     const repoRoute = repoSettingsApi && repoSettingsRoute(pathname);
     if (repoRoute) return repoSettingsApi(req, res, { route: repoRoute, login });
     const terminalWrite = TERMINAL_RE.exec(pathname);
-    if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
+    if (terminalWrite && ['upload', 'scroll', 'send', 'interrupt', 'answer'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings/webhooks') return webhookSwitchWrite(req, res, login);
+    if (MCP_SERVERS_WRITES.has(pathname)) return mcpServersWrite(req, res, pathname, login);
     const slackWrite = SLACK_SETUP_WRITE_RE.exec(pathname);
     if (slackWrite) return slackSetupWrite(req, res, slackWrite[1] ?? null, login);
     if (pathname === '/api/my/reviews') return myReviewsWrite(req, res, login);
@@ -2189,6 +2325,8 @@ export function createHandler({
       return reply(res, 421, { error: 'unknown host' });
     }
     const url = new URL(req.url || '/', 'http://console.invalid');
+    // woodshed-prod-mcp fetches these to check a token the relay added: public, on whatever name the issuer is.
+    if (url.pathname === DISCOVERY_PATH || url.pathname === JWKS_PATH) return oidcDocument(req, res, url.pathname);
     // woodshed-db.mjs has no cookie: its token is its sign-in.
     if (url.pathname === CONNECTION_PATH && req.method === 'GET') {
       return tunnel ? tunnel.connection(req, res) : reply(res, 404, { error: 'this console has no tunnel to your databases' });
@@ -2237,6 +2375,7 @@ export function createHandler({
     if (pathname === REVIEWER_SETUP_PATH) return reviewerApp ? reply(res, 200, await reviewerApp.view()) : reply(res, 404, { error: 'this console cannot make a reviewer App' });
     if (pathname === '/api/setup/github') return githubSetup ? reply(res, 200, await githubSetup.view()) : reply(res, 404, { error: 'this console has no secret store, so it cannot keep a GitHub App' });
     if (pathname === '/api/console-settings') return consoleSettingsReply(res);
+    if (pathname === MCP_SERVERS_PATH) return mcpServers ? reply(res, 200, mcpServers.view()) : reply(res, 404, { error: 'this console hands its sessions no MCP servers' });
     if (pathname === UPDATES_PATH) return woodshedUpdateReply(res);
     if (pathname === SLACK_SETUP_PATH) return slackSetupReply(res);
     if (pathname === `${SLACK_SETUP_PATH}/channels`) return slackChannelsReply(res, { query: url.searchParams.get('q') });
@@ -2284,11 +2423,16 @@ export function createHandler({
     const shareRead = APP_SHARE_RE.exec(pathname);
     if (shareRead && !shareRead[2]) return appShareAction(req, res, shareRead, user.login);
     const imageMatch = TERMINAL_RE.exec(pathname);
-    if (imageMatch?.[2] === 'applog' || imageMatch?.[2] === 'diff' || imageMatch?.[2] === 'transcript') {
+    if (imageMatch?.[2] === 'applog' || imageMatch?.[2] === 'diff' || imageMatch?.[2] === 'transcript' || imageMatch?.[2] === 'prompt') {
       const session = runningFor(imageMatch[1], user.login);
       if (!session) return reply(res, findFor(imageMatch[1], user.login) ? 409 : 404, { error: 'the session is not running' });
       const limit = imageMatch[2] === 'transcript' ? url.searchParams.get('limit') : null;
-      const query = limit && /^\d{1,4}$/.test(limit) ? `?${new URLSearchParams({ limit })}` : '';
+      const since = imageMatch[2] === 'transcript' ? url.searchParams.get('since') : null;
+      const params = new URLSearchParams({
+        ...(limit && /^\d{1,4}$/.test(limit) && { limit }),
+        ...(since && /^\d{1,16}(\.\d{1,6})?$/.test(since) && { since }),
+      });
+      const query = params.size ? `?${params}` : '';
       return toStatusd(req, res, session, { method: 'GET', path: `/${imageMatch[2]}${query}` });
     }
     if (imageMatch?.[2] === 'image') {
@@ -2361,6 +2505,8 @@ export function canOpen(session, login, members) {
  */
 export function canOpenApp(session, login, members, sharedWithMembers) {
   if (canOpen(session, login, members)) return true;
+  // A tainted session's app is its owner's alone, whatever was shared before (fleet.taint ends the shares too).
+  if (session.taintedAt) return false;
   return Boolean(sharedWithMembers && session.owner && login && (!members || members.isMember(login)));
 }
 
@@ -2370,6 +2516,7 @@ function appTarget({ fleet, login, members, shares, link }) {
   return function targetFor(id) {
     const session = fleet.find(id);
     if (!session?.endpoint || session.status !== 'running') return null;
+    if (link && session.taintedAt) return null;
     if (!link && !canOpenApp(session, login, members, shares?.membersOpen(id))) return null;
     return { host: session.endpoint.host, statusPort: session.endpoint.statusPort, sessionToken: session.token };
   };
@@ -2382,7 +2529,8 @@ function appTarget({ fleet, login, members, shares, link }) {
  */
 function editorTarget({ fleet, login, members, id }) {
   const session = fleet.find(id);
-  if (!session?.endpoint || session.status !== 'running' || session.editor !== true || !canOpen(session, login, members)) return null;
+  // Off for a tainted session: the editor fetches its extensions and the rest from the internet, which its lockdown refuses.
+  if (!session?.endpoint || session.status !== 'running' || session.editor !== true || session.taintedAt || !canOpen(session, login, members)) return null;
   return { host: session.endpoint.host, statusPort: session.endpoint.statusPort, sessionToken: session.token };
 }
 
@@ -2515,6 +2663,13 @@ export async function startConsole({ provider, config: given = null, repos = nul
   if (installation.sessionApi) {
     const api = listenSessionApi({ config, handle: installation.sessionApi });
     servers.push({ server: api, open: countRequests(api) });
+  }
+  // A tainted session's one way out, beside the session API, on the address only sessions reach (egressProxy.mjs).
+  if (installation.egressProxy) {
+    const { server: egress, port } = installation.egressProxy;
+    egress.on('error', (err) => console.error('egress: could not listen', { port, message: err?.message }));
+    egress.listen(port, config.sessionApi.host, () => console.log('egress: listening', { host: config.sessionApi.host, port }));
+    servers.push({ server: egress, open: countRequests(egress) });
   }
   const tlsAsk = await startTlsAsk({ config, sessions: () => installation.fleet.sessions() });
   if (tlsAsk) servers.push({ server: tlsAsk, open: countRequests(tlsAsk) });

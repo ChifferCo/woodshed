@@ -1,0 +1,29 @@
+<!-- @dsCard group="Settings" height=300 subtitle="Two exclusive choices side by side, Production in its own colours when picked" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600;700&display=swap">
+<style>
+ body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
+ fieldset{margin:0;padding:0;border:0;max-width:640px}
+ legend{font-size:14px;font-weight:600;margin-bottom:8px;padding:0}
+ .cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+ .card{display:grid;grid-template-columns:18px minmax(0,1fr);gap:4px 10px;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--ground)}
+ .radio{width:16px;height:16px;margin-top:1px;border-radius:50%;border:1.5px solid var(--meta);box-sizing:border-box}
+ .title{font-weight:600;font-size:14px}
+ .line{grid-column:2;font-size:12.5px;color:var(--sub)}
+ .prod .title::before{content:"";display:inline-block;width:7px;height:6px;background:currentColor;border-radius:1px;margin-right:6px;vertical-align:1px;box-shadow:0 -3px 0 -1px currentColor}
+ .prod.on{background:var(--prod);border-color:var(--prod);color:var(--prod-ink)}
+ .prod.on .line{color:var(--prod-ink)}
+ .prod.on .radio{border:5px solid var(--prod-ink)}
+ .callout{margin-top:10px;max-width:640px;box-sizing:border-box;padding:10px 12px;border:1px solid var(--prod);border-left-width:4px;border-radius:6px;font-size:12.5px}
+ .callout p{margin:0 0 6px;font-weight:600;font-size:13px;display:flex;gap:8px;align-items:center}
+ .tag{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:var(--prod);color:var(--prod-ink)}
+ ul{margin:0;padding-left:18px}
+</style>
+<fieldset>
+ <legend>Kind</legend>
+ <div class="cards">
+  <label class="card"><span class="radio"></span><span class="title">Ordinary</span><span class="line">Reads no production data. Sessions that use it keep their internet.</span></label>
+  <label class="card prod on"><span class="radio"></span><span class="title">Production</span><span class="line">Reads production data. Its first call locks the session down for good.</span></label>
+ </div>
+</fieldset>
+<div class="callout"><p><span class="tag">Production</span>What happens to a session that uses it</p>
+ <ul><li>Its first call locks that session down for good: no internet but its org's private repos on GitHub, and no package installs.</li><li>The session is removed some time after it stops.</li></ul></div>

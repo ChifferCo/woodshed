@@ -17,9 +17,9 @@ function freePort() {
   });
 }
 
-function run(home, port, command) {
+function run(home, port, command, extraEnv = {}) {
   return spawnSync('bash', [SCRIPT, command], {
-    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, DEV_CONSOLE_PORT: String(port), SESSION_ID: 'abcd1234' }, timeout: 60_000,
+    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, DEV_CONSOLE_PORT: String(port), SESSION_ID: 'abcd1234', ...extraEnv }, timeout: 60_000,
   });
 }
 
@@ -48,4 +48,28 @@ test('start leaves the dev console answering under a session app name, with its 
   assert.equal(stopped.status, 0, stopped.stderr);
   await assert.rejects(fetch(`http://127.0.0.1:${port}/healthz`));
   assert.match(run(home, port, 'stop').stdout, /no dev console started/);
+});
+
+// Open app and app shares reach this console, which has no sign-in: a real agent on the owner's credentials is never
+// behind it, in a private session or with the switches for one set.
+test('start never runs a real agent, in a private session or when asked to', async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dev-console-app-'));
+  const port = await freePort();
+  t.after(() => {
+    run(home, port, 'stop');
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  const started = run(home, port, 'start', { WOODSHED_CLAUDE_AUTH: 'own', DEV_CONSOLE_REAL_CLAUDE: '1', DEV_CONSOLE_REAL_CODEX: '1' });
+  assert.equal(started.status, 0, started.stderr);
+  // Up means it answers; its list can take a moment longer under load, so it is read again until it parses.
+  let list = null;
+  for (let i = 0; i < 50 && !list; i++) {
+    list = await fetch(`http://127.0.0.1:${port}/api/sessions`).then((r) => r.json()).catch(() => null);
+    if (!list) await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  assert.ok(list, 'the session list');
+  const ids = (list.sessions ?? list).map((s) => s.id);
+  assert.ok(ids.includes('aaaa1111'), 'the made-up sessions are there');
+  assert.ok(!ids.includes('c1a0dea1') && !ids.includes('c0dea1ed'), 'no real claude or codex');
+  assert.doesNotMatch(fs.readFileSync(path.join(home, '.cache/woodshed-dev-console/console.log'), 'utf8'), /real: true/);
 });

@@ -27,7 +27,7 @@ someone who can be assigned commenting on an unassigned session takes it. Assign
 to everyone with Sessions from GitHub, and a private one cannot be assigned. On an issue's session the GitHub issue follows: the assignee is put on
 the issue, a hand over or Unassign takes off the person the console put there, and someone GitHub already had assigned
 stays (`console/issueTracking.mjs`). The console's colors, type and rail rules are written down in `console/designSystem/` (tokens, usage rules and component cards); `console/designSystem.test.mjs` fails when its colors differ from `style.css`. `/s/<id>` opens on the tab the session belongs to, with the shed's session pane: a bar
-with **Agent**, **Terminal**, **Review**, **Diff** and **App log** tabs, the title, status, issue,
+with **Chat**, **TUI**, **Terminal**, **Review**, **Diff** and **App log** tabs, the title, status, issue,
 branch and PR, and the session's buttons. On a phone the rail is the page,
 after the standalone shed's: sessions are rows with a star and ⋯ big enough for
 a thumb, Shared's status filter is chips above the list, ⋯ opens as a sheet
@@ -48,11 +48,11 @@ lists every section of every page you can open, narrows as you type (`repo`, `to
 you to the section, on its page. A new card on a settings page needs an entry in `settingsIndex.cjs`
 (`settingsIndex.test.mjs` fails when its id is not on the page). Where a name appears on both sides, the card says
 whose it is: **My repo settings** and **My session timeouts** are yours; Settings' Sessions card and each repo's Settings are everyone's.
-- **Agent** is claude's tmux, through ttyd on 7681.
+- **TUI** is the agent's own screen, live: claude's (or codex's) tmux, through ttyd on 7681.
 - **Terminal** is a plain shell in the repo, beside claude, with the same
   environment. It runs in its own tmux session, `shell`, through a second ttyd
   on 7684 at `/shell/<id>/`, behind the same sign-in and owner checks as the
-  Agent's.
+  TUI's.
 - **Diff**, while the session runs, is what its checkout changes against its merge base with the default branch, uncommitted
   and untracked work included, as plain git diff: no analysis and no GitHub. It is read when the tab opens and on
   **Read again**, never on a timer. A file past the review parser's line caps, or past 2 MB of hunks in all, shows
@@ -65,9 +65,10 @@ whose it is: **My repo settings** and **My session timeouts** are yours; Setting
   (`public/sessionTabs.cjs`: sessionStorage, read only by the login that picked it and dropped at sign-out). The page
   never writes `?tab` itself: a tab picked lives in the history entry's state, so a reload, Back and Forward keep it
   (the entry's tab wins over its address), and an address only ever carries a link's tab, kept as it came after a pick
-  or a fallback (it goes through sign-in as it came, and a ?tab nobody linked to never reaches someone else). `?tab=agent` asks for Agent itself, as Open the agent and Resume do. A tab the session cannot
-  show now (Diff once it stopped) opens Agent; a remembered one is then remembered as Agent. Until the route's lookup
-  answers, the list may be the kept snapshot's, so the tab is held and tried again first.
+  or a fallback (it goes through sign-in as it came, and a ?tab nobody linked to never reaches someone else).
+  `?tab=chat` asks for Chat itself, as Open the chat and Resume do; a tab remembered as `agent` before TUI's rename
+  opens TUI. A tab the session cannot show now (Diff once it stopped) opens TUI; a remembered one is then remembered as
+  TUI. Until the route's lookup answers, the list may be the kept snapshot's, so the tab is held and tried again first.
 
 Both terminals stay connected while another tab shows. A session started from an
 image without the second ttyd has Terminal greyed out.
@@ -83,7 +84,37 @@ for the session's details, the app, its databases, the key bar's switch and the
 card's own actions; then the tabs.
 The size and the key bar's choice are remembered in the browser.
 
-Under claude's terminal on the Agent tab, a phone has a message box
+A running session opens on its **Chat** tab (`public/chat.js`): the conversation as a chat instead of the agent's
+terminal. The thread is read from the agent's own record of it, claude's transcript or codex's rollout, through
+statusd's `GET /transcript` (session/README.md), every 1.5 s while the agent works or a message waits to show and every
+5 s otherwise, with `since` so a record that did not move costs the session a stat. The person's messages are on the
+right; the agent's replies are Markdown, read into a tree and built as DOM nodes, never as HTML, with only http(s)
+and mailto links (`public/chatThread.cjs`); each run of tool calls between them is one work log, summed up in a line
+(`Ran 3 commands, edited 2 files`, `1 failed`) that folds open to the calls, open while it is the turn still running.
+Under a turn's last work log that edited a file, **Changed N files** lists what the turn's edits changed, a row a file
+with its `+N −M`, each folding open to its hunks in the Diff tab's colours, built from the edits the record carries
+(statusd's `GET /transcript` gives each edit a small diff: session/README.md). It is open while the turn runs and folded
+once it is over. Files a command changed (`sed -i`, a generator) are in no record: a turn that ran one says so, with a
+link to the **Diff** tab, which has the whole branch.
+The composer under it sends with Enter (Shift+Enter is a new line; on a phone Return is a new line and the arrow
+sends), takes files from **📎**, a paste or a drop (to `/tmp/uploads`, their paths added to the message), dictation
+where the browser has it, and keeps its draft with the phone's message box. A message shows as sent until the record
+holds it. While the agent works the line over the composer says **Working** with its clock, from the console's state
+or sooner from the record (a turn that ends on the person or a tool, written in the last 90 s and after the console
+last said it settled), and **■** stops the turn: `POST /api/sessions/<id>/interrupt`, which types Esc into the agent's
+pane (`console: agent interrupted from the page`). claude's questions (AskUserQuestion) are answered in their card:
+one option picked for each question, then **Send answers**, `POST /api/sessions/<id>/answer`, which statusd types
+into claude's picker only once its pane shows that same question with those options, from the highlighted row, and
+checks the pane again after each step (`session/panePrompt.mjs`, session/README.md). An approval the pane shows,
+claude's permission dialog or codex's approval, is read from the screen (`GET /api/sessions/<id>/prompt`) onto the
+**Needs you** line with **Approve** and **Deny**, under the same check. A pane that is not what was answered is a 409
+the page shows as `Not answered: <why>` with a way to the TUI tab; the console logs `console: answer typed in from
+the page` with the picks' numbers or the decision, never their text. A free-text answer, a question that takes
+several options, and anything else the agent asks only in its terminal stay **Answer in the TUI tab**. The agent still runs in its terminal, on
+the **TUI** tab (`?tab=tui`; `?tab=agent`, its old name, still opens it): hooks, Remote Control and Resume work as before. A session that is not running has
+no Chat tab and shows its start or its end there.
+
+Under claude's terminal on the TUI tab, a phone has a message box
 (`public/messageBox.js`): the phone's own keyboard, so autocorrect, dictation
 and paste work, **📎** for photos and files, and **🎤** for the browser's speech
 recognition (hidden where the browser has none). Files go to `/tmp/uploads` with
@@ -128,7 +159,7 @@ What the page does, from the shed's own review code:
 - **Ask about a line** (its number), **or a file**: claude reads the code to
   answer, in a few paragraphs.
 - **Chat** beside it: one message at a time, with the conversation so far, the
-  analysis and the files. It can only read; changes are made in the Agent tab.
+  analysis and the files. It can only read; changes are made in the TUI tab.
 
 With GitHub connected in a My Woodshed session, the page also writes to GitHub
 as you:
@@ -162,7 +193,7 @@ Every 30 seconds it reads the repo's issue events and new comments:
 | --- | --- |
 | `woodshed` label on an issue | A new session, unless one is already active for it, on `woodshed/<issue>-<id>` or the branch of the issue's last session |
 | `woodshed` label on a PR | Nothing: the task would be the PR's own description, and the session would push to its branch. Comment `/woodshed <what to do>` instead |
-| `/woodshed <text>` on an issue or PR with an active session | The text is typed into claude, or held until claude is open |
+| `/woodshed <text>` on an issue or PR with an active session | The text is typed into claude, or held until claude is at its prompt between turns (open, and not working), in the session's saved `pendingMessages` |
 | `/woodshed <text>` with no active session | A new session with the text as its request. On a PR it checks out the PR |
 
 Only people with write access can start or message a session; others are
@@ -391,7 +422,7 @@ The rest of the shed's rail and shell is here too, on every session's page
   every page shows, for everyone who can see the session.
 
 The terminals are the shed's too (`console/public/terminal.js`, on both the
-Agent and Terminal tabs):
+TUI and Terminal tabs):
 - **Copy out**: a drag in claude copies, as tmux sends it by OSC 52, with a
   "Copied" toast. Safari refuses a copy that comes from the socket, and says so.
 - **Links**: on a phone a tap opens a URL, a wrapped one rejoined first.
@@ -420,9 +451,10 @@ Agent and Terminal tabs):
   one shown in bright amber and scrolled to; Enter goes to an older one, Shift+Enter a newer one, Esc closes it. The
   marks are xterm decorations, not its selection, since ttyd copies every selection to the clipboard. What scrolled
   off before this browser attached is in tmux's history alone: scroll past the top into copy mode, then `?` searches it.
-- **The conversation so far**, for an app to show and scroll by itself, apart from the terminal:
-  `GET /api/sessions/<id>/transcript?limit=<n>` answers what was asked, what the agent said, and a line for each
-  tool it ran, newest last, from the agent's own record (statusd's `GET /transcript`). Anyone who can open the
+- **The conversation so far**, the Chat tab's thread, for an app to show and scroll by itself, apart from the terminal:
+  `GET /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>` answers what was asked, what the agent said, and a
+  line for each tool it ran (marked when it failed, and with what an edit changed, as `diffs`), newest last, from the agent's own record (statusd's `GET
+  /transcript`), or `{unchanged: true}` while nothing was written since the last answer. Anyone who can open the
   session may read it, while it runs.
 
 And what the shed shows about each session:
@@ -695,6 +727,122 @@ session is active. claude keeps its plan behaviour behind the proxy, except
 that it fetches no managed settings or organization policy with a custom base
 URL (`/status` says so). The docker launcher's sessions, which get the team key
 in their env file, use it directly.
+
+### MCP servers
+
+Admins give sessions' claude MCP servers on Console settings' **MCP servers** card, or through its API
+(`/api/console-settings/mcp-servers`, `server.mjs`'s list), which a hosting program calls as an owner behind its proxy's
+identity header. Every one is reached through the console's relay (`mcpRelay.mjs`), `/mcp/<name>` on the session API
+with the session's own token as its bearer, so a session never holds what a server takes to let it in. The list is
+`mcpServers` in `state.json`, or an embedding program's (`mcpServers` below, "Embedding the console"), beside the one
+the environment names (`woodshed-prod`, from `WOODSHED_PROD_MCP_URL`), which is changed only where it is set. Each
+server (`mcpServers.mjs`, `checkServer`):
+
+- `name` (what claude calls it), `url` (its Streamable HTTP endpoint, which the console calls), `people` and `repos`
+  (GitHub logins and `owner/name`, or `*`).
+- `production`: one that reads production data. Only My Woodshed sessions running claude get it, turned off until
+  their person turns it on in `/mcp`, and its first call taints the session (below). It can be added only where the
+  console can lock a session down: the docker launcher, or AWS with `prod_mcp`'s guarded network, and a session API and
+  egress proxy address. Otherwise the page and the API say why.
+- `shared` (ordinary ones only): shared sessions and questions from Slack get it too. A QA run or a review never gets
+  any, since it runs a pull request's code, nor does a Codex session yet.
+- `auth`, what the relay adds to each call: `oidc`, a five-minute token the console signs for `audience` (below);
+  `header`, a header (`header`, such as `authorization` or `x-api-key`) whose value is kept in the secret store as
+  `mcp-servers/<name>/header`, written once on the card or with `/header` and never read back; or `none`.
+
+**Testing a server** (`mcpTest.mjs`, `POST /api/console-settings/mcp-servers/test`): the card's Add server and Save test
+first, and each row has Test. The console itself calls the server as the relay would, with the same auth, and sends
+`initialize`, `notifications/initialized` (which must be accepted) and `tools/list`. A signed token (`sub`
+`console:test`, `test: true`) is made only for a saved server, to its saved address and audience: a server not saved
+yet, or one typed with another address or audience, is tested with no token, so no admin can catch a token at an
+address of their own and replay it to a server that trusts this console (a production server should refuse any `sub`
+but `private:<login>` anyway). A saved header value goes only to its saved address's origin; a typed one wherever the
+form says, and a saved value is read only while the server's address and the value's revision are still those the
+caller started with, so a test or relayed call in flight across an edit sends it nowhere. The server's own words (its
+name and version, a JSON-RPC error's message) come back only from a test that added nothing: one that added a header or
+a token answers with the tool count and an error's code alone, since a server could echo what it was sent. The console
+connects to the address its link-local check passed, never resolving the name again. No two
+servers share an audience: a token the relay makes for one is never one another takes. It answers whether it was reached, the server's name and version and how
+many tools it has, or one sentence saying what failed (not reached, refused what the console added, no MCP endpoint at
+that path, not an MCP server). No session takes part, nothing is tainted, and neither the answer nor the log
+(`mcpServers: server tested` with `ok` and `status`) carries the server's body or any secret. A failed test saves
+nothing unless the admin chooses Add anyway. The console never calls a link-local address, the instance metadata's
+among them, by address or by a name resolving to one: the relay and the test both refuse it.
+
+A server added, changed or removed reaches sessions started after it; a removed one's calls are refused at once
+(`mcpRelay: refused, no such server`). The fleet hands each session its servers' names in `WOODSHED_MCP_SERVERS`, and
+the session writes claude's `--mcp-config` from them (`session/taint.mjs mcp-config`). The console logs `mcpServers:
+server added`, `server changed` (with `productionWas` when its kind changed), `server removed`, `header saved` or
+`header cleared` with who, `mcpRelay: first call relayed` once for each session and server, `mcpRelay: refused` with
+`why`, `mcpRelay: auth not added` (a header with no value yet), `mcpRelay: the MCP server refused what the console
+added` (a 401 or 403 from it) and `mcpRelay: MCP server not reached`.
+
+A signed token is RS256 from the console as an OpenID Connect issuer (`oidcIssuer.mjs`: the key in the
+`oidc-signing-key` secret or `oidc-signing-key.pem` in the state folder, made the first time one is signed), with
+`iss` the console's address (`WOODSHED_OIDC_ISSUER`), `aud` the server's audience, `sub` `private:<login>` for a My
+Woodshed session or `session:<id>` for a shared one, and `login`, `session_id`, `session_kind` and `repo`. The
+discovery document and the keys are at `/.well-known/openid-configuration` and `/.well-known/jwks.json`, before
+sign-in; the card shows both for the server's own configuration. A local console with no secret store yet keeps its key
+in `oidc-signing-key.pem` in the state folder; once a store is chosen and the console restarts, it makes a new key there,
+which the JWKS then serves: a server fetching the JWKS follows by itself, and a test token signed before it no longer
+checks.
+
+### Production access
+
+A My Woodshed session can debug a real production bug through a production MCP server such as woodshed-prod-mcp, which
+masks and audits what it returns, and the console makes sure what the session saw stays in it (`../docs/reference.md`,
+"Production access", says what it covers; `../CLAUDE.md`'s Rules, why it is the one exception). Off until an admin adds
+a production server on Console settings (above, "MCP servers"), or the environment names one (`WOODSHED_PROD_MCP_URL`,
+with `WOODSHED_PROD_MCP_PEOPLE` and `_REPOS`).
+
+- **The relay** (`mcpRelay.mjs`): `/mcp/<name>` (and `/prod-mcp` for the environment's `woodshed-prod`) on the session
+  API. Each call goes on with the server's auth, for woodshed-prod-mcp a signed token with `aud` `woodshed-prod-mcp`.
+- **The session.** An eligible session's claude gets the production server from `--mcp-config` (`/tmp/woodshed-mcp.json`),
+  in its `disabledMcpServers` for the checkout: claude makes no call to it until its person turns it on in `/mcp`. It is
+  never started without the machine's Docker socket, which would let it undo a lockdown (its own, under Sysbox, stays).
+- **Who can be tainted**: only a session that could use a production server when it started, first or on a Resume (`mayUseProduction` on
+  its record, `fleet: a session that may use production`), which started as the lockdown needs: no machine's Docker,
+  its own databases, and on AWS the guarded network. One started before a server listed it is refused (503, `started
+  before it could use production`): a new session is ready for it. Its pass-through on AWS is likewise for those alone.
+- **The taint** (`fleet.taint`): the first relayed call of any kind to a production server locks the session down through the launcher
+  (`lockDown`), and only then sets `taintedAt` and forwards the call; the egress proxy holds the session to the
+  lockdown's rules from the moment it starts. A lockdown that fails answers the call 503 and leaves the session as it
+  was. The fleet ends the app's shares, then tells the session's statusd (`POST /taint`), which points every tool at
+  the egress proxy, adds `session/tainted.md` to the rules, stops the settings sync and reopens claude's conversation on
+  the Anthropic proxy with web search and fetch off and its production servers alone (the relay refuses it every
+  other server), typing in what changed (`taint.mjs`'s message). A resumed tainted
+  session starts so (`WOODSHED_TAINTED`). Its card says **Production**, its pane bar **Production data**; it has no Share
+  the app, Editor or Remote Control.
+- **The egress proxy** (`egressProxy.mjs`, `githubEgress.mjs`, `egressCerts.mjs`): on `WOODSHED_EGRESS_PORT`, taking the
+  session's token as its proxy credential. A tainted session reaches GitHub's hosts alone, through TLS the proxy opens
+  with its own authority (made by `openssl` in `egress/` in the state folder, name-constrained to github.com): git and
+  the API on its project's owner's repos that are not public, and the API's pull request writes and GraphQL mutations,
+  each id checked; its own project's repo it may always read (fetch, clone, API reads), public or not, so a resumed
+  session gets its branch, though it never pushes to a public one (the GraphQL document read with a tokenizer as GitHub reads it: a mutation must be the document's only
+  operation, with no fragment definitions or variable defaults, each top-level field an allowed one, every value a variable, and every value that lands
+  in an `ID` variable or an `id`/`…Id`/`…Ids` field checked). A guarded session not tainted yet (AWS) goes anywhere on
+  the public internet, untouched, but never to the console's own network: the name is resolved and every address it
+  has must be public (no loopback, link-local and so no instance metadata, private or shared ranges), and that address
+  is the one dialed. A session whose launcher does not guard its egress is refused pass-through altogether
+  (`passThrough`). Every tunnel an untainted session has open is cut the moment its lockdown starts (`fleet.onLocking`,
+  `egress: open connections cut at the lockdown`), as are its calls to ordinary MCP servers (`mcpRelay: ordinary calls
+  cut at the lockdown`), and none opens while it runs. It logs `egress: refused` with the host and why, never the path.
+- **What it kept** (`sessionApi.mjs`, `fleet.mjs`): its Claude home is saved for its Resume but never copied to the
+  owner's, `/claude-settings` refuses it, and its container's log is never read into the console's. It is removed
+  Console settings' **Remove a stopped session that saw production data after** (24 hours, or
+  `WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS`) after it stops, home and attachments with it; a home that would not delete is
+  tried again (`taintedHomesPending` in `state.json`). Its record goes with it, statusd's readings and all.
+- **The Anthropic proxy** reads a tainted session's calls and refuses one that would have Anthropic reach the internet
+  for it (`web_search`, `web_fetch`, `mcp_servers`, or an image or document anywhere in it with a `url` source):
+  `anthropicProxy: refused, a tainted session asked Anthropic to reach the internet`. A POST it cannot read as JSON is
+  refused too (`anthropicProxy: refused, a tainted session's call the console cannot read`).
+- **Its databases**: a My Woodshed session that may use production is given a copy of its own at its first start, as
+  a shared session is (`ownDatabases` on its record, `woodshed__<id>`), never its owner's `woodshed_<login>`, which the
+  owner's other sessions read: `fleet: a session that may use production gets databases of its own`. The copy is
+  kept while the session is on the list and dropped once it is removed (`keptIds`, the databases sweep).
+
+What woodshed-prod-mcp could add to tie its audit to Woodshed: its audit entries could carry the token's `session_id`
+and `login`, so a call is traced to the session that made it.
 
 ## Setting up the GitHub App from the console
 
@@ -1619,6 +1767,13 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   comments})}`, as `reviewerApp.mjs`'s, through which review sessions' verdicts are submitted and trusted. Without it
   no verdict counts (above, "The reviewer App"), and the console offers no reviewer App setup of its own. Logged as
   `console: GitHub App from the host`.
+- `mcpServers: {list(), save({server, by}), remove({name, by})}`: where the program keeps the MCP servers sessions get
+  (above, "MCP servers"), so Console settings' card and its API change them there and nothing goes to `state.json`.
+  `list` answers the servers in the API's shape (each is checked, and one that does not check is left out with
+  `mcpServers: a server from the program left out`); it is read at start and after each change. `save` is handed the
+  server as core keeps it, with `headerSavedAt`, `updatedBy` and `updatedAt`, to keep as it is; a header's value stays
+  in the console's secret store, never the program's list. A program that only adds servers for its people can call
+  the API instead, as an owner.
 - `woodshedUpdate: false`: no Woodshed card on Console settings, no dot on the avatar for it (`updates` is left out of
   `/api/me`), and no update check, for a program that deploys Woodshed itself. Its update routes
   (`/api/console-settings/updates`, `/check`, `/update`) answer 404, as on a console that runs from no git clone (below,
@@ -1683,7 +1838,7 @@ filters from the workflow file on the default branch, and waits for the suite wh
 cannot. With no `pullRequests` (or no project file, or neither a review nor a suite), it
 is posted once it is out of draft and none of its checks is running or failed (with no checks at all, 2 minutes after it was first seen, so they have time to show). A project
 file that cannot be read holds every pull request until it can. A My Woodshed session's
-pull request is never posted. Until then the
+pull request is never posted: it is watched instead (below). Until then the
 pull request waits in `state.json` (`slackPending`), checked once a minute and
 past the session's end; one closed, or still waiting after a week (a number on
 the Console settings page), is dropped unposted. Once it is posted, its session stops (`posted to Slack`) and is
@@ -1692,6 +1847,41 @@ its head commit, or a suite that failed or was skipped there, is typed
 into the session, once each, with the `rerun` tags to put on the next commit, and a paused session is resumed with it.
 A pull request older than the session is never posted: a resumed
 branch's, or the one a PR's own session works on.
+
+**A My Woodshed session's pull request is watched**, with or without Slack (`watch` on its `slackPending` item), so
+the session keeps going until its review and suites pass:
+
+- **What it hears.** Each verdict asking for changes and each failed or skipped suite, as a shared session does, and
+  once the gates pass on a head commit, a note (once per commit) to read the review's notes, fix what is real, see any
+  other check in `gh pr checks` through, say what passed and stop. A suite whose path filters leave the change out is
+  named as not run. Where a shared session would post a `Needs a human:` comment, it asks its owner at its terminal.
+  Nothing is posted to Slack or written on GitHub.
+- **Which pull request.** Only on a session whose statusd types only into a running agent when asked
+  (`agentOnlySend` in its status; an older image's is not watched: `fleet: pull request not watched, the session's
+  image types into its pane unchecked`). Only its owner's: one they opened, or one the console's App opened (a session that pushes
+  as the App) from the branch the console made for the session at its start (`madeBranch`: `woodshed/<owner>-<id>` or
+  `woodshed/<issue>-<id>`, not an existing branch it was started on, nor whatever it has checked out since; while the App's login is not read yet, such a pull request is decided a minute
+  later), in the repo itself and not a fork, after the session started (`slack:
+  someone else's pull request, not watched`). Never a review-only session's, nor one on another repo than its
+  project's (`fleet: pull request on another repo than the session's project, not watched`, as for a session whose
+  project left the list). Each watch is its session's own: two sessions on one pull request are each told, and a shared
+  session's post on it still goes out.
+- **How long.** While the session runs, so a fix pushed after the approval is followed to its own verdict. It ends when
+  the pull request closes, the session stops (nothing resumes a My Woodshed session but its owner), its project leaves
+  the console or its repo is another now (a default project replaced; each watch keeps its `repo`), the week runs out
+  (passed or not; checked again after GitHub's reads, before the session is told, as is the head commit: a push
+  during the reads makes them the old commit's, and nothing is said of it), or the project file has no review or
+  suite (`slack: pull request no longer waiting` with why). A watch that ran out is not started again by the session
+  coming back to its pull request (`watchesExpired` in `state.json`, by session, kept until the session leaves the
+  list). A close during the reads ends the watch too.
+- **While the session is elsewhere.** While it reports another pull request or none (a branch with none, or statusd's
+  lookup failing), the watch waits, keeping what it told, and goes on once the session is back; it still ends if the
+  pull request closes meanwhile.
+- **Resume and delivery.** A resumed session's watch starts again, its week over, and its new run is told where the
+  pull request stands. A stopping session hears nothing, and one claude is not open in (read again from statusd just before typing in, with
+  the pull request it reports, and the pull request read again from GitHub to be still open on the same commit, and statusd checks the pane once more as it types, `agentOnly`, so a closed claude's
+  shell never gets the text) is told at the next check
+  (each minute, even while webhooks flow) rather than held, so nothing is typed in at a later Resume.
 
 The console learns of the pull request from the session's status (`prUrl`),
 reads it and its checks from GitHub with the App's token
@@ -2045,6 +2235,7 @@ card's:
 | Retention | Delete a merged or closed session after | 0 to 30 days | 3 |
 | Retention | Delete a finished session whose PR stays open after | 1 to 90 days | 14 |
 | Retention | Delete a paused session with no pull request after | 1 to 60 days | 7 |
+| Retention | Remove a stopped session that saw production data after | 1 to 168 hours | `WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS`, 24 |
 | Slack, Pull requests' Limits | Stop waiting for the review and the suite after | 1 to 30 days | 7 |
 | Slack, Pull requests' Limits | Wait for the QA check before the brief for at most | 0 to 180 minutes | 30 |
 | Slack, Pull requests | Channel | picked from the channel picker (a channel ID where the app cannot list them), or none for no posts; a project with its own channel on its repo's Settings posts there instead | none |
@@ -2058,6 +2249,11 @@ own values, as a card does.
 They live in `state.json` under `settings`, and the console reads them each
 time it uses one, so a change applies on its next tick with no restart. The
 environment values are what a setting is until someone changes it.
+
+The **MCP servers** card, after Repos, lists the servers sessions get and adds, edits and removes them ("MCP servers"
+above, under the Anthropic proxy): each change applies at once, with no typed confirm, and is logged with who made it.
+A header's value is a password field, sent once and never shown again. Where the console cannot lock a session down
+the card says why and offers no Production kind.
 
 The **Woodshed** card, first on the page, follows the git clone the console runs from (`console/woodshedUpdate.mjs`;
 `WOODSHED_CHECKOUT` names another): at start and every hour, and on **Check now** (`POST
@@ -2292,6 +2488,12 @@ Remove My Woodshed.
 | `WOODSHED_LOCAL_WEBHOOK_PORT`, `_WEBHOOK_HOST`, `_WEBHOOK_URL` | none, `127.0.0.1`, none | On the local provider: where its webhook receiver listens (`providers/local/webhookReceiver.mjs`), at the Lambda's paths, `POST /github` and `POST /slack`, checked against `github-webhook-secret` and `slack-signing-secret` in `WOODSHED_LOCAL_SECRETS_DIR`, which it needs. `_WEBHOOK_URL` is the public address a proxy in front of it answers at, and the Secrets & webhooks page sets `<url>/github` on the GitHub App. A message the console fails on is tried three times; one still waiting when the console restarts is lost, and the poll finds it |
 | `WOODSHED_TUNNEL_POSTGRES`, `_TUNNEL_MONGO` | none | Where `woodshed-db.mjs`'s connections go, as `host:port`, each used only for a database the installation runs. Each one is a tunnel of its own, and the script listens for those alone; without either, or without own databases, My settings has no From your computer. Without the Postgres one there is no Restore a dump for Postgres either, and without the Mongo one none for Mongo. Set on the base box, for the databases it runs: RDS and the box's private address |
 | `WOODSHED_SESSION_API_HOST`, `_SESSION_API_PORT` | none, `7691` | With the App: the address the session API listens on (`sessionApi.mjs`). In AWS, the base box's private IP, which only session tasks can reach |
+| `WOODSHED_PROD_MCP_URL` | none | Production debugging ("Production access" above): one production MCP server from the environment, `woodshed-prod`, such as woodshed-prod-mcp, which the console's relay at `/prod-mcp` on the session API reaches, beside those Console settings adds. Set on the base box from Terraform's `prod_mcp.url` |
+| `WOODSHED_PROD_MCP_PEOPLE`, `_PROD_MCP_REPOS` | none | Whose My Woodshed sessions, on which repos, may use it: GitHub logins and `owner/name`, comma-separated, or `*` for all. Empty is nobody |
+| `WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS` | `24` | How long a tainted session is kept, stopped, for its Resume, before it is removed with all it kept, until Console settings' Retention card says otherwise |
+| `WOODSHED_OIDC_ISSUER` | `WOODSHED_PUBLIC_URL` | The issuer the relay's signed tokens name, whose `/.well-known/jwks.json` an MCP server fetches: the console's public address, unless its documents are served from another name |
+| `WOODSHED_EGRESS_PORT`, `WOODSHED_EGRESS_PROXY_URL` | `7693`, the session env's `WOODSHED_CONSOLE_URL` on that port | The egress proxy a tainted session leaves through (`egressProxy.mjs`), on the session API's address, and the URL sessions reach it at (on AWS, the base box's private address, from Terraform) |
+| `WOODSHED_ECS_GUARDED_SUBNETS`, `_ECS_GUARDED_SECURITY_GROUP` | none | For `ecs` with `prod_mcp`: the network a session that may use production starts on (`../providers/aws/README.md`, "Production access"). Both or neither |
 | `GH_TOKEN` | `gh auth token` | Without the App: polls, comments and reacts. Sessions push with it too unless the env file sets its own `GH_TOKEN`, and the console warns at startup when it does not: your own token reaches far more than this repo, which undoes the narrow token "Why permissions are off" in `../session/README.md` relies on |
 
 These had an older prefix until the project became Woodshed; the old names still work and log a deprecation

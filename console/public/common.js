@@ -269,10 +269,23 @@
    * @returns {HTMLElement|null}  the tag after a card's title: Private, or Assigned on a shared session someone has
    */
   function ownerTag(s, { named = false } = {}) {
+    // A session that has seen production data is its owner's alone too, and says so first.
+    if (s.owner && s.taintedAt) return productionTag(s);
     if (s.owner) return h('span', { class: 'otag is-private', title: 'Only you see this session' }, 'Private');
     if (s.assignee && named) return h('span', { class: 'otag is-assigned is-named', title: `Assigned to @${s.assignee}` }, personText(s.assignee));
     if (s.assignee) return h('span', { class: 'otag is-assigned', title: `Assigned to ${personText(s.assignee)}` }, 'Assigned');
     return null;
+  }
+
+  /**
+   * The mark of a session that has seen production data (console/mcpRelay.mjs): on its card, in place of Private, and on
+   * its pane bar with the longer word.
+   * @param {object} s
+   * @param {{long?: boolean}} [o]
+   */
+  function productionTag(s, { long = false } = {}) {
+    const title = `Production data since ${new Date(s.taintedAt).toLocaleString()}. Only you see this session; it reaches nothing but the console, its databases and your organization's private repos, for good, and everything it kept is deleted when it is removed.`;
+    return h('span', { class: 'otag is-production', title }, long ? 'Production data' : 'Production');
   }
 
   /**
@@ -787,7 +800,10 @@
 
   function setupAppToast(sent, s) {
     const agent = agentOf(s);
-    return sent === 'queued' ? `${agent} will be asked to set up the app when its turn ends` : `Asked ${agent} to set up the app`;
+    if (sent === 'queued') return `${agent} will be asked to set up the app when its turn ends`;
+    if (sent === 'in-box') return `The ask went into ${agent}'s box but was not sent: a prompt came up. Answer it, then send it from the TUI tab`;
+    if (sent === 'unknown') return `No answer from the session: ${agent} may have been asked. Check its screen before asking again`;
+    return `Asked ${agent} to set up the app`;
   }
 
   // Set up app says what it does before it asks the agent: the button's name alone did not, and a phone shows no title.
@@ -1533,7 +1549,9 @@
       method: 'POST', headers: { 'x-woodshed': '1', 'content-type': 'application/json' }, body: JSON.stringify(body || {}), signal,
     });
     const answer = await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(answer.error || `POST ${path} answered ${res.status}`), { status: res.status }, answer.link && { link: answer.link });
+    // `answered`: the console's own refusal, with its reason; a refusal with none (a proxy's page, a reply cut off) may
+    // have come after the console did the work.
+    if (!res.ok) throw Object.assign(new Error(answer.error || `POST ${path} answered ${res.status}`), { status: res.status, answered: typeof answer.error === 'string' }, answer.link && { link: answer.link }, answer.typed === true && { typed: true });
     return answer;
   }
 
@@ -1697,11 +1715,21 @@
   }
   forgetOtherLogins(document.querySelector?.('meta[name="woodshed-login"]')?.content ?? null);
 
+  // A session page's tabs, by their ?tab= name. Chat, the default, has none. `agent` is TUI's name from before it was
+  // renamed: an old link, a bookmark or a Needs you button made then still opens it.
+  const SESSION_TABS = ['tui', 'terminal', 'review', 'diff', 'applog'];
+  const TAB_ALIASES = { agent: 'tui' };
+  /** @returns {string}  the tab a ?tab= value opens: one of SESSION_TABS, or 'chat' for none or one it does not know */
+  function sessionTab(asked) {
+    const name = TAB_ALIASES[asked] ?? asked;
+    return SESSION_TABS.includes(name) ? name : 'chat';
+  }
+
   window.Woodshed = {
-    invite, forgetSignedIn, forgetOtherLogins, signingOut, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
+    invite, sessionTab, forgetSignedIn, forgetOtherLogins, signingOut, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
-    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
+    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();

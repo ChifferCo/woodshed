@@ -95,7 +95,8 @@ export function pullNumber(prUrl) {
  * @returns {Set<string>}  the sessions whose databases stay: every active one, and each stopped shared one still kept
  */
 export function keptIds(sessions) {
-  return new Set(sessions.filter((s) => ACTIVE_STATUSES.has(s.status) || (s.kept && !s.owner)).map((s) => s.id));
+  // A private session with databases of its own (one that may use production) keeps them while it is on the list.
+  return new Set(sessions.filter((s) => ACTIVE_STATUSES.has(s.status) || (s.kept && !s.owner) || (s.owner && s.ownDatabases)).map((s) => s.id));
 }
 
 /**
@@ -427,6 +428,14 @@ export function statusUpdate(session, status, nowIso) {
     branch: status.branch || session.branch,
     head: status.head || session.head,
     prUrl: prUrl || session.prUrl || null,
+    // The pull request statusd reported last, on any repo, or null for none on the branch it is on now (or a failed
+    // lookup): while it is not the watched one, the watch of a My Woodshed session's pull request waits (fleet.mjs,
+    // prListening), though `prUrl` keeps the last on its own repo. A statusd that sends no `prUrl` leaves it as it was.
+    reportedPrUrl: typeof status.prUrl === 'string' && status.prUrl ? status.prUrl.slice(0, 300)
+      : 'prUrl' in status ? null : session.reportedPrUrl,
+    // Whether its statusd types only into a running agent when asked (`agentOnly`): an older image's would type into
+    // the shell an exited agent leaves, so its private session's pull request is not watched.
+    agentOnlySend: status.agentOnlySend === true,
     // Every pull request the session has reported, oldest first: a session can open another after one merged.
     prUrls: withPrUrl(session, prUrl),
     app: APP_STATES.has(status.app) ? status.app : null,
@@ -438,6 +447,11 @@ export function statusUpdate(session, status, nowIso) {
     appName: appsFrom(status.apps)?.some((a) => a.name === status.appName) ? status.appName : null,
     // The project file turns the editor on and the image has it: Editor ↗ shows, and the console lets it through.
     editor: status.editor === true,
+    // Text waits in the agent's box at its prompt, unsent: Chat says so, and points at the TUI tab.
+    boxText: status.boxText === true,
+    // statusd sends with the guards: between turns, into an empty box, never into a prompt. One from before them types
+    // blind, so the console sends through it only while its agent is plainly idle (fleet.mjs, canType).
+    safeSend: status.safeSend === true,
     // The project uses Redis, so the session started one: Data ▾ offers it. An image from before statusd said so
     // still ran it.
     redis: status.redis !== false,
@@ -459,7 +473,9 @@ export function statusUpdate(session, status, nowIso) {
  * @param {object} session
  * @returns {object}  the session as the browser sees it: no token, no endpoint
  */
-export function publicSession({ token, terminalToken, endpoint, pendingMessages, ...rest }) {
+export function publicSession({ token, terminalToken, endpoint, pendingMessages, reportedPrUrl, agentOnlySend, ...rest }) {
   // A session whose image predates the Terminal tab has no shell ttyd to open.
-  return { ...rest, pendingMessages: pendingMessages?.length ?? 0, hasShell: Boolean(endpoint?.shellPort) };
+  // The page's ids of the messages held, never their text: a send whose answer it lost can tell it is still held.
+  const heldIds = (pendingMessages ?? []).filter((m) => m && typeof m === 'object' && m.id).map((m) => m.id);
+  return { ...rest, pendingMessages: pendingMessages?.length ?? 0, heldIds, hasShell: Boolean(endpoint?.shellPort) };
 }

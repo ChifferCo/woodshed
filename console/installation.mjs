@@ -28,6 +28,12 @@ import { createAppApi } from './githubApp.mjs';
 import { appOwnerCheck } from './appOwner.mjs';
 import { createAppIdentity, hostAppIdentity } from './appIdentity.mjs';
 import { createAnthropicProxy } from './anthropicProxy.mjs';
+import { createEgressCerts } from './egressCerts.mjs';
+import { createEgressProxy } from './egressProxy.mjs';
+import { GITHUB_HOSTS } from './githubEgress.mjs';
+import { createOidcIssuer } from './oidcIssuer.mjs';
+import { createMcpRelay } from './mcpRelay.mjs';
+import { createMcpServers, mcpSettings } from './mcpServers.mjs';
 import { createOpenAiProxy } from './openaiProxy.mjs';
 import { createCodexModels } from './codexModels.mjs';
 import { createSessionApi, sessionForToken } from './sessionApi.mjs';
@@ -207,6 +213,40 @@ async function loadAppKey(config, secrets) {
   };
 }
 
+// The MCP servers' side of the console (mcpServers.mjs, mcpRelay.mjs): the console as the OIDC issuer whose tokens the
+// relay adds, its key a secret where there is a store and otherwise a file in the state folder, made the first time a
+// token is signed; and, where a session can be locked down, the certificate authority the egress proxy shows tainted
+// sessions for GitHub.
+function mcpAccess({ loaded: given, secrets, launcher }) {
+  // A config an embedding program built by hand may have neither: no production server, and no egress proxy.
+  const loaded = { ...given, mcp: given.mcp ?? mcpSettings({}, given.publicUrl ?? 'http://localhost'), egress: given.egress ?? { port: 7693, sessionUrl: null } };
+  // A secret store with no backend yet (the local provider before one is picked) keeps nothing: the key goes in a file.
+  const keyStore = secrets && secrets.configured?.() !== false ? secrets : null;
+  const issuer = createOidcIssuer({ issuer: loaded.mcp.issuer, secrets: keyStore, keyFile: keyStore || !loaded.stateDir ? null : path.join(loaded.stateDir, 'oidc-signing-key.pem') });
+  const lockdown = () => {
+    if (typeof launcher?.lockDown !== 'function') return { available: false, why: 'its launcher cannot move a running session onto a locked network' };
+    if ('guardsEgress' in launcher && !launcher.guardsEgress) return { available: false, why: 'on AWS, sessions that may use production start on the guarded network Terraform makes with prod_mcp, and this installation has none' };
+    if (!loaded.sessionApi?.host) return { available: false, why: 'it has no session API (WOODSHED_SESSION_API_HOST)' };
+    if (!loaded.egress.sessionUrl) return { available: false, why: 'it has no address for its egress proxy (WOODSHED_EGRESS_PROXY_URL, or WOODSHED_CONSOLE_URL in the session env)' };
+    return { available: true, why: null };
+  };
+  const can = lockdown();
+  const certs = can.available ? createEgressCerts({ dir: path.join(loaded.stateDir, 'egress'), hosts: GITHUB_HOSTS }) : null;
+  const environment = loaded.mcp.environment;
+  if (environment) {
+    const people = environment.people === '*' ? 'everyone' : environment.people.length;
+    console.log('mcpServers: production server from the environment', { server: new URL(environment.url).host, people, repos: environment.repos, issuer: loaded.mcp.issuer, egress: loaded.egress.sessionUrl, lockdown: can.available });
+    if (!people || (Array.isArray(environment.repos) && !environment.repos.length)) console.warn('mcpServers: WOODSHED_PROD_MCP_PEOPLE or WOODSHED_PROD_MCP_REPOS lists nobody, so no session gets production access');
+    if (!can.available) console.warn('mcpServers: production access is off, this console cannot lock a session down', { why: can.why });
+    // Made or read now rather than at the first call, so a key that cannot be made shows at start.
+    issuer.load().catch(() => {});
+  }
+  // Every relying party fetches the keys over https from the issuer's own name.
+  if (!loaded.mcp.issuer.startsWith('https://') && environment) console.warn('oidcIssuer: the issuer is not https, which an MCP server may refuse', { issuer: loaded.mcp.issuer });
+  if (certs) certs.caPem().catch((err) => console.error('egress: certificate authority not ready', { message: err.message }));
+  return { issuer, certs, lockdown, settings: loaded.mcp, egress: certs ? { sessionUrl: loaded.egress.sessionUrl, caPem: () => certs.caPem() } : null };
+}
+
 /**
  * @param {{config: object, store: {state: object, save: () => void}, provider: {name?: string|null, words?: object|null,
  *          launcher: object, secrets: object|null, homes: object|null, dbAdmin: object|null, databases?: string[],
@@ -253,8 +293,9 @@ async function loadAppKey(config, secrets) {
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null, mcpServers: mcpServersHook = null }) {
   checkMembersHook(memberList, trusted);
+  if (mcpServersHook && ['list', 'save', 'remove'].some((f) => typeof mcpServersHook[f] !== 'function')) throw new Error('mcpServers needs list, save and remove');
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
   if (slackEventsUrl != null && typeof slackEventsUrl !== 'function') throw new Error('slackEventsUrl must be a function');
   checkSlackInstall(slackInstall);
@@ -350,6 +391,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const codexModels = createCodexModels({ userSettings, teamCredential: openai.teamCredential });
   const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
   const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });
+  const access = mcpAccess({ loaded, secrets, launcher: provider.launcher });
+  const mcpServers = createMcpServers({ store, settings: access.settings, secrets, host: mcpServersHook, lockdown: access.lockdown });
+  await mcpServers.load().catch((err) => console.warn('mcpServers: starting with none from the program', { message: err.message }));
   // Who reviews a pull request in a review session, as its author chose on My settings, from what the team keys and their
   // own sign-ins can run.
   const reviewAgents = createReviewAgents({
@@ -381,7 +425,23 @@ export async function createInstallation({ config: loaded, store, provider, trus
     reviewerApp,
     repoTriggers,
     reviewAgents,
+    mcpServers,
+    appShares,
+    egress: access.egress,
   });
+  // The relay and the egress proxy need the fleet, which locks a session down and says whether it is.
+  const mcpRelay = createMcpRelay({ servers: mcpServers, issuer: access.issuer, fleet, repoOf: (session) => projectFor(config, session).repo ?? null });
+  const egressProxy = access.certs ? createEgressProxy({
+    sessions: () => fleet.sessions(), isLocked: fleet.isLocked, certs: access.certs,
+    orgOf: (session) => projectFor(config, session).repo?.split('/')[0] ?? null,
+    repoOf: (session) => projectFor(config, session).repo ?? null,
+    // Untainted sessions use it only where their launcher sends them out through it: AWS's guarded network, which only a
+    // session that may use production starts on.
+    passThrough: (session) => Boolean(provider.launcher?.guardsEgress) && Boolean(session.mayUseProduction),
+  }) : null;
+  // What a session has open that its lockdown would not close goes the moment it starts.
+  if (egressProxy) fleet.onLocking((id) => egressProxy.cut(id));
+  fleet.onLocking((id) => mcpRelay.cut(id));
   // Sessions of anyone the program's list does not have go back to Unassigned, now for the first read and at each after.
   members?.whenGone?.((login) => fleet.releaseAssignments({ login, by: 'the program' }));
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
@@ -457,7 +517,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const handle = createHandler({
     config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
-    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
+    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,
     workflowLinks: () => projectReader.workflowLinks(),
     // Behind a hosting proxy nobody's write access is asked: the host says who is in.
@@ -478,6 +538,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
+    mcpRelay, egress: access.egress,
     ownerTokenRepos: hostConnect ? () => allProjects(config).map((p) => p.repo).filter(Boolean) : null,
   }) : null;
   const webhookDispatch = createWebhookDispatch({ label: config.label, labelOf: (name) => repoTriggers.of(name ?? defaultProject(config).name).label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity, webhookSwitch });
@@ -543,6 +604,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
     handle,
     upgrade,
     sessionApi,
+    // The port a tainted session leaves through, on the session API's address (server.mjs listens).
+    egressProxy: egressProxy && sessionApi ? { server: egressProxy, port: loaded.egress.port } : null,
     appPorts,
     start,
     /** Stops the loops; requests already in flight finish. */
@@ -566,6 +629,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
       launcher: config.launcher.kind, maxRunning: config.maxRunning, pollGitHub: config.pollGitHub,
       githubApp: Boolean(config.githubApp), githubBroker: Boolean(config.githubBroker), ownDatabases: databases.available, tunnel: tunnel.available,
       appPorts: appPorts ? appPorts.ports.length : 0, githubConnect: Boolean(hostConnect),
+      mcpServers: mcpServers.list().length, lockdown: access.lockdown().available,
     }),
   };
 }

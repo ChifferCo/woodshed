@@ -14,28 +14,33 @@
   // The tab a page was on as it went away, kept until the next shell page says whether the visit was left (KEPT_KEYS
   // in common.js drop it at sign-out with the rest).
   const LEAVING_KEY = 'woodshed-session-leaving';
-  // Agent is claude's terminal and the default; the others are the plain shell, the review, the diff and the app's logs.
-  const TABS = ['agent', 'terminal', 'review', 'diff', 'applog'];
+  // Chat, the conversation, is the default; TUI is the agent's own live terminal, and the others are the plain shell,
+  // the review, the diff and the app's logs (common.js's sessionTab names the same). `agent` is TUI's old name: an old
+  // link, or a tab remembered before the rename, still means it.
+  const TABS = ['chat', 'tui', 'terminal', 'review', 'diff', 'applog'];
+  const ALIASES = { agent: 'tui' };
   // What a history entry keeps for a review-only session still to land on its Review: no tab was picked there, and
   // coming back to it lands it on Review, whatever the session was left on since (leftOn, memory's asked).
   const LANDS_ON_REVIEW = 'lands-on-review';
 
-  /** @returns {string}  a tab the page knows, Agent for anything else */
+  /** @returns {string}  a tab the page knows, Chat for anything else */
   function known(name) {
-    return TABS.includes(name) ? name : 'agent';
+    const tab = Object.hasOwn(ALIASES, name ?? '') ? ALIASES[name] : name;
+    return TABS.includes(tab) ? tab : 'chat';
   }
 
   /**
-   * The tab a session can show now: Review needs a branch, Terminal a shell, Diff and App log a running coding session.
-   * Anything else shows Agent.
+   * The tab a session can show now: Review needs a branch, Terminal a shell, Diff and App log a running coding session;
+   * one it cannot falls back to TUI. Chat on a session that is not running is not a fallback: the page draws its start
+   * or how it ended there (session.js, viewOf) and Chat comes back once it runs.
    * @param {string} tab
    * @param {{ branch?: string, status: string, kind?: string }} s
    * @param {boolean} hasShell
    */
   function shown(tab, s, hasShell) {
-    if (tab === 'review' && !s.branch) return 'agent';
-    if (tab === 'terminal' && !hasShell) return 'agent';
-    if ((tab === 'applog' || tab === 'diff') && (s.status !== 'running' || s.kind === 'ask')) return 'agent';
+    if (tab === 'review' && !s.branch) return 'tui';
+    if (tab === 'terminal' && !hasShell) return 'tui';
+    if ((tab === 'applog' || tab === 'diff') && (s.status !== 'running' || s.kind === 'ask')) return 'tui';
     return tab;
   }
 
@@ -253,7 +258,8 @@
         if (id && inEntry === LANDS_ON_REVIEW) return null;
         if (id && inEntry) return inEntry;
         const tabs = load();
-        return (id && Object.hasOwn(tabs, id) ? tabs[id] : null) || null;
+        // A tab remembered before the rename (agent) means its new name.
+        return id && Object.hasOwn(tabs, id) && tabs[id] ? known(tabs[id]) : null;
       },
       remember(id, tab) {
         if (!id) return;

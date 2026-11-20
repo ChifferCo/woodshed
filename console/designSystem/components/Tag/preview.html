@@ -7,11 +7,13 @@
  .assigned{color:var(--slate);box-shadow:inset 0 0 0 1px var(--slate)}
  .private{background:var(--private);color:var(--private-ink)}
  .private::before{content:"";display:inline-block;width:6px;height:5px;background:currentColor;border-radius:1px;margin-right:4px;box-shadow:0 -3px 0 -1px currentColor}
+ .production{background:var(--prod);color:var(--prod-ink)}
+ .production::before{content:"";display:inline-block;width:6px;height:5px;background:currentColor;border-radius:1px;margin-right:4px;box-shadow:0 -3px 0 -1px currentColor}
  .none{background:var(--stopped);color:var(--sub)}
  .pr{font:600 11px "JetBrains Mono",ui-monospace,monospace;padding:2px 6px;border-radius:5px;border:1px solid var(--green);color:var(--green)}
  .pr.bad{border-color:var(--bad);color:var(--bad)}
  .pr.more{border-color:var(--line);background:var(--stopped);color:var(--sub)}
 </style>
-<div class="row"><span class="tag assigned">Assigned</span><span class="tag private">Private</span><span class="tag none">Unassigned</span></div>
+<div class="row"><span class="tag assigned">Assigned</span><span class="tag private">Private</span><span class="tag production" title="Production data since …">Production</span><span class="tag none">Unassigned</span></div>
 <div class="row"><span class="pr">PR #26544 ✓</span><span class="pr bad">PR #26530 ✗</span></div>
 <div class="row"><span class="pr more" title="2 more pull requests">+2</span><span class="pr">PR #26545 ✓</span><span class="pr">PR #26546</span></div>

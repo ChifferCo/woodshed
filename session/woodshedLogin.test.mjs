@@ -60,7 +60,9 @@ for a in "$@"; do args+=("\${a//%3N/%N}"); done
 exec ${REAL_DATE} "\${args[@]}"
 `, { mode: 0o755 });
   const env = {
-    PATH: `${bin}:${process.env.PATH}`, HOME: home, TMUX_TMPDIR: dir, LANG: 'C.UTF-8', WOODSHED_CLAUDE_AUTH: 'own', WOODSHED_LOGIN_RUN_DIR: runDir,
+    // No HISTFILE: the pane's bash would write ~/.bash_history as kill-server hangs it up, while the teardown removes
+    // the home (ENOTEMPTY).
+    PATH: `${bin}:${process.env.PATH}`, HOME: home, HISTFILE: '', TMUX_TMPDIR: dir, LANG: 'C.UTF-8', WOODSHED_CLAUDE_AUTH: 'own', WOODSHED_LOGIN_RUN_DIR: runDir,
     WOODSHED_LOGIN_URL_WAIT: '50', WOODSHED_LOGIN_CODE_WAIT: '50', WOODSHED_LOGIN_TURN_WAIT: '100', WOODSHED_LOGIN_START_WAIT: '100',
   };
   const tmux = (...args) => execFileSync('tmux', args, { env, encoding: 'utf8' });

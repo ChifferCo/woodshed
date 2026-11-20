@@ -1,7 +1,7 @@
 // The phone's message box under claude's terminal: a message written with the phone's own keyboard (autocorrect,
 // dictation, paste, the cursor), files from its picker, and the browser's speech recognition for the mic. Send types
 // it all into claude as one message, through the session's statusd (POST /api/sessions/<id>/send), then Enter.
-// Return makes a new line; only Send sends. session.js shows it on a phone, for a running session's Agent tab.
+// Return makes a new line; only Send sends. session.js shows it on a phone, for a running session's TUI tab.
 (function () {
   'use strict';
   const W = window.Woodshed;
@@ -45,6 +45,8 @@
     // Each session's files, while you write: { name, path, busy }. Its text is in sessionStorage.
     const files = new Map();
     let sessionId = null;
+    // The agent of the session shown, for what a send says.
+    let agentName = 'claude';
     // The sessions with a Send on its way: one session's send never holds another's box.
     const sending = new Set();
     // The dictation listening (dictation.js), for the session it started on.
@@ -157,34 +159,51 @@
         const words = abortListening();
         if (words) field.value = `${field.value.replace(/\s*$/, '')} ${words}`.trimStart();
       }
-      const paths = mine().filter((f) => f.path).map((f) => f.path);
-      const text = [field.value.trim(), ...paths].filter(Boolean).join('\n');
+      const sentFiles = mine().filter((f) => f.path);
+      const typed = field.value.trim();
+      const text = [typed, ...sentFiles.map((f) => f.path)].filter(Boolean).join('\n');
       if (!text) return draw();
       sending.add(id);
+      // Out of the box as it goes, as Chat's: what the person writes meanwhile is a new draft, which no outcome of this
+      // send touches. Files still uploading stay, for the next message.
+      files.set(id, mine().filter((f) => !sentFiles.includes(f)));
+      field.value = '';
+      keepDraft(id, '');
+      fit();
       draw();
+      // Held, sent, or maybe in: said as it is (chatThread.cjs, boxSendOutcome). The words come back only for a refusal
+      // that typed nothing, so a second Send never types one that may have gone in.
+      const agent = agentName;
+      let outcome;
       try {
         // A phone that locks or leaves the page mid-send can leave the call open for good, and Send grey with it.
-        await W.postJson(`/api/sessions/${id}/send`, { text }, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
-        files.delete(id);
-        keepDraft(id, '');
-        if (id === sessionId) {
-          field.value = '';
-          fit();
-          // The keyboard goes down, so claude's answer has the screen.
+        const answer = await W.postJson(`/api/sessions/${id}/send`, { text }, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
+        outcome = window.WoodshedChatThread.boxSendOutcome({ answer, agent });
+      } catch (err) {
+        outcome = window.WoodshedChatThread.boxSendOutcome({ err, agent });
+      }
+      try {
+        if (!outcome.clear) {
+          // Back before any newer draft, a blank line between, and its files with it: neither is lost.
+          const withDraft = (draft) => (draft.trim() ? `${typed}\n\n${draft}` : typed);
+          files.set(id, [...sentFiles, ...(files.get(id) ?? [])]);
+          if (id === sessionId) {
+            field.value = withDraft(field.value);
+            keepDraft(id, field.value);
+            fit();
+          } else keepDraft(id, withDraft(readDraft(id)));
+        } else if (id === sessionId && !field.value) {
+          // The keyboard goes down, so the agent's answer has the screen.
           field.blur();
         }
-        W.shell.toast('Sent');
-      } catch (err) {
-        W.shell.toast(err.name === 'TimeoutError'
-          ? `No answer in ${SEND_TIMEOUT_MS / 1000} s: check the terminal before sending again`
-          : `Not sent: ${err.message}`);
+        W.shell.toast(outcome.toast, { ms: outcome.toast === 'Sent' ? undefined : 6000 });
       } finally {
         sending.delete(id);
         if (id === sessionId) draw();
       }
     }
 
-    /** @param {object|null} s  the running session whose Agent tab shows, or null to hide the box */
+    /** @param {object|null} s  the running session whose TUI tab shows, or null to hide the box */
     function show(s) {
       el.hidden = !s;
       if (!s) {
@@ -194,7 +213,8 @@
       if (s.id === sessionId) return;
       abortListening();
       sessionId = s.id;
-      const label = `Message ${window.Woodshed.agentOf(s)}`;
+      agentName = window.Woodshed.agentOf(s);
+      const label = `Message ${agentName}`;
       field.placeholder = label;
       field.setAttribute('aria-label', label);
       field.value = readDraft(s.id);
