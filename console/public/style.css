@@ -219,10 +219,12 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 @keyframes mb-wave { to { height: 14px; } }
 @media (prefers-reduced-motion: reduce) { .spin, .mb-wave i, .prchip-mark.is-pending { animation: none; } }
 .btn-plain:disabled { opacity: 0.75; cursor: wait; }
-.pane { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; }
+.pane { flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; container: panebar / inline-size; }
+/* `panebar` is the pane's width, which is the bar's: a container query cannot style its own container, so the bar's own
+   gap and wrap below need it on the pane. */
 @media (min-width: 900px) { .pane { height: 100vh; } }
 /* After the shed's pane bar: Terminal | Review, the title, what the work is on, and the session's buttons. */
-.pane-bar { container: panebar / inline-size; display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 10px; padding: 4px 8px 4px 6px; background: var(--bar); border-bottom: 1px solid var(--bar-line); font-family: var(--mono); font-size: 11px; color: var(--bar-ink); }
+.pane-bar { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 10px; padding: 4px 8px 4px 6px; background: var(--bar); border-bottom: 1px solid var(--bar-line); font-family: var(--mono); font-size: 11px; color: var(--bar-ink); }
 .pane-bar > * { flex: none; }
 .ptabs { display: flex; flex: none; gap: 2px; padding: 2px; background: var(--bar-well); border: 1px solid var(--bar-well-line); border-radius: 6px; }
 .ptab { display: inline-flex; align-items: center; margin: 0; padding: 2px 11px; border: 0; border-radius: 4px; background: none; cursor: pointer; white-space: nowrap; font-family: "Red Hat Display", system-ui, sans-serif; font-size: 11.5px; font-weight: 600; color: var(--bar-sub); }
@@ -277,6 +279,13 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
   .pane-bar > .ptitle { min-width: min(7em, 18cqi); }
   .pane-bar .pdetails, .pane-bar .popen, .pane-bar > .prchip { display: none; }
   .pane-bar .pmore { display: grid; place-items: center; order: 1; width: 28px; height: 24px; margin: 0; padding: 0; font: inherit; font-size: 14px; color: var(--bar-ink); background: none; border: 1px solid var(--bar-well-line); border-radius: 4px; cursor: pointer; }
+}
+/* Narrower than that (a small window with the rail open), the name and its status take a row of their own over the tabs
+   and buttons, rather than push ⋯ and Stop past the window's edge. */
+@container panebar (max-width: 620px) {
+  .pane-bar { flex-wrap: wrap; }
+  .pane-bar > .ptitle { order: -2; flex: 1 1 calc(100% - 120px); }
+  .pane-bar > .status { order: -1; }
 }
 /* Phone only, like the key bar they drive, and the phone's top bar and message box. */
 .pback, .pkeys, .keybar, .pphone, .pmore, .msgbox { display: none; }
@@ -532,7 +541,7 @@ dialog.wizard:focus { outline: none; }
   .pane { flex: 1 1 auto; height: 100%; min-height: 0; }
   /* Two rows: back, the name over one line of its state, its PR and its usage, and ⋯; then the tabs, the full width,
      where a thumb can hit them. The app, Stop, Rename and the key bar's switch are in ⋯. */
-  .pane-bar { flex-wrap: wrap; row-gap: 7px; padding: 6px 8px 8px; }
+  .pane-bar { flex-wrap: wrap; row-gap: 7px; column-gap: 10px; padding: 6px 8px 8px; }
   .pane-bar .pback { display: flex; order: 0; align-items: center; justify-content: center; width: 24px; height: 36px; font-size: 24px; line-height: 1; color: var(--bar-ink); text-decoration: none; }
   .pane-bar .pphone { display: flex; order: 1; flex: 1 1 0; min-width: 0; flex-direction: column; gap: 2px; }
   .pphone-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "Red Hat Display", system-ui, sans-serif; font-size: 14px; font-weight: 600; color: var(--bar-strong); }

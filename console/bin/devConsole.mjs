@@ -170,7 +170,7 @@ const sessions = [
     planUsage: planReading({ minutesAgo: 1, fiveHour: [42, 132], sevenDay: [78, 2 * 1440 + 600] }),
   }),
   // A private session with everything the pane bar can hold: Invite (it has a PR), its plan, the machine, the editor and
-  // Redis, for how the bar fits a long name. Like every made-up session it has no shell, so Terminal opens App log.
+  // Redis, for how the bar fits a long name. It has no shell, so Terminal opens App log.
   session('ba5eba11', null, 'Crowded pane bar with a long session name to see what gives way', {
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, editor: true,
     prUrl: 'https://github.com/example-org/example-repo/pull/26700',

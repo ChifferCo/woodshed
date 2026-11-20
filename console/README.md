@@ -32,7 +32,8 @@ branch and PR, and the session's buttons. Terminal and Review each hold two view
 the tabs while one shows: **Shell** or **App log**, and **Review** or **Diff**; each tab opens the one last open. On the
 right: **Invite** (below), one meter for the plan and the machine, **Open ▾** (the editor and the databases' viewers),
 the app's button and **Stop**. As the bar narrows the session's name keeps its room: the meter goes first unless
-something runs high, then Invite, then Details and Open fold into **⋯**. What the bar leaves out is in Details (the
+something runs high, then Invite, then Details, Open and the PR chip fold into **⋯**, and on a bar narrower still the
+name and status take a row of their own. What the bar leaves out is in Details (the
 meter's readings and Invite) or in ⋯. On a phone the rail is the page,
 after the standalone shed's: sessions are rows with a star and ⋯ big enough for
 a thumb, Shared's status filter is chips above the list, ⋯ opens as a sheet
