@@ -404,7 +404,22 @@ async function tail(file, size) {
   }
 }
 
-async function newestIn(dir, keep) {
+/**
+ * The conversation claude writes to in this session: the newest transcript in its folder, of those this session wrote
+ * (changed since `writtenFrom`) or reopened (`resume`, the conversation a Resume gave `--resume`). A private session
+ * starts from its owner's Claude home, which holds their earlier conversations on the repo, one of them maybe another
+ * session's that is still running; until claude writes its first line here, none of them is this session's.
+ * @param {string} claudeDir  claude's transcript folder for the repo
+ * @param {{writtenFrom?: number, resume?: string|null}} [opts]  writtenFrom: when the home was restored, in ms (0: all)
+ * @returns {Promise<{name: string, file: string, stat: import('node:fs').Stats}|null>}
+ */
+export async function ownClaudeTranscript(claudeDir, { writtenFrom = 0, resume = null } = {}) {
+  const resumed = resume ? `${resume}.jsonl` : null;
+  const found = await newestIn(claudeDir, (name) => name.endsWith('.jsonl'), (name, stat) => name === resumed || stat.mtimeMs >= writtenFrom);
+  return found ? { ...found, name: path.basename(found.file) } : null;
+}
+
+async function newestIn(dir, keep, own = () => true) {
   let names;
   try {
     names = (await fs.readdir(dir)).filter(keep);
@@ -415,7 +430,7 @@ async function newestIn(dir, keep) {
     const file = path.join(dir, name);
     return { file, stat: await fs.stat(file).catch(() => null) };
   }));
-  return stats.filter((s) => s.stat).sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs)[0] ?? null;
+  return stats.filter((s) => s.stat && own(path.basename(s.file), s.stat)).sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs)[0] ?? null;
 }
 
 // Codex files its rollouts by the day they started: the newest is in the last day folder that has one.
@@ -435,17 +450,19 @@ async function newestRollout(codexHome) {
 
 /**
  * The newest conversation of the session's agent, newest entries last.
- * @param {{agent: 'claude'|'codex', claudeDir: string, codexHome: string, root?: string, limit?: number, since?: number}} opts
+ * @param {{agent: 'claude'|'codex', claudeDir: string, codexHome: string, root?: string, limit?: number, since?: number,
+ *          writtenFrom?: number, resume?: string|null}} opts
  *   claudeDir: claude's transcript folder for the repo. root: the repo, which edits' paths are given relative to.
- *   since: the writtenAt of the caller's last answer
+ *   since: the writtenAt of the caller's last answer. writtenFrom, resume: which of claude's are this session's
+ *   (ownClaudeTranscript)
  * @returns {Promise<{agent: string, entries: Entry[], partial: boolean, writtenAt: number|null}|{agent: string, unchanged: true, writtenAt: number}>}
  *   partial: older entries were left out, by the read or by the limit. unchanged: the newest record is still the
  *   one written at `since`, so the caller's entries stand
  */
-export async function readSessionTranscript({ agent, claudeDir, codexHome, root, limit = MAX_ENTRIES, since = null }) {
+export async function readSessionTranscript({ agent, claudeDir, codexHome, root, limit = MAX_ENTRIES, since = null, writtenFrom = 0, resume = null }) {
   const newest = agent === 'codex'
     ? await newestRollout(codexHome)
-    : await newestIn(claudeDir, (n) => n.endsWith('.jsonl'));
+    : await ownClaudeTranscript(claudeDir, { writtenFrom, resume });
   if (!newest) return { agent, entries: [], partial: false, writtenAt: null };
   if (since !== null && newest.stat.mtimeMs === since) return { agent, unchanged: true, writtenAt: since };
   let text;

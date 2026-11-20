@@ -789,6 +789,9 @@ dropClaudeLogin() {
 restoreHome() {
   [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
   local code
+  # The transcripts the home brings keep their own times: statusd tells this session's conversation from them by this
+  # one, so the Chat tab never shows an earlier session's (ownClaudeTranscript in sessionTranscript.mjs).
+  date +%s%3N > /tmp/woodshed-home-restored-from
   code=$(consoleCall /home/restore /tmp/woodshed-home.tgz --max-time 120)
   if [ "$code" = 200 ] && tar xzf /tmp/woodshed-home.tgz -C "$HOME"; then
     log "Claude home restored" "(bytes: $(wc -c < /tmp/woodshed-home.tgz))"
