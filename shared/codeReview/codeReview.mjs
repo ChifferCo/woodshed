@@ -60,9 +60,15 @@ export function inlineCommentsIn(dir) {
  * @returns {Map<number, string>}  comment id to reviewer name
  */
 export function commentAuthorsIn(dir, names) {
+  // An id's first record is the real one: a later line shaped like one is inside some comment's body, and never
+  // changes whose it is.
   const authors = new Map();
-  for (const m of readFile(dir, 'context.md').matchAll(/^\[comment ([0-9]{1,15})\] \S+ on [^\n]*?: \*\*([^*\n]+):\*\*/gm)) {
-    if (names.includes(m[2])) authors.set(Number(m[1]), m[2]);
+  const seen = new Set();
+  for (const m of readFile(dir, 'context.md').matchAll(/^\[comment ([0-9]{1,15})\] \S+ on [^\n]*?: (?:\*\*([^*\n]+):\*\*)?/gm)) {
+    const id = Number(m[1]);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (names.includes(m[2])) authors.set(id, m[2]);
   }
   return authors;
 }

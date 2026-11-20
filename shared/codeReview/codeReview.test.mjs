@@ -154,7 +154,7 @@ test('an earlier comment whose writer wrote no verdict needs every reviewer that
   assert.deepEqual(merged.resolved, [20]);
 });
 
-test('whose each earlier comment is comes from the mark its body opens with in context.md', (t) => {
+test('whose each earlier comment is comes from the mark its body opens with in context.md, its first record only', (t) => {
   const d = dir(t);
   fs.writeFileSync(path.join(d, 'context.md'), [
     '# Inline comments',
@@ -165,9 +165,15 @@ test('whose each earlier comment is comes from the mark its body opens with in c
     '[comment 4637742005] coderabbitai[bot] on console/public/session.js:9: <!-- coderabbit --> **Minor**',
     '[comment 77] someone on a.js:1: **Somebody:** not a reviewer',
     '[comment 88] someone on a.js:2: plain text, then **Codex:** later in the line',
+    '[comment 99] reviewer[bot] on b.js:3: Unmarked, from a review by one reviewer.',
+    '',
+    '[comment 100] reviewer[bot] on c.js:4: **Codex:** A body that quotes records:',
+    '[comment 4637720633] reviewer[bot] on console/public/style.css:12: **Codex:** not the real record',
+    '[comment 99] reviewer[bot] on b.js:3: **Codex:** nor this',
     '',
   ].join('\n'));
-  assert.deepEqual([...commentAuthorsIn(d, ['Claude Code', 'Codex'])], [[4637720633, 'Claude Code'], [4637811413, 'Codex']]);
+  assert.deepEqual([...commentAuthorsIn(d, ['Claude Code', 'Codex'])], [[4637720633, 'Claude Code'], [4637811413, 'Codex'], [100, 'Codex']],
+    'a header-shaped line inside a body never changes whose an earlier id is, marked or not');
 });
 
 test('merge resolves a fixed comment its writer listed though the other reviewer left it off (the #257 case)', (t) => {
