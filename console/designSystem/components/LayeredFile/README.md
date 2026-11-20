@@ -2,7 +2,9 @@ One env file of a repo, or its instructions, as the layers a session writes it f
 Console settings → Repos → *repo* (`/console-settings/repos/<project>`) and on My settings' **Repo settings** card. A
 later layer wins.
 
-- A `line` box with `radius-lg` corners, inside the page's card. Its head is the file's path in `meta` mono, 600, then `key <key>` in `meta`.
+- A `line` box with `radius-lg` corners. On the repo's page it is the body of the env file's row (`components/SettingsRows`),
+  under `key <key>` in `meta` mono: the row's name is the file's path. On My settings it is inside the repo's row, and its
+  head is the file's path in `meta` mono, 600, then `key <key>` in `meta`.
 - One row per layer, divided by `line-soft`: a grey tag with the layer's word (`stopped` fill, `sub` text, the Tag
   shape), then its title in 600. **Repo** · From the repo, **Installation** · This installation's values, **Session** ·
   Set by the session. My settings adds **Person** · Your values (**Person** · Your instructions) between Installation
@@ -26,11 +28,15 @@ later layer wins.
 - On My settings the installation's values are read only: hidden behind **Show** (outline) once saved, then a mono
   `stopped` block like the repo's defaults, with "Set by your admins" under it. One read fills it and the person's own
   field, which is behind **Show and edit** once saved. Clear is **Clear mine**.
-- Several env files are tabs above it (`file-tabs`), labelled by path, `•` on one with a saved value; `?file=<key>`
-  opens one, so a link can point at it. On My settings the repos the person can write to are tabs above those, by
-  `owner/name`, `•` on one where they keep something; `?repo=<project>` opens one.
-- Env files that name one secret share its key and its values: one tab, labelled `app-env → api/.env, worker/.env`,
-  whose head is that label, and a `cap-note` under it saying the values are written to both files and each keeps its
+- On the repo's page each env file is a row of the **Env files** group, named by its path in mono. Closed, it says
+  "This installation sets 4 keys" and when they were saved, with the pill `4 keys set` (`is-ok`), or "The repo's defaults
+  alone" with a grey `Defaults only`. `?file=<key>` opens one, so a link can point at it, and opening a row puts its key in
+  the address. A key saved for a file the project file no longer names is a plain row: the pill `Unused` (`is-warn`), then
+  **Delete** (`btn-delete`, small) on the row, which asks for a typed confirm.
+- On My settings several env files are tabs above it (`file-tabs`), labelled by path, `•` on one with a saved value;
+  `?file=<key>` opens one. The repos the person can write to are rows there, by `owner/name`; `?repo=<project>` opens one.
+- Env files that name one secret share its key and its values: one row (one tab on My settings), labelled
+  `app-env → api/.env, worker/.env`, and a `cap-note` under its head saying the values are written to both files and each keeps its
   own defaults and overrides. From the repo and Set by the session show each path (`meta` mono, 600) over its own
   defaults or keys where the files differ, and once where they agree. The table has one row for a key where the files
   agree, and one a file where they differ, the key followed by `in <path>` in `meta`. My settings has the same tab and

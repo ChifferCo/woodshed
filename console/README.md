@@ -2416,18 +2416,23 @@ On AWS the base box's role makes, reads and deletes `<prefix>/repos/*` itself (`
 `providers/aws/terraform/baseBox.tf`), so a new env file needs no Terraform.
 
 An admin sets layer 2 on the repo's own page, `/console-settings/repos/<project>` (public/repoSettings.js), which the
-**Settings** link on its row of Console settings' Repos card opens; `?file=<key>` opens one env file's tab. For each env
-file of the project file it shows its key and path, the repo's `defaults` (read only, with a link to the file on
+**Settings** link on its row of Console settings' Repos card opens. It is groups of rows that open in place, as My
+settings is (public/settingsRows.js): **Env files**, **Prompt**, **Sessions from GitHub** and **Slack**; a closed row says
+what it holds, and several may be open at once. Each env file of the project file is a row, which says how many keys this
+installation sets for it; `?file=<key>` opens one. Open, it shows its key, the repo's `defaults` (read only, with a link to the file on
 GitHub), the installation's values (hidden until **Show and edit**, since reading them is logged), the keys the session
 sets itself, and a table of which layer wins each key: key names only, never a value. Env files that name one secret
-are one tab, `app-env → api/.env, worker/.env`, with a note that the values are written to both files; each file's
+are one row, `app-env → api/.env, worker/.env`, with a note that the values are written to both files; each file's
 defaults and overrides are shown under its path where they differ, and the table has a row a file (`LOG_LEVEL in api/.env`)
 for a key the files do not agree on. Then the installation's
-Instructions, with the 16 KB count as they are typed; a save that looks like a credential is refused under the field.
-A key saved for an env file the project file no longer names is listed with **Delete**, which removes everyone's values
+Instructions, read when their row opens, with the 16 KB count as they are typed; a save that looks like a credential is
+refused under the field.
+A key saved for an env file the project file no longer names is a row marked **Unused** with **Delete**, which removes everyone's values
 for it after a typed confirm. A project file with no env files gets a short how-to in their place: an `envFiles` entry with a `path`
-(and `defaults` if any) in a pull request, no `secret` needed, and a tab here once it is on the default branch. Last,
-the repo's **Slack** card ("A channel for each project", above; `#slack` opens it). The page loads for anyone signed
+(and `defaults` if any) in a pull request, no `secret` needed, and a row here once it is on the default branch. Then
+**Sessions from GitHub**: the label's and the `/woodshed` comments' switches on their rows, and the label's name in a row
+that opens (`#github` opens it). Last, the **Slack** group's Pull request channel row ("A channel for each project",
+above; `#slack` opens it). The page loads for anyone signed
 in; its calls answer 403 to anyone but an admin, and it says so.
 
 Each person sets layer 3 on My settings' repo rows, under **Repos and files** (public/myRepoSettings.js, with the layers drawn by

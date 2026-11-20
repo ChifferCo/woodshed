@@ -10,6 +10,7 @@ import { createRepoSettings, createRepoSettingsApi, repoSettingsRoute } from './
 import { createSlack } from './slack.mjs';
 import { parseProject } from '../shared/project.mjs';
 
+const rowsSource = fs.readFileSync(new URL('./public/settingsRows.js', import.meta.url), 'utf8');
 const layersSource = fs.readFileSync(new URL('./public/repoLayers.js', import.meta.url), 'utf8');
 const source = fs.readFileSync(new URL('./public/repoSettings.js', import.meta.url), 'utf8');
 const pickerSource = fs.readFileSync(new URL('./public/slackSetup.js', import.meta.url), 'utf8');
@@ -76,6 +77,8 @@ async function call(api, { method, path, body, login }) {
 }
 
 const CHANNEL_PATH = '/api/console-settings/projects/slack-channel';
+const TRIGGERS_PATH = '/api/console-settings/projects/triggers';
+const TRIGGERS = { label: 'woodshed', consoleLabel: 'woodshed', labelSet: false, labels: true, comments: false };
 const CHANNELS = {
   found: [
     { id: 'C0APPPRS01', name: 'app-prs', private: false, member: true },
@@ -103,10 +106,13 @@ function channelCall(slack, body) {
 
 /**
  * The page for `project`, signed in as an admin unless `admin` is false (the server's ADMIN_API_RE answers 403 then).
+ * `triggers` is the repo's label and switches as repoTriggers.mjs answers them; left out, the page has no GitHub group.
  * `slack` is the console's Slack settings, {consoleChannel, channels: {<project>: channel}}; left out, it has none.
+ * The page is rows that open in place: `opened` is 'all' to open every row once it is drawn, as most tests read a
+ * row's body, or the ids of the rows to open ([] leaves the page as a link to it finds it).
  * @returns the page's root, the calls it made, and the console's state and secrets
  */
-async function loadPage({ project = 'app', search = '', hash = '', file = APP_FILE, admin = true, before = null, confirmAnswer = true, slack: slackSettings = null, channels = CHANNELS } = {}) {
+async function loadPage({ project = 'app', search = '', hash = '', file = APP_FILE, admin = true, before = null, confirmAnswer = true, slack: slackSettings = null, channels = CHANNELS, opened = 'all', triggers = null, triggersFail = null } = {}) {
   const store = { state: { sessions: [] }, save() {} };
   const secrets = memorySecrets();
   const config = { projects: PROJECTS, repo: 'acme/app' };
@@ -120,12 +126,21 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
   if (before) await before({ repoSettings, store, secrets });
   store.state.settings = { slackChannel: slackSettings?.consoleChannel ?? '', projectSlackChannels: { ...slackSettings?.channels } };
   const slack = slackSettings && createSlack({ store, secrets });
-  const api = createRepoSettingsApi({ repoSettings, config, slackOf: slack ? slackOf(slack) : null });
+  // The repo's label and switches, changed as the Repos card's API changes them.
+  let now = triggers && { ...triggers };
+  const api = createRepoSettingsApi({ repoSettings, config, slackOf: slack ? slackOf(slack) : null, triggersOf: () => now });
   const calls = [];
   const consoleCall = (method, path, body) => {
     // The page's objects are of its own realm: copied, so they compare as plain ones.
     calls.push({ method, path, ...(body !== undefined && { body: JSON.parse(JSON.stringify(body)) }) });
     if (!admin) return Promise.reject(Object.assign(new Error('only an admin can do this'), { status: 403 }));
+    if (path === TRIGGERS_PATH) {
+      if (triggersFail) return Promise.reject(Object.assign(new Error(triggersFail), { status: 400 }));
+      const { name: _name, ...change } = body;
+      if ('label' in change) now = { ...now, label: change.label ?? now.consoleLabel, labelSet: change.label !== null };
+      else now = { ...now, ...change };
+      return Promise.resolve({ triggers: { ...now } });
+    }
     if (path === CHANNEL_PATH) return slack ? channelCall(slack, body) : Promise.reject(Object.assign(new Error('this console posts nothing to Slack'), { status: 404 }));
     // The channel picker's list, as GET /api/console-settings/slack/channels answers it (slackSetup.mjs).
     if (path.startsWith('/api/console-settings/slack/channels')) return Promise.resolve(structuredClone(channels));
@@ -155,21 +170,39 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
   const location = { pathname: `/console-settings/repos/${project}`, search, hash, href: `http://console.test/console-settings/repos/${project}${search}${hash}` };
   const history = { urls: [], replaceState(_s, _t, url) { this.urls.push(String(url)); } };
   const context = vm.createContext({
-    window: { Woodshed: W, confirm: (text) => { asked.push(text); return confirmAnswer; } }, console, location, history, URL, URLSearchParams, TextEncoder,
-    document: { getElementById: (id) => (id === 'slack' ? walk(app).find((e) => e.attrs.id === 'slack') : app), activeElement: null },
+    window: { Woodshed: W, location, confirm: (text) => { asked.push(text); return confirmAnswer; } }, console, location, history, URL, URLSearchParams, TextEncoder,
+    document: { getElementById: (id) => walk(app).find((e) => e.attrs.id === id) ?? null, activeElement: null },
     setTimeout: (fn) => setImmediate(fn), clearTimeout: () => {},
   });
   vm.runInContext(pickerSource, context);
+  vm.runInContext(rowsSource, context);
   vm.runInContext(layersSource, context);
   vm.runInContext(source, context);
+  await settle();
+  if (opened === 'all') {
+    for (let head = closedHead(app); head; head = closedHead(app)) head.listeners.click();
+  } else {
+    for (const id of opened) openRow(app, id);
+  }
   await settle();
   return { app, calls, confirms, asked, history, store, secrets, repoSettings };
 }
 
+// A row is a section with its id; its head is the button that opens and closes it.
+const rowOf = (app, id) => walk(app).find((e) => e.tag === 'section' && e.attrs.id === id);
+const headOf = (app, id) => walk(app).find((e) => e.attrs.id === `${id}-head`);
+const closedHead = (app) => walk(app).find((e) => e.tag === 'button' && e.className === 'set-fold-head' && e.attrs['aria-expanded'] === 'false');
+const openRow = (app, id) => headOf(app, id).listeners.click();
+const isOpen = (app, id) => headOf(app, id)?.attrs['aria-expanded'] === 'true';
+// The Env files group's rows, by the name each shows.
+const fileRows = (app) => walk(groupOf(app, 'env-files')).filter((e) => e.tag === 'section').map((e) => textOf(walk(e).find((x) => x.className === 'set-name')));
+const groupOf = (app, id) => walk(app).find((e) => e.className === 'set-group' && e.attrs.id === id);
+// What a closed row says: its name, its value and its status word.
+const headText = (app, id) => walk(rowOf(app, id)).filter((e) => ['set-name', 'set-help'].includes(e.className) || e.className?.startsWith('pill')).map(textOf);
+
 const buttons = (app, text) => walk(app).filter((e) => e.tag === 'button' && textOf(e).trim() === text);
 const button = (app, text) => buttons(app, text)[0];
-const cardOf = (app, id) => walk(app).find((e) => e.attrs['aria-labelledby'] === `card-${id}`);
-const instructionsSave = (app) => buttons(cardOf(app, 'instructions'), 'Save')[0];
+const instructionsSave = (app) => buttons(rowOf(app, 'instructions'), 'Save')[0];
 const editorOf = (app, id) => walk(app).find((e) => e.tag === 'textarea' && e.attrs.id === id);
 // The key table's rows, as [key, repo, installation, session, wins].
 const tableRows = (app) => walk(app).filter((e) => e.tag === 'tbody').flatMap((b) => b.children.map((tr) => tr.children.map((td) => textOf(td))));
@@ -193,12 +226,12 @@ test('an env file shows its key and path, the repo\'s defaults, the session\'s w
   assert.match(text, /Its overrides: PORT\./);
   assert.match(text, /Only when the session has a value for it: ANTHROPIC_API_KEY\./);
   assert.match(text, /The project file's env, set in every process: NODE_ENV\./);
-  assert.deepEqual(tableRows(app), [
+  assert.deepEqual(tableRows(rowOf(app, 'file-api-env')), [
     ['LOG_LEVEL', '✓', '', '', 'Repo'],
     ['PORT', '', '', '✓', 'Session'],
     ['ANTHROPIC_API_KEY', '', '', '✓ if set', 'Session, if set'],
   ]);
-  assert.deepEqual(buttons(app, 'api/.env').map((b) => b.attrs['aria-pressed']), ['true']);
+  assert.deepEqual(fileRows(app), ['api/.env', 'web/.env.local'], 'a row an env file');
   assert.ok(editorOf(app, 'env-api-env'), 'nothing saved yet: the editor is open, empty');
 });
 
@@ -212,14 +245,14 @@ const SHARED_FILE = parseProject({
   ],
 });
 
-test('env files that share a key are one tab naming both paths, with a note, each file\'s defaults and overrides, and its rows where they differ', async () => {
+test('env files that share a key are one row naming both paths, with a note, each file\'s defaults and overrides, and its rows where they differ', async () => {
   const { app, calls, secrets } = await loadPage({ file: SHARED_FILE, envFiles: [] });
-  assert.deepEqual(walk(app).filter((e) => e.tag === 'button' && e.attrs['aria-pressed']).map((b) => textOf(b)), ['app-env → api/.env, worker/.env', 'web/.env.local']);
-  const text = textOf(app);
+  assert.deepEqual(fileRows(app), ['app-env → api/.env, worker/.env', 'web/.env.local']);
+  const text = textOf(rowOf(app, 'file-app-env'));
   assert.match(text, /These values are written to both files, api\/\.env, worker\/\.env, which name the secret app-env\. Each keeps its own defaults and overrides\./);
   assert.match(text, /From the repoapi\/\.envLOG_LEVEL=infoworker\/\.envNo defaults\./, 'each file\'s defaults under its path');
   assert.match(text, /api\/\.envIts overrides: PORT, SQL_URL\.worker\/\.envIts overrides: ROLE, SQL_URL\./);
-  assert.deepEqual(tableRows(app), [
+  assert.deepEqual(tableRows(rowOf(app, 'file-app-env')), [
     ['LOG_LEVEL in api/.env', '✓', '', '', 'Repo'],
     ['PORT in api/.env', '', '', '✓', 'Session'],
     ['SQL_URL', '', '', '✓', 'Session'],
@@ -233,9 +266,9 @@ test('env files that share a key are one tab naming both paths, with a note, eac
   assert.deepEqual([...secrets.values.keys()], ['repos/app/env/app-env'], 'one value for both files');
   assert.match(textOf(app), /writes them into api\/\.env and worker\/\.env;/);
   assert.deepEqual(tableRows(app).slice(0, 2), [['LOG_LEVEL in api/.env', '✓', '✓', '', 'Installation'], ['LOG_LEVEL in worker/.env', '', '✓', '', 'Installation']]);
+  assert.deepEqual(headText(app, 'file-app-env').slice(2), ['1 key set'], 'the row says what this installation sets');
 
-  button(app, 'web/.env.local').listeners.click();
-  assert.doesNotMatch(textOf(app), /These values are written to/, 'a key of one file has no note');
+  assert.doesNotMatch(textOf(rowOf(app, 'file-web-env-local')), /These values are written to/, 'a key of one file has no note');
 });
 
 test('saving a value posts it, and the table follows what the console answers', async () => {
@@ -247,7 +280,7 @@ test('saving a value posts it, and the table follows what the console answers', 
   await settle();
   assert.deepEqual(calls.at(-1), { method: 'POST', path: '/api/console-settings/repos/app/env/api-env', body: { text: `LOG_LEVEL=warn\nAPI_TOKEN=${SECRET_MARK}\nPORT=1\n` } });
   assert.equal(secrets.values.get('repos/app/env/api-env'), `LOG_LEVEL=warn\nAPI_TOKEN=${SECRET_MARK}\nPORT=1\n`);
-  assert.deepEqual(tableRows(app), [
+  assert.deepEqual(tableRows(rowOf(app, 'file-api-env')), [
     ['LOG_LEVEL', '✓', '✓', '', 'Installation'],
     ['API_TOKEN', '', '✓', '', 'Installation'],
     ['PORT', '', '✓', '✓', 'Session'],
@@ -300,13 +333,38 @@ test('a value the old start-time copy saved still says it was copied from Terraf
   assert.doesNotMatch(textOf(app), /Terraform secret/);
 });
 
-test('an env file\'s tab is deep-linked, with no note of a Terraform secret', async () => {
-  const { app, history } = await loadPage({ search: '?file=web-env-local' });
-  assert.deepEqual(buttons(app, 'web/.env.local').map((b) => b.attrs['aria-pressed']), ['true']);
+test('rows start closed and say what they hold; an env file\'s row is deep-linked, and opening one names it in the address', async () => {
+  const closed = await loadPage({ opened: [], triggers: TRIGGERS, slack: { consoleChannel: 'C0CONSOLE01', channels: {} } });
+  assert.deepEqual(['file-api-env', 'file-web-env-local', 'instructions', 'session-label-row', 'slack'].map((id) => isOpen(closed.app, id)), [false, false, false, false, false]);
+  assert.deepEqual(headText(closed.app, 'file-api-env'), ['api/.env', 'The repo\'s defaults alone', 'Defaults only']);
+  assert.deepEqual(headText(closed.app, 'instructions'), ['Instructions', 'None of this installation\'s: sessions on this repo get the repo\'s own rules alone', 'None']);
+  assert.deepEqual(headText(closed.app, 'session-label-row'), ['The label\'s name', 'woodshed, the console\'s', 'Console\'s']);
+  assert.deepEqual(headText(closed.app, 'slack'), ['Pull request channel', 'Posting to the console\'s channel, C0CONSOLE01.', 'Console\'s channel']);
+  assert.equal(walk(closed.app).some((e) => e.tag === 'textarea' || e.tag === 'table'), false, 'no body is drawn');
+  assert.deepEqual(closed.calls.map((c) => c.path), ['/api/console-settings/repos/app'], 'nothing else is read for a closed page');
+
+  const { app, history } = await loadPage({ search: '?file=web-env-local', opened: [] });
+  assert.deepEqual([isOpen(app, 'file-api-env'), isOpen(app, 'file-web-env-local')], [false, true]);
+  assert.deepEqual({ ...rowOf(app, 'file-web-env-local').scrolledTo }, { block: 'start' });
   assert.doesNotMatch(textOf(app), /Terraform/);
-  button(app, 'api/.env').listeners.click();
+  openRow(app, 'file-api-env');
   assert.deepEqual(history.urls, ['http://console.test/console-settings/repos/app?file=api-env']);
   assert.match(textOf(app), /key api-env/);
+  assert.deepEqual([isOpen(app, 'file-api-env'), isOpen(app, 'file-web-env-local')], [true, true], 'several rows may be open at once');
+  openRow(app, 'file-api-env');
+  assert.equal(isOpen(app, 'file-api-env'), false);
+});
+
+test('a row whose file has values says how many keys this installation sets', async () => {
+  const { app } = await loadPage({
+    opened: [],
+    before: ({ repoSettings }) => repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: 'A=1\nB=2\n', by: 'mia-dev' }),
+  });
+  const [name, value, pill] = headText(app, 'file-api-env');
+  assert.equal(name, 'api/.env');
+  assert.match(value, /^This installation sets 2 keys · Saved at .* · by @mia-dev · 8 bytes · 2 keys$/);
+  assert.equal(pill, '2 keys set');
+  assert.equal(walk(rowOf(app, 'file-api-env')).find((e) => e.className?.startsWith('pill')).className, 'pill is-ok');
 });
 
 test('instructions: the repo\'s rules are linked, the size is counted, and a credential is refused inline', async () => {
@@ -339,12 +397,19 @@ test('instructions over 16 KB cannot be saved, and say so before Save', async ()
   assert.equal(instructionsSave(app).disabled, true);
 });
 
-test('saved instructions are read when the page opens', async () => {
-  const { app, calls } = await loadPage({
-    before: ({ repoSettings }) => repoSettings.saveInstallation({ project: 'app', text: 'Keep it short.\n', by: 'mia-dev' }),
-  });
+test('saved instructions are read when their row opens, by its head or by a link', async () => {
+  const before = ({ repoSettings }) => repoSettings.saveInstallation({ project: 'app', text: 'Keep it short.\n', by: 'mia-dev' });
+  const { app, calls } = await loadPage({ before, opened: [] });
+  assert.deepEqual(calls.map((c) => c.path), ['/api/console-settings/repos/app'], 'not before');
+  assert.deepEqual(headText(app, 'instructions').slice(2), ['15 bytes']);
+  openRow(app, 'instructions');
+  await settle();
   assert.deepEqual(calls.map((c) => c.path), ['/api/console-settings/repos/app', '/api/console-settings/repos/app/instructions']);
   assert.equal(editorOf(app, 'instructions-text').value, 'Keep it short.\n');
+
+  const linked = await loadPage({ before, hash: '#instructions', opened: [] });
+  assert.deepEqual(linked.calls.map((c) => c.path), ['/api/console-settings/repos/app', '/api/console-settings/repos/app/instructions']);
+  assert.equal(editorOf(linked.app, 'instructions-text').value, 'Keep it short.\n');
 });
 
 test('a key the project file no longer names is listed, and Delete removes everyone\'s values for it after a typed confirm', async () => {
@@ -358,6 +423,9 @@ test('a key the project file no longer names is listed, and Delete removes every
     },
   });
   assert.match(textOf(app), /old-env is saved but the project file no longer has it/);
+  assert.deepEqual(fileRows(app), ['web/.env.local', 'old-env'], 'a row of the Env files group');
+  assert.equal(headOf(app, 'file-old-env'), undefined, 'with nothing to open');
+  assert.equal(textOf(walk(rowOf(app, 'file-old-env')).find((e) => e.className === 'pill is-warn')), 'Unused');
   button(app, 'Delete').listeners.click();
   assert.equal(confirms.length, 1);
   assert.equal(confirms[0].word, 'delete');
@@ -418,10 +486,11 @@ test('a console with no secret store says nothing can be saved, and turns the ed
 });
 
 const pickerSearch = (app) => walk(app).find((e) => e.tag === 'input' && e.attrs.id === 'slack-channel');
+const cardOf = (app, id) => rowOf(app, id);
 const options = (app) => walk(cardOf(app, 'slack')).filter((e) => e.attrs.role === 'option');
 const idField = (app) => walk(app).find((e) => e.tag === 'input' && e.attrs.id === 'slack-channel-id');
 
-test('the Slack card says what the channel is for and where posts go now, and lists the channels to pick from', async () => {
+test('the Slack row says what the channel is for and where posts go now, and lists the channels to pick from', async () => {
   const { app } = await loadPage({ slack: { consoleChannel: 'C0CONSOLE01', channels: {} } });
   const card = cardOf(app, 'slack');
   const text = textOf(card);
@@ -476,32 +545,91 @@ test('an app without channels:read and groups:read falls back to the channel ID,
   assert.deepEqual(calls.filter((c) => c.path === CHANNEL_PATH).at(-1).body, { name: 'app', channel: 'C0OTHER001' });
 });
 
-test('a console with no Slack says so on the card, with nothing to pick', async () => {
+test('a console with no Slack says so on the row, with nothing to pick', async () => {
   const { app } = await loadPage();
   const card = cardOf(app, 'slack');
   assert.match(textOf(card), /This console has no Slack, so it posts nothing and a channel cannot be set here\./);
   assert.doesNotMatch(textOf(card), /Posting to/);
   assert.equal(pickerSearch(app), undefined);
+  assert.equal(headOf(app, 'slack'), undefined, 'a plain row: nothing to open');
 });
 
-test('#slack brings the Slack card into view', async () => {
-  const { app } = await loadPage({ hash: '#slack', slack: { consoleChannel: 'C0CONSOLE01', channels: {} } });
-  const section = walk(app).find((e) => e.tag === 'section' && e.attrs.id === 'slack');
-  assert.deepEqual({ ...section.scrolledTo }, { block: 'center' });
-  assert.equal(section.attrs['aria-labelledby'], 'card-slack');
+test('#slack opens the channel\'s row and brings it into view, reading the channels only then', async () => {
+  const { app, calls } = await loadPage({ hash: '#slack', slack: { consoleChannel: 'C0CONSOLE01', channels: {} }, opened: [] });
+  assert.deepEqual({ ...rowOf(app, 'slack').scrolledTo }, { block: 'start' });
+  assert.equal(isOpen(app, 'slack'), true);
+  assert.ok(pickerSearch(app));
+  assert.equal(isOpen(app, 'file-api-env'), false, 'and no other');
+
+  const closed = await loadPage({ slack: { consoleChannel: 'C0CONSOLE01', channels: {} }, opened: [] });
+  assert.equal(closed.calls.some((c) => c.path.startsWith('/api/console-settings/slack/channels')), false, 'a closed row reads no channel');
+  assert.equal(calls.some((c) => c.path.startsWith('/api/console-settings/slack/channels')), true);
 });
 
 test('a repo with no env files says how to add one, with a link to its project file', async () => {
   const { app } = await loadPage({ file: parseProject({ version: 1 }), envFiles: [] });
-  const card = cardOf(app, 'env');
+  const card = groupOf(app, 'env-files');
   const text = textOf(card);
   assert.doesNotMatch(text, /The project file has no env files\./);
   assert.match(text, /This repo has no env files yet/);
   assert.match(text, /In a pull request, add an envFiles entry to \.woodshed\/project\.yaml ↗:/);
   assert.equal(textOf(walk(card).find((e) => e.tag === 'pre')), 'envFiles:\n  - path: api/.env\n    defaults:        # optional\n      - LOG_LEVEL=info');
   assert.match(text, /No secret is needed: the file's key comes from its path \(api\/\.env is api-env\)\./);
-  assert.match(text, /Once it is on the default branch, a tab for it appears here, to set this installation's values\./);
+  assert.match(text, /Once it is on the default branch, a row for it appears here, to set this installation's values\./);
   assert.match(text, /docs\/reference\.md, "The project file"/);
   const link = walk(card).find((e) => e.tag === 'a');
+  assert.equal(walk(card).some((e) => e.tag === 'section'), false, 'no row');
   assert.deepEqual([link.attrs.href, link.attrs.target], ['https://github.com/acme/app/blob/HEAD/.woodshed/project.yaml', '_blank']);
+});
+
+const switchOf = (app, id) => walk(rowOf(app, id)).find((e) => e.attrs.role === 'switch');
+
+test('Sessions from GitHub: each switch is on its row and applies as it is turned, and a refusal shows with every row closed', async () => {
+  const { app, calls } = await loadPage({ triggers: TRIGGERS, opened: [] });
+  const group = () => groupOf(app, 'github');
+  assert.match(textOf(group()), /How a shared session on acme\/app starts from GitHub\./);
+  assert.deepEqual([switchOf(app, 'switch-labels').attrs['aria-checked'], switchOf(app, 'switch-comments').attrs['aria-checked']], ['true', 'false']);
+  assert.equal(switchOf(app, 'switch-labels').attrs['aria-label'], 'Start sessions from the label');
+  assert.match(textOf(rowOf(app, 'switch-labels')), /On: the woodshed label on an issue starts a session, or resumes the one it had\./);
+  assert.match(textOf(rowOf(app, 'switch-comments')), /Off: \/woodshed … comments do nothing on this repo/);
+  switchOf(app, 'switch-comments').listeners.click();
+  await settle();
+  assert.deepEqual(calls.at(-1), { method: 'POST', path: TRIGGERS_PATH, body: { name: 'app', comments: true } });
+  assert.equal(switchOf(app, 'switch-comments').attrs['aria-checked'], 'true');
+  assert.match(textOf(rowOf(app, 'switch-comments')), /On: \/woodshed … on an issue or pull request starts a session/);
+
+  const refused = await loadPage({ triggers: TRIGGERS, triggersFail: 'the console could not save it', opened: [] });
+  switchOf(refused.app, 'switch-labels').listeners.click();
+  await settle();
+  assert.equal(isOpen(refused.app, 'session-label-row'), false);
+  assert.equal(textOf(walk(groupOf(refused.app, 'github')).find((e) => e.className === 'form-error')), 'the console could not save it');
+  assert.equal(switchOf(refused.app, 'switch-labels').attrs['aria-checked'], 'true', 'as it was');
+});
+
+test('the label\'s name is a row that opens: a label of the repo\'s own is saved, said on the closed row, and sent back to the console\'s', async () => {
+  const { app, calls } = await loadPage({ triggers: TRIGGERS, hash: '#github', opened: [] });
+  assert.equal(isOpen(app, 'session-label-row'), true, '#github opens it');
+  assert.deepEqual({ ...groupOf(app, 'github').scrolledTo }, { block: 'start' });
+  const row = () => rowOf(app, 'session-label-row');
+  const input = () => walk(row()).find((e) => e.tag === 'input' && e.attrs.id === 'session-label');
+  assert.equal(input().value, 'woodshed');
+  assert.equal(button(row(), 'Save').attrs.disabled, '', 'nothing typed yet');
+  assert.equal(button(row(), 'Use the console\'s').attrs.disabled, '');
+  input().value = 'a,b';
+  input().listeners.input();
+  assert.equal(textOf(walk(row()).find((e) => e.className === 'form-error')), 'A label cannot have a comma in it.');
+  assert.equal(button(row(), 'Save').attrs.disabled, '');
+  input().value = 'ai-session';
+  input().listeners.input();
+  button(row(), 'Save').listeners.click();
+  await settle();
+  assert.deepEqual(calls.at(-1), { method: 'POST', path: TRIGGERS_PATH, body: { name: 'app', label: 'ai-session' } });
+  assert.match(textOf(row()), /Saved\. The ai-session label starts sessions on acme\/app from now on/);
+  assert.deepEqual(headText(app, 'session-label-row'), ['The label\'s name', 'ai-session, this repo\'s own. The console\'s is woodshed.', 'Own']);
+  assert.match(textOf(rowOf(app, 'switch-labels')), /On: the ai-session label/);
+  button(row(), 'Use the console\'s').listeners.click();
+  await settle();
+  assert.deepEqual(calls.at(-1).body, { name: 'app', label: null });
+  assert.match(textOf(row()), /Back to the console's label, woodshed\./);
+  assert.deepEqual(headText(app, 'session-label-row').slice(1), ['woodshed, the console\'s', 'Console\'s']);
 });
