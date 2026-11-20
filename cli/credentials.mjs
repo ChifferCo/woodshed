@@ -73,7 +73,7 @@ function libsecret(run) {
   };
 }
 
-function file(dir) {
+function file(dir, platform) {
   const where = path.join(dir, 'credentials.json');
   const all = () => {
     try {
@@ -97,6 +97,8 @@ function file(dir) {
     file: where,
     save(origin, token) {
       checkArgs(origin, token);
+      // Windows has no file mode: a file under a folder others may read would be readable by them too.
+      if (platform === 'win32') throw new Error('this command line cannot keep a token safely on Windows yet');
       write({ ...all(), [origin]: token });
       return true;
     },
@@ -120,7 +122,7 @@ function file(dir) {
  *   `save` keeps the token in the first store that takes it and gives back that store
  */
 export function createCredentials({ platform = process.platform, run = runCommand, dir, has = (command) => onPath(command) }) {
-  const stores = { keychain: keychain(run), libsecret: libsecret(run), file: file(dir) };
+  const stores = { keychain: keychain(run), libsecret: libsecret(run), file: file(dir, platform) };
   const order = [
     ...(platform === 'darwin' && has('security') ? ['keychain'] : []),
     ...(platform === 'linux' && has('secret-tool') ? ['libsecret'] : []),

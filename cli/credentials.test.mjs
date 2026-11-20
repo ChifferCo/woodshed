@@ -82,3 +82,10 @@ test('nothing but a command line token, for a console address, reaches a store',
   assert.throws(() => creds.save('https://x.example -w evil', TOKEN), /not a console address/);
   assert.deepEqual(keyring.calls, []);
 });
+
+test('on Windows no token is written to a file, which has no mode to keep others out', (t) => {
+  const dir = tempDir(t);
+  const creds = createCredentials({ platform: 'win32', run: fakeKeyring().run, dir, has: () => false });
+  assert.throws(() => creds.save(ORIGIN, TOKEN), /cannot keep a token safely on Windows/);
+  assert.equal(fs.existsSync(path.join(dir, 'credentials.json')), false);
+});

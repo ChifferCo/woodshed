@@ -202,6 +202,8 @@ export async function main(argv, deps = {}) {
   }
 
   async function login(origin, { browser }) {
+    // Before any code is asked for, so no sign-in is left at the console that nothing here could keep.
+    if (platform === 'win32') throw new CliError('woodshed login does not run on Windows yet: it has nowhere to keep the token safely', { code: EXIT.refused, status: 'refused' });
     const before = signedIn(origin);
     const started = await call(origin, '/api/cli/device', { method: 'POST', body: { name: deps.hostname ?? os.hostname() } });
     if (started.status !== 200 || !started.body?.deviceCode) {
@@ -240,7 +242,13 @@ export async function main(argv, deps = {}) {
       if (polled.status !== 200 || !polled.body?.token) throw consoleNoCli(origin, polled.status);
       const { token, id } = polled.body;
       const [who, org, name, tokenExpiresAt] = [polled.body.login, polled.body.org, polled.body.console, polled.body.expiresAt].map(plain);
-      const store = credentials.save(origin, token);
+      if (!/^wsc_[0-9a-f]{64}$/.test(String(token))) throw consoleNoCli(origin, polled.status);
+      let store;
+      try {
+        store = credentials.save(origin, token);
+      } catch (err) {
+        throw new CliError(`Signed in, but the token could not be kept: ${err.message}. Revoke this sign-in on My settings.`);
+      }
       const config = readConfig(dir);
       config.current = origin;
       config.consoles[origin] = { login: who ?? null, store: store.kind, tokenId: id, signedInAt: new Date(now()).toISOString() };

@@ -202,3 +202,32 @@ test('a network that drops while the person approves is asked again, and console
   assert.match(out, /Signed in to Acme\]0;pwned as @mia-dev\./);
   assert.ok(!/[\u0000-\u001f\u007f]/.test(out.replace(/\n/g, '')), 'no control characters');
 });
+
+test('a console that hands out something other than a command line token gets a plain error, and nothing is kept', async (t) => {
+  const answers = [
+    () => new Response(JSON.stringify({ deviceCode: 'd'.repeat(64), userCode: 'BCDF-GHJK', expiresIn: 600, interval: 5 }), { status: 200 }),
+    () => new Response(JSON.stringify({ status: 'approved', token: 'not-a-token', id: 'x', login: 'mia-dev' }), { status: 200 }),
+  ];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-cli-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let err = '';
+  const code = await main(['login', '--console', 'https://c.example', '--no-browser'], {
+    env: { XDG_CONFIG_HOME: dir }, stdout: { write() {} }, stderr: { write: (s) => { err += s; } },
+    fetch: async () => answers.shift()(), sleep: async () => {}, platform: 'test', credentials: createCredentials({ platform: 'test', dir }),
+  });
+  assert.equal(code, EXIT.failed);
+  assert.match(err, /^woodshed: https:\/\/c\.example answered 200: it is not a Woodshed console/);
+  assert.equal(fs.existsSync(path.join(dir, 'credentials.json')), false);
+});
+
+test('on Windows login refuses before it asks the console for a code', async () => {
+  let asked = false;
+  let err = '';
+  const code = await main(['login', '--console', 'https://c.example'], {
+    env: { XDG_CONFIG_HOME: os.tmpdir() }, stdout: { write() {} }, stderr: { write: (s) => { err += s; } }, platform: 'win32',
+    fetch: async () => { asked = true; throw new Error('not reached'); },
+  });
+  assert.equal(code, EXIT.refused);
+  assert.equal(asked, false);
+  assert.match(err, /does not run on Windows yet/);
+});
