@@ -43,6 +43,11 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## Settings pages
 
+- My settings is groups of rows that open in place (`components/SettingsRows`), not a column of cards: Sign-ins,
+  Sessions, Kept for you, Repos and files, Display, then Remove My Woodshed alone. A row says the setting's name, what
+  it is now and its status word; several may be open at once. The groups show under My settings in the settings list
+  while it is the page shown, as Settings' tabs do under Settings: each a link to its group, none ever marked, since
+  all are on the one page.
 - A few things each set on or off at once, such as who reviews your pull requests on My settings, are an on/off grid (`components/OnOffGrid`): radios under Off and On, a row each, saved as they are picked.
 - Two or three exclusive choices whose difference matters, such as an MCP server's Ordinary or Production, are choice
   cards (`components/ChoiceCards`): side by side, each a title and one line saying what it does, the picked one in the
@@ -208,8 +213,8 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   navigation entry either: Secrets & webhooks links to it (in the GitHub webhook card, or the page's note when there is
   none), its page has a `‹ Secrets & webhooks` crumb above the title, and Settings is marked current in the list on it.
 - Keyboard shortcuts is in the settings list's This browser group, not in the avatar menu: the menu holds pages, and
-  `?` and the command palette open the sheet anywhere. The theme, review files and a session's default view are a card
-  on My settings (Display, `⇧⌘,` from anywhere), not a sheet: one place for what is yours, and the card says which of
+  `?` and the command palette open the sheet anywhere. The theme, review files and a session's default view are a group
+  on My settings (Display, `⇧⌘,` from anywhere), not a sheet: one place for what is yours, and the group says which of
   its choices are this browser's.
 
 ## Repo settings
@@ -232,10 +237,11 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - Save is the card's one `btn-open`; Clear and Hide are quiet. A refusal is a `form-error` under the buttons, in the
   console's words, and the typed text stays.
 - A non-admin gets the page's frame with one `cap-note` saying it is an admin's: no field, no value.
-- My settings has the same layers for each repo the person can write to, in its **Repo settings** card (a `set-card`,
-  `is-wide`): the repos as tabs, then each env file's layers with **Person** · Your values between Installation and
-  Session, and a **Yours** column in the table, then the Instructions. The installation's layer is read only there.
-  `?repo=<project>` (and `&file=<key>`) opens one. tmux keeps a card of its own.
+- My settings has the same layers for each repo the person can write to, under **Repos and files**: a row per repo
+  (`components/SettingsRows`), which opens on a segmented control of Instructions, Env files and Your files. Env files
+  has each env file's layers with **Person** · Your values between Installation and Session, and a **Yours** column in
+  the table. The installation's layer is read only there. `?repo=<project>` (and `&file=<key>`) opens one repo's row.
+  tmux is a row of its own after the repos.
 
 ## Ownership tags
 

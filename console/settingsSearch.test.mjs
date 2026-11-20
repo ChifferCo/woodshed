@@ -56,12 +56,18 @@ function loadSearch({ consoleLinks = [{ href: '/console-settings' }, { href: '/s
   const W = { h, isAdmin: () => true, consoleLinks: () => consoleLinks, goToSettings: (href) => went.push(href) };
   const heard = {};
   const location = { pathname: '/events', hash: '' };
-  const window = { Woodshed: W, WoodshedSettingsIndex: Index, location, addEventListener(type, fn) { (heard[type] ??= []).push(fn); }, history: { replaceState() {} } };
+  // The sections the search asked their page to open (My settings' rows listen for it).
+  const revealed = [];
+  class CustomEvent { constructor(type, init) { this.type = type; this.detail = init?.detail; } }
+  const window = {
+    Woodshed: W, WoodshedSettingsIndex: Index, location, addEventListener(type, fn) { (heard[type] ??= []).push(fn); }, history: { replaceState() {} },
+    dispatchEvent(e) { if (e.type === 'woodshed:settings-reveal') revealed.push(e.detail.id); },
+  };
   // The section a search result names, found by its id in what the page drew.
   const byId = (id, n = app) => (n.attrs?.id === id ? n : (n.children ?? []).map((c) => byId(id, c)).find(Boolean) ?? null);
   document.getElementById = (id) => byId(id);
   class MutationObserver { observe() {} disconnect() {} }
-  vm.runInContext(source, vm.createContext({ window, document, queueMicrotask, setTimeout, console, MutationObserver }));
+  vm.runInContext(source, vm.createContext({ window, document, queueMicrotask, setTimeout, console, MutationObserver, CustomEvent }));
   // A page that redraws on a timer, as Webhook events does every 5 s.
   const redraw = () => app.replaceChildren(h('div', { class: 'page' }, h('nav'), W.settingsSearch(), h('table')));
   // A settings page shown, on load or in place: what common.js says once it is (woodshed:settings-shown).
@@ -70,7 +76,7 @@ function loadSearch({ consoleLinks = [{ href: '/console-settings' }, { href: '/s
     app.replaceChildren(h('div', { class: 'page' }, ...children));
     for (const fn of heard['woodshed:settings-shown'] ?? []) fn();
   };
-  return { W, h, document, redraw, went, shown };
+  return { W, h, document, redraw, went, shown, revealed };
 }
 
 const settle = () => new Promise((r) => setImmediate(r));
@@ -127,9 +133,10 @@ test('Enter on a result on another page shows it in place, through goToSettings,
 });
 
 test('a page shown with a section in its address has that section outlined and scrolled to', () => {
-  const { h, shown } = loadSearch();
+  const { h, shown, revealed } = loadSearch();
   const members = h('section', { id: 'members' });
   shown('/people', '#members', members);
+  assert.deepEqual(revealed, ['members'], 'its page is asked to open it, where sections are rows that open');
   assert.equal(members.classList.names.has('is-found'), true);
   assert.equal(members.scrolled, true);
   const other = h('section', { id: 'members' });

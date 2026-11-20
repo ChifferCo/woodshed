@@ -1,5 +1,5 @@
 The on/off grid sets a few things on or off at once, one row each, with radios under **Off** and **On** across the
-top. My settings' **Reviews of my pull requests** card uses it, with a row for Claude Code and one for Codex: both on is
+top. My settings' **Reviews of my pull requests** row uses it, with a row for Claude Code and one for Codex: both on is
 both reviewing, both off is no code review (`public/mySettings.js`, `.onoff-grid` in `public/style.css`).
 
 - A plain table: the row's name in `ink`, 600 weight; the column heads in `label`, 12px, 600; rows divided by

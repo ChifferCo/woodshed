@@ -1301,6 +1301,8 @@
   // Under the avatar, as most apps keep them, and on the settings pages' list: your own settings, and the console's own,
   // which only an admin sees (the console refuses their calls to anyone else).
   const MY_LINKS = [{ href: '/settings', label: 'My settings' }];
+  // My settings' groups (mySettings.js), which open under it in the settings list while it is the page shown.
+  const MY_GROUPS = [['set-signins', 'Sign-ins'], ['set-sessions', 'Sessions'], ['set-kept', 'Kept for you'], ['repo-settings', 'Repos and files'], ['my-display', 'Display']];
   // Settings comes first and holds the console's own tabs (settingsTabs), so it stays current on each of them. Webhook
   // events is a log, reached from Secrets & webhooks, not an entry: Settings stays current on it too.
   const CONSOLE_LINKS = [
@@ -1492,7 +1494,17 @@
       ? [hostItem(entry), h('div', { class: 'side-subs' }, entry.items.map((sub) =>
         h('a', { class: 'side-item side-sub', href: sub.href, 'aria-current': sub.href === navCurrent ? 'page' : null }, sub.label)))]
       : hostItem(entry));
-    youSlot.replaceChildren(h('div', { class: 'side-group' }, 'You'), ...MY_LINKS.map(mine), ...(meNow?.menuYou ?? []).map(hostItem));
+    // A place on the page shown: gone to here, without showing the page again. The address may hold a query by then
+    // (?repo=, once a repo's row was opened), which settingsLinkClicked would take for another page and draw it anew,
+    // shutting every open row.
+    const toGroup = (id) => (e) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || location.pathname !== '/settings') return;
+      e.preventDefault();
+      history.replaceState(null, '', `${location.pathname}${location.search}#${id}`);
+      document.getElementById(id)?.scrollIntoView({ block: 'start' });
+    };
+    const myGroups = navCurrent === '/settings' ? [h('div', { class: 'side-subs' }, MY_GROUPS.map(([id, label]) => h('a', { class: 'side-item side-sub', href: `/settings#${id}`, onclick: toGroup(id) }, label)))] : [];
+    youSlot.replaceChildren(h('div', { class: 'side-group' }, 'You'), ...MY_LINKS.map(mine), ...myGroups, ...(meNow?.menuYou ?? []).map(hostItem));
     sectionsSlot.replaceChildren(...(meNow?.menuSections ?? []).flatMap((section) =>
       [h('div', { class: 'side-group' }, section.label), ...section.items.flatMap(hostEntry)]));
     fillConsoleSlot();

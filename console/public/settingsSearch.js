@@ -19,6 +19,8 @@
    */
   function reveal(id) {
     let shown = false;
+    // A page whose sections are rows that open (My settings) opens this one.
+    window.dispatchEvent(new CustomEvent('woodshed:settings-reveal', { detail: { id } }));
     const mark = () => {
       const target = document.getElementById(id);
       if (!target) return;
@@ -98,8 +100,10 @@
       if (entry.page === window.location.pathname) {
         event?.preventDefault();
         window.history.replaceState(null, '', `#${entry.id}`);
-        setOpen(false);
+        // Revealed first: a page that draws itself again to open the section gives this box its focus back, which
+        // opens the list, and the list is to end shut.
         reveal(entry.id);
+        setOpen(false);
       } else if (!event) {
         setOpen(false);
         W.goToSettings(entry.href);

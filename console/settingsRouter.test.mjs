@@ -367,7 +367,10 @@ test('on the other settings pages Settings stays one entry, and the avatar menu 
   for (const path of ['/settings']) {
     const t = adminPages(path);
     await answered();
-    assert.deepEqual(t.subs('side-sub'), [], `none under Settings on ${path}`);
+    assert.deepEqual(t.subs('side-sub'), [
+      ['Sign-ins', '/settings#set-signins', null], ['Sessions', '/settings#set-sessions', null], ['Kept for you', '/settings#set-kept', null],
+      ['Repos and files', '/settings#repo-settings', null], ['Display', '/settings#my-display', null],
+    ], `My settings' own groups under it on ${path}, and none under Settings`);
     assert.equal(t.settingsEntry().getAttribute('aria-current'), null);
     assert.deepEqual(t.subs('menu-sub'), [
       ['General', '/console-settings', null], ['Secrets & webhooks', '/secrets', null],
@@ -481,7 +484,7 @@ test('the avatar menu: My settings and the program\'s pages under the name, its 
 test('the side list: You with the program\'s pages, Console, then the program\'s sections, an entry\'s pages open on its own', async () => {
   const t = load('/settings', (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]], { me: HOST_MENU });
   await answered();
-  assert.deepEqual(sideRows(t), ['[You]', 'My settings (page)', 'Your workspaces', '[Console]', 'Settings', '[Service]', 'Admin', '[This browser]'],
+  assert.deepEqual(sideRows(t), ['[You]', 'My settings (page)', '› Sign-ins', '› Sessions', '› Kept for you', '› Repos and files', '› Display', 'Your workspaces', '[Console]', 'Settings', '[Service]', 'Admin', '[This browser]'],
     'Admin one entry away from its pages');
 
   const first = load('/nowhere');
