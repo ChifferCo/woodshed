@@ -42,6 +42,10 @@ const QA_MODEL = REVIEW_MODEL;
 
 /** Levels of questions: the top level, a follow-up, and a follow-up's follow-up. */
 export const MAX_DEPTH = 3;
+/** How deep a reader's own follow-ups may go: past the newcomer's levels, but not without end. */
+export const MAX_ASK_DEPTH = 8;
+/** A reader's question may be longer than the newcomer's one sentence. */
+export const MAX_USER_QUESTION = 1_000;
 const MAX_TOP_QUESTIONS = 6;
 const MAX_FOLLOWUPS_PER_ROUND = 8;
 const MAX_FOLLOWUPS_PER_ANSWER = 2;
@@ -693,11 +697,38 @@ export function pathTo(items, id) {
   const byId = new Map(items.map((i) => [i.id, i]));
   const chain = [];
   let at = byId.get(id);
-  while (at && chain.length <= MAX_DEPTH) {
+  while (at && chain.length < MAX_ASK_DEPTH) {
     chain.unshift(at);
     at = at.parent ? byId.get(at.parent) : null;
   }
   return chain;
+}
+
+/**
+ * A question the reader typed into the Q&A, checked and made an item: under the
+ * answered item `parent` names, or at the top when it is null. Its id is
+ * `<parent>.u<n>` (or `u<n>`), which the newcomer's `<parent>.<n>` cannot be.
+ *
+ * @returns {{ok: true, item: object} | {ok: false, error: string}}
+ */
+export function validateUserQuestion(payload, items) {
+  const raw = typeof payload?.question === 'string' ? payload.question.trim() : '';
+  if (!raw) return { ok: false, error: 'the question is empty' };
+  if (raw.length > MAX_USER_QUESTION) return { ok: false, error: `the question is longer than ${MAX_USER_QUESTION} characters` };
+  const parentId = payload?.parent == null || payload.parent === '' ? null : payload.parent;
+  let depth = 1;
+  if (parentId !== null) {
+    const parent = typeof parentId === 'string' ? items.find((i) => i.id === parentId) : null;
+    if (!parent) return { ok: false, error: 'the answer it follows up on is no longer there' };
+    if (!parent.answer) return { ok: false, error: 'that question has no answer yet to follow up on' };
+    depth = parent.depth + 1;
+    if (depth > MAX_ASK_DEPTH) return { ok: false, error: `follow-ups go ${MAX_ASK_DEPTH} levels deep at most` };
+  }
+  const prefix = parentId ? `${parentId}.u` : 'u';
+  let n = 1;
+  const taken = new Set(items.map((i) => i.id));
+  while (taken.has(`${prefix}${n}`)) n += 1;
+  return { ok: true, item: { id: `${prefix}${n}`, parent: parentId, depth, question: raw, answer: null } };
 }
 
 /**

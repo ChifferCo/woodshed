@@ -20,4 +20,15 @@ preview shows it in the console's nearest tokens. The pairs: `--ink` is `ink`, `
   6 questions…") beside a spinner, and Ask again is not offered.
 - An empty or replaced Q&A says so in a sentence ("There is no Q&A for this diff yet.") with **Ask the questions**, a
   quiet button too. A failure says what went wrong, as every error does.
+- The reader asks their own. An open answer ends, after its follow-ups, with a one-line field ("Ask a follow-up about
+  this answer…") and a quiet **Ask** button, never orange since there is one under every open answer, in the review page's ask panel
+  row (`.askrow`: the field on `panel` with a `line` border); the tree ends with the same row for a question of their own ("Ask a
+  question of your own about this change…"). Enter asks. While a question asked in a box waits, its **Ask** is
+  disabled and the field still takes the next one. A question's text breaks anywhere it must, so a pasted URL or one
+  long word never pushes the page sideways. Neither is shown while a run is going. The question joins the
+  tree at once where it was asked, "being answered", and "you asked" in `meta` beside it, folded like the rest once
+  answered. A question that comes back unanswered is put back in its field when the field is empty (a draft typed
+  since stays, and is not replaced), with "Not answered: <why>" under it either way, in the page's `--del`, as the ask
+  panel says its errors.
 - Opening or closing a question keeps the keyboard focus on it, and a refresh while a run goes keeps it there too.
+  A field being typed in keeps the focus, its caret and what was typed through every refresh.

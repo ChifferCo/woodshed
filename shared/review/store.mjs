@@ -257,7 +257,7 @@ export function answerKey({ session, filePath, line, side, question }) {
 // single job.json meant the explain overwrote the analysis's entry and then
 // deleted it on finishing — leaving a live analysis child with no breadcrumb at
 // all, which is precisely the orphan the breadcrumb exists to reap.
-const JOB_KINDS = ['analysis', 'explain', 'chat', 'qa'];
+const JOB_KINDS = ['analysis', 'explain', 'chat', 'qa', 'qa-ask'];
 
 function breadcrumbName(kind) {
   return `job-${JOB_KINDS.includes(kind) ? kind : 'analysis'}.json`;

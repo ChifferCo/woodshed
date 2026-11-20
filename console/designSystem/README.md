@@ -274,7 +274,9 @@ The Review tab frames the review page (`shared/review/page.mjs`), which has a pa
 holds there too, in its variables. Its **Q&A** tab is a folding tree of a newcomer's questions (`components/QaTree`),
 with no section head or intro above it: it opens with its tools row. Every question starts folded, a folded one says how many follow-ups it holds, and its controls (Open all, Close all,
 Ask again, Ask the questions) are quiet buttons, never orange. A question being answered says so in words beside its
-spinner, and opening one keeps the keyboard focus on it.
+spinner, and opening one keeps the keyboard focus on it. The reader asks too: an open answer ends with a one-line box
+for a follow-up, and the tree with one for a question of their own, each the ask panel's field and a quiet **Ask**
+button, never orange. A question they asked says "you asked" in `meta`.
 
 ## Iconography
 

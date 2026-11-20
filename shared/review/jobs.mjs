@@ -33,7 +33,8 @@ import {
 // (the chat, then the Q&A) was another process alongside. The Q&A shares the
 // analysis's slot, being background work nobody is waiting on a sentence of;
 // the chat shares the explain's, so a question someone typed never queues
-// behind a Q&A round.
+// behind a Q&A round. A question a reader types into the Q&A (`qa-ask`) is
+// someone waiting, so it goes in the explain's slot, with its timeout.
 const MAX_ANALYSIS_JOBS = 1;
 const MAX_EXPLAIN_JOBS = 1;
 const BACKGROUND_KINDS = ['analysis', 'qa'];
@@ -110,7 +111,7 @@ export function availableBytes(readMeminfo) {
 /**
  * Queue or start a `claude -p` run.
  *
- * @param {{kind: 'analysis'|'explain'|'chat'|'qa', session: string, argv: string[], cwd: string,
+ * @param {{kind: 'analysis'|'explain'|'chat'|'qa'|'qa-ask', session: string, argv: string[], cwd: string,
  *          log: Function, onLine?: Function}} spec
  * @returns {{ok: true, job: object} | {ok: false, status: number, error: string}}
  */
