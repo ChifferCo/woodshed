@@ -39,16 +39,86 @@
     // Chat is the conversation, drawn from the agent's own record of it, and the default; ?tab=tui is the agent's
     // TUI, its live terminal, ?tab=terminal the plain shell, ?tab=review the review, ?tab=diff the plain diff and
     // ?tab=applog the app's logs. A session that is not running has no chat: its page shows the start, or how it
-    // ended, as before. ?tab=agent, TUI's old name, still opens it, and the address is put right.
-    const asked = params.get('tab');
+    // ended, as before. ?tab=agent, TUI's old name, still opens it, and the address is put right. ?tab=chat asks for
+    // Chat itself. With no tab in the address (the rail's links), a session opens on the tab it was last left on
+    // (sessionTabs.cjs). Back and Forward reach an entry that says which tab it showed (its history state, as the
+    // default has no ?tab), so it comes back as it was rather than as the memory now says.
+    if (params.get('tab') === 'agent') params.set('tab', SessionTabs.known('agent'));
+    // Another login's entry asks for the ?tab it arrived with, whatever its address says now: one the page wrote there
+    // since was that login's choice. The address is put back to it.
+    const state = window.history.state;
+    const arrivedWith = SessionTabs.linkedTab(state, params.get('tab'));
+    const inAddress = id ? SessionTabs.addressTab(state, pageLogin, params.get('tab')) : params.get('tab');
+    const dropped = Boolean(params.get('tab')) && !inAddress;
+    if (inAddress) params.set('tab', inAddress);
+    else params.delete('tab');
+    // This login's own entry shows the tab it showed, over the link its address keeps (sessionTabs.cjs, ask).
+    const fromEntry = SessionTabs.entryTab(state, pageLogin);
+    const asked = SessionTabs.ask(tabMemory, id, inAddress, fromEntry);
     tab = W.sessionTab(asked);
     landOnReview = !asked;
-    if (asked && asked !== tab && tab !== 'chat') {
-      const url = new URL(window.location.href);
-      url.searchParams.set('tab', tab);
-      window.history.replaceState(window.history.state, '', url);
+    heldTab = null;
+    // An entry that showed a fallback (a link's tab the session could not show) still does after a reload.
+    fellBack = Boolean(id && state?.fellBack && state.login === pageLogin && fromEntry === tab);
+    const query = params.toString();
+    const address = `${pathname}${query ? `?${query}` : ''}`;
+    if (id && asked) markEntry(address, arrivedWith);
+    else if (id && dropped) window.history.replaceState({ ...state, login: pageLogin, tab: null, linkedTab: arrivedWith }, '', address);
+  }
+  // This history entry's address, with the tab it shows in its state (and the ?tab it arrived with, when given).
+  function markEntry(address, arrivedWith) {
+    const state = { ...SessionTabs.withEntryTab(window.history.state, tab, pageLogin), fellBack };
+    if (arrivedWith !== undefined) state.linkedTab = arrivedWith;
+    window.history.replaceState(state, '', address);
+  }
+  // This history entry's state alone, with the tab it keeps for Back and Forward (sessionTabs.cjs, leftOn): written as
+  // the page draws a session, so an entry left by Back or Forward keeps it too, not only one left through a link.
+  function stampEntry() {
+    const drawn = Boolean(id) && currentSession?.id === id;
+    const reviewPending = landOnReview && Boolean(currentSession?.reviewOnly);
+    const left = SessionTabs.leftOn({ tab, held: heldTab, reviewPending, drawn });
+    if (left === null) return;
+    if (SessionTabs.entryTab(window.history.state, pageLogin) !== left) {
+      window.history.replaceState({ ...SessionTabs.withEntryTab(window.history.state, left, pageLogin), fellBack }, '');
     }
   }
+  // The memory keeps the tab a session is left on (a click on a tab, a move to another page, Back or Forward), not the
+  // one an address asked for on arrival: a ?tab carried in from elsewhere (a link, the way back through sign-in, perhaps
+  // someone else's) shows, and becomes this login's only if they leave the session on it.
+  function leftTab() {
+    // A tab the page fell back to (a link's tab the session cannot show) was not picked: leaving keeps the memory as is.
+    if (fellBack) return null;
+    const drawn = Boolean(id) && currentSession?.id === id;
+    const reviewPending = landOnReview && Boolean(currentSession?.reviewOnly);
+    return SessionTabs.leaving({ tab, held: heldTab, reviewPending, drawn });
+  }
+  function rememberLeaving() {
+    const left = leftTab();
+    if (left) tabMemory.remember(id, left);
+  }
+  // Whether a back-forward cache restore is still checking who is signed in (pageshow): until it says, the page writes
+  // nothing to storage and follows no move, Back included, since it may be drawn for someone else.
+  let restoring = false;
+  // The tab each session was last on, for this browser tab and the login signed in.
+  const SessionTabs = window.WoodshedSessionTabs;
+  const pageLogin = document.querySelector('meta[name="woodshed-login"]')?.content ?? null;
+  const tabMemory = (() => {
+    try {
+      const memory = SessionTabs.memory(window.sessionStorage, pageLogin, () => !W.signingOut() && !restoring);
+      // The tab the last page went away on: the session was left on it, unless this load is a reload of that visit.
+      const reloaded = window.performance?.getEntriesByType?.('navigation')?.[0]?.type === 'reload';
+      const left = SessionTabs.takeLeaving(window.sessionStorage, pageLogin, reloaded);
+      if (left) memory.remember(left.id, left.tab);
+      return memory;
+    } catch {
+      return SessionTabs.memory({ getItem: () => null, setItem() {} }, pageLogin);
+    }
+  })();
+  // A tab asked for that the session, as the list before this route's lookup has it, cannot show: tried again once the
+  // lookup answers (render).
+  let heldTab = null;
+  // Whether the tab showing is a fallback the page chose (render), until a tab is picked or the route changes.
+  let fellBack = false;
   // Set on each arrival at a page without a tab in its address: a review-only session then opens on its Review.
   let landOnReview = false;
   // The tabs that show a page of their own rather than a terminal: no key bar and no message box. Chat has a composer
@@ -68,6 +138,8 @@
   let loadError = null;
   // The list belongs to the previous page (or this tab's saved snapshot) until this route's lookup answers.
   let routePending = true;
+  // Whether this route's list came from a lookup that answered, rather than a snapshot or a failed one (sessionTabs.cjs).
+  let routeConfirmed = false;
   let routeVersion = 0;
   const launcher = W.createLauncher();
   const messageBox = W.createMessageBox();
@@ -84,13 +156,24 @@
       window.location.href = url.href;
       return;
     }
-    if (url.href !== window.location.href) window.history.pushState(null, '', url.pathname + url.search);
+    // The address keeps a link's ?tab after another tab was picked, so an action asking for that tab (Open the agent,
+    // Open the diff, Remote Control's sign-in) can name the very address showing: it still opens that tab, as a new
+    // entry, and Back returns to the one picked (sessionTabs.cjs, opensAgain).
+    const again = SessionTabs.opensAgain({ sameAddress: url.href === window.location.href, sameSession: url.pathname === window.location.pathname && Boolean(id), asked: url.searchParams.get('tab'), showing: heldTab || tab });
+    if (url.href !== window.location.href || again) {
+      // The entry left behind keeps the tab it showed, for Back (sessionTabs.cjs, leftOn).
+      if (id) stampEntry();
+      window.history.pushState(null, '', url.pathname + url.search);
+    }
     moved();
   }
   function moved() {
+    if (restoring) return;
+    rememberLeaving();
     readRoute();
     routeVersion++;
     routePending = true;
+    routeConfirmed = false;
     loadError = null;
     closeCardMenu();
     if (onMy) launcher.applyQuery();
@@ -98,6 +181,53 @@
     refresh();
   }
   window.addEventListener('popstate', moved);
+  // Going away altogether (My settings, another page of the console, a reload, closing the browser tab) puts the tab
+  // aside for the next shell page, which keeps it unless that was a reload (sessionTabs.cjs, takeLeaving). After a
+  // sign-out or an account change nothing is put aside (W.signingOut).
+  window.addEventListener('pagehide', (e) => {
+    // Going into the back-forward cache, the whole document is hidden (dialogs under body too, such as Machine), so a
+    // restore shows nothing of it until pageshow below has checked who is signed in.
+    if (e.persisted) document.documentElement.style.visibility = 'hidden';
+    const left = leftTab();
+    if (left && !W.signingOut() && !restoring) SessionTabs.stashLeaving(window.sessionStorage, pageLogin, id, left);
+  });
+  // Back to this page from the browser's back-forward cache runs none of the page's start, and the page is as it was
+  // left, drawn for its login: the account may have changed in another browser tab since. It stays hidden until the
+  // console says who is signed in. Someone else (or nobody, or no answer): what was kept goes, nothing is written,
+  // and the page loads again (a lost sign-in is sent to sign in by common.js). The same login: the tab put aside as
+  // the page went away is taken (the visit was left, not reloaded), and the page is shown and refreshed.
+  window.addEventListener('pageshow', async (e) => {
+    if (!e.persisted) return;
+    document.documentElement.style.visibility = 'hidden';
+    restoring = true;
+    const shownAt = window.location.href;
+    let who = null;
+    try {
+      // /api/my names the login whether or not the console has sign-in (/api/me names none without it). No answer in
+      // 10 s counts as none: the page loads again rather than stay hidden.
+      const answer = W.getJson('/api/my');
+      const late = new Promise((resolve, reject) => setTimeout(() => reject(new Error('no answer')), 10_000));
+      who = (await Promise.race([answer, late]))?.login ?? null;
+    } catch {
+      who = undefined;
+    }
+    if (pageLogin && who !== pageLogin) {
+      W.forgetSignedIn();
+      window.location.reload();
+      return;
+    }
+    restoring = false;
+    try {
+      const left = SessionTabs.takeLeaving(window.sessionStorage, pageLogin, false);
+      if (left) tabMemory.remember(left.id, left.tab);
+    } catch {
+      // Storage refused: the memory stays as it was.
+    }
+    document.documentElement.style.visibility = '';
+    // A move made while it checked (Back again) was not followed: follow it now.
+    if (window.location.href !== shownAt) moved();
+    else refresh();
+  });
   // Every link to one of these pages, the rail's, the bar's ‹ and New session's among them. A new tab, a modifier
   // click or a link to anywhere else is the browser's.
   document.addEventListener('click', (e) => {
@@ -176,7 +306,7 @@
   async function resumePrivate(s) {
     try {
       const next = await W.postJson(`/api/my/sessions/${s.id}/resume`, {});
-      navigate(`/s/${next.id}`);
+      navigate(`/s/${next.id}?tab=chat`);
       return true;
     } catch (err) {
       window.alert(`Could not resume: ${err.message}`);
@@ -396,7 +526,7 @@
     const removable = W.isPrivate(s) && s.status !== 'stopping';
     const deletable = !s.owner && s.status !== 'stopping' && (live || s.kept);
     const gone = !s.owner && !live && !s.kept && s.status !== 'stopping';
-    const open = (tabName) => () => { navigate(`/s/${s.id}${tabName ? `?tab=${tabName}` : ''}`); };
+    const open = (tabName) => () => { navigate(`/s/${s.id}?tab=${tabName || 'chat'}`); };
     return [
       stoppedPrivate && { label: 'Resume', note: resumeNote(s), run: () => resumePrivate(s) },
       W.isResumable(s) && W.group(s) !== 'merged' && {
@@ -733,8 +863,8 @@
         const url = new URL(window.location.href);
         if (picked.length) url.searchParams.set('by', picked.join(','));
         else url.searchParams.delete('by');
-        // URLSearchParams would write the commas as %2C.
-        window.history.replaceState(null, '', `${url.pathname}${url.search.replace(/%2C/g, ',')}`);
+        // URLSearchParams would write the commas as %2C. The entry keeps its state: its tab and the ?tab it arrived with.
+        window.history.replaceState(window.history.state, '', `${url.pathname}${url.search.replace(/%2C/g, ',')}`);
         render();
       }, { allLabel: 'People' });
       railFrame = {
@@ -878,8 +1008,8 @@
   function setRailStatus(next) {
     const url = new URL(window.location.href);
     url.searchParams.set('status', next);
-    // URLSearchParams would write the commas of ?by= as %2C.
-    window.history.replaceState(null, '', `${url.pathname}${url.search.replace(/%2C/g, ',')}`);
+    // URLSearchParams would write the commas of ?by= as %2C. The entry keeps its state: its tab and the ?tab it arrived with.
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search.replace(/%2C/g, ',')}`);
     render();
   }
   function statusChips(listed, status) {
@@ -981,7 +1111,7 @@
   function paletteActions(item) {
     const s = data.sessions.find((x) => x.id === item.id);
     if (!s) return [];
-    const open = (tabName) => () => { navigate(`/s/${s.id}${tabName ? `?tab=${tabName}` : ''}`); };
+    const open = (tabName) => () => { navigate(`/s/${s.id}?tab=${tabName || 'chat'}`); };
     return [
       { group: 'Session', label: 'Open the chat', run: open('') },
       { group: 'Session', label: 'Open the agent\'s TUI', run: open('tui') },
@@ -1060,7 +1190,7 @@
       const res = await fetch(`/api/sessions/${s.id}/claude-login`, { method: 'POST', headers: { 'x-woodshed': '1' } });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `sign in answered ${res.status}`);
-      navigate(body.where === 'agent' ? `/s/${s.id}?tab=tui` : `/s/${s.id}?tab=terminal`);
+      navigate(`/s/${s.id}?tab=${body.where === 'agent' ? 'tui' : 'terminal'}`);
     } catch (err) {
       window.alert(`Could not start the sign-in: ${err.message}`);
     }
@@ -1863,15 +1993,21 @@
   }
 
   function setTab(next) {
-    if (tab === next) return;
+    // Agent picked while it already shows is a choice too when it stands in for another tab (sessionTabs.cjs, picks).
+    // So is the tab showing when the memory says another (a link opened it): the click makes it the one kept.
+    const picked = SessionTabs.picks({ tab, next, held: heldTab, landOnReview }) || tabMemory.asked(id, null, null) !== next;
+    heldTab = null;
+    fellBack = false;
+    if (!picked) return;
     tab = next;
     if (TAB_GROUPS[groupOf(next)]) lastInGroup[groupOf(next)] = next;
     landOnReview = false;
+    tabMemory.remember(id, tab);
     const url = new URL(window.location.href);
     if (currentSession) (tab === 'terminal' ? shellPool : agentPool).refit(currentSession, false);
-    if (tab === 'chat') url.searchParams.delete('tab');
-    else url.searchParams.set('tab', tab);
-    window.history.replaceState(null, '', url);
+    // The tab picked lives in the entry's state, not its address: a ?tab is only ever a link's, kept as it came so a
+    // reload through the server's sign-in still carries the link, and nothing this login picked rides in an address.
+    markEntry(url);
     render();
   }
 
@@ -1981,7 +2117,6 @@
     // The shell's terminal, made the first time its tab opens and dropped once the session stops.
     const hasShell = Boolean(shellKey(s));
     if (!hasShell) shellPool.hide();
-    else if (tab === 'terminal') shellPool.show(s);
     if (!s) {
       offerRenameOnce(null);
       slots.plain.hidden = true;
@@ -1998,9 +2133,23 @@
       return;
     }
     openReviewWhenRunning(s);
-    if (tab === 'review' && !s.branch) tab = 'tui';
-    if (tab === 'terminal' && !hasShell) tab = 'tui';
-    if ((tab === 'applog' || tab === 'diff') && (s.status !== 'running' || s.kind === 'ask')) tab = 'tui';
+    // A tab the session cannot show falls back to TUI. Until this route's lookup answers, the session may be the kept
+    // snapshot's (starting, where it now runs), so the tab asked for is held and tried again; once the answer is in,
+    // the fallback stands and the remembered tab says TUI too when it was the one that could not show.
+    // A failed lookup leaves the list as it was, so only a successful one confirms it (routeConfirmed).
+    const wanted = heldTab && routeConfirmed ? heldTab : tab;
+    const settled = SessionTabs.settle({ tab, held: heldTab, pending: !routeConfirmed, s, hasShell });
+    ({ tab, held: heldTab } = settled);
+    if (settled.fellBack) {
+      fellBack = true;
+      // The address keeps the link's ?tab (the entry's state says TUI shows), for the way back through sign-in.
+      markEntry(new URL(window.location.href));
+      // The memory is corrected only when it is what the session cannot show: a link's tab leaves it as it was,
+      // and a remembered one is corrected however it was asked (the memory, or an entry stamped from it before a reload).
+      if (SessionTabs.correctsMemory(tabMemory.asked(s.id, null, null), wanted)) tabMemory.remember(s.id, tab);
+    }
+    stampEntry();
+    if (hasShell && tab === 'terminal') shellPool.show(s);
     const view = viewOf(s);
     slots.head.replaceChildren(paneBar(s, view));
     offerRenameOnce(s);
@@ -2044,7 +2193,10 @@
     if (!s.reviewOnly || !landOnReview || s.status !== 'running') return;
     landOnReview = false;
     tab = 'review';
-    window.history.replaceState(null, '', `/s/${s.id}?tab=review`);
+    tabMemory.remember(s.id, tab);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('tab');
+    markEntry(url);
   }
 
   // What the last answers were, in this tab, so a page load draws the rail at once and refreshes it after, rather than
@@ -2058,6 +2210,8 @@
   function readLast() {
     try {
       const last = JSON.parse(window.sessionStorage.getItem(LAST_KEY) || 'null');
+      // Another login's (signed out in another browser tab, which ran no cleanup here) goes, unread.
+      if (last && last.login !== signedInAs) window.sessionStorage.removeItem(LAST_KEY);
       if (!last?.data?.sessions || last.login !== signedInAs) return;
       ({ data, me, pulls } = { data: last.data, me: last.me ?? null, pulls: last.pulls ?? [] });
       fromLast = true;
@@ -2066,6 +2220,7 @@
     }
   }
   function keepLast() {
+    if (W.signingOut() || restoring) return;
     try {
       window.sessionStorage.setItem(LAST_KEY, JSON.stringify({ login: signedInAs, data, me, pulls }));
     } catch {
@@ -2073,24 +2228,45 @@
     }
   }
 
+  // An answer older than one already applied is dropped: it would put back a session's earlier state.
+  const sessionLookups = SessionTabs.lookups();
+  // Signed in as someone else in another browser tab since this page was drawn, as any of a refresh's answers says
+  // (the session list, /api/my, the pull requests): nothing of theirs is drawn or kept under this page's login. What
+  // was kept goes, nothing more is written, and the page loads again as them. @returns {boolean}  whether it did
+  function accountChanged(...logins) {
+    if (!logins.some((login) => SessionTabs.otherLogin(signedInAs, login))) return false;
+    W.forgetSignedIn();
+    window.location.reload();
+    return true;
+  }
   async function refresh() {
     const version = routeVersion;
+    const lookup = sessionLookups.start();
     try {
       // My Woodshed's own answer is asked for on /, and once anywhere else, so moving to / has it already.
       // Asked again on every refresh while the setup card shows, so its databases row moves on whichever page is open.
       const askMe = onMy || !me || (railMine() && !W.setupDone(me));
       const answer = await Promise.all([W.fetchSessions(), askMe ? W.getJson('/api/my') : Promise.resolve(me)]);
       // A read started on the previous page must not confirm a session absent from its older list.
-      if (version !== routeVersion) return;
+      if (version !== routeVersion || !sessionLookups.fresh(lookup)) return;
+      if (accountChanged(answer[0]?.login, answer[1]?.login)) return;
       [data, me] = answer;
       routePending = false;
+      routeConfirmed = true;
       // The rail's pull requests are best effort: GitHub being slow must not hold the page.
-      if (railMine()) W.getJson('/api/my/pulls').then((answer) => { pulls = answer.pulls; keepLast(); render(); }, () => {});
+      if (railMine()) {
+        W.getJson('/api/my/pulls').then((answer) => {
+          if (accountChanged(answer?.login)) return;
+          pulls = answer.pulls;
+          keepLast();
+          render();
+        }, () => {});
+      }
       loadError = null;
       fromLast = false;
       keepLast();
     } catch (err) {
-      if (version !== routeVersion) return;
+      if (version !== routeVersion || sessionLookups.stale(lookup)) return;
       routePending = false;
       loadError = err.message;
       if (fromLast) {

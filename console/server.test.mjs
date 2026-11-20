@@ -867,6 +867,8 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   for (const page of ['/settings', '/console-settings', '/console-settings/repos/app', '/secrets', '/people', '/events']) {
     const settingsScripts = [...(await getBody(port, page, as('octocat'))).matchAll(/<script src="\/static\/([\w.]+)\?v=[0-9a-f]{12}"/g)].map((m) => m[1]);
     assert.deepEqual(settingsScripts.slice(-SETTINGS.length), SETTINGS, `${page} is the settings page`);
+    // Whose page it is too, so common.js drops what another login kept in the browser tab.
+    assert.match(await getBody(port, page, as('octocat')), /<meta name="woodshed-login" content="octocat">/, `${page} names who it is for`);
   }
   // Each script a page names is served: one missing from the static list would load as a 404.
   for (const script of SETTINGS) assert.equal((await fetch(`http://127.0.0.1:${port}/static/${script}`, { headers: { host: `localhost:${port}`, ...as('octocat') } })).status, 200, script);
@@ -2408,6 +2410,10 @@ test('the rail\'s pull requests are read from each repo the person may start on,
   const answer = await (await fetch(`http://127.0.0.1:${port}/api/my/pulls`, { headers: { cookie: 'woodshed_session=mia' } })).json();
   assert.deepEqual(asked.sort(), ['acme/app mia', 'acme/shop mia'], 'a repo the person may not start on is not asked');
   assert.deepEqual(answer.pulls.map((p) => `${p.project} ${p.repo}#${p.number}`), ['app acme/app#1', 'shop acme/shop#1'], 'newest first, each with its repo');
+  // Whose they are, so a page drawn for someone else neither draws nor keeps them; the kept answer says so too.
+  assert.equal(answer.login, 'mia');
+  const again = await (await fetch(`http://127.0.0.1:${port}/api/my/pulls`, { headers: { cookie: 'woodshed_session=mia' } })).json();
+  assert.equal(again.login, 'mia', 'from the minute it is kept');
 });
 
 test('the setup card offers the reviewer App to an admin of a console with its App, never to a member who could not open the page', async (t) => {
