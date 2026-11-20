@@ -1,0 +1,40 @@
+<!-- @dsCard group="Settings" height=420 subtitle="A group of settings as rows that open in place" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600&display=swap">
+<style>
+ body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
+ .label{margin:0 0 6px 2px;font-size:11.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--label)}
+ .box{max-width:620px;border:1px solid var(--line);border-radius:8px}
+ .box>*+*{border-top:1px solid var(--line-soft)}
+ .head{display:grid;grid-template-columns:minmax(0,1fr) auto 12px;align-items:center;gap:4px 12px;padding:11px 14px}
+ .plain .head{grid-template-columns:minmax(0,1fr) auto}
+ .open .head{background:var(--stopped);border-bottom:1px solid var(--line-soft);border-radius:7px 7px 0 0}
+ .name{display:block;font-size:14px;font-weight:600}
+ .help{display:block;margin-top:1px;font-size:12.5px;color:var(--sub)}
+ .pill{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:999px;background:var(--stopped);color:var(--meta);white-space:nowrap}
+ .open .pill{background:var(--ground)}
+ .pill.ok{background:var(--slate-tint);color:var(--green)}
+ .chev{font-size:11px;color:var(--meta)}
+ .open .chev{transform:rotate(90deg)}
+ .body{display:flex;flex-direction:column;gap:10px;padding:14px;font-size:13px}
+ .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+ label{display:flex;flex-direction:column;gap:4px;font-weight:600}
+ input{height:32px;padding:0 9px;border:1px solid var(--line);border-radius:4px;background:var(--ground);color:var(--ink);font:inherit}
+ .save{align-self:flex-start;height:30px;padding:0 12px;border:1px solid var(--amber);border-radius:4px;background:var(--amber-tint);color:var(--amber-ink);font:600 12.5px "Red Hat Display",sans-serif}
+ .seg{display:flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+ .seg span{padding:5px 12px;font-size:12px;color:var(--meta)}
+ .seg span+span{border-left:1px solid var(--line)}
+ .seg .on{background:var(--amber-tint);color:var(--amber-ink)}
+</style>
+<p class="label">Sessions</p>
+<div class="box">
+ <div class="open">
+  <div class="head"><span><span class="name">My session timeouts</span><span class="help">Pause after 1 hour waiting for you · stop after 8 hours working</span></span><span class="pill">Console defaults</span><span class="chev">▸</span></div>
+  <div class="body">
+   <div class="two"><label>Pause a session waiting for input after (hours)<input placeholder="1"></label><label>Stop a working session after (hours)<input placeholder="8"></label></div>
+   <button class="save" type="button">Save</button>
+  </div>
+ </div>
+ <div><div class="head"><span><span class="name">Reviews of my pull requests</span><span class="help">Claude Code and Codex both review the pull requests you open</span></span><span class="pill ok">Your own</span><span class="chev">▸</span></div></div>
+ <div class="plain"><div class="head"><span><span class="name">GitHub</span><span class="help">Your sessions commit, push and open pull requests as you</span></span><span class="pill">Pushes as you</span></div></div>
+ <div class="plain"><div class="head"><span><span class="name">Theme</span><span class="help">Follow the device, or pick one and keep it</span></span><span class="seg"><span class="on">device</span><span>light</span><span>dark</span></span></div></div>
+</div>

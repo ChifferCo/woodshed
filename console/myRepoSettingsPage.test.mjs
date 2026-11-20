@@ -1,4 +1,4 @@
-// My settings' Repo settings card (public/myRepoSettings.js), run the way the page loads it on a tiny DOM, against the
+// My settings' repo rows (public/myRepoSettings.js), run the way the page loads it on a tiny DOM, against the
 // real JSON API (repoSettings.mjs) over an in-memory secret store, as a person who can write to some repos and not others.
 
 import { test } from 'node:test';
@@ -80,10 +80,11 @@ async function call(api, { method, path, body, login }) {
 }
 
 /**
- * The card as sam-ops, who can write to app and tools but not infra (New session's check), with the person's own
- * default project `defaultProject`.
+ * The rows as sam-ops, who can write to app and tools but not infra (New session's check), with the person's own
+ * default project `defaultProject`. `opened` is the repo whose row is open from the start (null for none, as the page
+ * loads), and `part` the part of each open repo to show once it is read.
  */
-async function loadCard({ search = '', before = null, defaultProject = 'app', admin = false, files = FILES } = {}) {
+async function loadCard({ search = '', before = null, defaultProject = 'app', admin = false, files = FILES, opened = 'app', part = 'env' } = {}) {
   const store = { state: { sessions: [] }, save() {} };
   const secrets = memorySecrets();
   const config = { projects: PROJECTS, repo: 'acme/app' };
@@ -128,13 +129,29 @@ async function loadCard({ search = '', before = null, defaultProject = 'app', ad
   });
   vm.runInContext(layersSource, context);
   vm.runInContext(source, context);
-  // The page: My settings draws the card among its others on each render.
+  // The page: My settings draws the rows among its others on each render, and keeps which are open (mySettings.js).
+  const open = new Set(opened ? [`repo-${opened}`] : []);
   let card = null;
-  card = window.WoodshedMyRepoSettings.create({ render: () => { if (card) app.replaceChildren(card.card()); } });
-  app.replaceChildren(card.card());
+  const draw = () => { if (card) app.replaceChildren(...card.rows()); };
+  const row = ({ id, title, value, pill, onOpen }, ...body) => h('section', { id, class: 'row' },
+    h('button', { type: 'button', 'aria-expanded': String(open.has(id)), onclick: () => { if (open.has(id)) open.delete(id); else { open.add(id); onOpen?.(); } draw(); } }, title),
+    h('span', { class: 'row-value' }, value), h('span', { class: 'row-pill' }, pill), open.has(id) ? body : null);
+  card = window.WoodshedMyRepoSettings.create({ render: draw, row, isOpen: (id) => open.has(id), setOpen: (id) => open.add(id) });
+  draw();
   await settle();
+  if (part) await showPart(app, part);
   return { app, calls, asked, history, store, secrets, repoSettings };
 }
+
+const PARTS = { instructions: 'Instructions', env: 'Env files', files: 'Your files' };
+/** Shows that part of every open repo. */
+async function showPart(app, part) {
+  for (const b of walk(app).filter((e) => e.tag === 'button' && textOf(e).replace(' •', '') === PARTS[part] && e.attrs['aria-pressed'] === 'false')) b.listeners.click();
+  await settle();
+}
+const rowOf = (app, project) => walk(app).find((e) => e.attrs.id === `repo-${project}`);
+const pillOf = (app, project) => textOf(rowOf(app, project).children.find((c) => c.className === 'row-pill'));
+const valueOf = (app, project) => textOf(rowOf(app, project).children.find((c) => c.className === 'row-value'));
 
 const buttons = (app, text) => walk(app).filter((e) => e.tag === 'button' && textOf(e).trim() === text);
 const button = (app, text) => buttons(app, text)[0];
@@ -149,10 +166,15 @@ async function type(app, id, text) {
   editor.listeners.input();
 }
 
-test('the card lists only the repos the person can write to, on their default project, with the layers in order', async () => {
+test('a row for each repo the person can write to, read only once it is opened, with the layers in order', async () => {
+  const shut = await loadCard({ opened: null });
+  assert.deepEqual(buttons(shut.app, 'acme/app').map((b) => b.attrs['aria-expanded']), ['false']);
+  assert.deepEqual(shut.calls.map((c) => c.path), ['/api/my/repos'], 'no repo is read until its row is opened');
+  assert.equal(pillOf(shut.app, 'app'), 'None of yours');
+
   const { app, calls } = await loadCard();
-  assert.deepEqual(buttons(app, 'acme/app').map((b) => b.attrs['aria-pressed']), ['true']);
-  assert.equal(buttons(app, 'acme/tools').length, 1);
+  assert.deepEqual(buttons(app, 'acme/app').map((b) => b.attrs['aria-expanded']), ['true']);
+  assert.deepEqual(buttons(app, 'acme/tools').map((b) => b.attrs['aria-expanded']), ['false']);
   assert.equal(buttons(app, 'acme/infra').length, 0, 'a repo they cannot write to is not there');
   assert.deepEqual(calls.map((c) => c.path), ['/api/my/repos', '/api/my/repos/app']);
   const tags = walk(app).filter((e) => e.className === 'layer-tag').map(textOf);
@@ -177,8 +199,9 @@ test('saving your own values posts them to your repo settings, and the table sho
   ]);
   assert.ok(!textOf(walk(app).find((e) => e.tag === 'table')).includes(SECRET_MARK));
   assert.match(textOf(app), /Saved\. Your next private session on acme\/app writes them into api\/\.env/);
-  assert.match(textOf(app), /Yours on 1 repo/);
-  assert.deepEqual(buttons(app, 'acme/app •').length, 1, 'the repo\'s tab is marked');
+  assert.equal(pillOf(app, 'app'), 'Yours');
+  assert.equal(valueOf(app, 'app'), 'Your values for 1 env file', 'the repo\'s row says what is kept');
+  assert.equal(buttons(app, 'Env files •').length, 1, 'and its part is marked');
   assert.ok(!JSON.stringify(store.state).includes(SECRET_MARK));
 });
 
@@ -243,14 +266,14 @@ test('Clear mine asks first and empties your layer', async () => {
 
 test('your instructions: the installation\'s are shown read only, yours are counted, saved, and a credential is refused', async () => {
   const { app, secrets, calls } = await loadCard({
+    part: 'instructions',
     before: ({ repoSettings }) => repoSettings.saveInstallation({ project: 'app', text: 'Keep pull requests small.\n', by: 'mia-dev' }),
   });
   assert.deepEqual(calls.map((c) => c.path), ['/api/my/repos', '/api/my/repos/app', '/api/my/repos/app/instructions'], 'read on load, as the admin page does');
   assert.ok(walk(app).some((e) => e.tag === 'pre' && textOf(e) === 'Keep pull requests small.\n'));
   await type(app, 'my-instructions-app', 'Explain each change.\n');
   assert.match(textOf(app), /21 of 16,384 bytes/);
-  // The instructions' Save: the files panel's comes after it.
-  const instructionsSave = () => buttons(app, 'Save').at(-2);
+  const instructionsSave = () => button(app, 'Save');
   instructionsSave().listeners.click();
   await settle();
   assert.equal(secrets.values.get('users/sam-ops/repos/app/instructions'), 'Explain each change.\n');
@@ -264,25 +287,30 @@ test('your instructions: the installation\'s are shown read only, yours are coun
   assert.ok(!textOf(error).includes('sk-ant-'));
 });
 
-test('?repo= opens that repo, and ?file= its env file; picking another puts it in the URL', async () => {
-  const { app, history, calls } = await loadCard({ search: '?repo=tools' });
-  assert.deepEqual(buttons(app, 'acme/tools').map((b) => b.attrs['aria-pressed']), ['true']);
+test('?repo= opens that repo\'s row, and ?file= its env file; opening another puts it in the URL, and both stay open', async () => {
+  const { app, history, calls } = await loadCard({ search: '?repo=tools', opened: null });
+  assert.deepEqual(buttons(app, 'acme/tools').map((b) => b.attrs['aria-expanded']), ['true']);
+  assert.deepEqual(buttons(app, 'acme/app').map((b) => b.attrs['aria-expanded']), ['false']);
   assert.match(textOf(app), /tools\/\.env/);
   assert.ok(calls.some((c) => c.path === '/api/my/repos/tools'));
+  assert.ok(!calls.some((c) => c.path === '/api/my/repos/app'));
   button(app, 'acme/app').listeners.click();
   await settle();
   assert.deepEqual(history.urls, ['http://console.test/settings?repo=app']);
+  assert.deepEqual(['app', 'tools'].map((name) => button(app, `acme/${name}`).attrs['aria-expanded']), ['true', 'true']);
+  await showPart(app, 'env');
+  assert.match(textOf(rowOf(app, 'tools')), /tools\/\.env/, 'the first repo is still open on its own file');
   button(app, 'web/.env.local').listeners.click();
   assert.equal(history.urls.at(-1), 'http://console.test/settings?repo=app&file=web-env-local');
 
-  const linked = await loadCard({ search: '?repo=app&file=web-env-local' });
-  assert.deepEqual(buttons(linked.app, 'web/.env.local').map((b) => b.attrs['aria-pressed']), ['true']);
+  const linked = await loadCard({ search: '?repo=app&file=web-env-local', opened: null, part: null });
+  assert.deepEqual(buttons(linked.app, 'web/.env.local').map((b) => b.attrs['aria-pressed']), ['true'], 'a link to an env file opens on Env files');
 });
 
-test('a link to a repo they cannot write to opens their default one instead, and reads nothing of it', async () => {
-  const { app, calls } = await loadCard({ search: '?repo=infra', defaultProject: 'tools' });
-  assert.deepEqual(buttons(app, 'acme/tools').map((b) => b.attrs['aria-pressed']), ['true']);
-  assert.ok(!calls.some((c) => c.path.startsWith('/api/my/repos/infra')));
+test('a link to a repo they cannot write to opens no row, and reads nothing of it', async () => {
+  const { app, calls } = await loadCard({ search: '?repo=infra', defaultProject: 'tools', opened: null });
+  assert.deepEqual(walk(app).filter((e) => e.tag === 'button').map((b) => b.attrs['aria-expanded']), ['false', 'false']);
+  assert.deepEqual(calls.map((c) => c.path), ['/api/my/repos']);
 });
 
 test('an env file with no installation value names no Terraform secret on the installation\'s layer', async () => {
@@ -298,32 +326,31 @@ test('an admin is pointed at the repo\'s page on Console settings for the instal
 
 const inputOf = (app, id) => walk(app).find((e) => e.attrs.id === id);
 
-test('your files are each repo\'s own: added, opened, removed, and another repo\'s tab has none of them', async () => {
-  const { app, calls, secrets, asked } = await loadCard();
+test('your files are each repo\'s own: added, opened, removed, and another repo\'s row has none of them', async () => {
+  const { app, calls, secrets, asked } = await loadCard({ part: 'files' });
   assert.match(textOf(app), /Your files/);
   assert.match(textOf(app), /Whole files your private sessions on acme\/app write into its checkout/);
   assert.ok(!calls.some((c) => c.path.endsWith('/files')), 'with none listed, nothing is read');
-  inputOf(app, 'own-file-path').value = 'app/.env.production';
-  editorOf(app, 'own-file-text').value = `NOTION_TOKEN=${SECRET_MARK}\n`;
+  inputOf(app, 'own-file-path-app').value = 'app/.env.production';
+  editorOf(app, 'own-file-text-app').value = `NOTION_TOKEN=${SECRET_MARK}\n`;
   buttons(app, 'Save').at(-1).listeners.click();
   await settle();
   assert.deepEqual(calls.at(-1), { method: 'POST', path: '/api/my/repos/app/files', body: { path: 'app/.env.production', text: `NOTION_TOKEN=${SECRET_MARK}\n` } });
   assert.deepEqual(JSON.parse(secrets.values.get('users/sam-ops/repos/app/files')), { 'app/.env.production': `NOTION_TOKEN=${SECRET_MARK}\n` });
   assert.match(textOf(app), /Saved app\/\.env\.production\. Your next private session on acme\/app writes it/);
   assert.deepEqual(buttons(app, 'app/.env.production').map((b) => b.attrs['aria-pressed']), ['true'], 'the saved file is open');
-  assert.equal(inputOf(app, 'own-file-path').readOnly, true, 'a saved file keeps its path');
-  assert.match(textOf(app), /Yours on 1 repo/);
-  assert.equal(buttons(app, 'acme/app •').length, 1);
+  assert.equal(inputOf(app, 'own-file-path-app').readOnly, true, 'a saved file keeps its path');
+  assert.equal(pillOf(app, 'app'), 'Yours');
+  assert.equal(valueOf(app, 'app'), 'Your 1 file');
 
   button(app, 'acme/tools').listeners.click();
   await settle();
-  assert.equal(buttons(app, 'app/.env.production').length, 0, 'the tools repo has none of app\'s files');
-  assert.equal(inputOf(app, 'own-file-path').value, '');
-  assert.equal(editorOf(app, 'own-file-text').value, '');
-
-  button(app, 'acme/app •').listeners.click();
-  await settle();
-  assert.equal(editorOf(app, 'own-file-text').value, `NOTION_TOKEN=${SECRET_MARK}\n`, 'back on app, its file is open again');
+  await showPart(app, 'files');
+  const tools = { children: [rowOf(app, 'tools')] };
+  assert.equal(buttons(tools, 'app/.env.production').length, 0, 'the tools repo has none of app\'s files');
+  assert.equal(inputOf(app, 'own-file-path-tools').value, '');
+  assert.equal(editorOf(app, 'own-file-text-tools').value, '');
+  assert.equal(editorOf(app, 'own-file-text-app').value, `NOTION_TOKEN=${SECRET_MARK}\n`, 'app, still open beside it, keeps its file');
   button(app, 'Remove').listeners.click();
   await settle();
   assert.match(asked.at(-1), /Remove app\/\.env\.production\? Your next sessions on acme\/app no longer write it/);
@@ -331,21 +358,22 @@ test('your files are each repo\'s own: added, opened, removed, and another repo\
   assert.match(textOf(app), /Removed app\/\.env\.production\./);
 });
 
-test('saved files are read when the repo opens, and a refused path says why', async () => {
+test('saved files are read when the repo\'s files are shown, and a refused path says why', async () => {
   const { app, calls } = await loadCard({
+    part: 'files',
     before: ({ repoSettings }) => repoSettings.saveOwnFile({ login: 'sam-ops', project: 'app', path: '.mcp.local.json', text: '{}' }),
   });
   assert.ok(calls.some((c) => c.path === '/api/my/repos/app/files'));
-  assert.equal(editorOf(app, 'own-file-text').value, '{}', 'the first file is open');
+  assert.equal(editorOf(app, 'own-file-text-app').value, '{}', 'the first file is open');
   button(app, '+ Add a file').listeners.click();
-  inputOf(app, 'own-file-path').value = 'api/.env';
-  editorOf(app, 'own-file-text').value = 'X=1';
+  inputOf(app, 'own-file-path-app').value = 'api/.env';
+  editorOf(app, 'own-file-text-app').value = 'X=1';
   buttons(app, 'Save').at(-1).listeners.click();
   await settle();
   assert.match(textOf(walk(app).find((e) => e.className === 'form-error')), /api\/\.env is one of acme\/app's env files/);
   button(app, '+ Add a file').listeners.click();
-  inputOf(app, 'own-file-path').value = 'a.txt';
-  editorOf(app, 'own-file-text').value = '  ';
+  inputOf(app, 'own-file-path-app').value = 'a.txt';
+  editorOf(app, 'own-file-text-app').value = '  ';
   const before = calls.length;
   buttons(app, 'Save').at(-1).listeners.click();
   await settle();

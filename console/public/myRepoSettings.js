@@ -1,8 +1,8 @@
-// My settings' Repo settings card: for each repo the person can write to, their own values for each of its env files,
-// their own instructions and their own whole files (an app/.env.production), which only their private sessions on that
-// repo get, drawn as the layers a session writes
-// them from (designSystem/components/LayeredFile). They may read the installation's values too, since their sessions
-// hold them anyway; each read is logged. ?repo=<project> opens one repo, and ?file=<key> one of its env files.
+// My settings' repo rows: a row for each repo the person can write to, which opens on their own values for each of its
+// env files, their own instructions and their own whole files (an app/.env.production), which only their private
+// sessions on that repo get, drawn as the layers a session writes them from (designSystem/components/LayeredFile). They
+// may read the installation's values too, since their sessions hold them anyway; each read is logged.
+// ?repo=<project> opens one repo's row, and ?file=<key> one of its env files.
 (function () {
   'use strict';
   const W = window.Woodshed;
@@ -12,19 +12,27 @@
   const INSTRUCTIONS = '#instructions';
 
   /**
-   * @param {{render: () => void}} page  redraws the whole page, which calls card() again
-   * @returns {{card: () => object, afterRender: () => void, reload: () => void}}
+   * @param {object} page
+   * @param {() => void} page.render  redraws the whole page, which calls rows() again
+   * @param {(row: object, ...body: *[]) => object} page.row  My settings' row (mySettings.js): `opens` with no body drawn
+   * @param {(id: string) => boolean} page.isOpen  whether the row with that id is open
+   * @param {(id: string) => void} page.setOpen  opens one, before the next draw
+   * @returns {{rows: () => object[], afterRender: () => void, reload: () => void}}
    */
-  function createMyRepoSettings({ render }) {
+  function createMyRepoSettings({ render, row, isOpen, setOpen }) {
     const asked = new URLSearchParams(location.search);
     let repos = null;
     let reposError = null;
-    let project = null;
-    let fileKey = asked.get('file');
     // Scrolled to once, when a link named a repo.
-    let scrollPending = asked.has('repo');
+    let scrollPending = asked.get('repo');
+    const rowId = (project) => `repo-${project}`;
+    // By project: the env file and the part (instructions, env files, your files) each open repo shows. Several repos
+    // may be open at once, so nothing here is "the" repo: every function is told which.
+    const fileKeys = new Map();
+    const parts = new Map();
     const views = new Map();
     const viewErrors = new Map();
+    const viewLoads = new Set();
     // By `${project}\n${key}`: each editor, made once so what is typed survives a redraw, and what was read for it.
     const editors = new Map();
     const shownText = new Map();
@@ -32,33 +40,30 @@
     const notes = new Map();
     const busy = new Set();
     const saveButtons = new Map();
-    const sizeLine = h('p', { class: 'layer-count', role: 'status' });
-    // Your own whole files, by project: their texts, read the first time the repo's panel is drawn (a read that failed
-    // is not tried again until Try again, or render() would ask at once for as long as the store is down), and the one
-    // open, '' a new one.
+    const sizeLines = new Map();
+    // Your own whole files, by project: their texts, read the first time the repo's files are drawn (a read that failed
+    // is not tried again until Try again, or render() would ask at once for as long as the store is down), the one
+    // open, '' a new one, and the path and text boxes that hold it.
     const ownFiles = new Map();
     const ownFilesFailed = new Map();
     const ownLoads = new Set();
     const ownOpen = new Map();
+    const boxes = new Map();
     const FILES = '#files';
-    // The repo whose open file the path and text boxes hold.
-    let boxesFor = null;
-    const ownPathInput = h('input', { id: 'own-file-path', class: 'field mono', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'app/.env.production' });
-    const fileTextBox = h('textarea', { id: 'own-file-text', class: 'field mono file-text', rows: '10', spellcheck: 'false', autocomplete: 'off', placeholder: 'NOTION_TOKEN=…' });
 
-    const id = (key) => `${project}\n${key}`;
+    const id = (project, key) => `${project}\n${key}`;
+    const projectOf = (k) => k.slice(0, k.indexOf('\n'));
     const base = (name) => `/api/my/repos/${encodeURIComponent(name)}`;
-    const textPath = (key) => (key === INSTRUCTIONS ? `${base(project)}/instructions` : `${base(project)}/env/${encodeURIComponent(key)}`);
+    const textPath = (project, key) => (key === INSTRUCTIONS ? `${base(project)}/instructions` : `${base(project)}/env/${encodeURIComponent(key)}`);
     const { labelOf, pathsOf, andList } = L;
-    const view = () => views.get(project) ?? null;
 
     function refusal(err) {
       if (err.status === 403) return 'You can no longer start sessions on this repo, so you keep nothing for it.';
       return err.message;
     }
 
-    function editorFor(key) {
-      const k = id(key);
+    function editorFor(project, key) {
+      const k = id(project, key);
       if (!editors.has(k)) {
         const instructions = key === INSTRUCTIONS;
         const el = h('textarea', {
@@ -72,17 +77,34 @@
       return editors.get(k);
     }
 
+    function sizeLineOf(project) {
+      if (!sizeLines.has(project)) sizeLines.set(project, h('p', { class: 'layer-count', role: 'status' }));
+      return sizeLines.get(project);
+    }
+
+    function boxesOf(project) {
+      if (!boxes.has(project)) {
+        boxes.set(project, {
+          path: h('input', { id: `own-file-path-${project}`, class: 'field mono', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'app/.env.production' }),
+          text: h('textarea', { id: `own-file-text-${project}`, class: 'field mono file-text', rows: '10', spellcheck: 'false', autocomplete: 'off', placeholder: 'NOTION_TOKEN=…' }),
+          filled: false,
+        });
+      }
+      return boxes.get(project);
+    }
+
     const changed = (k) => editors.has(k) && editors.get(k).value !== (shownText.get(k) ?? '');
 
     function canSave(k) {
-      const v = view();
+      const v = views.get(projectOf(k));
       if (!v?.available || busy.has(k) || !shownText.has(k) || !changed(k)) return false;
       return !k.endsWith(`\n${INSTRUCTIONS}`) || bytesOf(editors.get(k).value) <= INSTRUCTIONS_MAX_BYTES;
     }
 
     function updateCounts(k) {
-      if (k === id(INSTRUCTIONS)) {
+      if (k.endsWith(`\n${INSTRUCTIONS}`)) {
         const bytes = bytesOf(editors.get(k).value);
+        const sizeLine = sizeLineOf(projectOf(k));
         sizeLine.textContent = `${bytes.toLocaleString()} of ${INSTRUCTIONS_MAX_BYTES.toLocaleString()} bytes`;
         sizeLine.className = `layer-count${bytes > INSTRUCTIONS_MAX_BYTES ? ' is-over' : ''}`;
       }
@@ -112,37 +134,36 @@
     }
 
     // Yours and the installation's come in one answer; reading the installation's is logged.
-    async function show(key) {
-      const k = id(key);
+    async function show(project, key) {
+      const k = id(project, key);
       await act(k, async () => {
-        const answer = await W.getJson(textPath(key));
+        const answer = await W.getJson(textPath(project, key));
         shownText.set(k, answer.text);
         installationText.set(k, answer.installation);
-        editorFor(key).value = answer.text;
+        editorFor(project, key).value = answer.text;
         return null;
       });
     }
 
-    function hide(key) {
-      const k = id(key);
+    function hide(project, key) {
+      const k = id(project, key);
       shownText.delete(k);
       installationText.delete(k);
-      editorFor(key).value = '';
+      editorFor(project, key).value = '';
       notes.delete(k);
       render();
     }
 
-    function save(key, { clear = false } = {}) {
-      const k = id(key);
-      const editor = editorFor(key);
+    function save(project, key, { clear = false } = {}) {
+      const k = id(project, key);
+      const editor = editorFor(project, key);
       const text = clear ? '' : editor.value;
-      const name = project;
       return act(k, async () => {
-        const answer = await W.postJson(textPath(key), { text });
-        views.set(name, answer);
+        const answer = await W.postJson(textPath(project, key), { text });
+        views.set(project, answer);
         editor.value = text;
         shownText.set(k, text);
-        summaryOf(name, answer);
+        summaryOf(project, answer);
         if (key === INSTRUCTIONS) return text.trim() ? 'Saved. Your next private session on this repo has them in its prompt; running ones keep theirs.' : 'Cleared. Your sessions get this installation\'s instructions and the repo\'s rules alone.';
         const f = answer.envFiles.find((x) => x.key === key);
         if (text.trim()) return `Saved. Your next private session on ${answer.repo} writes them into ${f ? andList(pathsOf(f)) : key}; running ones keep theirs.`;
@@ -150,23 +171,25 @@
       });
     }
 
-    function clear(key) {
-      const f = key === INSTRUCTIONS ? null : view().envFiles.find((x) => x.key === key);
+    function clear(project, key) {
+      const f = key === INSTRUCTIONS ? null : views.get(project).envFiles.find((x) => x.key === key);
       const what = key === INSTRUCTIONS ? 'your own instructions for this repo' : `your own values for ${labelOf(f)}`;
       if (!window.confirm(`Clear ${what}? Your sessions then get this installation's alone.`)) return;
-      save(key, { clear: true });
+      save(project, key, { clear: true });
     }
 
-    // The list's dot follows what the person keeps, without asking the console again.
+    // The row's words follow what the person keeps, without asking the console again.
     function summaryOf(name, v) {
-      const row = repos?.repos.find((r) => r.project === name);
-      if (!row) return;
-      row.envFiles = v.envFiles.filter((f) => f.personal).map((f) => f.key);
-      row.instructions = Boolean(v.instructions.personal);
-      row.files = v.files?.length ?? 0;
+      const entry = repos?.repos.find((r) => r.project === name);
+      if (!entry) return;
+      entry.envFiles = v.envFiles.filter((f) => f.personal).map((f) => f.key);
+      entry.instructions = Boolean(v.instructions.personal);
+      entry.files = v.files?.length ?? 0;
     }
 
     async function loadView(name) {
+      if (viewLoads.has(name)) return;
+      viewLoads.add(name);
       viewErrors.delete(name);
       try {
         const v = await W.getJson(base(name));
@@ -175,9 +198,10 @@
       } catch (err) {
         viewErrors.set(name, refusal(err));
       }
+      viewLoads.delete(name);
       render();
       const v = views.get(name);
-      if (v && (v.instructions.installation || v.instructions.personal) && name === project) await show(INSTRUCTIONS);
+      if (v && (v.instructions.installation || v.instructions.personal) && isOpen(rowId(name))) await show(name, INSTRUCTIONS);
     }
 
     function setQuery(params) {
@@ -189,16 +213,8 @@
       history.replaceState(null, '', url);
     }
 
-    function openRepo(name) {
-      project = name;
-      fileKey = null;
-      setQuery({ repo: name, file: null });
-      if (!views.has(name)) loadView(name);
-      render();
-    }
-
-    function openFile(key) {
-      fileKey = key;
+    function openFile(project, key) {
+      fileKeys.set(project, key);
       setQuery({ repo: project, file: key });
       render();
     }
@@ -211,41 +227,49 @@
         render();
         return;
       }
-      const names = repos.repos.map((r) => r.project);
+      // A link's repo opens its row, on its env file when the link names one. Any other repo stays shut, and is read
+      // only once it is opened.
       const wanted = asked.get('repo');
-      project = names.includes(wanted) ? wanted : names.includes(repos.defaultProject) ? repos.defaultProject : names[0] ?? null;
-      if (project) await loadView(project);
-      else render();
+      if (repos.repos.some((r) => r.project === wanted)) {
+        setOpen(rowId(wanted));
+        if (asked.get('file')) {
+          fileKeys.set(wanted, asked.get('file'));
+          parts.set(wanted, 'env');
+        }
+      } else {
+        scrollPending = null;
+      }
+      render();
     }
 
     // The person's own editable layer: behind Show and edit once saved, since the answer carries the installation's too.
-    function ownEditor(key, record, label) {
-      const k = id(key);
-      const editor = editorFor(key);
-      const v = view();
+    function ownEditor(project, key, record, label) {
+      const k = id(project, key);
+      const editor = editorFor(project, key);
+      const v = views.get(project);
       if (!record && !shownText.has(k)) shownText.set(k, '');
       editor.readOnly = busy.has(k);
       editor.disabled = !v.available;
       if (record && !shownText.has(k)) {
         return h('div', { class: 'value-row' },
           h('code', { class: 'value-box is-masked' }, key === INSTRUCTIONS ? '•••••••••••• hidden' : `•••••••••••• ${plural(record.keys?.length ?? 0, 'key', 'keys')}, hidden`),
-          h('button', { type: 'button', class: 'btn btn-plain', disabled: busy.has(k), onclick: () => show(key) }, busy.has(k) ? 'Reading…' : 'Show and edit'));
+          h('button', { type: 'button', class: 'btn btn-plain', disabled: busy.has(k), onclick: () => show(project, key) }, busy.has(k) ? 'Reading…' : 'Show and edit'));
       }
-      const saveButton = h('button', { type: 'button', class: 'btn btn-open', disabled: true, onclick: () => save(key) }, busy.has(k) ? 'Saving…' : 'Save');
+      const saveButton = h('button', { type: 'button', class: 'btn btn-open', disabled: true, onclick: () => save(project, key) }, busy.has(k) ? 'Saving…' : 'Save');
       saveButtons.set(k, saveButton);
       return [
         h('label', { class: 'sr-only', for: editor.id }, label),
         editor,
         h('div', { class: 'card-foot' },
           saveButton,
-          record && h('button', { type: 'button', class: 'btn btn-quiet', disabled: busy.has(k) || !v.available, onclick: () => clear(key) }, 'Clear mine'),
-          record && key !== INSTRUCTIONS && h('button', { type: 'button', class: 'btn btn-quiet', disabled: busy.has(k) || changed(k), title: changed(k) ? 'Save or undo the change first' : null, onclick: () => hide(key) }, 'Hide')),
+          record && h('button', { type: 'button', class: 'btn btn-quiet', disabled: busy.has(k) || !v.available, onclick: () => clear(project, key) }, 'Clear mine'),
+          record && key !== INSTRUCTIONS && h('button', { type: 'button', class: 'btn btn-quiet', disabled: busy.has(k) || changed(k), title: changed(k) ? 'Save or undo the change first' : null, onclick: () => hide(project, key) }, 'Hide')),
       ];
     }
 
     // The installation's layer, read only: its text once read, here or with Show and edit below.
-    function installationBlock(key, record) {
-      const k = id(key);
+    function installationBlock(project, key, record) {
+      const k = id(project, key);
       if (!record) return null;
       if (installationText.has(k)) {
         const text = installationText.get(k);
@@ -253,31 +277,32 @@
       }
       return h('div', { class: 'value-row' },
         h('code', { class: 'value-box is-masked' }, key === INSTRUCTIONS ? '•••••••••••• hidden' : `•••••••••••• ${plural(record.keys?.length ?? 0, 'key', 'keys')}, hidden`),
-        h('button', { type: 'button', class: 'btn btn-plain', disabled: busy.has(k), onclick: () => show(key) }, busy.has(k) ? 'Reading…' : 'Show'));
+        h('button', { type: 'button', class: 'btn btn-plain', disabled: busy.has(k), onclick: () => show(project, key) }, busy.has(k) ? 'Reading…' : 'Show'));
     }
 
-    function byAdmins() {
+    function byAdmins(project) {
       return W.isAdmin?.() ? ['Set by admins, for every session on this repo: ', h('a', { href: `/console-settings/repos/${encodeURIComponent(project)}` }, 'change it in Settings'), '.']
         : 'Set by your admins, for every session on this repo.';
     }
 
-    function envPanel(f) {
-      const v = view();
+    function envPanel(project, f) {
+      const v = views.get(project);
       const read = v.projectFile.read;
-      return h('div', { class: 'layered', 'aria-labelledby': `my-file-${f.key}` },
+      const headId = `my-file-${project}-${f.key}`;
+      return h('div', { class: 'layered', 'aria-labelledby': headId },
         h('div', { class: 'layered-head' },
-          h('h3', { id: `my-file-${f.key}`, class: 'mono' }, labelOf(f)),
+          h('h3', { id: headId, class: 'mono' }, labelOf(f)),
           h('span', { class: 'data-meta' }, h('span', null, `key ${f.key}`))),
         pathsOf(f).length > 1 && L.sharedNote(f),
         read && L.defaultsLayer(f, v.repo),
         layer('installation', 'This installation\'s values',
           h('p', { class: 'layer-meta' }, savedLine(f.installation)),
-          installationBlock(f.key, f.installation),
-          h('p', { class: 'sub' }, byAdmins())),
+          installationBlock(project, f.key, f.installation),
+          h('p', { class: 'sub' }, byAdmins(project))),
         layer('personal', 'Your values',
           h('p', { class: 'layer-meta' }, savedLine(f.personal)),
-          ownEditor(f.key, f.personal, `Your values for ${labelOf(f)}`),
-          note(id(f.key)),
+          ownEditor(project, f.key, f.personal, `Your values for ${labelOf(f)}`),
+          note(id(project, f.key)),
           h('p', { class: 'sub' }, `They replace the repo's defaults and this installation's values for the keys they set, in your private sessions on this repo only. ${NO_CREDENTIALS}`)),
         read && L.sessionLayer(f),
         read && h('div', { class: 'layer-gets' },
@@ -286,20 +311,21 @@
           h('p', { class: 'sub' }, 'Keys only: each value stays in its own layer. Shared sessions get the same, without yours.')));
     }
 
-    function instructionsPanel() {
-      const v = view();
-      const k = id(INSTRUCTIONS);
+    function instructionsPanel(project) {
+      const v = views.get(project);
+      const k = id(project, INSTRUCTIONS);
       const { installation, personal } = v.instructions;
-      return h('div', { class: 'layered', 'aria-labelledby': 'my-instructions-head' },
-        h('div', { class: 'layered-head' }, h('h3', { id: 'my-instructions-head' }, 'Instructions')),
+      const headId = `my-instructions-head-${project}`;
+      return h('div', { class: 'layered', 'aria-labelledby': headId },
+        h('div', { class: 'layered-head' }, h('h3', { id: headId }, 'Instructions')),
         layer('repo', 'From the repo', L.repoRules(v)),
         layer('installation', 'This installation\'s instructions',
           h('p', { class: 'layer-meta' }, savedLine(installation)),
-          installationBlock(INSTRUCTIONS, installation)),
+          installationBlock(project, INSTRUCTIONS, installation)),
         layer('personal', 'Your instructions',
           h('p', { class: 'layer-meta' }, savedLine(personal)),
-          ownEditor(INSTRUCTIONS, personal, 'Your instructions'),
-          shownText.has(k) && sizeLine,
+          ownEditor(project, INSTRUCTIONS, personal, 'Your instructions'),
+          shownText.has(k) && sizeLineOf(project),
           note(k),
           h('p', { class: 'sub' }, 'At most 16 KB. They go into the prompt of your private sessions on this repo only, after this installation\'s, and win where the two disagree. No secrets: put them in an env file\'s values.')));
     }
@@ -312,7 +338,7 @@
         const answer = await W.getJson(`${base(name)}/files`);
         ownFiles.set(name, answer.files ?? {});
         ownOpen.set(name, Object.keys(answer.files ?? {}).sort()[0] ?? '');
-        if (name === project) boxesFor = null;
+        boxesOf(name).filled = false;
       } catch (err) {
         ownFilesFailed.set(name, refusal(err));
       }
@@ -320,82 +346,82 @@
       render();
     }
 
-    // The path and text boxes are one pair, filled from the open file of the repo on screen.
-    function openOwnFile(file, { redraw = true } = {}) {
+    // Each repo's path and text boxes are one pair, filled from its open file.
+    function openOwnFile(project, file, { redraw = true } = {}) {
+      const box = boxesOf(project);
       ownOpen.set(project, file);
-      ownPathInput.value = file;
-      fileTextBox.value = file ? ownFiles.get(project)?.[file] ?? '' : '';
-      notes.delete(id(FILES));
+      box.path.value = file;
+      box.text.value = file ? ownFiles.get(project)?.[file] ?? '' : '';
+      notes.delete(id(project, FILES));
       if (redraw) render();
     }
 
-    function saveOwnFile(file, text, done) {
-      const name = project;
-      return act(id(FILES), async () => {
-        const answer = await W.postJson(`${base(name)}/files`, { path: file, text });
-        ownFiles.set(name, answer.files);
-        views.set(name, answer.view);
-        summaryOf(name, answer.view);
-        const next = answer.files[file.trim()] !== undefined ? file.trim() : Object.keys(answer.files).sort()[0] ?? '';
-        if (name === project) openOwnFile(next, { redraw: false });
-        else ownOpen.set(name, next);
+    function saveOwnFile(project, file, text, done) {
+      return act(id(project, FILES), async () => {
+        const answer = await W.postJson(`${base(project)}/files`, { path: file, text });
+        ownFiles.set(project, answer.files);
+        views.set(project, answer.view);
+        summaryOf(project, answer.view);
+        openOwnFile(project, answer.files[file.trim()] !== undefined ? file.trim() : Object.keys(answer.files).sort()[0] ?? '', { redraw: false });
         return done;
       });
     }
 
-    function filesPanel() {
-      const v = view();
-      const k = id(FILES);
+    function filesPanel(project) {
+      const v = views.get(project);
+      const k = id(project, FILES);
+      const box = boxesOf(project);
       let files = ownFiles.get(project) ?? null;
       // The view lists their paths: with none, there is nothing to read.
       if (v.available && !files && !ownFilesFailed.has(project)) {
         if (v.files?.length) loadOwnFiles(project);
         else ownFiles.set(project, files = {});
       }
-      // A repo opened since the boxes were last filled: fill them from its open file.
-      if (files && boxesFor !== project) {
-        boxesFor = project;
-        openOwnFile(ownOpen.get(project) ?? Object.keys(files).sort()[0] ?? '', { redraw: false });
+      // Read since the boxes were last filled: fill them from the open file.
+      if (files && !box.filled) {
+        box.filled = true;
+        openOwnFile(project, ownOpen.get(project) ?? Object.keys(files).sort()[0] ?? '', { redraw: false });
       }
       const open = ownOpen.get(project) ?? '';
       const records = v.files ?? [];
       const savedAt = (file) => records.find((f) => f.path === file)?.savedAt;
       const working = busy.has(k);
-      ownPathInput.readOnly = working || Boolean(open);
-      fileTextBox.readOnly = working;
-      ownPathInput.disabled = fileTextBox.disabled = !v.available || !files;
+      box.path.readOnly = working || Boolean(open);
+      box.text.readOnly = working;
+      box.path.disabled = box.text.disabled = !v.available || !files;
       const failed = ownFilesFailed.get(project);
-      return h('div', { class: 'layered', 'aria-labelledby': 'my-files-head' },
-        h('div', { class: 'layered-head' }, h('h3', { id: 'my-files-head' }, 'Your files'),
+      const headId = `my-files-head-${project}`;
+      return h('div', { class: 'layered', 'aria-labelledby': headId },
+        h('div', { class: 'layered-head' }, h('h3', { id: headId }, 'Your files'),
           h('span', { class: 'data-meta' }, h('span', null, records.length ? plural(records.length, 'file', 'files') : 'None'))),
         // Only the person's layer: nothing of the repo's or the installation's is under these paths.
         layer('personal', 'Your whole files',
           h('div', { class: 'file-tabs', role: 'group', 'aria-label': 'Your file' },
-            records.map((f) => h('button', { type: 'button', 'aria-pressed': String(f.path === open), disabled: working || !files, onclick: () => openOwnFile(f.path) }, f.path)),
-            h('button', { type: 'button', 'aria-pressed': String(open === ''), disabled: working || !files, onclick: () => openOwnFile('') }, '+ Add a file')),
-          h('label', { class: 'field-label', for: 'own-file-path' }, h('span', null, 'Path in the repo')),
-          ownPathInput,
-          h('label', { class: 'field-label', for: 'own-file-text' }, h('span', null, open ? `${open}${savedAt(open) ? `, saved ${W.when(savedAt(open))}` : ''}` : 'Its text')),
-          fileTextBox,
+            records.map((f) => h('button', { type: 'button', 'aria-pressed': String(f.path === open), disabled: working || !files, onclick: () => openOwnFile(project, f.path) }, f.path)),
+            h('button', { type: 'button', 'aria-pressed': String(open === ''), disabled: working || !files, onclick: () => openOwnFile(project, '') }, '+ Add a file')),
+          h('label', { class: 'field-label', for: `own-file-path-${project}` }, h('span', null, 'Path in the repo')),
+          box.path,
+          h('label', { class: 'field-label', for: `own-file-text-${project}` }, h('span', null, open ? `${open}${savedAt(open) ? `, saved ${W.when(savedAt(open))}` : ''}` : 'Its text')),
+          box.text,
           h('div', { class: 'card-foot' },
             failed && h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => loadOwnFiles(project) }, 'Try again'),
             h('button', {
               type: 'button', class: 'btn btn-open', disabled: !v.available || !files || working,
               onclick: () => {
-                const file = ownPathInput.value.trim();
-                if (!fileTextBox.value.trim()) {
+                const file = box.path.value.trim();
+                if (!box.text.value.trim()) {
                   notes.set(k, { text: 'Write the file\'s text first. To delete a file, use Remove.', bad: true });
                   render();
                   return;
                 }
-                saveOwnFile(file, fileTextBox.value, `Saved ${file}. Your next private session on ${v.repo} writes it; running ones keep theirs.`);
+                saveOwnFile(project, file, box.text.value, `Saved ${file}. Your next private session on ${v.repo} writes it; running ones keep theirs.`);
               },
             }, working ? 'Saving…' : 'Save'),
             open && h('button', {
               type: 'button', class: 'btn btn-quiet', disabled: working,
               onclick: () => {
                 if (!window.confirm(`Remove ${open}? Your next sessions on ${v.repo} no longer write it.`)) return;
-                saveOwnFile(open, '', `Removed ${open}.`);
+                saveOwnFile(project, open, '', `Removed ${open}.`);
               },
             }, 'Remove')),
           failed ? h('p', { class: 'form-error', role: 'alert' }, `Could not read your files: ${failed}`) : note(k),
@@ -404,66 +430,86 @@
             v.filesMaxBytes ? ` Up to ${Math.floor(v.filesMaxBytes / 1024)} KB across this repo's files, ${v.filesMax ?? 20} files at most.` : '')));
     }
 
-    function repoBody() {
-      const v = view();
+    // An open repo shows one part at a time, picked on a switch whose dot says where the person keeps something.
+    function repoBody(project) {
+      const v = views.get(project);
       if (viewErrors.has(project)) return h('p', { class: 'form-error', role: 'alert' }, `Could not load this repo's settings: ${viewErrors.get(project)}`);
       if (!v) return h('p', { class: 'empty' }, 'Loading the repo\'s settings…');
       const files = v.envFiles;
-      if (!files.some((f) => f.key === fileKey)) fileKey = files[0]?.key ?? null;
+      if (!files.some((f) => f.key === fileKeys.get(project))) fileKeys.set(project, files[0]?.key ?? null);
+      const fileKey = fileKeys.get(project);
       const f = fileKey && files.find((x) => x.key === fileKey);
+      const part = parts.get(project) ?? 'instructions';
+      const tabs = [
+        ['instructions', 'Instructions', Boolean(v.instructions.personal)],
+        ['env', 'Env files', files.some((x) => x.personal)],
+        ['files', 'Your files', (v.files?.length ?? 0) > 0],
+      ];
       return [
         !v.available && h('p', { class: 'cap-note', role: 'status' }, 'This console has no secret store, so nothing can be saved here.'),
         !v.projectFile.read && h('p', { class: 'cap-note', role: 'status' }, `The project file could not be read (${v.projectFile.error}), so only your saved values are listed. They cannot be saved again until it can be read.`),
-        files.length > 1 && h('div', { class: 'file-tabs', role: 'group', 'aria-label': 'Env file' }, files.map((x) => h('button', {
-          type: 'button', 'aria-pressed': String(x.key === fileKey), onclick: () => openFile(x.key),
-        }, labelOf(x), x.personal ? ' •' : ''))),
-        f ? envPanel(f) : h('p', { class: 'sub' }, 'The project file has no env files.'),
-        instructionsPanel(),
-        filesPanel(),
+        h('div', { class: 'theme-seg', role: 'group', 'aria-label': `What to set for ${v.repo}` }, tabs.map(([key, label, yours]) => h('button', {
+          type: 'button', class: 'theme-opt', 'aria-pressed': String(key === part), title: yours ? 'You keep something here' : null,
+          onclick: () => { parts.set(project, key); render(); },
+        }, label, yours ? ' •' : ''))),
+        part === 'files' ? filesPanel(project)
+          : part === 'instructions' ? instructionsPanel(project)
+            : [
+              files.length > 1 && h('div', { class: 'file-tabs', role: 'group', 'aria-label': 'Env file' }, files.map((x) => h('button', {
+                type: 'button', 'aria-pressed': String(x.key === fileKey), onclick: () => openFile(project, x.key),
+              }, labelOf(x), x.personal ? ' •' : ''))),
+              f ? envPanel(project, f) : h('p', { class: 'sub' }, 'The project file has no env files.'),
+            ],
       ];
     }
 
-    function card() {
+    /** One row per repo the person can write to; a repo is read when its row is first opened. */
+    function rows() {
       saveButtons.clear();
-      const list = repos?.repos ?? [];
-      const keeps = list.filter((r) => r.envFiles.length || r.instructions || r.files);
-      const pill = keeps.length ? h('span', { class: 'pill is-ok' }, `Yours on ${plural(keeps.length, 'repo', 'repos')}`) : h('span', { class: 'pill' }, 'None of yours');
-      const body = reposError ? h('p', { class: 'form-error', role: 'alert' }, `Could not load your repos: ${reposError}`)
-        : !repos ? h('p', { class: 'empty' }, 'Loading your repos…')
-          : !list.length ? h('p', { class: 'sub' }, 'You cannot write to any of this console\'s repos yet, so there is nothing to set.')
-            : [
-              list.length > 1 && h('div', { class: 'file-tabs', role: 'group', 'aria-label': 'Repo' }, list.map((r) => h('button', {
-                type: 'button', 'aria-pressed': String(r.project === project), onclick: () => openRepo(r.project),
-              }, r.repo, r.envFiles.length || r.instructions || r.files ? ' •' : ''))),
-              repoBody(),
-            ];
-      const node = h('section', { class: 'set-card is-wide', id: 'repo-settings' },
-        h('div', { class: 'set-head' }, h('h2', null, 'My repo settings'), pill),
-        h('p', { class: 'sub' }, 'Your own values for each repo\'s env files, your own instructions and your own files, for your private sessions on that repo. Shared sessions never get them. Your next private session picks up what you save; running ones keep theirs. Only repos you can write to are listed.'),
-        body);
+      if (reposError) return [h('p', { class: 'form-error set-rows-note', role: 'alert' }, `Could not load your repos: ${reposError}`)];
+      if (!repos) return [h('p', { class: 'empty set-rows-note' }, 'Loading your repos…')];
+      if (!repos.repos.length) return [h('p', { class: 'sub set-rows-note' }, 'You cannot write to any of this console\'s repos yet, so there is nothing to set.')];
+      const drawn = repos.repos.map((r) => {
+        const openNow = isOpen(rowId(r.project));
+        if (openNow && !views.has(r.project) && !viewErrors.has(r.project)) loadView(r.project);
+        const keeps = [
+          r.envFiles.length && `your values for ${plural(r.envFiles.length, 'env file', 'env files')}`,
+          r.instructions && 'your instructions',
+          r.files && `your ${plural(r.files, 'file', 'files')}`,
+        ].filter(Boolean).join(' · ');
+        return row({
+          id: rowId(r.project), title: r.repo, opens: true,
+          pill: h('span', { class: keeps ? 'pill is-ok' : 'pill' }, keeps ? 'Yours' : 'None of yours'),
+          value: keeps ? `${keeps[0].toUpperCase()}${keeps.slice(1)}` : 'Env values, instructions and files of your own, for your private sessions on it',
+          onOpen: () => setQuery({ repo: r.project, file: null }),
+        }, openNow && repoBody(r.project));
+      });
       for (const k of editors.keys()) updateCounts(k);
-      return node;
+      return drawn;
     }
 
     function afterRender() {
-      if (!scrollPending || !views.has(project)) return;
-      scrollPending = false;
-      document.getElementById('repo-settings')?.scrollIntoView?.({ block: 'start' });
+      if (!scrollPending || !views.has(scrollPending)) return;
+      const target = document.getElementById(rowId(scrollPending));
+      scrollPending = null;
+      target?.scrollIntoView?.({ block: 'start' });
     }
 
     // After Remove My Woodshed: nothing of the person's is left, so everything is read again.
     function reload() {
       for (const map of [views, viewErrors, shownText, installationText, notes, ownFiles, ownFilesFailed, ownOpen]) map.clear();
       for (const editor of editors.values()) editor.value = '';
-      ownPathInput.value = '';
-      fileTextBox.value = '';
-      boxesFor = null;
+      for (const box of boxes.values()) {
+        box.path.value = '';
+        box.text.value = '';
+        box.filled = false;
+      }
       repos = null;
       load();
     }
 
     load();
-    return { card, afterRender, reload };
+    return { rows, afterRender, reload };
   }
 
   window.WoodshedMyRepoSettings = { create: createMyRepoSettings };

@@ -19,6 +19,8 @@
    */
   function reveal(id) {
     let shown = false;
+    // A page whose sections are rows that open (My settings) opens this one.
+    window.dispatchEvent(new CustomEvent('woodshed:settings-reveal', { detail: { id } }));
     const mark = () => {
       const target = document.getElementById(id);
       if (!target) return;

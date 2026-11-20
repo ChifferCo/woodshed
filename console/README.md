@@ -357,7 +357,7 @@ with **Project**, the repo the session works on. With one project it only names 
 can write to (`console/projectAccess.mjs`; GitHub is asked once every 10 minutes per person
 and project, so a person just given write access waits up to 10 minutes for it to show), opening on your default, marked **— your default**. **Make my default** beside
 another one saves it (`POST /api/my/projects/default`, kept per person in `viewPrefs`), as does
-the **Default project** card on My settings; `?project=<name>` picks one for that visit. Resume asks again, so a session on a project whose repo you can no longer write
+the **My default project** row on My settings, saved as it is picked; `?project=<name>` picks one for that visit. Resume asks again, so a session on a project whose repo you can no longer write
 to does not start (403). The form
 asks for a prompt and, optionally, the rest below. It asks for no name: the session starts named after the prompt's
 first line, and the console asks Claude Haiku for a better one on the team's Anthropic key (`console/autoName.mjs`).
@@ -617,8 +617,8 @@ stops them first.
 **Repo settings**, on My settings, hold your own values for each repo's env files, your own instructions and your own
 files ("Your files" below), for your private sessions on that repo ("Repo settings" below says how they are kept and
 handed out):
-- The repos you can write to are tabs (New session's check), on your default project; `?repo=<project>` opens one and
-  `&file=<key>` one of its env files. A repo you cannot write to is not listed, and its routes answer 403.
+- The repos you can write to are rows (New session's check), each read once it is opened; inside, a switch shows its
+  Instructions, Env files or Your files. `?repo=<project>` opens one and `&file=<key>` one of its env files. A repo you cannot write to is not listed, and its routes answer 403.
 - Each env file shows its layers as a session writes them: the repo's `defaults`, this installation's values (read only,
   behind **Show**, since reading them is logged), **Your values**, and what the session sets itself, then a table of
   which wins each key, with a **Yours** column. Then the repo's rules, the installation's instructions and yours.
@@ -672,7 +672,9 @@ login. It then:
 Branches and pull requests stay on GitHub, and shared sessions you started stay
 on Shared.
 
-**My settings** (`/settings`, in the avatar menu) holds your Claude token: make
+**My settings** (`/settings`, in the avatar menu) is groups of rows (Sign-ins, Sessions, Kept for you, Repos and
+files, Display): each row says a setting's name, what it is now and its status word, and opens in place on its form.
+Several may be open at once, and a link or the settings search that names one opens it. It holds your Claude token: make
 it with `claude setup-token` on your laptop. The console keeps it in Secrets
 Manager at `<prefix>/users/<login>/claude-token`, makes that secret itself,
 and never shows it again. `state.json` notes only when it was saved.
@@ -2416,7 +2418,7 @@ for it after a typed confirm. A project file with no env files gets a short how-
 the repo's **Slack** card ("A channel for each project", above; `#slack` opens it). The page loads for anyone signed
 in; its calls answer 403 to anyone but an admin, and it says so.
 
-Each person sets layer 3 on My settings' **Repo settings** card (public/myRepoSettings.js, with the layers drawn by
+Each person sets layer 3 on My settings' repo rows, under **Repos and files** (public/myRepoSettings.js, with the layers drawn by
 public/repoLayers.js, which the admin page shares), for each repo they can write to: see "My Woodshed" above. Env
 files that share a key are one tab there too (`app-env → api/.env, worker/.env`), and a person's values are written to
 each of them.
@@ -2433,7 +2435,7 @@ The JSON API:
 | `GET`, `POST /api/console-settings/repos/<project>/env/<key>` | admins | `{"text"}`, the installation's values; a POST of `{"text": ""}` clears them |
 | `POST /api/console-settings/repos/<project>/env/<key>/remove` | admins | deletes the installation's and everyone's values for a key the project file no longer names |
 | `GET`, `POST /api/console-settings/repos/<project>/instructions` | admins | `{"text"}` |
-| `GET /api/my/repos` | everyone | the repos you can write to, each with the keys and instructions you keep for it, and `defaultProject`, the one My settings opens on |
+| `GET /api/my/repos` | everyone | the repos you can write to, each with the keys and instructions you keep for it, and `defaultProject`, the person's default |
 | `GET /api/my/repos/<project>` | writers | the admin view, plus your own records (`personal`) |
 | `GET`, `POST /api/my/repos/<project>/env/<key>` | writers | `{"text": yours, "installation": the installation's or null}`; a POST saves yours |
 | `GET`, `POST /api/my/repos/<project>/instructions` | writers | the same, for the instructions |
