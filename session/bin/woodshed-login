@@ -22,6 +22,10 @@ LOG_FILE=$RUN_DIR/woodshed-login.log
 STATE_FILE=$RUN_DIR/woodshed-claude-state.json
 FLAGS_FILE=$RUN_DIR/woodshed-claude-flags
 CLAUDE_PANE=claude
+# Where claude runs: tmux's `claude` session, or with the project file's `terminal: herdr` the Herdr terminal of that name
+# on the session's herdr-core (session/agentPane.mjs). The sign-in's own terminal is tmux's either way.
+TERMINAL=${WOODSHED_TERMINAL:-tmux}
+HC=${WOODSHED_HC_BIN:-hc}
 CREDENTIALS=$HOME/.claude/.credentials.json
 # How long each wait lasts, in tenths of a second: the tests make them short.
 URL_WAIT=${WOODSHED_LOGIN_URL_WAIT:-200}
@@ -42,6 +46,15 @@ now() { node -e 'console.log(Date.now())'; }
 # The `at` of claude's last hook, and its event, from session/hookState.mjs's file: "<at> <event>".
 lastHook() { node -e 'try { const s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); console.log(`${s.at ?? 0} ${s.event ?? ""} ${s.state ?? ""}`); } catch { console.log("0  "); }' "$STATE_FILE"; }
 say() { echo "[woodshed-login $(date -u +%H:%M:%S)] $*" >> "$LOG_FILE"; }
+
+# claude's terminal: a line typed at its prompt with its Enter, the screen read, the box cleared. hc types text only as
+# a paste with its Enter.
+inHerdr() { [ "$TERMINAL" = herdr ]; }
+agentLine() {
+  if inHerdr; then "$HC" send "$CLAUDE_PANE" "$1"; else tmux send-keys -t "$CLAUDE_PANE" -l "$1"; tmux send-keys -t "$CLAUDE_PANE" Enter; fi
+}
+agentScreen() { if inHerdr; then "$HC" read "$CLAUDE_PANE"; else tmux capture-pane -p -t "$CLAUDE_PANE"; fi; }
+agentClear() { if inHerdr; then "$HC" keys "$CLAUDE_PANE" ctrl+u > /dev/null; else tmux send-keys -t "$CLAUDE_PANE" C-u; fi; }
 
 # Waits, a tenth of a second at a time, until the command succeeds or the wait runs out.
 waitFor() {
@@ -129,8 +142,7 @@ case "${1:-}" in
       kill -TERM "$CLAUDE_PID" 2>/dev/null || true
       if ! waitFor 100 bash -c "! kill -0 $CLAUDE_PID 2>/dev/null"; then kill -KILL "$CLAUDE_PID" 2>/dev/null || true; sleep 0.5; fi
       since=$(now)
-      tmux send-keys -t "$CLAUDE_PANE" -l "$BIN_DIR/claude$(cat "$FLAGS_FILE") --resume $CLAUDE_CODE_SESSION_ID"
-      tmux send-keys -t "$CLAUDE_PANE" Enter
+      agentLine "$BIN_DIR/claude$(cat "$FLAGS_FILE") --resume $CLAUDE_CODE_SESSION_ID" > /dev/null
       opened() { read -r at event state < <(lastHook); [ "$event" = SessionStart ] && [ "$at" -gt "$since" ]; }
       if ! waitFor "$START_WAIT" opened; then say "claude did not open again within a minute"; exit 1; fi
       say "claude reopened" "(conversation: $CLAUDE_CODE_SESSION_ID)"
@@ -138,20 +150,25 @@ case "${1:-}" in
     # A resumed claude fires SessionStart twice, about 4 seconds apart, and keys typed between them are lost (measured on
     # Claude Code 2.1.322). So the command is typed until claude's prompt shows it ("❯", a no-break space, the text: an
     # autocomplete row below it starts with spaces), the line cleared before each try, and
-    # only then sent.
+    # only then sent. In Herdr, which types it with its Enter, the panel showing is the only proof, and a try whose
+    # Enter was lost is cleared by the next.
+    # Its panel says "Remote Control"; an Enter swallowed by the second start leaves the prompt as it was.
+    panel() { agentScreen | grep -v '^[[:space:]]*$' | tail -n 12 | grep -q 'Remote Control'; }
     for ((try = 1; try <= 15; try++)); do
       sleep 1
-      tmux send-keys -t "$CLAUDE_PANE" C-u
-      tmux send-keys -t "$CLAUDE_PANE" -l /remote-control
-      sleep 0.5
-      if tmux capture-pane -p -t "$CLAUDE_PANE" | grep -v '^[[:space:]]*$' | tail -n 6 | grep -q '^❯[^/]*/remote-control *$'; then
+      agentClear
+      if inHerdr; then
+        # hc refuses to type into a claude whose record says blocked: that try is lost, not the whole step.
+        if ! refusal=$(agentLine /remote-control 2>&1); then say "Herdr did not type /remote-control" "($(printf '%s' "$refusal" | tail -n 1))"; continue; fi
+      else
+        tmux send-keys -t "$CLAUDE_PANE" -l /remote-control
+        sleep 0.5
+        agentScreen | grep -v '^[[:space:]]*$' | tail -n 6 | grep -q '^❯[^/]*/remote-control *$' || continue
         tmux send-keys -t "$CLAUDE_PANE" Enter
-        # Its panel says "Remote Control"; an Enter swallowed by the second start leaves the prompt as it was.
-        panel() { tmux capture-pane -p -t "$CLAUDE_PANE" | grep -v '^[[:space:]]*$' | tail -n 12 | grep -q 'Remote Control'; }
-        if waitFor 30 panel; then
-          say "/remote-control typed in" "(tries: $try)"
-          exit 0
-        fi
+      fi
+      if waitFor 30 panel; then
+        say "/remote-control typed in" "(tries: $try)"
+        exit 0
       fi
     done
     say "claude's prompt never showed /remote-control, type it yourself"

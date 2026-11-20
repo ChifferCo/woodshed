@@ -958,6 +958,41 @@ codexFlags() {
   [ -z "${EFFORT:-}" ] || printf ' -c model_reasoning_effort=\\"%s\\"' "$EFFORT"
 }
 
+# What the agent runs in (session/agentPane.mjs): the project file's `terminal`, for a coding session. A question, a
+# review and a QA run are in tmux whatever it says: they are scripts, or an ask's claude, that nobody attaches to.
+agentTerminal() {
+  case "${SESSION_MODE:-}" in ask | qa | review) echo tmux; return ;; esac
+  local terminal
+  terminal=$(project get terminal 2>/dev/null) || terminal=tmux
+  echo "${terminal:-tmux}"
+}
+
+# Herdr's core (herdr-core, `hc`) for this session, with a terminal named claude in the checkout for the agent: a
+# shell, kept (a lost one is replaced in place), as tmux's pane is. Its programs get the environment it starts with, as
+# tmux's do. The shell is bash as a login shell, as tmux starts it: with no SHELL set (Docker sets none) hc's own pick is
+# sh. notes off: hc types nothing on its own into the agent.
+startHerdr() {
+  command -v hc > /dev/null || { log "WARNING: no hc in this image, the agent runs in tmux"; return 1; }
+  mkdir -p "$HOME/.config/herdr-core"
+  printf 'notes = false\nshell = ["/bin/bash", "-l"]\n' > "$HOME/.config/herdr-core/config.toml"
+  if ! hc server start > /tmp/woodshed-herdr.log 2>&1 \
+    || ! hc run --bg --no-parent --keep --name claude --cwd "$REPO_DIR" >> /tmp/woodshed-herdr.log 2>&1; then
+    log "WARNING: Herdr did not start, the agent runs in tmux" "($(tail -n 1 /tmp/woodshed-herdr.log))"
+    return 1
+  fi
+  log "Herdr started" "(version: $(hc --version | awk '{print $2}'), terminal: claude)"
+}
+
+# A command typed at the agent's terminal's prompt, with its Enter: tmux's pane, or Herdr's terminal, where text goes in
+# only as a paste with its Enter.
+agentRun() {
+  if [ "$WOODSHED_TERMINAL" = herdr ]; then
+    hc send claude "$1" > /dev/null
+  else
+    tmux send-keys -t claude "$1" Enter
+  fi
+}
+
 startClaude() {
   # --add-dir needs the folder to be there, attachments or not.
   mkdir -p "${UPLOADS_DIR:-/tmp/uploads}"
@@ -966,31 +1001,37 @@ startClaude() {
     startDbViewers
     startDockerPorts
   fi
-  tmux new-session -d -s claude -x 200 -y 50 -c "$REPO_DIR"
-  tmux set-option -t claude remain-on-exit on
+  # Exported before either starts, so statusd, claude and what claude runs (woodshed-login) all know where it is.
+  WOODSHED_TERMINAL=$(agentTerminal)
+  export WOODSHED_TERMINAL
+  if [ "$WOODSHED_TERMINAL" = herdr ] && ! startHerdr; then WOODSHED_TERMINAL=tmux; fi
+  if [ "$WOODSHED_TERMINAL" = tmux ]; then
+    tmux new-session -d -s claude -x 200 -y 50 -c "$REPO_DIR"
+    tmux set-option -t claude remain-on-exit on
+  fi
   # woodshed-login reopens claude with the same flags once it signed in.
   [ "${AGENT:-claude}" = codex ] || claudeFlags > /tmp/woodshed-claude-flags
   if [ "${SESSION_MODE:-}" = qa ]; then
     # After statusd's port is open: the run asks it for the app's port and to start the app. Working from the start.
     touch /tmp/qa-running
-    tmux send-keys -t claude "until curl -s -o /dev/null http://127.0.0.1:\${STATUSD_PORT:-7682}/; do sleep 1; done; SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/qa.sh" Enter
+    agentRun "until curl -s -o /dev/null http://127.0.0.1:\${STATUSD_PORT:-7682}/; do sleep 1; done; SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/qa.sh"
   elif [ "${SESSION_MODE:-}" = review ]; then
     # The review reads the diff and sends its verdict to the console; no app, so it does not wait on statusd.
     touch /tmp/review-running
-    tmux send-keys -t claude "SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/review.sh" Enter
+    agentRun "SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/review.sh"
   elif [ "${AGENT:-claude}" = codex ]; then
     # A Codex conversation is not kept between runs, so a resume starts the prompt again.
     if [ "${REVIEW_ONLY:-}" = 1 ]; then
-      tmux send-keys -t claude "$SESSION_DIR/bin/codex$(codexFlags)" Enter
+      agentRun "$SESSION_DIR/bin/codex$(codexFlags)"
     else
-      tmux send-keys -t claude "$SESSION_DIR/bin/codex$(codexFlags) \"\$(cat /tmp/woodshed-prompt.md)\"" Enter
+      agentRun "$SESSION_DIR/bin/codex$(codexFlags) \"\$(cat /tmp/woodshed-prompt.md)\""
     fi
   elif resumable; then
-    tmux send-keys -t claude "$SESSION_DIR/bin/claude$(claudeFlags) --resume $RESUME_SESSION" Enter
+    agentRun "$SESSION_DIR/bin/claude$(claudeFlags) --resume $RESUME_SESSION"
   elif [ "${REVIEW_ONLY:-}" = 1 ]; then
-    tmux send-keys -t claude "$SESSION_DIR/bin/claude$(claudeFlags)" Enter
+    agentRun "$SESSION_DIR/bin/claude$(claudeFlags)"
   else
-    tmux send-keys -t claude "$SESSION_DIR/bin/claude$(claudeFlags) \"\$(cat /tmp/woodshed-prompt.md)\"" Enter
+    agentRun "$SESSION_DIR/bin/claude$(claudeFlags) \"\$(cat /tmp/woodshed-prompt.md)\""
   fi
   # The shed's terminal theme: a terminal paints its own background, and ttyd's default is a lighter grey than the
   # pane around it. The pane's ground, the accent for the cursor, and the app's selection wash. No leave alert, as in the
@@ -999,13 +1040,16 @@ startClaude() {
   # The browser scrolls back through its own copy of what tmux scrolled off (tmux.conf): 10000 lines rather than
   # xterm.js's 1000, and no more, since each line costs the page its width in cells. tmux keeps 50000.
   local scrollback=scrollback=10000
+  # The TUI tab: the agent's terminal, tmux's pane or Herdr's terminal, which a person's own Herdr can attach to too.
+  local attach=(tmux attach -t claude)
+  [ "$WOODSHED_TERMINAL" = tmux ] || attach=(hc attach claude)
   ttyd --writable --port 7681 --base-path "/term/$SESSION_ID" --credential "woodshed:${TERMINAL_TOKEN:-$SESSION_TOKEN}" \
-    -t "$theme" -t "$scrollback" -t disableLeaveAlert=true tmux attach -t claude >/tmp/ttyd.log 2>&1 &
+    -t "$theme" -t "$scrollback" -t disableLeaveAlert=true "${attach[@]}" >/tmp/ttyd.log 2>&1 &
   # The Terminal tab: a shell beside claude in the repo, with the same environment. Its own tmux session, so a
   # reload or a second browser finds it as it was; -A makes a new one after someone types exit.
   ttyd --writable --port 7684 --base-path "/shell/$SESSION_ID" --credential "woodshed:${TERMINAL_TOKEN:-$SESSION_TOKEN}" \
     -t "$theme" -t "$scrollback" -t disableLeaveAlert=true tmux new-session -A -s shell -c "$REPO_DIR" >/tmp/ttyd-shell.log 2>&1 &
-  log "Claude started" "(session: $SESSION_ID, branch: $BRANCH, started_by: ${STARTED_BY:-unknown})"
+  log "Claude started" "(session: $SESSION_ID, branch: $BRANCH, started_by: ${STARTED_BY:-unknown}, terminal: $WOODSHED_TERMINAL)"
 }
 
 # The rules as the system prompt, written at every start as writeRules does, and the question as the first message.

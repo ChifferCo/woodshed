@@ -443,6 +443,13 @@ URL on top of each env file's Repo settings values
   the console has not reached the session`, once for the start: `address: false` with `launching: true` is a launcher
   whose start call has not come back (no `fleet: machine ready` either), and `address: true` gives the statusd read's
   error in `message`. It stays there until the start timeout fails it.
+- **A session whose project file says `terminal: herdr` runs its agent in tmux, or its TUI tab is blank.** The log says
+  `Herdr started` with hc's version, or `WARNING: Herdr did not start, the agent runs in tmux` with `hc`'s last line
+  (`/tmp/woodshed-herdr.log` in the session has the rest), and `Claude started` gives the `terminal` it used. In the
+  session's Terminal, `hc ls` lists the `claude` terminal, `hc get claude --json` its `status` (the agent's own word,
+  which statusd logs as `source: 'herdr'`) and `hc read claude` its screen; the TUI tab is ttyd running `hc attach
+  claude`. A Chat message that Herdr refused logs `statusd: Herdr did not send the message` with `why` (`blocked`, a
+  prompt open; `status_mismatch`, not idle). A question, a review and a QA run use tmux whatever the file says.
 - **The app inside a session will not start or log in.** That is about the repo's own app, and its installation
   says what to check: `.woodshed/install/README.md` in the repo. The env files get the databases through the project
   file's env file overrides, from each engine's variables (`PGHOST`, `PGPASSWORD`, `MONGODB_URI`; docs/reference.md, "Databases"):

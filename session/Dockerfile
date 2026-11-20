@@ -56,6 +56,11 @@ FROM node:22.16.0-bookworm-slim AS base
 ARG TTYD_VERSION=1.7.7
 ARG TTYD_SHA256_AMD64=8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
 ARG TTYD_SHA256_ARM64=b38acadd89d1d396a0f5649aa52c539edbad07f4bc7348b27b4f4b7219dd4165
+# Herdr's terminal runtime, herdr-core (`hc`), for a project whose file says `terminal: herdr` (session/agentPane.mjs).
+# The sha256 are its release's manifest.json (releases.herdr.dev/core/<version>/manifest.json).
+ARG HERDR_CORE_VERSION=0.1.21
+ARG HERDR_CORE_SHA256_AMD64=78424755c10a40dde38a0bdb55c20ac19706e9ae05ed68fc2acf1fcff0d941c1
+ARG HERDR_CORE_SHA256_ARM64=e844a2bfab48a226097679d076bc83042fe57fccef5387ef802e5b24e78b529a
 # Set by BuildKit to the platform being built (amd64 or arm64), which is also Debian's name for it.
 ARG TARGETARCH
 ARG PLAYWRIGHT_MCP_VERSION
@@ -88,6 +93,21 @@ RUN case "$TARGETARCH" in \
   && curl -fsSL -o /usr/local/bin/ttyd "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.${ttyd_arch}" \
   && echo "${ttyd_sha}  /usr/local/bin/ttyd" | sha256sum -c - \
   && chmod +x /usr/local/bin/ttyd
+
+# One static binary, and `hc`, the name its CLI and its docs use. A new version comes in by these pins, never `hc update`.
+RUN case "$TARGETARCH" in \
+    amd64) hc_arch=x86_64; hc_sha="$HERDR_CORE_SHA256_AMD64" ;; \
+    arm64) hc_arch=aarch64; hc_sha="$HERDR_CORE_SHA256_ARM64" ;; \
+    *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+  esac \
+  && curl -fsSL -o /tmp/herdr-core.tar.gz "https://releases.herdr.dev/core/${HERDR_CORE_VERSION}/herdr-core-linux-${hc_arch}.tar.gz" \
+  && echo "${hc_sha}  /tmp/herdr-core.tar.gz" | sha256sum -c - \
+  && mkdir -p /usr/local/share/herdr-core \
+  && tar -xzf /tmp/herdr-core.tar.gz -C /usr/local/share/herdr-core \
+  && install -m 755 /usr/local/share/herdr-core/herdr-core /usr/local/bin/herdr-core \
+  && rm /tmp/herdr-core.tar.gz /usr/local/share/herdr-core/herdr-core \
+  && ln -s herdr-core /usr/local/bin/hc \
+  && hc --version
 
 RUN curl -fsSL -o /etc/ssl/certs/rds-global-bundle.pem https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
   && echo "${RDS_CA_SHA256}  /etc/ssl/certs/rds-global-bundle.pem" | sha256sum -c -
