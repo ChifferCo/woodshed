@@ -1,5 +1,5 @@
-Settings rows are how My settings shows what is yours: groups of rows, each row one setting with its name, what it is
-now and its status word, opening in place on its form (`public/mySettings.js`, `row`, `line` and `group`; `.set-group`,
+Settings rows are how a settings page shows what it holds, My settings first: groups of rows, each row one setting with its name, what it is
+now and its status word, opening in place on its form (`public/settingsRows.js`, `row`, `line` and `group`, which each settings page makes with its own render; `.set-group`,
 `.set-fold` and `.set-line` in `public/style.css`). The page reads in one screen, and nothing is hidden: a closed row
 still says its value.
 

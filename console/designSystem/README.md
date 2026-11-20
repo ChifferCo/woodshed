@@ -212,6 +212,10 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   program's there, beside its own pages. Webhook events is a log, not a setting, and not a
   navigation entry either: Secrets & webhooks links to it (in the GitHub webhook card, or the page's note when there is
   none), its page has a `‹ Secrets & webhooks` crumb above the title, and Settings is marked current in the list on it.
+  Its deliveries are plain rows of one box (Settings rows), never a table: when it came in `meta` mono, then what the
+  console did (`ink`, 600) over one mono line with the event, what it was on, who sent it and the delivery's id, then a
+  pill with the status word: Acted on (`green`), Ignored or Skipped (neutral), Failed (`bad`). On a phone the time
+  sits over the text and the pill under it.
 - Keyboard shortcuts is in the settings list's This browser group, not in the avatar menu: the menu holds pages, and
   `?` and the command palette open the sheet anywhere. The theme, review files and a session's default view are a group
   on My settings (Display, `⇧⌘,` from anywhere), not a sheet: one place for what is yours, and the group says which of
