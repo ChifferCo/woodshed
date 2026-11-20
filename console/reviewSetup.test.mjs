@@ -301,7 +301,7 @@ test('who sees what: the asker its status, writers and console admins the plan, 
 });
 
 test('the console\'s key and QA in CI are never in one repo, whichever request comes first', async () => {
-  const { gh, reviewSetup } = setup({ repos: { 'acme/game': { admins: ['ann'] }, 'acme/old-qa': { admins: ['ann'], files: { [QA_WORKFLOW]: 'qa' } } } });
+  const { gh, reviewSetup, store } = setup({ repos: { 'acme/game': { admins: ['ann'] }, 'acme/old-qa': { admins: ['ann'], files: { [QA_WORKFLOW]: 'qa' } } } });
   const review = (await reviewSetup.create(parseRequest({ repo: 'acme/game' }), { login: 'ann' })).request;
   await approveShown(reviewSetup, review, 'ann', { consoleAdmin: true });
   assert.equal(gh.openSecret('acme/game', 'ANTHROPIC_API_KEY'), TEAM_KEY);
@@ -314,6 +314,13 @@ test('the console\'s key and QA in CI are never in one repo, whichever request c
   // A key the repo set itself since is its own: QA in CI goes ahead.
   gh.repos['acme/game'].secretUpdatedAt = new Date(Date.parse('2026-11-20T10:00:00Z') + 3_600_000).toISOString();
   assert.equal((await reviewSetup.view(qa, 'ann', { consoleAdmin: false })).canApprove.ok, true);
+
+  // Another spelling of the repo's name, or the request that set the key pruned from the list, changes nothing: the
+  // console's key is known by the repo's id, apart from the requests.
+  gh.repos['acme/game'].secretUpdatedAt = '2020-01-01T00:00:00Z';
+  store.state.reviewSetups = store.state.reviewSetups.filter((r) => r.id !== review.id);
+  const spelled = (await reviewSetup.create(parseRequest({ repo: 'ACME/Game', qa: true }), { login: 'ann' })).request;
+  assert.match((await reviewSetup.view(spelled, 'ann', { consoleAdmin: true })).canApprove.why, /is the console's own, set by an earlier request/);
 
   // Review alone in a repo that already runs QA in CI does not get the console's key either.
   const old = (await reviewSetup.create(parseRequest({ repo: 'acme/old-qa' }), { login: 'ann' })).request;
@@ -345,8 +352,25 @@ test('a failure\'s detail is for those who can write to the repo: the asker with
   const forCat = await reviewSetup.sessionStatus(request);
   assert.deepEqual([forCat.status, forCat.steps], ['failed', []]);
   assert.doesNotMatch(forCat.why, /main|409|rule/);
-  assert.match((await reviewSetup.view(request, 'cat', { consoleAdmin: false })).why, /those who can write to the repo see which/);
+  const catPage = await reviewSetup.view(request, 'cat', { consoleAdmin: false });
+  assert.match(catPage.why, /those who can write to the repo see which/);
+  assert.doesNotMatch(JSON.stringify(catPage), /main|409|rule|commit/i, 'nor in the history or steps');
   assert.match((await reviewSetup.view(request, 'ann', { consoleAdmin: false })).why, /Repository rule violations found/);
+});
+
+test('a label GitHub refuses for any reason but being there already fails its step', async () => {
+  const { gh } = setup({ repos: { 'acme/game': { admins: ['ann'], secrets: ['ANTHROPIC_API_KEY'] } } });
+  const realFetch = gh.fetch;
+  const store = { state: {}, save() {} };
+  const rs = createReviewSetup({
+    store, teamKey: async () => TEAM_KEY, publicUrl: 'x',
+    github: appGitHub({ appId: '1', privateKey: APP_KEY, fetchImpl: async (url, init) => (new URL(String(url)).pathname.endsWith('/labels') && init?.method === 'POST'
+      ? new Response(JSON.stringify({ message: 'Validation Failed', errors: [{ code: 'invalid', field: 'color' }] }), { status: 422 }) : realFetch(url, init)) }),
+  });
+  const { request } = await rs.create(parseRequest({ repo: 'acme/game', qaRunner: 'woodshed' }), { login: 'ann' });
+  await approveShown(rs, request, 'ann', { consoleAdmin: true });
+  assert.equal(request.status, 'failed');
+  assert.match(request.why, /^Create the woodshed-qa label: GitHub refused the label: HTTP 422/);
 });
 
 test('the session API: a session asks and follows its own request, and never another\'s', async (t) => {

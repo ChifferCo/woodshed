@@ -2274,7 +2274,8 @@ and is handed a link and a status, never a credential:
    from the console's key, unless the repo has one, which is left as it is. The console's key and QA in the repo's CI
    are never in one repo: that job starts each pull request's own app on the runner that then holds the key, so a pull
    request a session opened could read it. The key is not set where CI's QA workflow is (already, or written by the
-   request), and CI's QA workflow is not written where the key is the console's own: one a request set, and GitHub's
+   request), and CI's QA workflow is not written where the key is the console's own: one the console set (kept in
+   `state.json` under `reviewSetupKeys`, by GitHub's id for the repo, apart from the requests), and GitHub's
    `updated_at` says the repo has not replaced since. Either waits for the repo's own `ANTHROPIC_API_KEY`; QA as a
    Woodshed session removes CI's workflow and needs neither. A QA workflow someone adds by hand later is theirs to
    weigh. A read GitHub did not answer (the Actions setting, whether the secret is there)
@@ -2295,6 +2296,8 @@ and is handed a link and a status, never a credential:
    `GET /api/review-setup/<id>`. Which step failed, and why, is shown only to those who can write to the repo (for a
    session, its owner or whoever started it): anyone else reads `failed` and where to look. `status` is `pending`, `applying`, `applied`, `refused` or `failed`, with `why` and
    each step's outcome. A request nobody decides in 24 hours is refused as expired.
+
+Who can write to a repo, and who is its admin, is GitHub's base `permission` for them, whatever custom role they have.
 
 Each step needs a permission of the App's installation on the repo, read from GitHub (`GET /repos/<repo>/installation`)
 before anything is asked of the approver: Workflows: write for the workflow files (with Contents: write),

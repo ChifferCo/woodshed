@@ -39,7 +39,8 @@ const TOKEN_MARGIN_MS = 5 * 60_000;
 const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const REF_RE = /^(?!.*\.\.)[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 const ID_RE = /^[0-9a-f]{12}$/;
-const WRITER_ROLES = new Set(['admin', 'maintain', 'write']);
+const WRITER_ROLES = new Set(['admin', 'write']);
+const FAILED_ELSEWHERE = 'it failed at one of its steps: those who can write to the repo see which on its page';
 // GitHub's clock and the console's, for telling the console's key from one the repo set after it.
 const KEY_CLOCK_SLACK_MS = 60_000;
 
@@ -302,7 +303,7 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
    * GitHub's answers) only with `detail`, for someone who can write to the repo.
    */
   function statusOf(request, { detail = false } = {}) {
-    const why = request.status === 'failed' && !detail ? 'it failed at one of its steps: those who can write to the repo see which on its page' : request.why ?? null;
+    const why = request.status === 'failed' && !detail ? FAILED_ELSEWHERE : request.why ?? null;
     return {
       id: request.id, repo: request.repo, qa: request.qa, ref: request.ref, status: request.status, why,
       createdAt: request.createdAt, expiresAt: request.expiresAt, decidedAt: request.decidedAt ?? null, decidedBy: request.decidedBy ?? null,
@@ -389,6 +390,7 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
     const repoAnswer = await gh.call('GET', `/repos/${repo}`);
     if (!repoAnswer.ok) throw new Error(`GitHub did not answer for ${repo}: ${gitHubReason(repoAnswer)}`);
     plan.branch = repoAnswer.body.default_branch;
+    plan.repoId = String(repoAnswer.body.id ?? '');
 
     async function file(path) {
       if (!readable.contents) return { known: false };
@@ -437,7 +439,7 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
       const answer = await gh.call('GET', `/repos/${repo}/actions/secrets/${SECRET_NAME}`);
       plan.keySet = answer.ok ? true : answer.status === 404 ? false : null;
       // The key there is the console's while GitHub says it was last changed no later than when a request here set it.
-      const setAt = consoleKeySetAt(repo);
+      const setAt = consoleKeySetAt(plan.repoId);
       consoleKey = Boolean(answer.ok && setAt && Date.parse(answer.body.updated_at ?? 0) <= Date.parse(setAt) + KEY_CLOCK_SLACK_MS);
       // Only a key GitHub says is not there is set: one it did not answer for may be the repo's own.
       if (plan.keySet === null) plan.blockers.push(`GitHub did not say whether ${repo} has ${SECRET_NAME} (${gitHubReason(answer)}): load this page again.`);
@@ -468,9 +470,10 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
     return plan;
   }
 
-  // The newest time a request here set the console's key on `repo`.
-  function consoleKeySetAt(repo) {
-    return state.reviewSetups.filter((r) => r.repo === repo && r.keySetAt).map((r) => r.keySetAt).sort().at(-1) ?? null;
+  // When the console last set its key on a repo, by GitHub's id for it: kept apart from the requests, which are pruned,
+  // and the same whatever spelling of the repo's name a request used, or after a rename.
+  function consoleKeySetAt(repoId) {
+    return (repoId && state.reviewSetupKeys?.[repoId]) || null;
   }
 
   /** @returns {Promise<string|null>}  why `login` may not approve a request on the repo, asked before anything is read of it */
@@ -492,7 +495,8 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
 
   const isMine = (request, login) => Boolean(login && (request.by.login === login || request.by.person === login));
 
-  // What `login` may do on the repo, as GitHub tells the App: null when it is not a collaborator, or the App is not there.
+  // What `login` may do on the repo, as GitHub tells the App: its base permission (`admin`, `write`, `read`; a custom
+  // role's `role_name` is not one of these), null when it is not a collaborator, or the App is not there.
   async function repoRole(repo, login) {
     if (!github || !login) return null;
     const installation = await github.installationOf(repo);
@@ -501,7 +505,7 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
       .call('GET', `/repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`);
     if (answer.status === 404) return null;
     if (!answer.ok) throw new Error(`GitHub did not say what @${login} may do on ${repo}: ${gitHubReason(answer)}`);
-    return answer.body.role_name ?? answer.body.permission ?? null;
+    return answer.body.permission ?? null;
   }
 
   /** @returns {Promise<boolean>}  whether `login` may see the request at all */
@@ -529,7 +533,11 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
     const role = consoleAdmin ? null : await repoRole(request.repo, login);
     const writer = WRITER_ROLES.has(role);
     if (!mine && !consoleAdmin && !writer) throw shown('no such request', 404);
-    const out = { ...statusOf(request, { detail: consoleAdmin || writer }), ...shownBy(request, login, consoleAdmin), plan: null, canApprove: { ok: false, why: null }, canRefuse: false, mine };
+    const detail = consoleAdmin || writer;
+    const visible = shownBy(request, login, consoleAdmin);
+    // A failure's note in the history is GitHub's answer about the repo: the same detail as `why`.
+    const history = detail ? visible.history : visible.history.map((e) => (e.what === 'failed' ? { ...e, note: FAILED_ELSEWHERE } : e));
+    const out = { ...statusOf(request, { detail }), by: visible.by, history, plan: null, canApprove: { ok: false, why: null }, canRefuse: false, mine };
     out.canRefuse = request.status === 'pending' && (consoleAdmin || mine || role === 'admin');
     if (request.status !== 'pending') return out;
     if (!github) {
@@ -572,7 +580,8 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
       },
       'qa-label': async () => {
         const answer = await gh.call('POST', `/repos/${request.repo}/labels`, QA_LABEL);
-        if (!answer.ok && answer.status !== 422) throw new Error(`GitHub refused the label: ${gitHubReason(answer)}`);
+        const exists = answer.status === 422 && (answer.body.errors ?? []).some((e) => e?.code === 'already_exists');
+        if (!answer.ok && !exists) throw new Error(`GitHub refused the label: ${gitHubReason(answer)}`);
         return null;
       },
       approvals: async (s) => {
@@ -588,7 +597,7 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
         const sealed = sealedBox(value, Buffer.from(String(publicKey.body.key ?? ''), 'base64')).toString('base64');
         const answer = await gh.call('PUT', `/repos/${request.repo}/actions/secrets/${SECRET_NAME}`, { encrypted_value: sealed, key_id: publicKey.body.key_id });
         if (!answer.ok) throw new Error(`GitHub refused the secret: ${gitHubReason(answer)}`);
-        request.keySetAt = iso();
+        state.reviewSetupKeys = { ...state.reviewSetupKeys, [plan.repoId]: iso() };
         console.log('reviewSetup: Anthropic key set as an Actions secret', { id: request.id, repo: request.repo, name: SECRET_NAME });
         return null;
       },

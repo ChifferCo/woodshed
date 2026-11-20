@@ -40,7 +40,7 @@ export function fakeGitHub(repos, { now = Date.now } = {}) {
   for (const [name, r] of Object.entries(repos)) {
     const secretKey = crypto.randomBytes(32);
     state[name] = {
-      installed: r.installed ?? true, installationId: String(installationIds += 1), permissions: { ...(r.permissions ?? ALL_PERMISSIONS) },
+      installed: r.installed ?? true, installationId: String(installationIds += 1), id: installationIds * 7, permissions: { ...(r.permissions ?? ALL_PERMISSIONS) },
       admins: r.admins ?? [], writers: r.writers ?? [], branch: 'main', protectedBranch: Boolean(r.protectedBranch),
       files: new Map(Object.entries(r.files ?? {}).map(([p, text]) => [p, { sha: sha(text), text }])),
       labels: new Set(r.labels ?? []), workflow: { default_workflow_permissions: 'read', can_approve_pull_request_reviews: Boolean(r.canApprove) },
@@ -71,7 +71,7 @@ export function fakeGitHub(repos, { now = Date.now } = {}) {
     let m = /^\/repos\/([^/]+\/[^/]+)\/installation$/.exec(path);
     if (m) {
       if (!auth.startsWith('Bearer ey')) return answer(401, { message: 'A JSON web token could not be decoded' });
-      const repo = state[m[1]];
+      const repo = state[Object.keys(state).find((k) => k.toLowerCase() === m[1].toLowerCase())];
       return repo?.installed ? answer(200, { id: Number(repo.installationId), permissions: repo.permissions }) : answer(404, { message: 'Not Found' });
     }
     m = /^\/app\/installations\/(\d+)\/access_tokens$/.exec(path);
@@ -88,12 +88,14 @@ export function fakeGitHub(repos, { now = Date.now } = {}) {
     }
     m = /^\/repos\/([^/]+\/[^/]+)(\/.*)?$/.exec(path);
     if (!m) return answer(404, { message: 'Not Found' });
-    const [, repoName, rest = ''] = m;
+    const [, spelled, rest = ''] = m;
+    // GitHub reads a repo's name whatever its case.
+    const repoName = Object.keys(state).find((k) => k.toLowerCase() === spelled.toLowerCase()) ?? spelled;
     const repo = state[repoName];
     const grant = tokens.get(auth.replace(/^Bearer /, ''));
     if (!repo || !grant || grant.repo !== repoName) return answer(404, { message: 'Not Found' });
     const can = (name, level) => allows(grant.permissions, name, level);
-    if (rest === '' && method === 'GET') return answer(200, { full_name: repoName, default_branch: repo.branch });
+    if (rest === '' && method === 'GET') return answer(200, { id: repo.id, full_name: repoName, default_branch: repo.branch });
     m = /^\/contents\/(.+)$/.exec(rest);
     if (m) {
       const file = decodeURIComponent(m[1]);
