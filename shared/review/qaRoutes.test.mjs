@@ -30,10 +30,12 @@ else {
     process.exit(0);
   }
   if (!argv.includes('--system-prompt') && prompt.includes('take your time')) {
-    // A reader's question that is still being answered while the test asks another in its box.
+    // A reader's question that is still being answered while the test asks another in its box. ", a long time" waits
+    // past a whole Ask again, and the answer names the question, so a test can tell whose answer landed.
+    const asked = [...prompt.matchAll(/^question: (.*)$/gm)].map((m) => m[1]).pop() || '';
     setTimeout(() => {
-      process.stdout.write(JSON.stringify({ type: 'result', is_error: false, total_cost_usd: 0.001, structured_output: { answers: ids.map((id) => ({ id, answer: 'Slow answer to ' + id + '.' })) } }));
-    }, 1_500);
+      process.stdout.write(JSON.stringify({ type: 'result', is_error: false, total_cost_usd: 0.001, structured_output: { answers: ids.map((id) => ({ id, answer: 'Slow answer to ' + id + '.' + (asked.includes('#') ? ' (' + asked + ')' : '') })) } }));
+    }, prompt.includes('take your time, a long time') ? 10_000 : 1_500);
     return;
   }
   if (!argv.includes('--system-prompt')) {
@@ -918,4 +920,23 @@ test('one question waits in a box at a time; another box takes its own meanwhile
   assert.equal(readQa(session).items.find((i) => i.id === 'q1.u1').answer, 'Slow answer to q1.u1.');
   assert.equal((await ask('q1', 'And another?')).body.item.id, 'q1.u2');
   await until(() => readQa(session).items.every((i) => !i.asking));
+});
+
+test('an answer still on its way when Ask again replaced the tree never lands on a new question with the same id', async () => {
+  const session = 'claude-7f7f7f7f';
+  const createdAt = '2026-11-19T10:00:00.000Z';
+  makeReview(session, path.join(DIR, 'ask-again'), createdAt);
+  await call('POST', `/reviews/${session}/qa`);
+  await until(() => readQa(session)?.status === 'ready');
+  const ask = (question) => callWith('POST', `/reviews/${session}/qa/ask`, { parent: 'q1', question, forDiff: createdAt });
+  assert.equal((await ask('take your time, a long time #old')).body.item.id, 'q1.u1');
+  // Ask again writes a new tree, with a q1 and no q1.u1, while the old answer is still being written.
+  assert.equal((await call('POST', `/reviews/${session}/qa`)).body.status, 'running');
+  await until(() => { const q = readQa(session); return q?.status === 'ready' && !q.items.some((i) => i.mine) ? q : null; });
+  // The new question takes the same id. It waits behind the old run, in the same slot, so the old answer comes first.
+  const fresh = await ask('take your time #new');
+  assert.equal(fresh.body.item.id, 'q1.u1');
+  // The first answer seen on it is the one that matters: a later one would write over a wrong one.
+  const first = await until(() => readQa(session).items.find((i) => i.id === 'q1.u1' && i.answer), 30_000);
+  assert.equal(first.answer, 'Slow answer to q1.u1. (take your time #new)');
 });

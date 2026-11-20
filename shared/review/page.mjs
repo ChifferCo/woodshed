@@ -3059,7 +3059,10 @@ ${DARK_PALETTE}
     async function askQaAgain(replace) {
       if (!state.session) return;
       var was = qaView;
-      var mine = was.data && (was.data.items || []).some(function own(i) { return i.mine; });
+      // A question of the reader's that failed and is back in its box counts too:
+      // Ask again drops it with the rest.
+      var mine = was.data && ((was.data.items || []).some(function own(i) { return i.mine; })
+        || Object.keys(was.data.askErrors || {}).length > 0);
       if (replace && mine && !window.confirm('Ask again writes a new Q&A, without the questions you asked. Ask again?')) return;
       var asked;
       try {
@@ -3323,13 +3326,18 @@ ${DARK_PALETTE}
       // A later failure of this question puts it back in the box, even when it
       // is the same text as one put back before.
       delete view.refilled[parent];
-      // A read that started after the ask was sent has come back already: what
-      // it found (answered, or failed already) is newer than this reply.
-      if (view.data && view.readsDone <= sentAfter) {
+      // A read that started after the ask was sent may have come back already.
+      // What it found of the question (answered, or failed already) is newer
+      // than this reply; a read the server answered before writing the question
+      // found nothing of it, and the question is added as waiting.
+      if (view.data) {
         var had = (view.data.items || []).some(function same(i) { return i.id === got.item.id; });
-        if (!had) view.data.items = (view.data.items || []).concat([got.item]);
-        if (view.data.askErrors) delete view.data.askErrors[parent];
-        view.posted[got.item.id] = { item: got.item, after: view.reads };
+        var fresh = view.readsDone > sentAfter;
+        var failed = view.data.askErrors && view.data.askErrors[parent];
+        var failedHere = fresh && failed && failed.question === got.item.question;
+        if (!had && !failedHere) view.data.items = (view.data.items || []).concat([got.item]);
+        if (!fresh && view.data.askErrors) delete view.data.askErrors[parent];
+        if (!fresh) view.posted[got.item.id] = { item: got.item, after: view.reads };
       }
       if (parent) view.open[parent] = true;
       render();
