@@ -1,0 +1,11 @@
+<!-- @dsCard group="Settings" height=150 subtitle="One of two or three short words, applied at once" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600&display=swap">
+<style>
+ body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif;display:flex;flex-direction:column;gap:14px}
+ .seg{display:flex;width:max-content;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+ .seg button{height:28px;margin:0;padding:0 12px;border:0;background:none;color:var(--meta);font:inherit;font-size:12px;font-weight:500}
+ .seg button+button{border-left:1px solid var(--line)}
+ .seg button[aria-pressed="true"]{background:var(--amber-tint);color:var(--amber-ink)}
+</style>
+<div class="seg" role="group" aria-label="Theme"><button aria-pressed="true">device</button><button aria-pressed="false">light</button><button aria-pressed="false">dark</button></div>
+<div class="seg" role="group" aria-label="Sessions on a phone"><button aria-pressed="false">Chat</button><button aria-pressed="true">TUI</button></div>

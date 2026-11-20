@@ -18,7 +18,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - **Type.** `title` (Merriweather) once per page. Everything else is Red Hat Display: `card-title`, `button`, `group-label`. Meta lines, PR chips and counts are JetBrains Mono: `meta`, `chip`.
 - **Spacing and radius.** Gaps are `space-2` between cards and head controls, `space-3` for rail padding. Cards are `radius-lg`, rail buttons `radius-md`, form buttons `radius-sm`, the People filter and count chips `radius-pill`.
 - **Contrast.** Text meets 4.5:1 on the grounds named in its token note, in both themes. White on `action` is 4.8:1 in light; use `action-ink` in dark.
-- **Dark.** Dark follows the device unless the console's settings sheet picked light. Both themes use the same token names.
+- **Dark.** Dark follows the device unless My settings' Display card picked light. Both themes use the same token names.
 - **Motion.** None beyond the spinning ring on a PR chip while checks run, and the same ring on a control waiting on the console (Starting…). A checklist's marks stay still: it is drawn again every second.
 
 ## The rail
@@ -207,8 +207,10 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   program's there, beside its own pages. Webhook events is a log, not a setting, and not a
   navigation entry either: Secrets & webhooks links to it (in the GitHub webhook card, or the page's note when there is
   none), its page has a `‹ Secrets & webhooks` crumb above the title, and Settings is marked current in the list on it.
-- Keyboard shortcuts is in the settings list's This browser group, beside Theme and review files, not in the avatar
-  menu: the menu holds pages, and `?` and the command palette open the sheet anywhere.
+- Keyboard shortcuts is in the settings list's This browser group, not in the avatar menu: the menu holds pages, and
+  `?` and the command palette open the sheet anywhere. The theme, review files and a session's default view are a card
+  on My settings (Display, `⇧⌘,` from anywhere), not a sheet: one place for what is yours, and the card says which of
+  its choices are this browser's.
 
 ## Repo settings
 

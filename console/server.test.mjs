@@ -856,8 +856,20 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
 
   assert.equal((await post(port, '/api/sessions/0a1b2c3d/pin', { on: true }, as('octocat'))).status, 200);
   const sessions = async (login) => JSON.parse(await getBody(port, '/api/sessions', as(login)));
-  assert.deepEqual((await sessions('octocat')).viewPrefs, { pinned: ['0a1b2c3d'] });
-  assert.deepEqual((await sessions('mia-dev')).viewPrefs, { pinned: [] }, 'nobody else\'s pins');
+  const chat = { desktop: 'chat', phone: 'chat' };
+  assert.deepEqual((await sessions('octocat')).viewPrefs, { pinned: ['0a1b2c3d'], sessionView: chat });
+  assert.deepEqual((await sessions('mia-dev')).viewPrefs, { pinned: [], sessionView: chat }, 'nobody else\'s pins');
+
+  // The tab a session opens on when none was picked: the person's own, on a desktop and on a phone.
+  const saved = await post(port, '/api/my/session-view', { phone: 'tui' }, as('octocat'));
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.body, { desktop: 'chat', phone: 'tui' });
+  assert.deepEqual(JSON.parse(await getBody(port, '/api/my/session-view', as('octocat'))), { desktop: 'chat', phone: 'tui' });
+  assert.deepEqual((await sessions('octocat')).viewPrefs.sessionView, { desktop: 'chat', phone: 'tui' });
+  assert.deepEqual((await sessions('mia-dev')).viewPrefs.sessionView, chat, 'nobody else\'s view');
+  assert.equal((await post(port, '/api/my/session-view', { phone: 'terminal' }, as('octocat'))).status, 400);
+  assert.equal((await post(port, '/api/my/session-view', { tablet: 'tui' }, as('octocat'))).status, 400);
+  assert.equal((await post(port, '/api/my/session-view', {}, as('octocat'))).status, 400);
 
   assert.equal((await post(port, '/api/sessions/0a1b2c3d/rename', { title: 'New name' }, as('mia-dev'))).status, 200);
   assert.equal(session.title, 'New name');

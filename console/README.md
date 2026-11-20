@@ -69,7 +69,10 @@ whose it is: **My repo settings** and **My session timeouts** are yours; Setting
 - `?tab=terminal` opens on Terminal's Shell, `?tab=applog` on its App log, `?tab=review` on Review and `?tab=diff` on
   Review's Diff.
   With no `?tab`, as from the rail, a session opens on the tab it was last left on in that browser tab
-  (`public/sessionTabs.cjs`: sessionStorage, read only by the login that picked it and dropped at sign-out). The page
+  (`public/sessionTabs.cjs`: sessionStorage, read only by the login that picked it and dropped at sign-out), and on
+  one it was never left on, the person's default view: Chat or TUI, one for a desktop and one for a phone (under
+  720px), from My settings' Display card (`viewPrefs.mjs`, `GET` and `POST /api/my/session-view`; the console logs
+  `viewPrefs: session view changed`). Chat unless they changed it. Until a tab is picked it follows the window's width. The page
   never writes `?tab` itself: a tab picked lives in the history entry's state, so a reload, Back and Forward keep it
   (the entry's tab wins over its address), and an address only ever carries a link's tab, kept as it came after a pick
   or a fallback (it goes through sign-in as it came, and a ?tab nobody linked to never reaches someone else).
@@ -92,7 +95,7 @@ for the session's details, the app, its databases, the key bar's switch and the
 card's own actions; then the tabs.
 The size and the key bar's choice are remembered in the browser.
 
-A running session opens on its **Chat** tab (`public/chat.js`): the conversation as a chat instead of the agent's
+A running session opens on its **Chat** tab unless its person picked TUI as their default view (`public/chat.js`): the conversation as a chat instead of the agent's
 terminal. The thread is read from the agent's own record of it, claude's transcript or codex's rollout, through
 statusd's `GET /transcript` (session/README.md), every 1.5 s while the agent works or a message waits to show and every
 5 s otherwise, with `since` so a record that did not move costs the session a stat. The person's messages are on the
@@ -502,8 +505,10 @@ And what the shed shows about each session:
   once you type), go to a page, or Tab on a session for its actions. **?** (or
   **⌘?**) lists the keys; **⌘.** hides the rail, as does the
   button beside the user menu at its foot, and a strip down the left edge
-  shows it again; **⇧⌘,** opens Settings, with
-  the theme (device, light or dark, kept in the browser); **⇧⌘O** (or **N**) is
+  shows it again; **⇧⌘,** goes to My settings'
+  Display card: the theme (device, light or dark) and review files, kept in
+  the browser, and whether a session opens on Chat or TUI, one choice for a
+  desktop and one for a phone, kept for you on every device; **⇧⌘O** (or **N**) is
   New session; **G** then **M**, **E** or **S** goes to My Woodshed, shared
   sessions or My settings. Ctrl works for ⌘ outside a terminal, and the pages
   write the keys as Ctrl on Windows and Linux. A key alone works only while

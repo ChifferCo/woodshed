@@ -22,7 +22,7 @@ const PLANNED = new Set();
 
 test('every color token matches style.css in light and in both dark blocks', () => {
   const light = declarations(':root');
-  // Dark is declared twice: when the device asks for it, and when the settings sheet picks it.
+  // Dark is declared twice: when the device asks for it, and when My settings' Display card picks it.
   const dark = { ...light, ...declarations(':root[data-theme="dark"]') };
   const darkByDevice = { ...light, ...declarations(':root:not([data-theme="light"])') };
   const wrong = [];

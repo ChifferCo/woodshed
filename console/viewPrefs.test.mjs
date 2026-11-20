@@ -10,9 +10,9 @@ test('pins are each person\'s own, and only sessions they can still see come bac
   prefs.setPinned('joel', '7c21e0d4', true);
   prefs.setPinned('joel', '0a1b2c3d', false);
 
-  assert.deepEqual(prefs.view('joel'), { pinned: ['7c21e0d4'] });
-  assert.deepEqual(prefs.view('mia'), { pinned: [] });
-  assert.deepEqual(prefs.view('joel', new Set(['0a1b2c3d'])), { pinned: [] }, 'a removed session is left out');
+  assert.deepEqual(prefs.view('joel').pinned, ['7c21e0d4']);
+  assert.deepEqual(prefs.view('mia').pinned, []);
+  assert.deepEqual(prefs.view('joel', new Set(['0a1b2c3d'])).pinned, [], 'a removed session is left out');
 
   assert.throws(() => prefs.setPinned('joel', '../x', true), /session id/);
   assert.ok(store.saves >= 3);
@@ -33,8 +33,24 @@ test('the old fold choices are dropped from the stored state, and the pins stay'
   const store = { state: { viewPrefs: { joel: { pinned: ['0a1b2c3d'], folded: { '0a1b2c3d': true }, startFolded: true } } }, saves: 0, save() { this.saves += 1; } };
   const prefs = createViewPrefs(store);
   assert.deepEqual(store.state.viewPrefs.joel, { pinned: ['0a1b2c3d'] });
-  assert.deepEqual(prefs.view('joel'), { pinned: ['0a1b2c3d'] });
+  assert.deepEqual(prefs.view('joel').pinned, ['0a1b2c3d']);
   assert.equal(store.saves, 1);
   createViewPrefs(store);
   assert.equal(store.saves, 1, 'nothing left to drop the second time');
+});
+
+test('the tab a session opens on is Chat until the person picks TUI, for a desktop and a phone apart', () => {
+  const store = { state: {}, saves: 0, save() { this.saves += 1; } };
+  const prefs = createViewPrefs(store);
+  assert.deepEqual(prefs.sessionView('joel'), { desktop: 'chat', phone: 'chat' });
+  assert.deepEqual(prefs.setSessionView('joel', { phone: 'tui' }), { desktop: 'chat', phone: 'tui' });
+  assert.deepEqual(prefs.setSessionView('joel', { desktop: 'tui' }), { desktop: 'tui', phone: 'tui' }, 'one choice leaves the other');
+  assert.deepEqual(prefs.view('joel').sessionView, { desktop: 'tui', phone: 'tui' });
+  assert.deepEqual(prefs.sessionView('mia'), { desktop: 'chat', phone: 'chat' }, 'nobody else\'s');
+  assert.deepEqual(prefs.setSessionView('joel', { desktop: 'chat', phone: 'chat' }), { desktop: 'chat', phone: 'chat' });
+  assert.equal(store.state.viewPrefs.joel.sessionView, undefined, 'the default is kept as nothing');
+  assert.throws(() => prefs.setSessionView('joel', { phone: 'review' }), /chat or tui/);
+  assert.throws(() => prefs.setSessionView('joel', { tablet: 'tui' }), /chat or tui/);
+  assert.throws(() => prefs.setSessionView('joel', {}), /chat or tui/);
+  assert.equal(store.saves, 3);
 });

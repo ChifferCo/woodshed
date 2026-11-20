@@ -1,5 +1,6 @@
-// The shed's shell around every page: the command palette (⌘K or /), the shortcuts sheet (⌘? or ?), the settings
-// sheet (⇧⌘,) with the theme, the keys that open them, and the hover hint that names a control's key. Which key does
+// The shed's shell around every page: the command palette (⌘K or /), the shortcuts sheet (⌘? or ?), ⇧⌘, to My
+// settings' Display card (the theme, review files and a session's default view), the keys that open them, and the
+// hover hint that names a control's key. Which key does
 // what is keys.cjs's. The session page registers its sessions and their actions (W.shell.register); every other page
 // gets the commands alone. Keys pressed in a terminal frame reach here too (W.shell.bindFrame), with ⌘ only: Ctrl and
 // a key alone there are the terminal's.
@@ -11,9 +12,8 @@
   const MAC = K.isMac(window.navigator);
   // A shortcut's key as text, for this computer: ⇧⌘O on a Mac, Ctrl+Shift+O elsewhere.
   const keyText = (id) => K.label(K.byId[id].mod, MAC);
-  const THEME_KEY = 'woodshed-theme';
-  // Read by the shed's review page, which is framed on this origin: writing it fires a storage event there.
-  const REVIEW_EXPAND_KEY = 'shed.review.expand';
+  // Where ⇧⌘, goes: the theme and the rest of what was the settings sheet are a card on My settings (mySettings.js).
+  const DISPLAY_HREF = '/settings#my-display';
 
   let page = { sessions: () => [], actions: () => [], toggleRail: null, railShown: () => true };
 
@@ -43,7 +43,6 @@
   function closeAll() {
     closePalette();
     closeSheet(keys);
-    closeSheet(settings);
   }
 
   // ---- toast ----
@@ -82,7 +81,7 @@
       // A log, not a menu entry (common.js, CONSOLE_LINKS), so named here to stay a place to go.
       W.isAdmin?.() && { group: 'Go to', label: 'Webhook events', run: go('/events') },
       { group: 'Commands', label: 'Keyboard shortcuts', meta: '?', run: () => openSheet(keys) },
-      { group: 'Commands', label: 'Settings', meta: keyText('settings'), run: () => openSheet(settings) },
+      { group: 'Go to', label: 'Display: theme, review files, Chat or TUI', meta: keyText('settings'), run: go(DISPLAY_HREF) },
       page.toggleRail && { group: 'Commands', label: page.railShown() ? 'Hide the rail' : 'Show the rail', meta: keyText('rail'), run: page.toggleRail },
     ].filter(Boolean);
   }
@@ -148,7 +147,6 @@
 
   function openPalette() {
     closeSheet(keys);
-    closeSheet(settings);
     setLevel(null);
     palette.hidden = false;
     takeFocus(input);
@@ -182,7 +180,7 @@
     }
   });
 
-  // ---- the two sheets ----
+  // ---- the shortcuts sheet ----
   function sheet(title, body) {
     const dialog = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-label': title, tabindex: '-1' },
       h('div', { class: 'sheet-head' }, h('h3', null, title), h('span', { class: 'esc' }, 'esc to close')),
@@ -194,7 +192,6 @@
 
   function openSheet(s) {
     closePalette();
-    for (const other of [keys, settings]) if (other !== s) closeSheet(other);
     s.onOpen?.();
     s.el.hidden = false;
     takeFocus(s.dialog);
@@ -225,63 +222,6 @@
       : 'A key alone works while you are not typing. Inside a terminal, Ctrl is the terminal\'s: click outside it first. Sessions have no key of their own: Ctrl+K, then type a name.'),
   ]);
 
-  // Appearance is this browser's.
-  const THEMES = [['system', 'device', 'Follow my device'], ['light', 'light', 'Always light'], ['dark', 'dark', 'Always dark']];
-  function currentTheme() {
-    return document.documentElement.dataset.theme || 'system';
-  }
-  function setTheme(theme) {
-    try {
-      if (theme === 'system') window.localStorage.removeItem(THEME_KEY);
-      else window.localStorage.setItem(THEME_KEY, theme);
-    } catch {
-      // A private window keeps it for this page.
-    }
-    if (theme === 'system') delete document.documentElement.dataset.theme;
-    else document.documentElement.dataset.theme = theme;
-    paintSettings();
-  }
-
-  // Expanded unless folded by choice: the review page reads 'collapsed' as folded and anything else as open.
-  function reviewExpands() {
-    try {
-      return window.localStorage.getItem(REVIEW_EXPAND_KEY) !== 'collapsed';
-    } catch {
-      return true;
-    }
-  }
-  function setReviewExpand(value) {
-    try {
-      if (value === 'collapsed') window.localStorage.setItem(REVIEW_EXPAND_KEY, 'collapsed');
-      else window.localStorage.removeItem(REVIEW_EXPAND_KEY);
-    } catch {
-      // A private window keeps nothing.
-    }
-    paintSettings();
-  }
-
-  function seg(options, current, onPick) {
-    return h('div', { class: 'theme-seg', role: 'group' }, options.map(([value, label, title]) => h('button', {
-      type: 'button', class: 'theme-opt', title, 'aria-pressed': String(value === current), onclick: () => onPick(value),
-    }, label)));
-  }
-
-  const settingsBody = h('div');
-  const settings = sheet('Settings', settingsBody);
-  function paintSettings() {
-    settingsBody.replaceChildren(
-      h('div', { class: 'set-row' },
-        h('div', { class: 'set-title' }, 'Appearance'),
-        h('p', { class: 'set-note' }, 'Follow the device, or pick one and keep it. Terminals stay dark either way: they are a program\'s colours, not the page\'s.'),
-        seg(THEMES, currentTheme(), setTheme)),
-      h('div', { class: 'set-row' },
-        h('div', { class: 'set-title' }, 'Review files'),
-        h('p', { class: 'set-note' }, 'Whether a review opens with every file\'s diff showing or folded. This browser\'s; files you mark as viewed stay folded.'),
-        seg([['collapsed', 'folded', 'Open a review with every file folded'], ['all', 'expanded', 'Open a review with every file\'s diff showing']],
-          reviewExpands() ? 'all' : 'collapsed', setReviewExpand)),
-      h('p', { class: 'sheet-note' }, 'Your Claude token, GitHub and databases are on ', h('a', { href: '/settings' }, 'My settings'), '.'));
-  }
-  settings.onOpen = paintSettings;
 
   // ---- the keys ----
   // G waits this long for the second key of a sequence.
@@ -290,13 +230,13 @@
   const ACTS = {
     keys: () => toggleSheet(keys),
     palette: () => (palette.hidden ? openPalette() : closePalette()),
-    settings: () => toggleSheet(settings),
+    settings: go(DISPLAY_HREF),
     rail: () => page.toggleRail?.(),
     new: go('/?new=1'),
   };
   function onKey(e, inFrame, modOnly = false) {
     hideHint();
-    if (e.key === 'Escape' && (!palette.hidden || !keys.el.hidden || !settings.el.hidden)) {
+    if (e.key === 'Escape' && (!palette.hidden || !keys.el.hidden)) {
       if (!palette.hidden && actionsFor) return;
       e.preventDefault();
       closeAll();
@@ -308,7 +248,7 @@
     const afterG = Date.now() - gAt < SEQUENCE_MS;
     gAt = 0;
     // A key alone is for the page, never for an open palette or sheet, whose own keys come first.
-    const overlayOpen = !palette.hidden || !keys.el.hidden || !settings.el.hidden;
+    const overlayOpen = !palette.hidden || !keys.el.hidden;
     const id = K.match(e, { inFrame, afterG, typing: overlayOpen || K.takesTyping(e.composedPath?.()[0] ?? e.target) });
     // A form's own key (⌘↵ on New session) is left to the form, which reads it from its fields.
     if (!id || K.byId[id]?.where || (id === 'rail' && !page.toggleRail)) return;
@@ -389,7 +329,7 @@
   }
 
   W.shell = {
-    register, toast, bindFrame, openPalette, openSettings: () => openSheet(settings), openKeys: () => openSheet(keys),
+    register, toast, bindFrame, openPalette, openKeys: () => openSheet(keys),
     keyText,
   };
 })();
