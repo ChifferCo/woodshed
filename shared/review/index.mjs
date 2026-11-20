@@ -157,8 +157,10 @@ const chatJobs = new Map();
  *  is, so a run unwinding after a discard or re-review writes nothing. */
 const qaRuns = new Map();
 let qaGen = 0;
-/** session -> Set of tokens, one per question a reader typed into the Q&A that
- *  is being answered. Cleared wherever qaRuns is, so an answer still on its way
+/** session -> Set of attempt tokens, one per question a reader typed into the
+ *  Q&A that is being answered. A token is random, not the item's id: Ask again
+ *  writes a new tree whose ids can repeat, and an old answer must not land on
+ *  a new question that happens to share its id. Cleared wherever qaRuns is, so an answer still on its way
  *  after a discard or re-review writes nothing. */
 const qaAsks = new Map();
 
@@ -2161,7 +2163,7 @@ function handleQaRead(res, ctx, session) {
  * the question back in that box with the reason.
  */
 export function withoutLostAsks(qa, going) {
-  const lost = (qa.items || []).filter((i) => i.asking && !going?.has(i.id));
+  const lost = (qa.items || []).filter((i) => i.asking && !going?.has(i.attempt));
   if (!lost.length) return qa;
   const askErrors = { ...(qa.askErrors || {}) };
   for (const item of lost) {
@@ -2180,6 +2182,9 @@ export function withoutLostAsks(qa, going) {
  * keeps it; the answer lands on it when the run ends. A run that fails takes
  * the item out again and leaves its question and reason in `askErrors`, keyed
  * by the parent, for the page to put back in that box.
+ *
+ * One question waits at a time in each box: a second would share the box's one
+ * askErrors entry, and two failures (an outage) would keep only one question.
  *
  * Every write re-reads qa.json and changes only this item, synchronously, so
  * two questions answered at once, or one answered while the reader asks
@@ -2206,23 +2211,30 @@ function handleQaAsk(payload, res, ctx, session) {
     log('review.qa_ask_refused', { reqId, session, why: 'run going' });
     return json(res, 409, { ok: false, code: 'running', error: 'the Q&A is still being written: ask once it has finished' });
   }
-  const qa = readQa(session);
-  if (!qa || (qa.forDiff ?? null) !== (review.createdAt ?? null)) {
+  const read = readQa(session);
+  if (!read || (read.forDiff ?? null) !== (review.createdAt ?? null)) {
     return json(res, 409, { ok: false, code: 'no-qa', error: 'there is no Q&A for this diff to ask in' });
   }
+  // Questions a restart cut off are handed back here for good, not only on reads:
+  // kept, a new question in that box would leave the old one's error under it.
+  const qa = withoutLostAsks(read, qaAsks.get(session));
   const checked = validateUserQuestion(payload, qa.items);
   if (!checked.ok) {
     log('review.qa_ask_refused', { reqId, session, why: checked.error });
     return json(res, 400, { ok: false, error: checked.error });
   }
-  const item = { ...checked.item, mine: true, asking: true };
+  if (qa.items.some((i) => i.asking && (i.parent || '') === (checked.item.parent || ''))) {
+    log('review.qa_ask_refused', { reqId, session, why: 'one waiting in that box' });
+    return json(res, 409, { ok: false, code: 'asking', error: 'a question asked here is still being answered: ask this once it is' });
+  }
+  const token = randomBytes(8).toString('hex');
+  const item = { ...checked.item, mine: true, asking: true, attempt: token };
   qa.items.push(item);
   if (qa.askErrors) {
     delete qa.askErrors[item.parent || ''];
     if (!Object.keys(qa.askErrors).length) delete qa.askErrors;
   }
   writeQa({ session, qa });
-  const token = item.id;
   if (!qaAsks.has(session)) qaAsks.set(session, new Set());
   qaAsks.get(session).add(token);
   log('review.qa_ask_started', { reqId, session, id: item.id, depth: item.depth });
@@ -2230,7 +2242,7 @@ function handleQaAsk(payload, res, ctx, session) {
     .catch(function unexpected(err) {
       log('review.qa_ask_crashed', { session, id: item.id, error: err?.message });
       try {
-        settleUserQuestion({ session, review, id: item.id, error: err?.message || 'the answer failed' });
+        settleUserQuestion({ session, review, item, error: err?.message || 'the answer failed' });
       } catch (again) {
         log('review.qa_ask_failure_not_saved', { session, error: again?.message });
       }
@@ -2244,22 +2256,22 @@ function handleQaAsk(payload, res, ctx, session) {
   return json(res, 200, { ok: true, status: 'running', item });
 }
 
-function qaAskIsLive(session, id) {
-  return !!qaAsks.get(session)?.has(id);
+function qaAskIsLive(session, attempt) {
+  return !!qaAsks.get(session)?.has(attempt);
 }
 
 async function answerUserQuestion({ ctx, session, review, item }) {
   const { log } = ctx;
-  const live = () => qaAskIsLive(session, item.id);
+  const live = () => qaAskIsLive(session, item.attempt);
   const treeish = snapshotTreeish(review);
   if (!treeish) {
-    return settleUserQuestion({ session, review, id: item.id, error: 'this review was taken before the Q&A could pin its code: press Re-review' });
+    return settleUserQuestion({ session, review, item, error: 'this review was taken before the Q&A could pin its code: press Re-review' });
   }
   const snapshot = await makeSnapshot({ repoDir: review.worktree, treeish, session });
   try {
     if (!snapshot.ok) log('review.qa_copy_failed', { session, error: snapshot.error });
     if (!live()) return;
-    if (!snapshot.ok) return settleUserQuestion({ session, review, id: item.id, error: snapshot.error });
+    if (!snapshot.ok) return settleUserQuestion({ session, review, item, error: snapshot.error });
     const files = readDiff(session)?.files || [];
     // The tree as it is now, so the answerer sees the questions above this one
     // with the answers they got, the reader's own among them.
@@ -2279,9 +2291,9 @@ async function answerUserQuestion({ ctx, session, review, item }) {
     if (!landed) {
       const error = answered.ok ? 'the answer did not come back for this question' : answered.error;
       log('review.qa_ask_failed', { session, id: item.id, error });
-      return settleUserQuestion({ session, review, id: item.id, error, costUsd: answered.costUsd });
+      return settleUserQuestion({ session, review, item, error, costUsd: answered.costUsd });
     }
-    settleUserQuestion({ session, review, id: item.id, answer: open[0].answer, costUsd: answered.costUsd });
+    settleUserQuestion({ session, review, item, answer: open[0].answer, costUsd: answered.costUsd });
     log('review.qa_ask_answered', { session, id: item.id, depth: item.depth, costUsd: answered.costUsd, ms: answered.ms });
   } finally {
     if (snapshot.ok && !removeSnapshot(snapshot.dir)) {
@@ -2291,15 +2303,17 @@ async function answerUserQuestion({ ctx, session, review, item }) {
 }
 
 /** Land an answer, or a failure, on a reader's question: the one write after the run. */
-function settleUserQuestion({ session, review, id, answer = null, error = null, costUsd = null }) {
-  if (!qaAskIsLive(session, id)) return;
+function settleUserQuestion({ session, review, item, answer = null, error = null, costUsd = null }) {
+  if (!qaAskIsLive(session, item.attempt)) return;
   const qa = readQa(session);
   if (!qa || (qa.forDiff ?? null) !== (review.createdAt ?? null)) return;
-  const at = qa.items.findIndex((i) => i.id === id);
+  // By its attempt as well as its id: a tree Ask again wrote since can have a
+  // new question under the same id, which this answer is not about.
+  const at = qa.items.findIndex((i) => i.id === item.id && i.attempt === item.attempt);
   if (at === -1) return;
   if (typeof costUsd === 'number') qa.costUsd = (qa.costUsd || 0) + costUsd;
   if (answer) {
-    const { asking, ...rest } = qa.items[at];
+    const { asking, attempt, ...rest } = qa.items[at];
     qa.items[at] = { ...rest, answer };
   } else {
     const [lost] = qa.items.splice(at, 1);

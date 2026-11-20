@@ -424,9 +424,11 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
   there is no newcomer round after it. It runs as a `qa-ask` job, in the explain's slot rather than the Q&A's, since
   someone is waiting on it. The item is written at once, `asking` and `mine`, and the answer lands on it; a failure
   takes it out and leaves its question and reason in `askErrors` under its parent's id, and the page puts them back in
-  that box. Each write re-reads `qa.json` and changes only its own item, so asks never drop each other; they are
-  refused while a run is writing the tree, and one whose file is gone or replaced (Discard, Re-review, Ask again)
-  writes nothing. A read finds an `asking` item no ask is answering (the shed restarted) and hands it back the same way.
+  that box. One question waits in a box at a time, so a box's one `askErrors` entry never loses a question. Each write
+  re-reads `qa.json` and changes only its own item, found by its id and a random `attempt` token (Ask again writes a
+  tree whose ids can repeat), so asks never drop each other; they are refused while a run is writing the tree, and one
+  whose file is gone or replaced (Discard, Re-review, Ask again) writes nothing. An `asking` item no ask is answering
+  (the shed restarted) is handed back the same way on a read, and for good at the next ask.
 
 - **An ask panel is a conversation, and the page holds it.** Each question under a file, line or span is still one
   `claude -p` run, but the page sends the earlier turns of that panel in `history` and `buildExplainPrompt` replays the

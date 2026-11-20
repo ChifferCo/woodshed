@@ -29,6 +29,13 @@ else {
     process.stdout.write(JSON.stringify({ type: 'result', is_error: true, result: 'the stand-in refused', total_cost_usd: 0.001 }));
     process.exit(0);
   }
+  if (!argv.includes('--system-prompt') && prompt.includes('take your time')) {
+    // A reader's question that is still being answered while the test asks another in its box.
+    setTimeout(() => {
+      process.stdout.write(JSON.stringify({ type: 'result', is_error: false, total_cost_usd: 0.001, structured_output: { answers: ids.map((id) => ({ id, answer: 'Slow answer to ' + id + '.' })) } }));
+    }, 1_500);
+    return;
+  }
   if (!argv.includes('--system-prompt')) {
     // The answerer quotes a.txt from the folder it runs in, so a test can see which copy of the code it read.
     let seen = '';
@@ -58,7 +65,7 @@ process.env.PATH = `${BIN}:${process.env.PATH}`;
 process.env.WOODSHED_REVIEWS = path.join(DIR, 'reviews');
 
 const { handleReviewRequest, failedQaRecord, removeReviewSession, pullRequestDiff, withoutLostAsks } = await import('./index.mjs');
-const { writeSessionReview, writeDiff, readQa } = await import('./store.mjs');
+const { writeSessionReview, writeDiff, readQa, writeQa } = await import('./store.mjs');
 const { makeSnapshot, removeSnapshot, sweepStaleSnapshots, reservedSnapshotBytes } = await import('./qa.mjs');
 
 // A worktree review of a real checkout, whose snapshot is the commit made here: what the diff was taken from.
@@ -863,12 +870,50 @@ test('a reader\'s question being answered when the shed restarted reads back as 
   const qa = {
     items: [
       { id: 'q1', parent: null, depth: 1, question: 'What?', answer: 'This.' },
-      { id: 'q1.u1', parent: 'q1', depth: 2, question: 'Who calls it?', answer: null, asking: true, mine: true },
-      { id: 'u1', parent: null, depth: 1, question: 'Safe?', answer: null, asking: true, mine: true },
+      { id: 'q1.u1', parent: 'q1', depth: 2, question: 'Who calls it?', answer: null, asking: true, mine: true, attempt: 'a1' },
+      { id: 'u1', parent: null, depth: 1, question: 'Safe?', answer: null, asking: true, mine: true, attempt: 'a2' },
     ],
   };
-  const read = withoutLostAsks(qa, new Set(['u1']));
+  const read = withoutLostAsks(qa, new Set(['a2']));
   assert.deepEqual(read.items.map((i) => i.id), ['q1', 'u1'], 'the one still going stays');
   assert.equal(read.askErrors.q1.question, 'Who calls it?');
-  assert.equal(withoutLostAsks(qa, new Set(['q1.u1', 'u1'])), qa, 'nothing lost, the same object');
+  assert.equal(withoutLostAsks(qa, new Set(['a1', 'a2'])), qa, 'nothing lost, the same object');
+});
+
+test('a question a restart cut off is handed back for good once the reader asks in that box again', async () => {
+  const session = 'claude-7d7d7d7d';
+  const createdAt = '2026-11-19T10:00:00.000Z';
+  makeReview(session, path.join(DIR, 'restarted'), createdAt);
+  await call('POST', `/reviews/${session}/qa`);
+  await until(() => readQa(session)?.status === 'ready');
+  // As a restart leaves it: an item waiting, its attempt known to no process.
+  const qa = readQa(session);
+  qa.items.push({ id: 'q1.u1', parent: 'q1', depth: 2, question: 'Lost?', answer: null, mine: true, asking: true, attempt: 'gone' });
+  writeQa({ session, qa });
+  assert.equal((await call('GET', `/reviews/${session}/qa`)).body.qa.askErrors.q1.question, 'Lost?');
+
+  const again = await callWith('POST', `/reviews/${session}/qa/ask`, { parent: 'q1', question: 'Lost?', forDiff: createdAt });
+  assert.deepEqual([again.status, again.body.item.id], [200, 'q1.u1'], 'the cut-off item is gone, so its id is free');
+  const done = await until(() => { const q = readQa(session); return q.items.find((i) => i.id === 'q1.u1')?.answer ? q : null; });
+  assert.equal(done.askErrors, undefined);
+  assert.equal(done.items.filter((i) => i.id === 'q1.u1').length, 1);
+  assert.equal('attempt' in done.items.find((i) => i.id === 'q1.u1'), false, 'the attempt goes with the wait');
+  assert.equal((await call('GET', `/reviews/${session}/qa`)).body.qa.askErrors, undefined);
+});
+
+test('one question waits in a box at a time; another box takes its own meanwhile', async () => {
+  const session = 'claude-7e7e7e7e';
+  const createdAt = '2026-11-19T10:00:00.000Z';
+  makeReview(session, path.join(DIR, 'one-per-box'), createdAt);
+  await call('POST', `/reviews/${session}/qa`);
+  await until(() => readQa(session)?.status === 'ready');
+  const ask = (parent, question) => callWith('POST', `/reviews/${session}/qa/ask`, { parent, question, forDiff: createdAt });
+  assert.equal((await ask('q1', 'take your time: why?')).status, 200);
+  const second = await ask('q1', 'And another?');
+  assert.deepEqual([second.status, second.body.code], [409, 'asking']);
+  assert.equal((await ask('q2', 'Elsewhere?')).status, 200);
+  await until(() => readQa(session).items.every((i) => !i.asking));
+  assert.equal(readQa(session).items.find((i) => i.id === 'q1.u1').answer, 'Slow answer to q1.u1.');
+  assert.equal((await ask('q1', 'And another?')).body.item.id, 'q1.u2');
+  await until(() => readQa(session).items.every((i) => !i.asking));
 });

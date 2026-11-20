@@ -844,7 +844,7 @@ ${DARK_PALETTE}
     .qa-list .qa-list > .qa-node > .qa-q { font-weight: 500; font-size: 13.5px; }
     .qa-q .chev { flex: none; width: 1rem; color: var(--muted); font-size: 11px; line-height: 21px; transition: transform 0.12s; }
     .qa-q[aria-expanded="true"] .chev { transform: rotate(90deg); }
-    .qa-q .txt { flex: 1; min-width: 0; }
+    .qa-q .txt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
     .qa-q .kids {
       flex: none; align-self: center; font: 500 11px/1.6 ui-monospace, monospace; color: var(--muted);
       border: 1px solid var(--rule-strong); border-radius: 3px; padding: 0 0.35rem;
@@ -3254,8 +3254,11 @@ ${DARK_PALETTE}
       var go = el('button', 'quiet', 'Ask');
       go.type = 'button';
       var sending = !!qaView.sending[parent];
+      // One question waits in a box at a time; the next can be typed meanwhile.
+      var waiting = ((d && d.items) || []).some(function here(i) { return i.asking && (i.parent || '') === parent; });
       input.disabled = sending;
-      go.disabled = sending;
+      go.disabled = sending || waiting;
+      if (waiting) go.dataset.tip = 'Once the question asked here is answered';
       input.addEventListener('input', function onEdit() { qaView.drafts[parent] = input.value; });
       input.addEventListener('keydown', function onKey(ev) {
         if (ev.key === 'Enter') { ev.preventDefault(); sendQaQuestion(parent); }
@@ -3292,8 +3295,13 @@ ${DARK_PALETTE}
       if (view !== qaView) return;
       view.sending[parent] = false;
       view.drafts[parent] = '';
+      // A later failure of this question puts it back in the box, even when it
+      // is the same text as one put back before.
+      delete view.refilled[parent];
       if (view.data) {
-        view.data.items = (view.data.items || []).concat([got.item]);
+        // A poll may have brought it in already, maybe answered: kept as it is.
+        var had = (view.data.items || []).some(function same(i) { return i.id === got.item.id; });
+        if (!had) view.data.items = (view.data.items || []).concat([got.item]);
         if (view.data.askErrors) delete view.data.askErrors[parent];
       }
       if (parent) view.open[parent] = true;

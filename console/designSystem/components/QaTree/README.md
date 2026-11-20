@@ -23,7 +23,9 @@ preview shows it in the console's nearest tokens. The pairs: `--ink` is `ink`, `
 - The reader asks their own. An open answer ends, after its follow-ups, with a one-line field ("Ask a follow-up about
   this answer…") and a quiet **Ask** button, never orange since there is one under every open answer, in the review page's ask panel
   row (`.askrow`: the field on `panel` with a `line` border); the tree ends with the same row for a question of their own ("Ask a
-  question of your own about this change…"). Enter asks. Neither is shown while a run is going. The question joins the
+  question of your own about this change…"). Enter asks. While a question asked in a box waits, its **Ask** is
+  disabled and the field still takes the next one. A question's text breaks anywhere it must, so a pasted URL or one
+  long word never pushes the page sideways. Neither is shown while a run is going. The question joins the
   tree at once where it was asked, "being answered", and "you asked" in `meta` beside it, folded like the rest once
   answered. A question that comes back unanswered is put back in its field, with "Not answered: <why>" under it in
   the page's `--del`, as the ask panel says its errors.
