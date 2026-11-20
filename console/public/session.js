@@ -178,16 +178,35 @@
     const left = leftTab();
     if (left && !W.signingOut()) SessionTabs.stashLeaving(window.sessionStorage, pageLogin, id, left);
   });
-  // Back to this page from the browser's back-forward cache runs none of the page's start: the tab put aside as it went
-  // away is taken here instead (the visit was left, not reloaded).
-  window.addEventListener('pageshow', (e) => {
+  // Back to this page from the browser's back-forward cache runs none of the page's start, and the page is as it was
+  // left, drawn for its login: the account may have changed in another browser tab since. It stays hidden until the
+  // console says who is signed in. Someone else (or nobody, or no answer): what was kept goes, nothing is written,
+  // and the page loads again (a lost sign-in is sent to sign in by common.js). The same login: the tab put aside as
+  // the page went away is taken (the visit was left, not reloaded), and the page is shown and refreshed.
+  window.addEventListener('pageshow', async (e) => {
     if (!e.persisted) return;
+    const app = document.getElementById('app');
+    if (app) app.style.visibility = 'hidden';
+    let who = null;
+    try {
+      // /api/my names the login whether or not the console has sign-in (/api/me names none without it).
+      who = (await W.getJson('/api/my'))?.login ?? null;
+    } catch {
+      who = undefined;
+    }
+    if (pageLogin && who !== pageLogin) {
+      W.forgetSignedIn();
+      window.location.reload();
+      return;
+    }
     try {
       const left = SessionTabs.takeLeaving(window.sessionStorage, pageLogin, false);
       if (left) tabMemory.remember(left.id, left.tab);
     } catch {
       // Storage refused: the memory stays as it was.
     }
+    if (app) app.style.visibility = '';
+    refresh();
   });
   // Every link to one of these pages, the rail's, the bar's ‹ and New session's among them. A new tab, a modifier
   // click or a link to anywhere else is the browser's.
