@@ -436,21 +436,46 @@
       const idle = field('idleHours', 'Pause it after waiting for input for (hours)', { min: '0.25', max: '24', step: '0.25', id: 'session-limit-idle' });
       const life = field('lifetimeHours', 'Stop it after it has run for (hours)', { min: '1', max: '24', step: '1', id: 'session-limit-lifetime' });
       const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+      const cancel = h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel');
+      const save = h('button', { type: 'submit', class: 'btn btn-open' }, 'Save');
       const form = h('form', { method: 'dialog' },
         h('p', null, `For this session alone. Empty is what it runs on otherwise: ${fallback.idleHours ? hoursText(fallback.idleHours) : '—'} waiting, ${fallback.lifetimeHours ? hoursText(fallback.lifetimeHours) : '—'} in all. ${s.qa || s.review ? 'A QA or review run is not resumed once it stops.' : 'It tries to push its work first, and Resume picks it up.'}`),
         idle.row, life.row, error,
         h('div', { class: 'dialog-actions' },
-          h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel'),
-          h('button', { type: 'submit', class: 'btn btn-open' }, 'Save')));
+          cancel,
+          save));
       const dialog = h('dialog', { class: 'confirm', 'aria-labelledby': 'limits-title' }, h('h2', { id: 'limits-title' }, 'Pause and stop'), form);
+      // While a save is on its way the dialog stays: closing it then would say nothing was saved, and the console may
+      // still keep the hours.
+      let pending = false;
+      dialog.addEventListener('cancel', (e) => { if (pending) e.preventDefault(); });
+      // A lifetime shorter than the session has run stops it at the console's next check: said once, and a second Save
+      // goes ahead.
+      let warnedFor = null;
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
+        if (pending) return;
         const values = { idleHours: idle.input.value || null, lifetimeHours: life.input.value || null };
+        const ranMs = s.status === 'running' && s.startedAt ? Date.now() - Date.parse(s.startedAt) : 0;
+        if (values.lifetimeHours && Number(values.lifetimeHours) * 3_600_000 <= ranMs && warnedFor !== values.lifetimeHours) {
+          warnedFor = values.lifetimeHours;
+          error.textContent = `It has already run for ${span(ranMs)}, so it would stop within seconds: its work is pushed first. Save again to stop it now.`;
+          error.hidden = false;
+          return;
+        }
+        pending = true;
+        save.disabled = true;
+        cancel.disabled = true;
+        error.hidden = true;
         try {
           await postJson(`/api/sessions/${s.id}/limits`, values);
           saved = true;
+          pending = false;
           dialog.close();
         } catch (err) {
+          pending = false;
+          save.disabled = false;
+          cancel.disabled = false;
           error.textContent = err.message;
           error.hidden = false;
         }
