@@ -524,8 +524,12 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   // Read by the shed's review page, which is framed on this origin: writing it fires a storage event there.
   const REVIEW_EXPAND_KEY = 'shed.review.expand';
   let sessionView = null;
+  let viewLoaded = false;
   const displayStatus = h('p', { class: 'form-note', role: 'status' });
-  const loadSessionView = () => W.getJson('/api/my/session-view').then((answer) => { sessionView = answer; if (me) render(); }, () => {});
+  const loadSessionView = () => W.getJson('/api/my/session-view').then((answer) => { sessionView = answer; }, (err) => {
+    displayStatus.textContent = `Could not load your session views: ${err.message}`;
+    displayStatus.classList.add('is-error');
+  }).finally(() => { viewLoaded = true; if (me) render(); });
 
   function currentTheme() {
     return document.documentElement.dataset.theme || 'system';
@@ -603,7 +607,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   let reviews = null;
   const reviewStatus = h('p', { class: 'form-note', role: 'status' });
   const AGENTS_OF = { none: [], claude: ['claude'], codex: ['codex'], both: ['claude', 'codex'] };
-  const loadReviews = () => W.getJson('/api/my/reviews').then((answer) => { reviews = answer; if (me) render(); }, () => {});
+  let reviewsLoaded = false;
+  const loadReviews = () => W.getJson('/api/my/reviews').then((answer) => { reviews = answer; }, () => {}).finally(() => { reviewsLoaded = true; if (me) render(); });
 
   function saveReviews(choice, done) {
     return act({ card: 'reviews', note: reviewStatus, done, call: async () => { reviews = await W.postJson('/api/my/reviews', { choice }); } });
@@ -735,6 +740,9 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   // ⇧⌘, goes to #my-display, which has no box to focus: the card is scrolled to alone.
   let asked = ({ '#claude': 'claude-token', '#codex': 'codex-auth', '#my-display': 'my-display' })[window.location.hash] ?? null;
   function showAsked() {
+    // The cards above Display (reviews, the default project) come in their own answers: scrolling before they are drawn
+    // leaves Display pushed down the page once they are.
+    if (asked === 'my-display' && !(reviewsLoaded && projectsLoaded && viewLoaded)) return;
     const input = asked && document.getElementById(asked);
     if (!input) return;
     asked = null;
@@ -743,7 +751,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   }
 
   W.getJson('/api/my').then((answer) => { me = answer; }, (err) => { loadError = err.message; }).then(() => (me ? openFile(fileKey ?? fileKeys()[0]) : render()));
-  W.getJson('/api/my/projects').then((answer) => { projects = answer; if (me) render(); }, () => {});
+  let projectsLoaded = false;
+  W.getJson('/api/my/projects').then((answer) => { projects = answer; }, () => {}).finally(() => { projectsLoaded = true; if (me) render(); });
   loadReviews();
   loadSessionView();
   render();

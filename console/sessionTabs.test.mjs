@@ -388,3 +388,13 @@ test('Chat on a session that is not running is not a fallback: it comes back onc
   assert.equal(tabs.shown('chat', { status: 'starting', branch: 'woodshed/x' }, false), 'chat');
   assert.equal(tabs.shown('chat', { status: 'stopped' }, false), 'chat');
 });
+
+test('a session asked for no tab opens on the person\'s default view for the width, Chat unless TUI was picked', () => {
+  assert.equal(tabs.defaultView(null, false), 'chat', 'nothing saved');
+  assert.equal(tabs.defaultView(undefined, true), 'chat');
+  const view = { desktop: 'tui', phone: 'chat' };
+  assert.equal(tabs.defaultView(view, false), 'tui', 'a desktop');
+  assert.equal(tabs.defaultView(view, true), 'chat', 'a phone');
+  assert.equal(tabs.defaultView({ desktop: 'chat', phone: 'tui' }, true), 'tui');
+  assert.equal(tabs.defaultView({ desktop: 'review' }, false), 'chat', 'anything else is Chat');
+});

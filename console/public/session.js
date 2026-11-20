@@ -125,10 +125,7 @@
   // Set on the same arrivals, until a tab is picked: the session shows the person's default view (My settings, Display),
   // Chat or TUI, the phone's under 720px and the desktop's above, and follows the width while nothing was picked.
   let defaulted = false;
-  function defaultView() {
-    const view = data?.viewPrefs?.sessionView?.[narrow.matches ? 'phone' : 'desktop'];
-    return view === 'tui' ? 'tui' : 'chat';
-  }
+  const defaultView = () => SessionTabs.defaultView(data?.viewPrefs?.sessionView, narrow.matches);
   // The tabs that show a page of their own rather than a terminal: no key bar and no message box. Chat has a composer
   // of its own.
   const PAGE_TABS = new Set(['chat', 'review', 'diff', 'applog']);

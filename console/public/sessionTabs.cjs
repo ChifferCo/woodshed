@@ -68,6 +68,16 @@
   }
 
   /**
+   * The tab a session opens on when none was asked for: the person's default view (My settings, Display) for this width,
+   * the phone's under 720px. Chat for anything but TUI, and with no choice saved.
+   * @param {{ desktop?: string, phone?: string }|null|undefined} sessionView  /api/sessions' viewPrefs.sessionView
+   * @param {boolean} narrow
+   */
+  function defaultView(sessionView, narrow) {
+    return sessionView?.[narrow ? 'phone' : 'desktop'] === 'tui' ? 'tui' : 'chat';
+  }
+
+  /**
    * Whether clicking `next` is a choice to keep. A click on the tab showing is one too when that tab stands in for
    * another: one held while the lookup is pending (settle), or a review-only session's Review, which it switches to
    * once it runs (`landOnReview`). Either is then replaced by the click.
@@ -284,6 +294,6 @@
   }
 
 
-  return { KEY, LEAVING_KEY, stashLeaving, takeLeaving, ask, opensAgain, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, entryTab, withEntryTab, addressTab, linkedTab,
+  return { KEY, LEAVING_KEY, stashLeaving, takeLeaving, ask, opensAgain, TABS, LANDS_ON_REVIEW, known, shown, settle, defaultView, picks, leftOn, entryTab, withEntryTab, addressTab, linkedTab,
     leaving, correctsMemory, otherLogin, lookups, memory };
 });
