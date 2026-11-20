@@ -18,7 +18,7 @@
     // Read by the New session form itself (launcher.js), from any of its fields: `where` says so on the sheet.
     { id: 'start', mod: '⌘↵', what: 'Start the session', where: 'New session' },
     // Read by terminal.js (terminalFind.cjs's isFindKey). Off a Mac, `modOther`: Ctrl+F in a terminal is the pane's.
-    { id: 'find', mod: '⌘F', modOther: '⇧⌘F', what: 'Find in the terminal', where: 'Agent and Terminal tabs' },
+    { id: 'find', mod: '⌘F', modOther: '⇧⌘F', what: 'Find in the terminal', where: 'TUI and Terminal tabs' },
     // ⌘? opens it too (match, below), and is left off the list: it is ? with ⌘ held, which says nothing more.
     { id: 'keys', bare: '?', what: 'Keyboard shortcuts' },
     { id: 'mine', bare: 'G M', what: 'Go to My Woodshed', href: '/' },

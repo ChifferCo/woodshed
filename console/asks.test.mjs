@@ -30,7 +30,7 @@ function setup({ replyOk = true, person = async (user) => PEOPLE[user] ?? null }
   };
   const statuses = {};
   async function statusd(session, method, path, opts) {
-    if (path === '/status') return statuses[session.id] ?? { state: 'working' };
+    if (path === '/status') return { safeSend: true, ...(statuses[session.id] ?? { state: 'working' }) };
     if (path === '/send') calls.sent.push({ id: session.id, text: opts.body.text });
     return { committed: false, head: 'abc' };
   }

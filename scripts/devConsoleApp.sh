@@ -26,7 +26,10 @@ start() {
   # In a session, Open app's requests name the session's app host, which only the console in front knows.
   local sessionApp=0
   if [[ -n ${SESSION_ID:-} ]]; then sessionApp=1; fi
-  DEV_CONSOLE_SESSION_APP=$sessionApp setsid node "$REPO/console/bin/devConsole.mjs" "$PORT" >>"$LOG" 2>&1 </dev/null &
+  # Made-up sessions only, never a real agent: this console has no sign-in, and Open app and app shares reach it. A real
+  # claude or codex runs on its owner's credentials, so it is a separate console on another port Open app never
+  # forwards (CLAUDE.md, "Checking a console page change in a browser").
+  DEV_CONSOLE_REAL_CODEX=0 DEV_CONSOLE_REAL_CLAUDE=0 DEV_CONSOLE_SESSION_APP=$sessionApp setsid node "$REPO/console/bin/devConsole.mjs" "$PORT" >>"$LOG" 2>&1 </dev/null &
   local pid=$!
   echo "$pid" >"$PID_FILE"
   for _ in $(seq "$WAIT_STEPS"); do

@@ -1,7 +1,7 @@
 // A made-up session for the dev console whose project declares two apps, served by the real statusd
 // (session/statusd.mjs) over a small checkout made here. Start app's menu, the switch from one app to the other and Open
 // app (`http://<id>.apps.localhost:<port>/`) all work as in a session: each app is a page that names itself, on its own
-// frontend port beside one backend they share. No container, tmux or claude: the Agent and Terminal tabs go nowhere.
+// frontend port beside one backend they share. No container, tmux or claude: the TUI and Terminal tabs go nowhere.
 // The console reads a session's status only while its launcher says the container runs, so `binDir` holds a `docker`
 // that says so for this session's container alone, and hands every other call to the real one, if there is one.
 
@@ -11,6 +11,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { statusdReady } from './devStatusd.mjs';
 
 const STATUSD = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'session', 'statusd.mjs');
 const AUTHOR = ['-c', 'user.email=dev@example.com', '-c', 'user.name=Dev Console', '-c', 'commit.gpgsign=false'];
@@ -64,14 +66,20 @@ export async function startDevAppsSession({ id, token }) {
   git('commit', '-q', '-m', 'two apps');
   const port = await freePort();
   const child = spawn(process.execPath, [STATUSD], {
-    env: { ...process.env, SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), REPO_DIR: repo, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '' },
+    env: { ...process.env, SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   // Its app decisions only: tmux and gh are not here, which it warns of on every status read.
   const relay = (chunk) => { if (/statusd: app/.test(String(chunk))) process.stdout.write(`dev apps session: ${chunk}`); };
   child.stdout.on('data', relay);
   child.stderr.on('data', relay);
-  await new Promise((resolve) => child.stdout.on('data', (chunk) => { if (String(chunk).includes('listening')) resolve(); }));
+  try {
+    await statusdReady(child);
+  } catch (err) {
+    child.kill();
+    fs.rmSync(root, { recursive: true, force: true });
+    throw new Error(`the dev apps session did not start: ${err.message}`);
+  }
   const binDir = path.join(root, 'bin');
   const ref = `woodshed-${id}`;
   fs.mkdirSync(binDir);

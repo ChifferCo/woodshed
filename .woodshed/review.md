@@ -15,3 +15,13 @@ Woodshed is open-source, dependency-free Node ESM with no build step, and this r
 - The pull request title: one line in Conventional Commits form, no trailers. Not the branch's own commits: pull
   requests are squash-merged under their title, so a `WIP:` checkpoint, a merge commit, a body or a trailer on the
   branch never reaches main. Do not block on them, comment on them, or ask for a history rewrite.
+- Judge test coverage by the behavior a test exercises. When asking for a test as a merge condition, name the new
+  behavior that lacks coverage and a wrong result the existing tests would accept. A second test through another
+  layer, another permutation of a covered case, or a regression test for an optional concern is optional. A
+  separate path that implements its own guard and could silently lose data deserves its own check.
+- Before requesting changes, group related findings and state what would resolve each blocker, including any
+  evidence you already know you need. On the next round, check the fix against those stated conditions.
+- On a follow-up, read the author's fix and the tests together. Once they address the reported failure, close that
+  finding. Apply the same likelihood and impact threshold to anything newly discovered in the fix. For example,
+  restoring an older tab preference is a convenience issue. Restoring data belonging to another login is a
+  security issue.

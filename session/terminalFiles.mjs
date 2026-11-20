@@ -20,7 +20,7 @@ const MAX_SCROLL_STEPS = 40;
 // Copy mode moves a line a step. The browser hands it the rest of a pane's history at once when its own scrollback runs
 // out (console/public/terminalScroll.cjs): up to tmux.conf's history-limit.
 const MAX_COPY_LINES = 50_000;
-// The two tmux sessions a page shows: claude's (the Agent tab) and the plain shell (the Terminal tab).
+// The two tmux sessions a page shows: claude's (the TUI tab) and the plain shell (the Terminal tab).
 const PANES = { agent: 'claude', terminal: 'shell' };
 const IMAGE_TYPES = new Map([['png', 'image/png'], ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'], ['gif', 'image/gif'], ['webp', 'image/webp']]);
 

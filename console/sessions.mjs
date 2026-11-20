@@ -447,6 +447,11 @@ export function statusUpdate(session, status, nowIso) {
     appName: appsFrom(status.apps)?.some((a) => a.name === status.appName) ? status.appName : null,
     // The project file turns the editor on and the image has it: Editor ↗ shows, and the console lets it through.
     editor: status.editor === true,
+    // Text waits in the agent's box at its prompt, unsent: Chat says so, and points at the TUI tab.
+    boxText: status.boxText === true,
+    // statusd sends with the guards: between turns, into an empty box, never into a prompt. One from before them types
+    // blind, so the console sends through it only while its agent is plainly idle (fleet.mjs, canType).
+    safeSend: status.safeSend === true,
     // The project uses Redis, so the session started one: Data ▾ offers it. An image from before statusd said so
     // still ran it.
     redis: status.redis !== false,
@@ -470,5 +475,7 @@ export function statusUpdate(session, status, nowIso) {
  */
 export function publicSession({ token, terminalToken, endpoint, pendingMessages, reportedPrUrl, agentOnlySend, ...rest }) {
   // A session whose image predates the Terminal tab has no shell ttyd to open.
-  return { ...rest, pendingMessages: pendingMessages?.length ?? 0, hasShell: Boolean(endpoint?.shellPort) };
+  // The page's ids of the messages held, never their text: a send whose answer it lost can tell it is still held.
+  const heldIds = (pendingMessages ?? []).filter((m) => m && typeof m === 'object' && m.id).map((m) => m.id);
+  return { ...rest, pendingMessages: pendingMessages?.length ?? 0, heldIds, hasShell: Boolean(endpoint?.shellPort) };
 }

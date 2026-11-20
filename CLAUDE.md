@@ -808,6 +808,24 @@ URL on top of each env file's Repo settings values
   speech recognition, and says why in a toast when the site may not use the
   microphone. A terminal that reconnected by itself logs `terminal:
   reconnecting` in the browser's console.
+- **Chat's Send says `Not sent: this session started before Chat could send safely`.** Its statusd predates the
+  guarded send (its `/status` has no `safeSend`), and would type blind, Enter and all, into whatever is on screen: the
+  console logs `console: message from the page refused, the session cannot send safely`. Type in the TUI tab, or start
+  a new session. Messages the console sends itself (Slack follow-ups, review feedback) still go to such a session, one
+  right after each status read that says it is idle.
+- **Chat's Needs you line offers only the TUI tab, for a prompt it should read.** statusd's `GET /prompt` answered 503
+  `pane-unread`: statusd logs `statusd: prompt not read, the pane could not be read` with tmux's error. A send refused as
+  busy (`why: 'typing'`) right after a session's lockdown is the reopen of claude holding the pane until the new claude
+  works (`session/paneLock.mjs`); the console holds the message and sends it then, and statusd logs `the reopened claude
+  was not seen working, the pane let go of anyway` when that took over 30 s.
+- **The Chat tab's Send answers, Approve or Deny says `Not answered: …`.** statusd types an answer only once the agent's
+  pane shows that same prompt (`session/panePrompt.mjs`): the console logs `console: answer typed in from the page`
+  with the picks' numbers or the decision, and statusd `statusd: answer typed` with the arrow keys it took, or `statusd:
+  answer refused` with `why` (`no-picker`: answered or cancelled already; `other-question`: the picker was moved on in
+  the TUI tab; `other-options`, `other-approval`: the screen changed; `not-moved`: the highlight did not follow) and
+  `typed`, how many questions it had answered before it stopped. `TMUX= tmux capture-pane -p -t claude` in the session
+  shows what it read. A Claude Code or codex that draws its picker otherwise reads as `no-picker` for every answer:
+  capture its pane into `shared/__fixtures__/` and fix the reader.
 - **Files attached to New session are missing in the session.** The console
   logs `attachments: staged`, `claimed` and `handed out`; the session's log says
   `Attachments fetched` or `WARNING: attachments not fetched` with the status.
@@ -975,12 +993,26 @@ cards. Pull request chips show without their state or checks, since polling GitH
 pull requests, from a stand-in `gh` that answers that one read (`console/bin/devGh.mjs`). `/s/dddd4444` is running,
 for the pane bar's buttons, but has no container: it cannot show a live terminal, and the app and database links go
 nowhere. `/s/5a5a5a5a` is starting, for the start checklist in the local provider's words, until the start timeout
-fails it. `/s/c0ffee11` is running with a live Agent terminal where ttyd and tmux are on the PATH (as in a Woodshed
+fails it. `/s/c0ffee11` is running with a live TUI where ttyd and tmux are on the PATH (as in a Woodshed
 session): `devTerminalSession.mjs` runs them on `session/tmux.conf` over a made-up conversation, for find, copy, links
 and scrolling back. `/s/beadfeed?tab=review` is running with a Review tab that works: `devReviewSession.mjs` answers it with
 the shed's real review page over a made-up change it commits to a scratch repo, with an analysis already written. Its
 chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and app go nowhere. Add a session to
 `devConsole.mjs` to cover another state.
+`/s/c0de5e55` (codex) and `/s/c1a0de00` (claude) open on a Chat tab that works: the real statusd over a private tmux,
+whose pane runs a stand-in agent (`devChatAgent.mjs`) writing the agents' real record formats. `/s/c1a0dea1` runs the
+real `claude` instead, in a clone of this checkout with no remote and with its TUI tab live, on this machine's Claude
+credential, with `DEV_CONSOLE_REAL_CLAUDE=1`. It spends that credential's usage, and its session can run commands as
+this machine, so it is never behind Start app's console, which Open app and app shares reach with no sign-in:
+`devConsoleApp.sh` starts none, and `DEV_CONSOLE_SESSION_APP=1` refuses one. Run it as a console of its own on a port
+nothing forwards, such as `DEV_CONSOLE_REAL_CLAUDE=1 node console/bin/devConsole.mjs 7700`, from this machine's own
+browser (the Playwright one, in a session). Every made-up session's statusd listens on loopback with a token made for the
+run. With
+`DEV_CONSOLE_REAL_CLAUDE_MODE=default` it runs in default permission mode, as a session New session starts in "default"
+does, and asks before it runs a command or edits a file, for the Chat tab's approvals. `/s/c0dea1ed` is the real
+`codex` the same way, once `codex login` has signed this machine in (`DEV_CONSOLE_REAL_CODEX`); with
+`DEV_CONSOLE_REAL_CODEX_MODE=plan` it runs with plan mode's read-only sandbox and asks before it writes, for the Chat
+tab's approvals.
 `DEV_CONSOLE_HOST_REPOS=1` starts it as an embedding program would, with a made-up `repos` hook
 (`scripts/devHostConsole.mjs`): Console settings' Repos card then lists `acme/api`, `acme/web` and `acme/lib`, asks for no
 name, and refuses any other typed repo with a link to give the App access, as a hosted console does. With
