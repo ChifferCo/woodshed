@@ -64,11 +64,13 @@ test('a tab the page does not know is Chat, the default, and agent is TUI\'s old
   assert.equal(tabs.memory(store, 'octocat').asked('aaaa1111', null, null), 'tui');
 });
 
-test('a remembered tab the session cannot show now falls back to TUI', () => {
+test('a remembered tab the session cannot show now falls back to its pair\'s other view, else TUI', () => {
   const running = { status: 'running', branch: 'woodshed/x' };
   const stopped = { status: 'stopped', branch: 'woodshed/x' };
   assert.equal(tabs.shown('diff', running, true), 'diff');
-  assert.equal(tabs.shown('diff', stopped, true), 'tui', 'a stopped session has no checkout to diff');
+  assert.equal(tabs.shown('diff', stopped, true), 'review', 'a stopped session has no checkout to diff: Review shows what it pushed');
+  assert.equal(tabs.shown('diff', { status: 'stopped' }, true), 'tui', 'nor a branch to review');
+  assert.equal(tabs.shown('diff', { status: 'starting', branch: 'woodshed/x' }, true), 'tui', 'starting: TUI until Diff can show');
   assert.equal(tabs.shown('applog', stopped, true), 'tui');
   assert.equal(tabs.shown('diff', { ...running, kind: 'ask' }, true), 'tui', 'a question has no diff');
   assert.equal(tabs.shown('review', stopped, false), 'review', 'a stopped session with a branch keeps its review');
@@ -94,17 +96,19 @@ test('a tab the kept snapshot cannot show is held until the route\'s lookup answ
   assert.deepEqual(at, { tab: 'diff', held: null, fellBack: false });
 });
 
-test('once the route\'s lookup answers, a tab the session cannot show falls back to TUI for good', () => {
+test('once the route\'s lookup answers, a tab the session cannot show falls back for good', () => {
   const stopped = { status: 'stopped', branch: 'woodshed/x' };
-  let at = tabs.settle({ tab: 'diff', held: null, pending: true, s: stopped, hasShell: false });
-  assert.deepEqual(at, { tab: 'tui', held: 'diff', fellBack: false });
+  let at = tabs.settle({ tab: 'applog', held: null, pending: true, s: stopped, hasShell: false });
+  assert.deepEqual(at, { tab: 'tui', held: 'applog', fellBack: false });
   at = tabs.settle({ tab: at.tab, held: at.held, pending: false, s: stopped, hasShell: false });
   assert.deepEqual(at, { tab: 'tui', held: null, fellBack: true }, 'the page then drops ?tab and remembers TUI');
   // Moving between sessions: the list is the last answer, the lookup pending, and it can show the tab already.
   assert.deepEqual(tabs.settle({ tab: 'review', held: null, pending: true, s: stopped, hasShell: false }),
     { tab: 'review', held: null, fellBack: false });
-  assert.deepEqual(tabs.settle({ tab: 'diff', held: null, pending: false, s: stopped, hasShell: false }),
+  assert.deepEqual(tabs.settle({ tab: 'applog', held: null, pending: false, s: stopped, hasShell: false }),
     { tab: 'tui', held: null, fellBack: true }, 'with the answer in, at once');
+  assert.deepEqual(tabs.settle({ tab: 'diff', held: null, pending: false, s: stopped, hasShell: false }),
+    { tab: 'review', held: null, fellBack: true }, 'Diff of a stopped session falls back to Review, its pair');
 });
 
 test('a failed lookup confirms nothing: the tab stays held until one answers', () => {

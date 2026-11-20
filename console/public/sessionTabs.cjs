@@ -43,7 +43,10 @@
     const live = s.status === 'running' && s.kind !== 'ask';
     if (tab === 'review' && !s.branch) return live ? 'diff' : 'tui';
     if (tab === 'terminal' && !hasShell) return live ? 'applog' : 'tui';
-    if ((tab === 'applog' || tab === 'diff') && !live) return 'tui';
+    // Once it has ended, what it pushed is in Review. One still starting shows TUI meanwhile: Diff comes once it runs.
+    const ended = !['queued', 'starting', 'running'].includes(s.status);
+    if (tab === 'diff' && !live) return ended && s.branch ? 'review' : 'tui';
+    if (tab === 'applog' && !live) return 'tui';
     return tab;
   }
 
