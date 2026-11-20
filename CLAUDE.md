@@ -1038,7 +1038,8 @@ with `admin: false` from the Playwright browser (`page.route`).
 env file values, instructions and Your files, each per repo. The first's file names a Deploy workflow link, which the
 avatar menu shows over the installation's `WOODSHED_ACTIONS_WORKFLOWS` (Run infrastructure).
 `DEV_CONSOLE_WEBHOOKS=1` names a webhook receiver (which never listens, since polling is off), so the Console
-settings page shows its GitHub webhooks switch (Slack's needs a console that answers Slack questions).
+settings page shows its GitHub webhooks switch (Slack's needs a console that answers Slack questions), and the
+Webhook events page lists made-up deliveries: acted on, ignored, skipped and failed.
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
 7690 with `DEV_CONSOLE_SESSION_APP=1` so it also answers under the session's app name, behind **Open app**.
 

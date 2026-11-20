@@ -435,6 +435,23 @@ function devRepoSettings(dir) {
 // GH_TOKEN stands in for `gh auth token`, and polling is off, so nothing here calls GitHub: the open pull requests come
 // from devGh.mjs's gh.
 const webhookPort = process.env.DEV_CONSOLE_WEBHOOKS === '1' ? await freePort() : null;
+// Made-up deliveries for the Webhook events page (console/webhookEvents.mjs), oldest first as the log is written: one
+// of each thing the console does with a message. Nothing sent them.
+if (webhookPort) {
+  const at = (minutesAgo) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
+  const delivery = (n) => `${String(n).repeat(8)}-0000-4000-8000-${String(n).repeat(12)}`;
+  const event = (minutesAgo, n, fields) => ({ receivedAt: at(minutesAgo), handledAt: at(minutesAgo), deliveryId: delivery(n), type: null, number: null, kind: null, login: null, detail: '', sessionId: null, reason: null, ...fields });
+  const made = [
+    event(190, 1, { type: 'label', number: 41, kind: 'issue', login: 'mia-dev', detail: 'woodshed', outcome: 'started', sessionId: 'aaaa1111' }),
+    event(150, 2, { type: 'comment', number: 41, kind: 'issue', login: 'mia-dev', detail: '/woodshed also cover the empty state', outcome: 'sent', sessionId: 'aaaa1111' }),
+    event(95, 3, { type: 'label', number: 41, kind: 'issue', login: 'mia-dev', detail: 'woodshed', outcome: 'duplicate', reason: 'the poll already started this one' }),
+    event(60, 4, { type: 'pr', number: 57, kind: 'pr', login: 'sam-ops', detail: 'review submitted', outcome: 'refreshed', reason: 'the chip and the Slack post' }),
+    event(32, 5, { type: 'comment', number: 63, kind: 'pr', login: 'drive-by', detail: '/woodshed fix the flaky test', outcome: 'ignored', reason: 'drive-by has no write access to the repo' }),
+    event(14, 6, { type: 'mention', login: 'slack:U0MADEUP01', detail: 'how do sessions get their databases?', outcome: 'ignored', reason: 'Slack questions are switched off on Console settings' }),
+    event(3, 7, { type: 'comment', number: 41, kind: 'issue', login: 'mia-dev', detail: '/woodshed pick this up again', outcome: 'failed', reason: 'the session could not be resumed: its Claude home was not saved' }),
+  ];
+  fs.writeFileSync(path.join(stateDir, 'webhookEvents.jsonl'), made.map((e) => `${JSON.stringify(e)}\n`).join(''), { mode: 0o600 });
+}
 let child = null;
 function startConsole() {
   child = spawn(process.execPath, [server], {
