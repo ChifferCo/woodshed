@@ -89,3 +89,23 @@ test('on Windows no token is written to a file, which has no mode to keep others
   assert.throws(() => creds.save(ORIGIN, TOKEN), /cannot keep a token safely on Windows/);
   assert.equal(fs.existsSync(path.join(dir, 'credentials.json')), false);
 });
+
+test('the file is written only in a folder of yours closed to others, never through a link', (t) => {
+  const base = tempDir(t);
+  const open = path.join(base, 'open');
+  fs.mkdirSync(open);
+  fs.chmodSync(open, 0o777);
+  const tightened = createCredentials({ platform: 'linux', run: fakeKeyring({ works: false }).run, dir: open, has: () => false });
+  assert.equal(tightened.save(ORIGIN, TOKEN).kind, 'file');
+  assert.equal(fs.statSync(open).mode & 0o777, 0o700, 'your own folder, open to others, is closed before the token goes in');
+  assert.deepEqual(fs.readdirSync(open), ['credentials.json'], 'and no temporary file is left');
+
+  const real = path.join(base, 'real');
+  fs.mkdirSync(real, { mode: 0o700 });
+  const linked = path.join(base, 'linked');
+  fs.symlinkSync(real, linked);
+  const viaLink = createCredentials({ platform: 'linux', run: fakeKeyring({ works: false }).run, dir: linked, has: () => false });
+  assert.throws(() => viaLink.save(ORIGIN, TOKEN), /is not a folder only you can write to/);
+  // Someone else's folder cannot be made here without root, so that refusal is the same check on `uid`, read above.
+  assert.deepEqual(fs.readdirSync(real), []);
+});

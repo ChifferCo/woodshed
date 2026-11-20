@@ -160,7 +160,7 @@ export async function main(argv, deps = {}) {
   const emit = (object) => stdout.write(`${JSON.stringify(object)}\n`);
   const say = (text) => { if (!json) stdout.write(`${text}\n`); };
 
-  async function call(origin, pathname, { method = 'GET', body, token } = {}) {
+  async function call(origin, pathname, { method = 'GET', body, token, timeoutMs = REQUEST_MS } = {}) {
     let res;
     try {
       res = await fetchFn(`${origin}${pathname}`, {
@@ -174,7 +174,7 @@ export async function main(argv, deps = {}) {
         body: body ? JSON.stringify(body) : undefined,
         redirect: 'manual',
         // The answer too, read below: a console that stalls never holds a login past its code's expiry.
-        signal: AbortSignal.timeout(REQUEST_MS),
+        signal: AbortSignal.timeout(Math.max(1, Math.min(REQUEST_MS, timeoutMs))),
       });
     } catch (err) {
       throw new CliError(`could not reach ${origin}: ${err.cause?.message ?? err.message}`);
@@ -218,7 +218,9 @@ export async function main(argv, deps = {}) {
     const verificationUrlComplete = approvalUrl(origin, userCode);
     if (!verificationUrlComplete) throw consoleNoCli(origin, started.status);
     const verificationUrl = `${origin}/cli`;
-    const expiresAt = now() + expiresIn * 1000;
+    // A console that is not one could send anything: never wait longer than the console's own 10 minutes.
+    const lasts = Number(expiresIn) > 0 ? Math.min(Number(expiresIn), 600) : 600;
+    const expiresAt = now() + lasts * 1000;
     if (json) emit({ event: 'code', console: origin, userCode, verificationUrl, verificationUrlComplete, expiresAt: new Date(expiresAt).toISOString() });
     say(`Your code: ${userCode}`);
     say(browser ? `Opening ${verificationUrlComplete}` : `Open ${verificationUrlComplete}`);
@@ -230,7 +232,7 @@ export async function main(argv, deps = {}) {
       if (now() >= expiresAt) break;
       let polled;
       try {
-        polled = await call(origin, '/api/cli/token', { method: 'POST', body: { deviceCode } });
+        polled = await call(origin, '/api/cli/token', { method: 'POST', body: { deviceCode }, timeoutMs: expiresAt - now() });
       } catch (err) {
         // A network that drops while the person approves (a laptop's Wi-Fi) is asked again until the code expires.
         if (!json) stderr.write(`woodshed: ${err.message}; trying again\n`);

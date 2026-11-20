@@ -6,6 +6,7 @@
 // Each store is keyed by the console's origin (https://console.example), so signing in to a second console keeps the
 // first's token. cli.json (config.mjs) says which store holds each console's, so a read never guesses.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -85,10 +86,27 @@ function file(dir, platform) {
   };
   const write = (data) => {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const temp = `${where}.${process.pid}.tmp`;
-    fs.writeFileSync(temp, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
-    // writeFileSync's mode applies only to a new file, and a umask can narrow it: set it outright before it is in place.
-    fs.chmodSync(temp, 0o600);
+    // A folder another account can write to could hold a file or a link of theirs where the token is about to go.
+    // Ours but open to others (a umask of 002 makes that), it is closed first; anyone else's, or a link, is refused.
+    let folder = fs.lstatSync(dir);
+    const own = typeof process.getuid !== 'function' || folder.uid === process.getuid();
+    if (folder.isDirectory() && own && (folder.mode & 0o077)) {
+      fs.chmodSync(dir, 0o700);
+      folder = fs.lstatSync(dir);
+    }
+    if (!folder.isDirectory() || !own || (folder.mode & 0o022)) {
+      throw new Error(`${dir} is not a folder only you can write to: it must be yours, and not a link; or set XDG_CONFIG_HOME`);
+    }
+    // Made new and owner-only before a byte of the token is in it: `wx` refuses a file or link already there, and the
+    // name cannot be guessed ahead.
+    const temp = `${where}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+    const fd = fs.openSync(temp, 'wx', 0o600);
+    try {
+      fs.fchmodSync(fd, 0o600);
+      fs.writeSync(fd, `${JSON.stringify(data, null, 2)}\n`);
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(temp, where);
   };
   return {
