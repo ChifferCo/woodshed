@@ -266,6 +266,9 @@ test('risk areas are quoted from the review comment of the run that approved', (
   assert.equal(riskAreasFrom({ comments: [RISKY], review, gate: { ...gate, commentAuthor: 'octocat' } }).found, false, 'another author');
   assert.equal(riskAreasFrom({ comments: [RISKY], review, gate: { ...gate, heading: '## Review' } }).found, false, 'the summary is the heading\'s words');
   assert.equal(riskAreasFrom({ comments: [RISKY], review, gate: { ...gate, commentAuthor: null } }).found, false, 'none configured');
+  const codexOnly = { ...RISKY, body: RISKY.body.replace('<summary>Code review</summary>', '<summary>Codex review</summary>') };
+  assert.equal(riskAreasFrom({ comments: [codexOnly], review, gate: { ...gate, runner: 'woodshed' } }).items.length, 2, 'a session\'s review by Codex alone');
+  assert.equal(riskAreasFrom({ comments: [codexOnly], review, gate }).found, false, 'only a session\'s review is Codex\'s');
   assert.equal(after(brief({ comments: [reviewComment('No breaking or hard-to-undo changes.')] }), 'Risks'), '**Risks:** none listed');
   assert.equal(after(brief({ comments: [] }), 'Risks'), '**Risks:** the AI review comment was not found');
 });

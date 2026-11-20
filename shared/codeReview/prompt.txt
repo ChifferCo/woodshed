@@ -129,7 +129,7 @@ careful, and fair.
    Then the rest in a collapsible block:
 
    <details>
-   <summary>Claude review</summary>
+   <summary>{{AGENT}} review</summary>
 
    ### Overview
    What the pull request does and how, in one or two sentences, and your overall impression.
