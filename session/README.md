@@ -92,10 +92,10 @@ change to the stage by the workflow's run, about the time the build takes.
    (`replaced by the session`; files that share a key are one entry, `api/.env, worker/.env from app-env (…)`, with the
    values' sizes once and each path's layers), and a line for repo settings no env file of the checkout has a key for:
    never a value.
-3. Starts its own Redis on 127.0.0.1, with redis-commander for Data ▾, when the
+3. Starts its own Redis on 127.0.0.1, with redis-commander for Open ▾, when the
    project file's `env` or `envFiles` mention `REDIS_URL` (`startRedisIfUsed`), and
    logs `Redis started`; otherwise it logs `Redis not started (the project uses none…)`,
-   and statusd reports `redis: false`, so Data ▾ has no Redis. A shared Redis
+   and statusd reports `redis: false`, so Open ▾ has no Redis. A shared Redis
    would let one session's worker run another session's jobs when the app's queues
    have no key prefix. The image keeps `redis-server` either way.
 4. Starts `claude --permission-mode auto` in tmux, through `session/bin/claude`, inline (never Claude Code's full-screen

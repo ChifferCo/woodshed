@@ -1,4 +1,4 @@
-// The link My Woodshed's "Invite an engineer" copies: it opens the New session form with Work on already set to this
+// The link My Woodshed's Invite copies: it opens the New session form with Work on already set to this
 // session's pull request, or to its pushed branch while it has none. One file for the page (a script that sets
 // `WoodshedInvite`) and the tests (required), as logins.cjs is.
 (function (root, factory) {
@@ -36,10 +36,5 @@
     return `${origin}/?new=1&on=${encodeURIComponent(on)}${project ? `&project=${encodeURIComponent(project)}` : ''}${linkQuery ? `&${linkQuery}` : ''}`;
   }
 
-  /** @returns {string} the button's words for a target */
-  function inviteLabel({ state }) {
-    return state === 'unpushed' ? 'Invite an engineer: push the branch first' : 'Invite an engineer';
-  }
-
-  return { inviteTarget, inviteUrl, inviteLabel };
+  return { inviteTarget, inviteUrl };
 });

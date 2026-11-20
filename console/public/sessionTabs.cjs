@@ -30,17 +30,23 @@
   }
 
   /**
-   * The tab a session can show now: Review needs a branch, Terminal a shell, Diff and App log a running coding session;
-   * one it cannot falls back to TUI. Chat on a session that is not running is not a fallback: the page draws its start
-   * or how it ended there (session.js, viewOf) and Chat comes back once it runs.
+   * The tab a session can show now: Review needs a branch, Terminal a shell, Diff and App log a running coding session.
+   * Terminal and Review each hold two views on the bar (session.js, TAB_GROUPS), and one it cannot show falls back to the
+   * other of its pair first, as a click on the bar's tab does; anything else falls back to TUI. Chat on a session that is
+   * not running is not a fallback: the page draws its start or how it ended there (session.js, viewOf) and Chat comes
+   * back once it runs.
    * @param {string} tab
    * @param {{ branch?: string, status: string, kind?: string }} s
    * @param {boolean} hasShell
    */
   function shown(tab, s, hasShell) {
-    if (tab === 'review' && !s.branch) return 'tui';
-    if (tab === 'terminal' && !hasShell) return 'tui';
-    if ((tab === 'applog' || tab === 'diff') && (s.status !== 'running' || s.kind === 'ask')) return 'tui';
+    const live = s.status === 'running' && s.kind !== 'ask';
+    if (tab === 'review' && !s.branch) return live ? 'diff' : 'tui';
+    if (tab === 'terminal' && !hasShell) return live ? 'applog' : 'tui';
+    // Once it has ended, what it pushed is in Review. One still starting shows TUI meanwhile: Diff comes once it runs.
+    const ended = !['queued', 'starting', 'running'].includes(s.status);
+    if (tab === 'diff' && !live) return ended && s.branch ? 'review' : 'tui';
+    if (tab === 'applog' && !live) return 'tui';
     return tab;
   }
 
@@ -49,7 +55,7 @@
    * has answered (`pending`, which a failed lookup leaves as it was), the session may be a kept snapshot's or the
    * previous page's (starting, where it now runs): a tab it cannot show is held, Agent shows meanwhile, and the held tab
    * is tried again on the first render after an answer. Only then does a fallback stand (`fellBack`): the page then
-   * takes the tab out of the address and remembers Agent.
+   * takes the tab out of the address and remembers the one it fell back to.
    * @param {{ tab: string, held: string|null, pending: boolean, s: object, hasShell: boolean }} at
    * @returns {{ tab: string, held: string|null, fellBack: boolean }}
    */

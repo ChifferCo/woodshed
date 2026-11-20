@@ -156,7 +156,7 @@ sign-in in front, hands both to the console with two settings, each off unless s
   `https://<session>.woodshed.example.com`. A project with several apps (`apps`) has **Start app ▾** list them: one
   runs at a time, and Open app opens whichever runs. The session is told the domain after its id in `SESSION_APP_DOMAIN`
   (`session/README.md`, "Environment"), for an app that checks the name it is reached by.
-- **Edit its code:** **Editor ↗** in the session's pane bar opens VS Code on its checkout in a new tab, on the
+- **Edit its code:** **Editor ↗**, under **Open ▾** in the session's pane bar, opens VS Code on its checkout in a new tab, on the
   session's app name, started the first time someone opens it. The project file's `editor` turns it on and off. See "The editor" in `console/README.md`.
 - **Ask a question:** mention the bot in any Slack channel it is in, e.g.
   `@woodshed how does a task decide to retry?`. A session reads the default branch and answers
@@ -420,7 +420,7 @@ An installation works on one repo, and nothing in this folder names one. To set 
   names the repo's own.
 - **Which services a session needs** follow the project file: its `databases`, and Redis, started only when its
   `env` or `envFiles` mention `REDIS_URL` (`usesVariable` in `shared/project.mjs`; the start logs `Redis started` or
-  `Redis not started`, and Data ▾ offers Redis only then). A shared service is the installation's to run: an env file line needing a variable that is not set
+  `Redis not started`, and Open ▾ offers Redis only then). A shared service is the installation's to run: an env file line needing a variable that is not set
   is named in the start's log (`Env files written`, `unset:`), with a warning.
 - **Exceptions** to the rules in `CLAUDE.md` belong to an installation, in its own `.woodshed/install/README.md`.
 
@@ -579,7 +579,7 @@ is a module there with its entry in `ENGINES`, and its server in each provider (
   libpq's `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` and `PGSSLMODE` (so the image's `psql`, Postgres
   16's, connects with no setup) and `PG_URL`; mongo gives `MONGODB_URI`. Woodshed names no app's variable.
 - **Its viewers** (pgweb at `/pg/<id>/`; mongo-express at `/mongo/<id>/`, and on a private session's restore copy at
-  `/mongo-copy/<id>/`), which Data ▾, statusd and the console's proxy list from the modules.
+  `/mongo-copy/<id>/`), which Open ▾, statusd and the console's proxy list from the modules.
 
 Every owner has the same user name and password on each engine (`woodshed_<login>`, `woodshed__<session id>`), and
 one record and one db-admin run cover them all (`console/databases.mjs`). The templates are built together, since one

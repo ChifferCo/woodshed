@@ -565,7 +565,7 @@ startRedis() {
   redis-server --daemonize yes --save '' --appendonly no --bind 127.0.0.1 >/dev/null
 }
 
-# Only a project whose env mentions REDIS_URL (usesVariable) is given a Redis; statusd decides Data ▾'s Redis the same
+# Only a project whose env mentions REDIS_URL (usesVariable) is given a Redis; statusd decides Open ▾'s Redis the same
 # way. `viewer` also starts its redis-commander.
 startRedisIfUsed() {
   if ! usesVariable REDIS_URL; then
@@ -583,7 +583,7 @@ startRedisViewer() {
     --url-prefix "/redis/$SESSION_ID" --nosave >/tmp/redis-commander.log 2>&1 &
 }
 
-# Data ▾'s viewers: each engine's (pgweb, mongo-express) on the databases the console made for the session (its own,
+# Open ▾'s viewers: each engine's (pgweb, mongo-express) on the databases the console made for the session (its own,
 # or its owner's), as their own user, so they reach nothing else. Loopback only: statusd forwards to them after
 # checking the session token. Logs in /tmp/<viewer>.log.
 startDbViewers() {

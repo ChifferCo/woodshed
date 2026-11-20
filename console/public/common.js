@@ -1016,7 +1016,10 @@
     const tip = `The session's container: ${cpu} CPU (100% is one of its ${cores} cores busy), ${mem}${u.memoryLimitBytes ? ` of ${fmtBytes(u.memoryLimitBytes)}` : ''} memory, page cache left out.`;
     // What is over the line comes first.
     const parts = memLevel && !cpuLevel ? [mem, cpu] : [cpu, mem];
-    return { text: `${level ? '⚠ ' : ''}${parts.join(' · ')}`, level, tip };
+    const text = `${level ? '⚠ ' : ''}${parts.join(' · ')}`;
+    // The pane bar's meter says the CPU alone while all is well, and the whole line once something runs high.
+    const short = level ? text : u.cpuPercent !== null ? `CPU ${cpu}` : `Mem ${mem}`;
+    return { text, short, level, tip };
   }
 
   // The badge opens the machine's dialog. The page draws the badge again on each refresh, which refreshes an open dialog.
@@ -1146,21 +1149,7 @@
     return at.toLocaleString(undefined, today ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' });
   }
 
-  // The pane bar's button face: a short bar and the share used for each window, or when it comes back once one is out.
-  function planUsageFace(u) {
-    const out = u.windows.find((w) => w.level === 'out');
-    const level = out ? 'out' : u.windows.some((w) => w.level === 'hot' || w.level === 'warn') ? 'warn' : '';
-    const parts = out
-      ? [`✗ out${out.resetsAt ? ` until ${resetText(out.resetsAt)}` : ''}`]
-      : u.windows.filter((w) => w.usedPercent !== null).map((w) => h('span', { class: `plan-w${w.level ? ' is-warn' : ''}` },
-        h('span', { class: 'plan-mini', 'aria-hidden': 'true' }, h('i', { style: `width:${w.usedPercent}%` })), `${w.short} ${Math.round(w.usedPercent)}%`));
-    return {
-      level,
-      nodes: [h('span', { class: 'plan-lbl' }, 'Plan'), ...(parts.length ? parts : ['—']), u.stale && u.asOf && h('span', { class: 'plan-age' }, ago(u.asOf))],
-    };
-  }
-
-  // What the plan chip opens: each window with when it resets, how old the reading is, and that it is shared.
+  // What the pane bar's meter opens: each window with when it resets, how old the reading is, and that it is shared.
   function planUsageDetails(u) {
     const meter = (w) => h('div', { class: `plan-meter${w.level ? ` is-${w.level === 'out' ? 'hot' : w.level}` : ''}` },
       h('div', { class: 'plan-row' }, h('span', null, w.label), h('b', null, w.usedPercent === null ? '—' : `${Math.round(w.usedPercent)}%`)),
@@ -1766,6 +1755,6 @@
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
+    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
 })();

@@ -853,14 +853,14 @@ URL on top of each env file's Repo settings values
   it is back to every minute. If that keeps happening, the App is not
   subscribed to **Pull request review** and **Workflow run**: the webhook card
   on the Secrets & webhooks tab lists what is missing.
-- **The CPU and memory badge is missing.** statusd reads the container's cgroup
+- **The CPU and memory are missing from the pane bar's meter.** statusd reads the container's cgroup
   (`session/usage.mjs`); a session from an image before it reports no `usage`.
-  CPU shows `—` until two status reads 2 s apart.
-- **A private session's Plan chip is missing or old.** It shows once Claude has answered: in the session's
+  CPU shows `—` until two status reads 2 s apart. On a narrow bar the meter shows only while something runs high.
+- **A private session's Plan reading is missing or old.** It shows, in the pane bar's meter, once Claude has answered: in the session's
   Terminal, `cat ~/.claude/woodshed-usage/claude.json` is what the status line saved. No file means Claude Code sent no
   `rate_limits` (a session not on a Pro, Max or Ultra plan, or none answered yet), or the status line is not
-  `session/statusline.sh`. statusd logs `statusd: plan usage not read` with the error once per reason. The chip shows
-  the newest reading of all your private sessions, its age past 30 minutes, and none from an image before
+  `session/statusline.sh`. statusd logs `statusd: plan usage not read` with the error once per reason. The meter shows
+  the newest reading of all your private sessions, its age past 30 minutes in its tooltip, and none from an image before
   `session/planUsage.mjs`.
 - **The Review tab is blank, or says `no review for this session`.** The tab frames
   the shed's page (`/review?session=claude-<id>`, README.md, "Review"). Its calls
@@ -902,7 +902,7 @@ URL on top of each env file's Repo settings values
   has no `shellPort` for it), or the session is not running. Inside a session,
   `/tmp/ttyd-shell.log` is its log. A connection that hangs means the sessions'
   security group lacks the `shell` rule for 7684 (an apply is due).
-- **Data ▾ has no Redis, or Redis answers `not found` or `the Redis viewer is not running`.**
+- **Open ▾ has no Redis, or Redis answers `not found` or `the Redis viewer is not running`.**
   No Redis means the project file's env never mentions `REDIS_URL`, so the session started none: its log says
   `Redis not started`, and statusd reports `redis: false`. `not found` means the session started from an image without
   redis-commander; `the Redis viewer is not running` that it died: `/tmp/redis-commander.log` in the session's terminal.

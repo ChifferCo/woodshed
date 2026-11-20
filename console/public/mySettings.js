@@ -295,7 +295,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     return [
       several ? `A ${named} database, each called ` : `A ${named} database called `, h('code', null, db.name),
       `, copied from the same template as every shared session's. ${several ? 'Their' : 'Its'} user reaches nothing else, and only your private sessions are given it. `,
-      `Open ${several ? `them with the ${named} buttons` : `it with the ${named} button`} in Data ▾ on any of your running private sessions.`,
+      `Open ${several ? `them with the ${named} buttons` : `it with the ${named} button`} in Open ▾ on any of your running private sessions.`,
     ];
   }
 
