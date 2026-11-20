@@ -816,14 +816,19 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     input?.focus({ preventScroll: true });
   }
   // The search, on this page already: its section is opened before it is outlined (settingsSearch.js).
-  // A link to a row followed while the page is shown does the same: the browser scrolls to it.
+  // A link to a row followed while the page is shown does the same.
   function openNamed(id) {
     if (!id || open.has(id)) return;
     open.add(id);
     render();
   }
   life.on(window, 'woodshed:settings-reveal', (e) => openNamed(e.detail?.id));
-  life.on(window, 'hashchange', () => openNamed(window.location.hash.slice(1)));
+  // The browser scrolled to it before the draw that opened it, which can leave it off the window: it is brought back.
+  life.on(window, 'hashchange', () => {
+    const id = window.location.hash.slice(1);
+    openNamed(id);
+    document.getElementById(id)?.scrollIntoView({ block: 'start' });
+  });
 
   W.getJson('/api/my').then((answer) => { me = answer; }, (err) => { loadError = err.message; }).then(() => (me ? openFile(fileKey ?? fileKeys()[0]) : render()));
   let projectsLoaded = false;
