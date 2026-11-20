@@ -84,7 +84,8 @@ async function call(api, { method, path, body, login }) {
  * default project `defaultProject`. `opened` is the repo whose row is open from the start (null for none, as the page
  * loads), and `part` the part of each open repo to show once it is read.
  */
-async function loadCard({ search = '', before = null, defaultProject = 'app', admin = false, files = FILES, opened = 'app', part = 'env' } = {}) {
+async function loadCard({ search = '', before = null, defaultProject = 'app', admin = false, files = FILES, opened = 'app', part = 'env', failOnce = null } = {}) {
+  let toFail = failOnce;
   const store = { state: { sessions: [] }, save() {} };
   const secrets = memorySecrets();
   const config = { projects: PROJECTS, repo: 'acme/app' };
@@ -100,6 +101,11 @@ async function loadCard({ search = '', before = null, defaultProject = 'app', ad
   const calls = [];
   const consoleCall = (method, path, body) => {
     calls.push({ method, path, ...(body !== undefined && { body: JSON.parse(JSON.stringify(body)) }) });
+    // `failOnce`: the console not answering that path the first time it is asked.
+    if (toFail === path) {
+      toFail = null;
+      return Promise.reject(new Error('the console did not answer'));
+    }
     return call(api, { method, path, body, login: 'sam-ops' });
   };
   const app = element('div');
@@ -134,7 +140,7 @@ async function loadCard({ search = '', before = null, defaultProject = 'app', ad
   let card = null;
   const draw = () => { if (card) app.replaceChildren(...card.rows()); };
   const row = ({ id, title, value, pill, onOpen }, ...body) => h('section', { id, class: 'row' },
-    h('button', { type: 'button', 'aria-expanded': String(open.has(id)), onclick: () => { if (open.has(id)) open.delete(id); else { open.add(id); onOpen?.(); } draw(); } }, title),
+    h('button', { type: 'button', 'aria-expanded': String(open.has(id)), onclick: () => { if (open.has(id)) open.delete(id); else { onOpen?.(); open.add(id); } draw(); } }, title),
     h('span', { class: 'row-value' }, value), h('span', { class: 'row-pill' }, pill), open.has(id) ? body : null);
   card = window.WoodshedMyRepoSettings.create({ render: draw, row, isOpen: (id) => open.has(id), setOpen: (id) => open.add(id) });
   draw();
@@ -379,4 +385,19 @@ test('saved files are read when the repo\'s files are shown, and a refused path 
   await settle();
   assert.equal(calls.length, before, 'an empty file is not sent');
   assert.match(textOf(app), /Write the file's text first/);
+});
+
+test('a repo whose read failed says so, and is read again when its row is opened again', async () => {
+  const { app, calls } = await loadCard({ opened: null, part: null, failOnce: '/api/my/repos/app' });
+  button(app, 'acme/app').listeners.click();
+  await settle();
+  assert.match(textOf(rowOf(app, 'app')), /Could not load this repo's settings: the console did not answer/);
+  button(app, 'acme/app').listeners.click();
+  await settle();
+  assert.equal(calls.filter((c) => c.path === '/api/my/repos/app').length, 1, 'closing it asks nothing');
+  button(app, 'acme/app').listeners.click();
+  await settle();
+  assert.equal(calls.filter((c) => c.path === '/api/my/repos/app').length, 2);
+  assert.doesNotMatch(textOf(rowOf(app, 'app')), /Could not load/);
+  assert.match(textOf(rowOf(app, 'app')), /Instructions/);
 });

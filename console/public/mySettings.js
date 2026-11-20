@@ -64,9 +64,11 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     if (!parts.length && !opens) return h('section', { class: 'set-fold is-plain', id }, h('div', { class: 'set-fold-head' }, text, pill));
     const isOpen = open.has(id);
     return h('section', { class: `set-fold${isOpen ? ' is-open' : ''}${danger ? ' is-danger' : ''}`, id },
+      // Its id is what gives the button its focus back after the redraw that opens or closes it (render).
       h('h3', { class: 'set-fold-h' }, h('button', {
-        type: 'button', class: 'set-fold-head', 'aria-expanded': String(isOpen), 'aria-controls': `${id}-body`,
-        onclick: () => { toggle(id); if (open.has(id)) onOpen?.(); },
+        type: 'button', class: 'set-fold-head', id: `${id}-head`, 'aria-expanded': String(isOpen), 'aria-controls': `${id}-body`,
+        // Told before the draw that opens it, so what it sets (a repo to read again) is drawn.
+        onclick: () => { if (!open.has(id)) onOpen?.(); toggle(id); },
       }, text, pill, h('span', { class: 'set-fold-chev', 'aria-hidden': 'true' }, '▸'))),
       isOpen && h('div', { class: 'set-fold-body', id: `${id}-body` }, parts));
   }
@@ -77,13 +79,13 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   }
 
   /** A group of rows under its label. Rows that are not drawn (null) are left out, and a group with none is too. */
-  function group({ id, label, note, danger = false }, ...rows) {
+  function group({ id, label, note }, ...rows) {
     const drawn = rows.flat(Infinity).filter(Boolean);
     if (!drawn.length) return null;
     return h('div', { class: 'set-group', id },
       label && h('h2', { class: 'set-group-label' }, label),
       note && h('div', { class: 'set-group-note' }, note),
-      h('div', { class: `set-rows-box${danger ? ' is-danger' : ''}` }, drawn));
+      h('div', { class: 'set-rows-box' }, drawn));
   }
 
   // Commands a person needs again after the first time stay under a fold (designSystem/README.md, "Commands to copy").
@@ -428,7 +430,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       failed: 'The last try failed: open this for why',
     }[db.status];
     // A copy or a restore under way keeps its row open: its progress is what the person came for.
-    if (db.status === 'working' || db.status === 'failed' || restore.busy()) open.add('my-databases');
+    if (db.status === 'working' || restore.busy()) open.add('my-databases');
     return row({ id: 'my-databases', title: 'Your databases', pill, value },
       h('p', { class: 'sub' }, ...databasesLine(db)),
       db.status === 'none' && !me.claudeToken.set && h('p', { class: 'sub' }, 'They are made when you save your Claude token.'),
@@ -788,8 +790,10 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
         note: 'Your own values for each repo\'s env files, your own instructions and your own files, for your private sessions on that repo. Shared sessions never get them. Only repos you can write to are listed.',
       }, repoSettings.rows(), filesCard()),
       displayCard(),
-      group({ id: 'set-remove', danger: true }, removeCard())));
-    if (focused?.id && focused !== document.activeElement && focused.isConnected) focused.focus({ preventScroll: true });
+      group({ id: 'set-remove' }, removeCard())));
+    // A box is the same node after the draw; a row's head is a new one, found by its id.
+    const again = focused?.id ? (focused.isConnected ? focused : document.getElementById(focused.id)) : null;
+    if (again && again !== document.activeElement) again.focus({ preventScroll: true });
     watchDatabases();
     showAsked();
     repoSettings.afterRender();

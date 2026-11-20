@@ -481,7 +481,8 @@
           id: rowId(r.project), title: r.repo, opens: true,
           pill: h('span', { class: keeps ? 'pill is-ok' : 'pill' }, keeps ? 'Yours' : 'None of yours'),
           value: keeps ? `${keeps[0].toUpperCase()}${keeps.slice(1)}` : 'Env values, instructions and files of your own, for your private sessions on it',
-          onOpen: () => setQuery({ repo: r.project, file: null }),
+          // Opening it again after a read that failed reads it again.
+          onOpen: () => { viewErrors.delete(r.project); setQuery({ repo: r.project, file: null }); },
         }, openNow && repoBody(r.project));
       });
       for (const k of editors.keys()) updateCounts(k);
