@@ -27,7 +27,8 @@ preview shows it in the console's nearest tokens. The pairs: `--ink` is `ink`, `
   disabled and the field still takes the next one. A question's text breaks anywhere it must, so a pasted URL or one
   long word never pushes the page sideways. Neither is shown while a run is going. The question joins the
   tree at once where it was asked, "being answered", and "you asked" in `meta` beside it, folded like the rest once
-  answered. A question that comes back unanswered is put back in its field, with "Not answered: <why>" under it in
-  the page's `--del`, as the ask panel says its errors.
+  answered. A question that comes back unanswered is put back in its field when the field is empty (a draft typed
+  since stays, and is not replaced), with "Not answered: <why>" under it either way, in the page's `--del`, as the ask
+  panel says its errors.
 - Opening or closing a question keeps the keyboard focus on it, and a refresh while a run goes keeps it there too.
   A field being typed in keeps the focus, its caret and what was typed through every refresh.

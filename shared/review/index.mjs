@@ -2195,8 +2195,14 @@ function handleQaAsk(payload, res, ctx, session) {
   const { json, log, reqId } = ctx;
   const review = readSessionReview(session);
   if (!review) return json(res, 404, { ok: false, error: 'no review for this session' });
-  const forDiff = typeof payload?.forDiff === 'string' ? payload.forDiff : null;
-  if (forDiff !== null && forDiff !== (review.createdAt ?? '')) {
+  // Required, unlike a Q&A start's: a question is about the tree on the asker's
+  // screen, and without it one asked before a re-review would land in the new one.
+  if (typeof payload?.forDiff !== 'string') {
+    log('review.qa_ask_refused', { reqId, session, why: 'no forDiff' });
+    return json(res, 400, { ok: false, error: 'the request does not say which diff the question is about' });
+  }
+  const forDiff = payload.forDiff;
+  if (forDiff !== (review.createdAt ?? '')) {
     log('review.qa_ask_refused', { reqId, session, why: 'other diff' });
     return json(res, 409, {
       ok: false, code: 'other-diff',

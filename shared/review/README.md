@@ -418,7 +418,7 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
   and opens only what is clicked. It describes a diff, so `removeArtifact` drops it with the artifact (a re-review or
   Discard), and a run the shed restarted under reads back as `interrupted`.
 
-  The reader asks too. `POST /reviews/<session>/qa/ask` (`{ parent, question, forDiff }`) takes a follow-up under any
+  The reader asks too. `POST /reviews/<session>/qa/ask` (`{ parent, question, forDiff }`, `forDiff` required) takes a follow-up under any
   answered item, or with `parent` null a question of their own at the top, down to `MAX_ASK_DEPTH` levels. The same
   answerer answers it alone, on a fresh copy of the diff's tree, with the questions and answers above it in its prompt;
   there is no newcomer round after it. It runs as a `qa-ask` job, in the explain's slot rather than the Q&A's, since

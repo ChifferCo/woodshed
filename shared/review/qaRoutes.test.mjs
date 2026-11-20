@@ -846,6 +846,8 @@ test('a reader\'s question is refused when it cannot be answered where it was as
   assert.equal((await ask({ question: 'x'.repeat(1001) })).status, 400);
   assert.equal((await ask({ parent: 'q9', question: 'Why?' })).body.error, 'the answer it follows up on is no longer there');
   assert.equal((await ask({ question: 'Why?', forDiff: '2026-01-01T00:00:00.000Z' })).body.code, 'other-diff');
+  const unnamed = await callWith('POST', `/reviews/${session}/qa/ask`, { question: 'Why?' });
+  assert.deepEqual([unnamed.status, unnamed.body.error], [400, 'the request does not say which diff the question is about']);
   assert.equal(readQa(session).items.length, 4, 'nothing was added');
 });
 

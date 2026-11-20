@@ -2939,7 +2939,7 @@ ${DARK_PALETTE}
     // A reader asks their own questions too: a follow-up under any answer, or a
     // question of theirs under the tree. The answerer answers it as it answered
     // the newcomer's; it is written to the tree at once, waiting, and answered there.
-    var qaView = { session: null, data: null, loading: false, error: null, started: false, timer: null, open: {}, drafts: {}, sending: {}, refilled: {} };
+    var qaView = { session: null, data: null, loading: false, error: null, started: false, timer: null, open: {}, drafts: {}, sending: {}, refilled: {}, reads: 0, readsDone: 0, posted: {} };
 
     function qaTabCount() {
       if (qaView.session !== state.session || !qaView.data) return null;
@@ -2959,7 +2959,7 @@ ${DARK_PALETTE}
     }
 
     function freshQaView(started) {
-      return { session: state.session, data: null, loading: false, error: null, started: started, timer: null, open: {}, drafts: {}, sending: {}, refilled: {} };
+      return { session: state.session, data: null, loading: false, error: null, started: started, timer: null, open: {}, drafts: {}, sending: {}, refilled: {}, reads: 0, readsDone: 0, posted: {} };
     }
 
     // Each load answers into the view it started with. Discard, Re-review and
@@ -2971,12 +2971,15 @@ ${DARK_PALETTE}
       var view = qaView;
       if (view.loading) return;
       view.loading = true;
+      var readNo = ++view.reads;
       var before = view.data ? view.data.status : null;
       try {
         var got = await api('GET', '/reviews/' + state.session + '/qa');
         if (view !== qaView) return;
         var had = !!view.data;
         view.data = got.qa || null;
+        view.readsDone = Math.max(view.readsDone, readNo);
+        keepPostedAsks(view, readNo);
         // A Q&A made for another diff than the one this page shows: the review
         // was taken again in another tab, and its answers are about code this
         // page is not showing. Not drawn, and not asked again from here either,
@@ -3255,7 +3258,7 @@ ${DARK_PALETTE}
       go.type = 'button';
       var sending = !!qaView.sending[parent];
       // One question waits in a box at a time; the next can be typed meanwhile.
-      var waiting = ((d && d.items) || []).some(function here(i) { return i.asking && (i.parent || '') === parent; });
+      var waiting = qaBoxWaiting(d, parent);
       input.disabled = sending;
       go.disabled = sending || waiting;
       if (waiting) go.dataset.tip = 'Once the question asked here is answered';
@@ -3272,10 +3275,32 @@ ${DARK_PALETTE}
       return row;
     }
 
+    // A read that started before an ask was accepted can come back after it,
+    // with the tree as it was: without this it would take the new question off
+    // the page, and with no question waiting, stop the polling for its answer.
+    // Each accepted ask is held until a read that started after it comes back,
+    // which tells what became of it.
+    function keepPostedAsks(view, readNo) {
+      for (var id in view.posted) {
+        var held = view.posted[id];
+        if (readNo > held.after) { delete view.posted[id]; continue; }
+        if (!view.data) continue;
+        var items = view.data.items || [];
+        if (!items.some(function same(i) { return i.id === id; })) view.data.items = items.concat([held.item]);
+        if (view.data.askErrors) delete view.data.askErrors[held.item.parent || ''];
+      }
+    }
+
+    function qaBoxWaiting(d, parent) {
+      return ((d && d.items) || []).some(function here(i) { return i.asking && (i.parent || '') === parent; });
+    }
+
     async function sendQaQuestion(parent) {
       var view = qaView;
       var question = (view.drafts[parent] || '').trim();
-      if (!question || view.sending[parent]) return;
+      // Enter as well as Ask: neither sends while this box's question waits.
+      if (!question || view.sending[parent] || qaBoxWaiting(view.data, parent)) return;
+      var sentAfter = view.reads;
       view.sending[parent] = true;
       view.askError = null;
       render();
@@ -3298,11 +3323,13 @@ ${DARK_PALETTE}
       // A later failure of this question puts it back in the box, even when it
       // is the same text as one put back before.
       delete view.refilled[parent];
-      if (view.data) {
-        // A poll may have brought it in already, maybe answered: kept as it is.
+      // A read that started after the ask was sent has come back already: what
+      // it found (answered, or failed already) is newer than this reply.
+      if (view.data && view.readsDone <= sentAfter) {
         var had = (view.data.items || []).some(function same(i) { return i.id === got.item.id; });
         if (!had) view.data.items = (view.data.items || []).concat([got.item]);
         if (view.data.askErrors) delete view.data.askErrors[parent];
+        view.posted[got.item.id] = { item: got.item, after: view.reads };
       }
       if (parent) view.open[parent] = true;
       render();
