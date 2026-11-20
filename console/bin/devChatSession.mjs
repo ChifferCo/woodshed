@@ -179,6 +179,7 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   if (restoredHome && agent === 'claude' && !real) restoreEarlierHome(recordDir, restoredFile);
   // A tmux server of its own (TMUX_TMPDIR), so it never meets the session's own claude.
   const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: root, HOME: home, WOODSHED_CLAUDE_STATE_FILE: stateFile, WOODSHED_HOME_RESTORED_FILE: restoredFile,
+    ...(restoredHome && { DEV_CHAT_AGENT_FRESH: '1' }),
     ...(realCodex && { CODEX_HOME: codexHome }) };
   let paneCommand = `${process.execPath} ${AGENT} ${agent} ${recordDir} ${repo}`;
   if (realCodex) {

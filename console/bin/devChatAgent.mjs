@@ -99,41 +99,46 @@ function ran(tool, input, failed = false) {
   }
 }
 
-// ---- A conversation that happened before the page opened.
-if (format === 'codex') write({ timestamp: now(), type: 'session_meta', payload: { id, cwd: repo } });
-said('user', 'Why do webhook deliveries fail after a deploy?');
-ran('Read', 'console/webhookDispatch.mjs');
-ran('Bash', 'rg -n "retry" console/webhookDispatch.mjs');
-ran('Bash', 'node --test console/webhookDispatch.test.mjs', true);
-ran('Bash', 'node --test console/webhookDispatch.test.mjs');
-said('assistant', [
-  '## What happens',
-  '',
-  'A deploy stops the console for **a few seconds**, and the first retry lands while it is away:',
-  '',
-  '1. The delivery fails with `ECONNREFUSED`.',
-  '2. The retry waits 2 s, then 4 s, then 8 s.',
-  '3. It gives up after the fifth try.',
-  '',
-  '| Try | Wait | Console up? |',
-  '| --- | ---: | --- |',
-  '| 1 | 2 s | no |',
-  '| 2 | 4 s | no |',
-  '| 3 | 8 s | yes |',
-  '',
-  'The backoff is in `console/webhookDispatch.mjs`:',
-  '',
-  '```js',
-  'const BACKOFF_MS = [2_000, 4_000, 8_000];',
-  'await sleep(BACKOFF_MS[attempt] ?? BACKOFF_MS.at(-1));',
-  '```',
-  '',
-  'See https://docs.github.com/en/webhooks for how GitHub retries on its side.',
-].join('\n'));
-said('user', 'Make it back off for longer');
-ran('Edit', edit('[2_000, 4_000, 8_000]', '[5_000, 15_000, 45_000]'));
-ran('Bash', 'node --test console/webhookDispatch.test.mjs');
-said('assistant', 'Changed the backoff to 5 s, 15 s and 45 s (`console/webhookDispatch.mjs:42`). The tests pass.');
+// ---- A conversation that happened before the page opened, but for a session just started (DEV_CHAT_AGENT_FRESH=1),
+// whose agent writes nothing until it is sent a message.
+const fresh = process.env.DEV_CHAT_AGENT_FRESH === '1';
+if (format === 'codex' && !fresh) write({ timestamp: now(), type: 'session_meta', payload: { id, cwd: repo } });
+if (!fresh) pastConversation();
+function pastConversation() {
+  said('user', 'Why do webhook deliveries fail after a deploy?');
+  ran('Read', 'console/webhookDispatch.mjs');
+  ran('Bash', 'rg -n "retry" console/webhookDispatch.mjs');
+  ran('Bash', 'node --test console/webhookDispatch.test.mjs', true);
+  ran('Bash', 'node --test console/webhookDispatch.test.mjs');
+  said('assistant', [
+    '## What happens',
+    '',
+    'A deploy stops the console for **a few seconds**, and the first retry lands while it is away:',
+    '',
+    '1. The delivery fails with `ECONNREFUSED`.',
+    '2. The retry waits 2 s, then 4 s, then 8 s.',
+    '3. It gives up after the fifth try.',
+    '',
+    '| Try | Wait | Console up? |',
+    '| --- | ---: | --- |',
+    '| 1 | 2 s | no |',
+    '| 2 | 4 s | no |',
+    '| 3 | 8 s | yes |',
+    '',
+    'The backoff is in `console/webhookDispatch.mjs`:',
+    '',
+    '```js',
+    'const BACKOFF_MS = [2_000, 4_000, 8_000];',
+    'await sleep(BACKOFF_MS[attempt] ?? BACKOFF_MS.at(-1));',
+    '```',
+    '',
+    'See https://docs.github.com/en/webhooks for how GitHub retries on its side.',
+  ].join('\n'));
+  said('user', 'Make it back off for longer');
+  ran('Edit', edit('[2_000, 4_000, 8_000]', '[5_000, 15_000, 45_000]'));
+  ran('Bash', 'node --test console/webhookDispatch.test.mjs');
+  said('assistant', 'Changed the backoff to 5 s, 15 s and 45 s (`console/webhookDispatch.mjs:42`). The tests pass.');
+}
 
 // ---- The pane.
 const out = (s) => process.stdout.write(s);
