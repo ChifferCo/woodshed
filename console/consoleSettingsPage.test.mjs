@@ -435,7 +435,7 @@ test('where the embedding program names each repo, there is no name field, and i
   await tick();
   assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings/projects/remove', body: { name: 'api' } }]);
   assert.equal(byId(app, 'repo-api'), undefined, 'its row is gone');
-  assert.match(textOf(byId(app, 'repo-add')), /acme\/api removed: new sessions can no longer start on it\..*Add it again to undo\./, 'said on Add a repo, which undoes it');
+  assert.match(textOf(byId(app, 'repos-add')), /acme\/api removed: new sessions can no longer start on it\..*Add it again to undo\./, 'said on Add a repo, which undoes it');
 });
 
 test('with no App to ask, or GitHub not answering, Add a repo takes owner/name typed in', async () => {
@@ -628,24 +628,24 @@ test('MCP servers: a row per server, whose form is its own; Kind is two cards, P
   assert.deepEqual(walk(card).filter((e) => e.className === 'set-fold-head').map((e) => e.attrs.id), ['mcp-server-shop-head', 'mcp-add-head'], 'Add a server is the last row');
   assert.match(textOf(headOf(app, 'mcp-server-shop')), /^shopshop\.example\.com · My Woodshed sessions of everyone · repos: acme\/api, acme\/gone · X-Api-Key header · by @mia-devOrdinary/, 'closed, the row says all of it');
   assert.equal(buttonIn(card, 'Edit'), undefined, 'opening the row is its Edit');
-  assert.equal(byId(app, 'mcp-server-shop-header'), undefined);
+  assert.equal(byId(app, 'mcp-server-shop__header'), undefined);
   headOf(app, 'mcp-server-shop').listeners.click();
-  assert.equal(byId(app, 'mcp-server-shop-header').attrs.value, 'X-Api-Key', 'a header shows in Title-Case');
-  assert.equal(byId(app, 'mcp-server-shop-name').attrs.disabled, '', 'a saved server keeps its name');
+  assert.equal(byId(app, 'mcp-server-shop__header').attrs.value, 'X-Api-Key', 'a header shows in Title-Case');
+  assert.equal(byId(app, 'mcp-server-shop__name').attrs.disabled, '', 'a saved server keeps its name');
   assert.deepEqual(walk(byId(app, 'mcp-server-shop')).filter((e) => e.tag === 'button' && e.className !== 'set-fold-head').map((e) => textOf(e)), ['Save', 'Test', 'Remove']);
   headOf(app, 'mcp-add').listeners.click();
   assert.equal(byId(app, 'mcp-kind-ordinary').attrs.checked, '');
   assert.equal(byId(app, 'mcp-kind-production').attrs.disabled, '');
-  assert.notEqual(byId(app, 'mcp-kind-ordinary').attrs.name, byId(app, 'mcp-server-shop-kind-ordinary').attrs.name, 'two open forms never share a radio group');
+  assert.notEqual(byId(app, 'mcp-kind-ordinary').attrs.name, byId(app, 'mcp-server-shop__kind-ordinary').attrs.name, 'two open forms never share a radio group');
   assert.match(textOf(cardOf(app, 'mcp')), /Not on this console: it cannot lock a session down, since it has no session API\./);
 });
 
 test('MCP servers: a row closed and opened again starts from what is saved, so closing is its Cancel', async () => {
   const { app } = await loadPage(MCP_ANSWER);
-  byId(app, 'mcp-server-shop-url').listeners.input({ target: { value: 'https://typed.example.com/mcp' } });
+  byId(app, 'mcp-server-shop__url').listeners.input({ target: { value: 'https://typed.example.com/mcp' } });
   headOf(app, 'mcp-server-shop').listeners.click();
   headOf(app, 'mcp-server-shop').listeners.click();
-  assert.equal(byId(app, 'mcp-server-shop-url').attrs.value, 'https://shop.example.com/mcp');
+  assert.equal(byId(app, 'mcp-server-shop__url').attrs.value, 'https://shop.example.com/mcp');
 });
 
 test('MCP servers: one the installation sets is a line with Test alone, and Remove says so on Add a server', async () => {
@@ -670,9 +670,9 @@ test('MCP servers: Repos is All repos and the console\'s repos, a saved one it d
   const { app } = await loadPage(MCP_ANSWER);
   assert.equal(byId(app, 'mcp-repo-all').attrs.checked, '', 'a new server is for every repo');
   assert.equal(byId(app, 'mcp-repo-0').attrs.disabled, '');
-  assert.equal(byId(app, 'mcp-server-shop-repo-all').attrs.checked, undefined);
-  assert.deepEqual([0, 1].map((i) => byId(app, `mcp-server-shop-repo-${i}`).attrs.checked), [undefined, '']);
-  assert.equal(byId(app, 'mcp-server-shop-repo-x0').attrs.checked, '');
+  assert.equal(byId(app, 'mcp-server-shop__repo-all').attrs.checked, undefined);
+  assert.deepEqual([0, 1].map((i) => byId(app, `mcp-server-shop__repo-${i}`).attrs.checked), [undefined, '']);
+  assert.equal(byId(app, 'mcp-server-shop__repo-x0').attrs.checked, '');
   assert.match(textOf(cardOf(app, 'mcp')), /acme\/gonenot a repo of this console/);
 });
 
@@ -685,7 +685,7 @@ test('MCP servers: Save tests the form first, keeps it on a failure, and Save an
     name: 'shop', url: 'https://shop.example.com/mcp', production: false, shared: false, people: '*', repos: ['acme/api', 'acme/gone'], auth: 'header', header: 'X-Api-Key',
   } } }], 'no value: the console tests with the saved one');
   assert.match(textOf(byId(app, 'mcp-server-shop')), /Not saved\. The server answered 401/);
-  assert.equal(byId(app, 'mcp-server-shop-url').attrs.value, 'https://shop.example.com/mcp', 'the form stays as typed');
+  assert.equal(byId(app, 'mcp-server-shop__url').attrs.value, 'https://shop.example.com/mcp', 'the form stays as typed');
   buttonIn(cardOf(app, 'mcp'), 'Save anyway').listeners.click();
   await tick();
   assert.deepEqual(posted.slice(1).map((p) => p.path), ['/api/console-settings/mcp-servers']);
@@ -767,13 +767,13 @@ test('the old #slack, followed while the page is shown, lands on the Slack group
 
 test('a link that names a row opens it: the repos open on Add a repo, and the old #slack lands on Slack', async () => {
   const repos = await loadPage(ANSWER, { opened: false, hash: '#card-projects' });
-  assert.ok(isOpen(repos.app, 'repo-add'));
+  assert.ok(isOpen(repos.app, 'repos-add'));
   assert.equal(isOpen(repos.app, 'repo-r'), false);
   const data = await loadPage({ ...ANSWER, settings: NUMBERS }, { opened: false, hash: '#card-retention' });
   assert.ok(isOpen(data.app, 'card-retention'));
   const slack = await loadPage(WITH_SLACK, { slack: SLACK_ON, opened: false, hash: '#slack' });
   assert.ok(cardOf(slack.app, 'slack'), 'the group the link names is drawn');
   const none = await loadPage({ ...ANSWER, projects: [] }, { opened: false });
-  assert.ok(isOpen(none.app, 'repo-add'), 'with no repo yet, Add a repo is open');
-  assert.match(textOf(byId(none.app, 'repo-none')), /^No repo yetSo no session can start\. The first one added becomes the default\.$/);
+  assert.ok(isOpen(none.app, 'repos-add'), 'with no repo yet, Add a repo is open');
+  assert.match(textOf(byId(none.app, 'repos-none')), /^No repo yetSo no session can start\. The first one added becomes the default\.$/);
 });

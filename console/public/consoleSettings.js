@@ -249,7 +249,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
             loadRepoChoices();
             // Said on Add a repo, which undoes it: the repo's own row is gone.
             open.delete(id);
-            open.add('repo-add');
+            open.add('repos-add');
             repoForm.error = null;
             repoForm.notice = `${p.repo} removed: new sessions can no longer start on it. Its pull requests and branches on GitHub are not touched. Add it again to undo.`;
             return null;
@@ -392,7 +392,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
   // Add a repo, the group's last row: open by itself while the console has none.
   function addRepoRow() {
     return row({
-      id: 'repo-add', title: 'Add a repo',
+      id: 'repos-add', title: 'Add a repo',
       value: listing()
         ? `One of the repos ${repoChoices.via === 'gh' ? 'the console\'s gh login can push to' : 'the GitHub App may reach'}, or another typed as owner/name`
         : 'As owner/name',
@@ -426,7 +426,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       note: ['The repos sessions can start on. The default one is what questions from Slack use. Each repo\'s own project file says which databases its sessions need, so each is checked on its own: one that cannot start sessions says Needs setup, with why and how to fix it. ', repoChoices?.via === 'gh' ? 'Sessions push with the console\'s gh login, so it must be able to push to a repo added here.' : 'The GitHub App must be given access to a repo before it is added here.', ' An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail. A repo\'s own settings page has its env file values, instructions and the Slack channel its pull requests go to.'],
     },
       data.projects.length ? data.projects.map(projectRow)
-        : row({ id: 'repo-none', title: 'No repo yet', value: 'So no session can start. The first one added becomes the default.' }),
+        : row({ id: 'repos-none', title: 'No repo yet', value: 'So no session can start. The first one added becomes the default.' }),
       addRepoRow());
   }
 
@@ -518,7 +518,8 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
   }
 
   // The ids of a form's fields: Add a server's are mcp-<field>, a saved server's carry its name, since both may be open.
-  const fid = (f, part) => (f.editing ? `${mcpRowId(f.editing)}-${part}` : `mcp-${part}`);
+  // The two underscores are in no server's name, so one server's field never has another's row or field id.
+  const fid = (f, part) => (f.editing ? `${mcpRowId(f.editing)}__${part}` : `mcp-${part}`);
 
   // One server: the closed row says where it is, who gets it and what the console adds; opened, it is its form. One
   // the installation's configuration sets cannot be changed here, so its row has Test alone.
@@ -1200,6 +1201,8 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     else if (!channelPicker) channelPicker = W.slackChannelPicker({ value: v.channel, name: v.channelName, id: 'slack-channel-search' });
     return row({
       id: 'slack-pulls', title: 'Pull requests', opens: true,
+      // What the last change said is not said again by a row opened anew.
+      onOpen: () => { if (slackNote.on === 'pulls') slackNote.text = null; },
       value: [
         v.channel ? `Posted to ${channelName(v)}` : 'Not posted: no channel',
         qty('slackGiveUpDays') && `gives up after ${qty('slackGiveUpDays')}`, qty('qaWaitMinutes') && `waits ${qty('qaWaitMinutes')} for QA`,
@@ -1371,7 +1374,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     asked = ALIASES[asked] ?? asked;
     open.add(asked);
     // A link to the repos is most often followed to add one.
-    if (asked === 'card-projects') open.add('repo-add');
+    if (asked === 'card-projects') open.add('repos-add');
   }
   // Called after each of the load's draws: a group drawn later above the target would push it down the page again.
   function showAsked() {
@@ -1386,7 +1389,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       loadError = err.message;
     }
     // With no repo yet, the one thing to do is add one.
-    if (data?.projects && !data.projects.length) open.add('repo-add');
+    if (data?.projects && !data.projects.length) open.add('repos-add');
     await loadMcp();
     render();
     showAsked();
@@ -1416,6 +1419,8 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
 
   // The search opens the row it found, and a link to a row followed while the page is shown opens it (settingsRows.js).
   follow(life);
+  // Someone who scrolls while the page loads has left the link's target: the later draws do not take them back.
+  for (const type of ['wheel', 'touchmove', 'keydown']) life.on(window, type, () => { asked = null; });
   // The names links used before the rows, followed while the page is shown, land on their rows too.
   life.on(window, 'hashchange', () => {
     const id = ALIASES[location.hash.slice(1)];
