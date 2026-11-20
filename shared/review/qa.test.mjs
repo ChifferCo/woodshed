@@ -95,6 +95,8 @@ test('a worktree review\'s made-up title and body are not handed over as the aut
     assert.match(prompt, /do\s+not ask about or remark on them/);
   }
   assert.doesNotMatch(top, /Ask about the words in the title/);
+  assert.doesNotMatch(analysis, /written by the PR author/);
+  assert.match(buildAnalysisPrompt({ meta: { title: 'x', body: 'y' }, files }), /written by the PR author/);
 
   const pr = { state: 'OPEN', title: 'Add the relay', body: 'It forwards calls.', number: 7 };
   const prTop = buildTopQuestionsPrompt({ meta: pr, files, overview: '' });
