@@ -361,13 +361,140 @@
   // A countdown nobody needs all the time: it only shows once the pause is this close.
   const PAUSE_WARN_MS = 15 * 60_000;
 
-  /** @returns {string|null}  `pauses in 9 min`, for a running session claude is not busy in, in its last 15 minutes */
-  function pausesIn(s, { idleHours, askIdleHours, myIdleHours }) {
+  /**
+   * @returns {{left: number, why: 'idle'|'lifetime'}|null}  how long until a running session pauses or stops by itself,
+   *   from the console's `pause` (its own limits and any Extend in it), else from the page's idle numbers
+   */
+  function pauseLeft(s, { idleHours, askIdleHours, myIdleHours }) {
+    if (s.status !== 'running') return null;
+    if (s.pause) {
+      // Waiting on claude's work never pauses it; only its lifetime ends a busy session.
+      if (s.pause.why === 'idle' && BUSY_STATES.has(s.state)) return null;
+      return { left: Date.parse(s.pause.at) - Date.now(), why: s.pause.why };
+    }
     if (s.kind === 'ask') idleHours = askIdleHours;
     else if (s.owner && myIdleHours) idleHours = myIdleHours;
-    if (s.status !== 'running' || BUSY_STATES.has(s.state) || !s.lastActiveAt || !idleHours) return null;
-    const left = Date.parse(s.lastActiveAt) + idleHours * 3_600_000 - Date.now();
-    return left > PAUSE_WARN_MS ? null : `pauses in ${span(left)}`;
+    if (BUSY_STATES.has(s.state) || !s.lastActiveAt || !idleHours) return null;
+    return { left: Date.parse(s.lastActiveAt) + idleHours * 3_600_000 - Date.now(), why: 'idle' };
+  }
+
+  /** @returns {string|null}  `pauses in 9 min` or `stops in 9 min`, for a running session in its last 15 minutes */
+  function pausesIn(s, data) {
+    const end = pauseLeft(s, data);
+    if (!end || end.left > PAUSE_WARN_MS) return null;
+    return `${end.why === 'lifetime' ? 'stops' : 'pauses'} in ${span(end.left)}`;
+  }
+
+  /**
+   * @returns {boolean}  whether the viewer may say when the session pauses and stops: a private session's owner, a shared
+   *   one's assignee (the console refuses anyone else), never on a question from Slack
+   */
+  function ownsLimits(s, data) {
+    if (s.kind === 'ask') return false;
+    return s.owner ? sameLogin(s.owner, data.login) : sameLogin(s.assignee, data.login);
+  }
+
+  /** @returns {boolean}  whether to offer Extend: the viewer's call, and the pause close enough */
+  function canExtend(s, data) {
+    if (!ownsLimits(s, data)) return false;
+    const end = pauseLeft(s, data);
+    return Boolean(end) && end.left <= PAUSE_WARN_MS;
+  }
+
+  /** Extend: the console puts the session's pause or stop an hour later. */
+  async function extendSession(s) {
+    try {
+      const after = await postJson(`/api/sessions/${s.id}/extend`, {});
+      const at = after?.pause && new Date(after.pause.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      notify(at ? `Extended: it ${after.pause.why === 'lifetime' ? 'stops' : 'pauses'} at ${at} at the earliest` : 'Extended');
+    } catch (err) {
+      notify(`Not extended: ${err.message}`);
+    }
+  }
+
+  function hoursText(n) {
+    return `${n} ${n === 1 ? 'hour' : 'hours'}`;
+  }
+
+  /**
+   * This session's own pause and stop, in a dialog of the console's own: empty fields go back to what it would run
+   * on otherwise (its owner's from My settings, or the console's).
+   * @returns {Promise<boolean>}  whether something was saved
+   */
+  function sessionLimitsDialog(s, { idleHours, lifetimeHours, myIdleHours, myLifetimeHours }) {
+    const fallback = {
+      idleHours: (s.owner && myIdleHours) || idleHours,
+      lifetimeHours: (s.owner && myLifetimeHours) || lifetimeHours,
+    };
+    return new Promise((resolve) => {
+      let saved = false;
+      const field = (key, label, attrs) => {
+        const input = h('input', { class: 'field mono', type: 'number', inputmode: 'decimal', placeholder: String(fallback[key] ?? ''), ...attrs });
+        input.value = s.limits?.[key] ?? '';
+        return { input, row: h('label', { class: 'field-label' }, h('span', null, label), input) };
+      };
+      const idle = field('idleHours', 'Pause it after waiting for input for (hours)', { min: '0.25', max: '24', step: '0.25', id: 'session-limit-idle' });
+      const life = field('lifetimeHours', 'Stop it after it has run for (hours)', { min: '1', max: '24', step: '1', id: 'session-limit-lifetime' });
+      const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+      const cancel = h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel');
+      const save = h('button', { type: 'submit', class: 'btn btn-open' }, 'Save');
+      const form = h('form', { method: 'dialog' },
+        h('p', null, `For this session alone. Empty is what it runs on otherwise: ${fallback.idleHours ? hoursText(fallback.idleHours) : '—'} waiting, ${fallback.lifetimeHours ? hoursText(fallback.lifetimeHours) : '—'} in all. ${s.qa || s.review ? 'A QA or review run is not resumed once it stops.' : 'It tries to push its work first, and Resume picks it up.'}`),
+        idle.row, life.row, error,
+        h('div', { class: 'dialog-actions' },
+          cancel,
+          save));
+      const dialog = h('dialog', { class: 'confirm', 'aria-labelledby': 'limits-title' }, h('h2', { id: 'limits-title' }, 'Pause and stop'), form);
+      // While a save is on its way the dialog stays: closing it then would say nothing was saved, and the console may
+      // still keep the hours.
+      let pending = false;
+      dialog.addEventListener('cancel', (e) => { if (pending) e.preventDefault(); });
+      // A lifetime shorter than the session has run stops it at the console's next check: said once, and a second Save
+      // goes ahead.
+      let warnedFor = null;
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (pending) return;
+        const values = { idleHours: idle.input.value || null, lifetimeHours: life.input.value || null };
+        const ranMs = s.status === 'running' && s.startedAt ? Date.now() - Date.parse(s.startedAt) : 0;
+        // What it would run on after the save: the hours entered, or what an empty field falls back to.
+        const lifetime = Number(values.lifetimeHours || fallback.lifetimeHours) || 0;
+        const key = String(values.lifetimeHours ?? '');
+        // An Extend from this run holds the stop back to its end, as the console has it (sessions.mjs pauseAt).
+        const heldTo = Date.parse(s.extendedAt) >= Date.parse(s.startedAt) ? Date.parse(s.extendedUntil) : NaN;
+        const held = Number.isFinite(heldTo) && heldTo > Date.now();
+        if (lifetime && lifetime * 3_600_000 <= ranMs && warnedFor !== key) {
+          warnedFor = key;
+          error.textContent = `It has already run for ${span(ranMs)}, past ${hoursText(lifetime)}, so it would stop ${held ? `when its Extend runs out, in ${span(heldTo - Date.now())}` : 'within seconds'}: it tries to push its work first. Save again to ${held ? 'keep these hours' : 'stop it now'}.`;
+          error.hidden = false;
+          return;
+        }
+        pending = true;
+        save.disabled = true;
+        cancel.disabled = true;
+        error.hidden = true;
+        try {
+          await postJson(`/api/sessions/${s.id}/limits`, values);
+          saved = true;
+          pending = false;
+          dialog.close();
+        } catch (err) {
+          pending = false;
+          save.disabled = false;
+          cancel.disabled = false;
+          error.textContent = err.message;
+          error.hidden = false;
+        }
+      });
+      dialog.addEventListener('close', () => {
+        dialog.remove();
+        if (saved) notify('Saved for this session');
+        resolve(saved);
+      });
+      document.body.append(dialog);
+      dialog.showModal();
+      idle.input.focus();
+    });
   }
 
   /** @returns {string|null}  `deleted in 2 days`, for a kept session whose end is set */
@@ -1754,7 +1881,7 @@
     invite, sessionTab, forgetSignedIn, forgetOtherLogins, signingOut, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, pickedLogins, byQuery, peoplePicker,
-    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
+    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
 })();

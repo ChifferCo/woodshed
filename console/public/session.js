@@ -537,6 +537,8 @@
       s.prUrl && { label: `Open PR ${W.prNumber(s.prUrl)} ↗`, note: 'Its pull request on GitHub, in a new tab', href: s.prUrl },
       ...assignActions(s),
       { label: 'Rename…', note: 'Give it a new name, the one the rail and its page show', run: () => rename(s) },
+      live && s.kind !== 'ask' && W.canExtend(s, data) && { label: 'Extend 1 hour', note: `${W.pausesIn(s, data)}: put it off by an hour`, run: async () => { await W.extendSession(s); refresh(); } },
+      W.ownsLimits(s, data) && { label: 'Pause and stop…', note: 'How long this session alone waits for input before it pauses, and runs before it stops', run: () => editLimits(s) },
       { label: isPinned(s) ? 'Unpin' : 'Pin', note: 'Keep it at the top of its group. Only you see your pins', run: () => setPinned(s, !isPinned(s)) },
       !live && W.needsYou(s) && {
         label: 'Move to Stopped', note: 'Nothing to do on it now: take it out of Needs you. Resume still picks it up', end: true,
@@ -708,6 +710,27 @@
     refresh();
   }
 
+  // Shown in a session's last 15 minutes before it pauses or stops by itself: an hour more, each press.
+  function extendButton(s, { bar = false } = {}) {
+    const pauses = W.pausesIn(s, data);
+    return h('button', {
+      // The pane bar's buttons are pbtn type; the rail card's are the console's small plain button.
+      type: 'button', class: bar ? 'pbtn pextend' : 'btn btn-plain btn-sm extend-btn',
+      title: `${pauses ? `It ${pauses}. ` : ''}Put it off by an hour`,
+      onclick: async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.currentTarget.disabled = true;
+        await W.extendSession(s);
+        refresh();
+      },
+    }, bar && pauses ? `${pauses[0].toUpperCase()}${pauses.slice(1)} · Extend` : 'Extend');
+  }
+
+  async function editLimits(s) {
+    if (await W.sessionLimitsDialog(s, data)) refresh();
+  }
+
   function takeButton(s) {
     return h('button', {
       type: 'button', class: 'btn btn-primary btn-sm', title: 'Nobody has this session: take it',
@@ -762,6 +785,7 @@
         h('span', { class: 'rsub-text' }, sub),
         pr ? W.prChips(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
         W.isUnassigned(s) && data.assignable && takeButton(s),
+        live && W.canExtend(s, data) && extendButton(s),
         !live && W.canResumePrivate(s) && resumeButton(s, true),
         W.isResumable(s) && W.group(s) !== 'merged' && W.resumeSharedButton(s, { small: true, onDone: refresh })));
   }
@@ -1120,6 +1144,8 @@
       s.status === 'running' && data.appDomain && !data.appPorts && W.isPrivate(s) && !s.taintedAt && { group: 'App', label: 'Share the app…', run: () => W.shareApp(s) },
       s.branch && { group: 'Session', label: 'Open the review', run: open('review') },
       { group: 'Session', label: 'Rename it', run: () => rename(s) },
+      s.status === 'running' && W.canExtend(s, data) && { group: 'Session', label: 'Extend it by an hour', run: async () => { await W.extendSession(s); refresh(); } },
+      W.ownsLimits(s, data) && { group: 'Session', label: 'Change when it pauses and stops…', run: () => editLimits(s) },
       { group: 'Session', label: isPinned(s) ? 'Unpin it' : 'Pin it', run: () => setPinned(s, !isPinned(s)) },
       s.prUrl && { group: 'Elsewhere', label: 'Open its pull request ↗', run: () => window.open(s.prUrl, '_blank', 'noopener') },
       !W.isLive(s) && W.needsYou(s) && { group: 'Session', label: 'Move it to Stopped', run: () => moveToStopped(s) },
@@ -1231,11 +1257,25 @@
       row('Started by', `${W.personText(s.startedBy)}, ${trigger}`),
       row(W.isLive(s) ? 'Running for' : 'Ran for', s.startedAt && W.duration(s.startedAt, s.stoppedAt)),
       row('Runs on', claude),
+      s.kind !== 'ask' && s.runsOn && row('Pauses', limitsLine(s)),
       !W.isPrivate(s) && s.kind !== 'ask' && row('Assigned to', assignedLine(s)),
       row('Visible to', W.isPrivate(s) ? 'Only you' : 'Everyone on the console'),
       W.isPrivate(s) && s.kind !== 'ask' && s.branch && !['pr', 'branch'].includes(inviteTargetOf(s).state)
         && row('Invite', 'Invite shows in the bar once GitHub has the branch: the session pushes when it commits and when it stops'),
       s.taintedAt && row('Production data', `Since ${W.ago(s.taintedAt)}: it reaches only the console, its databases and your organization's private repos, and all it kept is deleted when it is removed`));
+  }
+
+  // When it pauses and stops by itself, and whether those are its own, with the next one while it runs.
+  function limitsLine(s) {
+    const hours = (n) => `${n} ${n === 1 ? 'hour' : 'hours'}`;
+    const own = s.limits && (s.limits.idleHours || s.limits.lifetimeHours) ? ' (this session\'s own)' : '';
+    // While the agent works its idle clock keeps moving, so only a stop at its lifetime has a time to give then.
+    const busy = s.state === 'working' || s.state === 'starting';
+    // An Extend from before a resume counts for nothing, as the console has it (sessions.mjs pauseAt).
+    const extended = s.extendedUntil && Date.parse(s.extendedAt) >= Date.parse(s.startedAt) && Date.parse(s.extendedUntil) >= Date.parse(s.pause?.at);
+    const next = s.status === 'running' && s.pause && !(busy && s.pause.why === 'idle')
+      ? `. Next: ${s.pause.why === 'lifetime' ? 'stops' : 'pauses'} at ${new Date(s.pause.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}${extended ? ', extended' : ''}` : '';
+    return `After ${hours(s.runsOn.idleHours)} waiting for input, and stops at ${hours(s.runsOn.lifetimeHours)}${own}${next}`;
   }
 
   // Who has a shared session and how they got it: by the label, a /woodshed comment, taking it, or a hand over.
@@ -1455,7 +1495,7 @@
       // A phone's two rows: the name over one line of its state, its PR and its usage, with ⋯ for the rest.
       h('div', { class: 'pphone' },
         h('b', { class: 'pphone-title', title: s.title }, s.title),
-        h('span', { class: 'pphone-meta' }, W.statusBadge(s), s.taintedAt && W.productionTag(s), phoneAppState(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
+        h('span', { class: 'pphone-meta' }, W.statusBadge(s), s.taintedAt && W.productionTag(s), W.pausesIn(s, data) && h('span', { class: 'ptimer' }, W.pausesIn(s, data)), phoneAppState(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
       h('button', {
         type: 'button', class: 'pmore', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === `${s.id}:phone`), 'data-menu-for': `${s.id}:phone`,
         'aria-label': `Actions for ${s.title}`, title: 'Actions',
@@ -1494,6 +1534,7 @@
         tools && openActions(s).length > 0 && barMenuButton(s, {
           key: 'open', label: 'Open ▾', className: 'popen', title: 'Its checkout in VS Code, or its databases and Redis in a viewer, each in a new tab', open: () => ({ items: openActions(s) }),
         }),
+        s.status === 'running' && W.canExtend(s, data) && extendButton(s, { bar: true }),
         s.kind !== 'ask' && W.appButton(s, { appDomain: data.appDomain, onDone: refresh, onChange: render, small: true }),
         (s.status === 'queued' || s.status === 'starting' || s.status === 'running') && stopBarButton(s),
         W.isResumable(s) && W.resumeSharedButton(s, { small: true, onDone: refresh })));
