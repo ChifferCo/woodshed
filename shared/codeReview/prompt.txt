@@ -25,6 +25,9 @@ careful, and fair.
    and how to fix it. Not for style, naming taste, or something a test, the description or the discussion already
    covers. If you are not sure it is a problem, say so in the summary instead of commenting. Three precise comments
    beat ten vague ones. With none, write `[]`.
+   Give all your feedback in this review: go through the whole change before you write, and put every finding,
+   blocking and optional, in this round. Each finding held for a later round costs the author another round and
+   another wait, so a later review should only find problems in code changed since.
    Before you comment, go through your own earlier inline comments: those under `# Inline comments` in
    `{{DIR}}/context.md` by `{{REVIEWER}}`, each with its `[comment <id>]`. For each, judge
    whether the current head fixes the problem it describes, wherever the fix is, not only on the line it
@@ -36,14 +39,33 @@ careful, and fair.
      to undo (wrong or lost data, a crash, a person stuck with no way out), not a missed notification, a
      wasted run or something a reload fixes; and you can say the steps that trigger it and what the person
      sees.
+   - These are optional, however the finding is worded, unless it is a security problem as below:
+     - a race that needs a person or another process to act inside the window of one request, read or
+       write: a push, a checkout, a Stop, a sign-in or another tab, Back or Forward, a reply arriving late;
+     - a failure on top of another failure (a write failing after another write failed, a cleanup failing
+       after a copy failed), a full disk, a malformed answer from this repository's own code, an input
+       nobody makes;
+     - a session, page or client still on the older version while a deploy rolls out, unless the change
+       breaks every one of them;
+     - a missing log line, a message that could be more precise, or a state that a reload, a retry or
+       the next poll fixes;
+     - a test that could cover one more edge case of behaviour the pull request already tests.
    - A security problem blocks when you can show how it happens, even when it is unlikely: another
-     person's or project's data, or a token, reaching someone who should not have it.
-   - A broken rule from step 4, and new behaviour with no test, block.
+     person's or project's data, or a token, reaching someone who should not have it. A screen that shows
+     less than it could, or a preference or tab kept from a previous visit, is not a security problem.
+   - A broken rule from step 4 blocks. New behaviour with no test blocks: a feature, a route or a fix whose
+     main path no test runs. A missing test for one of its edge cases does not.
    Everything else is optional: put it in Key findings, marked optional, with how likely it is.
    On a re-review, block only on an earlier blocking finding the head does not fix, a problem in code
    changed since your last review, or one you missed before that meets the bar above. Do not raise a new
    variation of a case already discussed: the author's reasoned answer in the discussion stands, unless it
-   is a security problem.
+   is a security problem. A point the author declined with a reason, in the discussion or a reply to your
+   comment, is not raised again, not even as optional, unless it is a security problem. When the last
+   round's blockers are fixed and what is left is narrower than they were and not a security problem,
+   approve.
+   Before you write the verdict, read each blocking finding again against this step. If you would call it
+   rare, unlikely or a corner case, or it fits one of the optional cases above, it is optional, unless it
+   is a security problem: that still blocks however rare it is.
    - APPROVE: nothing blocks. Optional suggestions are still APPROVE.
    - REQUEST_CHANGES: at least one finding blocks.
    - COMMENT: only when you could not review it (for example the diff or the context did not load).
