@@ -2261,17 +2261,27 @@ and its own `anthropic-api-key`, once an admin of the repo approves it (`reviewS
 and is handed a link and a status, never a credential:
 
 1. **Ask.** A session calls the session API's `POST /review-setup` with its `SESSION_TOKEN` (`{"repo": "acme/game",
-   "qa": true}`, or `"qaRunner": "woodshed"`, and `"ref"` to pin a commit of Woodshed's workflows; without one the
-   console pins Woodshed's main as it is then). Anyone signed in asks with `POST /api/review-setup`. The answer is the
+   "qa": true}`, or `"qaRunner": "woodshed"`, and `"ref"` to pin an older commit of Woodshed's workflows; without one
+   the console pins Woodshed's main as it is then). A ref is kept as its commit, and only a commit Woodshed's main has
+   (`compare/main...<sha>` says `behind` or `identical`): never a branch someone pushed, or a fork's commit, which
+   GitHub also answers for under Woodshed's name. Anyone signed in asks with `POST /api/review-setup`. The answer is the
    request: its `id`, `status: "pending"` and `url`, its approval page, `/review-setup/<id>`. Asking again for the same
    repo answers the request already waiting; each session or person has at most 5 waiting. A question from Slack, a QA
    run, a review and a tainted session may not ask: they run code their pull request wrote, or hold production data.
 2. **Approve.** The page shows who asked (the session, linked, and whose it is), each step against the repo as GitHub
    has it now, and each file in full: the review workflow (and CI's QA workflow), the `woodshed-qa` label, letting
    Actions create and approve pull requests (keeping the repo's default workflow permissions), and `ANTHROPIC_API_KEY`
-   from the console's key, unless the repo has one, which is left as it is. Only an admin of the repo on GitHub
+   from the console's key, unless the repo has one, which is left as it is. QA in the repo's CI never gets the
+   console's key: its job starts each pull request's own app on the runner that then holds the key, so a pull request
+   a session opened could read it. Such a request waits for the repo's own `ANTHROPIC_API_KEY`; review alone, or QA as
+   a Woodshed session, does not. A read GitHub did not answer (the Actions setting, whether the secret is there)
+   blocks the approval rather than writing over what may be there. Only an admin of the repo on GitHub
    approves (`collaborators/<login>/permission`), and when the console's own key would be copied into the repo, where
-   every workflow can read it, a console admin as well. Whoever asked can withdraw it, and an approver refuse it.
+   every workflow can read it, a console admin as well. Whoever asked can withdraw it, and an admin of the repo or a
+   console admin refuse it. Whoever asked sees its status; what it would change (read from GitHub with the App) only
+   those who can write to the repo, and console admins; anyone else gets 404. A private session's title shows only to
+   its owner and console admins: others see whose session asked. The list (`GET /api/review-setup`) is your own
+   requests, or every one for a console admin.
 3. **Apply.** Each file is a commit to the default branch, as the script makes it, whose message names the approver and
    the request. The key is sealed to the repo's public key (`sealedBox.mjs`, libsodium's sealed box) and never logged
    or shown. A step GitHub refuses stops the rest: the request is `failed` with the step and GitHub's reason (a branch

@@ -12,6 +12,11 @@ import crypto from 'node:crypto';
 import { openSealedBox, x25519PublicKey } from '../sealedBox.mjs';
 
 export const WOODSHED_MAIN = '7e57c0de'.repeat(5);
+/** An older commit main has, tagged v1. */
+export const WOODSHED_OLD = '01dc0de0'.repeat(5);
+/** A commit main does not have: a branch someone pushed, or a fork's commit GitHub answers for under Woodshed's name. */
+export const WOODSHED_OTHER = 'f04cf04c'.repeat(5);
+const WOODSHED_REFS = { main: WOODSHED_MAIN, v1: WOODSHED_OLD, 'session-branch': WOODSHED_OTHER, [WOODSHED_MAIN]: WOODSHED_MAIN, [WOODSHED_OLD]: WOODSHED_OLD, [WOODSHED_OTHER]: WOODSHED_OTHER };
 
 /** Every permission the review setup needs: what an App given them all has. */
 export const ALL_PERMISSIONS = { metadata: 'read', contents: 'write', workflows: 'write', issues: 'write', administration: 'write', secrets: 'write', pull_requests: 'write' };
@@ -52,7 +57,16 @@ export function fakeGitHub(repos) {
   async function handle(method, url, headers, body) {
     const path = url.pathname;
     const auth = String(headers.authorization ?? '');
-    if (method === 'GET' && path === '/repos/ChifferCo/woodshed/commits/main') return answer(200, { sha: WOODSHED_MAIN });
+    let w = /^\/repos\/ChifferCo\/woodshed\/commits\/(.+)$/.exec(path);
+    if (w && method === 'GET') {
+      const found = WOODSHED_REFS[decodeURIComponent(w[1])];
+      return found ? answer(200, { sha: found }) : answer(422, { message: `No commit found for SHA: ${decodeURIComponent(w[1])}` });
+    }
+    w = /^\/repos\/ChifferCo\/woodshed\/compare\/([0-9a-f]{40})\.\.\.([0-9a-f]{40})$/.exec(path);
+    if (w && method === 'GET') {
+      const status = w[1] === w[2] ? 'identical' : w[1] === WOODSHED_MAIN && w[2] === WOODSHED_OLD ? 'behind' : 'diverged';
+      return answer(200, { status });
+    }
     let m = /^\/repos\/([^/]+\/[^/]+)\/installation$/.exec(path);
     if (m) {
       if (!auth.startsWith('Bearer ey')) return answer(401, { message: 'A JSON web token could not be decoded' });

@@ -7,7 +7,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-import { ALL_PERMISSIONS, MANIFEST_PERMISSIONS, WOODSHED_MAIN, fakeGitHub } from './bin/devReviewSetup.mjs';
+import { ALL_PERMISSIONS, MANIFEST_PERMISSIONS, WOODSHED_MAIN, WOODSHED_OLD, WOODSHED_OTHER, fakeGitHub } from './bin/devReviewSetup.mjs';
 import {
   QA_WORKFLOW, REQUEST_TTL_MS, REVIEW_WORKFLOW, appGitHub, createReviewSetup, createReviewSetupApi, missingPermissions, parseRequest,
   qaWorkflow, reviewSetupRoute, reviewWorkflow,
@@ -86,7 +86,7 @@ exit 0
 
 test('a session asks, an admin of the repo approves, and the console applies it with its App and key', async () => {
   const { gh, reviewSetup } = setup();
-  const { request, created } = await reviewSetup.create(parseRequest({ repo: 'acme/game', qa: true }), { session: SESSION });
+  const { request, created } = await reviewSetup.create(parseRequest({ repo: 'acme/game', qaRunner: 'woodshed' }), { session: SESSION });
   assert.equal(created, true);
   const status = reviewSetup.statusOf(request);
   assert.deepEqual([status.status, status.ref, status.url], ['pending', WOODSHED_MAIN, 'https://console.example/review-setup/aaaaaaaaaaa1']);
@@ -95,7 +95,7 @@ test('a session asks, an admin of the repo approves, and the console applies it 
   const page = await reviewSetup.view(request, 'ann', { consoleAdmin: true });
   assert.deepEqual(page.canApprove, { ok: true, why: null });
   assert.deepEqual(page.plan.steps.map((s) => [s.key, s.change]), [
-    ['review-workflow', true], ['qa-workflow', true], ['qa-label', true], ['approvals', true], ['secret', true],
+    ['review-workflow', true], ['qa-label', true], ['approvals', true], ['secret', true],
   ]);
   assert.match(page.plan.steps[0].text, new RegExp(`review\\.yml@${WOODSHED_MAIN}`), 'the page shows the exact file, pinned');
   assert.equal(page.plan.setsKey, true);
@@ -104,11 +104,11 @@ test('a session asks, an admin of the repo approves, and the console applies it 
   assert.equal(request.status, 'applied', request.why);
   const repo = gh.repos['acme/game'];
   assert.equal(repo.files.get(REVIEW_WORKFLOW).text, reviewWorkflow(WOODSHED_MAIN));
-  assert.equal(repo.files.get(QA_WORKFLOW).text, qaWorkflow(WOODSHED_MAIN));
+  assert.ok(!repo.files.has(QA_WORKFLOW), 'QA runs as a session: no CI workflow');
   assert.ok(repo.labels.has('woodshed-qa'));
   assert.deepEqual(repo.workflow, { default_workflow_permissions: 'read', can_approve_pull_request_reviews: true }, 'the default level is kept');
   assert.equal(gh.openSecret('acme/game', 'ANTHROPIC_API_KEY'), TEAM_KEY, 'GitHub holds the team key, sealed to the repo');
-  assert.deepEqual(request.steps.map((s) => s.state), ['done', 'done', 'done', 'done', 'done']);
+  assert.deepEqual(request.steps.map((s) => s.state), ['done', 'done', 'done', 'done']);
   assert.deepEqual(request.history.map((h) => [h.what, h.by]), [['asked', 'session abcd1234'], ['approved', 'ann'], ['applied', 'ann']]);
 
   const commit = gh.calls.find((c) => c.method === 'PUT' && c.path.endsWith('woodshed-review.yml'));
@@ -178,7 +178,7 @@ test('no team key, the App not installed, or a branch rule: each is said, and a 
 
 test('the session runner removes CI\'s QA workflow and writes none, and what is already so is left', async () => {
   const { gh, reviewSetup } = setup({
-    repos: { 'acme/game': { admins: ['ann'], files: { [QA_WORKFLOW]: 'old', [REVIEW_WORKFLOW]: reviewWorkflow('v1') }, labels: ['woodshed-qa'], canApprove: true } },
+    repos: { 'acme/game': { admins: ['ann'], files: { [QA_WORKFLOW]: 'old', [REVIEW_WORKFLOW]: reviewWorkflow(WOODSHED_OLD) }, labels: ['woodshed-qa'], canApprove: true } },
   });
   const { request } = await reviewSetup.create(parseRequest({ repo: 'acme/game', qaRunner: 'woodshed', ref: 'v1' }), { login: 'ann' });
   const page = await reviewSetup.view(request, 'ann', { consoleAdmin: true });
@@ -231,13 +231,76 @@ async function serve(t, handler) {
   return `http://127.0.0.1:${server.address().port}`;
 }
 
+test('a ref is pinned to its commit, and only one Woodshed\'s main has: never a pushed branch or a fork\'s commit', async () => {
+  const { reviewSetup } = setup();
+  const tagged = (await reviewSetup.create(parseRequest({ repo: 'acme/game', ref: 'v1' }), { login: 'ann' })).request;
+  assert.equal(tagged.ref, WOODSHED_OLD, 'the tag is kept as its commit, so it cannot move later');
+  for (const ref of ['session-branch', WOODSHED_OTHER]) {
+    await assert.rejects(reviewSetup.create(parseRequest({ repo: 'acme/game', ref }), { login: 'ann' }),
+      (err) => err.status === 400 && /is not a commit of Woodshed's main/.test(err.message), ref);
+  }
+  await assert.rejects(reviewSetup.create(parseRequest({ repo: 'acme/game', ref: 'no-such-ref' }), { login: 'ann' }), (err) => err.status === 400);
+});
+
+test('QA in CI never gets the console\'s key, which a pull request\'s own app would run next to; the repo\'s own key is fine', async () => {
+  const { gh, reviewSetup } = setup({ repos: { 'acme/game': { admins: ['ann'] }, 'acme/keyed': { admins: ['ann'], secrets: ['ANTHROPIC_API_KEY'] } } });
+  const bare = (await reviewSetup.create(parseRequest({ repo: 'acme/game', qa: true }), { login: 'ann' })).request;
+  const page = await reviewSetup.view(bare, 'ann', { consoleAdmin: true });
+  assert.match(page.canApprove.why, /QA in acme\/game's CI runs each pull request's own app next to ANTHROPIC_API_KEY, so the console's key is not set for it/);
+  await assert.rejects(reviewSetup.approve(bare, 'ann', { consoleAdmin: true }), (err) => err.status === 409);
+  assert.equal(gh.openSecret('acme/game', 'ANTHROPIC_API_KEY'), null);
+
+  const keyed = (await reviewSetup.create(parseRequest({ repo: 'acme/keyed', qa: true }), { login: 'ann' })).request;
+  await reviewSetup.approve(keyed, 'ann', { consoleAdmin: true });
+  assert.equal(keyed.status, 'applied', keyed.why);
+  assert.equal(gh.repos['acme/keyed'].files.get(QA_WORKFLOW).text, qaWorkflow(WOODSHED_MAIN));
+});
+
+test('a read GitHub did not answer blocks its step, rather than overwriting what may be there', async () => {
+  const { gh } = setup();
+  const realFetch = gh.fetch;
+  const flaky = (path) => async (url, init) => (new URL(String(url)).pathname.endsWith(path) && (init?.method ?? 'GET') === 'GET'
+    ? new Response(JSON.stringify({ message: 'Server Error' }), { status: 502 }) : realFetch(url, init));
+  const store = { state: {}, save() {} };
+  for (const path of ['/actions/secrets/ANTHROPIC_API_KEY', '/actions/permissions/workflow']) {
+    const rs = createReviewSetup({ store, github: appGitHub({ appId: '1', privateKey: APP_KEY, fetchImpl: flaky(path) }), teamKey: async () => TEAM_KEY, publicUrl: 'x' });
+    const { request } = await rs.create(parseRequest({ repo: 'acme/game' }), { login: `ann-${path.length}` });
+    assert.match((await rs.view(request, 'ann', { consoleAdmin: true })).canApprove.why, /HTTP 502 Server Error\): load this page again/, path);
+    await assert.rejects(rs.approve(request, 'ann', { consoleAdmin: true }), (err) => err.status === 409, path);
+  }
+  assert.ok(!gh.calls.some((c) => c.method === 'PUT'), 'nothing written');
+});
+
+test('who sees what: the asker its status, writers and console admins the plan, nobody else anything, and a private session\'s title only its owner', async () => {
+  const { reviewSetup } = setup({ repos: { 'acme/game': { admins: ['ann'], writers: ['bob'] } } });
+  const { request } = await reviewSetup.create(parseRequest({ repo: 'acme/game' }), { session: { ...SESSION, owner: 'cat' } });
+  const cat = await reviewSetup.view(request, 'cat', { consoleAdmin: false });
+  assert.equal(cat.mine, true);
+  assert.equal(cat.plan, null, 'cat cannot write to acme/game, so sees no plan of it');
+  assert.equal(cat.by.title, 'Set up acme/game');
+  assert.equal(cat.canRefuse, true, 'whoever asked withdraws');
+  const bob = await reviewSetup.view(request, 'bob', { consoleAdmin: false });
+  assert.ok(bob.plan, 'a writer sees what it would change');
+  assert.deepEqual(bob.by, { private: true, person: 'cat' }, 'and whose session, not its title');
+  assert.equal(bob.history[0].by, 'a session');
+  assert.equal(bob.canRefuse, false);
+  const ann = await reviewSetup.view(request, 'ann', { consoleAdmin: false });
+  assert.equal(ann.canRefuse, true, 'a repo admin refuses, though the key needs a console admin to approve');
+  await assert.rejects(reviewSetup.view(request, 'eve', { consoleAdmin: false }), (err) => err.status === 404);
+  assert.equal(await reviewSetup.canSee(request, 'eve', { consoleAdmin: false }), false);
+  assert.deepEqual(reviewSetup.list('eve', { consoleAdmin: false }), []);
+  assert.deepEqual(reviewSetup.list('bob', { consoleAdmin: false }), []);
+  assert.equal(reviewSetup.list('cat', { consoleAdmin: false }).length, 1);
+  assert.deepEqual(reviewSetup.list('dee', { consoleAdmin: true })[0].by.title, 'Set up acme/game');
+});
+
 test('the session API: a session asks and follows its own request, and never another\'s', async (t) => {
   const { reviewSetup } = setup();
   const other = { ...SESSION, id: 'ffff0000', token: 'session-token-2' };
   const api = createSessionApi({ fleet: { sessions: () => [SESSION, other] }, tokens: null, reviewSetup });
   const base = await serve(t, (req, res) => api(req, res));
   const post = (p, body, token = SESSION.token) => fetch(`${base}${p}`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
-  const made = await post('/review-setup', { repo: 'acme/game', qa: true });
+  const made = await post('/review-setup', { repo: 'acme/game', qaRunner: 'woodshed' });
   assert.equal(made.status, 201);
   const { id, status, url } = await made.json();
   assert.deepEqual([status, url], ['pending', `https://console.example/review-setup/${id}`]);
@@ -267,7 +330,9 @@ test('the signed-in API: anyone asks and reads; the page\'s approve answers with
   const { id } = await made.json();
   assert.equal((await (await call('/api/review-setup')).json()).requests[0].id, id);
   assert.equal((await call(`/api/review-setup/${id}/approve`, { method: 'POST', body: {}, login: 'bob', admin: false })).status, 403);
-  assert.equal((await call(`/api/review-setup/${id}/refuse`, { method: 'POST', body: {}, login: 'eve', admin: false })).status, 403, 'a stranger refuses nothing');
+  assert.equal((await call(`/api/review-setup/${id}/refuse`, { method: 'POST', body: {}, login: 'eve', admin: false })).status, 404, 'a stranger is told nothing');
+  assert.equal((await call(`/api/review-setup/${id}`, { login: 'eve', admin: false })).status, 404);
+  assert.deepEqual((await (await call('/api/review-setup', { login: 'eve', admin: false })).json()).requests, []);
   const approved = await (await call(`/api/review-setup/${id}/approve`, { method: 'POST', body: {} })).json();
   assert.equal(approved.status, 'applied');
   assert.equal((await call('/api/review-setup/aaaaaaaaaaa9')).status, 404);

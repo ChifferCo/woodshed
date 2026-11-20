@@ -43,6 +43,8 @@
   }
 
   function who(by) {
+    // A private session someone else's: whose it is, not its title.
+    if (by.private && !by.session) return [`a My Woodshed session of ${W.personText(by.person)}`];
     if (by.session) {
       return [h('a', { href: `/s/${encodeURIComponent(by.session)}` }, by.title || `session ${by.session}`),
         by.person ? ` (${by.private ? 'a My Woodshed session of ' : 'a shared session started by '}${W.personText(by.person)})` : ''];
@@ -90,7 +92,9 @@
       h('section', { class: 'secret-form' },
         h('h3', null, pending ? 'Approving it changes this ' : data.status === 'refused' ? 'Nothing was changed ' : 'What was done ',
           h('span', { class: `pill ${tone}` }, word)),
-        data.plan?.branch && h('p', { class: 'msg-plain' }, `Each file is one commit to ${data.plan.branch}, by the console's GitHub App, pinned to Woodshed `, h('code', null, data.ref), '.'),
+        data.plan?.branch && h('p', { class: 'msg-plain' }, `Each file is one commit to ${data.plan.branch}, by the console's GitHub App, pinned to Woodshed's commit `,
+          h('a', { href: `https://github.com/ChifferCo/woodshed/commit/${encodeURIComponent(data.ref)}`, target: '_blank', rel: 'noopener noreferrer' }, h('code', null, data.ref.slice(0, 12))),
+          ', which its main has.'),
         rows(),
         pending && data.plan?.setsKey && h('p', { class: 'msg-plain' }, 'ANTHROPIC_API_KEY is set from the console\'s own Anthropic key, sealed to the repo. Every workflow in ',
           h('code', null, data.repo), ' can read it, so anyone who can push a workflow there can spend it.'),
@@ -101,7 +105,7 @@
       h('section', null,
         h('h3', null, 'History'),
         h('ul', { class: 'review-setup-history' }, data.history.map((e) => h('li', null,
-          h('span', { class: 'review-setup-when' }, W.when(e.at)), ' ', e.what, ' by ', e.by.startsWith('session ') ? e.by : `@${e.by}`,
+          h('span', { class: 'review-setup-when' }, W.when(e.at)), ' ', e.what, ' by ', /^(a )?session\b/.test(e.by) ? e.by : `@${e.by}`,
           e.note && e.what !== 'refused' && e.what !== 'failed' ? ` · ${e.note}` : '')))));
   }
 

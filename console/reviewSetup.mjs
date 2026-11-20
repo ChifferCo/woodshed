@@ -39,6 +39,7 @@ const TOKEN_MARGIN_MS = 5 * 60_000;
 const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const REF_RE = /^(?!.*\.\.)[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 const ID_RE = /^[0-9a-f]{12}$/;
+const WRITER_ROLES = new Set(['admin', 'maintain', 'write']);
 
 export const REVIEW_WORKFLOW = '.github/workflows/woodshed-review.yml';
 export const QA_WORKFLOW = '.github/workflows/woodshed-qa.yml';
@@ -176,6 +177,11 @@ export function appGitHub({ appId, privateKey, fetchImpl = fetch, now = Date.now
     return { status: res.status, ok: res.ok, body: answer };
   }
 
+  async function publicGet(path) {
+    const res = await fetchImpl(`${GITHUB_API}${path}`, { headers: { accept: GITHUB_HEADERS.accept, 'x-github-api-version': GITHUB_HEADERS['x-github-api-version'] } });
+    return { status: res.status, ok: res.ok, body: await res.json().catch(() => ({})) };
+  }
+
   const appCall = (method, path, body) => send(`Bearer ${appJwt({ appId, privateKey: key(), nowMs: now() })}`, method, path, body);
 
   async function tokenFor({ repo, installationId, permissions }) {
@@ -200,12 +206,18 @@ export function appGitHub({ appId, privateKey, fetchImpl = fetch, now = Date.now
     as(scope) {
       return { call: async (method, path, body) => send(`Bearer ${await tokenFor(scope)}`, method, path, body) };
     },
-    /** A public repo's commit, read with no token: Woodshed's own main, to pin the workflows to. */
+    /** @returns {Promise<string|null>}  a public repo's commit for `ref`, read with no token; null when it has none */
     async publicCommit(repo, ref) {
-      const res = await fetchImpl(`${GITHUB_API}/repos/${repo}/commits/${encodeURIComponent(ref)}`, { headers: { accept: GITHUB_HEADERS.accept, 'x-github-api-version': GITHUB_HEADERS['x-github-api-version'] } });
-      const answer = await res.json().catch(() => ({}));
-      if (!res.ok || !/^[0-9a-f]{40}$/.test(String(answer.sha ?? ''))) throw new Error(`GitHub did not give ${repo}@${ref}'s commit: HTTP ${res.status}`);
-      return answer.sha;
+      const res = await publicGet(`/repos/${repo}/commits/${encodeURIComponent(ref)}`);
+      if (res.status === 404 || res.status === 422) return null;
+      if (!res.ok || !/^[0-9a-f]{40}$/.test(String(res.body.sha ?? ''))) throw new Error(`GitHub did not give ${repo}@${ref}'s commit: HTTP ${res.status}`);
+      return res.body.sha;
+    },
+    /** @returns {Promise<string>}  how `head` stands to `base` in a public repo: `identical`, `behind`, `ahead` or `diverged` */
+    async publicCompare(repo, base, head) {
+      const res = await publicGet(`/repos/${repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`);
+      if (!res.ok) throw new Error(`GitHub did not compare ${repo}'s ${base} with ${head}: HTTP ${res.status}`);
+      return String(res.body.status ?? '');
     },
   };
 }
@@ -286,15 +298,25 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
     };
   }
 
-  // A ref the asker gave is used as it is, as the script's --ref; otherwise Woodshed's main, as a commit.
+  // The commit of Woodshed's workflows the repo will run, next to the key: Woodshed's main as it is now, or a ref the
+  // asker gave, resolved to its commit and taken only when main has it. A branch anyone could push, or a fork's commit
+  // (which GitHub also answers for under Woodshed's name), is refused, and the page shows the commit, never a name.
   async function pin(ref) {
-    if (ref) return ref;
+    let main;
+    let sha;
     try {
-      return await github.publicCommit(WOODSHED_REPO, 'main');
+      main = await github.publicCommit(WOODSHED_REPO, 'main');
+      if (!main) throw new Error('no main');
+      if (!ref) return main;
+      sha = await github.publicCommit(WOODSHED_REPO, ref);
+      if (sha === main) return sha;
+      if (sha && ['behind', 'identical'].includes(await github.publicCompare(WOODSHED_REPO, main, sha))) return sha;
     } catch (err) {
-      console.warn('reviewSetup: Woodshed\'s main not read', { message: firstLine(err) });
-      throw shown(`Woodshed's main commit could not be read from GitHub to pin the workflows to: give a ref (${firstLine(err)})`, 502);
+      console.warn('reviewSetup: Woodshed\'s commit not read', { ref, message: firstLine(err) });
+      throw shown(`Woodshed's commit could not be read from GitHub to pin the workflows to: try again (${firstLine(err)})`, 502);
     }
+    console.log('reviewSetup: ref refused, not on Woodshed\'s main', { ref, sha: sha ?? null });
+    throw shown(`${ref} is not a commit of Woodshed's main: pin a commit main has, or leave ref out for main as it is now`, 400);
   }
 
   /**
@@ -312,11 +334,12 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
       ? { session: session.id, title: String(session.title ?? '').slice(0, 120), person: session.owner ?? session.startedBy ?? null, private: Boolean(session.owner) }
       : { login: login ?? null };
     const same = (r) => r.status === 'pending' && (session ? r.by.session === session.id : !r.by.session && r.by.login === by.login);
+    // Pinned first, so nothing waits between the checks below and keeping the request: two asks at once make one.
+    const ref = await pin(options.ref);
     const mine = state.reviewSetups.filter((r) => fresh(r) && same(r));
-    const again = mine.find((r) => r.repo === options.repo && r.qa === options.qa && (!options.ref || r.ref === options.ref));
+    const again = mine.find((r) => r.repo === options.repo && r.qa === options.qa && r.ref === ref);
     if (again) return { request: again, created: false };
     if (mine.length >= MAX_PENDING_EACH) throw shown(`${mine.length} of your requests already wait for approval: withdraw one first`, 429);
-    const ref = await pin(options.ref);
     const request = {
       id: newId(), kind: 'review', repo: options.repo, qa: options.qa, ref, status: 'pending', by,
       createdAt: iso(), expiresAt: iso(now() + REQUEST_TTL_MS), steps: [], history: [],
@@ -382,6 +405,8 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
     if (readable.administration) {
       const answer = await gh.call('GET', `/repos/${repo}/actions/permissions/workflow`);
       if (answer.ok) workflowAccess = answer.body;
+      // Written blind, the setting's default permission could change: it waits for a read.
+      else plan.blockers.push(`GitHub did not give ${repo}'s Actions setting (${gitHubReason(answer)}): load this page again.`);
     }
     const canApprove = workflowAccess?.can_approve_pull_request_reviews === true;
     step('approvals', canApprove ? 'GitHub Actions may already create and approve pull requests' : 'Let GitHub Actions create and approve pull requests',
@@ -389,6 +414,8 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
     if (readable.secrets) {
       const answer = await gh.call('GET', `/repos/${repo}/actions/secrets/${SECRET_NAME}`);
       plan.keySet = answer.ok ? true : answer.status === 404 ? false : null;
+      // Only a key GitHub says is not there is set: one it did not answer for may be the repo's own.
+      if (plan.keySet === null) plan.blockers.push(`GitHub did not say whether ${repo} has ${SECRET_NAME} (${gitHubReason(answer)}): load this page again.`);
     }
     step('secret', plan.keySet ? `${SECRET_NAME} is already set on ${repo}, and is left as it is` : `Set ${SECRET_NAME} on ${repo} from the console's Anthropic key`,
       { change: plan.keySet !== true });
@@ -400,7 +427,13 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
       plan.blockers.push(`The console's GitHub App may not ${missing.length > 1 ? 'do all of this' : 'do this'} on ${repo}: it lacks ${missing.join(', ')}. Add ${missing.length > 1 ? 'them' : 'it'} in the App's settings on GitHub (Permissions & events), then accept the change on its installation for ${repo.split('/')[0]}.`);
     }
     plan.setsKey = plan.steps.some((s) => s.key === 'secret' && s.change);
-    if (plan.setsKey && !(await teamKey())) plan.blockers.push('The console has no Anthropic key to set: an admin sets anthropic-api-key on the Secrets page first.');
+    // QA in CI starts the pull request's own app on the runner that then holds the key, so a pull request's code (a
+    // session's, say) could read it: the console's key never goes to a repo for that.
+    if (plan.setsKey && qa === 'actions') {
+      plan.blockers.push(`QA in ${repo}'s CI runs each pull request's own app next to ${SECRET_NAME}, so the console's key is not set for it: set the repo's own ${SECRET_NAME} first, or ask for review alone, or QA as a Woodshed session.`);
+    } else if (plan.setsKey && !(await teamKey())) {
+      plan.blockers.push('The console has no Anthropic key to set: an admin sets anthropic-api-key on the Secrets page first.');
+    }
     return plan;
   }
 
@@ -421,17 +454,54 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
     return { ok: true, why: null };
   }
 
+  const isMine = (request, login) => Boolean(login && (request.by.login === login || request.by.person === login));
+
+  // What `login` may do on the repo, as GitHub tells the App: null when it is not a collaborator, or the App is not there.
+  async function repoRole(repo, login) {
+    if (!github || !login) return null;
+    const installation = await github.installationOf(repo);
+    if (!installation) return null;
+    const answer = await github.as({ repo, installationId: installation.id, permissions: { metadata: 'read' } })
+      .call('GET', `/repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`);
+    if (answer.status === 404) return null;
+    if (!answer.ok) throw new Error(`GitHub did not say what @${login} may do on ${repo}: ${gitHubReason(answer)}`);
+    return answer.body.role_name ?? answer.body.permission ?? null;
+  }
+
+  /** @returns {Promise<boolean>}  whether `login` may see the request at all */
+  async function canSee(request, login, { consoleAdmin }) {
+    return consoleAdmin || isMine(request, login) || WRITER_ROLES.has(await repoRole(request.repo, login));
+  }
+
+  // A private session is its owner's: someone else sees whose it is, not its title or id.
+  function shownBy(request, login, consoleAdmin) {
+    if (!request.by.private || consoleAdmin || request.by.person === login) return { by: request.by, history: request.history };
+    return {
+      by: { private: true, person: request.by.person },
+      history: request.history.map((e) => (e.what === 'asked' && e.by.startsWith('session ') ? { ...e, by: 'a session' } : e)),
+    };
+  }
+
   /**
-   * The page's view: the request, what approving it would change now, and whether `login` may approve it.
+   * The page's view: the request, what approving it would change now, and whether `login` may approve it. Whoever
+   * asked sees its status; what the App reads of the repo only those who can write to it, and console admins.
    * @param {{consoleAdmin: boolean}} opts
+   * @throws {Error}  `shown` 404, for someone who neither asked, nor can write to the repo, nor is a console admin
    */
   async function view(request, login, { consoleAdmin }) {
-    const mine = Boolean(login && (request.by.login === login || request.by.person === login));
-    const out = { ...statusOf(request), by: request.by, history: request.history, plan: null, canApprove: { ok: false, why: null }, canRefuse: false, mine };
-    out.canRefuse = request.status === 'pending' && (consoleAdmin || mine);
+    const mine = isMine(request, login);
+    const role = consoleAdmin ? null : await repoRole(request.repo, login);
+    const writer = WRITER_ROLES.has(role);
+    if (!mine && !consoleAdmin && !writer) throw shown('no such request', 404);
+    const out = { ...statusOf(request), ...shownBy(request, login, consoleAdmin), plan: null, canApprove: { ok: false, why: null }, canRefuse: false, mine };
+    out.canRefuse = request.status === 'pending' && (consoleAdmin || mine || role === 'admin');
     if (request.status !== 'pending') return out;
     if (!github) {
       out.canApprove.why = 'This console has no GitHub App of its own to apply it with.';
+      return out;
+    }
+    if (!consoleAdmin && !writer) {
+      out.canApprove.why = `What it would change is shown to those who can write to ${request.repo}: an admin of it approves.`;
       return out;
     }
     try {
@@ -441,7 +511,6 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
         steps: plan.steps.map(({ key, what, change, missing, path, text }) => ({ key, what, change, missing, path: path ?? null, text: text ?? null })),
       };
       out.canApprove = plan.blockers.length ? { ok: false, why: plan.blockers[0] } : await approverCheck(request, plan, login, { consoleAdmin });
-      if (!out.canRefuse && out.canApprove.ok) out.canRefuse = true;
     } catch (err) {
       console.warn('reviewSetup: plan not read', { id: request.id, repo: request.repo, message: firstLine(err) });
       out.canApprove.why = `GitHub did not answer: ${firstLine(err)}`;
@@ -563,7 +632,7 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
   /** Refused by an approver, or withdrawn by whoever asked. */
   function refuse(request, login, reason) {
     if (request.status !== 'pending' || applying.has(request.id)) throw shown(`it is ${request.status === 'pending' ? 'being applied' : request.status} already`, 409);
-    const own = login && (request.by.login === login || request.by.person === login);
+    const own = isMine(request, login);
     const note = String(reason ?? '').trim().slice(0, 300);
     decide(request, 'refused', `${own ? 'withdrawn' : 'refused'} by @${login ?? 'console'}${note ? `: ${note}` : ''}`, { by: login ?? 'console' });
     save();
@@ -571,12 +640,13 @@ export function createReviewSetup({ store, github, teamKey, publicUrl, linkQuery
     return request;
   }
 
-  /** @returns {object[]}  the requests, newest first, for the page's list */
-  function list() {
-    return state.reviewSetups.map(fresh).slice().reverse().map((r) => ({ ...statusOf(r), by: r.by }));
+  /** @returns {object[]}  the requests `login` asked for, every one for a console admin, newest first */
+  function list(login, { consoleAdmin }) {
+    return state.reviewSetups.map(fresh).filter((r) => consoleAdmin || isMine(r, login)).reverse()
+      .map((r) => ({ ...statusOf(r), by: shownBy(r, login, consoleAdmin).by }));
   }
 
-  return { create, find, view, approve, refuse, list, statusOf, available: () => Boolean(github) };
+  return { create, find, view, canSee, approve, refuse, list, statusOf, available: () => Boolean(github) };
 }
 
 const API_RE = /^\/api\/review-setup(?:\/([0-9a-f]{12})(?:\/(approve|refuse))?)?$/;
@@ -612,10 +682,13 @@ async function readBody(req, limit = 4096) {
 /**
  * The signed-in API. The server has already checked the host, and for a POST the origin and `x-woodshed`.
  *
- *   GET  /api/review-setup                 {"requests": [...]}: every request, newest first
+ *   GET  /api/review-setup                 {"requests": [...]}: those you asked for (every one, for a console admin),
+ *                                          newest first
  *   POST /api/review-setup                 {"repo", "qa"?, "qaRunner"?, "ref"?}  ->  201 the request's status, with
  *                                          `url`, its approval page (200 for the same one already waiting)
- *   GET  /api/review-setup/<id>            the request, what approving it would change now, and `canApprove`
+ *   GET  /api/review-setup/<id>            the request, what approving it would change now, and `canApprove`: what
+ *                                          it would change only to those who can write to the repo and console admins;
+ *                                          404 to anyone else who did not ask
  *   POST /api/review-setup/<id>/approve    applies it  ->  the request, `applied` or `failed` with `why`
  *   POST /api/review-setup/<id>/refuse     {"reason"?}  ->  the request, `refused`
  * @param {{reviewSetup: ReturnType<typeof createReviewSetup>}} deps
@@ -625,7 +698,7 @@ export function createReviewSetupApi({ reviewSetup }) {
   return async function handle(req, res, { route, login, admin }) {
     try {
       if (!route.id) {
-        if (req.method === 'GET') return reply(res, 200, { requests: reviewSetup.list() });
+        if (req.method === 'GET') return reply(res, 200, { requests: reviewSetup.list(login, { consoleAdmin: Boolean(admin) }) });
         if (req.method !== 'POST') return reply(res, 405, { error: 'method not allowed' });
         const { request, created } = await reviewSetup.create(parseRequest(await readBody(req)), { login });
         return reply(res, created ? 201 : 200, reviewSetup.statusOf(request));
@@ -636,6 +709,11 @@ export function createReviewSetupApi({ reviewSetup }) {
         return reply(res, 404, { error: 'no such request' });
       }
       const consoleAdmin = Boolean(admin);
+      // Someone who did not ask, cannot write to the repo and is not a console admin is told nothing of it.
+      if (route.action && !(await reviewSetup.canSee(request, login, { consoleAdmin }))) {
+        req.resume();
+        return reply(res, 404, { error: 'no such request' });
+      }
       if (!route.action && req.method === 'GET') return reply(res, 200, await reviewSetup.view(request, login, { consoleAdmin }));
       if (!route.action || req.method !== 'POST') return reply(res, 405, { error: 'method not allowed' });
       const body = await readBody(req);
