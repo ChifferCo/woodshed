@@ -14,7 +14,7 @@
 
 import { randomBytes } from 'node:crypto';
 
-import { REVIEW_MODEL } from './analyze.mjs';
+import { REVIEW_MODEL, describedAs } from './analyze.mjs';
 import { trimHistory } from './chat.mjs';
 
 const MAX_QUESTION_CHARS = 500;
@@ -164,7 +164,7 @@ export function buildExplainPrompt({ meta, file, filePath, line, endLine, side, 
       lines.push('rather than line by line.');
     }
   }
-  lines.push(`Pull request: ${String(meta.title || '').slice(0, 300)} (#${meta.number})`);
+  lines.push(`Pull request: ${describedAs(meta).title}${meta.number ? ` (#${meta.number})` : ''}`);
   lines.push('');
 
   const excerpt = excerptAround({ file, line, side });
