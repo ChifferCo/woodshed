@@ -433,21 +433,40 @@ async function newestRollout(codexHome) {
   return null;
 }
 
+// The question claude has open, from its PreToolUse hook (hookState.mjs, ASK_FILE): claude writes the call to its
+// transcript only once it is answered or cancelled. Null for none, or a file being written.
+async function openAsk(file) {
+  try {
+    const [stat, raw] = await Promise.all([fs.stat(file), fs.readFile(file, 'utf8')]);
+    const ask = JSON.parse(raw);
+    const questions = askedQuestions({ name: 'AskUserQuestion', input: ask?.input });
+    if (typeof ask?.toolUseId !== 'string' || !ask.toolUseId || !questions) return null;
+    const at = typeof ask.at === 'string' ? ask.at : null;
+    return { toolUseId: ask.toolUseId, mtimeMs: stat.mtimeMs, entry: { role: 'tool', tool: 'AskUserQuestion', text: questions[0].question, questions, at } };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The newest conversation of the session's agent, newest entries last.
  * @param {{agent: 'claude'|'codex', claudeDir: string, codexHome: string, root?: string, limit?: number, since?: number}} opts
  *   claudeDir: claude's transcript folder for the repo. root: the repo, which edits' paths are given relative to.
- *   since: the writtenAt of the caller's last answer
+ *   since: the writtenAt of the caller's last answer. askFile: where claude's hook keeps the question it has open
+ *   (hookState.mjs, ASK_FILE), added at the end while the transcript does not have it yet
  * @returns {Promise<{agent: string, entries: Entry[], partial: boolean, writtenAt: number|null}|{agent: string, unchanged: true, writtenAt: number}>}
  *   partial: older entries were left out, by the read or by the limit. unchanged: the newest record is still the
  *   one written at `since`, so the caller's entries stand
  */
-export async function readSessionTranscript({ agent, claudeDir, codexHome, root, limit = MAX_ENTRIES, since = null }) {
+export async function readSessionTranscript({ agent, claudeDir, codexHome, root, limit = MAX_ENTRIES, since = null, askFile = null }) {
   const newest = agent === 'codex'
     ? await newestRollout(codexHome)
     : await newestIn(claudeDir, (n) => n.endsWith('.jsonl'));
   if (!newest) return { agent, entries: [], partial: false, writtenAt: null };
-  if (since !== null && newest.stat.mtimeMs === since) return { agent, unchanged: true, writtenAt: since };
+  const ask = agent === 'claude' && askFile ? await openAsk(askFile) : null;
+  // A question asked since the transcript's last write is news too.
+  const writtenAt = Math.max(newest.stat.mtimeMs, ask?.mtimeMs ?? 0);
+  if (since !== null && writtenAt === since) return { agent, unchanged: true, writtenAt: since };
   let text;
   let partial = false;
   if (newest.file.endsWith('.zst')) {
@@ -464,12 +483,14 @@ export async function readSessionTranscript({ agent, claudeDir, codexHome, root,
     ({ text, partial } = await tail(newest.file, newest.stat.size));
   }
   const all = agent === 'codex' ? parseCodexRollout(text, { partial, root }) : parseClaudeTranscript(text, { partial, root });
+  // Answered or cancelled, the call is in the transcript under its id, and the transcript's own entry stands.
+  if (ask && !text.includes(ask.toolUseId)) all.push(ask.entry);
   const max = Math.max(1, Math.min(MAX_ENTRIES, Math.trunc(Number(limit)) || MAX_ENTRIES));
   return {
     agent,
     // The newest edits keep their hunks within the answer's bound; older ones their files and counts.
     entries: capDiffs(all.slice(-max)),
     partial: partial || all.length > max,
-    writtenAt: newest.stat.mtimeMs,
+    writtenAt,
   };
 }

@@ -17,6 +17,12 @@ import { isMain } from '../shared/isMain.mjs';
 // session task needs it and it is in no PER_SESSION_ENV (providers/aws/ecsLauncher.mjs): every session uses the default.
 export const STATE_FILE = process.env.WOODSHED_CLAUDE_STATE_FILE || '/tmp/woodshed-claude-state.json';
 
+// The question claude's AskUserQuestion has open, for the Chat tab (sessionTranscript.mjs, readSessionTranscript).
+// Claude Code writes the call to its transcript only once it is answered or cancelled (measured on 2.1.329; 2.1.247
+// wrote it as it asked), so the Chat tab would show no question while claude waits on one. PreToolUse fires before the
+// picker opens, with the questions and the call's id. Beside STATE_FILE, so it moves with it.
+export const ASK_FILE = STATE_FILE.replace(/\.json$/, '') + '-ask.json';
+
 // PreToolUse comes 30 ms before PermissionRequest for the same call, so needs-you is the later write. Notification
 // repeats it 6 s on, in case a parallel tool's PostToolUse landed in between.
 const STATE_BY_EVENT = {
@@ -76,6 +82,29 @@ export function runningShells(payload) {
   return tasks.filter((t) => t?.type === 'shell' && t?.status === 'running' && WAITING_JOB_RE.test(String(t?.command ?? ''))).length;
 }
 
+/**
+ * What a firing does to ASK_FILE. Esc on the picker fires no hook: the cancelled call then lands in the transcript with
+ * its id, which tells the reader the question is no longer open.
+ * @param {any} payload  the hook's stdin, parsed
+ * @returns {{write: {toolUseId: string, input: object, at: string}}|{clear: true}|null}
+ */
+export function askForHook(payload, now = Date.now()) {
+  const event = payload?.hook_event_name;
+  const asks = payload?.tool_name === 'AskUserQuestion' && !payload?.agent_id;
+  if (event === 'PreToolUse' && asks) {
+    if (typeof payload.tool_use_id !== 'string' || !Array.isArray(payload.tool_input?.questions)) return null;
+    return { write: { toolUseId: payload.tool_use_id, input: payload.tool_input, at: new Date(now).toISOString() } };
+  }
+  if ((event === 'PostToolUse' && asks) || event === 'UserPromptSubmit' || event === 'Stop' || event === 'SessionStart') return { clear: true };
+  return null;
+}
+
+function writeAtomically(file, text) {
+  const tmp = `${file}.${process.pid}`;
+  fs.writeFileSync(tmp, text);
+  fs.renameSync(tmp, file);
+}
+
 function main() {
   let payload;
   try {
@@ -83,11 +112,12 @@ function main() {
   } catch {
     return;
   }
+  const ask = askForHook(payload);
+  if (ask?.write) writeAtomically(ASK_FILE, JSON.stringify(ask.write));
+  else if (ask?.clear) fs.rmSync(ASK_FILE, { force: true });
   const state = stateForHook(payload);
   if (!state) return;
-  const tmp = `${STATE_FILE}.${process.pid}`;
-  fs.writeFileSync(tmp, JSON.stringify({ state, event: payload.hook_event_name, at: Date.now(), shells: runningShells(payload) }));
-  fs.renameSync(tmp, STATE_FILE);
+  writeAtomically(STATE_FILE, JSON.stringify({ state, event: payload.hook_event_name, at: Date.now(), shells: runningShells(payload) }));
 }
 
 if (isMain(import.meta.url)) main();

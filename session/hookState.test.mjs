@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
-import { stateForHook, runningShells } from './hookState.mjs';
+import { askForHook, stateForHook, runningShells } from './hookState.mjs';
 
 const run = promisify(execFile);
 
@@ -83,4 +83,21 @@ test('the hook prints nothing, since a UserPromptSubmit hook\'s output goes into
   child.child.stdin.end(JSON.stringify({ hook_event_name: 'SubagentStop' }));
   const { stdout, stderr } = await child;
   assert.equal(stdout + stderr, '');
+});
+
+// The firings around an AskUserQuestion, as Claude Code 2.1.329 sent them: PreToolUse before the picker opens, with the
+// questions and the call's id, and PostToolUse once it is answered. Esc fires none.
+test('the question claude opens is kept until it is answered or a new turn starts', () => {
+  const input = { questions: [{ question: 'Which colour?', header: 'Colour', options: [{ label: 'Red' }, { label: 'Blue' }], multiSelect: false }] };
+  const now = Date.parse('2026-11-20T02:02:21.000Z');
+  assert.deepEqual(askForHook({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_use_id: 'toolu_1', tool_input: input }, now),
+    { write: { toolUseId: 'toolu_1', input, at: '2026-11-20T02:02:21.000Z' } });
+  assert.deepEqual(askForHook({ hook_event_name: 'PostToolUse', tool_name: 'AskUserQuestion', tool_use_id: 'toolu_1' }), { clear: true });
+  for (const event of ['UserPromptSubmit', 'Stop', 'SessionStart']) assert.deepEqual(askForHook({ hook_event_name: event }), { clear: true });
+  // Another tool, a subagent's question (claude's main pane shows none of it), or one with no id says nothing of it.
+  assert.equal(askForHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_use_id: 'toolu_2', tool_input: { command: 'ls' } }), null);
+  assert.equal(askForHook({ hook_event_name: 'PostToolUse', tool_name: 'Bash' }), null);
+  assert.equal(askForHook({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', agent_id: 'a1', tool_use_id: 'toolu_3', tool_input: input }), null);
+  assert.equal(askForHook({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', tool_input: input }), null);
+  assert.equal(askForHook({ hook_event_name: 'PermissionRequest', tool_name: 'AskUserQuestion', tool_input: input }), null);
 });

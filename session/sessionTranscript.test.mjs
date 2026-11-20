@@ -393,3 +393,45 @@ test('a prompt that quotes a command tag in its prose is the prompt, not the com
   const entries = parseClaudeTranscript(user('Explain <command-name>/help</command-name> in the transcript format.'));
   assert.deepEqual(entries.map((e) => e.text), ['Explain <command-name>/help</command-name> in the transcript format.']);
 });
+
+// Claude Code 2.1.329 writes an AskUserQuestion call to its transcript only once it is answered or cancelled; its
+// PreToolUse hook keeps the open one in a file (hookState.mjs, ASK_FILE).
+test("claude's open question comes from its hook's file until the transcript has the call", async (t) => {
+  const dir = home(t);
+  const claudeDir = path.join(dir, 'claude');
+  fs.mkdirSync(claudeDir);
+  const file = path.join(claudeDir, 'now.jsonl');
+  const askFile = path.join(dir, 'ask.json');
+  const asked = '2026-11-20T02:02:21.000Z';
+  fs.writeFileSync(file, CLAUDE);
+  fs.utimesSync(file, new Date(1000), new Date(1000));
+  const before = await readSessionTranscript({ agent: 'claude', claudeDir, codexHome: dir, askFile });
+  assert.equal(before.entries.at(-1).text, 'Done: both fixed.');
+  fs.writeFileSync(askFile, JSON.stringify({
+    toolUseId: 'toolu_9',
+    at: asked,
+    input: { questions: [{ question: 'Resolve them for you?', options: [{ label: 'Resolve all 3', description: 'I mark them resolved.' }, { label: 'I will do it' }] }] },
+  }));
+  fs.utimesSync(askFile, new Date(2000), new Date(2000));
+  // The question is news to a caller that read the transcript before it was asked.
+  const open = await readSessionTranscript({ agent: 'claude', claudeDir, codexHome: dir, askFile, since: before.writtenAt });
+  assert.equal(open.writtenAt, 2000);
+  assert.deepEqual(open.entries.at(-1), {
+    role: 'tool', tool: 'AskUserQuestion', text: 'Resolve them for you?', at: asked,
+    questions: [{ question: 'Resolve them for you?', options: ['Resolve all 3', 'I will do it'], descriptions: ['I mark them resolved.', ''] }],
+  });
+  assert.deepEqual(await readSessionTranscript({ agent: 'claude', claudeDir, codexHome: dir, askFile, since: 2000 }), { agent: 'claude', unchanged: true, writtenAt: 2000 });
+  // Cancelled with Esc, which fires no hook: the call lands in the transcript under its id, with its result, and the
+  // file left behind adds nothing.
+  fs.appendFileSync(file, '\n' + [
+    line({ type: 'assistant', timestamp: asked, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_9', name: 'AskUserQuestion', input: { questions: [{ question: 'Resolve them for you?', options: [{ label: 'Resolve all 3' }] }] } }] } }),
+    line({ type: 'user', timestamp: asked, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_9', is_error: true, content: 'rejected' }] } }),
+  ].join('\n'));
+  const closed = await readSessionTranscript({ agent: 'claude', claudeDir, codexHome: dir, askFile });
+  assert.deepEqual(closed.entries.filter((e) => e.questions).map((e) => [e.text, e.error]), [['Resolve them for you?', true]]);
+  // A file the hook is still writing, or one that names no question, is no question.
+  fs.writeFileSync(askFile, '{"toolUseId": "toolu_1');
+  assert.equal((await readSessionTranscript({ agent: 'claude', claudeDir, codexHome: dir, askFile })).entries.at(-1).tool, 'AskUserQuestion');
+  fs.writeFileSync(askFile, JSON.stringify({ toolUseId: 'toolu_1', input: { questions: [] } }));
+  assert.equal((await readSessionTranscript({ agent: 'claude', claudeDir, codexHome: dir, askFile })).entries.length, closed.entries.length);
+});

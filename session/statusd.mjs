@@ -66,7 +66,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { classifyPane, parseTranscriptTail } from '../shared/sessionState.mjs';
-import { STATE_FILE } from './hookState.mjs';
+import { ASK_FILE, STATE_FILE } from './hookState.mjs';
 import { STOP_TIMEOUT_MS, SYNC_EVERY_MS, exchange, readState, syncOnce, writeState } from './settingsSync.mjs';
 import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs';
 import { readDisk, readUsage, usageBetween } from './usage.mjs';
@@ -1763,6 +1763,7 @@ async function handle(req, res) {
       claudeDir: transcriptDir(),
       root: REPO_DIR,
       codexHome: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
+      askFile: ASK_FILE,
       ...(limit ? { limit: Number(limit) } : {}),
       ...(params.get('since') && Number.isFinite(since) ? { since } : {}),
     }).catch((err) => {
