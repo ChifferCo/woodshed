@@ -496,7 +496,9 @@ test('an admin invites, accepts and removes on the People page, a member who is 
   const github = { canWrite: async (login) => login !== 'outsider' };
   const revoked = [];
   const tunnel = { revoke: (login) => revoked.push(login) };
-  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, github, tunnel });
+  const cliRevoked = [];
+  const cli = { revokeAll: (login) => cliRevoked.push(login), list: () => [] };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, github, tunnel, cli });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
@@ -533,6 +535,7 @@ test('an admin invites, accepts and removes on the People page, a member who is 
   assert.equal((await post(port, '/api/people/remove', { login: 'sam-ops' }, mia)).status, 200);
   assert.equal((await getWith(port, '/api/people', sam)).status, 401, 'removed, they are out at once');
   assert.deepEqual(revoked, ['sam-ops'], 'and their database tunnels with them, the open ones too');
+  assert.deepEqual(cliRevoked, ['sam-ops'], 'and their command line sign-ins');
   assert.equal((await post(port, '/api/access/ask', {}, { ...sam, origin: 'https://evil.example' })).status, 403);
 });
 

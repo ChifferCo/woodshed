@@ -1490,6 +1490,19 @@ answers none of these, and the app signs in inside its window there, unless the 
 console's pages sign in at (`/auth/start` here), which the app sends to the browser. The console logs `auth: desktop sign-in code
 issued`, `auth: desktop signed in`, or `auth: desktop sign-in code refused` with `known` and `verified`.
 
+**The woodshed command line** (`cli/`) signs in by a device code (`console/cliSignIn.mjs`), as `gh auth login` does.
+`woodshed login` asks `POST /api/cli/device` for a code, prints it, and opens `/cli?code=` in the browser, which signs in
+as usual if it has to, then asks **Sign in the woodshed command line?**, naming the computer, the code and when it was
+asked. Only that page's button, a form POST from the console's own page (Origin checked, never framed),
+approves it; Deny refuses it. The CLI asks `POST /api/cli/token` every 5 seconds meanwhile, and gets its token once.
+Both of those refuse a call with an Origin header, which a browser always sends and the CLI never does, so no web page
+starts a sign-in to hand someone the link of. The code lasts 10 minutes. The token (`wsc_…`) is its own kind, not the
+database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer` to `/api/cli/*` alone for now. The console
+keeps only its SHA-256, in `state.json` under `cliTokens`, and My settings' Command line row lists each computer with
+Revoke. Remove My Woodshed, People's Remove and leaving a hosting program's list end them all. The console logs
+`cliSignIn: sign-in started`, `sign-in approved` or `denied`, `token made`, `token revoked` with `by`, and `refused, a
+browser's call` or `refused, the token's person is no longer a member`.
+
 **A console with no repo yet** (neither `WOODSHED_REPO` nor `WOODSHED_PROJECTS`, and nothing added on the
 Repos card) has no repository to ask about. It lets in the owner of the account its GitHub App is installed on: that
 user, or an active admin of that organization (`console/appOwner.mjs`, asked with a token of the installation narrowed
@@ -1789,6 +1802,9 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   the browser is signed in as, `desktopCode` issues a code for them when they press Sign in, `claimDesktopCode` makes
   the app a session of the program's), the codes from `createDesktopCodes` (`auth.mjs`), and `signInUrl(back)` and
   `signInPaths` for the program's sign-in page.
+- The command line's routes are core's own (`cliSignIn.mjs`): `/cli` is behind the program's sign-in like any page, and
+  `/api/cli/*` carries its own token in `Authorization`, so the program's proxy passes those through without its
+  sign-in, as it does `/api/tunnel/*`.
 - `repos: {list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`: where the program keeps the
   installation's repos, which it built `config.projects` from, so Console settings' Repos card changes them there and
   core keeps no list of its own (`addedProjects`, above under the Repos card). `list` answers what Add a repo offers:

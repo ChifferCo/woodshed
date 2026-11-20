@@ -43,7 +43,8 @@ export function desktopLink({ code, challenge, next }) {
   return link.href;
 }
 
-const PAGE_STYLE = `
+// The card both sign-in pages are told in (designSystem/components/DesktopSignIn), also the command line's (cliSignIn.mjs).
+export const PAGE_STYLE = `
   :root { color-scheme: light dark; --ink: #1b2232; --sub: #666666; --ground: #ffffff; --stopped: #f6f5f2; --line: #e2e2e2; --action: #b45a05; --action-ink: #ffffff; }
   @media (prefers-color-scheme: dark) { :root { --ink: #e8ecf5; --sub: #a3aabb; --ground: #12151c; --stopped: #10131a; --line: #2a3142; --action: #f59433; --action-ink: #1b1204; } }
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px; box-sizing: border-box; background: var(--stopped); color: var(--ink); font: 15px/1.5 "Red Hat Display", system-ui, sans-serif; }
@@ -55,7 +56,7 @@ const PAGE_STYLE = `
   form { margin: 0; }`;
 
 // Never in a frame: a page of another site could otherwise lay it under a click of its own.
-const PAGE_HEADERS = {
+export const PAGE_HEADERS = {
   // same-origin, not no-referrer: with no-referrer Chrome sends the consent form's POST with `Origin: null`, which the
   // origin check refuses. Other sites, and the woodshed:// link, still get no referrer.
   'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'same-origin',

@@ -44,6 +44,10 @@
 //                                POST /api/my/databases/restore/apply {"confirm": "apply"} swaps it in, /discard drops it (dbRestore.mjs)
 //   POST /api/my/tunnel-token    a token for woodshed-db.mjs, shown once; POST /api/my/tunnel-token/remove revokes it
 //   GET  /api/tunnel/connection, UPGRADE /api/tunnel/pg|mongo   your databases from your computer, by that token (dbTunnel.mjs)
+//   POST /api/cli/device, /api/cli/token, GET /api/cli/me, POST /api/cli/logout   the woodshed command line's sign-in by a
+//                                device code, and its token's calls (cliSignIn.mjs); GET/POST /cli is the page the code is
+//                                approved on, signed in
+//   POST /api/my/cli-tokens/<id>/revoke   ends one computer's command line sign-in, from My settings
 //   POST /api/sessions           {"number": 123, "startedBy": "login", "prompt": "..."}
 //   POST /api/sessions/<id>/stop
 //   POST /api/sessions/<id>/pin     {"on": true}   pinned to the top of your rail; yours alone
@@ -194,6 +198,7 @@ import { createReviewProxy, isReviewPath } from './reviewProxy.mjs';
 import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
 import { safeNext, signInFailure } from './auth.mjs';
 import { handleDesktopSignIn } from './desktopSignIn.mjs';
+import { handleCliApi, handleCliPage } from './cliSignIn.mjs';
 import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
 import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
 import { QA_POSTER_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
@@ -304,6 +309,7 @@ const MY_FILE_RE = /^\/api\/my\/files\/([a-z-]+)(\/reset)?$/;
 const MY_GITHUB_RE = /^\/api\/my\/github\/(identity|disconnect)$/;
 const MY_SESSION_ACTION_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/(resume|remove)$/;
 const MY_TUNNEL_RE = /^\/api\/my\/tunnel-token(\/remove)?$/;
+const MY_CLI_REVOKE_RE = /^\/api\/my\/cli-tokens\/([0-9a-f]{16})\/revoke$/;
 const MY_RESTORE_RE = /^\/api\/my\/databases\/restore\/(apply|discard)$/;
 // A whole .env file, JSON-escaped, under Secrets Manager's 64 KB; own files' limit follows the secret store's.
 const MAX_FILE_BODY_BYTES = 160 * 1024;
@@ -710,6 +716,7 @@ export function createHandler({
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
+  cli = null,
 }) {
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
   const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
@@ -759,6 +766,13 @@ export function createHandler({
     if (!signInOn()) return true;
     // A program's own list (hostedMembers.mjs) is not counted: the program says it, as without one.
     return Boolean(members) && !members.hosted && members.view().members.length === 1;
+  }
+
+  // What `woodshed status` says of the console besides who is signed in: its name, and the GitHub account its repos are
+  // on (the default project's owner), as the org. Null with no repo yet.
+  function cliAbout() {
+    const repo = defaultProject(config).repo || null;
+    return { console: consoleName, org: repo ? repo.split('/')[0] : null };
   }
 
   // Who is signed in to the console: the hosting proxy's identity, or the browser's session cookie.
@@ -1042,6 +1056,7 @@ export function createHandler({
       fleet.releaseAssignments?.({ login: handle, by: login });
       // Their token is refused from now on (createTunnel's `allowed`); this also closes the tunnels already open.
       tunnel?.revoke(handle);
+      cli?.revokeAll(handle, `People, by @${login}`);
     }
     return peopleReply(res);
   }
@@ -1432,6 +1447,8 @@ export function createHandler({
       agents: { claude: Boolean(view.claudeToken?.set), codex: Boolean(view.codexAuth?.set) || teamOpenAiKey }, databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last(defaultProject(config).name) ?? null,
       // Each project the person may start on that is not ready, by name (databaseGate.mjs), as last read.
       projectBlockers: blockersSeen.get(login) ?? {}, restore: dbRestore?.view(login) ?? null, tunnel: tunnel?.view(login) ?? null, running: activePrivateCount(fleet.sessions(), login),
+      // The computers the woodshed command line is signed in on as this person (cliSignIn.mjs), never a token.
+      cli: cli ? { tokens: cli.list(login) } : null,
       limit: config.maxPrivatePerPerson, limitDefaults: { idleHours: config.limits.idleMs / 3_600_000, lifetimeHours: config.limits.lifetimeMs / 3_600_000 }, names: namesFor([login]),
       // A console that started with no repo: the setup card sends an admin to add one on Console settings.
       repoNeeded: !hasRepo(config),
@@ -1513,6 +1530,7 @@ export function createHandler({
     if (databases) await databases.remove(login);
     dbRestore?.forget(login);
     tunnel?.revoke(login);
+    cli?.revokeAll(login, 'Remove My Woodshed');
     // Last: each stop above tries to save the home, which the session API refuses for someone with no record now.
     if (homes) {
       await homes.removeSessionsOf(login);
@@ -2271,6 +2289,12 @@ export function createHandler({
     if (SETUP_WRITE_RE.test(pathname)) return githubSetupWrite(req, res, pathname, login);
     if (pathname === `${REVIEWER_SETUP_PATH}/manifest`) return reviewerSetupWrite(req, res);
     if (pathname === '/api/my/uploads') return stageUpload(req, res, login);
+    const cliRevoke = MY_CLI_REVOKE_RE.exec(pathname);
+    if (cliRevoke) {
+      if (!cli) return reply(res, 404, { error: 'this console has no command line sign-in' });
+      if (!cli.revoke(login, cliRevoke[1])) return reply(res, 404, { error: 'no such sign-in' });
+      return reply(res, 200, myView(login));
+    }
     if (pathname === '/api/my/databases/restore') return restoreUpload(req, res, login);
     const repoRoute = repoSettingsApi && repoSettingsRoute(pathname);
     if (repoRoute) return repoSettingsApi(req, res, { route: repoRoute, login });
@@ -2391,6 +2415,11 @@ export function createHandler({
     if (url.pathname === CONNECTION_PATH && req.method === 'GET') {
       return tunnel ? tunnel.connection(req, res) : reply(res, 404, { error: 'this console has no tunnel to your databases' });
     }
+    // The woodshed command line has no cookie either: a device code, then its token, is its sign-in.
+    if (url.pathname.startsWith('/api/cli/')) {
+      if (!cli) return reply(res, 404, { error: 'this console has no command line sign-in' });
+      return handleCliApi({ req, res, url, cli, publicUrl: config.publicUrl, about: cliAbout });
+    }
     // Sign-in's cookies belong to one host name, and GitHub sends people back only to publicUrl's. Once sign-in
     // can be used, a page opened on another public name (the bare IP) moves there.
     const stays = url.pathname === '/healthz';
@@ -2415,6 +2444,8 @@ export function createHandler({
       console.log('console: Connect GitHub started', { login: user.login });
       return redirect(res, location, setCookie);
     }
+    // The page a command line's sign-in code is approved on: its form posts without x-woodshed, as a page's form does.
+    if (cli && await handleCliPage({ req, res, url, cli, login: user.login, consoleName })) return;
     if (handleTerminalRequest(req, res, { targetFor: terminalTarget(fleet, user.login, access) })) return;
     if (isReviewPath(url.pathname)) return proxyReview(req, res, url, user.login);
     const { pathname } = url;
