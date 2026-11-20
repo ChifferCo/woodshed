@@ -1086,8 +1086,8 @@ you out.
   delivery the Lambda refused never reaches the queue: GitHub's Recent
   Deliveries page shows those. When a source is switched off on Console
   settings (below), the page says so above the list.
-- **Webhooks** card on Console settings (`/console-settings#webhooks`): a
-  switch for GitHub, and on the Slack card's Questions row one for Slack, shown
+- **GitHub webhooks** row on Console settings, under This console (`/console-settings#webhooks`): a
+  switch for GitHub on the row itself, and on the Slack group's Questions row one for Slack, shown
   where webhooks reach the console (a queue, the local receiver, or the program
   it is embedded in), that turn each source off on its own. **GitHub webhooks** off, the console drops
   each GitHub delivery as it arrives, so the queue forgets it, and polls GitHub
@@ -1939,8 +1939,9 @@ console only, like the App key: a session never sees it.
 
 ### Setting it up: the Slack card
 
-Console settings has one **Slack** card for all of it (`public/consoleSettings.js`, its server side
-`console/slackSetup.mjs`). Not set up, it says what Slack does and has **Set up Slack**, which opens a dialog
+Console settings has one **Slack** group for all of it, a row each for the bot, pull requests and questions
+(`public/consoleSettings.js`, its server side
+`console/slackSetup.mjs`). Not set up, it is one line that says what Slack does and has **Set up Slack**, which opens a dialog
 (`public/slackSetup.js`). Where the program embedding the console offers an install of its own (`slackInstall`,
 "Embedding the console"), the dialog first asks which way to connect; otherwise it opens on the own app's steps:
 
@@ -1976,13 +1977,14 @@ Connected, the card has a row each:
   What the card says of the saved token is kept until the token changes, and an app reinstalled with new scopes keeps
   its token: **Check again**, next to a missing scope or a refused token, asks Slack about it now and reads the
   channel list again (`POST /api/console-settings/slack/recheck`, `slack: saved token checked again`).
-- **Pull requests**: the channel, and **Change channel**, the picker again. **Limits** unfolds the two waits before a
+- **Pull requests**: the channel, which the closed row names; opened, the picker again with **Save channel** and
+  **No channel** (closing the row cancels a pick), and under **Limits** the two waits before a
   post (the review and suites, and the QA check; the table below).
 - **Questions**, only where the console answers them at all (a Slack bot and a session API): the switch that was on
   the Webhooks card (`POST /api/console-settings/webhooks` with `source: "slack"`), when the bot was last mentioned
   (from the Webhook events log), a note while no signing secret is saved, and **Limits** for the questions' own
   (below, "Questions from Slack").
-- **Disconnect Slack**, behind a typed `slack`, deletes both secrets (`POST /api/console-settings/slack/disconnect`;
+- **Disconnect Slack**, in the Bot row behind a typed `slack`, deletes both secrets (`POST /api/console-settings/slack/disconnect`;
   `slack: disconnected`). It is offered only where the secret store makes a secret on its first write
   (`createsOnWrite`, providers/README.md), as the local store does: a store whose secrets its infrastructure made, as
   Terraform makes AWS's, would be left without the one the webhooks Lambda reads, so there the keys are replaced
@@ -2268,18 +2270,23 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
 
 The Settings page (`/console-settings`, first under Console in the avatar
 menu; its General tab, beside the Secrets & webhooks tab) holds the numbers above. Only an admin can
-open it and change them. Each card saves its own values together with its Save
-button, with no typed confirm since changing a value back undoes it (the typed
+open it and change them. It is groups of rows that open in place, as My settings is (`public/settingsRows.js`,
+designSystem/components/SettingsRows): **This console** (Woodshed, GitHub webhooks), **Repos**, **Shared sessions**,
+**Kept sessions** (Retention, Sessions holding data), **Slack** and **MCP servers**. A closed row says what it is set
+to and its status word, several may be open at once, and a link or the search that names a row opens it
+(`/console-settings#card-retention`; `#card-projects` opens on Add a repo, and the older `#slack` and `#webhooks`
+still land on theirs). Each row of numbers saves its own values together with its Save
+button, sending only the ones that changed, with no typed confirm since changing a value back undoes it (the typed
 confirm is kept for what cannot be undone: Stalled's fixes below, secrets, a
-restore), and the server refuses a value out of its range, keeping none of the
-card's:
+restore), and the server refuses a value out of its range, keeping none of that
+save's. Its closed row says **Defaults**, **Changed**, or **Not saved** while a typed number waits for its Save:
 
-| Card | Setting | Range | Default |
+| Row | Setting | Range | Default |
 | --- | --- | --- | --- |
-| Sessions | Shared sessions running at once | 1 to 20 | `WOODSHED_MAX_SESSIONS`, 5 |
-| Sessions | My Woodshed sessions per person | 1 to 10 | 3 |
-| Sessions | Pause a session waiting for input after | 0.25 to 24 hours | `WOODSHED_IDLE_HOURS`, 1 |
-| Sessions | Stop a working session after | 1 to 24 hours | `WOODSHED_LIFETIME_HOURS`, 8 |
+| Shared sessions, Running at once | Shared sessions running at once | 1 to 20 | `WOODSHED_MAX_SESSIONS`, 5 |
+| Shared sessions, Running at once | My Woodshed sessions per person | 1 to 10 | 3 |
+| Shared sessions, Timeouts | Pause a session waiting for input after | 0.25 to 24 hours | `WOODSHED_IDLE_HOURS`, 1 |
+| Shared sessions, Timeouts | Stop a working session after | 1 to 24 hours | `WOODSHED_LIFETIME_HOURS`, 8 |
 | Retention | Delete a merged or closed session after | 0 to 30 days | 3 |
 | Retention | Delete a finished session whose PR stays open after | 1 to 90 days | 14 |
 | Retention | Delete a paused session with no pull request after | 1 to 60 days | 7 |
@@ -2299,19 +2306,21 @@ pane bar offer **Extend** to that same person, which puts that an hour later eac
 /api/sessions/<id>/extend`); a resume forgets it. The console logs `fleet: session extended` with `why` (`idle` or `lifetime`) and `until`, and `fleet:
 session limits changed` with who changed them. A question from Slack has neither.
 
-The Slack card's Limits are shown once Slack is set up (above, "Setting it up: the Slack card"); each Limits saves its
-own values, as a card does.
+Slack's limits are in its Pull requests and Questions rows, under Limits, once Slack is set up (above, "Setting it
+up: the Slack card"); each saves its own values, as a row of numbers does.
 
 They live in `state.json` under `settings`, and the console reads them each
 time it uses one, so a change applies on its next tick with no restart. The
 environment values are what a setting is until someone changes it.
 
-The **MCP servers** card, after Repos, lists the servers sessions get and adds, edits and removes them ("MCP servers"
-above, under the Anthropic proxy): each change applies at once, with no typed confirm, and is logged with who made it.
+The **MCP servers** group, last, has a row for each server sessions get ("MCP servers"
+above, under the Anthropic proxy). A server's row opens on its form, with **Save**, **Test** and **Remove**: there is
+no Edit button, and closing the row drops what was typed. **Add a server** is the group's last row. A server the
+installation's configuration sets is a line with Test alone. Each change applies at once, with no typed confirm, and is logged with who made it.
 A header's value is a password field, sent once and never shown again. Where the console cannot lock a session down
 the card says why and offers no Production kind.
 
-The **Woodshed** card, first on the page, follows the git clone the console runs from (`console/woodshedUpdate.mjs`;
+The **Woodshed** row, first on the page under This console, follows the git clone the console runs from (`console/woodshedUpdate.mjs`;
 `WOODSHED_CHECKOUT` names another): at start and every hour, and on **Check now** (`POST
 /api/console-settings/updates/check`), it runs `git fetch` on the remote of the branch the clone tracks, and lists the
 commits `HEAD` lacks, newest first (30, then how many more), with the count beside Console settings in the avatar menu
@@ -2335,8 +2344,9 @@ console logs `woodshedUpdate: following` with the clone, its branch and remote a
 `behindBy` and `aheadBy`, `check failed`, `update started`, `updated, restarting`, and `update failed` with the step
 (`pull`, `starts`, `image`) and whether it went back; the start check logs `console: start check passed`.
 
-The **Repos** card, next, lists the repos sessions can start on (the projects above) and adds more.
-**Add a repo** is a list of the repos the GitHub App may reach and that are not projects yet
+The **Repos** group, next, has a row for each repo sessions can start on (the projects above): closed, it says
+whether the repo is the default or who added it, its sessions and where its pull requests go; opened, it has its
+colour, the link to its own settings page and Remove. **Add a repo**, the group's last row, is a list of the repos the GitHub App may reach and that are not projects yet
 (`GET /api/console-settings/projects/repos`: each of the App's installations, `GET /app/installations`, then its repos,
 `GET /installation/repositories` with a token narrowed to reading metadata), with an optional name; **Add repo** sends
 the pick (`POST /api/console-settings/projects`). Under it, *Not listed?* links each installation's settings on GitHub,
