@@ -290,8 +290,8 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
           wh.expectedUrl && copyButton('url', wh.expectedUrl),
           h('button', {
             type: 'button', class: 'btn btn-stop',
-            onclick: () => {
-              const url = window.prompt('The payload URL to set on the GitHub App', gh.url || wh.expectedUrl || 'https://');
+            onclick: async () => {
+              const url = await W.askText({ title: 'Set the GitHub App’s payload URL', label: 'Payload URL', value: gh.url || wh.expectedUrl || 'https://', goLabel: 'Next', mono: true });
               if (!url) return;
               W.confirmChange({
                 title: 'Change the GitHub App’s payload URL?',

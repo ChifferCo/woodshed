@@ -23,7 +23,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## The rail
 
-- The rail head is one row: the Mine | Everyone switch, the People filter on Everyone only, and + New session on the right. The rail is 360px wide on a desktop. On a console one person uses there is no switch: the head reads My sessions, over one list of every session in Mine's groups.
+- The rail head is one row: the Mine | Everyone switch, the People filter on Everyone only, and + New session on the right. The rail is 360px wide on a desktop, and 412px in the desktop app on macOS, where its head also holds the window's traffic lights (`desktop/windowChrome.mjs`, below). On a console one person uses there is no switch: the head reads My sessions, over one list of every session in Mine's groups.
 - The user menu sits in a footer and opens upward. Beside it, a square quiet button with a sidebar icon hides the rail (⌘.); while it is hidden, a strip down the left edge, on `ground` with a `line` border, holds the same button at the foot to show it again. Neither shows on a phone, where the rail is its own page.
 - With more than one project, a row of filter chips sits under the head: All with its count, then one per project with its `proj-*` swatch, name and count. They are the legend of the cards' edges, and picking one shows only that project's sessions (the zone counts follow); the pick is kept in the browser.
 - A card has two lines. Line one: the title, an ownership tag, then the star and ⋯ marks. Line two: the status word first, then a name only when the card does not already say it, with the PR chips (at most two, older ones folded into a grey `+N` chip; RailCard) or the issue number and Resume or Take it at the right end. Resume is the only filled button on a card. How long a session ran is under its Details, not on the card. With more than one project, the card's left edge is 3px of its project's `proj-*` colour, and the project's name is in its tooltip and its link's accessible name.
@@ -279,3 +279,24 @@ spinner, and opening one keeps the keyboard focus on it.
 ## Iconography
 
 No icon set. The console uses text glyphs (`▾ ▸ ✓ ✗ ⋯ ☆ ↗`) and 6px status dots; a stopped session's dot is a ring. A lock on the Private tag is drawn in CSS, not an image. The phone's message box under the terminal is the one place with drawn icons (📎 and the mic, as round buttons): on a desktop, the same actions are outline buttons with words, Attach files and Dictate (Stop while it listens, with a plain "Listening." line in `sub` under the field, no motion).
+
+## Asking for one line of text
+
+- A name or an address the person types (Rename…, the payload URL) is asked in the console's own dialog
+  (`components/TextDialog`, `W.askText`), never `window.prompt`: the desktop app has none, and the browser's looks like
+  the browser, not the console. It is the `confirm` dialog with one field: a title saying what is asked, the field's
+  label, Cancel quiet and the action orange, Enter to take it, Escape to drop it.
+
+## The desktop app's window on macOS
+
+- No title bar: the rail head and the pane bar run to the window's top edge, the traffic lights sit at the left of the
+  rail head (80px of room there and in the settings pages' head), and those bars drag the window, their controls
+  staying clickable. The rail is 412px so its row still fits. The window is never narrower than 900px, the desktop
+  layout, so the phone layout never sits under the lights. The app adds this to the console's pages
+  (`desktop/windowChrome.mjs`); the console in a browser is unchanged.
+
+## Pages outside the console
+
+- The desktop app's sign-in, in the browser and in the app, is one card on the `stopped` ground (`components/DesktopSignIn`):
+  a `title` sentence of where the person stands, one `sub` paragraph, one orange button, and a quiet way back. The
+  card that asks before signing the app in names the account and is never shortened.

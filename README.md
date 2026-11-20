@@ -89,6 +89,9 @@ and review feedback go back to the same session.
 The first two use the `local` provider and the last uses `aws`. A server holds as many sessions as its cores and
 memory allow; AWS adds Fargate tasks as you need them.
 
+**On your desktop:** [`desktop/`](desktop/README.md) is the console in an app of its own for macOS, Windows and Linux,
+with a notification and a Dock badge when a session needs you. It works with any of the three.
+
 ## Using it on your repository
 
 Add a `.woodshed/project.yaml` to your repository. It tells a session what to install, which env files to write, how

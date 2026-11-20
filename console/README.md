@@ -1439,6 +1439,21 @@ hours, and write access is checked again every hour, so leaving the repository
 signs you out. The GitHub user token is used once, to learn the login, and
 dropped.
 
+**The desktop app** (`desktop/`) signs in through the person's own browser, where they are usually signed in to GitHub
+already (`console/desktopSignIn.mjs`). Its Sign in with GitHub opens `/auth/desktop?challenge=` in the browser, which
+signs in as usual if it has to, then asks **Sign in to the Woodshed app?** as whom. Only that button, a form POST from
+the console's own page (Origin checked, the page never framed), makes the code, so another program on the machine that
+opens the browser with a challenge of its own and catches `woodshed://` gets nothing without the person's press. The
+page after it opens `woodshed://signed-in?code=&challenge=` with a code that lives two minutes and works once; the
+challenge goes back with it so the app claims only the link of the sign-in it is waiting on. The app claims it at `POST /auth/desktop/claim` with the verifier the challenge was made from (PKCE's S256), for a
+session of its own, which keeps the browser session's last access check and ends when the browser's would, so
+handing a sign-in to the app never extends it: signing the browser out leaves the app signed in, and the other way round. `GET
+/auth/desktop/ready` says the console does this; a console behind a hosting proxy, which signs people in itself,
+answers none of these, and the app signs in inside its window there, unless the program answers them itself
+("Embedding the console": `handleDesktopSignIn` with its own sign-in). The ready answer's `signInPaths` are the paths the
+console's pages sign in at (`/auth/start` here), which the app sends to the browser. The console logs `auth: desktop sign-in code
+issued`, `auth: desktop signed in`, or `auth: desktop sign-in code refused` with `known` and `verified`.
+
 **A console with no repo yet** (neither `WOODSHED_REPO` nor `WOODSHED_PROJECTS`, and nothing added on the
 Repos card) has no repository to ask about. It lets in the owner of the account its GitHub App is installed on: that
 user, or an active admin of that organization (`console/appOwner.mjs`, asked with a token of the installation narrowed
@@ -1733,6 +1748,11 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
 - `config.linkQuery`: query parameters every link the console hands out carries (GitHub comments, Slack posts,
   `SESSION_URL`, the copied New session link), for the program to route them.
 - `newId`: how session ids are made, when they must be unique beyond the installation.
+- Where the program signs people in itself (`trusted`), the desktop app's routes are its own to answer, since core's
+  sign-in is off: `handleDesktopSignIn` (`desktopSignIn.mjs`) with an `auth` of the program's (`visitorFor` says who
+  the browser is signed in as, `desktopCode` issues a code for them when they press Sign in, `claimDesktopCode` makes
+  the app a session of the program's), the codes from `createDesktopCodes` (`auth.mjs`), and `signInUrl(back)` and
+  `signInPaths` for the program's sign-in page.
 - `repos: {list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`: where the program keeps the
   installation's repos, which it built `config.projects` from, so Console settings' Repos card changes them there and
   core keeps no list of its own (`addedProjects`, above under the Repos card). `list` answers what Add a repo offers:

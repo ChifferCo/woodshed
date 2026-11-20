@@ -2441,6 +2441,84 @@ test('the setup card offers the reviewer App to an admin of a console with its A
   }
 });
 
+// The desktop app signs in through the person's browser (desktopSignIn.mjs): the browser, signed in, gets a woodshed://
+// link with a one-time code, and the app claims a session of its own with the verifier behind the challenge.
+test('a browser signed in to the console signs the desktop app in, through the console\'s own routes', async (t) => {
+  const crypto = await import('node:crypto');
+  let handle;
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const base = `http://localhost:${port}`;
+  const config = { host: '127.0.0.1', publicUrl: base, extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const github = async (url) => {
+    if (url.endsWith('/login/oauth/access_token')) return new Response(JSON.stringify({ access_token: 'ghu_user' }));
+    if (url.endsWith('/user')) return new Response(JSON.stringify({ login: 'octo', id: 1 }));
+    return new Response('[]');
+  };
+  const auth = createAuth({ publicUrl: base, store: { state: {}, save() {} }, clientId: async () => 'Iv1.app', clientSecret: () => 'cs', canWrite: async () => true, fetchImpl: github, required: true });
+  handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth });
+  const get = (path, cookie = '') => fetch(`${base}${path}`, { redirect: 'manual', headers: { accept: 'text/html', cookie } });
+  const cookieOf = (res) => res.headers.getSetCookie().map((c) => c.split(';')[0]).filter((c) => !c.endsWith('=')).join('; ');
+
+  assert.deepEqual(await (await get('/auth/desktop/ready')).json(), { desktop: true, available: true, required: true, signInPaths: ['/auth/start'] });
+  const verifier = crypto.randomBytes(32).toString('base64url');
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  const desktop = `/auth/desktop?challenge=${challenge}&next=%2Fs%2F0a1b2c3d`;
+  assert.equal((await get('/auth/desktop?challenge=short')).status, 400);
+
+  // Signed out, the browser signs in with GitHub first, and comes back to the same desktop page.
+  const out = await get(desktop);
+  assert.equal(out.status, 302);
+  assert.equal(out.headers.get('location'), `/auth/start?next=${encodeURIComponent(desktop)}`);
+  const start = await get(out.headers.get('location'));
+  const state = new URL(start.headers.get('location')).searchParams.get('state');
+  const back = await get(`/auth/callback?code=c0de&state=${state}`, cookieOf(start));
+  assert.equal(back.headers.get('location'), desktop);
+  const browser = cookieOf(back);
+
+  // Signed in, the browser asks first: no code is made until the person presses the button on the console's page.
+  const ask = await get(desktop, browser);
+  assert.equal(ask.status, 200);
+  assert.equal(ask.headers.get('x-frame-options'), 'DENY');
+  assert.equal(ask.headers.get('referrer-policy'), 'same-origin', 'no-referrer would make Chrome send the form with Origin: null');
+  const askPage = await ask.text();
+  assert.match(askPage, /Sign in to the Woodshed app\?/);
+  assert.match(askPage, /as <strong>@octo<\/strong>/);
+  assert.doesNotMatch(askPage, /woodshed:\/\//);
+  assert.match(askPage, /name="login" value="octo"/, 'the form carries the account it names');
+  const form = new URLSearchParams({ login: 'octo', challenge, next: '/s/0a1b2c3d' }).toString();
+  // A page left open from another account's sign-in asks again, naming the account this browser is now.
+  const stale = await fetch(`${base}/auth/desktop`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: browser, origin: base }, body: new URLSearchParams({ login: 'someone-else', challenge, next: '/' }).toString() });
+  assert.equal(stale.status, 303);
+  assert.equal(stale.headers.get('location'), `/auth/desktop?${new URLSearchParams({ challenge, next: '/' })}`);
+  const press = (headers) => fetch(`${base}/auth/desktop`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: browser, ...headers }, body: form });
+  assert.equal((await press({})).status, 403, 'no Origin: not the console\'s form');
+  assert.equal((await press({ origin: 'https://evil.example' })).status, 403, 'another site\'s form');
+  const signedOut = await fetch(`${base}/auth/desktop`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: base }, body: form });
+  assert.equal(signedOut.status, 303, 'a signed-out press goes back to sign in');
+  const page = await press({ origin: base });
+  assert.equal(page.status, 200);
+  const link = /url=(woodshed:\/\/signed-in\?[^"]+)"/.exec(await page.text())?.[1].replaceAll('&amp;', '&');
+  const code = new URL(link).searchParams.get('code');
+  assert.equal(new URL(link).searchParams.get('next'), '/s/0a1b2c3d');
+
+  const claim = (body, headers = { 'x-woodshed': '1' }) => fetch(`${base}/auth/desktop/claim`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  assert.equal((await claim({ code, verifier }, {})).status, 403, 'only the app sends the header');
+  // A malformed claim is refused, never thrown on: an object whose toString is not a function, a number, nothing.
+  for (const bad of [{ code: { toString: 1 }, verifier }, { code, verifier: { toString: 1 } }, { code: 7, verifier }, {}, null]) {
+    assert.equal((await claim(bad)).status, 400, JSON.stringify(bad));
+  }
+  const claimed = await claim({ code, verifier });
+  assert.equal(claimed.status, 200);
+  assert.deepEqual(await claimed.json(), { login: 'octo' });
+  const app = cookieOf(claimed);
+  assert.notEqual(app, browser);
+  const sessions = await fetch(`${base}/api/sessions`, { headers: { cookie: app } });
+  assert.equal(sessions.status, 200, 'the app is signed in');
+  assert.equal((await claim({ code, verifier })).status, 401, 'a code works once');
+});
+
 test('the console\'s limit on one message is statusd\'s own, so nothing it accepts is refused for good later', async () => {
   const { MAX_MESSAGE_CHARS } = await import('./server.mjs');
   const statusdSource = await (await import('node:fs/promises')).readFile(new URL('../session/statusd.mjs', import.meta.url), 'utf8');

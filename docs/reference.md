@@ -21,6 +21,7 @@ here use `woodshed.example.com` for an installation's domain.
 | `session/` | The session image: everything that runs inside a session's container | [session/README.md](../session/README.md) |
 | `shared/` | Modules the console and the sessions both run, and other tools can embed: review, the project file's reader, the terminal and same-origin helpers | [shared/README.md](../shared/README.md) |
 | `providers/` | Where Woodshed runs. `providers/console.mjs` picks one and starts the console on it | [providers/README.md](../providers/README.md), and "Providers", below |
+| `desktop/` | The desktop app: the console in a window of its own, with notifications and a Dock badge, signing in through the browser. The one folder with dependencies (Electron, as dev dependencies) | [desktop/README.md](../desktop/README.md) |
 | `test/` | Checks across the folders: `layout.test.mjs` | |
 | `scripts/` | Tools for working on Woodshed itself: `prAssets.sh` attaches screenshots to a pull request, on a `refs/pr-assets/` ref that `.github/workflows/prAssetsCleanup.yml` deletes when the pull request is closed unmerged | |
 

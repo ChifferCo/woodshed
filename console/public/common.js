@@ -1596,6 +1596,42 @@
     input.focus();
   }
 
+  /**
+   * One line of text from the person, in the console's own dialog: window.prompt is missing where the page runs in the
+   * desktop app (Electron has none, and returns nothing), and looks like the browser's rather than the console's.
+   * @param {{title: string, label: string, value?: string, goLabel: string, maxLength?: number|null, mono?: boolean}} opts
+   *   `maxLength`: a limit on the field, none by default: a field that cuts a paste can keep a shorter text that still
+   *   looks right (a URL without its last parameter), so a caller cuts what it keeps itself, after looking at it
+   * @returns {Promise<string|null>}  what was typed, trimmed, or null on Cancel, Escape or an empty field
+   */
+  function askText({ title, label, value = '', goLabel, maxLength = null, mono = false }) {
+    return new Promise((resolve) => {
+      let answer = null;
+      const input = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', ...(maxLength ? { maxlength: String(maxLength) } : {}), class: mono ? 'field mono' : 'field' });
+      input.value = value;
+      const go = h('button', { type: 'submit', class: 'btn btn-open' }, goLabel);
+      const form = h('form', { method: 'dialog' },
+        h('label', { class: 'field-label' }, h('span', null, label), input),
+        h('div', { class: 'dialog-actions' },
+          h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel'),
+          go));
+      const dialog = h('dialog', { class: 'confirm', 'aria-labelledby': 'ask-title' }, h('h2', { id: 'ask-title' }, title), form);
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        answer = input.value.trim() || null;
+        dialog.close();
+      });
+      dialog.addEventListener('close', () => {
+        dialog.remove();
+        resolve(answer);
+      });
+      document.body.append(dialog);
+      dialog.showModal();
+      input.focus();
+      input.select();
+    });
+  }
+
   // `?by=` holds the logins picked, comma-separated; none is everyone.
   function pickedLogins(search) {
     return (new URLSearchParams(search).get('by') || '').split(',').map((l) => l.trim()).filter(Boolean);
@@ -1673,7 +1709,7 @@
   window.Woodshed = {
     invite, sessionTab, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
+    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };

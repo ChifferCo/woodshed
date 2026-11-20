@@ -1,0 +1,70 @@
+{
+  "name": "woodshed-desktop",
+  "productName": "Woodshed",
+  "version": "0.1.0",
+  "description": "Woodshed's console in a window of its own, with a notification and a Dock badge when a session needs you.",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "electron": "45.4.1",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "run.woodshed.desktop",
+    "productName": "Woodshed",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "*.mjs",
+      "*.cjs",
+      "setup.html",
+      "setup.js",
+      "signin.html",
+      "signin.js",
+      "icon.png",
+      "badges/*.png",
+      "!*.test.mjs",
+      "!renderIcon.mjs",
+      "!renderBadges.mjs"
+    ],
+    "icon": "icon.png",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "mimeTypes": [
+        "x-scheme-handler/woodshed"
+      ]
+    },
+    "protocols": [
+      {
+        "name": "Woodshed sign-in",
+        "schemes": [
+          "woodshed"
+        ]
+      }
+    ]
+  }
+}

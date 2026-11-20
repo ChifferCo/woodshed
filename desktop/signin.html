@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Woodshed</title>
+<style>
+  /* The console's tokens (console/public/style.css), the few this page uses. */
+  :root {
+    color-scheme: light;
+    --ink: #1b2232; --sub: #666666; --meta: #767676; --line: #e2e2e2; --ground: #ffffff; --stopped: #f6f5f2;
+    --action: #b45a05; --action-ink: #ffffff; --bad: #b42318;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --ink: #e8ecf5; --sub: #a3aabb; --meta: #8f97a8; --line: #2a3142; --ground: #12151c; --stopped: #10131a;
+      --action: #f59433; --action-ink: #1b1204; --bad: #f97066;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--stopped); color: var(--ink);
+    font: 15px/1.5 "Red Hat Display", system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: grid; place-items: center; padding: 16px;
+  }
+  main {
+    width: min(460px, 100%); background: var(--ground); border: 1px solid var(--line); border-radius: 12px;
+    padding: 32px;
+  }
+  /* icon.png carries its own margin and shadow, Apple's icon grid: drawn a little larger and pulled into line. */
+  img { width: 72px; height: 72px; display: block; margin: -8px 0 12px -7px; }
+  h1 { font: 700 24px/1.3 Merriweather, Georgia, serif; margin: 0 0 8px; }
+  p { margin: 0 0 20px; color: var(--sub); }
+  button {
+    width: 100%; padding: 10px 14px; border: 0; border-radius: 6px; background: var(--action); color: var(--action-ink);
+    font: 600 15px "Red Hat Display", system-ui, sans-serif; cursor: pointer;
+  }
+  button.quiet { background: transparent; color: var(--ink); border: 1px solid var(--line); margin-top: 10px; font-weight: 500; }
+  .error { color: var(--bad); margin: 0 0 16px; }
+  .error:empty { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <img src="icon.png" alt="">
+  <h1 id="title">Finish signing in in your browser</h1>
+  <p id="lead">Your browser opened the console's sign-in. Where you are signed in to GitHub already, it takes a click. When it asks whether to open Woodshed, say yes, and you land back here.</p>
+  <div class="error" id="error" role="alert"></div>
+  <button id="browser" type="button">Open the browser again</button>
+  <button id="here" class="quiet" type="button">Sign in in this window instead</button>
+</main>
+<script src="signin.js"></script>
+</body>
+</html>

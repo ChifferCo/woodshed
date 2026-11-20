@@ -1,0 +1,16 @@
+<!-- @dsCard group="Dialogs" height=260 subtitle="One line of text: Rename this session, and an address in mono" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600;700&family=JetBrains+Mono&display=swap">
+<style>
+ body{margin:0;padding:20px;background:rgba(20,23,31,.5);font-family:"Red Hat Display",system-ui,sans-serif;display:grid;gap:16px;justify-items:start}
+ .confirm{width:min(500px,100%);box-sizing:border-box;padding:20px;border:1px solid var(--line);border-radius:8px;background:var(--ground);color:var(--ink)}
+ h2{margin:0 0 12px;font-size:17px}
+ label{display:grid;gap:6px;font-size:13px;font-weight:600;color:var(--ink)}
+ input{box-sizing:border-box;width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--ground);color:var(--ink);font:14px "Red Hat Display",system-ui,sans-serif}
+ input.mono{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:13px}
+ .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+ .btn{min-height:30px;padding:0 12px;border-radius:var(--radius-sm);font:600 13px "Red Hat Display",system-ui,sans-serif;border:1px solid transparent}
+ .quiet{background:transparent;color:var(--ink);border-color:var(--line)}
+ .open{background:var(--action);color:var(--action-ink);border-color:var(--action)}
+</style>
+<div class="confirm"><h2>Rename this session</h2><label>Name<input value="Speed up Claude sessions"></label><div class="actions"><button class="btn quiet" type="button">Cancel</button><button class="btn open" type="button">Rename</button></div></div>
+<div class="confirm"><h2>Set the GitHub App’s payload URL</h2><label>Payload URL<input class="mono" value="https://woodshed.example.com/webhooks/github"></label><div class="actions"><button class="btn quiet" type="button">Cancel</button><button class="btn open" type="button">Next</button></div></div>

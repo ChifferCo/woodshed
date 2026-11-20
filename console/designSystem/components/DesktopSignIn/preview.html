@@ -1,0 +1,21 @@
+<!-- @dsCard group="Pages" height=620 subtitle="The desktop app's sign-in: the browser's question and hand-off, the app's waiting card and an error" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Red+Hat+Display:wght@400;600&display=swap">
+<style>
+ body{margin:0;padding:20px;background:var(--stopped);color:var(--ink);font:15px/1.5 "Red Hat Display",system-ui,sans-serif;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+ .card{background:var(--ground);border:1px solid var(--line);border-radius:12px;padding:24px;max-width:440px;box-sizing:border-box}
+ h1{font:700 18px/1.3 Merriweather,Georgia,serif;margin:0 0 6px}
+ p{color:var(--sub);margin:0 0 14px;font-size:13.5px}
+ .btn{display:inline-block;padding:8px 14px;border-radius:6px;border:0;background:var(--action);color:var(--action-ink);font:600 13.5px "Red Hat Display",system-ui,sans-serif}
+ .wide{display:block;width:100%;text-align:center;box-sizing:border-box}
+ .outline{background:transparent;color:var(--ink);border:1px solid var(--line);font-weight:400;margin-top:8px}
+ .quiet{color:var(--sub);margin-left:10px;font-size:13.5px}
+ .bad{color:var(--bad);margin:0 0 14px;font-size:13.5px}
+ .icon{width:44px;height:44px;border-radius:10px;background:#1b2232;margin-bottom:12px;display:grid;place-items:center;color:#E87D09;font-weight:700}
+ .cap{grid-column:1/-1;margin:4px 0 -8px;font:600 11px "Red Hat Display",system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--label)}
+</style>
+<p class="cap">In the browser</p>
+<div class="card"><h1>Sign in to the Woodshed app?</h1><p>The Woodshed app on this computer asks to sign in to Woodshed as <strong>@octocat</strong>. Sign in only if you just pressed Sign in with GitHub in the app.</p><span class="btn">Sign in to the app</span><span class="quiet">Cancel</span></div>
+<div class="card"><h1>You're signed in</h1><p>Your browser is handing the sign-in to the Woodshed app. If it asked whether to open Woodshed, say yes. You can close this tab after.</p><span class="btn">Open the Woodshed app</span></div>
+<p class="cap">In the app</p>
+<div class="card"><div class="icon">⌒</div><h1>Finish signing in in your browser</h1><p>Your browser opened the console's sign-in. When it asks whether to open Woodshed, say yes.</p><span class="btn wide">Open the browser again</span><span class="btn wide outline">Sign in in this window instead</span></div>
+<div class="card"><div class="icon">⌒</div><h1>Signing in did not finish</h1><p>Try again in your browser, or sign in in this window.</p><p class="bad">That sign-in has expired or was already used. Sign in again from the app.</p><span class="btn wide">Open the browser again</span><span class="btn wide outline">Sign in in this window instead</span></div>

@@ -228,9 +228,12 @@
     });
   }
 
-  // Rename, as the shed has it: a prompt, which works on a phone, rather than an editor the refresh would rebuild.
+  // Rename in a dialog of the console's own (W.askText), which works on a phone and in the desktop app, where
+  // window.prompt does nothing, rather than an editor the refresh would rebuild.
   async function rename(s) {
-    const answer = window.prompt('Name this session:', s.title);
+    // No limit on the field: a pasted title is cut to the 120 characters a name keeps only after its runs of spaces
+    // collapse, below, as the browser's prompt did.
+    const answer = await W.askText({ title: 'Rename this session', label: 'Name', value: s.title, goLabel: 'Rename' });
     if (answer === null) return;
     const title = answer.replace(/\s+/g, ' ').trim().slice(0, 120);
     if (!title || title === s.title) return;

@@ -382,3 +382,98 @@ test('someone who is not a member is not matched on Slack', async () => {
   await settle();
   assert.deepEqual(asked, [], 'a writer who has to ask to join leaves no Slack entry');
 });
+
+// The desktop app's sign-in: a browser signed in to the console hands the app a one-time code, which only the holder
+// of the verifier behind the challenge can claim.
+async function desktopPair() {
+  const { createHash, randomBytes } = await import('node:crypto');
+  const verifier = randomBytes(32).toString('base64url');
+  return { verifier, challenge: createHash('sha256').update(verifier).digest('base64url') };
+}
+
+test('a signed-in browser hands the desktop app a session of its own', async () => {
+  const ctx = setup();
+  const browser = cookiesFrom((await signIn(ctx)).setCookies);
+  const { verifier, challenge } = await desktopPair();
+  const code = await ctx.auth.desktopCode({ cookieHeader: browser, challenge });
+  assert.match(code, /^[0-9a-f]{48}$/);
+  const claimed = ctx.auth.claimDesktopCode({ code, verifier });
+  assert.equal(claimed.login, 'octo');
+  assert.match(claimed.setCookie, /^__Host-woodshed_session=[0-9a-f]{64}; Path=\/; HttpOnly; SameSite=Lax; Secure; Max-Age=43200$/);
+  const app = cookiesFrom(claimed.setCookie);
+  assert.notEqual(app, browser, 'the app gets a session of its own, not the browser\'s');
+  assert.deepEqual(await ctx.auth.sessionFor(app), { login: 'octo' });
+  // Signing the browser out leaves the app signed in, and the other way round.
+  ctx.auth.signOut(browser);
+  assert.deepEqual(await ctx.auth.sessionFor(app), { login: 'octo' });
+});
+
+test('a desktop code works once, for its verifier alone, for two minutes', async () => {
+  const ctx = setup();
+  const browser = cookiesFrom((await signIn(ctx)).setCookies);
+  const { verifier, challenge } = await desktopPair();
+  const other = await desktopPair();
+  const code = await ctx.auth.desktopCode({ cookieHeader: browser, challenge });
+  assert.equal(ctx.auth.claimDesktopCode({ code, verifier: other.verifier }), null, 'another program that caught the code has no verifier');
+  assert.equal(ctx.auth.claimDesktopCode({ code, verifier }), null, 'a refused claim used the code up');
+  const again = await ctx.auth.desktopCode({ cookieHeader: browser, challenge });
+  assert.ok(ctx.auth.claimDesktopCode({ code: again, verifier }));
+  assert.equal(ctx.auth.claimDesktopCode({ code: again, verifier }), null, 'used once');
+  const late = await ctx.auth.desktopCode({ cookieHeader: browser, challenge });
+  ctx.clock.now += 2 * 60_000;
+  assert.equal(ctx.auth.claimDesktopCode({ code: late, verifier }), null, 'expired');
+  assert.equal(ctx.auth.claimDesktopCode({ code: 'nope', verifier }), null);
+  assert.equal(ctx.auth.claimDesktopCode({ code: undefined, verifier: undefined }), null);
+});
+
+test('a signed-out browser gets no desktop code, and a challenge must be S256', async () => {
+  const ctx = setup();
+  const { challenge } = await desktopPair();
+  assert.equal(await ctx.auth.desktopCode({ cookieHeader: '', challenge }), null);
+  await assert.rejects(ctx.auth.desktopCode({ cookieHeader: '', challenge: 'short' }), /not a desktop sign-in challenge/);
+});
+
+test('the desktop app\'s session keeps the browser\'s last access check, and a signed-out browser hands over nothing', async () => {
+  const ctx = setup();
+  const browser = cookiesFrom((await signIn(ctx)).setCookies);
+  ctx.clock.now += 59 * 60_000;
+  const { verifier, challenge } = await desktopPair();
+  const app = cookiesFrom(ctx.auth.claimDesktopCode({ code: await ctx.auth.desktopCode({ cookieHeader: browser, challenge }), verifier }).setCookie);
+  ctx.writers.length = 0;
+  ctx.writeChecks.length = 0;
+  ctx.clock.now += 2 * 60_000;
+  assert.equal(await ctx.auth.sessionFor(app), null, 'an hour after the browser\'s check, GitHub is asked again, and access is gone');
+  assert.deepEqual(ctx.writeChecks, ['octo']);
+
+  const other = setup();
+  const signedIn = cookiesFrom((await signIn(other)).setCookies);
+  const pair = await desktopPair();
+  const code = await other.auth.desktopCode({ cookieHeader: signedIn, challenge: pair.challenge });
+  other.auth.signOut(signedIn);
+  assert.equal(other.auth.claimDesktopCode({ code, verifier: pair.verifier }), null);
+});
+
+test('the desktop codes refuse a code that is not a string, and do not throw on it', async () => {
+  const { createDesktopCodes } = await import('./auth.mjs');
+  const codes = createDesktopCodes();
+  const { verifier, challenge } = await desktopPair();
+  const code = codes.issue({ login: 'octo' }, challenge);
+  assert.deepEqual(codes.claim({ toString: 1 }, verifier), { refused: { known: false, verified: false } });
+  assert.deepEqual(codes.claim(undefined, verifier), { refused: { known: false, verified: false } });
+  assert.deepEqual(codes.claim(code, verifier), { data: { login: 'octo' } }, 'the real code still works after');
+});
+
+test('the desktop app\'s session ends when the browser\'s would, never later', async () => {
+  const ctx = setup();
+  const browser = cookiesFrom((await signIn(ctx)).setCookies);
+  // Eleven hours into the browser's twelve, the app is signed in for the hour the browser has left.
+  ctx.clock.now += 11 * 3_600_000;
+  const { verifier, challenge } = await desktopPair();
+  const claimed = ctx.auth.claimDesktopCode({ code: await ctx.auth.desktopCode({ cookieHeader: browser, challenge }), verifier });
+  assert.match(claimed.setCookie, /Max-Age=3600$/);
+  const app = cookiesFrom(claimed.setCookie);
+  ctx.clock.now += 3_600_000 - 1;
+  assert.equal(await ctx.auth.sessionFor(app).then((u) => u?.login), 'octo');
+  ctx.clock.now += 1;
+  assert.equal(await ctx.auth.sessionFor(app), null, 'gone with the browser\'s');
+});
