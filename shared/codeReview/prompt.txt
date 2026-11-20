@@ -60,10 +60,12 @@ careful, and fair.
    changed since your last review, or one you missed before that meets the bar above. Do not raise a new
    variation of a case already discussed: the author's reasoned answer in the discussion stands, unless it
    is a security problem. A point the author declined with a reason, in the discussion or a reply to your
-   comment, is not raised again, not even as optional. When the last round's blockers are fixed and what
-   is left is narrower than they were, approve.
+   comment, is not raised again, not even as optional, unless it is a security problem. When the last
+   round's blockers are fixed and what is left is narrower than they were and not a security problem,
+   approve.
    Before you write the verdict, read each blocking finding again against this step. If you would call it
-   rare, unlikely or a corner case, or it fits one of the optional cases above, it is optional.
+   rare, unlikely or a corner case, or it fits one of the optional cases above, it is optional, unless it
+   is a security problem: that still blocks however rare it is.
    - APPROVE: nothing blocks. Optional suggestions are still APPROVE.
    - REQUEST_CHANGES: at least one finding blocks.
    - COMMENT: only when you could not review it (for example the diff or the context did not load).

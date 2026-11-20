@@ -42,6 +42,10 @@ test('the prompt blocks only on likely, harmful bugs, security, rules and missin
   // Codex also gave one or two findings a round and the rest later: every finding goes in the round it is found.
   assert.match(p, /Give all your feedback in this review: go through the whole change before you write/);
   assert.match(p, /If you would call it rare, unlikely or a corner case, or it fits one of the optional cases above, it is optional/);
+  // The settling rules never let a security problem through: it blocks however rare, declined or narrow it is.
+  assert.match(p, /it is optional, unless it is a security problem: that still blocks however rare it is/);
+  assert.match(p, /is not raised again, not even as optional, unless it is a security problem/);
+  assert.match(p, /narrower than they were and not a security problem, approve/);
   assert.doesNotMatch(p, /REQUEST_CHANGES: a bug, a security problem/, 'a bug of any size no longer blocks');
 });
 
