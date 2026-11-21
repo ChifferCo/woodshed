@@ -95,15 +95,22 @@ async function machines(run) {
   return list.filter((m) => m && typeof m.name === 'string');
 }
 
+/** @returns {boolean}  whether a machine's saved line is this command line's tunnel to that session on that console */
+export function isTunnelTo(machine, { origin, session }) {
+  return machine?.via === true && typeof machine.target === 'string'
+    && machine.target.endsWith(` tunnel --console ${shellQuote(origin)} ${session} --`);
+}
+
 /**
- * Adds the session's machine, or leaves it as it is when it is already there, connected, through this same line. One
- * found otherwise (another line, or unreachable: a resumed session is a new container, whose hc core hc will not take
- * for the one it knew) is forgotten and added again; its terminals there keep running.
+ * Adds the session's machine, or leaves it as it is when it is already there, connected, through this same line, and
+ * not short-lived (`--temp`, which the app's sidebar hides). One found otherwise (another line, or unreachable: a
+ * resumed session is a new container, whose hc core hc will not take for the one it knew) is forgotten and added
+ * again; its terminals there keep running.
  * @returns {Promise<{action: 'added'|'updated'|'kept', state: string|null}>}
  */
 export async function addMachine(run, { name, via }) {
   const found = (await machines(run)).find((m) => m.name === name);
-  if (found && found.via === true && found.target === via && found.state === 'connected') return { action: 'kept', state: 'connected' };
+  if (found && found.via === true && found.target === via && found.state === 'connected' && found.temporary !== true) return { action: 'kept', state: 'connected' };
   if (found) {
     const rm = await run(['machine', 'rm', '--json', name]);
     if (rm.code !== 0) throw Object.assign(new Error(`hc could not forget the old ${name}: ${hcError(rm).message}`), { hc: true });
@@ -131,9 +138,13 @@ export async function agentOn(run, name) {
   return { inHerdr: hcError(out).kind === 'not_found' ? false : null, address: null };
 }
 
-/** @returns {Promise<boolean>}  whether there was such a machine to forget */
-export async function removeMachine(run, name) {
-  if (!(await machines(run)).some((m) => m.name === name)) return false;
+/**
+ * Forgets the session's machine: only one this command line added, whose line is the tunnel to that session on that
+ * console, never another machine someone gave the same name.
+ * @returns {Promise<boolean>}  whether there was such a machine to forget
+ */
+export async function removeMachine(run, name, { origin, session }) {
+  if (!(await machines(run)).some((m) => m.name === name && isTunnelTo(m, { origin, session }))) return false;
   const rm = await run(['machine', 'rm', '--json', name]);
   if (rm.code !== 0) throw Object.assign(new Error(`hc could not forget ${name}: ${hcError(rm).message}`), { hc: true });
   return true;

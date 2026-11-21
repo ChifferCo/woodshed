@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { addMachine, agentOn, compareVersions, hcRunner, hcVersion, removeMachine, shellQuote, viaCommand } from './hc.mjs';
+import { addMachine, agentOn, compareVersions, hcRunner, hcVersion, isTunnelTo, removeMachine, shellQuote, viaCommand } from './hc.mjs';
 import { selfCommand } from './woodshed.mjs';
 
 function scratch(t) {
@@ -78,7 +78,7 @@ esac
   assert.match((await run(['--version'])).stdout, /session=scratch/, 'the core the person\'s environment names');
   await assert.rejects(addMachine(run, { name: 'woodshed-aaaa0001', via: 'x' }), /hc could not add woodshed-aaaa0001: the via command exited 255/);
   assert.deepEqual(await agentOn(run, 'woodshed-aaaa0001'), { inHerdr: false, address: null }, 'no such terminal: the agent runs in tmux');
-  assert.equal(await removeMachine(run, 'woodshed-aaaa0001'), false, 'nothing to forget');
+  assert.equal(await removeMachine(run, 'woodshed-aaaa0001', { origin: 'http://localhost:7712', session: 'aaaa0001' }), false, 'nothing to forget');
   assert.deepEqual(await run(['other']), { code: 9, stdout: '', stderr: '' });
   const missing = hcRunner({ bin: path.join(dir, 'no-such-hc') });
   assert.equal((await missing(['--version'])).missing, true);
@@ -88,7 +88,16 @@ esac
 test('a machine hc cannot list is a failure, and an agent hc cannot look up is not known', async () => {
   const broken = async () => ({ code: 1, stdout: '', stderr: 'core not running\n' });
   await assert.rejects(addMachine(broken, { name: 'm', via: 'x' }), /hc machine ls failed: core not running/);
-  await assert.rejects(removeMachine(broken, 'm'), /hc machine ls failed/);
+  await assert.rejects(removeMachine(broken, 'm', { origin: 'http://localhost:7712', session: 'aaaa0001' }), /hc machine ls failed/);
   const unknown = async () => ({ code: 1, stdout: '{"error":{"kind":"unavailable","message":"m is unreachable"}}', stderr: '' });
   assert.deepEqual(await agentOn(unknown, 'm'), { inHerdr: null, address: null });
+});
+
+test('a machine is this command line\'s tunnel to a session only by its saved line, for that console and session', () => {
+  const target = viaCommand({ node: '/n', script: '/s', origin: 'https://console.example', session: 'aaaa0001' });
+  assert.equal(isTunnelTo({ via: true, target }, { origin: 'https://console.example', session: 'aaaa0001' }), true);
+  assert.equal(isTunnelTo({ via: true, target }, { origin: 'https://other.example', session: 'aaaa0001' }), false);
+  assert.equal(isTunnelTo({ via: true, target }, { origin: 'https://console.example', session: 'bbbb0002' }), false);
+  assert.equal(isTunnelTo({ via: false, target: 'dev-box' }, { origin: 'https://console.example', session: 'aaaa0001' }), false, 'an ssh machine');
+  assert.equal(isTunnelTo({ via: true, target: 'docker exec -i box sh -c' }, { origin: 'https://console.example', session: 'aaaa0001' }), false);
 });
