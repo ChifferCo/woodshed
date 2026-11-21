@@ -1,12 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  sessionOfMachine, terminalName, terminalKind, newSessionArgs, parsePorts, forwardArgs, jsonLines, startProgress,
-  openForwards, errorOf, outcomeOf, pauseText, mayExtend, newlyBlocked, blockedNotice,
+  sessionOfMachine, terminalName, terminalKind, newSessionArgs, jsonLines, startProgress, errorOf, outcomeOf, pauseText,
+  mayExtend, newlyBlocked, blockedNotice,
 } from './woodshed/woodshed.js';
 
-// The lines below are what the command line prints with --json: `session new` (cli/sessions.mjs, #279) and
-// `forward` (cli/forward.mjs, #281).
+// The lines below are what the command line prints with --json: `session new` (cli/sessions.mjs).
 
 test('a session is known by its machine, woodshed-<id>, and nothing else', () => {
   assert.equal(sessionOfMachine('woodshed-ab12cd34'), 'ab12cd34');
@@ -18,7 +17,8 @@ test('a session is known by its machine, woodshed-<id>, and nothing else', () =>
 test('background terminals are named for what they run, within herdr-core\'s 32 characters', () => {
   const name = terminalName('new', Date.now().toString(36));
   assert.ok(/^[a-z0-9_-]{1,32}$/.test(name), name);
-  assert.deepEqual(terminalKind(terminalName('fwd', 'ab12cd34')), { kind: 'fwd', id: 'ab12cd34' });
+  assert.deepEqual(terminalKind(terminalName('new', 'k1')), { kind: 'new', id: 'k1' });
+  assert.equal(terminalKind('woodshed-fwd-ab12cd34'), null);
   assert.equal(terminalKind('claude'), null);
   assert.equal(terminalKind('woodshed-other-ab12cd34'), null);
 });
@@ -30,14 +30,6 @@ test('New session passes only what was filled in, and the prompt after --', () =
     ['session', 'new', '--json', '--repo', 'acme/app', '--branch', '123', '--agent', 'codex', '--', '--help is broken'],
   );
   assert.deepEqual(newSessionArgs({ agent: 'sh -c x' }), ['session', 'new', '--json']);
-});
-
-test('ports: blank is every port, else numbers or session:local pairs', () => {
-  assert.deepEqual(parsePorts(''), { auto: true });
-  assert.deepEqual(parsePorts(' 3000, 5173:5174 '), { ports: ['3000', '5173:5174'] });
-  for (const bad of ['0', '70000', 'abc', '3000:', '1:2:3', '-p']) assert.ok(parsePorts(bad).error, bad);
-  assert.deepEqual(forwardArgs('ab12cd34', { auto: true }), ['forward', '--auto', 'ab12cd34', '--json']);
-  assert.deepEqual(forwardArgs('ab12cd34', { ports: ['3000'] }), ['forward', 'ab12cd34', '3000', '--json']);
 });
 
 test('a start is followed from its JSON lines, a line still being written skipped', () => {
@@ -56,16 +48,6 @@ test('a start is followed from its JSON lines, a line still being written skippe
   assert.equal(done.end, 'needs-you');
   assert.equal(done.session.state, 'needs-you');
   assert.equal(startProgress('{"event":"error","status":"refused","error":"You cannot start sessions on x"}').error, 'You cannot start sessions on x');
-});
-
-test('the ports open now follow forwarding and closed events', () => {
-  const text = [
-    "Following session ab12cd34's ports. Ctrl-C stops.",
-    JSON.stringify({ event: 'forwarding', session: 'ab12cd34', port: 5173, local: 5174, wanted: 5173, moved: true, url: 'http://localhost:5174' }),
-    JSON.stringify({ event: 'forwarding', session: 'ab12cd34', port: 3000, local: 3000, wanted: 3000, moved: false, url: 'http://localhost:3000' }),
-    JSON.stringify({ event: 'closed', session: 'ab12cd34', port: 5173, local: 5174, why: 'stopped listening' }),
-  ].join('\n');
-  assert.deepEqual(openForwards(text), [{ port: 3000, local: 3000, wanted: 3000, url: 'http://localhost:3000', moved: false }]);
 });
 
 test('a failure says the command line\'s own reason', () => {

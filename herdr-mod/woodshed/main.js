@@ -1,30 +1,27 @@
-// Woodshed: your Woodshed sessions beside your terminals. A panel lists them with when each pauses, opens their
-// app, brings their ports to this computer, and starts new ones; an agent that needs you in a session's machine is
-// named by its session. Everything here calls the `woodshed` command line, which holds the sign-in: this mod never
+// Woodshed: your Woodshed sessions beside your terminals. A panel lists them with when each pauses, and starts new
+// ones; an agent that needs you in a session's machine is named by its session. Everything here calls the `woodshed` command line, which holds the sign-in: this mod never
 // sees a token.
 //
-// One mod, four views, picked by props().view:
+// One mod, three views, picked by props().view:
 //   (none)     the panel (docked, or as a dialog with `mod.open woodshed`)
 //   "new"      New Woodshed session…: a form, then the start step by step
 //   "info"     Session info: when it pauses or stops, with Extend
-//   "forward"  Forward port…: the session's ports on this computer's localhost
 //
-// Long commands (a start, a forward) run as herdr-core terminals of their own, named woodshed-new-… and
-// woodshed-fwd-<id>, so they outlive the dialog and the window; the mod reads their output with `hc read`.
+// A start runs as a herdr-core terminal of its own, named woodshed-new-…, so it outlives the dialog and the window;
+// the mod reads its output with `hc read`.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import {
-  exec, hc, home, theme, props, run, openOverlay, closeOverlay, notify, agents, spaces, focused, terminals,
+  exec, hc, home, theme, props, run, openOverlay, closeOverlay, notify, agents, spaces, focused,
   checking, nextCommand,
 } from "herdr";
 import {
-  EXIT, SESSION_ID, sessionOfMachine, terminalName, newSessionArgs, parsePorts, forwardArgs, startProgress, outcomeOf,
+  EXIT, SESSION_ID, sessionOfMachine, terminalName, newSessionArgs, startProgress, outcomeOf,
   pauseText, mayExtend, newlyBlocked, blockedNotice,
 } from "./woodshed.js";
 import {
-  readPanel, tidyStarts, readForwards, startRefusal, startInTerminal, pollStart, readSession, extendSession, appAddress,
-  startForward, readForward, stopForward,
+  readPanel, tidyStarts, startRefusal, startInTerminal, pollStart, readSession, extendSession,
 } from "./actions.js";
 
 const I = (name) => `mods/workspace-chrome/${name}.svg`;
@@ -57,27 +54,19 @@ async function runCore(args) {
 }
 
 /** Starts the command line in a background herdr-core terminal of its own. @returns {Promise<string|null>} an error */
-async function launch(name, args, how = startInTerminal) {
+async function launch(name, args) {
   let path;
   try {
     path = await cli();
   } catch (err) {
     return err.message;
   }
-  return how(runCore, { path, name, cwd: home(), args });
+  return startInTerminal(runCore, { path, name, cwd: home(), args });
 }
 
 // The system's browser, through the app (it takes only http and https URLs with a host).
 function openUrl(cx, url) {
   if (/^https?:\/\/[^/\s]+/.test(String(url ?? ""))) cx.open_url(url);
-}
-
-function openApp(cx, id) {
-  cx.spawn(async (cx) => {
-    const app = await appAddress(runCli, id);
-    if (app.url) openUrl(cx, app.url);
-    else notify({ title: `Woodshed ${id}: no app to open`, body: app.error, level: app.level });
-  });
 }
 
 /** The session whose space has the keyboard, when it is on a Woodshed session's machine. */
@@ -98,7 +87,6 @@ export default class Woodshed extends View {
     this.handle = cx.focus_handle();
     if (this.view === "new") this.initNew(cx);
     else if (this.view === "info") this.initInfo(cx);
-    else if (this.view === "forward") this.initForward(cx);
     else this.initPanel(cx);
   }
 
@@ -116,14 +104,12 @@ export default class Woodshed extends View {
     this.who = null; // {console, login} | {signedOut: reason} | {missing: reason}
     this.sessions = null;
     this.listError = null;
-    this.forwards = {}; // session id -> [{port, local, url, moved}]
     this.seen = new Map(); // agent address -> last status, for notifications
     this.finishedStarts = new Set(); // starts' terminals found finished at the last tidy
     this.watching = false;
     if (checking()) return;
     cx.spawn(async (cx) => { await this.refresh(); cx.notify(); });
     cx.timer.every(30_000, (cx) => cx.spawn(async (cx) => { await this.refresh(); cx.notify(); }));
-    cx.timer.every(5_000, (cx) => cx.spawn(async (cx) => { if (await this.readForwards()) cx.notify(); }));
     // Agents blocked in a session's machine: the app's live data, read every 2 s, no process started.
     cx.timer.every(2_000, () => {
       const fresh = newlyBlockedOnce(this);
@@ -138,14 +124,12 @@ export default class Woodshed extends View {
     });
   }
 
-  // Keys bound as "woodshed.<command>" in keys.json: new, open, forward, info (on the focused session's space).
+  // Keys bound as "woodshed.<command>" in keys.json: new, and info (on the focused session's space).
   command(name, cx) {
     if (name === "new") return dialog("new");
     const id = focusedSession();
     if (!id) return notify({ title: "Not a Woodshed session", body: "Focus a space on a woodshed-<id> machine, or use the Woodshed panel.", level: "info" });
-    if (name === "open") openApp(cx, id);
-    else if (name === "forward") dialog("forward", { id });
-    else if (name === "info") dialog("info", { id });
+    if (name === "info") dialog("info", { id });
   }
 
   async refresh() {
@@ -153,20 +137,9 @@ export default class Woodshed extends View {
     await tidyStarts(runCore, this.finishedStarts);
   }
 
-  async readForwards() {
-    const next = await readForwards(runCore, terminals());
-    const changed = JSON.stringify(next) !== JSON.stringify(this.forwards);
-    this.forwards = next;
-    return changed;
-  }
-
   panelRow(t, s) {
     const now = Date.now();
     const dot = s.state === "needs-you" ? t.blocked : s.state === "working" ? t.working : LIVE.has(s.status) ? t.idle : t.dim;
-    const live = s.status === "running";
-    const icon = (id, name, label, action) => div().id(`${id}-${s.id}`).px(5).py(3).rounded(5).cursor_pointer()
-      .hover((st) => st.bg(t.hover)).on_click((_e, cx) => { cx.stop_propagation(); action(cx); })
-      .child(h_flex().gap(4).items_center().text_size(11.5).text_color(t.muted).child(svg(I(name)).size(12)).child(label));
     return v_flex().id(`ws-row-${s.id}`).px(8).py(6).gap(2).rounded(7).cursor_pointer().hover((st) => st.bg(t.hover))
       .on_click(() => dialog("info", { id: s.id }))
       .child(h_flex().gap(7).items_center()
@@ -177,13 +150,7 @@ export default class Woodshed extends View {
         .child(div().flex_none().text_size(11.5).text_color(s.state === "needs-you" ? t.blocked : t.dim).child(s.stateWord ?? "")))
       .child(h_flex().gap(6).items_center().pl(14)
         .child(div().flex_none().text_size(11.5).text_color(t.dim).child(s.id))
-        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(pauseText(s.pause, now)))
-        .when(live, (el) => el.child(icon("ws-open", "monitor", "App", (cx) => openApp(cx, s.id))))
-        .when(live, (el) => el.child(icon("ws-fwd", "git-compare", "Ports", () => dialog("forward", { id: s.id })))))
-      .when((this.forwards[s.id] ?? []).length > 0, (el) => el.child(h_flex().pl(14).gap(6).flex_wrap()
-        .children(this.forwards[s.id].map((f) => div().id(`ws-fl-${s.id}-${f.port}`).text_size(11.5).text_color(t.accent)
-          .cursor_pointer().on_click((_e, cx) => { cx.stop_propagation(); openUrl(cx, f.url); })
-          .child(f.moved ? `${f.port}→${f.local}` : `:${f.port}`)))));
+        .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(pauseText(s.pause, now))));
   }
 
   renderPanel(t) {
@@ -408,104 +375,13 @@ export default class Woodshed extends View {
       .when(Boolean(this.extendSaid), (el) => el.child(div().pt(6).text_size(12).text_color(t.blocked).child(this.extendSaid)))
       .child(h_flex().pt(16).gap(8).justify_end().flex_wrap()
         .child(button("ws-console", "Open on the console", false, true, (_e, cx) => openUrl(cx, s.url)))
-        .child(button("ws-app", "Open app", false, running, (_e, cx) => openApp(cx, s.id)))
-        .child(button("ws-forward", "Forward port…", false, running, () => { this.close(); dialog("forward", { id: s.id }); }))
         .child(button("ws-extend", this.extending ? "Extending…" : "Extend", true, running && canExtend, (_e, cx) => this.extend(cx))));
-  }
-
-  // ---- Forward port ----
-
-  initForward(cx) {
-    this.portsText = "";
-    this.portsError = null;
-    this.open = [];
-    this.fwdState = null; // null | "starting" | "on" | {ended: text}
-    this.portsInput = InputState.new({ placeholder: "blank: every port it listens on; or 3000 5173:5174" });
-    this.portsInput.on("change", (_e, cx) => { this.portsText = this.portsInput.value(); this.portsError = null; cx.notify(); });
-    this.portsInput.on("submit", (_e, cx) => this.forward(cx));
-    this.portsInput.focus();
-    if (!this.id || checking()) return;
-    this.name = terminalName("fwd", this.id);
-    cx.spawn(async (cx) => { await this.readForward(); cx.notify(); });
-    cx.timer.every(1_500, (cx) => {
-      if (!this.fwdState || this.reading) return;
-      this.reading = true;
-      cx.spawn(async (cx) => {
-        try {
-          await this.readForward();
-          cx.notify();
-        } finally {
-          this.reading = false;
-        }
-      });
-    });
-  }
-
-  async readForward() {
-    const read = await readForward(runCore, this.name);
-    this.open = read.open;
-    if (read.state === null) {
-      if (this.fwdState === "on") this.fwdState = null;
-    } else this.fwdState = read.state;
-  }
-
-  forward(cx) {
-    const parsed = parsePorts(this.portsText);
-    if (parsed.error) {
-      this.portsError = parsed.error;
-      cx.notify();
-      return;
-    }
-    this.fwdState = "starting";
-    cx.notify();
-    cx.spawn(async (cx) => {
-      const error = await launch(this.name, forwardArgs(this.id, parsed), startForward);
-      this.fwdState = error ? { ended: error } : "on";
-      cx.notify();
-    });
-  }
-
-  stopForward(cx) {
-    cx.spawn(async (cx) => {
-      await stopForward(runCore, this.name);
-      await this.readForward();
-      cx.notify();
-    });
-  }
-
-  renderForward(t) {
-    const st = this.fwdState;
-    const on = st === "on" || st === "starting";
-    const root = v_flex().id("woodshed-forward").track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
-      .w_full().min_h(0).p(18).bg(t.popover).text_color(t.foreground)
-      .child(h_flex().items_center().child(div().flex_1().text_size(15).font_semibold().child(`Forward session ${this.id ?? ""}'s ports`))
-        .child(div().id("ws-esc").px(6).py(2).rounded(5).text_size(11).text_color(t.dim).cursor_pointer().on_click(() => this.close()).child("Esc")))
-      .child(div().pt(6).text_size(12.5).line_height("18px").text_color(t.muted)
-        .child("Its ports on this computer's localhost, the same numbers where they are free. It keeps going when this closes, until you stop it here. Anyone with an account on this computer can reach them meanwhile."));
-    const rows = this.open.map((f) => h_flex().id(`ws-port-${f.port}`).gap(8).py(4).items_center().text_size(12.5)
-      .child(div().w(70).text_color(t.dim).child(`port ${f.port}`))
-      .child(div().flex_1().text_color(t.accent).cursor_pointer().on_click((_e, cx) => openUrl(cx, f.url)).child(f.url))
-      .when(f.moved, (el) => el.child(div().text_size(11.5).text_color(t.dim).child(`${f.wanted} was taken here`))));
-    return root
-      .when(!on, (el) => el
-        .child(div().pt(12).pb(5).text_size(11.5).text_color(t.dim).child("Ports"))
-        .child(h_flex().gap(8)
-          .child(Input.new(this.portsInput).flex_1().h(34).px(10).rounded(8).border_1().border_color(t.input).bg(t.background).text_size(12.8).text_color(t.foreground))
-          .child(div().id("ws-fwd-start").h(34).px(14).flex().items_center().rounded(8).bg(t.solid).text_color(t.solid_foreground)
-            .text_size(12.5).font_medium().cursor_pointer().on_click((_e, cx) => this.forward(cx)).child("Forward"))))
-      .when(Boolean(this.portsError), (el) => el.child(div().pt(6).text_size(12).text_color(t.blocked).child(this.portsError)))
-      .when(Boolean(st?.ended), (el) => el.child(div().pt(8).text_size(12).text_color(t.blocked).child(st.ended)))
-      .when(on, (el) => el
-        .child(v_flex().pt(12).children(rows.length ? rows : [div().text_size(12.5).text_color(t.dim).child(st === "starting" ? "Starting…" : "Waiting for a port to listen in the session…")]))
-        .child(h_flex().pt(16).justify_end().child(div().id("ws-fwd-stop").h(32).px(14).flex().items_center().rounded(8)
-          .border_1().border_color(t.input).bg(t.raised).text_size(12.5).cursor_pointer().on_click((_e, cx) => this.stopForward(cx)).child("Stop forwarding"))));
   }
 
   render() {
     const t = theme();
     if (this.view === "new") return this.renderNew(t);
     if (this.view === "info") return this.renderInfo(t);
-    if (this.view === "forward") return this.renderForward(t);
     return this.renderPanel(t);
   }
 }

@@ -4,9 +4,7 @@
 //   core(args)          runs hc (herdr-core) and waits: {code, stdout, stderr}, never rejects
 // main.js gives the real ones (the app's exec and hc).
 
-import {
-  EXIT, jsonLines, errorOf, startProgress, openForwards, terminalKind,
-} from './woodshed.js';
+import { EXIT, jsonLines, errorOf, startProgress, terminalKind } from './woodshed.js';
 
 /** @returns {Promise<string>}  a terminal's screen and history, '' when it cannot be read */
 export async function readTerminal(core, name) {
@@ -77,16 +75,6 @@ export async function tidyStarts(core, finishedBefore) {
   for (const name of finished) finishedBefore.add(name);
 }
 
-/** @returns {Promise<Object<string, object[]>>}  each session's open forwards, by session id, from the live terminals */
-export async function readForwards(core, liveTerminals) {
-  const out = {};
-  for (const t of liveTerminals) {
-    const kind = terminalKind(t.name);
-    if (kind?.kind === 'fwd' && t.state !== 'finished') out[kind.id] = openForwards(await readTerminal(core, t.name));
-  }
-  return out;
-}
-
 // ---- New session ----
 
 /** @returns {string|null}  why the form cannot start yet (the console refuses no prompt unless on a branch or PR) */
@@ -121,47 +109,4 @@ export async function readSession(cli, id) {
 export async function extendSession(cli, id) {
   const r = await cli(['session', 'extend', id, '--json']);
   return r.code === EXIT.done ? null : errorOf(r);
-}
-
-/**
- * The session's app address, to open; a failure is told instead, and nothing opens.
- * @returns {Promise<{url: string}|{error: string, level: string}>}
- */
-export async function appAddress(cli, id) {
-  const r = await cli(['open', id, '--json']);
-  const url = jsonLines(r.stdout).find((e) => typeof e.url === 'string')?.url;
-  if (r.code === EXIT.done && url && /^https?:\/\/[^/\s]+/.test(url)) return { url };
-  return { error: r.code === EXIT.done ? 'the command line gave no address' : errorOf(r), level: r.code === EXIT.waiting ? 'warning' : 'error' };
-}
-
-// ---- Forward port ----
-
-/** One forward per session: a new one takes the place of the last. @returns {Promise<string|null>} an error */
-export async function startForward(core, { path, name, cwd, args }) {
-  if (await terminalState(core, name)) {
-    await core(['kill', name]);
-    await core(['rm', name]);
-  }
-  return startInTerminal(core, { path, name, cwd, args });
-}
-
-/**
- * Where a forward is: none, on with its open ports, or ended (with why, unless it was stopped). An ended one's
- * terminal is removed.
- * @returns {Promise<{state: null|'on'|{ended: string}, open: object[]}>}
- */
-export async function readForward(core, name) {
-  const term = await terminalState(core, name);
-  if (!term) return { state: null, open: [] };
-  const text = await readTerminal(core, name);
-  if (term.state !== 'finished') return { state: 'on', open: openForwards(text) };
-  await core(['rm', name]);
-  const stopped = term.exit_code === EXIT.done || term.reason === 'killed' || term.exit_code === 130 || term.exit_code === 143;
-  const said = text.split('\n').filter((l) => l.trim() && !l.trim().startsWith('{')).join('\n');
-  return { state: { ended: stopped ? 'Stopped.' : errorOf({ stdout: text, stderr: said }) }, open: [] };
-}
-
-/** Ends a forward. */
-export async function stopForward(core, name) {
-  await core(['kill', name]);
 }

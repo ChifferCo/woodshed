@@ -1,14 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  readPanel, tidyStarts, readForwards, startRefusal, pollStart, readSession, extendSession, appAddress, startForward,
-  readForward, stopForward, startInTerminal,
+  readPanel, tidyStarts, startRefusal, pollStart, readSession, extendSession, startInTerminal,
 } from './woodshed/actions.js';
-import { terminalName, newSessionArgs, forwardArgs } from './woodshed/woodshed.js';
+import { terminalName, newSessionArgs } from './woodshed/woodshed.js';
 
 // Each of the mod's actions, driven with a stand-in command line and a stand-in herdr-core, checking what it runs
 // and what it makes of the answers. The command line's lines are what it prints with --json (cli/sessions.mjs,
-// cli/forward.mjs, cli/woodshed.mjs).
+// cli/woodshed.mjs).
 
 const ok = (stdout = '') => ({ code: 0, stdout, stderr: '' });
 const line = (value) => `${JSON.stringify(value)}\n`;
@@ -136,40 +135,4 @@ test('Session info reads the session, and Extend sends that session\'s id and re
   assert.equal(await extendSession(cli, 'cd34ef56'), 'Only in its last 15 minutes');
   assert.deepEqual(await readSession(cli, 'cd34ef56'), { error: 'No session cd34ef56 you can see' });
   assert.deepEqual(calls.filter((c) => c[1] === 'extend'), [['session', 'extend', 'ab12cd34', '--json'], ['session', 'extend', 'cd34ef56', '--json']]);
-});
-
-test('Open app opens the address only when the command line gave one, and says why otherwise', async () => {
-  const { cli } = fakeCli({
-    'open ab12cd34 --json': ok(line({ session: 'ab12cd34', url: 'https://ab12cd34.apps.example.com/' })),
-    'open cd34ef56 --json': { code: 1, stdout: line({ event: 'error', status: 'error', error: 'this console\'s apps have no names of their own' }), stderr: '' },
-    'open ef56ab12 --json': { code: 2, stdout: line({ event: 'error', status: 'signed-out', error: 'not signed in' }), stderr: '' },
-    'open 00000000 --json': ok(line({ session: '00000000', url: 'file:///etc/passwd' })),
-  });
-  assert.deepEqual(await appAddress(cli, 'ab12cd34'), { url: 'https://ab12cd34.apps.example.com/' });
-  assert.deepEqual(await appAddress(cli, 'cd34ef56'), { error: 'this console\'s apps have no names of their own', level: 'error' });
-  assert.deepEqual(await appAddress(cli, 'ef56ab12'), { error: 'not signed in', level: 'warning' });
-  assert.equal((await appAddress(cli, '00000000')).url, undefined, 'never anything but http(s)');
-});
-
-test('Forward port starts one forward per session, lists its ports, and Stop ends that one only', async () => {
-  const name = terminalName('fwd', 'ab12cd34');
-  const { core, terminals } = fakeCore({ [name]: { state: 'live', text: '' }, [terminalName('fwd', 'cd34ef56')]: { state: 'live', text: '' } });
-  const args = forwardArgs('ab12cd34', { auto: true });
-  assert.equal(await startForward(core, { path: '/usr/local/bin/woodshed', name, cwd: '/home/ana', args }), null, 'the last forward is replaced, not refused');
-  assert.deepEqual(terminals[name].argv, ['/usr/local/bin/woodshed', 'forward', '--auto', 'ab12cd34', '--json']);
-  terminals[name].text = line({ event: 'forwarding', session: 'ab12cd34', port: 5173, local: 5174, wanted: 5173, moved: true, url: 'http://localhost:5174' });
-  assert.deepEqual(await readForward(core, name), { state: 'on', open: [{ port: 5173, local: 5174, wanted: 5173, url: 'http://localhost:5174', moved: true }] });
-  const panel = await readForwards(core, Object.entries(terminals).map(([n, t]) => ({ name: n, state: t.state })));
-  assert.deepEqual(Object.keys(panel).sort(), ['ab12cd34', 'cd34ef56']);
-  await stopForward(core, name);
-  assert.deepEqual(await readForward(core, name), { state: { ended: 'Stopped.' }, open: [] });
-  assert.equal(terminals[name], undefined, 'an ended forward\'s terminal is removed');
-  assert.equal(terminals[terminalName('fwd', 'cd34ef56')].state, 'live', 'the other session\'s forward is left alone');
-});
-
-test('a forward that failed says the command line\'s reason', async () => {
-  const name = terminalName('fwd', 'ab12cd34');
-  const { core } = fakeCore({ [name]: { state: 'finished', exit_code: 3, text: line({ event: 'error', status: 'refused', error: 'not your session' }) } });
-  assert.deepEqual(await readForward(core, name), { state: { ended: 'not your session' }, open: [] });
-  assert.deepEqual(await readForward(core, name), { state: null, open: [] });
 });

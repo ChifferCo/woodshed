@@ -18,17 +18,14 @@ export function sessionOfMachine(name) {
 // The command line's exit codes (cli/README.md).
 export const EXIT = { done: 0, failed: 1, waiting: 2, refused: 3 };
 
-/**
- * A background terminal's name in herdr-core: one per kind and session, so the panel finds a forward again after the
- * app restarts, and never starts two. Names are 1-32 of a-z 0-9 - _.
- */
+/** A background terminal's name in herdr-core, by what it runs. Names are 1-32 of a-z 0-9 - _. */
 export function terminalName(kind, id) {
   return `woodshed-${kind}-${id}`;
 }
 
 /** @returns {{kind: string, id: string}|null}  what a terminal named by terminalName runs */
 export function terminalKind(name) {
-  const m = /^woodshed-(new|fwd)-([0-9a-z]{1,20})$/.exec(String(name ?? ''));
+  const m = /^woodshed-(new)-([0-9a-z]{1,20})$/.exec(String(name ?? ''));
   return m ? { kind: m[1], id: m[2] } : null;
 }
 
@@ -51,29 +48,6 @@ export function newSessionArgs({ repo, branch, agent, model, prompt }) {
   const text = String(prompt ?? '').trim();
   if (text) args.push('--', text);
   return args;
-}
-
-/**
- * The ports typed into Forward port…: `3000`, `3000:3001` (the session's 3000 on this computer's 3001), several
- * separated by spaces or commas, or empty for every port the session listens on.
- * @returns {{auto: true}|{ports: string[]}|{error: string}}
- */
-export function parsePorts(text) {
-  const words = String(text ?? '').split(/[\s,]+/).filter(Boolean);
-  if (!words.length) return { auto: true };
-  const ok = (n) => /^\d{1,5}$/.test(n) && Number(n) >= 1 && Number(n) <= 65535;
-  for (const word of words) {
-    const [port, local, extra] = word.split(':');
-    if (extra !== undefined || !ok(port) || (local !== undefined && !ok(local))) {
-      return { error: `${word} is not a port: give a number, or <session port>:<port here>` };
-    }
-  }
-  return { ports: words };
-}
-
-/** `woodshed forward`'s arguments: every port with --auto, else the ones given. */
-export function forwardArgs(id, parsed) {
-  return parsed.auto ? ['forward', '--auto', id, '--json'] : ['forward', id, ...parsed.ports, '--json'];
 }
 
 /** @returns {object[]}  each JSON object line in a command's output; other lines are skipped */
@@ -107,21 +81,6 @@ export function startProgress(text) {
     else if (event.event === 'error') progress.error = typeof event.error === 'string' ? event.error : 'the command failed';
   }
   return progress;
-}
-
-/**
- * The ports a `woodshed forward --json` has open now, from its `forwarding` and `closed` events in order.
- * @returns {{port: number, local: number, wanted: number, url: string, moved: boolean}[]}
- */
-export function openForwards(text) {
-  const open = new Map();
-  for (const event of jsonLines(text)) {
-    if (event.event === 'forwarding' && Number.isInteger(event.port) && typeof event.url === 'string') {
-      const wanted = Number.isInteger(event.wanted) ? event.wanted : event.port;
-      open.set(event.port, { port: event.port, local: event.local, wanted, url: event.url, moved: Boolean(event.moved) });
-    } else if (event.event === 'closed' && Number.isInteger(event.port)) open.delete(event.port);
-  }
-  return [...open.values()].sort((a, b) => a.port - b.port);
 }
 
 /** @returns {string}  the error a finished command gave: its JSON error line, else its last line of stderr */
