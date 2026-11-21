@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // The woodshed command line: signs in to a Woodshed console, says who is signed in, starts and manages sessions, opens
-// a pipe or terminal into a running session, reads and sets choices on My settings, and syncs Claude settings.
+// a pipe or terminal into a running session, moves work from Herdr into a session, reads and sets choices on My
+// settings, and syncs Claude settings.
 // Plain Node 22 with no dependencies (cli/README.md).
 //
 //   woodshed login  [--console <url>] [--no-browser]   a code to approve in the browser, then a token kept in the keychain
@@ -10,6 +11,7 @@
 //   woodshed session connect <id> [--shell]            this terminal on your session's agent, or its shell (terminal.mjs)
 //   woodshed session new|list|get|herdr|stop|resume|remove|extend|limits   sessions (sessions.mjs); herdr makes one
 //                                                     a machine in Herdr's hc (hc.mjs)
+//   woodshed move --from herdr [--terminal T|--tab T|--space S] --to <id>|new   terminals moved into a session (move.mjs)
 //   woodshed review enable|status                      review this checkout's pull requests in Woodshed sessions (review.mjs)
 //   woodshed config list|get|set                       your choices on My settings, never a secret (config.mjs)
 //   woodshed settings plan|push|pull [...]            Claude settings and a checkout's ignored files (settings.mjs)
@@ -27,8 +29,12 @@ import { createCredentials } from './credentials.mjs';
 import { reviewCommand } from './review.mjs';
 import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
+import { repoCommand } from './repos.mjs';
 import { configCommand } from './config.mjs';
 import { hcRunner, hcVersion, viaCommand } from './hc.mjs';
+import { moveCommand } from './move.mjs';
+import { programRunner } from './moveLayout.mjs';
+import { gitRunner } from './moveCode.mjs';
 import { settingsCommand } from './settings.mjs';
 import { setupCommand, SETUP_USAGE } from './setup.mjs';
 import { attach, openTerminal } from './terminal.mjs';
@@ -40,7 +46,7 @@ const REQUEST_MS = 20_000;
 export const EXIT = Object.freeze({ done: 0, failed: 1, waiting: 2, refused: 3 });
 
 // Commands that read their own options: what follows them, but --console, --json and --help, is theirs (in `args`).
-const OWN_ARGS = new Set(['session', 'config', 'settings', 'setup']);
+const OWN_ARGS = new Set(['session', 'move', 'config', 'repo', 'settings', 'setup']);
 
 const USAGE = `Usage: woodshed <command> [--console <url>] [--json]
 
@@ -49,11 +55,13 @@ Commands:
   login     sign in to a Woodshed console: approve the code it shows in your browser; --no-wait returns before approval
   logout    sign out of the console, here and at the console
   status    the console, its org, who is signed in, and the hc found here (Herdr's, for session herdr)
+  repo      list, add and remove repos: woodshed repo --help
   tunnel <id> -- <line>
             run <line> in your running session, with this command's stdin, stdout and stderr; exits with its
             exit code, or 255 when the pipe could not open or broke
   session   start, list, connect to, add to Herdr, stop, resume and remove sessions, and give them more time:
             woodshed session --help
+  move      move work into a session from a supported source: woodshed move --help
   review    review this checkout's pull requests in Woodshed sessions: woodshed review --help
   config    your choices on My settings (terminal, reviews, default repo, …), never a secret: woodshed config --help
   settings  plan|push|pull [--only <what>,...] [--own-files <checkout>] [--replace]
@@ -63,7 +71,7 @@ Commands:
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};
                    WOODSHED_CONSOLE sets it too)
-  --no-browser     login and setup print addresses instead of opening them
+  --no-browser     print addresses to open instead of opening them
   --json           machine-readable output: one JSON object per line
   --help           this text
 
@@ -191,8 +199,7 @@ export function selfCommand({ execPath = process.execPath, argv1 = process.argv[
   return { node: onPath ?? execPath, script: linked ?? script };
 }
 
-// Only an address this command line built (approvalUrl), and never through a shell: cmd's `start` would read & and | in
-// it as commands of their own. On Windows, rundll32 from System32 by its full path, never one in the current folder.
+// Open a checked web address without a shell. On Windows, use the full System32 path to rundll32.
 export function browserCommand(url, platform, env = process.env) {
   if (platform === 'darwin') return ['open', [url]];
   if (platform === 'win32') return [path.win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'rundll32.exe'), ['url.dll,FileProtocolHandler', url]];
@@ -529,7 +536,9 @@ export async function main(argv, deps = {}) {
     command = args.command;
     json = args.json;
     if (args.command === 'setup' && args.help) { stdout.write(`${SETUP_USAGE}\n`); return EXIT.done; }
+    if (args.command === 'repo' && args.help) return repoCommand(args, { stdout, EXIT });
     if (args.command === 'session' && args.help) return await sessionCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
+    if (args.command === 'move' && args.help) return await moveCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.command === 'review' && args.help) return await reviewCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.command === 'config' && args.help) return await configCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.help || !args.command || args.command === 'help') {
@@ -543,10 +552,18 @@ export async function main(argv, deps = {}) {
     if (args.command === 'logout') return await logout(origin);
     if (args.command === 'status') return await status(origin);
     if (args.command === 'tunnel') return await tunnel(origin, args);
-    if (args.command === 'session') {
-      // Its prompt may follow `--`, so a word of it is never read as an option.
-      return await sessionCommand({ origin, rest: [...args.args, ...(args.rest ? ['--', ...args.rest] : [])] }, {
-        call, token: signedIn(origin).token, stdout, stderr, say, emit, json, sleep, now, EXIT, platform, hc,
+    if (args.command === 'repo') return await repoCommand({ ...args, origin }, {
+      stdout, call, token: signedIn(origin).token, open, isTerminal: deps.isTerminal ?? Boolean(stdout.isTTY), json, emit, say, EXIT,
+      fail: (message, opts) => new CliError(message, opts),
+    });
+    if (args.command === 'session' || args.command === 'move') {
+      // The session prompt may follow `--`, so a word of it is never read as an option.
+      const moving = args.command === 'move';
+      const command = moving ? moveCommand : sessionCommand;
+      const rest = [...args.args, ...(args.rest ? ['--', ...args.rest] : [])];
+      return await command({ origin, rest }, {
+        call, ...(moving ? { getToken: () => signedIn(origin).token } : { token: signedIn(origin).token }),
+        stdout, stderr, say, emit, json, sleep, now, EXIT, platform, hc,
         // The line hc keeps for a session's machine: this command line's tunnel into it, on this console.
         // A relative config folder is made absolute: hc's core runs the line from a folder of its own.
         // This terminal on the session's, once: closed, detached, refused, unreachable, or cut once it was open.
@@ -563,6 +580,11 @@ export async function main(argv, deps = {}) {
         via: (session) => viaCommand({ ...(deps.self ?? selfCommand({ env })), origin, session, configHome: env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : null }),
         fail: (message, opts) => new CliError(message, opts),
         confirm: deps.confirm ?? ((question) => confirmOnTerminal(question, stderr)),
+        // move's own: the Herdr app, git, and `session connect` to call.
+        // hc as move runs it, with what is piped to it (hc file write).
+        ...(moving && !deps.hc ? { hc: programRunner({ bin: env.WOODSHED_HC_BIN || 'hc', env }) } : {}),
+        app: deps.app ?? programRunner({ bin: env.WOODSHED_HERDR_APP_BIN || 'herdr-app', env }), git: deps.git ?? gitRunner({ env }), env,
+        hostname: deps.hostname ?? os.hostname(), session: sessionCommand, ...(deps.moveId ? { moveId: deps.moveId } : {}),
       });
     }
     if (args.command === 'review') {

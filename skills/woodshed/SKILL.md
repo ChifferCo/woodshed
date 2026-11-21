@@ -32,6 +32,7 @@ it is there:
 ```sh
 woodshed --help
 woodshed session --help     # once `session` is listed
+woodshed repo --help        # once `repo` is listed
 ```
 
 The table in section 4 says which change each command arrives in. A command `--help` does not list has not shipped in
@@ -74,6 +75,10 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 - **Stopping and removing are the person's call.** `session stop` ends the work in progress (a running one's
   work is checkpointed on the way, but exit 0 does not promise it reached GitHub: check the branch before saying so);
   `session remove` deletes the saved conversation. Do either only when asked, and pass `--yes` to `remove` only then.
+- **Moving is the person's call.** `woodshed move --from herdr` ends the local agents it moves and pushes the work to a branch.
+  Run it only when asked, and `--dry-run` first to show them what would move. Programs restart in the session only with
+  `--restart auto` or their yes; never pass `--restart auto` for them unasked. For an exit 3 listing secret-looking
+  files, tell the person which paths and kinds were flagged. Let them decide how to remove credentials from the work.
 - **Use the console the person gave you.** `--console <url>`, else `WOODSHED_CONSOLE`, else the last one signed in to,
   else the hosted `https://console.woodshed.run`. On a fresh computer that is the hosted one, so for a self-hosted
   console pass its `--console <url>` to `login` and `status` alike. Plain `http://` is refused except on `localhost`.
@@ -86,6 +91,9 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed login [--no-browser]` | Prints a code and opens the console's `/cli` page; waits up to 10 minutes for the person to approve | 0 signed in, 2 code expired, 3 denied | main |
 | `woodshed logout` | Ends this computer's sign-in | 0 | main |
 | `woodshed status` | The console, its org, who is signed in, and the Herdr `hc` here with its version | 0, 2 not signed in | main |
+| `woodshed repo list` | Shows connected repos and, for admins, repos available to add and GitHub App access | 0 listed, 2 sign in, 1 failed | main |
+| `woodshed repo add <owner/name> [--name N]` | Adds a repo to the console | 0 added, 2 needs GitHub App access or sign-in, 3 refused, 1 failed | main |
+| `woodshed repo remove <owner/name>` | Removes a repo and its Woodshed settings | 0 removed, 2 sign in, 3 refused, 1 failed | main |
 | `woodshed session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--no-wait\|--connect\|--herdr] ["prompt"]` | Starts a private session and waits, step by step, until it runs; `--connect` then puts the terminal on its agent's, `--herdr` adds it to Herdr as below | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on, or no `hc` | main |
 | `woodshed session connect <id> [--shell]` | Puts the person's own terminal on the session's agent, or its shell; resumes a paused one first. Interactive: suggest it to them, and use `tunnel` yourself | 0 disconnected, 1 could not open, 2 sign-in ended, 3 shared or saw production | main |
 | `woodshed session herdr <id>` | Makes one of their sessions a machine in Herdr, `woodshed-<id>`, in the app's sidebar; resumes a paused one first | 0 connected, 2 needs the person, 1 failed, 3 no `hc` 0.1.21 or newer, shared, or saw production | main |
@@ -96,6 +104,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed session remove <id> [--yes]` | Takes it off the list with its saved conversation, and forgets its Herdr machine | 0, 2 not confirmed, 3 a shared session | main |
 | `woodshed session extend <id>` | Puts its pause or stop off by an hour (allowed in its last 15 minutes) | 0, 3 refused | main |
 | `woodshed session limits <id> [--idle-hours N\|default] [--lifetime-hours N\|default]` | Its own idle pause and lifetime | 0, 1 out of range, 3 not theirs | main |
+| `woodshed move --from herdr [--terminal T …\|--tab T\|--space S] --to <id>\|new [--restart ask\|auto\|never] [--dry-run]` | Moves terminals on this computer into a session: each agent with its conversation, each shell, each program started again; pushes the work to `woodshed/move-<id>` first, and ends a local agent only once its moved one runs | 0 moved, 2 a moved agent needs the person, 3 a secret in the work, an agent mid-turn, another repo, 1 failed (all undone) | main |
 | `woodshed settings plan [--pull] [--only …] [--own-files <checkout>]` | Lists what push (or pull) would do with each item; sends and writes nothing | 0 | main |
 | `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude settings, skills, and a checkout's ignored env files. Imported MCP definitions sync between computers. | 0, 2 not listed before or not confirmed | main |
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | main |
@@ -127,6 +136,15 @@ woodshed login --json          # add --no-browser where no browser can open (a s
 The first line is `{"event":"code","userCode":…,"verificationUrlComplete":…}`. Give the person the code and the link,
 and ask them to check the page shows the same code before pressing **Sign in the CLI**. The command waits for them; let
 it. Exit 2 means the code expired, 3 that they denied it: say so and stop.
+
+### Choose repos for the console
+
+Run `woodshed repo list --json` and use `projects` for connected repos and `available` for choices to add. `canChange`
+tells you whether the person can make changes. `githubAppAccess` is `true` or `false` when known, and `null` otherwise.
+Run `woodshed repo add <owner/name> --json --no-browser` for the repo the person asked to add. On exit 2 with
+`needs-github-app`, give the person the `url` and ask them to grant access for that repo. Stop and run the same
+command again once they say they have done it. Remove a repo with `woodshed repo remove <owner/name>` only when
+asked. It also clears that repo's settings in Woodshed.
 
 ### Start a session and follow it
 
@@ -169,6 +187,19 @@ command's stdin, stdout and stderr. It opens only into their own running My Wood
 production data. Exit 255 with a reason on stderr is the pipe's own failure: not signed in, refused, not reached, or cut.
 The line is at most 8 KB: write anything longer to a script in the session first. Closing the tunnel hangs up what the
 line started, so start a server that must outlive it with `setsid … &`.
+
+### Move work from this computer into a session
+
+```sh
+woodshed move --from herdr --space api --to new --dry-run --json   # what would move: the move bundle, nothing done
+woodshed move --from herdr --space api --to new                    # or --to <id>: one of theirs on the same repo
+```
+
+`--terminal <t>` (repeatable, `hc ls` addresses), `--tab` or `--space` (by id or name, `herdr-app ls`) choose what moves.
+Each agent between turns moves with its conversation. If one is mid-turn, wait for it to finish. When the CLI cannot
+tell which conversation belongs to a terminal, use `hc label <t> claude.session=<id>` for Claude Code or
+`hc label <t> codex.session=<id>` for Codex. The session uses its own databases. Ignored files (`.env`) stay local.
+`settings push --own-files` gives their sessions their own.
 
 ### See a session's app
 

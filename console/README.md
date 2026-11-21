@@ -982,11 +982,11 @@ and submits the review at the reviewed commit. It logs `fleet: review verdict su
 `as: 'console App'` when no reviewer App was made, in which case GitHub refuses an approval of the App's own pull
 requests.
 
-### The review in a session, as in Actions
+### The review in a session
 
-A review session does what `review.yml` does, so a repo can move from one to the other without losing anything. Its
-prompt (`shared/codeReview/prompt.txt`) is the workflow's word for word, apart from paths, and a test fails when they
-part. The session cannot write to GitHub, so it writes files and the console posts them:
+The session and the reusable Actions workflow share the common review instructions. The session prompt
+(`shared/codeReview/prompt.txt`) has its own verdict and merge-risk criteria. The session writes files for the
+console to post to GitHub:
 
 - **Inline comments** (`inline-comments.json`) go on the diff's lines with the verdict. GitHub refuses a whole review
   when one comment is on a line the diff does not show, so the console then submits the verdict with the comments in
@@ -1025,7 +1025,9 @@ review that runs on it later clears the skip.
 
 The two verdicts become one (`codeReview.mjs merge`):
 
-- The stricter conclusion and the higher merge risk win, so a pull request is approved only when both approve.
+- The stricter conclusion wins, so a pull request is approved only when both approve.
+- The highest reported merge risk wins. When both rate it High, the check prefers a report with a failure reason
+  and a pre-merge check.
 - The comment and summary have a section from each, and each inline comment says whose it is.
 - An earlier comment is resolved when the reviewer who wrote it (its `**Claude Code:**` or `**Codex:**`, read from the
   comment records `review.sh` keeps in `earlier-comments.jsonl`) found it fixed;
@@ -1918,8 +1920,10 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
 - `repos: {list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`: where the program keeps the
   installation's repos, which it built `config.projects` from, so Console settings' Repos card changes them there and
   core keeps no list of its own (`addedProjects`, above under the Repos card). `list` answers what Add a repo offers:
-  `{repos: [{repo, private}] (or owner/name strings), grant: [{account, href}], install}`, the links `https://` only,
-  less the projects (core takes those out). `add` checks the repo, keeps it, and answers the project as the program
+  `{repos: [{repo, private}] (or owner/name strings), grant: [{account, href}], install, complete?}`, the links
+  `https://` only. Core takes connected repos out of the Add a repo picker. Set `complete: true` only when the list
+  includes every repo the App can reach, including connected ones. The CLI can then tell when a repo has lost access.
+  `add` checks the repo, keeps it, and answers the project as the program
   named it, `{name, repo}`; `remove` takes one off. Either throws an error with `shown: true` (and `link: {href, text}`
   where the fix is a page, such as giving the GitHub App access) for a refusal the page shows as it is; core refuses
   the default project, a repo with sessions on it, and a repo or name already there before it asks. `names: false` when
@@ -2504,6 +2508,13 @@ list stays in `addedProjects` and is removed from it. A program that names each 
 name field. The change applies to the installation at once, until the program builds it again from its own list; the
 program's refusal is shown under the field with its link, and a failure that is not a refusal answers `The change failed;
 the console log says why`.
+
+`woodshed repo` uses `GET /api/cli/repos` to list, `POST /api/cli/repos` with `{repo, name?}` to add, and
+`POST /api/cli/repos/remove` with `{repo}` to remove. Each authenticates the `wsc_` token and refuses any `Origin`
+header. The add and remove go through the same project code as the Repos card, including the hosting program's `repos`
+hook and the usual settings cleanup on remove. Hosted CLI requests check current membership and role when the host
+supplies the `members` hook. Hosted changes require a verified owner role. Other signed-in members see only the
+repos they can start sessions on.
 
 Each repo on the card has a row of six colours, its colour on the rail (`public/projectColors.cjs` holds the palette and
 the rule, for the server and the pages alike). A pick is saved at once (`POST /api/console-settings/projects/color`,
