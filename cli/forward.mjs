@@ -8,6 +8,7 @@
 // and closes the forward of one that stopped listening. A local port that is taken moves to the next free one, and it
 // says which. It runs until Ctrl-C.
 
+import { setMaxListeners } from 'node:events';
 import net from 'node:net';
 
 import { createUnframer, encodeLine, frame, FRAME, LINE_HEADER } from '../shared/execFrames.mjs';
@@ -89,6 +90,8 @@ export async function listenFree(wanted, onConnection, { tries = MOVE_TRIES } = 
 export async function runForward({ origin, token, session, specs, auto, say, warn, emit, signal, userAgent = 'woodshed-cli', retryMs = RETRY_MS, lines = { once: ONCE_LINE, watch: WATCH_LINE } }) {
   const forwards = new Map(); // session port -> {servers, local, sockets}
   const failures = new Map(); // session port -> the last failure said, so each is said once until it changes
+  // Each connection opening listens for Ctrl-C while it waits: a browser opens many at once.
+  setMaxListeners(0, signal);
   const upgrade = (path, headers) => openUpgrade({ url: new URL(path, origin), token, headers, userAgent, signal });
   // A port that could not be listened on here: a failure of this computer's, not a refusal.
   let localFailure = null;

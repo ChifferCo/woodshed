@@ -129,6 +129,14 @@ test('a session\'s port comes to localhost, moved to the next free one when take
   assert.ok(forwarding.local > s.appPort);
   assert.ok(run.said.includes(`localhost:${s.appPort} is taken here, so session aaaa1111's port ${s.appPort} is on http://localhost:${forwarding.local}`));
   assert.equal(await get(forwarding.local, '/hello'), 'app /hello');
+  // A browser's burst of connections, each waiting on the console at once, all answered and no warning.
+  const warnings = [];
+  const onWarning = (w) => warnings.push(w.name);
+  process.on('warning', onWarning);
+  const burst = await Promise.all(Array.from({ length: 20 }, (_, i) => get(forwarding.local, `/${i}`)));
+  process.off('warning', onWarning);
+  assert.deepEqual(burst, Array.from({ length: 20 }, (_, i) => `app /${i}`));
+  assert.equal(warnings.includes('MaxListenersExceededWarning'), false);
 
   // A console restart cuts the connections open then; the next one opens again.
   s.cut();
