@@ -13,7 +13,7 @@
 
 import fs from 'node:fs';
 import { isMain } from './isMain.mjs';
-import { SECRET_HEADER, SECRET_VARIABLE, secretContent } from './secretLike.mjs';
+import { SECRET_HEADER, SECRET_VARIABLE, secretContent, shellCredential } from './secretLike.mjs';
 
 export const CODEX_CONFIG = '.codex/config.toml';
 // Tables keyed by a name the person picks: a statement in one belongs to its entry (mcp_servers.github), and an entry
@@ -318,6 +318,11 @@ export function credentialOf(statement) {
   if (single !== null && single.trim() && !REFERENCE.test(single)) {
     if (LITERAL_TABLES.has(table) && (SECRET_VARIABLE.test(last) || (table === 'http_headers' && SECRET_HEADER.test(last)))) return `sets ${name}`;
     if (SECRET_VARIABLE.test(last) && !WORD.test(single) && !(namesVariable(last, table) && ENV_NAME.test(single))) return `sets ${name}`;
+  }
+  // A program's arguments, read as its command line: `--api-key abc`, `-H "Authorization: …"`, `TOKEN=abc`.
+  if (strings.length > 1 || last === 'args') {
+    const argv = shellCredential(strings.map((s) => (/\s/.test(s.said) ? `"${s.said}"` : s.said)).join(' '));
+    if (argv) return `${name} passes ${argv}`;
   }
   for (const { said: text } of strings) {
     let url = null;

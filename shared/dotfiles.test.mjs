@@ -98,5 +98,6 @@ test('curl\'s --user with a password is a credential, one read from a variable i
   assert.match(dotfileProblem('bash-aliases', "alias api='curl --user=mia:hunter2 https://x'\n"), /--user sign-in/);
   assert.equal(dotfileProblem('bash-aliases', "alias api='curl -u \"$API_USER:$API_PASS\" https://x'\n"), null);
   assert.equal(dotfileProblem('bash-aliases', "alias api='curl -u mia https://x'\n"), null, 'a name alone, curl asks for the password');
+  assert.equal(dotfileProblem('bash-aliases', "alias dr='docker run --rm -u 1000:1000 node:22'\n"), null, 'docker\'s -u is a user and a group');
   assert.match(dotfileProblem('gitconfig', '[alias]\n\tx = echo \\'), /an escape git does not read/);
 });

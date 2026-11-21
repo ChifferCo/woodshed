@@ -1,6 +1,9 @@
 // A Claude plugin's marketplace as the shared settings carry it (session/settingsSync.mjs's plugin items): only what a
 // session can add again, never what claude recorded whole. A folder's path is the computer's, and a URL can hold a
-// sign-in, so neither ever leaves the home it was recorded in: such a source goes as its kind alone.
+// sign-in, so neither ever leaves the home it was recorded in: such a source goes as its kind alone, and so does one with
+// a key's shape anywhere in it.
+
+import { secretContent } from './secretLike.mjs';
 
 const REPO_RE = /^[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*$/;
 const KIND_RE = /^[a-z][a-z-]{0,19}$/;
@@ -12,6 +15,7 @@ const KIND_RE = /^[a-z][a-z-]{0,19}$/;
  */
 export function carriedSource(source) {
   if (!source || typeof source !== 'object') return null;
+  if (secretContent(JSON.stringify(source))) return { source: typeof source.source === 'string' && KIND_RE.test(source.source) ? source.source : 'other' };
   if (source.source === 'github' && typeof source.repo === 'string' && REPO_RE.test(source.repo) && !source.ref && !source.path) {
     return { source: 'github', repo: source.repo };
   }

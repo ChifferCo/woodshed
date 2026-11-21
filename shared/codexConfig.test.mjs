@@ -101,3 +101,15 @@ test('a # inside a quoted value is no comment, and a key\'s shape in a comment o
   assert.equal(sharedPart(commented), 'model = "o3"\n', 'neither the comment nor the table goes');
   assert.equal(configCredential('model = "o3\n'), 'is not TOML the console reads');
 });
+
+test('an MCP server\'s key given as an argument keeps the server local, and a marketplace URL with a key\'s shape goes as its kind', async () => {
+  const { credentialOf } = await import('./codexConfig.mjs');
+  const { carriedSource } = await import('./pluginSource.mjs');
+  const token = `ghp_${'x1'.repeat(18)}`;
+  const kv = (text) => readToml(text).find((s) => s.kind === 'kv');
+  assert.equal(credentialOf(kv('[mcp_servers.x]\nargs = ["-y", "some-mcp", "--api-key", "abc123"]\n')), 'mcp_servers.x.args passes a --api-key value');
+  assert.equal(credentialOf(kv('[mcp_servers.x]\nargs = ["--header", "Authorization: Bearer abc"]\n')), 'mcp_servers.x.args passes the Authorization header');
+  assert.equal(credentialOf(kv('[mcp_servers.x]\nargs = ["-y", "docs-mcp", "--api-key", "$DOCS_KEY"]\n')), null);
+  assert.equal(credentialOf(kv('[mcp_servers.x]\nargs = ["-y", "docs-mcp"]\n')), null);
+  assert.deepEqual(carriedSource({ source: 'url', url: `https://example.com/${token}/marketplace.json` }), { source: 'url' });
+});
