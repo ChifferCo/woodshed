@@ -111,13 +111,14 @@ export function startProgress(text) {
 
 /**
  * The ports a `woodshed forward --json` has open now, from its `forwarding` and `closed` events in order.
- * @returns {{port: number, local: number, url: string, moved: boolean}[]}
+ * @returns {{port: number, local: number, wanted: number, url: string, moved: boolean}[]}
  */
 export function openForwards(text) {
   const open = new Map();
   for (const event of jsonLines(text)) {
     if (event.event === 'forwarding' && Number.isInteger(event.port) && typeof event.url === 'string') {
-      open.set(event.port, { port: event.port, local: event.local, url: event.url, moved: Boolean(event.moved) });
+      const wanted = Number.isInteger(event.wanted) ? event.wanted : event.port;
+      open.set(event.port, { port: event.port, local: event.local, wanted, url: event.url, moved: Boolean(event.moved) });
     } else if (event.event === 'closed' && Number.isInteger(event.port)) open.delete(event.port);
   }
   return [...open.values()].sort((a, b) => a.port - b.port);

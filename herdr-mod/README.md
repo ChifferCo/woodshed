@@ -7,7 +7,9 @@ Woodshed panel beside your terminals. It does nothing itself. Every action runs 
 - **The panel** lists your running My Woodshed sessions: state, when each pauses or stops by itself, and the ports
   forwarded from it. Click a session for its info.
 - **New session…** asks for a repo, a branch (or a pull request or issue number), the agent and a prompt, then shows the
-  start step by step (`woodshed session new --json`). Closing the dialog does not stop the start.
+  start step by step (`woodshed session new --json`). The prompt may be left out only on a branch or pull request,
+  where the session reviews it, as the console's own New session allows. Closing the dialog does not stop the start;
+  a start that failed goes back to the form, its fields kept.
 - **Session info** shows the session's branch, pull request, when it pauses or stops, and the hours it runs on
   (`woodshed session get`). **Extend** puts the pause or stop off by an hour (`woodshed session extend`). The console
   allows that in the last 15 minutes, so the button waits until then. Nothing keeps a session awake for being
@@ -67,8 +69,9 @@ browser was not tried.
 
 ```sh
 herdr-app check herdr-mod/woodshed      # loads it once, as the app would; writes its jsconfig.json and .d.ts there
-node --test herdr-mod/woodshed.test.mjs  # what it reads from the command line, and when it notifies
+node --test herdr-mod/*.test.mjs        # each action against a stand-in CLI and herdr-core, and what it reads
 ```
 
-`check` renders only the first state of the panel: try the dialogs in the app. `woodshed/woodshed.js` holds everything
-that is not drawing, so the tests run it under node.
+`check` renders only a copy's first state: try the dialogs in the app. Everything that is not drawing is in
+`woodshed/actions.js` (what each action runs, given the command line and `hc` to run) and `woodshed/woodshed.js` (how it
+reads their answers), so the tests run it under node.

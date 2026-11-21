@@ -10,7 +10,7 @@ import {
 
 test('a session is known by its machine, woodshed-<id>, and nothing else', () => {
   assert.equal(sessionOfMachine('woodshed-ab12cd34'), 'ab12cd34');
-  for (const name of [null, undefined, 'woodrow-dev-box', 'woodshed-AB12CD34', 'woodshed-ab12cd3', 'woodshed-ab12cd345', 'x-woodshed-ab12cd34']) {
+  for (const name of [null, undefined, 'acme-dev-box', 'woodshed-AB12CD34', 'woodshed-ab12cd3', 'woodshed-ab12cd345', 'x-woodshed-ab12cd34']) {
     assert.equal(sessionOfMachine(name), null, String(name));
   }
 });
@@ -65,7 +65,7 @@ test('the ports open now follow forwarding and closed events', () => {
     JSON.stringify({ event: 'forwarding', session: 'ab12cd34', port: 3000, local: 3000, wanted: 3000, moved: false, url: 'http://localhost:3000' }),
     JSON.stringify({ event: 'closed', session: 'ab12cd34', port: 5173, local: 5174, why: 'stopped listening' }),
   ].join('\n');
-  assert.deepEqual(openForwards(text), [{ port: 3000, local: 3000, url: 'http://localhost:3000', moved: false }]);
+  assert.deepEqual(openForwards(text), [{ port: 3000, local: 3000, wanted: 3000, url: 'http://localhost:3000', moved: false }]);
 });
 
 test('a failure says the command line\'s own reason', () => {

@@ -19,9 +19,13 @@ import {
   checking, nextCommand,
 } from "herdr";
 import {
-  EXIT, SESSION_ID, sessionOfMachine, terminalName, terminalKind, newSessionArgs, parsePorts, forwardArgs, jsonLines,
-  startProgress, openForwards, errorOf, outcomeOf, pauseText, mayExtend, newlyBlocked, blockedNotice,
+  EXIT, SESSION_ID, sessionOfMachine, terminalName, newSessionArgs, parsePorts, forwardArgs, startProgress, outcomeOf,
+  pauseText, mayExtend, newlyBlocked, blockedNotice,
 } from "./woodshed.js";
+import {
+  readPanel, tidyStarts, readForwards, startRefusal, startInTerminal, pollStart, readSession, extendSession, appAddress,
+  startForward, readForward, stopForward,
+} from "./actions.js";
 
 const I = (name) => `mods/workspace-chrome/${name}.svg`;
 const LIVE = new Set(["queued", "starting", "running", "stopping"]);
@@ -38,8 +42,8 @@ async function cli() {
   return cliPath;
 }
 
-/** Runs the command line and waits for it. Never rejects: a command that could not start comes back as code 1. */
-async function woodshed(args, timeout = 60_000) {
+/** The command line, run and waited for. Never rejects: a command that could not start comes back as code 1. */
+async function runCli(args, timeout = 60_000) {
   try {
     return await exec(await cli(), args, { cwd: home(), timeout });
   } catch (err) {
@@ -47,35 +51,20 @@ async function woodshed(args, timeout = 60_000) {
   }
 }
 
-/** Starts the command line in a background herdr-core terminal of its own. @returns {string|null} an error */
-async function startInTerminal(name, args) {
+/** hc, run and waited for. Never rejects. */
+async function runCore(args) {
+  return hc(args).catch((err) => ({ code: 1, stdout: "", stderr: err?.message ?? String(err) }));
+}
+
+/** Starts the command line in a background herdr-core terminal of its own. @returns {Promise<string|null>} an error */
+async function launch(name, args, how = startInTerminal) {
   let path;
   try {
     path = await cli();
   } catch (err) {
     return err.message;
   }
-  const r = await hc(["run", "--bg", "--json", "--no-parent", "--name", name, "--cwd", home(), "--", path, ...args]).catch((e) => ({ code: 1, stderr: String(e) }));
-  return r.code === 0 ? null : (r.stderr || r.stdout || "herdr-core did not start it").trim();
-}
-
-async function readTerminal(name) {
-  const r = await hc(["read", name, "--json"]).catch(() => null);
-  try {
-    return r?.code === 0 ? JSON.parse(r.stdout).text ?? "" : "";
-  } catch {
-    return "";
-  }
-}
-
-/** @returns {object|null}  the terminal named so, finished ones too: {state, exit_code, ...} */
-async function terminalState(name) {
-  const r = await hc(["ls", "--all", "--json"]).catch(() => null);
-  try {
-    return (JSON.parse(r?.stdout ?? "{}").terminals ?? []).find((t) => t.name === name) ?? null;
-  } catch {
-    return null;
-  }
+  return how(runCore, { path, name, cwd: home(), args });
 }
 
 // The system's browser, through the app (it takes only http and https URLs with a host).
@@ -85,10 +74,9 @@ function openUrl(cx, url) {
 
 function openApp(cx, id) {
   cx.spawn(async (cx) => {
-    const r = await woodshed(["open", id, "--json"]);
-    const url = jsonLines(r.stdout).find((e) => typeof e.url === "string")?.url;
-    if (r.code === EXIT.done && url) openUrl(cx, url);
-    else notify({ title: `Woodshed ${id}: no app to open`, body: errorOf(r), level: r.code === EXIT.waiting ? "warning" : "error" });
+    const app = await appAddress(runCli, id);
+    if (app.url) openUrl(cx, app.url);
+    else notify({ title: `Woodshed ${id}: no app to open`, body: app.error, level: app.level });
   });
 }
 
@@ -130,6 +118,7 @@ export default class Woodshed extends View {
     this.listError = null;
     this.forwards = {}; // session id -> [{port, local, url, moved}]
     this.seen = new Map(); // agent address -> last status, for notifications
+    this.finishedStarts = new Set(); // starts' terminals found finished at the last tidy
     this.watching = false;
     if (checking()) return;
     cx.spawn(async (cx) => { await this.refresh(); cx.notify(); });
@@ -160,36 +149,12 @@ export default class Woodshed extends View {
   }
 
   async refresh() {
-    const status = await woodshed(["status", "--json"], 20_000);
-    const said = jsonLines(status.stdout).pop() ?? {};
-    if (status.code === EXIT.done) this.who = { console: said.name || said.console, login: said.login };
-    else if (status.code === EXIT.waiting) this.who = { signedOut: said.ended ? `your sign-in to ${said.console} ended` : `not signed in to ${said.console ?? "a console"}` };
-    else this.who = { missing: errorOf(status) };
-    if (status.code !== EXIT.done) {
-      this.sessions = null;
-      return;
-    }
-    const list = await woodshed(["session", "list", "--json"], 20_000);
-    const body = jsonLines(list.stdout).find((e) => Array.isArray(e.sessions));
-    if (list.code === EXIT.done && body) {
-      this.sessions = body.sessions.filter((s) => s.mine);
-      this.listError = null;
-    } else this.listError = list.code === EXIT.done ? null : errorOf(list);
-    // A start whose dialog was closed leaves its finished terminal behind: take it away once it is done.
-    const all = await hc(["ls", "--all", "--json"]).catch(() => null);
-    try {
-      for (const t of JSON.parse(all?.stdout ?? "{}").terminals ?? []) {
-        if (terminalKind(t.name)?.kind === "new" && t.state === "finished") await hc(["rm", t.name]).catch(() => null);
-      }
-    } catch {
-      // Nothing to tidy.
-    }
+    Object.assign(this, await readPanel(runCli));
+    await tidyStarts(runCore, this.finishedStarts);
   }
 
   async readForwards() {
-    const live = terminals().filter((t) => terminalKind(t.name)?.kind === "fwd" && t.state !== "finished");
-    const next = {};
-    for (const t of live) next[terminalKind(t.name).id] = openForwards(await readTerminal(t.name));
+    const next = await readForwards(runCore, terminals());
     const changed = JSON.stringify(next) !== JSON.stringify(this.forwards);
     this.forwards = next;
     return changed;
@@ -268,49 +233,57 @@ export default class Woodshed extends View {
 
   initNew(cx) {
     this.fields = {};
-    for (const [key, placeholder] of [["repo", "owner/name (blank: your usual one)"], ["branch", "branch, or a pull request or issue number"], ["prompt", "What should it do? (optional)"]]) {
+    const hints = [
+      ["repo", "owner/name (blank: your usual one)"],
+      ["branch", "branch, or a pull request or issue number"],
+      ["prompt", "What should it do? (blank on a branch or PR: it reviews it)"],
+    ];
+    for (const [key, placeholder] of hints) {
       const input = InputState.new({ placeholder });
-      input.on("change", (_e, cx) => { this.fields[key] = input.value(); cx.notify(); });
+      input.on("change", (_e, cx) => { this.fields[key] = input.value(); this.formError = null; cx.notify(); });
       input.on("submit", (_e, cx) => this.start(cx));
       this.fields[`${key}Input`] = input;
     }
     this.fields.agent = "claude";
+    this.formError = null;
     this.fields.repoInput.focus();
     cx.timer.after(600, () => this.fields.repoInput.focus());
     this.started = null; // {name, progress, finished: {code}|null, error}
-  }
-
-  start(cx) {
-    if (this.started) return;
-    const name = terminalName("new", Date.now().toString(36));
-    this.started = { name, progress: startProgress(""), finished: null, error: null };
-    cx.notify();
-    cx.spawn(async (cx) => {
-      const error = await startInTerminal(name, newSessionArgs(this.fields));
-      if (error) {
-        this.started.error = error;
-        cx.notify();
-        return;
-      }
-      cx.notify();
-    });
     cx.timer.every(1_000, (cx) => {
-      if (!this.started || this.started.finished || this.started.error || this.polling) return;
+      const s = this.started;
+      if (!s || s.finished || s.error || !s.launched || this.polling) return;
       this.polling = true;
       cx.spawn(async (cx) => {
         try {
-          this.started.progress = startProgress(await readTerminal(name));
-          const term = await terminalState(name);
-          if (term?.state === "finished") {
-            this.started.finished = { code: term.exit_code };
-            await hc(["rm", name]).catch(() => null);
-          }
+          Object.assign(s, await pollStart(runCore, s.name));
           cx.notify();
         } finally {
           this.polling = false;
         }
       });
     });
+  }
+
+  start(cx) {
+    if (this.started) return;
+    this.formError = startRefusal(this.fields);
+    if (this.formError) {
+      cx.notify();
+      return;
+    }
+    const s = { name: terminalName("new", Date.now().toString(36)), progress: startProgress(""), finished: null, error: null, launched: false };
+    this.started = s;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      s.error = await launch(s.name, newSessionArgs(this.fields));
+      s.launched = !s.error;
+      cx.notify();
+    });
+  }
+
+  // Back to the form, its fields as they were, after a start that did not run.
+  editAgain() {
+    this.started = null;
   }
 
   renderNew(t) {
@@ -333,6 +306,7 @@ export default class Woodshed extends View {
         .child(label("Branch")).child(input(f.branchInput))
         .child(label("Agent")).child(h_flex().gap(6).child(choice("claude")).child(choice("codex")))
         .child(label("Prompt")).child(input(f.promptInput))
+        .when(Boolean(this.formError), (el) => el.child(div().pt(6).text_size(12).text_color(t.blocked).child(this.formError)))
         .child(h_flex().pt(18).gap(8).justify_end()
           .child(div().id("ws-cancel").h(32).px(14).flex().items_center().rounded(8).border_1().border_color(t.input).bg(t.raised)
             .text_size(12.5).cursor_pointer().on_click(() => this.close()).child("Cancel"))
@@ -362,6 +336,9 @@ export default class Woodshed extends View {
         .when(done && p.end === "running" && Boolean(id), (el) => el.child(div().id("ws-info").h(32).px(14).flex().items_center().rounded(8)
           .bg(t.solid).text_color(t.solid_foreground).text_size(12.5).font_medium().cursor_pointer()
           .on_click(() => { this.close(); dialog("info", { id }); }).child("Session info")))
+        .when(Boolean(s.error) || (done && s.finished.code !== EXIT.done && s.finished.code !== EXIT.waiting), (el) => el.child(div().id("ws-again")
+          .h(32).px(14).flex().items_center().rounded(8).border_1().border_color(t.input).bg(t.raised).text_size(12.5).cursor_pointer()
+          .on_click((_e, cx) => { this.editAgain(); cx.notify(); }).child("Edit and try again")))
         .child(div().id("ws-close").h(32).px(14).flex().items_center().rounded(8).border_1().border_color(t.input).bg(t.raised)
           .text_size(12.5).cursor_pointer().on_click(() => this.close()).child(done || s.error ? "Close" : "Close, it keeps starting")));
   }
@@ -375,15 +352,16 @@ export default class Woodshed extends View {
     this.extendSaid = null;
     if (!this.id || checking()) return;
     cx.spawn(async (cx) => { await this.readSession(); cx.notify(); });
+    // Read again while it is open, so Extend turns on when the last 15 minutes come.
+    cx.timer.every(30_000, (cx) => cx.spawn(async (cx) => { if (!this.extending) { await this.readSession(); cx.notify(); } }));
   }
 
   async readSession() {
-    const r = await woodshed(["session", "get", this.id, "--json"]);
-    const body = jsonLines(r.stdout).find((e) => e.session);
-    if (r.code === EXIT.done && body) {
-      this.session = body.session;
+    const read = await readSession(runCli, this.id);
+    if (read.session) {
+      this.session = read.session;
       this.infoError = null;
-    } else this.infoError = errorOf(r);
+    } else this.infoError = read.error;
   }
 
   extend(cx) {
@@ -391,8 +369,7 @@ export default class Woodshed extends View {
     this.extending = true;
     cx.notify();
     cx.spawn(async (cx) => {
-      const r = await woodshed(["session", "extend", this.id, "--json"]);
-      this.extendSaid = r.code === EXIT.done ? null : errorOf(r);
+      this.extendSaid = await extendSession(runCli, this.id);
       await this.readSession();
       this.extending = false;
       cx.notify();
@@ -465,19 +442,11 @@ export default class Woodshed extends View {
   }
 
   async readForward() {
-    const term = await terminalState(this.name);
-    if (!term) {
+    const read = await readForward(runCore, this.name);
+    this.open = read.open;
+    if (read.state === null) {
       if (this.fwdState === "on") this.fwdState = null;
-      this.open = [];
-      return;
-    }
-    const text = await readTerminal(this.name);
-    this.open = openForwards(text);
-    if (term.state === "finished") {
-      this.fwdState = { ended: term.exit_code === EXIT.done ? "Stopped." : errorOf({ stdout: text, stderr: text.split("\n").filter((l) => !l.startsWith("{")).join("\n") }) };
-      this.open = [];
-      await hc(["rm", this.name]).catch(() => null);
-    } else this.fwdState = "on";
+    } else this.fwdState = read.state;
   }
 
   forward(cx) {
@@ -490,12 +459,7 @@ export default class Woodshed extends View {
     this.fwdState = "starting";
     cx.notify();
     cx.spawn(async (cx) => {
-      // One forward per session: a new one takes the place of the last.
-      if (await terminalState(this.name)) {
-        await hc(["kill", this.name]).catch(() => null);
-        await hc(["rm", this.name]).catch(() => null);
-      }
-      const error = await startInTerminal(this.name, forwardArgs(this.id, parsed));
+      const error = await launch(this.name, forwardArgs(this.id, parsed), startForward);
       this.fwdState = error ? { ended: error } : "on";
       cx.notify();
     });
@@ -503,7 +467,7 @@ export default class Woodshed extends View {
 
   stopForward(cx) {
     cx.spawn(async (cx) => {
-      await hc(["kill", this.name]).catch(() => null);
+      await stopForward(runCore, this.name);
       await this.readForward();
       cx.notify();
     });
@@ -521,7 +485,7 @@ export default class Woodshed extends View {
     const rows = this.open.map((f) => h_flex().id(`ws-port-${f.port}`).gap(8).py(4).items_center().text_size(12.5)
       .child(div().w(70).text_color(t.dim).child(`port ${f.port}`))
       .child(div().flex_1().text_color(t.accent).cursor_pointer().on_click((_e, cx) => openUrl(cx, f.url)).child(f.url))
-      .when(f.moved, (el) => el.child(div().text_size(11.5).text_color(t.dim).child(`${f.port} was taken here`))));
+      .when(f.moved, (el) => el.child(div().text_size(11.5).text_color(t.dim).child(`${f.wanted} was taken here`))));
     return root
       .when(!on, (el) => el
         .child(div().pt(12).pb(5).text_size(11.5).text_color(t.dim).child("Ports"))
