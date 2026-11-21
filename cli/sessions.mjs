@@ -434,7 +434,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
  *            all?: boolean, yes?: boolean, id?: string}}
  */
 export function parseSessionArgs(sub, words, fail) {
-  const takes = {
+  const commands = {
     new: { values: ['repo', 'branch', 'agent', 'model'], flags: ['no-wait'], words: 'prompt' },
     list: { values: [], flags: ['all'], words: null },
     get: { values: [], flags: [], words: 'id' },
@@ -443,7 +443,9 @@ export function parseSessionArgs(sub, words, fail) {
     stop: { values: [], flags: [], words: 'id' },
     resume: { values: [], flags: ['no-wait'], words: 'id' },
     remove: { values: [], flags: ['yes'], words: 'id' },
-  }[sub];
+  };
+  // Its own keys only: `constructor` or `toString` is no command.
+  const takes = Object.hasOwn(commands, sub) ? commands[sub] : null;
   if (!takes) throw fail(`unknown session command ${sub}\n\n${SESSION_USAGE}`);
   const out = {};
   const positional = [];
