@@ -53,7 +53,7 @@ async function signedIn(t) {
     });
     return { code, out, err };
   };
-  return { origin, run, cli, id };
+  return { origin, run, cli, id, session };
 }
 
 test('woodshed tunnel runs the words after -- as one line in the session, with the line\'s exit code', async (t) => {
@@ -85,4 +85,19 @@ test('every failure of the pipe itself exits 255, and says why on stderr only', 
   const ended = await run(['tunnel', 'aaaa1111', '--console', origin, '--', 'true']);
   assert.equal(ended.code, 255);
   assert.match(ended.err, /refused \(401\).*woodshed login/);
+});
+
+test('a session that is not running says how to bring its Herdr machine back; one that saw production says only that', async (t) => {
+  const { run, origin, session } = await signedIn(t);
+  Object.assign(session, { status: 'stopped' });
+  const stopped = await run(['tunnel', 'aaaa1111', '--console', origin, '--', 'true']);
+  assert.equal(stopped.code, 255);
+  assert.equal(stopped.out, '');
+  assert.equal(stopped.err, `woodshed: refused (409): the session is stopped, not running. To reconnect it in Herdr, run: woodshed session herdr aaaa1111 --console ${origin} (it resumes the session and adds its machine again; resuming alone leaves the machine unreachable)\n`);
+  assert.doesNotMatch(stopped.err, /resume it first/, 'a resume alone leaves the machine unreachable');
+
+  Object.assign(session, { status: 'running', taintedAt: new Date().toISOString() });
+  const tainted = await run(['tunnel', 'aaaa1111', '--console', origin, '--', 'true']);
+  assert.equal(tainted.code, 255);
+  assert.equal(tainted.err, 'woodshed: refused (409): this session has seen production data: nothing runs in it from outside\n');
 });

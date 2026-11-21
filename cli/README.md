@@ -170,7 +170,10 @@ running session of yours (a My Woodshed session), never one that has seen produc
 session's environment without the session's own token. Revoking this computer's sign-in, or the session stopping,
 closes it. An open tunnel does not keep the session awake: it pauses when idle as it would without one, which ends the
 tunnel. Exit 255 is the tunnel's own failure (not signed in, refused, the console or session not reached, cut before the
-line ended), and it always says why on stderr. A line that itself exits 255 exits 255 too, with nothing of the tunnel's
+line ended), and it always says why on stderr. A session that is paused or stopped is refused with 409, and the
+message, which Herdr shows as its machine's reason, says to run `woodshed session herdr <id>`: a resumed session runs a
+new `hc` core, so resuming it alone leaves its machine unreachable, and `session herdr` resumes it and adds the machine
+again. A line that itself exits 255 exits 255 too, with nothing of the tunnel's
 on stderr, as ssh does. The line is at most 8 KB: a longer one belongs in a script in the session. Closing the tunnel
 before the line ends (Ctrl-C, a cut network) hangs up everything the line started in the session.
 
@@ -183,11 +186,12 @@ before the line ends (Ctrl-C, a cut network) hangs up everything the line starte
 | `session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--connect\|--herdr] ["prompt"]` | Starts a private session, as My Woodshed's New session does: on `R` (`owner/name`, default the repo New session opens on for you), working on branch `B` or a pull request or issue (`123`, `pr 123`, its URL), with that agent and model. Then it waits, printing each start step as it is done, until the session runs. `--no-wait` returns once the console has it. Ctrl-C stops the wait, not the session. `--connect` then puts this terminal on its agent's, as `connect` does; `--herdr` adds it to Herdr, as `herdr` does (below), and checks for `hc` before starting anything. | 0 running (with `--connect`, until you disconnect; with `--herdr`, added), 2 running and needs you, 1 failed or stopped (or `hc` could not add it), 3 a repo you cannot start on, or no `hc` |
 | `session connect <id> [--shell]` | Puts this terminal on one of your sessions' agent, as its TUI tab shows it (claude or codex, in tmux or Herdr), or with `--shell` on its shell, the Terminal tab's. A paused or stopped one is resumed first. Below. | 0 disconnected (Ctrl-\\) or the session's terminal closed normally, 2 the sign-in ended, 1 could not open or reconnect, or the session's terminal closed it on an error, 3 a shared session, or one that has seen production data |
 | `session herdr <id>` | Makes one of your sessions a machine in Herdr, `woodshed-<id>`, so it shows in the app's sidebar beside this computer: below. A paused or stopped one is resumed first, and waited for as `resume` does. | 0 connected, 2 connected and the session needs you, 1 its start failed or `hc` could not add it, 3 no `hc`, one older than 0.1.21, a shared session, or one that has seen production data |
-| `session list [--all]` | Your sessions and the shared ones you can see: id, state (the page's words), whose, when it pauses or stops by itself, project and title. Ended shared sessions only with `--all`. | 0 |
+| `session list [--all]` | Your sessions and the shared ones you can see: id, state (the page's words), whose, when it pauses or stops by itself, project and title. Ended shared sessions only with `--all`. With `hc` here, it also names the `woodshed-<id>` machines in Herdr whose session is no longer on the console (`herdrLeftovers` in `--json`), and says to run `prune`. | 0 |
 | `session get <id>` | One session: state, branch, agent, pull request, when it pauses or stops, and the hours it runs on. | 0, 1 none you can see |
 | `session stop <id>` | Stops it, and waits until the console has stopped it, a running one's work checkpointed on the way (up to 3 minutes: past that it says to check with `get`). One that paused or failed by itself is marked stopped by you, as the page's Stop does, so it no longer waits on you. | 0, 1 not answered in time |
 | `session resume <id> [--no-wait]` | Starts one of your stopped sessions again, its conversation and all, and waits as `new` does. | as `new`; 3 a shared session (resume it on the console) |
 | `session remove <id> [--yes]` | Takes one of your sessions off the list with its saved conversation, stopping it first, and forgets its `woodshed-<id>` machine in Herdr when there is one. It asks first on a terminal; with no terminal it needs `--yes`. | 0, 2 not confirmed, 3 a shared session |
+| `session prune` | Forgets the `woodshed-<id>` machines in Herdr whose session is no longer on the console's list: removed on the page, or cleaned up by the console, which only `session remove` would have forgotten. Below. | 0, 1 `hc` could not list or forget one |
 | `session extend <id>` | Puts its pause or stop off by an hour. The console allows it in the session's last 15 minutes, to its owner, or a shared session's assignee. | 0, 3 refused |
 | `session limits <id> [--idle-hours N\|default] [--lifetime-hours N\|default]` | Its own idle pause and lifetime, in place of yours or the console's; `default` goes back to them. The other is kept. | 0, 1 out of range, 3 not yours to change |
 
@@ -241,8 +245,20 @@ hc machine add --json --name woodshed-<id> --install \
   from another install of this command, or one added with `--temp`) is forgotten and added again. `hc machine rm` leaves
   the terminals in the session running. `session remove` forgets a `woodshed-<id>` only when its line is this command
   line's tunnel to that session on that console, never a machine of that name you made yourself.
+- **Leftovers:** a session removed on the console's page, or cleaned up by the console, leaves its machine in the
+  sidebar, unreachable. `session list` names each `woodshed-<id>` whose line is this command line's tunnel to that
+  session on this console and whose id is not on the console's list at all, and `session prune` forgets those, with
+  the same check as `remove`. A paused, stopped or deleted session still on the list keeps its machine (`session herdr`
+  brings a paused one back), and any other machine is never touched. The list is the signed-in person's: a machine
+  added while signed in to the same console as someone else reads as a leftover.
 - **The agent** appears in a space on the machine when you picked Herdr under Agent terminal on My settings before the
   session started. `session herdr` places the running terminal (`woodshed-<id>/claude`) and keeps any existing layout.
+- **Names:** with the Herdr app's window open, `session herdr` then names the agent's space after the session's title
+  and its tab after its agent (`claude` or `codex`), with `herdr-app do space.rename` and `tab.rename`. It renames a
+  space or tab only while it has Herdr's default name (none, the checkout's folder, a tab's number) or the name it gave
+  last, which it keeps in the terminal's `woodshed.space-name` and `woodshed.tab-name` labels: never one you renamed.
+  The console names a session a few seconds after it starts, so running `session herdr` again picks up a later title.
+  With no `herdr-app` or no window, nothing is named and nothing is said. The machine stays `woodshed-<id>`.
   With tmux selected, open the agent in the browser or use `session connect`. The machine still works for new terminals.
 - **No `hc`,** or one older than 0.1.21, exits 3 and says so. Nothing here installs or updates it: `hc update` does,
   when you choose.

@@ -5,6 +5,9 @@
 // Nothing here installs or updates hc: a missing or old one is said, and the person decides.
 
 import { execFile } from 'node:child_process';
+import path from 'node:path';
+
+import { failureOf } from './moveLayout.mjs';
 import { windowsExecutable } from '../shared/windowsExecutable.mjs';
 
 // The oldest hc whose machines, `--via` and `--install` this was checked against (the session image pins the same).
@@ -156,4 +159,85 @@ export async function removeMachine(run, name, { origin, session }) {
   const rm = await run(['machine', 'rm', '--json', name]);
   if (rm.code !== 0) throw Object.assign(new Error(`hc could not forget ${name}: ${hcError(rm).message}`), { hc: true });
   return true;
+}
+
+/**
+ * The machines this command line added for sessions on that console that are no longer on its list: a session removed
+ * on the console's page, or cleaned up by the console, whose machine nothing forgot. Only a machine named
+ * `woodshed-<id>` whose saved line is this command line's tunnel to that same session on that console; a paused or
+ * stopped session is still on the list, so its machine stays for `session herdr` to bring back.
+ * @param {(id: string) => boolean} exists  whether the console still lists a session by that id
+ * @returns {Promise<{name: string, session: string, state: string|null}[]>}
+ */
+export async function leftoverMachines(run, { origin, exists }) {
+  const out = [];
+  for (const m of await machines(run)) {
+    const session = /^woodshed-([0-9a-f]{8})$/.exec(m.name)?.[1];
+    if (!session || exists(session) || !isTunnelTo(m, { origin, session })) continue;
+    out.push({ name: m.name, session, state: typeof m.state === 'string' ? m.state : null });
+  }
+  return out;
+}
+
+// Labels on the agent's terminal holding the names this command line last gave its space and tab, so a later run can
+// tell a name of its own (which a later title replaces) from one the person gave (which it never touches).
+export const NAMED_SPACE_LABEL = 'woodshed.space-name';
+export const NAMED_TAB_LABEL = 'woodshed.tab-name';
+// The app's window learns of a terminal adopted by its labels a moment after they are written.
+const WINDOW_TRIES = 20;
+const WINDOW_WAIT_MS = 250;
+
+/**
+ * Names the Herdr space the session's agent is in after the session's title, and its tab after the agent, with the Herdr
+ * app's own commands (`herdr-app ls`, `herdr-app do space.rename`, `tab.rename`). A space or tab is renamed only while
+ * it has Herdr's default name (none, the checkout's folder, or a tab's number) or the name this command line gave it
+ * last: never one the person renamed. With no herdr-app, or no window open, nothing is named and nothing is said.
+ * @param {{machine: string, address: string, title: string|null, agent: string, sleep: (ms: number) => Promise<void>}} args
+ * @returns {Promise<{space: string|null, tab: string|null, error?: string}>}  the names given now (null: left as it was)
+ */
+export async function nameAgentPlace(hc, app, { machine, address, title, agent, sleep }) {
+  const none = { space: null, tab: null };
+  const qualified = (id) => (String(id).startsWith(`${machine}/`) ? String(id) : `${machine}/${id}`);
+  const got = await hc(['get', '--json', address]);
+  const terminal = got.code === 0 ? parsed(got.stdout) : null;
+  if (!terminal) return none;
+  const labels = terminal.labels && typeof terminal.labels === 'object' ? terminal.labels : {};
+  // Where the window shows the agent: waited for, since it adopts a newly labelled terminal a moment later.
+  let place = null;
+  for (let i = 0; i < WINDOW_TRIES && !place; i++) {
+    if (i) await sleep(WINDOW_WAIT_MS);
+    const ls = await app(['ls'], { timeoutMs: 10_000 });
+    if (ls.missing || ls.code !== 0) return none;
+    const spaces = parsed(ls.stdout)?.spaces;
+    for (const space of Array.isArray(spaces) ? spaces : []) {
+      for (const tab of Array.isArray(space?.tabs) ? space.tabs : []) {
+        const shown = (Array.isArray(tab?.terminals) ? tab.terminals : []).some((t) => t && (t.terminal === address || qualified(t.terminal ?? '') === address));
+        if (shown && typeof space.id === 'string' && typeof tab.id === 'string') place = { space, tab };
+      }
+    }
+  }
+  if (!place) return none;
+  const nameOf = (x) => (typeof x.name === 'string' ? x.name : '');
+  const folders = new Set([place.space.folder, terminal.cwd].filter((f) => typeof f === 'string' && f).map((f) => path.posix.basename(f)));
+  const spaceFree = (n) => n === '' || folders.has(n) || n === labels[NAMED_SPACE_LABEL];
+  const tabFree = (n) => /^\d*$/.test(n) || n === labels[NAMED_TAB_LABEL];
+  const out = { ...none };
+  const rename = async (command, id, name, label) => {
+    const done = await app(['do', command, JSON.stringify({ id: qualified(id), name })], { timeoutMs: 30_000 });
+    const answer = parsed(done.stdout);
+    if (done.missing) return false;
+    if (done.code !== 0 || !answer || answer.error) throw new Error(`herdr-app ${command}: ${failureOf(done)}`);
+    const marked = await hc(['label', '--json', address, `${label}=${name}`]);
+    if (marked.code !== 0) throw new Error(`hc label ${address}: ${hcError(marked).message}`);
+    return true;
+  };
+  try {
+    const spaceName = nameOf(place.space);
+    if (title && spaceName !== title && spaceFree(spaceName) && await rename('space.rename', place.space.id, title, NAMED_SPACE_LABEL)) out.space = title;
+    const tabName = nameOf(place.tab);
+    if (tabName !== agent && tabFree(tabName) && await rename('tab.rename', place.tab.id, agent, NAMED_TAB_LABEL)) out.tab = agent;
+  } catch (err) {
+    return { ...out, error: err.message };
+  }
+  return out;
 }
