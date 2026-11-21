@@ -1,0 +1,25 @@
+{
+  "name": "@chifferco/woodshed-cli",
+  "version": "0.1.0",
+  "description": "Start and manage Woodshed sessions from your computer",
+  "license": "AGPL-3.0-only",
+  "repository": "github:ChifferCo/woodshed",
+  "bin": {
+    "woodshed": "cli/woodshed.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "cli/credentials.mjs",
+    "cli/hc.mjs",
+    "cli/sessions.mjs",
+    "cli/tunnel.mjs",
+    "cli/woodshed.mjs",
+    "cli/README.md",
+    "shared/execFrames.mjs",
+    "skills/woodshed/SKILL.md",
+    "COPYRIGHT",
+    "LICENSE-AGPL"
+  ]
+}

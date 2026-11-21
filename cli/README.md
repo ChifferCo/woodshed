@@ -6,6 +6,17 @@ dependencies, like the rest of Woodshed.
 
 ## Running it
 
+With Node 22 or newer and npm, install or upgrade the CLI on macOS or Linux:
+
+```sh
+curl -fsSL https://woodshed.run/cli | sh
+```
+
+The installer puts the command in `~/.woodshed/cli` and links it from `~/.local/bin` (or `~/bin` if that is on
+PATH instead). If needed, it prints the line to add to your shell profile. Then ask your agent to run `woodshed login`.
+For the optional Claude Code and Codex skill, use `sh -s -- --yes` in the install command. You can also use
+`npm install --global @chifferco/woodshed-cli` with your usual npm prefix.
+
 From a checkout of this repository:
 
 ```sh
@@ -19,7 +30,16 @@ To type `woodshed` instead, link it onto your PATH once:
 ln -s "$PWD/cli/woodshed.mjs" ~/.local/bin/woodshed
 ```
 
-An installer (`curl … | bash`, npm) comes later.
+### Publishing a CLI release
+
+The repository-root `package.json` is the CLI's npm manifest. Its `files` list preserves the CLI's source paths and
+includes its runtime imports and the bundled skill. Update that list when the CLI starts importing another file.
+Run `node --test cli/package.test.mjs` to test an installation from a packed tarball.
+
+Set the new `version` in `package.json` and merge it. From a clean checkout of that commit, a maintainer with write
+access to the `@chifferco` npm scope runs `npm pack --dry-run` to inspect the contents, then `npm publish --access public`.
+Once the package is live, update the version in Woodshed Cloud's `site/cli.sh`. The site installer pins an exact
+npm tarball URL, so it upgrades only when the site publishes the new pin.
 
 ## Commands
 
