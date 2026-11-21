@@ -369,9 +369,14 @@ export async function sessionCommand({ origin, rest }, ctx) {
     let tries = 0;
     for (;;) {
       const out = await ctx.terminal(s.id, kind);
-      if (out.status === 'closed' || out.status === 'detached') {
-        stderr.write(`\r\nConnection to ${s.id} closed${out.status === 'closed' && out.code !== 1000 ? ` (${out.code ?? 'no code'})` : ''}.\n`);
+      // 1000 is its program ending; another code is ttyd closing it on an error (1008: it refused the first message).
+      if (out.status === 'detached' || (out.status === 'closed' && out.code === 1000)) {
+        stderr.write(`\r\nConnection to ${s.id} closed.\n`);
         return EXIT.done;
+      }
+      if (out.status === 'closed') {
+        stderr.write(`\r\nConnection to ${s.id} closed by the session's terminal with ${out.code ?? 'no code'}.\n`);
+        return EXIT.failed;
       }
       if (out.status === 'refused' && out.http === 401) {
         throw fail(`The sign-in to ${origin} ended: ${out.message}. Run: woodshed login --console ${origin}`, { code: EXIT.waiting, status: 'signed-out' });

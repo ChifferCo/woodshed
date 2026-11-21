@@ -591,6 +591,11 @@ test('session connect says why a terminal was not opened, and needs a terminal o
   assert.equal(unreachable.code, EXIT.failed);
   assert.match(unreachable.err, /could not reach the console/);
 
+  const refused = await consoleFor(t, { terminal: fakeTerminal([{ status: 'closed', code: 1008 }]) });
+  const policy = await refused.run(['session', 'connect', 'aaaa0001']);
+  assert.equal(policy.code, EXIT.failed, 'closed on an error is no clean end');
+  assert.match(policy.err, /closed by the session's terminal with 1008/);
+
   const ended = await consoleFor(t, { terminal: fakeTerminal([{ status: 'refused', http: 401, message: 'the token was revoked' }]) });
   assert.equal((await ended.run(['session', 'connect', 'aaaa0001'])).code, EXIT.waiting);
 
