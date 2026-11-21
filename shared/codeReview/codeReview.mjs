@@ -135,7 +135,7 @@ function combinedMergeRisk(reviews) {
   const risk = higher.verdict.mergeRisk;
   const othersAtTier = rated.filter((review) => review !== higher && review.verdict.mergeRisk.tier === risk.tier);
   if (reviews.length > 1 && risk.tier === 'High' && !othersAtTier.length
-      && (!risk.reason || !risk.summary.split('\n').slice(2).some((line) => /^- Verify before merging: +\S/.test(line)))) {
+      && (!risk.reason || !/^- Verify before merging:[ \t]+\S/m.test(risk.summary))) {
     const reason = 'Only one reviewer rated this High, and the High rating lacks a failure reason or a pre-merge check.';
     const reported = risk.reason ? `\n\n${higher.name} reported: ${risk.reason}` : '';
     return { tier: 'Medium', reason, summary: `MEDIUM\n${reason}${reported}` };

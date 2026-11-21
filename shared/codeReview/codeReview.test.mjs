@@ -147,6 +147,20 @@ test('two reviews become one: the stricter verdict and the higher merge risk win
   assert.deepEqual(merged.resolved, [2], 'an earlier comment with no known writer is resolved only when both found it fixed');
 });
 
+test('the failure reason and pre-merge check can appear in either order', (t) => {
+  const d = dir(t);
+  fs.writeFileSync(path.join(d, 'verdict.txt'), 'APPROVE');
+  const merge = (report) => {
+    fs.writeFileSync(path.join(d, 'merge-risk.md'), report);
+    return mergeVerdicts([
+      { name: 'Claude Code', verdict: verdictOf('APPROVE') },
+      { name: 'Codex', verdict: verdictIn(d) },
+    ]).mergeRisk.tier;
+  };
+  assert.equal(merge(`HIGH\n${highRiskCheck}\nA new route could expose a private session.\n`), 'High');
+  assert.equal(merge(`HIGH\n${highRiskCheck}\n`), 'Medium');
+});
+
 test('an unrated verdict cannot let the other reviewer set High without evidence', () => {
   const high = verdictOf('APPROVE', { tier: 'High' });
   high.mergeRisk.summary = 'HIGH\nHigh reason';
