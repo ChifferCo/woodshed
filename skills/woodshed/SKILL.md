@@ -80,7 +80,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed session extend <id>` | Puts its pause or stop off by an hour (allowed in its last 15 minutes) | 0, 3 refused | main |
 | `woodshed session limits <id> [--idle-hours N\|default] [--lifetime-hours N\|default]` | Its own idle pause and lifetime | 0, 1 out of range, 3 not theirs | main |
 | `woodshed settings plan [--pull] [--only …] [--own-files <checkout>]` | Lists what push (or pull) would do with each item; sends and writes nothing | 0 | main |
-| `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude settings, skills, MCP servers, and a checkout's ignored env files | 0, 2 not listed before or not confirmed | main |
+| `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude and Codex settings, skills, MCP servers, plugins, a few dotfiles, and a checkout's ignored env files | 0, 2 not listed before or not confirmed | main |
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | main |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in their running session, in its checkout | the line's code, 255 the pipe failed | main |
 
@@ -156,12 +156,15 @@ whose Open app opens it.
 ### Carry Claude settings
 
 Their private sessions keep Claude settings in step (`settings.json`, `CLAUDE.md`, keybindings, agents, commands,
-skills, user-scope MCP servers). `settings` joins this computer to that.
+skills, user-scope MCP servers), Codex's (`~/.codex`'s `config.toml`, `AGENTS.md`, prompts, skills) and the plugins they
+installed. `settings` joins this computer to that, and also saves their git, readline and alias lines on My settings
+(`dotfile/gitconfig`, `dotfile/inputrc`, `dotfile/bash-aliases`), which replace what My settings had.
 
 1. `woodshed settings plan` (add `--own-files <checkout>` for that checkout's ignored env files). Show the person the
    whole list: each item, its size, and `upload`, `skip` or `refuse` with why.
 2. Push only what they agree to: `woodshed settings push`, with `--only <name>` for a part of it. An item never listed
-   before exits 2 until a plan has shown it.
+   before exits 2 until a plan has shown it. A dotfile goes only when they name it (`--only dotfile/gitconfig`). A pull
+   never installs a plugin: its list gives the `claude plugin install` for them to run if they want it.
 3. For pull, `woodshed settings plan --pull` lists what pull would write and what each item would run on this
    computer (an MCP server's command, hooks, a skill's shell lines). Those are held until a list has shown them, so that
    **the person** sees what will run here. Show them that list and wait for their yes before `woodshed settings pull`.
