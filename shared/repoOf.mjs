@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { windowsExecutable } from './windowsExecutable.mjs';
 
 /**
  * The repo a checkout is of, as GitHub names it, from its `origin`: every clone Woodshed makes (install.sh, the
@@ -8,7 +9,9 @@ import { execFileSync } from 'node:child_process';
 export function repoOf(repoDir) {
   let url;
   try {
-    url = execFileSync('git', ['-C', repoDir, 'remote', 'get-url', 'origin'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const git = process.platform === 'win32' ? windowsExecutable('git', { exclude: [process.cwd(), repoDir] }) : 'git';
+    if (!git) return null;
+    url = execFileSync(git, ['-C', repoDir, 'remote', 'get-url', 'origin'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   } catch {
     return null;
   }

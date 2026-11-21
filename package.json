@@ -23,6 +23,7 @@
     "cli/README.md",
     "shared/execFrames.mjs",
     "shared/repoOf.mjs",
+    "shared/windowsExecutable.mjs",
     "shared/wsFrames.mjs",
     "skills/woodshed/SKILL.md",
     "COPYRIGHT",

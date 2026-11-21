@@ -182,7 +182,10 @@ export async function setupCommand(args, ctx) {
       if (addedRepo.code !== EXIT.done) {
         const event = addedRepo.events.find((e) => e.status === 'needs-github-app' || e.event === 'needs-github-app');
         const url = linkTo(event?.installUrl ?? event?.url, origin, true);
-        if (addedRepo.code === EXIT.waiting && event) return stop('repos', EXIT.waiting, `Install the GitHub App for ${repo}, then run setup again.${url ? '' : ' Ask a console admin for its install link.'}`, { repo, ...(url ? { url } : {}) });
+        if (addedRepo.code === EXIT.waiting && event) {
+          const choices = selected.map((name) => `--repo ${name}`).join(' ');
+          return stop('repos', EXIT.waiting, `Install the GitHub App for ${repo}, then rerun setup with ${choices}.${url ? '' : ' Ask a console admin for its install link.'}`, { repo, selected, ...(url ? { url } : {}) });
+        }
         return childError('repos', addedRepo, `Could not add ${repo}.`, { repo });
       }
     }

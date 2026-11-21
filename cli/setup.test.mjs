@@ -81,6 +81,7 @@ test('setup skips repos already added and stops at the GitHub App install link',
   assert.equal(after.code, 2);
   assert.deepEqual(after.calls.slice(2), [['repo', 'list'], ['repo', 'add', 'acme/lib']]);
   assert.equal(after.events.at(-1).url, url);
+  assert.ok(after.events.at(-1).message.includes(`--repo ${repo} --repo acme/lib`));
 });
 
 test('setup does not treat a repo refusal as a browser handoff', async () => {
