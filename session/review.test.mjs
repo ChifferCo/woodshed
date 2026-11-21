@@ -143,6 +143,28 @@ test('with Codex beside Claude Code, both review the same diff and the stricter 
   assert.deepEqual(body.inlineComments.map((c) => c.body), ['**Claude Code:** Say what it is for.', '**Codex:** This link 404s.']);
 });
 
+test('a disputed High without a pre-merge check is reported as Medium without changing the verdict', async (t) => {
+  const codex = FAKE_CODEX.replace('MEDIUM', 'HIGH');
+  const { reports, output } = await runReview(t, { agents: 'claude codex', codex });
+  assert.match(output, /Verdict sent to the console \(status: 204\)/);
+  const { body } = reports.find((r) => r.path === '/review-report');
+  assert.equal(body.mergeRisk.tier, 'Medium');
+  assert.match(body.mergeRisk.summary, /the High rating lacks a failure reason or a pre-merge check/);
+  assert.equal(body.conclusion, 'REQUEST_CHANGES');
+});
+
+test('a disputed High with a pre-merge check is reported with the evidence', async (t) => {
+  const check = '- Verify before merging: A second account cannot read the private session.';
+  const codex = FAKE_CODEX.replace('MEDIUM', 'HIGH')
+    .replace('A link people follow.', `The new route could expose a private session.\\n${check}`);
+  const { reports, output } = await runReview(t, { agents: 'claude codex', codex });
+  assert.match(output, /Verdict sent to the console \(status: 204\)/);
+  const { body } = reports.find((r) => r.path === '/review-report');
+  assert.equal(body.mergeRisk.tier, 'High');
+  assert.ok(body.mergeRisk.summary.includes(check));
+  assert.equal(body.conclusion, 'REQUEST_CHANGES');
+});
+
 test('a Codex that fails leaves Claude Code\'s review, which says Codex wrote none', async (t) => {
   const { reports, output } = await runReview(t, { agents: 'claude codex', codex: '#!/bin/bash\necho "the console has no OpenAI key" >&2\nexit 1\n' });
   assert.match(output, /Codex ended \(exit=1\)/);
