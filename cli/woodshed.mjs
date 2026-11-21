@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// The woodshed command line: signs in to a Woodshed console and says who is signed in. Later commands (sessions,
-// tunnels, settings) are added here. Plain Node 22, no dependencies, as the rest of Woodshed (cli/README.md).
+// The woodshed command line: signs in to a Woodshed console, says who is signed in, and opens a pipe into one's own
+// running session. Later commands (sessions, settings) are added here. Plain Node 22, no dependencies, as the rest of Woodshed (cli/README.md).
 //
 //   woodshed login  [--console <url>] [--no-browser]   a code to approve in the browser, then a token kept in the keychain
 //   woodshed logout [--console <url>]                  ends that token at the console and forgets it here
 //   woodshed status [--console <url>]                  the console, its org, and who is signed in
+//   woodshed tunnel <id> -- <line>                     runs <line> in your session, piped to this terminal (tunnel.mjs)
 //
 // Every command takes --json. Exit codes: 0 done, 2 waiting on a person (a sign-in or an approval), 3 refused, 1 any
 // other failure.
@@ -16,6 +17,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { createCredentials } from './credentials.mjs';
+import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 
 export const VERSION = '0.1.0';
 export const DEFAULT_CONSOLE = 'https://console.woodshed.run';
@@ -29,6 +31,9 @@ Commands:
   login     sign in to a Woodshed console: approve the code it shows in your browser
   logout    sign out of the console, here and at the console
   status    the console, its org, and who is signed in
+  tunnel <id> -- <line>
+            run <line> in your running session, with this command's stdin, stdout and stderr; exits with its
+            exit code, or 255 when the pipe could not open or broke
 
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};
@@ -48,13 +53,17 @@ class CliError extends Error {
 }
 
 /**
- * @returns {{command: string|null, console: string|null, json: boolean, browser: boolean, help: boolean}}
+ * @returns {{command: string|null, args: string[], rest: string[]|null, console: string|null, json: boolean,
+ *            browser: boolean, help: boolean}}  `args` follow the command; `rest` is everything after `--`
  */
 export function parseArgs(argv) {
-  const out = { command: null, console: null, json: false, browser: true, help: false };
+  const out = { command: null, args: [], rest: null, console: null, json: false, browser: true, help: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--json') out.json = true;
+    if (arg === '--') {
+      out.rest = argv.slice(i + 1);
+      break;
+    } else if (arg === '--json') out.json = true;
     else if (arg === '--no-browser') out.browser = false;
     else if (arg === '--help' || arg === '-h') out.help = true;
     else if (arg === '--console') {
@@ -63,6 +72,7 @@ export function parseArgs(argv) {
     } else if (arg.startsWith('--console=')) out.console = arg.slice('--console='.length);
     else if (arg.startsWith('-')) throw new CliError(`unknown option ${arg}\n\n${USAGE}`);
     else if (!out.command) out.command = arg;
+    else if (out.command === 'tunnel') out.args.push(arg);
     else throw new CliError(`unexpected ${arg}\n\n${USAGE}`);
   }
   return out;
@@ -336,6 +346,22 @@ export async function main(argv, deps = {}) {
     return EXIT.done;
   }
 
+  // The pipe's own failures exit 255, as ssh's do, so a program that runs it tells them from the line's exit codes.
+  async function tunnel(origin, args) {
+    const [session, ...extra] = args.args;
+    if (!/^[0-9a-f]{8}$/.test(session ?? '') || extra.length || !args.rest?.length) {
+      stderr.write('woodshed: usage: woodshed tunnel <session id> -- <line>\n');
+      return TUNNEL_FAILED;
+    }
+    const { token } = signedIn(origin);
+    if (!token) {
+      stderr.write(`woodshed: not signed in to ${origin}. Run: woodshed login${origin === DEFAULT_CONSOLE ? '' : ` --console ${origin}`}\n`);
+      return TUNNEL_FAILED;
+    }
+    // As ssh does: the words after -- are one line, joined by spaces, for the session's sh -c.
+    return runTunnel({ origin, token, session, line: args.rest.join(' '), stdin: deps.stdin ?? process.stdin, stdout, stderr, userAgent: `woodshed-cli/${VERSION}` });
+  }
+
   try {
     const args = parseArgs(argv);
     json = args.json;
@@ -348,9 +374,14 @@ export async function main(argv, deps = {}) {
     if (args.command === 'login') return await login(origin, { browser: args.browser });
     if (args.command === 'logout') return await logout(origin);
     if (args.command === 'status') return await status(origin);
+    if (args.command === 'tunnel') return await tunnel(origin, args);
     throw new CliError(`unknown command ${args.command}\n\n${USAGE}`);
   } catch (err) {
     if (!(err instanceof CliError)) throw err;
+    if (argv.slice(0, argv.includes('--') ? argv.indexOf('--') : argv.length).includes('tunnel')) {
+      stderr.write(`woodshed: ${err.message}\n`);
+      return TUNNEL_FAILED;
+    }
     if (json) emit({ event: 'error', status: err.status, error: err.message.split('\n')[0] });
     else stderr.write(`woodshed: ${err.message}\n`);
     return err.code;

@@ -1,7 +1,7 @@
 # The woodshed command line
 
-`woodshed` signs in to a Woodshed console from your computer and says who is signed in. Later commands (sessions,
-tunnels, settings) are added here. It is plain Node 22 with no dependencies, like the rest of Woodshed.
+`woodshed` signs in to a Woodshed console from your computer, says who is signed in, and opens a pipe into your
+running sessions. Later commands (sessions, settings) are added here. It is plain Node 22 with no dependencies, like the rest of Woodshed.
 
 ## Running it
 
@@ -27,6 +27,7 @@ An installer (`curl … | bash`, npm) comes later.
 | `woodshed login` | Asks the console for a code, prints it, and opens the console's `/cli` page in your browser. Check the page shows the same code and press **Sign in the CLI**. The token it gets is kept as below. Signing in again on the same computer ends its earlier sign-in. | 0 signed in, 2 the code expired with nobody approving it, 3 denied |
 | `woodshed logout` | Ends the token at the console and forgets it here. | 0 |
 | `woodshed status` | The console's name and address, its org (the GitHub account its repos are on), and who is signed in. | 0 signed in, 2 not signed in or the sign-in ended |
+| `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 
 Every command takes:
 
@@ -41,6 +42,19 @@ Every command takes:
 Exit codes, for every command: `0` done, `2` waiting on a person (sign in, or approve), `3` refused (denied, or an
 address it will not send a token to), `1` anything else (the console not reached, a console from before the command
 line).
+
+## The tunnel into a session
+
+`woodshed tunnel` is a byte pipe, so it prints nothing of its own except on stderr, and only when something fails; it
+ignores `--json`. It opens one HTTPS request to the console, `/api/tunnel/exec/<id>` with this computer's token, which
+the console passes to the session's statusd (`console/execPipe.mjs`, `session/execPipe.mjs`). It opens only into a
+running session of yours (a My Woodshed session), never one that has seen production data. What it runs gets the
+session's environment without the session's own token. Revoking this computer's sign-in, or the session stopping,
+closes it. An open tunnel does not keep the session awake: it pauses when idle as it would without one, which ends the
+tunnel. Exit 255 is the tunnel's own failure (not signed in, refused, the console or session not reached, cut before the
+line ended), and it always says why on stderr. A line that itself exits 255 exits 255 too, with nothing of the tunnel's
+on stderr, as ssh does. The line is at most 8 KB: a longer one belongs in a script in the session. Closing the tunnel
+before the line ends (Ctrl-C, a cut network) hangs up everything the line started in the session.
 
 ## Where the token is kept
 
@@ -75,3 +89,21 @@ node cli/woodshed.mjs login --console http://localhost:7712
 node cli/woodshed.mjs status --json
 node cli/woodshed.mjs logout
 ```
+
+### Trying the tunnel
+
+The dev console has no real session, so start one yourself: the session image, running this checkout's statusd, with
+its 7682 published on loopback. Then give the dev console its port and token, and sign in to it:
+
+```sh
+umask 077; openssl rand -hex 24 > /tmp/ws-exec-token; printf 'SESSION_TOKEN=%s\n' "$(cat /tmp/ws-exec-token)" > /tmp/ws-exec.env
+docker run -d --name ws-exec -p 127.0.0.1:17682:7682 --env-file /tmp/ws-exec.env -e SESSION_ID=55aa55aa -e REPO_DIR=/tmp/work \
+  -v "$PWD/session:/opt/woodshed/session:ro" -v "$PWD/shared:/opt/woodshed/shared:ro" --entrypoint sh <session image> \
+  -c 'mkdir -p /tmp/work && cd /tmp/work && git init -q && exec node /opt/woodshed/session/statusd.mjs'
+DEV_CONSOLE_EXEC_PORT=17682 DEV_CONSOLE_EXEC_TOKEN_FILE=/tmp/ws-exec-token node console/bin/devConsole.mjs 7712
+node cli/woodshed.mjs login --console http://localhost:7712
+node cli/woodshed.mjs tunnel 55aa55aa -- 'id -un; pwd'
+```
+
+`kill -HUP <the dev console's pid>` restarts its console on the same state, as a redeploy does, to see a tunnel (or a
+terminal runtime's `--via` machine) reconnect.

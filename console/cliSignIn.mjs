@@ -91,7 +91,18 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
   // This console, as its consent page names it: consoles at one address can share every label the page shows (a name,
   // an org, or none), so the form carries this, and a form from another console's page asks again. Not a secret: it
   // only tells consoles apart, and a code outlives no restart, so one made at each start is enough.
-  const id = crypto.randomBytes(12).toString('hex');
+  const consoleId = crypto.randomBytes(12).toString('hex');
+  // Told of each token that ends before its time, so what it holds open closes with it (execPipe.mjs).
+  const endedListeners = [];
+  const ended = (id, login, why) => {
+    for (const fn of endedListeners) {
+      try {
+        fn({ id, login, why });
+      } catch (err) {
+        console.warn('cliSignIn: a listener failed at a token\'s end', { id, message: err.message });
+      }
+    }
+  };
 
   function tokens() {
     store.state.cliTokens ??= {};
@@ -170,6 +181,7 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
     for (const [oldId] of mine.slice(0, Math.max(0, mine.length - MAX_TOKENS_PER_PERSON + 1))) {
       console.log('cliSignIn: oldest sign-in ended, past the most a person keeps', { login, id: oldId, most: MAX_TOKENS_PER_PERSON });
       delete tokens()[oldId];
+      ended(oldId, login, 'past the most a person keeps');
     }
     tokens()[id] = { login, name, hash: sha256(token), createdAt, expiresAt, lastUsedAt: createdAt };
     store.save();
@@ -252,6 +264,7 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
     delete tokens()[id];
     store.save();
     console.log('cliSignIn: token revoked', { login, id, name: record.name, by });
+    ended(id, login, 'revoked');
     return true;
   }
 
@@ -270,9 +283,15 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
     for (const id of ids) delete tokens()[id];
     store.save();
     console.log('cliSignIn: every token revoked', { login, count: ids.length, by });
+    for (const id of ids) ended(id, login, 'revoked');
   }
 
-  return { id, start, waiting, decide, poll, owns, tokenFor, list, revoke, revokeAll, logins: () => [...new Set(Object.values(tokens()).map((r) => r.login))] };
+  /** @param {(ended: {id: string, login: string|null, why: string}) => void} fn  called as each token is revoked */
+  function whenEnded(fn) {
+    endedListeners.push(fn);
+  }
+
+  return { id: consoleId, start, waiting, decide, poll, owns, tokenFor, list, revoke, revokeAll, whenEnded, logins: () => [...new Set(Object.values(tokens()).map((r) => r.login))] };
 }
 
 function json(res, status, body) {
