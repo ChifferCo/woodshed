@@ -1016,8 +1016,11 @@ ${DARK_PALETTE}
     /* The two halves of the page, and the controls that belong to the whole
        review rather than to either. Modelled on the row GitHub puts above a
        diff, because the job is the same one. */
+    /* Nothing in the bar shrinks or wraps its words, so when the tabs and the
+       controls do not fit on one row, the controls move to a row of their
+       own, right-aligned, rather than off the edge. */
     .tabbar {
-      display: flex; align-items: flex-end; gap: 1.1rem;
+      display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.2rem 1.1rem;
       border-bottom: 1px solid var(--rule); margin: 1.9rem 0 1.4rem;
     }
     .tab {
@@ -1080,7 +1083,6 @@ ${DARK_PALETTE}
     @media (hover: none) and (max-width: 720px) {
       /* Where the page turns tips off (above), the icon would say nothing, so
          a phone shows the sentence, on a row of its own under the tabs. */
-      .tabbar { flex-wrap: wrap; row-gap: 0.2rem; }
       .tabbar .right { width: 100%; justify-content: flex-end; }
       .mergehint {
         flex: 0 1 auto; width: auto; height: auto; min-width: 0; gap: 0.35rem; cursor: default;
@@ -1488,10 +1490,7 @@ ${DARK_PALETTE}
       .fpath .fname { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .fbar .chip { display: none; }
       .counts { display: none; }
-      /* The label wraps to three lines at this width; a tab that reads down
-         the page is worse than one that scrolls off it. */
-      .tabbar { flex-wrap: wrap; row-gap: 0.2rem; }
-      .tab { white-space: nowrap; }
+      /* The controls always take a row of their own at this width. */
       .tabbar .right { width: 100%; justify-content: flex-end; }
     }
     @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
