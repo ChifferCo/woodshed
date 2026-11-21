@@ -287,6 +287,11 @@ spinner, and opening one keeps the keyboard focus on it. The reader asks too: an
 for a follow-up, and the tree with one for a question of their own, each the ask panel's field and a quiet **Ask**
 button, never orange. A question they asked says "you asked" in `meta`.
 
+Its tab bar ends with **Submit review**, then, for an approved pull request, either **Squash and merge** or the merge
+hint (`components/MergeHint`): an Octicons info icon whose tip says why merging waits. The bar holds controls, never a
+sentence, so it stays on one line. On a touch screen up to 720px, where the page turns tips off, the hint shows its
+sentence beside the icon.
+
 ## Iconography
 
 No icon set. The console uses text glyphs (`▾ ▸ ✓ ✗ ⋯ ☆ ↗`) and 6px status dots; a stopped session's dot is a ring. A lock on the Private tag is drawn in CSS, not an image. The phone's message box under the terminal is the one place with drawn icons (📎 and the mic, as round buttons): on a desktop, the same actions are outline buttons with words, Attach files and Dictate (Stop while it listens, with a plain "Listening." line in `sub` under the field, no motion).
