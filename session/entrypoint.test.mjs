@@ -83,7 +83,7 @@ test('a review-only session writes no prompt, and claude starts with none', () =
   assert.match(out, /after writePrompt/);
   assert.equal(prompt, null);
   assert.match(rules, /You are running in a Woodshed session/);
-  assert.match(fn('startClaude'), /REVIEW_ONLY:-\}" = 1 \]; then\n\s+tmux send-keys -t claude "\$SESSION_DIR\/bin\/claude\$\(claudeFlags\)" Enter/);
+  assert.match(fn('startClaude'), /REVIEW_ONLY:-\}" = 1 \]; then\n\s+agentRun "\$SESSION_DIR\/bin\/claude\$\(claudeFlags\)"\n/);
 });
 
 test('attached files are listed under the prompt', () => {
@@ -345,7 +345,7 @@ test('a QA session writes no prompt, and runs qa.sh in claude\'s pane once statu
   assert.match(ENTRYPOINT, /if \[ "\$\{SESSION_MODE:-\}" = qa \]; then\n    log "Prompt skipped"/);
   const start = fn('startClaude');
   const qa = start.slice(start.indexOf('SESSION_MODE:-}" = qa'), start.indexOf('elif [ "${AGENT:-claude}" = codex ]'));
-  assert.ok(qa.indexOf('touch /tmp/qa-running') < qa.indexOf('tmux send-keys'), 'the session reads as working before the run starts');
+  assert.ok(qa.indexOf('touch /tmp/qa-running') < qa.indexOf('agentRun'), 'the session reads as working before the run starts');
   assert.match(qa, /until curl -s -o \/dev\/null http:\/\/127\.0\.0\.1:.*; do sleep 1; done; SESSION_DIR=\$SESSION_DIR bash \$SESSION_DIR\/qa\.sh/);
 });
 
@@ -1068,4 +1068,72 @@ test('writeOwnFiles writes the owner\'s files git ignores, logs what it skipped,
   assert.equal(fs.existsSync(path.join(repo, 'notes.txt')), false);
   assert.equal(fs.existsSync(json), false);
   assert.equal(execFileSync('bash', ['-c', script], { encoding: 'utf8' }), '', 'nothing to write without the JSON');
+});
+
+// The entrypoint's choice of the agent's terminal and what it types there, with stand-in hc and tmux that record each
+// call: the owner's pick on My settings (OWNER_TERMINAL, from the /settings answer) in a private coding session, tmux
+// for anything else.
+function agentTerminalRun({ terminal = null, kind = 'private', mode = '', hc = 'ok', body }) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-terminal-'));
+  const repo = path.join(tmp, 'repo');
+  const bin = path.join(tmp, 'bin');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.mkdirSync(bin);
+  const calls = path.join(tmp, 'calls');
+  const record = (name, fails) => `#!/bin/bash\necho "${name} $*" >> ${calls}\n${fails ? 'echo "hc: the core did not start" >&2; exit 1\n' : ''}[ "$1" != --version ] || echo "hc 0.1.21"\n`;
+  if (hc !== 'none') fs.writeFileSync(path.join(bin, 'hc'), record('hc', hc === 'fails'), { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'tmux'), record('tmux', false), { mode: 0o755 });
+  const script = [
+    'set -euo pipefail',
+    'log() { echo "[woodshed] $*"; }',
+    fn('agentTerminal'),
+    fn('startHerdr').replaceAll('/tmp/', `${tmp}/`),
+    fn('agentRun'),
+    body,
+  ].join('\n');
+  try {
+    const out = execFileSync('bash', ['-c', script], {
+      encoding: 'utf8',
+      env: { PATH: `${bin}:/usr/bin:/bin:${path.dirname(process.execPath)}`, HOME: tmp, REPO_DIR: repo, SESSION_MODE: mode, SESSION_KIND: kind, ...(terminal ? { OWNER_TERMINAL: terminal } : {}) },
+    });
+    return { out, calls: fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8') : '', config: fs.existsSync(path.join(tmp, '.config/herdr-core/config.toml')) ? fs.readFileSync(path.join(tmp, '.config/herdr-core/config.toml'), 'utf8') : null };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+test('the agent runs in Herdr only in a private session whose owner picked it, and in tmux everywhere else', () => {
+  assert.equal(agentTerminalRun({ body: 'agentTerminal' }).out.trim(), 'tmux', 'an owner who picked nothing, or a console from before the setting');
+  assert.equal(agentTerminalRun({ terminal: 'tmux', body: 'agentTerminal' }).out.trim(), 'tmux');
+  assert.equal(agentTerminalRun({ terminal: 'herdr', body: 'agentTerminal' }).out.trim(), 'herdr');
+  assert.equal(agentTerminalRun({ terminal: 'herdr', kind: '', body: 'agentTerminal' }).out.trim(), 'tmux', 'a shared session');
+  for (const mode of ['ask', 'qa', 'review']) {
+    assert.equal(agentTerminalRun({ terminal: 'herdr', mode, body: 'agentTerminal' }).out.trim(), 'tmux', mode);
+  }
+});
+
+test('the owner\'s terminal comes from the /settings answer, read where the other own settings are', () => {
+  const fetch = fn('fetchOwnerSettings');
+  assert.match(fetch, /OWNER_TERMINAL=\$\(jq -r '\.terminal \/\/ empty' <<< "\$answer"\)/);
+  assert.match(fetch, /terminal: \$\{OWNER_TERMINAL:-tmux\}/);
+});
+
+test('in Herdr, the agent\'s terminal is a kept shell named claude in the checkout, and its command goes in through hc', () => {
+  const { out, calls, config } = agentTerminalRun({ terminal: 'herdr', body: 'startHerdr && WOODSHED_TERMINAL=herdr agentRun "claude --resume x"' });
+  assert.match(out, /Herdr started \(version: 0\.1\.21, terminal: claude\)/);
+  assert.match(calls, /^hc server start$/m);
+  assert.match(calls, /^hc run --bg --no-parent --keep --name claude --cwd \S+\/repo$/m);
+  assert.match(calls, /^hc send claude claude --resume x$/m);
+  assert.doesNotMatch(calls, /^tmux/m);
+  assert.equal(config, 'notes = false\nshell = ["/bin/bash", "-l"]\n', 'hc types nothing into the agent on its own, and its shell is tmux\'s');
+});
+
+test('a core that does not start, or no hc at all, leaves the agent in tmux, saying why', () => {
+  const failed = agentTerminalRun({ terminal: 'herdr', hc: 'fails', body: 'startHerdr || echo "in tmux"' });
+  assert.match(failed.out, /WARNING: Herdr did not start, the agent runs in tmux \(hc: the core did not start\)/);
+  assert.match(failed.out, /in tmux/);
+  const none = agentTerminalRun({ terminal: 'herdr', hc: 'none', body: 'startHerdr || echo "in tmux"' });
+  assert.match(none.out, /WARNING: no hc in this image, the agent runs in tmux/);
+  const tmux = agentTerminalRun({ body: 'WOODSHED_TERMINAL=tmux agentRun "claude"' });
+  assert.equal(tmux.calls, 'tmux send-keys -t claude claude Enter\n', 'tmux as it always was');
 });

@@ -27,6 +27,8 @@
       words: 'openai chatgpt gpt api key auth.json token login log in credentials sign in agent review reviews pull request plan subscription' },
     { page: '/settings', id: 'my-reviews', title: 'Reviews of my pull requests', note: 'Who reviews the pull requests you open: Claude Code, Codex, both, or no code review.',
       words: 'review reviewer reviews codex openai claude code both none no off agents second opinion verdict approve merge risk pull request pr' },
+    { page: '/settings', id: 'my-terminal', title: 'Agent terminal', note: 'Whether your private sessions run claude or codex in tmux or in Herdr.',
+      words: 'terminal tmux herdr hc runtime attach agent claude codex tui laptop' },
     { page: '/settings', id: 'my-project', title: 'My default project', note: 'The repo New session starts on for you.',
       words: 'repo repository default project which repo new session start on pick choose' },
     { page: '/settings', id: 'my-display', title: 'Display', note: 'Theme, review files folded or expanded, and whether a session opens on Chat or TUI, on a desktop and on a phone.',
