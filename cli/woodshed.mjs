@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// The woodshed command line: signs in to a Woodshed console, says who is signed in, starts and manages sessions, and
-// opens a pipe into one's own running session. Later commands (settings) are added here. Plain Node 22, no
-// dependencies, as the rest of Woodshed (cli/README.md).
+// The woodshed command line: signs in to a Woodshed console, says who is signed in, starts and manages sessions, opens
+// a pipe into one's own running session, and carries one's Claude settings to and from one's sessions. Plain Node 22,
+// no dependencies, as the rest of Woodshed (cli/README.md).
 //
 //   woodshed login  [--console <url>] [--no-browser]   a code to approve in the browser, then a token kept in the keychain
 //   woodshed logout [--console <url>]                  ends that token at the console and forgets it here
@@ -9,6 +9,8 @@
 //   woodshed tunnel <id> -- <line>                     runs <line> in your session, piped to this terminal (tunnel.mjs)
 //   woodshed session new|list|get|herdr|stop|resume|remove|extend|limits   sessions (sessions.mjs); herdr makes one
 //                                                     a machine in Herdr's hc (hc.mjs)
+//   woodshed settings plan|push|pull [...]            this computer's Claude settings and a checkout's ignored files, to
+//                                                      and from your private sessions (settings.mjs)
 //
 // Every command takes --json. Exit codes: 0 done, 2 waiting on a person (a sign-in or an approval), 3 refused, 1 any
 // other failure.
@@ -23,12 +25,16 @@ import { createCredentials } from './credentials.mjs';
 import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
 import { hcRunner, hcVersion, viaCommand } from './hc.mjs';
+import { settingsCommand } from './settings.mjs';
 
 export const VERSION = '0.1.0';
 export const DEFAULT_CONSOLE = 'https://console.woodshed.run';
 // Each call to the console, its answer read included.
 const REQUEST_MS = 20_000;
 export const EXIT = Object.freeze({ done: 0, failed: 1, waiting: 2, refused: 3 });
+
+// Commands that read their own options: what follows them, but --console, --json and --help, is theirs (in `args`).
+const OWN_ARGS = new Set(['session', 'settings']);
 
 const USAGE = `Usage: woodshed <command> [--console <url>] [--json]
 
@@ -41,6 +47,9 @@ Commands:
             exit code, or 255 when the pipe could not open or broke
   session   start, list, add to Herdr, stop, resume and remove sessions, and give them more time:
             woodshed session --help
+  settings  plan|push|pull [--only <what>,...] [--own-files <checkout>] [--replace]
+            your Claude settings, skills and MCP servers, and a checkout's ignored files, to and from
+            your private sessions. plan lists each item and sends nothing (cli/README.md, "Settings")
 
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};
@@ -62,7 +71,8 @@ class CliError extends Error {
 /**
  * @returns {{command: string|null, args: string[], rest: string[]|null, console: string|null, json: boolean,
  *            browser: boolean, help: boolean}}  `args` follow the command; `rest` is everything after `--`. For
- *            `session`, `args` also takes its own options (sessions.mjs reads them), and `rest` its prompt
+ *            `session` and `settings`, `args` also takes their own options (sessions.mjs and settings.mjs read them),
+ *            and for `session` `rest` its prompt
  */
 export function parseArgs(argv) {
   const out = { command: null, args: [], rest: null, console: null, json: false, browser: true, help: false };
@@ -78,7 +88,7 @@ export function parseArgs(argv) {
       if (!argv[i + 1]) throw new CliError('--console needs a URL');
       out.console = argv[++i];
     } else if (arg.startsWith('--console=')) out.console = arg.slice('--console='.length);
-    else if (out.command === 'session') out.args.push(arg);
+    else if (OWN_ARGS.has(out.command)) out.args.push(arg);
     else if (arg.startsWith('-')) throw new CliError(`unknown option ${arg}\n\n${USAGE}`);
     else if (!out.command) out.command = arg;
     else if (out.command === 'tunnel') out.args.push(arg);
@@ -450,6 +460,14 @@ export async function main(argv, deps = {}) {
         via: (session) => viaCommand({ ...(deps.self ?? selfCommand({ env })), origin, session, configHome: env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : null }),
         fail: (message, opts) => new CliError(message, opts),
         confirm: deps.confirm ?? ((question) => confirmOnTerminal(question, stderr)),
+      });
+    }
+    if (args.command === 'settings') {
+      const { token } = signedIn(origin);
+      if (!token) throw new CliError(`Not signed in to ${origin}. Run: woodshed login${origin === DEFAULT_CONSOLE ? '' : ` --console ${origin}`}`, { code: EXIT.waiting, status: 'signed-out' });
+      return await settingsCommand({
+        rest: args.args, origin, token, dir, env, json, call, say, emit, EXIT, home: deps.home, interactive: deps.interactive, ask: deps.ask,
+        warn: (text) => stderr.write(`woodshed: ${text}\n`), fail: (message, opts) => new CliError(message, opts),
       });
     }
     throw new CliError(`unknown command ${args.command}\n\n${USAGE}`);
