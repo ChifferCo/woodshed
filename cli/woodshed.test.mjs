@@ -233,3 +233,32 @@ test('on Windows login refuses before it asks the console for a code', async () 
   assert.equal(asked, false);
   assert.match(err, /does not run on Windows yet/);
 });
+
+test('login refused for too many sign-ins waiting says to try again later, in the minutes the console gives, and fails', async (t) => {
+  const c = await consoleFor(t);
+  // Sign-ins this computer started and left: the CLI reaches the console from loopback, with nothing forwarded.
+  for (let i = 0; i < 5; i++) c.cli.start({ name: 'left', from: '127.0.0.1' });
+  const out = await c.run(['login', '--console', c.origin, '--json']);
+  assert.equal(out.code, EXIT.failed);
+  assert.deepEqual(out.lines, [{ event: 'error', status: 'busy', error: `Too many sign-ins from this address are waiting at ${c.origin}. Try again in 10 minutes.` }]);
+  assert.deepEqual(c.opened, [], 'nothing opened');
+  const text = await c.run(['login', '--console', c.origin]);
+  assert.equal(text.err, `woodshed: Too many sign-ins from this address are waiting at ${c.origin}. Try again in 10 minutes.\n`);
+
+  // What a console sends is never printed: only its Retry-After, as a number of minutes, and a known scope.
+  const answers = [
+    [{ 'retry-after': '61' }, { scope: 'console', error: '\u001b]0;pwned\u0007' }, 'has too many sign-ins waiting. Try again in 2 minutes.'],
+    [{ 'retry-after': 'Wed, 21 Oct 2026 07:28:00 GMT' }, {}, 'has too many sign-ins waiting. Try again in a few minutes.'],
+    [{ 'retry-after': '99999' }, { scope: 'client' }, 'Try again in 60 minutes.'],
+  ];
+  for (const [headers, body, said] of answers) {
+    let err = '';
+    const code = await main(['login', '--console', 'https://console.example'], {
+      env: { XDG_CONFIG_HOME: c.dir }, stdout: { write: () => {} }, stderr: { write: (s) => { err += s; } }, platform: 'test',
+      credentials: createCredentials({ platform: 'test', dir: path.join(c.dir, 'woodshed') }),
+      fetch: async () => new Response(JSON.stringify(body), { status: 429, headers: { 'content-type': 'application/json', ...headers } }),
+    });
+    assert.equal(code, EXIT.failed);
+    assert.ok(err.includes(said) && !err.includes('pwned'), err);
+  }
+});

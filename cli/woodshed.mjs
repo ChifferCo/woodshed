@@ -195,7 +195,18 @@ export async function main(argv, deps = {}) {
     } catch {
       // A proxy's page, or a console from before the command line: said by the status below.
     }
-    return { status: res.status, body: answer };
+    return { status: res.status, body: answer, retryAfter: res.headers.get('retry-after') };
+  }
+
+  // Too many sign-ins waiting, from this address or on the whole console: said here, with the console's Retry-After as a
+  // wait in minutes, so a console's text never decides what is printed.
+  function busy(origin, answer) {
+    const seconds = /^\d{1,6}$/.test(String(answer.retryAfter ?? '').trim()) ? Number(answer.retryAfter) : null;
+    const minutes = seconds ? Math.min(60, Math.ceil(seconds / 60)) : null;
+    const later = minutes ? `in ${minutes} minute${minutes === 1 ? '' : 's'}` : 'in a few minutes';
+    // Sign-ins from this address left unanswered (a login stopped part way) wait out their 10 minutes at the console.
+    if (answer.body?.scope === 'client') return new CliError(`Too many sign-ins from this address are waiting at ${origin}. Try again ${later}.`, { status: 'busy' });
+    return new CliError(`${origin} has too many sign-ins waiting. Try again ${later}.`, { status: 'busy' });
   }
 
   function consoleNoCli(origin, status) {
@@ -221,7 +232,7 @@ export async function main(argv, deps = {}) {
     const before = signedIn(origin);
     const started = await call(origin, '/api/cli/device', { method: 'POST', body: { name: deps.hostname ?? os.hostname() } });
     if (started.status !== 200 || !started.body?.deviceCode) {
-      if (started.status === 429) throw new CliError(plain(started.body?.error) ?? 'the console is busy: try again in a few minutes');
+      if (started.status === 429) throw busy(origin, started);
       throw consoleNoCli(origin, started.status);
     }
     const { deviceCode, userCode, expiresIn, interval } = started.body;

@@ -8,6 +8,7 @@ import { currentName, envValue } from '../shared/envNames.mjs';
 import { RUNS_ON_NAME } from '../shared/project.mjs';
 import { isSessionVariable } from '../shared/reservedNames.mjs';
 import { parseAppPorts } from './appPorts.mjs';
+import { parseTrustedProxies } from './clientAddress.mjs';
 import { mcpSettings } from './mcpServers.mjs';
 import { defaultProject, loadProjects } from './projects.mjs';
 import { secretSpecs } from './secrets.mjs';
@@ -351,6 +352,8 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     appPorts: parseAppPorts(envValue(env, 'APP_PORTS')),
     // Where a reverse proxy asks before getting a certificate on demand (tlsAsk.mjs), on 127.0.0.1; none turns it off.
     tlsAskPort: tlsAskPort(env),
+    // The proxies whose X-Forwarded-For names the client (clientAddress.mjs): loopback unless WOODSHED_TRUSTED_PROXIES says.
+    trustedProxies: parseTrustedProxies(env.WOODSHED_TRUSTED_PROXIES),
     // On a console the internet reaches, sign-in never goes optional: not before the client secret is set,
     // nor while a new one is unproven.
     // A trusted proxy's identity header is sign-in, and always required (trustedIdentity.mjs).

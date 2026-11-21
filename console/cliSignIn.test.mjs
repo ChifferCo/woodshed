@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import http from 'node:http';
 
-import { CLI_TOKEN_TTL_MS, createCliDevices, createCliSignIn, handleCliApi, handleCliPage, normalUserCode } from './cliSignIn.mjs';
+import { parseTrustedProxies } from './clientAddress.mjs';
+import { CLI_TOKEN_TTL_MS, createCliDevices, createCliSignIn, handleCliApi, handleCliPage, MAX_PENDING_PER_CLIENT, normalUserCode } from './cliSignIn.mjs';
 
 function signIn({ allowed } = {}) {
   let clock = Date.parse('2026-11-20T10:00:00Z');
@@ -212,4 +213,83 @@ test('the /cli page asks again when the browser moved to another console with th
     assert.ok(cli.owns({ authorization: `Bearer ${token.token}` }), 'kept by the console the page named');
     assert.equal(twin.owns({ authorization: `Bearer ${token.token}` }), false);
   }
+});
+
+test('a client address may have 5 sign-ins waiting, then is refused with how long until one expires, without blocking anyone else', () => {
+  const { cli, tick } = signIn();
+  const started = [];
+  for (let i = 0; i < MAX_PENDING_PER_CLIENT; i++) {
+    started.push(cli.start({ name: `try ${i}`, from: '198.51.100.9' }));
+    tick(60_000);
+  }
+  const over = (() => { try { cli.start({ name: 'one more', from: '198.51.100.9' }); } catch (err) { return err; } return null; })();
+  assert.equal(over?.status, 429);
+  assert.equal(over.scope, 'client');
+  assert.equal(over.retryAfter, 5 * 60, 'the oldest of its codes, started 5 minutes ago, has 5 minutes left');
+  assert.match(over.message, /5 sign-ins from your address are already waiting: approve one, or try again in 5 minutes/);
+  assert.throws(() => cli.start({ name: 'same /64', from: '::ffff:198.51.100.9' }), { status: 429 }, 'the same address however it is written');
+  assert.ok(cli.start({ name: 'someone else', from: '203.0.113.7' }).deviceCode, 'another client still starts one');
+
+  // A code collected or denied frees its place at once; an abandoned one when it expires.
+  cli.decide({ code: started[0].userCode, login: 'mia-dev', approve: true });
+  assert.equal(cli.poll(started[0].deviceCode).status, 'approved');
+  assert.ok(cli.start({ name: 'after collecting', from: '198.51.100.9' }).deviceCode);
+  tick(4 * 60_000);
+  assert.throws(() => cli.start({ name: 'full again', from: '198.51.100.9' }), { status: 429, retryAfter: 120 });
+  // The oldest left was started at minute 1, so it expires at minute 11.
+  tick(120_000);
+  assert.ok(cli.start({ name: 'after one expired', from: '198.51.100.9' }).deviceCode);
+});
+
+test('IPv6 clients are counted by /64, so new addresses in one do not get new places', () => {
+  const { cli } = signIn();
+  for (let i = 1; i <= MAX_PENDING_PER_CLIENT; i++) cli.start({ name: `v6 ${i}`, from: `2001:db8:1:2::${i}` });
+  assert.throws(() => cli.start({ from: '2001:db8:1:2:ffff::1' }), { status: 429, scope: 'client' });
+  assert.ok(cli.start({ from: '2001:db8:1:3::1' }).deviceCode, 'the next /64 is another client');
+});
+
+test('the console-wide cap still holds as a backstop over many addresses', () => {
+  const { cli, tick } = signIn();
+  for (let i = 0; i < 200; i++) {
+    cli.start({ from: `10.0.${Math.floor(i / 250)}.${i % 250}` });
+    if (i === 0) tick(30_000);
+  }
+  const err = (() => { try { cli.start({ from: '203.0.113.7' }); } catch (e) { return e; } return null; })();
+  assert.equal(err?.status, 429);
+  assert.equal(err.scope, 'console');
+  assert.equal(err.retryAfter, 600 - 30, 'until the oldest on the console expires');
+});
+
+// The device route over HTTP, its client address read as the console reads it.
+async function deviceServer(t, { trustedProxies } = {}) {
+  const store = { state: {}, save() {} };
+  const cli = createCliSignIn({ store, trustedProxies });
+  const server = http.createServer((req, res) => {
+    handleCliApi({ req, res, url: new URL(req.url, 'http://x'), cli, publicUrl: 'https://console.example', about: () => ({}) });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  return (headers = {}) => fetch(`http://127.0.0.1:${port}/api/cli/device`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{"name":"x"}' });
+}
+
+test('over HTTP, a 429 carries Retry-After, and the limit counts the address a trusted proxy forwards', async (t) => {
+  // The test reaches the server from loopback, as Caddy reaches the console: its X-Forwarded-For is taken.
+  const device = await deviceServer(t);
+  for (let i = 0; i < MAX_PENDING_PER_CLIENT; i++) assert.equal((await device({ 'x-forwarded-for': '198.51.100.9' })).status, 200);
+  const refused = await device({ 'x-forwarded-for': '198.51.100.9' });
+  assert.equal(refused.status, 429);
+  const retryAfter = Number(refused.headers.get('retry-after'));
+  assert.ok(retryAfter > 590 && retryAfter <= 600, `Retry-After ${retryAfter}`);
+  assert.equal((await refused.json()).scope, 'client');
+  assert.equal((await device({ 'x-forwarded-for': '203.0.113.7' })).status, 200, 'another client behind the same proxy still signs in');
+  assert.equal((await device({ 'x-forwarded-for': '198.51.100.9, 203.0.113.8' })).status, 200, 'only the proxy\'s own entry counts');
+});
+
+test('over HTTP, a made-up X-Forwarded-For from a peer that is not a trusted proxy buys no new places', async (t) => {
+  const device = await deviceServer(t, { trustedProxies: parseTrustedProxies('none') });
+  for (let i = 0; i < MAX_PENDING_PER_CLIENT; i++) assert.equal((await device({ 'x-forwarded-for': `198.51.100.${i}` })).status, 200);
+  const spoofed = await device({ 'x-forwarded-for': '198.51.100.250' });
+  assert.equal(spoofed.status, 429, 'every request counted as the socket\'s own address');
+  assert.ok(Number(spoofed.headers.get('retry-after')) > 0);
 });

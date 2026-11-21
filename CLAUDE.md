@@ -338,8 +338,11 @@ URL on top of each env file's Repo settings values
   and `token made`; `refused, a browser's call` is a call with an Origin header (a page, never the CLI). `status`
   exiting 2 with `ended` is a token revoked on My settings' Command line row (`cliSignIn: token revoked` with `by`),
   expired after 90 days, or one whose person left People (`refused, the token's person is no longer a member`): sign in
-  again. The token is in the macOS Keychain or libsecret, else in the file `woodshed status --json` names
-  (`credentialsFile`); never print it.
+  again. `Too many sign-ins from this address are waiting` is 5 codes from one address not yet approved or expired
+  (`cliSignIn: sign-in refused, too many waiting` with `scope: 'client'` and `from`); the same refusal for many people at
+  once, all with one `from`, is a proxy in front that reaches the console from an address `WOODSHED_TRUSTED_PROXIES`
+  does not list (loopback is trusted by default), so its `X-Forwarded-For` is not read. The token is in the macOS
+  Keychain or libsecret, else in the file `woodshed status --json` names (`credentialsFile`); never print it.
 - **`woodshed tunnel` exits 255.** Its stderr says why (cli/README.md, "The tunnel into a session"): `refused (401)`
   is a sign-in revoked or expired (`woodshed login` again), `refused (404)` a session that is not that person's own,
   `refused (409)` one not running (resume it) or one that has seen production data, which never gets a pipe. The
