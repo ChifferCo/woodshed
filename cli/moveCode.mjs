@@ -1,4 +1,4 @@
-// `woodshed herdr move`'s code side: the work in a checkout, frozen into one commit and pushed to a branch of its own, so a
+// `woodshed move --from herdr`'s code side: the work in a checkout, frozen into one commit and pushed to a branch of its own, so a
 // session can check it out. The person's branch, index and working tree are never touched: the commit is built in a
 // temporary index (GIT_INDEX_FILE), from everything git sees, untracked files included and ignored ones left out, and
 // pushed by its hash.

@@ -70,7 +70,7 @@ test('the work is frozen from a temporary index: untracked files in, ignored one
   assert.deepEqual(found.files.map((f) => `${f.status} ${f.path}`).sort(), ['A services/api/new.js', 'A staged.txt', 'M README.md']);
   assert.deepEqual(found.secrets, []);
   assert.deepEqual(found.ignoredEnv, ['.env'], 'the ignored env file is named, so the person knows it stays');
-  const commit = await freeze(git, checkout, { tree: found.tree, message: 'woodshed herdr move test' });
+  const commit = await freeze(git, checkout, { tree: found.tree, message: 'woodshed move --from herdr test' });
   const pushed = await pushBranch(git, checkout, { commit, branch: 'woodshed/move-test' });
   assert.deepEqual(pushed, { ok: true });
 
@@ -79,7 +79,7 @@ test('the work is frozen from a temporary index: untracked files in, ignored one
   assert.ok(fs.readFileSync(path.join(root, '.git', 'index')).equals(indexBefore), 'the person\'s index is not rewritten');
   const onGithub = sh(['--git-dir', path.join(path.dirname(root), 'github.git'), 'ls-tree', '-r', '--name-only', 'woodshed/move-test'], root).split('\n');
   assert.deepEqual(onGithub.sort(), ['.gitignore', 'README.md', 'services/api/index.js', 'services/api/new.js', 'staged.txt']);
-  assert.equal(sh(['--git-dir', path.join(path.dirname(root), 'github.git'), 'log', '-1', '--format=%P %s', 'woodshed/move-test'], root), `${checkout.head} woodshed herdr move test`);
+  assert.equal(sh(['--git-dir', path.join(path.dirname(root), 'github.git'), 'log', '-1', '--format=%P %s', 'woodshed/move-test'], root), `${checkout.head} woodshed move --from herdr test`);
 
   assert.equal(await deleteBranch(git, checkout, 'woodshed/move-test'), true);
   assert.throws(() => sh(['--git-dir', path.join(path.dirname(root), 'github.git'), 'rev-parse', '--verify', 'woodshed/move-test'], root));

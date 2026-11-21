@@ -1,4 +1,4 @@
-// `woodshed herdr move`'s layout: which terminals were chosen, the spaces, tabs and splits they are in on this computer, and
+// `woodshed move --from herdr`'s layout: which terminals were chosen, the spaces, tabs and splits they are in on this computer, and
 // the same layout made again on the session's machine.
 //
 // Herdr keeps each machine's spaces, tabs and splits in its core's `herdr-app` document, read here through hc's API

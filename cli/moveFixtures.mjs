@@ -1,4 +1,4 @@
-// Stand-ins for `woodshed herdr move`'s tests (move*.test.mjs): a checkout with its GitHub, and Herdr's core and window.
+// Stand-ins for `woodshed move --from herdr`'s tests (move*.test.mjs): a checkout with its GitHub, and Herdr's core and window.
 // Not used by the command itself.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -36,7 +36,7 @@ export function repoFor(t, { name = 'acme/app' } = {}) {
 }
 
 /**
- * Herdr as `woodshed herdr move` drives it: hc's core (this computer's terminals, and each machine's), the app's window with
+ * Herdr as `woodshed move --from herdr` drives it: hc's core (this computer's terminals, and each machine's), the app's window with
  * its spaces, tabs and splits per machine, and the files and commands sent to machines. Programs are made up: a
  * terminal's foreground is what its argv says, a claude says it is idle once it opens, `/exit` ends it.
  */

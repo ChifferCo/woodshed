@@ -1,8 +1,8 @@
-// `woodshed herdr move`: terminals on this computer moved into a Woodshed session, as they are: an agent with its
+// `woodshed move --from herdr`: terminals on this computer moved into a Woodshed session, as they are: an agent with its
 // conversation, a shell in its folder, a program started again there, in the same spaces, tabs and splits of the Herdr
 // app. Laptop to session only.
 //
-//   woodshed herdr move [--terminal T ...|--tab T|--space S] --to <session id>|new [--restart ask|auto|never] [--dry-run]
+//   woodshed move --from herdr [--terminal T ...|--tab T|--space S] --to <session id>|new [--restart ask|auto|never] [--dry-run]
 //
 // In order, and nothing local is touched before the last step:
 //   1. The chosen terminals, read from hc (moveLayout.mjs) and each classified (moveAgents.mjs).
@@ -39,11 +39,12 @@ const LIVE_MS = 120_000;
 const END_MS = 20_000;
 const POLL_MS = 1000;
 
-export const MOVE_USAGE = `Usage: woodshed herdr move [--terminal <t> ...|--tab <tab>|--space <space>] --to <session id>|new [options]
+export const MOVE_USAGE = `Usage: woodshed move --from herdr [--terminal <t> ...|--tab <tab>|--space <space>] --to <session id>|new [options]
 
-Moves terminals on this computer into a Woodshed session: each agent with its conversation (Claude Code or Codex),
-each shell in its folder, each program started again there, in the same spaces, tabs and splits in Herdr.
+Moves work into a Woodshed session. Herdr terminals carry their agents and conversations (Claude Code or Codex),
+open shells in their folders, and can restart programs. Their spaces, tabs and splits are recreated in Herdr.
 
+  --from herdr       move terminals from Herdr on this computer (required; Herdr is the supported source)
   --terminal <t>     a terminal by address or name (hc ls); repeat it for more
   --tab <tab>        every terminal of a tab, by id or name (herdr-app ls)
   --space <space>    every terminal of a space, by id or name
@@ -59,7 +60,7 @@ databases stay: the session has its own. A local agent ends only once its moved 
 Exit codes: 0 moved, 2 waiting on a person (sign in, a moved agent that needs you), 3 refused, 1 anything else.`;
 
 /**
- * @returns {{terminal: string[], tab?: string, space?: string, to: string, dryRun: boolean, restart: 'ask'|'auto'|'never'}}
+ * @returns {{from: 'herdr', terminal: string[], tab?: string, space?: string, to: string, dryRun: boolean, restart: 'ask'|'auto'|'never'}}
  */
 export function parseMoveArgs(words, fail) {
   const out = { terminal: [], dryRun: false, restart: 'ask' };
@@ -68,16 +69,18 @@ export function parseMoveArgs(words, fail) {
     const [name, inline] = word.startsWith('--') ? word.slice(2).split(/=(.*)/s) : [null, null];
     const value = () => {
       const v = inline ?? words[++i];
-      if (v === undefined || v === '') throw fail(`--${name} needs a value`);
+      if (v === undefined || v === '' || (name === 'from' && inline === undefined && v.startsWith('--'))) throw fail(`--${name} needs a value`);
       return v;
     };
     if (name === 'terminal') out.terminal.push(value());
-    else if (name === 'tab' || name === 'space' || name === 'to' || name === 'restart') {
+    else if (name === 'from' || name === 'tab' || name === 'space' || name === 'to' || name === 'restart') {
       if (out[name] !== undefined && name !== 'restart') throw fail(`--${name} is given once`);
       out[name] = value();
     } else if (name === 'dry-run' && inline === undefined) out.dryRun = true;
     else throw fail(`${word.startsWith('-') ? `unknown option ${word}` : `unexpected ${word}`} for move\n\n${MOVE_USAGE}`);
   }
+  if (!out.from) throw fail(`move needs --from herdr\n\n${MOVE_USAGE}`);
+  if (out.from !== 'herdr') throw fail(`--from must be herdr\n\n${MOVE_USAGE}`);
   const kinds = [out.terminal.length ? 'terminal' : null, out.tab ? 'tab' : null, out.space ? 'space' : null].filter(Boolean);
   if (kinds.length !== 1) throw fail(`move takes one of --terminal, --tab or --space\n\n${MOVE_USAGE}`);
   if (!out.to) throw fail(`move needs --to <session id> or --to new\n\n${MOVE_USAGE}`);
@@ -121,12 +124,13 @@ async function runMove({ origin, rest }, ctx) {
   const say = (line) => ctx.say(redactCredentials(line));
   const emit = (event) => ctx.emit(safeOutput(event));
   const env = ctx.env ?? process.env;
-  if (!rest.length || rest[0] === 'help') {
+  if (rest[0] === 'help') {
     ctx.stdout.write(`${MOVE_USAGE}\n`);
-    return rest.length ? EXIT.done : EXIT.failed;
+    return EXIT.done;
   }
   const opts = parseMoveArgs(rest, fail);
-  if (!ctx.token) {
+  const token = ctx.getToken();
+  if (!token) {
     if (json) emit({ event: 'error', status: 'signed-out', error: `not signed in to ${origin}` });
     say(`Not signed in to ${origin}. Run: woodshed login --console ${origin}`);
     return EXIT.waiting;
@@ -137,7 +141,7 @@ async function runMove({ origin, rest }, ctx) {
     else say(text);
   };
 
-  if (ctx.platform === 'win32') throw refused('woodshed herdr move does not run on Windows yet');
+  if (ctx.platform === 'win32') throw refused('woodshed move --from herdr does not run on Windows yet');
   // A program's command line as it is printed: what may be a credential in it hidden. The real one is for its restart.
   const shown = (argv) => shownCommand(argv, (word) => secretsIn(word).length > 0);
   const version = await hcVersion(hc);
@@ -145,7 +149,7 @@ async function runMove({ origin, rest }, ctx) {
 
   // A call to the console, its refusals said as exit codes, as `woodshed session` says them.
   async function ask(pathname, { method = 'GET', body } = {}) {
-    const out = await call(origin, pathname, { method, body, token: ctx.token });
+    const out = await call(origin, pathname, { method, body, token });
     if (out.status === 401) throw fail(`The sign-in to ${origin} ended. Run: woodshed login --console ${origin}`, { code: EXIT.waiting, status: 'signed-out' });
     if (out.status === 403) throw refused(printable(out.body?.error) ?? `${origin} refused that`);
     if (out.status >= 400 || !out.body || typeof out.body !== 'object') throw fail(printable(out.body?.error) ?? `${origin} answered ${out.status}`);
@@ -365,7 +369,7 @@ async function runMove({ origin, rest }, ctx) {
       if (!(await execOk(machine, ['sh', '-c', clean, 'sh', staged, dest, dir]))) left.push(`${dir} on ${machine}`);
     }
     for (const s of made.sessions) {
-      const out = await call(origin, `/api/my/sessions/${s.id}/remove`, { method: 'POST', body: {}, token: ctx.token, deadlineMs: 180_000 }).catch(() => null);
+      const out = await call(origin, `/api/my/sessions/${s.id}/remove`, { method: 'POST', body: {}, token, deadlineMs: 180_000 }).catch(() => null);
       if (out?.status !== 200) left.push(`session ${s.id} (woodshed session remove ${s.id})`);
       await hc(['machine', 'rm', '--json', machineName(s.id)]).catch(() => null);
     }
@@ -393,7 +397,7 @@ async function runMove({ origin, rest }, ctx) {
     // ---- 2. Frozen and pushed: one commit per checkout, a branch per place.
     for (const c of checkouts.values()) {
       // Nothing of this computer's in it, not even the branch's name (which could hold anything): it goes to GitHub.
-      const message = `woodshed herdr move ${id}: work in progress, moved into a session`;
+      const message = `woodshed move ${id}: work in progress, moved into a session`;
       commits.set(c.root, await freeze(git, c, { tree: surveys.get(c.root).tree, message }));
     }
     cleanSurveys();
@@ -422,7 +426,7 @@ async function runMove({ origin, rest }, ctx) {
     } else sessionOf.set(repos[0], target.id);
     for (const sid of new Set(sessionOf.values())) {
       const events = [];
-      const code = await ctx.session({ origin, rest: ['herdr', sid] }, { ...ctx, json: true, emit: (o) => events.push(o), say: () => {} });
+      const code = await ctx.session({ origin, rest: ['herdr', sid] }, { ...ctx, token, json: true, emit: (o) => events.push(o), say: () => {} });
       const connected = events.find((e) => e.event === 'connected');
       if ((code !== EXIT.done && code !== EXIT.waiting) || !connected) {
         const said = events.find((e) => e.event === 'failed' || e.event === 'stopped' || e.event === 'error');
@@ -453,7 +457,7 @@ async function runMove({ origin, rest }, ctx) {
     for (const a of agents) {
       const sid = sessionOf.get(placeOf.get(a).repo);
       if (kinds.get(a).agent === 'codex' && !facts.get(sid).codexFlags.trim()) {
-        throw refused(`Session ${sid} did not provide its Codex flags. Restart it with a session image that supports woodshed herdr move, or move to a new session.`);
+        throw refused(`Session ${sid} did not provide its Codex flags. Restart it with a session image that supports woodshed move --from herdr, or move to a new session.`);
       }
     }
 

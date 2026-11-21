@@ -156,20 +156,23 @@ function laptop(t, { window = true, sessions = [], conversation = true, agentSta
 
 const sends = (h, address) => h.calls.filter((c) => c.args?.[0] === 'send' && c.args.includes(address)).map((c) => c.args.at(-1));
 
-test('move options: one way of choosing, a target, and a restart policy', () => {
+test('move options require a source, one way of choosing, and a target', () => {
   const fail = (m) => new Error(m);
-  assert.deepEqual(parseMoveArgs(['--space', 'api', '--to', 'new'], fail), { terminal: [], space: 'api', to: 'new', dryRun: false, restart: 'ask' });
-  assert.deepEqual(parseMoveArgs(['--terminal', 't1', '--terminal=t2', '--to', 'aaaa0001', '--restart', 'auto', '--dry-run'], fail).terminal, ['t1', 't2']);
-  assert.throws(() => parseMoveArgs(['--space', 'api', '--tab', 'main', '--to', 'new'], fail), /one of --terminal, --tab or --space/);
-  assert.throws(() => parseMoveArgs(['--space', 'api'], fail), /needs --to/);
-  assert.throws(() => parseMoveArgs(['--space', 'api', '--to', 'yesterday'], fail), /not a session id/);
-  assert.throws(() => parseMoveArgs(['--space', 'api', '--to', 'new', '--restart', 'maybe'], fail), /--restart must be/);
+  const from = ['--from', 'herdr'];
+  assert.deepEqual(parseMoveArgs([...from, '--space', 'api', '--to', 'new'], fail), { from: 'herdr', terminal: [], space: 'api', to: 'new', dryRun: false, restart: 'ask' });
+  assert.deepEqual(parseMoveArgs(['--terminal', 't1', '--terminal=t2', '--from=herdr', '--to', 'aaaa0001', '--restart', 'auto', '--dry-run'], fail).terminal, ['t1', 't2']);
+  assert.throws(() => parseMoveArgs(['--from', '--to', 'new'], fail), /--from needs a value/);
+  assert.throws(() => parseMoveArgs([...from, '--from=herdr', '--space', 'api', '--to', 'new'], fail), /--from is given once/);
+  assert.throws(() => parseMoveArgs([...from, '--space', 'api', '--tab', 'main', '--to', 'new'], fail), /one of --terminal, --tab or --space/);
+  assert.throws(() => parseMoveArgs([...from, '--space', 'api'], fail), /needs --to/);
+  assert.throws(() => parseMoveArgs([...from, '--space', 'api', '--to', 'yesterday'], fail), /not a session id/);
+  assert.throws(() => parseMoveArgs([...from, '--space', 'api', '--to', 'new', '--restart', 'maybe'], fail), /--restart must be/);
 });
 
 test('a space moves to a new session: code pushed, the conversation carried and resumed as the session\'s agent, the dev server restarted, the layout made again, and the local agent ended last', async (t) => {
   const l = laptop(t);
   const before = l.local();
-  const out = await l.run(['herdr', 'move', '--space', 'api', '--to', 'new', '--restart', 'auto', '--console', ORIGIN]);
+  const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'auto', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.done, out.err + out.out);
 
   // The code: one commit on its own branch, untracked work in, the ignored .env not, and nothing here changed.
@@ -220,7 +223,7 @@ test('a space moves to a new session: code pushed, the conversation carried and 
 
 test('--dry-run prints the move bundle and does nothing: no push, no session, nothing sent', async (t) => {
   const l = laptop(t);
-  const out = await l.run(['herdr', 'move', '--space', 'api', '--to', 'new', '--dry-run', '--json', '--console', ORIGIN]);
+  const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--dry-run', '--json', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.done, out.err + out.out);
   const { bundle } = out.events.find((e) => e.event === 'bundle');
   assert.equal(bundle.version, 1);
@@ -241,7 +244,7 @@ test('--dry-run prints the move bundle and does nothing: no push, no session, no
 test('a refused push stops the move with nothing made and nothing here changed', async (t) => {
   const l = laptop(t);
   fs.writeFileSync(path.join(l.repo.bare, 'hooks', 'pre-receive'), '#!/bin/sh\necho "protected" >&2\nexit 1\n', { mode: 0o755 });
-  const out = await l.run(['herdr', 'move', '--space', 'api', '--to', 'new', '--restart', 'auto', '--json', '--console', ORIGIN]);
+  const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'auto', '--json', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.failed);
   const error = out.events.find((e) => e.event === 'error');
   assert.equal(error.status, 'push-refused');
@@ -254,7 +257,7 @@ test('a refused push stops the move with nothing made and nothing here changed',
 test('a paused session that does not come back undoes the move: the branch deleted, nothing here touched', async (t) => {
   const paused = { id: 'bbbb0002', owner: 'mia-dev', repo: 'acme/app', project: 'app', status: 'stopped', stopReason: 'idle for 2 h', title: 'Paused one', options: { agent: 'claude' } };
   const l = laptop(t, { sessions: [paused], consoleSays: { resumeAs: { status: 'failed', error: 'the machine could not start' } } });
-  const out = await l.run(['herdr', 'move', '--terminal', 't1', '--to', 'bbbb0002', '--console', ORIGIN]);
+  const out = await l.run(['move', '--from', 'herdr', '--terminal', 't1', '--to', 'bbbb0002', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.failed, out.out);
   assert.match(out.err, /Session bbbb0002 could not be connected: the machine could not start/);
   assert.ok(l.calls.some(([m, p]) => m === 'POST' && p === '/api/my/sessions/bbbb0002/resume'), 'connect resumed it first');
@@ -266,7 +269,7 @@ test('a paused session that does not come back undoes the move: the branch delet
 
 test('a missing conversation stops the move before anything is pushed', async (t) => {
   const l = laptop(t, { conversation: false });
-  const out = await l.run(['herdr', 'move', '--space', 'api', '--to', 'new', '--json', '--console', ORIGIN]);
+  const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--json', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.failed);
   const error = out.events.find((e) => e.event === 'error');
   assert.equal(error.status, 'no-conversation');
@@ -279,7 +282,7 @@ test('a moved agent that never says what it is doing undoes everything, the new 
   // The session's claude never comes back after the /exit: what was typed does not start it.
   const real = l.h.hc;
   const stuck = async (args, opts) => (args[0] === 'send' && args.at(-1).includes('--resume') ? { code: 0, stdout: '{}\n', stderr: '' } : real(args, opts));
-  const out = await laptopRunWith(l, stuck, ['herdr', 'move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
+  const out = await laptopRunWith(l, stuck, ['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.failed, out.out);
   assert.match(out.err, /The moved claude in woodshed-dddd0004\/t1 said nothing in 120 s/);
   assert.ok(l.calls.some(([m, p]) => m === 'POST' && p === '/api/my/sessions/dddd0004/remove'), 'the new session is removed');
@@ -305,17 +308,17 @@ async function laptopRunWith(l, hc, args) {
 test('what refuses a move: a secret in the work, an agent mid-turn, a session on another repo', async (t) => {
   const l = laptop(t);
   fs.writeFileSync(path.join(l.repo.root, 'deploy.pem'), 'key\n');
-  const secret = await l.run(['herdr', 'move', '--space', 'api', '--to', 'new', '--console', ORIGIN]);
+  const secret = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--console', ORIGIN]);
   assert.equal(secret.code, EXIT.refused);
   assert.match(secret.err, /These look like secrets, and the move would push them to GitHub:\n {2}.*deploy\.pem {2}a key file\n/);
   fs.rmSync(path.join(l.repo.root, 'deploy.pem'));
 
-  const other = await l.run(['herdr', 'move', '--terminal', 't2', '--to', 'eeee0005', '--console', ORIGIN]);
+  const other = await l.run(['move', '--from', 'herdr', '--terminal', 't2', '--to', 'eeee0005', '--console', ORIGIN]);
   assert.equal(other.code, EXIT.refused);
   assert.match(other.err, /Session eeee0005 works on acme\/tools, and these terminals are in acme\/app/);
 
   const busy = laptop(t, { agentState: 'working' });
-  const mid = await busy.run(['herdr', 'move', '--space', 'api', '--to', 'new', '--console', ORIGIN]);
+  const mid = await busy.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--console', ORIGIN]);
   assert.equal(mid.code, EXIT.refused);
   assert.match(mid.err, /t1 \(claude, working\) is mid-turn: a conversation moves between turns/);
   assert.equal(busy.onGithub('woodshed/move-c0ffee42'), null);
@@ -323,7 +326,7 @@ test('what refuses a move: a secret in the work, an agent mid-turn, a session on
 
 test('into a running session of yours, the agent gets a worktree and a branch of its own, and the session\'s agent is left alone', async (t) => {
   const l = laptop(t, { window: false });
-  const out = await l.run(['herdr', 'move', '--space', 'api', '--to', 'aaaa0001', '--restart', 'never', '--console', ORIGIN]);
+  const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'aaaa0001', '--restart', 'never', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.done, out.err + out.out);
   assert.ok(l.onGithub('woodshed/move-c0ffee42'));
   const worktree = l.execs.find((e) => e.argv[2]?.includes('worktree add'));
@@ -351,7 +354,7 @@ test('a conversation that holds a secret is refused before the push', async (t) 
   const l = laptop(t);
   const file = fs.readdirSync(path.join(l.repo.dir, 'home', '.claude', 'projects')).map((d) => path.join(l.repo.dir, 'home', '.claude', 'projects', d, `${CONVERSATION}.jsonl`))[0];
   fs.appendFileSync(file, `${JSON.stringify({ type: 'user', message: { content: `my key is AKIA${'R'.repeat(16)}` } })}\n`);
-  const held = await l.run(['herdr', 'move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
+  const held = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
   assert.equal(held.code, EXIT.refused);
   assert.match(held.err, /These conversations hold what looks like a secret.*\n {2}t1's conversation 11111111-2222-4333-8444-555555555555, line 3: an AWS access key\n/s);
   assert.ok(!held.err.includes('AKIA'), 'never the value');
@@ -367,7 +370,7 @@ test('a password-bearing URL in a transcript refuses the move before push or upl
   fs.appendFileSync(file, `${JSON.stringify({ type: 'assistant', message: { content: `DATABASE_URL=${url}` } })}\n`);
   fs.writeFileSync(path.join(l.repo.bare, 'hooks', 'pre-receive'), '#!/bin/sh\ntouch push-started\n', { mode: 0o755 });
 
-  const out = await l.run(['herdr', 'move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json']);
+  const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json']);
   assert.equal(out.code, EXIT.refused);
   assert.deepEqual(out.events.find((event) => event.event === 'secrets')?.conversations, [{ address: 't1', line: 3, kind: 'a password in a URL' }]);
   assert.ok(!(out.out + out.err).includes(password));
@@ -391,7 +394,7 @@ test('decoded transcript credential headers refuse a move before push or upload'
   fs.appendFileSync(file, `${[raw, escaped, listValue, pair, requestLog, output, wrapped].join('\n')}\n`);
   fs.writeFileSync(path.join(l.repo.bare, 'hooks', 'pre-receive'), '#!/bin/sh\ntouch push-started\n', { mode: 0o755 });
 
-  const out = await l.run(['herdr', 'move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json']);
+  const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json']);
   assert.equal(out.code, EXIT.refused);
   assert.deepEqual(out.events.find((event) => event.event === 'secrets')?.conversations, [
     { address: 't1', line: 3, kind: 'a credential header' },
@@ -422,7 +425,7 @@ test('credential headers in an untracked request log refuse the move before push
   for (const [file, content, lines] of logs) {
     const trace = path.join(l.repo.root, file);
     fs.writeFileSync(trace, content);
-    const out = await l.run(['herdr', 'move', '--terminal', 't2', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json']);
+    const out = await l.run(['move', '--from', 'herdr', '--terminal', 't2', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json']);
     assert.equal(out.code, EXIT.refused, file);
     assert.deepEqual(out.events.find((event) => event.event === 'secrets')?.files, lines.map((line) => ({
       root: fs.realpathSync(l.repo.root), path: file, line, kind: 'a credential header',
@@ -440,7 +443,7 @@ test('filename-only and binary credentials stop the move without printing their 
   const synthetic = `ghp_${'f4'.repeat(18)}`;
   const renamed = path.join(l.repo.root, `export_${synthetic}.md`);
   fs.copyFileSync(path.join(l.repo.root, 'README.md'), renamed);
-  const args = ['herdr', 'move', '--space', 'api', '--to', 'new', '--console', ORIGIN];
+  const args = ['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--console', ORIGIN];
   for (const extra of [[], ['--json']]) {
     const out = await l.run([...args, '--dry-run', ...extra]);
     assert.equal(out.code, EXIT.refused);
@@ -487,7 +490,7 @@ test('local Git replacement refs cannot hide a credential in the history a move 
   sh(['replace', original, clean], root);
   assert.equal(sh(['log', '-1', '--format=%s'], root), 'clean local replacement');
 
-  const out = await l.run(['herdr', 'move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
+  const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.refused);
   assert.match(out.err, /fixture\.txt:1  a GitHub token/);
   assert.ok(!out.err.includes('ghp_'));
@@ -510,7 +513,7 @@ process.stdout.write('version https://git-lfs.github.com/spec/v1\\noid sha256:' 
   const hook = path.join(root, '.git', 'hooks', 'pre-push');
   fs.writeFileSync(hook, '#!/bin/sh\nprintf "%s\\n" "$GIT_LFS_SKIP_PUSH" > .git/pre-push-ran\nif [ "$GIT_LFS_SKIP_PUSH" != 1 ]; then touch .git/lfs-upload-started; fi\n', { mode: 0o755 });
 
-  const args = ['herdr', 'move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN];
+  const args = ['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN];
   const refused = await l.run(args);
   assert.equal(refused.code, EXIT.refused);
   assert.match(refused.err, /fixture\.asset  a Git LFS pointer whose payload cannot be screened/);
@@ -544,7 +547,7 @@ test('recursive push config cannot publish an unverified submodule commit', asyn
   sh(['commit', '-qm', 'unpublished child work'], cwd);
   const unpublished = sh(['rev-parse', 'HEAD'], cwd);
 
-  const args = ['herdr', 'move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN];
+  const args = ['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN];
   const assertRefused = (out) => {
     assert.equal(out.code, EXIT.refused, out.err);
     assert.match(out.err, /could not verify these submodule commits on a remote-tracking branch:\n {2}.*vendor\/fixture/);
@@ -573,7 +576,7 @@ test('recursive push config cannot publish an unverified submodule commit', asyn
 
 test('a concurrent transcript import is preserved and only the failed upload is cleaned up', async (t) => {
   const l = laptop(t, { machine: { collides: true } });
-  const out = await l.run(['herdr', 'move', '--space', 'api', '--to', 'aaaa0001', '--restart', 'never', '--console', ORIGIN]);
+  const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'aaaa0001', '--restart', 'never', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.refused, out.out);
   assert.match(out.err, /is already in woodshed-aaaa0001: this conversation was moved there before/);
   const dest = `woodshed-aaaa0001:/home/node/.claude/projects/${claudeProjectDir('/home/node/woodshed-move-c0ffee42/services/api')}/${CONVERSATION}.jsonl`;
@@ -586,7 +589,7 @@ test('a changed local transcript stays local and only the screened copy reaches 
   const l = laptop(t);
   const file = path.join(l.repo.dir, 'home', '.claude', 'projects', claudeProjectDir(l.cwd), `${CONVERSATION}.jsonl`);
   const before = fs.readFileSync(file, 'utf8');
-  const out = await l.run(['herdr', 'move', '--space', 'api', '--to', 'aaaa0001', '--console', ORIGIN], {
+  const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'aaaa0001', '--console', ORIGIN], {
     confirm: true,
     onAsk: () => fs.appendFileSync(file, `${JSON.stringify({ type: 'user', message: { content: `AKIA${'T'.repeat(16)}` } })}\n`),
   });
@@ -602,11 +605,11 @@ test('a changed local transcript stays local and only the screened copy reaches 
 test('a program with a credential on its command line is never started again in the session, nor printed', async (t) => {
   const l = laptop(t);
   Object.assign(l.h.terminals.get(l.dev).foreground, { name: 'node', argv: ['node', 'server.js', '--api-key', 'abc123secret'] });
-  const dry = await l.run(['herdr', 'move', '--space', 'api', '--to', 'new', '--dry-run', '--json', '--console', ORIGIN]);
+  const dry = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--dry-run', '--json', '--console', ORIGIN]);
   assert.ok(!dry.out.includes('abc123secret'));
   assert.equal(dry.events.find((e) => e.event === 'bundle').bundle.terminals[1].process.command, 'node server.js --api-key …');
   let asked = null;
-  const out = await l.run(['herdr', 'move', '--space', 'api', '--to', 'new', '--restart', 'auto', '--console', ORIGIN], { confirm: true, onAsk: (q) => { asked = q; } });
+  const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'auto', '--console', ORIGIN], { confirm: true, onAsk: (q) => { asked = q; } });
   assert.equal(out.code, EXIT.done, out.err);
   assert.ok(!out.out.includes('abc123secret') && !out.err.includes('abc123secret'));
   assert.equal(asked, null, 'not even asked');
@@ -616,7 +619,7 @@ test('a program with a credential on its command line is never started again in 
   assert.match(out.out, /a shell there: node server\.js --api-key … was not started again, as its command line holds what may be a credential/);
   // A known token's shape is a credential whatever flag it follows.
   Object.assign(l.h.terminals.get(l.dev).foreground, { argv: ['curl', '-u', 'me:hunter2', `--header=x-k: sk_live_${'z'.repeat(24)}`] });
-  const curl = await l.run(['herdr', 'move', '--space', 'api', '--to', 'new', '--dry-run', '--json', '--console', ORIGIN]);
+  const curl = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--dry-run', '--json', '--console', ORIGIN]);
   assert.equal(curl.events.find((e) => e.event === 'bundle').bundle.terminals.find((x) => x.process).process.command, 'curl -u … …');
 });
 
@@ -624,7 +627,7 @@ test('a switch immediately before a password flag cannot disclose the password i
   const l = laptop(t);
   const password = 'inert-argument-password';
   Object.assign(l.h.terminals.get(l.dev).foreground, { name: 'db', argv: ['db', '--no-keyring', '--password', password] });
-  const args = ['herdr', 'move', '--space', 'api', '--to', 'new', '--restart', 'auto', '--console', ORIGIN];
+  const args = ['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'auto', '--console', ORIGIN];
   const dry = await l.run([...args, '--dry-run', '--json']);
   assert.equal(dry.code, EXIT.done, dry.err);
   assert.ok(!dry.out.includes(password));
@@ -647,13 +650,13 @@ test('a Codex terminal moves with its rollout and is ended here with /quit thoug
   const id = '22222222-3333-4444-8555-666666666666';
   fs.writeFileSync(path.join(day, `rollout-2026-11-20T09-00-00-${id}.jsonl`), `${JSON.stringify({ type: 'session_meta', payload: { id, cwd: l.cwd } })}\n`);
   Object.assign(l.h.terminals.get(l.claude), { foreground: { name: 'codex', argv: ['codex'], cwd: l.cwd, pid: 9 }, status: null, status_ms: null });
-  const refused = await l.run(['herdr', 'move', '--space', 'api', '--to', 'c0dec0de', '--restart', 'never', '--console', ORIGIN], { env: { CODEX_HOME: codexDir } });
+  const refused = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'c0dec0de', '--restart', 'never', '--console', ORIGIN], { env: { CODEX_HOME: codexDir } });
   assert.equal(refused.code, EXIT.refused, refused.err);
   assert.match(refused.err, /did not provide its Codex flags/);
   assert.equal(l.h.files.size, 0);
   assert.deepEqual(sends(l.h, l.claude), []);
   machine.noCodexFlags = false;
-  const out = await l.run(['herdr', 'move', '--space', 'api', '--to', 'c0dec0de', '--restart', 'never', '--json', '--console', ORIGIN], { env: { CODEX_HOME: codexDir } });
+  const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'c0dec0de', '--restart', 'never', '--json', '--console', ORIGIN], { env: { CODEX_HOME: codexDir } });
   assert.equal(out.code, EXIT.done, out.err + out.out);
   assert.ok(l.h.files.has(`woodshed-c0dec0de:/home/node/.codex/sessions/2026/11/20/rollout-2026-11-20T09-00-00-${id}.jsonl`));
   const run = l.h.calls.find((c) => c.app?.[1] === 'space.new' || c.app?.[1] === 'pane.split');
@@ -666,7 +669,7 @@ test('a Codex terminal moves with its rollout and is ended here with /quit thoug
 
 test('an agent of the other kind than the session\'s is not moved into it: it would run without that kind\'s guards', async (t) => {
   const l = laptop(t, { sessions: [{ id: 'c0dec0de', owner: 'mia-dev', repo: 'acme/app', project: 'app', status: 'running', state: 'done', title: 'Codex one', options: { agent: 'codex' } }] });
-  const out = await l.run(['herdr', 'move', '--terminal', 't1', '--to', 'c0dec0de', '--console', ORIGIN]);
+  const out = await l.run(['move', '--from', 'herdr', '--terminal', 't1', '--to', 'c0dec0de', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.refused);
   assert.match(out.err, /t1 runs claude, and session c0dec0de runs codex: a session runs one kind of agent, with/);
   assert.equal(l.onGithub('woodshed/move-c0ffee42'), null, 'refused before anything was pushed');
@@ -685,7 +688,7 @@ test('a new session runs the kind of the repo\'s agents, whichever checkout of i
   Object.assign(l.h.terminals.get(l.claude), { foreground: { name: 'zsh', argv: ['-zsh'], cwd: l.cwd, pid: 9 }, status: null, status_ms: null });
   const codex = l.h.add({ argv: ['/bin/zsh', '-l'], cwd: wtReal, foreground: { name: 'codex', argv: ['codex'], cwd: wtReal, pid: 10 }, status: null });
   l.h.space('pair', [['main', { row: [l.claude, codex] }]]);
-  const out = await l.run(['herdr', 'move', '--space', 'pair', '--to', 'new', '--console', ORIGIN]);
+  const out = await l.run(['move', '--from', 'herdr', '--space', 'pair', '--to', 'new', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.done, out.err + out.out);
   const started = l.calls.find(([m, p]) => m === 'POST' && p === '/api/my/sessions');
   assert.equal(started[2].agent, 'codex');
@@ -705,7 +708,7 @@ test('a conversation over hc\'s 8 MB goes in gzipped parts, and is put together 
   }
   fs.appendFileSync(file, `${lines.join('\n')}\n`);
   assert.ok(fs.statSync(file).size > 8 * 1024 * 1024);
-  const out = await l.run(['herdr', 'move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
+  const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.done, out.err + out.out);
   const parts = l.h.calls.filter((c) => c.args?.[0] === 'file' && c.args.at(-1).includes('.woodshed-part-'));
   assert.ok(parts.length >= 2 && parts.every((c) => c.input.length <= 6 * 1024 * 1024), `several parts, each within what hc takes (${parts.length})`);

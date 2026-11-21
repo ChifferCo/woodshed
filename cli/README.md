@@ -44,6 +44,14 @@ needs another file. Run `node --test cli/package.test.mjs` to pack, extract and 
 Woodshed Cloud's Site workflow pins a core commit, runs `npm pack --offline --ignore-scripts` on it, and publishes
 the tarball and its SHA-256 on woodshed.run. The site's installer checks that digest before installing the CLI.
 
+### Command organization
+
+Name top-level commands for a Woodshed workflow, such as `move` or `tunnel`, or group related operations by the
+resource they act on, as in `session list`, `review status` and `settings push`. Put integration choices in flags
+when they select how the workflow runs. For example, `move --from herdr --to new` selects the source and destination.
+Keep a source explicit even when only one is supported. Keep session management under `session`. For example,
+`session herdr <id>` adds the selected session to Herdr.
+
 ## Commands
 
 | Command | What it does | Exits |
@@ -51,7 +59,7 @@ the tarball and its SHA-256 on woodshed.run. The site's installer checks that di
 | `woodshed login` | Asks the console for a code, prints it, and opens the console's `/cli` page in your browser. Check the page shows the same code and press **Sign in the CLI**. The token it gets is kept as below. Signing in again on the same computer ends its earlier sign-in. | 0 signed in, 2 the code expired with nobody approving it, 3 denied, 1 too many sign-ins waiting (below) |
 | `woodshed logout` | Ends the token at the console and forgets it here. | 0 |
 | `woodshed status` | The console's name and address, its org (the GitHub account its repos are on), who is signed in, and the Herdr `hc` found here with its version (`hc` in `--json`: `installed`, `version`, `minimum`, `ok`), for `session herdr`. | 0 signed in, 2 not signed in or the sign-in ended |
-| `woodshed herdr move [--terminal T\|--tab T\|--space S] --to <id>\|new` | Moves terminals here into a session, agents with their conversations: below. | 0 moved, 2 a moved agent needs you, 3 refused, 1 failed and undone |
+| `woodshed move --from herdr [--terminal T\|--tab T\|--space S] --to <id>\|new` | Moves terminals here into a session, agents with their conversations: below. | 0 moved, 2 a moved agent needs you, 3 refused, 1 failed and undone |
 | `woodshed review enable\|status` | In a checkout: reviews the repo's pull requests in Woodshed sessions, by its project file, and says what the console still needs. Below. | 0 done, 2 an admin's step, a sign-in or a merge still to come, 1 a project file that does not read or check |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 | `woodshed config list\|get\|set` | Reads or sets [your choices on My settings](#your-choices-on-my-settings). | as below |
@@ -239,13 +247,14 @@ The console reads them for the token at `GET /api/cli/config`, which answers the
 
 ## Moving work into a session
 
-`woodshed herdr move` (`move.mjs`) takes terminals from this computer's Herdr into one of your sessions, as they are.
-`woodshed herdr --help` lists the Herdr commands. Use `woodshed session herdr <id>` to add a session to Herdr's sidebar.
+`woodshed move` (`move.mjs`) takes work from this computer into one of your sessions. Its supported source is
+`--from herdr`, which takes your Herdr terminals as they are. Run `woodshed move --help` for the options.
+Use `woodshed session herdr <id>` to add an existing session to Herdr's sidebar.
 
 ```sh
-woodshed herdr move --space api --to new          # a new session for each repo the space's terminals are in
-woodshed herdr move --terminal t3 --terminal t5 --to <id>   # into one of yours, on the same repo
-woodshed herdr move --tab main --to new --dry-run --json    # the move bundle, and nothing done
+woodshed move --from herdr --space api --to new          # a new session for each repo the space's terminals are in
+woodshed move --from herdr --terminal t3 --terminal t5 --to <id>   # into one of yours, on the same repo
+woodshed move --from herdr --tab main --to new --dry-run --json    # the move bundle, and nothing done
 ```
 
 `--terminal` (repeatable; an `hc ls` address or a name), `--tab` or `--space` (an id or a name, as `herdr-app ls`
