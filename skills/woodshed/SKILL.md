@@ -1,6 +1,6 @@
 ---
 name: woodshed
-description: "Use the `woodshed` command line to work with a Woodshed console for the person: sign in, start a cloud session and follow it, list, stop, resume or remove sessions, give one more time before a long task, run a command in a session, bring a session's port to localhost, print its app's address, carry Claude settings to and from private sessions, and turn on Woodshed's review for a repo. Use when the person asks to start or check a Woodshed session, to run or preview something in one, to keep one from pausing, to sync their Claude settings with Woodshed, or to turn on Woodshed's review for a repo."
+description: "Use the `woodshed` command line to work with a Woodshed console for the person: sign in, start a cloud session and follow it, list, stop, resume or remove sessions, give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, and turn on Woodshed's review for a repo. Use when the person asks to start or check a Woodshed session, to run something in one, to keep one from pausing, to sync their Claude settings with Woodshed, or to turn on Woodshed's review for a repo."
 ---
 
 # Work with Woodshed from the command line
@@ -52,7 +52,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
   admin on its pages. Do not ask the person to paste a key or token into the chat, and do not run
   `scripts/enable-review.sh` (it takes their own token and key) for them.
 - **Being connected does not keep a session awake.** A session pauses after its idle hours with nothing to do (its own
-  agent not working) and stops at its lifetime, whatever tunnels, forwards or terminals are open. If you need it longer,
+  agent not working) and stops at its lifetime, whatever tunnels or terminals are open. If you need it longer,
   ask for the time (section 5).
 - **Stopping and removing are the person's call.** `session stop` ends the work in progress (it is pushed first);
   `session remove` deletes the saved conversation. Do either only when asked, and pass `--yes` to `remove` only then.
@@ -78,9 +78,6 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude settings, skills, MCP servers, and a checkout's ignored env files | 0, 2 not listed before or not confirmed | #278 |
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | #278 |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in their running session, in its checkout | the line's code, 255 the pipe failed | main |
-| `woodshed forward <id> <port>[:<local>]...` | The session's port on this computer's `localhost`, until stopped | 0 at Ctrl-C, 2, 3, 1 | #281 |
-| `woodshed forward --auto <id>` | The same for every port the session listens on | as above | #281 |
-| `woodshed open <id>` | The session's app address, `https://<id>.<app domain>/` | 0, 2, 1 no app names on this console | #281 |
 
 "main" is in every copy. A pull request number means the command arrives when that pull request merges; until then,
 section 1 applies. Session ids are 8 hex characters, as `session list` prints them.
@@ -130,7 +127,7 @@ the hours it runs on. Then:
 
 - The pause is within 15 minutes and the task needs longer: `woodshed session extend <id>` (an hour more each time).
 - The task needs more than its limits allow: `woodshed session limits <id> --lifetime-hours N` (or `--idle-hours N`,
-  for one that will sit idle while you work through a tunnel or a forward). `default` goes back to the person's own.
+  for one that will sit idle while you work through a tunnel). `default` goes back to the person's own.
 - Exit 3 from either: it is not theirs to change (a shared session is its assignee's). Tell the person; do not try a
   different session.
 
@@ -148,16 +145,8 @@ line started, so start a server that must outlive it with `setsid … &`.
 
 ### See a session's app
 
-```sh
-woodshed open <id>                                   # the https address, behind the console's sign-in
-woodshed forward <id> 3000 --json                    # http://localhost:3000 here (or the next free port)
-woodshed forward --auto <id> --json                  # every port it listens on, as they come and go
-```
-
-`forward` runs until stopped, so run it in the background. Read each `{"event":"forwarding","port":…,"local":…,
-"moved":…,"url":…}` line for the address: a local port that is taken moves to the next free one. A forward has no
-sign-in of its own: anyone with an account on this computer can reach it while it runs. To share the app with someone
-else, the person makes a share link on the console; `open`'s address is not one.
+The command line has no command for this. Give the person the session's console page (`url` in `session get --json`),
+whose Open app opens it.
 
 ### Carry Claude settings
 
