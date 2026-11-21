@@ -20,10 +20,12 @@
     "cli/moveCode.mjs",
     "cli/moveLayout.mjs",
     "cli/sessions.mjs",
+    "cli/terminal.mjs",
     "cli/tunnel.mjs",
     "cli/woodshed.mjs",
     "cli/README.md",
     "shared/execFrames.mjs",
+    "shared/wsFrames.mjs",
     "skills/woodshed/SKILL.md",
     "COPYRIGHT",
     "LICENSE-AGPL"

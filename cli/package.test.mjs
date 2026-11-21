@@ -25,6 +25,7 @@ test('the packed CLI installs offline and runs help and signed-out status outsid
   const cli = path.join(home, 'woodshed');
   fs.symlinkSync(path.join(prefix, 'package/cli/woodshed.mjs'), cli);
   assert.match(run(cli, ['--help']), /Usage: woodshed/);
+  assert.match(run(cli, ['session', '--help']), /connect <id>/);
   assert.match(run(cli, ['config', '--help']), /Usage: woodshed config /);
   assert.match(run(cli, ['move', '--help']), /Usage: woodshed move /);
   assert.equal(JSON.parse(run(cli, ['status', '--json'], 2)).signedIn, false);

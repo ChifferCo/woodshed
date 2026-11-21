@@ -396,6 +396,28 @@ test('filename-only and binary credentials stop the move without printing their 
   assert.equal(l.repo.sh(['cat-file', '-s', `${l.onGithub('woodshed/move-c0ffee42')}:cache.sqlite`], l.repo.root), String(fs.statSync(cache).size));
 });
 
+test('local Git replacement refs cannot hide a credential in the history a move would publish', async (t) => {
+  const l = laptop(t);
+  const { root, sh } = l.repo;
+  const base = sh(['rev-parse', 'HEAD'], root);
+  const file = 'fixture.txt';
+  fs.writeFileSync(path.join(root, file), `ghp_${'9b'.repeat(18)}`);
+  sh(['add', file], root);
+  sh(['commit', '-qm', 'unpublished fixture'], root);
+  const original = sh(['rev-parse', 'HEAD'], root);
+  fs.unlinkSync(path.join(root, file));
+  const clean = sh(['commit-tree', `${base}^{tree}`, '-p', base, '-m', 'clean local replacement'], root);
+  sh(['replace', original, clean], root);
+  assert.equal(sh(['log', '-1', '--format=%s'], root), 'clean local replacement');
+
+  const out = await l.run(['move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
+  assert.equal(out.code, EXIT.refused);
+  assert.match(out.err, /fixture\.txt:1  a GitHub token/);
+  assert.ok(!out.err.includes('ghp_'));
+  assert.equal(l.onGithub('woodshed/move-c0ffee42'), null);
+  assert.ok(!l.calls.some(([method]) => method === 'POST'));
+});
+
 test('the move refuses a new Git LFS pointer before the upload hook runs', async (t) => {
   const l = laptop(t);
   const { root, dir, sh } = l.repo;

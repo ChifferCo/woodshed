@@ -20,13 +20,13 @@ const LFS_VERSION = /^version (?:https:\/\/(?:git-lfs|hawser)\.github\.com\/spec
 
 /**
  * Runs git in a folder. Never through a shell; GIT_TERMINAL_PROMPT=0 so a push with no credential fails rather than
- * waits on a prompt nobody sees. `input` is piped to it; `raw` keeps its output as bytes; `limit` stops reading after
- * that many bytes.
+ * waits on a prompt nobody sees. Git pushes original objects, so inspect them without local replacements throughout
+ * the move. `input` is piped to it; `raw` keeps its output as bytes; `limit` stops reading after that many bytes.
  * @returns {(args: string[], opts?: {cwd?: string, env?: object, timeoutMs?: number, input?: string, raw?: boolean}) => Promise<{code: number|null, stdout: string|Buffer, stderr: string}>}
  */
 export function gitRunner({ bin = 'git', env = process.env } = {}) {
   return (args, { cwd, env: extra = {}, timeoutMs = GIT_MS, input = null, raw = false, limit = null } = {}) => new Promise((resolve) => {
-    const child = spawn(bin, args, { cwd, env: { ...env, GIT_TERMINAL_PROMPT: '0', ...extra }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(bin, args, { cwd, env: { ...env, GIT_TERMINAL_PROMPT: '0', ...extra, GIT_NO_REPLACE_OBJECTS: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
     const out = [];
     const err = [];
     const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);

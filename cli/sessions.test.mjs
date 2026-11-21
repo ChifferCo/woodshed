@@ -55,7 +55,7 @@ const iso = (ms) => new Date(ms).toISOString();
 // A console's real handler and command line sign-in over a made-up fleet: mia-dev's sessions, octocat's, and shared
 // ones. A session the fleet starts or resumes takes the next of `script`'s steps each time the list is read, as a start
 // moves while the command line waits. The command line is signed in as mia-dev before each test.
-async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app', writers = null, stopTimesOut = false, hc = fakeHc(), relativeConfig = false } = {}) {
+async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app', writers = null, stopTimesOut = false, hc = fakeHc(), relativeConfig = false, tty = true, terminal = null } = {}) {
   let clock = T0;
   const now = () => clock;
   const store = { state: {}, save() {} };
@@ -144,17 +144,25 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const credentials = createCredentials({ platform: 'test', dir: path.join(dir, 'woodshed') });
   let answer = null;
+  const listFailures = [];
   const run = async (args) => {
     let out = '';
     let err = '';
     const code = await main(args, {
-      env: { XDG_CONFIG_HOME: relativeConfig ? path.relative(process.cwd(), dir) : dir }, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
+      env: { XDG_CONFIG_HOME: relativeConfig ? path.relative(process.cwd(), dir) : dir }, stdout: { write: (s) => { out += s; }, isTTY: tty },
+      stdin: { isTTY: tty }, stderr: { write: (s) => { err += s; } }, terminal: terminal?.run,
       sleep: async (ms) => { clock += ms; }, now, hostname: 'mia-laptop', platform: 'test', credentials, confirm: async () => answer,
       hc: hc.run, self: { node: '/usr/local/bin/node', script: '/home/mia/woodshed/cli/woodshed.mjs' },
       // A stop the console takes longer to answer than the command line waits.
-      fetch: (url, init) => (stopTimesOut && String(url).endsWith('/stop')
-        ? Promise.reject(Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }))
-        : fetch(url, init)),
+      fetch: (url, init) => {
+        if (stopTimesOut && String(url).endsWith('/stop')) return Promise.reject(Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }));
+        if (listFailures.length && String(url).endsWith('/api/sessions')) {
+          const status = listFailures.shift();
+          if (status === null) return Promise.reject(new TypeError('fetch failed'));
+          return Promise.resolve(new Response('The upstream is unavailable', { status }));
+        }
+        return fetch(url, init);
+      },
       // The person approves the code at once, as signed in to the console.
       openBrowser: (url) => { cli.decide({ code: new URL(url).searchParams.get('code'), login: 'mia-dev', approve: true }); },
     });
@@ -162,7 +170,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
   };
   const signed = await run(['login', '--console', origin]);
   assert.equal(signed.code, EXIT.done, signed.err);
-  return { origin, run, calls, sessions, cli, hc, dir, answer: (a) => { answer = a; } };
+  return { origin, run, calls, sessions, cli, hc, dir, answer: (a) => { answer = a; }, listFailures, now };
 }
 
 // A start as the fleet moves it: in line, starting, each step, then running.
@@ -518,4 +526,140 @@ test('session remove forgets the session\'s machine in hc too', async (t) => {
   const out2 = await unsure.run(['session', 'remove', 'bbbb0002', '--yes']);
   assert.equal(out2.code, EXIT.done, 'the session is removed all the same');
   assert.match(out2.err, /hc machine ls failed: core not running\. If hc machine ls shows woodshed-bbbb0002 reached by woodshed tunnel bbbb0002, forget it with: hc machine rm woodshed-bbbb0002\n/);
+});
+
+// The session's terminal as `session connect` sees each connection end: closed by its side, detached here, refused, never
+// reached, or cut once it was open. Each call is kept, and moves the next of `ends`.
+function fakeTerminal(ends, { during = () => {} } = {}) {
+  const calls = [];
+  const run = async (session, kind) => {
+    calls.push([session, kind]);
+    during(calls.length);
+    return ends.shift() ?? { status: 'closed', code: 1000 };
+  };
+  return { run, calls };
+}
+
+test('session connect puts this terminal on the session\'s agent, or with --shell its shell, until one side ends it', async (t) => {
+  const terminal = fakeTerminal([{ status: 'closed', code: 1000 }, { status: 'detached' }]);
+  const c = await consoleFor(t, { terminal });
+  const out = await c.run(['session', 'connect', 'aaaa0001']);
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.match(out.err, /^Connecting to aaaa0001's claude's terminal\. Ctrl-\\ disconnects; the session goes on\.\n\r\nConnection to aaaa0001 closed\.\n$/);
+  const shell = await c.run(['session', 'connect', 'aaaa0001', '--shell']);
+  assert.equal(shell.code, EXIT.done);
+  assert.match(shell.err, /aaaa0001's shell/);
+  assert.deepEqual(terminal.calls, [['aaaa0001', 'term'], ['aaaa0001', 'shell']]);
+  assert.ok(!c.calls.some(([kind]) => kind === 'resume'));
+});
+
+test('session connect resumes a paused session first, and session new --connect starts one and connects', async (t) => {
+  const terminal = fakeTerminal([]);
+  const c = await consoleFor(t, { terminal, script: [...START, { status: 'running', state: 'working' }] });
+  const resumed = await c.run(['session', 'connect', 'bbbb0002']);
+  assert.equal(resumed.code, EXIT.done, resumed.err);
+  assert.deepEqual(c.calls.find(([kind]) => kind === 'resume'), ['resume', { owner: 'mia-dev', id: 'bbbb0002' }]);
+  assert.match(resumed.out, /Session bbbb0002 is running/);
+  const started = await c.run(['session', 'new', '--connect', 'fix the login bug']);
+  assert.equal(started.code, EXIT.done, started.err);
+  assert.deepEqual(terminal.calls, [['bbbb0002', 'term'], ['dddd0004', 'term']]);
+  assert.match((await c.run(['session', 'new', '--connect', '--no-wait', 'go'])).err, /--connect waits for the session to run/);
+  assert.match((await c.run(['session', 'new', '--connect', '--herdr', 'go'])).err, /pick one/);
+});
+
+test('a connection that drops is opened again while the session runs, and not once it stopped', async (t) => {
+  const again = fakeTerminal([{ status: 'attached-then-cut', message: 'no answer in 30 s' }, { status: 'unreachable', message: 'could not reach it' }]);
+  const c = await consoleFor(t, { terminal: again });
+  const out = await c.run(['session', 'connect', 'aaaa0001']);
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.match(out.err, /the connection to aaaa0001 dropped \(no answer in 30 s\); connecting again/);
+  assert.equal(again.calls.length, 3, 'cut, a try that failed, then open until it closed');
+
+  const stopping = fakeTerminal([{ status: 'attached-then-cut', message: 'the connection closed' }], {
+    during: () => {
+      stopped.listFailures.push(502);
+      stopped.sessions.find((s) => s.id === 'aaaa0001').status = 'stopped';
+    },
+  });
+  const stopped = await consoleFor(t, { terminal: stopping });
+  const gone = await stopped.run(['session', 'connect', 'aaaa0001', '--shell']);
+  assert.equal(gone.code, EXIT.failed);
+  assert.ok(gone.err.includes(`Session aaaa0001 is stopped now. Run woodshed session connect aaaa0001 --shell --console ${stopped.origin} to resume it and connect again.`));
+  assert.equal(stopping.calls.length, 1);
+});
+
+test('session connect says why a terminal was not opened, and needs a terminal of its own', async (t) => {
+  const never = await consoleFor(t, { terminal: fakeTerminal([{ status: 'unreachable', message: 'could not reach the console' }]) });
+  const unreachable = await never.run(['session', 'connect', 'aaaa0001']);
+  assert.equal(unreachable.code, EXIT.failed);
+  assert.match(unreachable.err, /could not reach the console/);
+
+  const refused = await consoleFor(t, { terminal: fakeTerminal([{ status: 'closed', code: 1008 }]) });
+  const policy = await refused.run(['session', 'connect', 'aaaa0001']);
+  assert.equal(policy.code, EXIT.failed, 'closed on an error is no clean end');
+  assert.match(policy.err, /closed by the session's terminal with 1008/);
+
+  const ended = await consoleFor(t, { terminal: fakeTerminal([{ status: 'refused', http: 401, message: 'the token was revoked' }]) });
+  assert.equal((await ended.run(['session', 'connect', 'aaaa0001'])).code, EXIT.waiting);
+
+  const terminal = fakeTerminal([]);
+  const piped = await consoleFor(t, { tty: false, terminal });
+  const noTty = await piped.run(['session', 'connect', 'bbbb0002']);
+  assert.equal(noTty.code, EXIT.failed);
+  assert.match(noTty.err, /needs a terminal: for a command, use woodshed tunnel <id> -- <line>/);
+  assert.equal((await piped.run(['session', 'connect', 'aaaa0001', '--json'])).code, EXIT.failed);
+  assert.ok(!piped.calls.length && !terminal.calls.length, 'nothing resumed, nothing opened');
+
+  const c = await consoleFor(t, { terminal });
+  assert.equal((await c.run(['session', 'connect', 'cccc0003'])).code, EXIT.refused, 'a shared session');
+  c.sessions.find((s) => s.id === 'aaaa0001').taintedAt = iso(T0);
+  const tainted = await c.run(['session', 'connect', 'aaaa0001']);
+  assert.equal(tainted.code, EXIT.refused);
+  assert.match(tainted.err, /production data/);
+  assert.equal(terminal.calls.length, 0);
+});
+
+test('a connection that drops at once, again and again, is given up on a minute after the first drop', async (t) => {
+  const quick = Array.from({ length: 40 }, () => ({ status: 'attached-then-cut', message: 'the connection closed', ms: 100 }));
+  const terminal = fakeTerminal(quick);
+  const c = await consoleFor(t, { terminal });
+  const out = await c.run(['session', 'connect', 'aaaa0001', '--shell']);
+  assert.equal(out.code, EXIT.failed);
+  assert.match(out.err, /Could not connect to aaaa0001 again in 60 s: the connection closed/);
+  assert.ok(out.err.includes(`Run woodshed session connect aaaa0001 --shell --console ${c.origin} to try again.`));
+  assert.equal(out.err.match(/connecting again/g).length, 1, 'the first drop starts the minute');
+  assert.match(out.err, /it dropped again at once \(the connection closed\); still trying, for up to \d+ s more/);
+  assert.ok(terminal.calls.length < 15, `${terminal.calls.length} tries`);
+});
+
+test('a console out of reach while a dropped connection is opened again is tried again, not given up on', async (t) => {
+  let c = null;
+  const terminal = fakeTerminal([{ status: 'attached-then-cut', message: 'the connection closed', ms: 60_000 }], {
+    during: (n) => {
+      if (n === 1) c.listFailures.push(502, null, 503, 504);
+      else assert.equal(c.listFailures.length, 0, 'checked the session again before reopening the terminal');
+    },
+  });
+  c = await consoleFor(t, { terminal });
+  const out = await c.run(['session', 'connect', 'aaaa0001']);
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.equal(terminal.calls.length, 2);
+});
+
+test('session connect does not start another retry at the reconnect deadline', async (t) => {
+  let c;
+  let droppedAt;
+  const terminal = fakeTerminal([{ status: 'attached-then-cut', message: 'the connection closed' }], {
+    during: () => {
+      droppedAt = c.now();
+      c.listFailures.push(...Array(20).fill(502));
+    },
+  });
+  c = await consoleFor(t, { terminal });
+  const out = await c.run(['session', 'connect', 'aaaa0001']);
+  assert.equal(out.code, EXIT.failed);
+  assert.match(out.err, /Could not connect to aaaa0001 again in 60 s: .* answered 502/);
+  assert.equal(c.now() - droppedAt, 60_000, 'the last wait ends at the deadline');
+  assert.equal(c.listFailures.length, 10, 'no status check starts at the deadline');
+  assert.equal(terminal.calls.length, 1);
 });
