@@ -15,14 +15,37 @@
 // the token closes its pipes at once (cliSignIn's `whenEnded`), and so does a session's lockdown starting
 // (fleet.onLocking): a tainted session's only way out is the console's egress proxy, so it gets no pipe at all.
 // An open pipe is not activity: the session pauses when idle as it would without one, which ends the pipe.
+//
+// The same checks open a terminal, for `woodshed session connect` (cli/terminal.mjs):
+//
+//   UPGRADE /api/tunnel/term/<id>    `Upgrade: websocket`, the same token, `x-woodshed-terminal-size: <columns>x<rows>`
+//   UPGRADE /api/tunnel/shell/<id>   the same, for the Terminal tab's shell rather than the agent's terminal (the TUI tab)
+//
+// The console sends the websocket on to the session's ttyd for that tab, as terminalProxy.mjs does the page's, with
+// ttyd's credential in place of the person's token. ttyd also wants its credential in the terminal's first message,
+// which a browser reads from ttyd's /token page: the console sends that message itself, with the size the command line
+// asked for, so the credential never leaves the console. Then it copies bytes both ways, as for a pipe.
 
 import net from 'node:net';
 
 import logins from './public/logins.cjs';
+import { basicAuth } from './terminalProxy.mjs';
 import { LINE_HEADER, PROTOCOL, decodeLine } from '../shared/execFrames.mjs';
+import { OP, encodeFrame, isKey } from '../shared/wsFrames.mjs';
 const { loginKey } = logins;
 
 const PATH_RE = /^\/api\/tunnel\/exec\/([0-9a-f]{8})$/;
+const TERMINAL_RE = /^\/api\/tunnel\/(term|shell)\/([0-9a-f]{8})$/;
+export const SIZE_HEADER = 'x-woodshed-terminal-size';
+// The session's port for each terminal, as its endpoint names them.
+const TERMINAL_PORT = { term: 'termPort', shell: 'shellPort' };
+
+/** @returns {{columns: number, rows: number}}  the size asked for, kept to what a terminal can be; 80x24 for none */
+export function terminalSize(header) {
+  const match = /^(\d{1,4})x(\d{1,4})$/.exec(String(header ?? ''));
+  const keep = (n, fallback) => (n >= 1 ? Math.min(n, 1000) : fallback);
+  return { columns: keep(Number(match?.[1]), 80), rows: keep(Number(match?.[2]), 24) };
+}
 const RECHECK_MS = 15_000;
 // statusd's answer to the upgrade, before the console gives up on it.
 const ANSWER_MS = 15_000;
@@ -54,7 +77,7 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
   let timer = null;
 
   /** @returns {{session: object}|{status: number, text: string, message: string, why: string}} */
-  function check(id, login) {
+  function check(id, login, kind = 'exec') {
     const session = fleet.find(id);
     if (!session || !mayOpen(session, login) || session.kind === 'ask') {
       return { status: 404, text: 'Not Found', message: 'no session of yours by that id\n', why: 'not theirs' };
@@ -64,6 +87,9 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
     }
     if (session.status !== 'running' || !session.endpoint?.statusPort || !session.token) {
       return { status: 409, text: 'Conflict', message: `the session is ${session.status ?? 'not running'}, not running: resume it first\n`, why: 'not running' };
+    }
+    if (kind !== 'exec' && (!session.endpoint[TERMINAL_PORT[kind]] || !session.terminalToken)) {
+      return { status: 404, text: 'Not Found', message: 'this session has no such terminal: its image is older than it\n', why: 'no terminal' };
     }
     return { session };
   }
@@ -90,7 +116,7 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
       }
       if (!signedIn) close(pipe, 'the token ended');
       else {
-        const checked = check(pipe.session, pipe.login);
+        const checked = check(pipe.session, pipe.login, pipe.kind);
         if (!checked.session) close(pipe, checked.why);
       }
     }));
@@ -115,13 +141,21 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
   cli.whenEnded?.(({ id }) => closeWhere((pipe) => pipe.tokenId === id, 'the token was revoked'));
   fleet.onLocking?.((id) => closeWhere((pipe) => pipe.session === id, 'the session is being locked down'));
 
-  /** @returns {boolean}  false when the path is not the exec pipe's */
+  /** @returns {boolean}  false when the path is not the exec pipe's or a terminal's */
   function handleUpgrade(req, socket, head) {
     // The raw path, not new URL(): a path like //a:99999 makes it throw, and nothing above this catches.
-    const id = PATH_RE.exec(String(req.url || '/').split('?')[0])?.[1];
+    const pathname = String(req.url || '/').split('?')[0];
+    const terminal = TERMINAL_RE.exec(pathname);
+    const id = terminal?.[2] ?? PATH_RE.exec(pathname)?.[1];
     if (!id) return false;
-    if (String(req.headers.upgrade).toLowerCase() !== PROTOCOL) {
+    const kind = terminal?.[1] ?? 'exec';
+    if (kind === 'exec' && String(req.headers.upgrade).toLowerCase() !== PROTOCOL) {
       refuse(socket, 400, 'Bad Request', `upgrade to ${PROTOCOL}\n`);
+      return true;
+    }
+    if (kind !== 'exec' && (String(req.headers.upgrade).toLowerCase() !== 'websocket' || !isKey(req.headers['sec-websocket-key'])
+      || req.headers['sec-websocket-version'] !== '13')) {
+      refuse(socket, 400, 'Bad Request', 'upgrade to a websocket (version 13)\n');
       return true;
     }
     // Asking GitHub about write access can take a moment: the socket waits, and is let go of if it closes meanwhile. A
@@ -135,10 +169,14 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
         return;
       }
       const { login } = signedIn;
-      const checked = check(id, login);
+      const checked = check(id, login, kind);
       if (!checked.session) {
-        console.warn('execPipe: refused', { login, session: id, why: checked.why });
+        console.warn('execPipe: refused', { login, session: id, kind, why: checked.why });
         refuse(socket, checked.status, checked.text, checked.message);
+        return;
+      }
+      if (kind !== 'exec') {
+        forward({ kind, signedIn, session: checked.session, authorization: req.headers.authorization, socket, head, key: req.headers['sec-websocket-key'], size: terminalSize(req.headers[SIZE_HEADER]) });
         return;
       }
       const line = req.headers[LINE_HEADER];
@@ -146,7 +184,7 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
         refuse(socket, 400, 'Bad Request', `no line to run in ${LINE_HEADER}, or one too long\n`);
         return;
       }
-      forward({ signedIn, session: checked.session, line, authorization: req.headers.authorization, socket, head });
+      forward({ kind, signedIn, session: checked.session, line, authorization: req.headers.authorization, socket, head });
     }).catch((err) => {
       console.warn('execPipe: token not checked', { session: id, message: err.message });
       socket.destroy();
@@ -154,12 +192,23 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
     return true;
   }
 
-  function forward({ signedIn, session, line, authorization, socket, head }) {
+  // A terminal's request to its ttyd, and the first message ttyd wants: its credential, and the terminal's size.
+  function terminalRequest({ kind, session, key, size, host, port }) {
+    const lines = [`GET /${kind}/${session.id}/ws HTTP/1.1`, `host: ${host}:${port}`, 'connection: Upgrade', 'upgrade: websocket',
+      `sec-websocket-key: ${key}`, 'sec-websocket-version: 13', 'sec-websocket-protocol: tty', `origin: http://${host}:${port}`,
+      `authorization: ${basicAuth(session.terminalToken)}`];
+    const credential = Buffer.from(`woodshed:${session.terminalToken}`).toString('base64');
+    return { lines, first: encodeFrame(OP.text, JSON.stringify({ AuthToken: credential, ...size })) };
+  }
+
+  function forward({ kind, signedIn, session, line, authorization, socket, head, key, size }) {
     const { host, statusPort } = session.endpoint;
-    const pipe = { socket, upstream: null, tokenId: signedIn.id, login: signedIn.login, session: session.id, authorization, openedAt: now(), why: null };
+    const port = kind === 'exec' ? statusPort : session.endpoint[TERMINAL_PORT[kind]];
+    const pipe = { socket, upstream: null, kind, tokenId: signedIn.id, login: signedIn.login, session: session.id, authorization, openedAt: now(), why: null };
     track(pipe);
     let answered = false;
-    const upstream = net.connect(statusPort, host);
+    const terminal = kind === 'exec' ? null : terminalRequest({ kind, session, key, size, host, port });
+    const upstream = net.connect(port, host);
     pipe.upstream = upstream;
     const giveUp = setTimeout(() => {
       console.warn('execPipe: the session did not answer', { login: pipe.login, session: pipe.session });
@@ -167,10 +216,11 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
       upstream.destroy();
     }, ANSWER_MS);
     upstream.on('connect', () => {
-      const lines = [`GET /exec HTTP/1.1`, `host: ${host}:${statusPort}`, 'connection: Upgrade', `upgrade: ${PROTOCOL}`,
+      const lines = terminal?.lines ?? [`GET /exec HTTP/1.1`, `host: ${host}:${statusPort}`, 'connection: Upgrade', `upgrade: ${PROTOCOL}`,
         `authorization: Bearer ${session.token}`, `${LINE_HEADER}: ${line}`];
       upstream.write(`${lines.join('\r\n')}\r\n\r\n`);
-      if (head?.length) upstream.write(head);
+      // A websocket's client sends nothing before the 101: anything that came early follows the console's first message.
+      if (head?.length && !terminal) upstream.write(head);
     });
     // statusd's answer is read whole before anything goes to the computer: a 101 opens the pipe, anything else is
     // passed on as the refusal it is.
@@ -187,19 +237,30 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
       answered = true;
       const status = Number(/^HTTP\/1\.[01] (\d{3})/.exec(buffered.subarray(0, end).toString('latin1'))?.[1]);
       if (status !== 101) {
-        console.warn('execPipe: refused by the session', { login: pipe.login, session: pipe.session, status: status || null });
+        console.warn('execPipe: refused by the session', { login: pipe.login, session: pipe.session, kind, status: status || null });
+        // ttyd's refusal is of the console's credential, not the person's token: a 401 passed on would read as their
+        // sign-in ending. statusd's answers to the pipe are its own (a tainted session's 409), and pass as they are.
+        if (kind !== 'exec') {
+          refuse(socket, 502, 'Bad Gateway', `the session's terminal did not open (it answered ${status || 'nothing'})\n`);
+          upstream.destroy();
+          return;
+        }
         socket.write(buffered);
         upstream.pipe(socket);
         return;
       }
       upstream.setNoDelay(true);
       socket.setNoDelay?.(true);
+      if (terminal) {
+        upstream.write(terminal.first);
+        if (head?.length) upstream.write(head);
+      }
       socket.write(buffered);
       // pipe() holds each side back while the other's buffer is full.
       upstream.pipe(socket);
       socket.pipe(upstream);
       pipe.connected = true;
-      console.log('execPipe: opened', { login: pipe.login, session: pipe.session, token: pipe.tokenId, device: signedIn.record?.name ?? null });
+      console.log('execPipe: opened', { login: pipe.login, session: pipe.session, kind, token: pipe.tokenId, device: signedIn.record?.name ?? null });
     };
     upstream.on('data', readAnswer);
     upstream.on('error', (err) => {
@@ -208,18 +269,26 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
       console.warn('execPipe: session unreachable', { login: pipe.login, session: pipe.session, message: err.message });
       refuse(socket, 502, 'Bad Gateway', 'the session did not answer the console\n');
     });
+    // The session's side closed: the computer's is ended once what is on its way is written, and read again so its
+    // hang-up is seen (pipe() paused it when the session's side went), or the pipe would stay open until the session
+    // stops. An upgraded socket is half open by default, so the computer hanging up first ends the console's side too.
     upstream.on('close', () => {
       clearTimeout(giveUp);
-      if (!answered) socket.end();
+      socket.end();
+      if (answered) socket.resume();
     });
     socket.on('error', () => upstream.destroy());
+    socket.on('end', () => {
+      upstream.end();
+      socket.end();
+    });
     socket.on('close', () => {
       clearTimeout(giveUp);
       upstream.destroy();
       untrack(pipe);
       if (!pipe.connected) return;
       console.log('execPipe: closed', {
-        login: pipe.login, session: pipe.session, token: pipe.tokenId, seconds: Math.round((now() - pipe.openedAt) / 1000),
+        login: pipe.login, session: pipe.session, kind, token: pipe.tokenId, seconds: Math.round((now() - pipe.openedAt) / 1000),
         sent: upstream.bytesWritten, received: upstream.bytesRead, why: pipe.why ?? 'ended',
       });
     });

@@ -344,10 +344,13 @@ URL on top of each env file's Repo settings values
   counts (`cliSignIn: sign-in refused, too many waiting` with `scope: 'client'` and `lastFrom`); the same refusal for many people
   at once, all with one `lastFrom`, is a proxy in front that reaches the console from an address `WOODSHED_TRUSTED_PROXIES`
   does not list (loopback is trusted by default), so its `X-Forwarded-For` is not read. The token is in the macOS
-  Keychain or libsecret, else in the file `woodshed status --json` names (`credentialsFile`); never print it.
-  `woodshed settings` (cli/README.md, "Settings") lists each item with why it is skipped or refused, and the console
-  logs `cliSettings: pushed` or `cliSettings: refused`; `answered 404 to /api/cli/settings` is a console with nowhere to
-  keep Claude homes, or one from before the command.
+  Keychain or libsecret, else in the file `woodshed status --json` names (`credentialsFile`; on Windows, sealed with
+  DPAPI, or a plain file when `store` is `file`); never print it. On Windows `login` refusing with `could not be made a
+  folder only you can open` says why: the SIDs still allowed on `%LOCALAPPDATA%\woodshed` besides the person's own,
+  SYSTEM's and Administrators', or that it could not be made theirs.
+- **`woodshed settings` skips or refuses an item.** The list says why (cli/README.md, "Settings"). The console logs
+  `cliSettings: pushed` or `cliSettings: refused`. A 404 from `/api/cli/settings` means the console has nowhere to keep
+  Claude homes or predates the command.
 - **`woodshed tunnel` exits 255.** Its stderr says why (cli/README.md, "The tunnel into a session"): `refused (401)`
   is a sign-in revoked or expired, or its person's write access gone (`woodshed login` again), `refused (404)` a session that is not that person's own,
   `refused (409)` one not running (resume it) or one that has seen production data, which never gets a pipe. The
@@ -356,6 +359,13 @@ URL on top of each env file's Repo settings values
   session is being locked down`, `not running`). A pipe cut while the session ran on, with `why: 'ended'`, is the
   computer's side or the network going; one cut when the session paused is the idle pause, which a pipe does not hold
   off. In the session, statusd logs `statusd: exec opened` and `exec closed` with the exit code.
+- **`woodshed session connect` does not open, or drops.** It is the same path as the tunnel, a websocket to the
+  session's ttyd (console/README.md, "A terminal from the command line"), and the same lines with `kind: 'term'` or
+  `'shell'`: `execPipe: refused` with `why` (`no terminal` is a session image from before the Terminal tab, for
+  `--shell`), `refused by the session` with ttyd's status, `closed` with `why`. A terminal that opens and closes at
+  once with 1008 is ttyd refusing the console's first message: a ttyd other than 1.7.7's protocol. A drop says
+  `connecting again` and tries for a minute while the session runs; one that says the session is paused or stopped
+  needs `session connect` again, which resumes it.
 - **`woodshed session` fails, or a start it waits on never ends.** Each command's message says what the console
   answered (cli/README.md, "Sessions"): exit 3 with `does not reach this` is a route its token may not call
   (`cliSessions: refused, not a route the command line may call`; the list is in `console/cliSessions.mjs`), and
