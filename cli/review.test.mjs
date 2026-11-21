@@ -114,6 +114,29 @@ test('review status and enable use installed Git when run from a checkout contai
   }
 });
 
+test('review leaves linked project files and directories alone', async (t) => {
+  for (const linked of ['file', 'directory']) {
+    const s = await setup(t);
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-review-project-'));
+    t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+    const original = 'version: 1\n# Fixture\n';
+    fs.writeFileSync(path.join(outside, 'project.yaml'), original);
+    const folder = path.join(s.repo, '.woodshed');
+    if (linked === 'file') {
+      fs.mkdirSync(folder);
+      fs.symlinkSync(path.join(outside, 'project.yaml'), path.join(folder, 'project.yaml'), 'file');
+    } else {
+      fs.symlinkSync(outside, folder, 'junction');
+    }
+    for (const sub of ['status', 'enable']) {
+      const result = await s.run(['review', sub, '--json']);
+      assert.equal(result.code, EXIT.failed);
+      assert.match(result.lines[0].error, /project\.yaml.*symlink/);
+    }
+    assert.equal(fs.readFileSync(path.join(outside, 'project.yaml'), 'utf8'), original);
+  }
+});
+
 test('what only an admin can do is printed as its step, with exit 2; the file is written anyway', async (t) => {
   const s = await setup(t);
   s.state.reviewer = 'none';

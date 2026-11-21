@@ -173,7 +173,7 @@ function databaseProblems(project, repoDir) {
 // is one (what it names is read as the file, which can be anything the reader may read: a CI runner's environment, a
 // file in the machine owner's home); `file` for the repo's own file; `missing` when the checkout has none, so the
 // default branch's is read; `other` for a folder, or a path through a file (`README.md/init.sh`).
-function checkoutEntry(repoDir, file) {
+export function checkoutEntry(repoDir, file) {
   const parts = file.split('/');
   for (let i = 1; i <= parts.length; i += 1) {
     let stat;

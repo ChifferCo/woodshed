@@ -105,6 +105,16 @@ test('setup opens My settings for a missing session sign-in and respects --no-br
   }
 });
 
+test('the agent sign-in handoff keeps interactive repo choices in order', async () => {
+  const { invoke } = fake({ commands: ['repo'], tty: true, input: ['acme/lib, acme/app'], answers: {
+    status: result(0, { ...ready, sessionSignIns: { claude: false, codex: false } }),
+    'repo list': result(0, { projects: [{ repo }, { repo: 'acme/lib' }], available: [] }),
+  } });
+  const after = await invoke();
+  assert.equal(after.code, EXIT.waiting);
+  assert.match(after.events.at(-1).message, /rerun setup with --repo acme\/lib --repo acme\/app/);
+});
+
 test('setup checks review in each checkout and tells the person where to open the project file PR', async () => {
   const lib = path.resolve('some checkout');
   const { invoke } = fake({ commands: ['review'], here: repo, checkouts: { [lib]: 'Acme/Lib' }, answers: {

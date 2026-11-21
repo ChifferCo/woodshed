@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { PROJECT_FILE, parseProject, readRepoFile, repoOf } from '../shared/project.mjs';
-import { checkSummary } from '../shared/projectCheck.mjs';
+import { checkSummary, checkoutEntry } from '../shared/projectCheck.mjs';
 import { parseYaml } from '../shared/yamlLite.mjs';
 import { enableReview } from './projectReview.mjs';
 
@@ -134,6 +134,7 @@ export async function reviewCommand({ origin, rest }, deps) {
   function checkout(dirOption) {
     const dir = checkoutOf(path.resolve(deps.cwd ?? process.cwd(), dirOption ?? '.'));
     if (!dir) throw fail(`${dirOption ?? 'this folder'} is not in a git checkout: run woodshed review in a checkout of the repo, or give --dir`);
+    if (checkoutEntry(dir, PROJECT_FILE) === 'symlink') throw fail(`Review needs a regular ${PROJECT_FILE} in the checkout. Its path contains a symlink.`);
     return { dir, repo: repoOf(dir) };
   }
 

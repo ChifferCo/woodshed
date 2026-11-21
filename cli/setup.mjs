@@ -157,6 +157,7 @@ export async function setupCommand(args, ctx) {
   const has = (name) => new RegExp(`^ {2}${name}\\b`, 'm').test(help.stdout);
 
   let selected = opts.repos;
+  const resume = () => selected.length ? `rerun setup with ${selected.map((name) => `--repo ${name}`).join(' ')}` : 'run setup again';
   if (!has('repo')) {
     report('repos', 'skipped', 'This CLI has no repo command yet. Choose repos in the console or use a CLI with repo list and repo add.', { url: `${origin}/console-settings` });
   } else {
@@ -186,8 +187,7 @@ export async function setupCommand(args, ctx) {
         const event = addedRepo.events.find((e) => e.status === 'needs-github-app' || e.event === 'needs-github-app');
         const url = linkTo(event?.installUrl ?? event?.url, origin, true);
         if (addedRepo.code === EXIT.waiting && event) {
-          const choices = selected.map((name) => `--repo ${name}`).join(' ');
-          return stop('repos', EXIT.waiting, `Install the GitHub App for ${repo}, then rerun setup with ${choices}.${url ? '' : ' Ask a console admin for its install link.'}`, { repo, selected, ...(url ? { url } : {}) });
+          return stop('repos', EXIT.waiting, `Install the GitHub App for ${repo}, then ${resume()}.${url ? '' : ' Ask a console admin for its install link.'}`, { repo, selected, ...(url ? { url } : {}) });
         }
         return childError('repos', addedRepo, `Could not add ${repo}.`, { repo });
       }
@@ -202,7 +202,7 @@ export async function setupCommand(args, ctx) {
   } else if (signIns[agent] !== true) {
     const url = `${origin}/settings`;
     if (args.browser) open(url);
-    return stop('agent', EXIT.waiting, `Connect ${opts['--agent'] ?? 'Claude or Codex'} on My settings, then run setup again.`, { url });
+    return stop('agent', EXIT.waiting, `Connect ${opts['--agent'] ?? 'Claude or Codex'} on My settings, then ${resume()}.`, { url });
   } else {
     report('agent', 'done', `${agent === 'claude' ? 'Claude' : 'Codex'} is connected for sessions.`, { agent });
   }
