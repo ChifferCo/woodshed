@@ -12,13 +12,13 @@ function listen(server) {
 
 // A console where mia-dev and octocat each have a private session and a shared one runs, with a command line token
 // made for each of them, and cookies for the page.
-async function consoleFor(t, { people = null, writers = null } = {}) {
+async function consoleFor(t, { people = null, writers = null, claudeToken = true } = {}) {
   let clock = Date.parse('2026-11-20T10:00:00Z');
   const store = { state: {}, save() {} };
   const cli = createCliSignIn({ store, now: () => clock, allowed: (login) => !people || people.has(login) });
   const sessions = [
     { id: 'aaaa0001', owner: 'mia-dev', title: 'Mia\'s', status: 'running', token: 'statusd-secret', terminalToken: 'ttyd-secret' },
-    { id: 'bbbb0002', owner: 'octocat', title: 'Octocat\'s', status: 'stopped', token: 'statusd-secret-2' },
+    { id: 'bbbb0002', owner: 'octocat', title: 'Octocat\'s', status: 'stopped', token: 'statusd-secret-2', options: { agent: 'codex' } },
     { id: 'cccc0003', owner: null, title: 'Shared', status: 'running', startedBy: 'octocat', assignee: 'octocat', token: 'statusd-secret-3' },
   ];
   const calls = [];
@@ -41,7 +41,7 @@ async function consoleFor(t, { people = null, writers = null } = {}) {
       session.limits = values;
     },
   };
-  const userSettings = { view: () => ({ claudeToken: { set: true } }), refresh: async () => {}, limitsFor: () => ({ idleMs: 2 * 3_600_000, lifetimeMs: 12 * 3_600_000 }) };
+  const userSettings = { view: () => ({ claudeToken: { set: claudeToken } }), refresh: async () => {}, limitsFor: () => ({ idleMs: 2 * 3_600_000, lifetimeMs: 12 * 3_600_000 }) };
   const asked = [];
   const auth = {
     enabled: () => true, available: () => true, sessionFor: async (cookie) => (cookie ? { login: /woodshed_session=([\w-]+)/.exec(cookie)[1] } : null),
@@ -230,4 +230,14 @@ test('write access is asked at a token\'s first use and then hourly, and GitHub 
   assert.equal(await access.allowed('mia'), false);
   assert.deepEqual(revoked, [['mia', 'write access gone']]);
   assert.equal(await createCliAccess({ canWrite: null, revokeAll() {} }).allowed('mia'), true, 'no GitHub sign-in, nothing to ask');
+});
+
+test('resume answers someone else\'s private session as it does one that does not exist, whatever it runs', async (t) => {
+  const c = await consoleFor(t, { claudeToken: false });
+  const theirs = await c.call('/api/my/sessions/bbbb0002/resume', { method: 'POST', body: {} });
+  const none = await c.call('/api/my/sessions/99990009/resume', { method: 'POST', body: {} });
+  assert.deepEqual(theirs, none, 'octocat\'s Codex session cannot be told from no session');
+  assert.deepEqual(none, { status: 409, body: { error: 'no session you can open with that id' } });
+  assert.equal(c.calls.length, 0, 'the fleet is never asked');
+  assert.match((await c.call('/api/my/sessions/aaaa0001/resume', { method: 'POST', body: {} })).body.error, /save your Claude token/, 'her own still says what it needs');
 });

@@ -420,6 +420,11 @@ export async function main(argv, deps = {}) {
 }
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  // `woodshed session list | head`: a reader that stops early is no failure of this command.
+  process.stdout.on('error', (err) => {
+    if (err.code === 'EPIPE') process.exit(process.exitCode ?? 0);
+    throw err;
+  });
   main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (err) => {
     process.stderr.write(`woodshed: ${err?.stack ?? err}\n`);
     process.exitCode = EXIT.failed;
