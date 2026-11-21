@@ -55,14 +55,15 @@ function listenOn(server, port, host) {
  */
 export async function listenFree(wanted, onConnection, { tries = MOVE_TRIES } = {}) {
   for (let port = wanted; port < wanted + tries && port <= 65_535; port++) {
-    const v4 = net.createServer(onConnection);
+    // Half-open, as a TCP forward must be: a client that ends its side still gets the rest of the answer.
+    const v4 = net.createServer({ allowHalfOpen: true }, onConnection);
     try {
       await listenOn(v4, port, '127.0.0.1');
     } catch (err) {
       if (err.code === 'EADDRINUSE' || err.code === 'EACCES') continue;
       throw err;
     }
-    const v6 = net.createServer(onConnection);
+    const v6 = net.createServer({ allowHalfOpen: true }, onConnection);
     try {
       await listenOn(v6, port, '::1');
       return { servers: [v4, v6], port };
@@ -82,13 +83,15 @@ export async function listenFree(wanted, onConnection, { tries = MOVE_TRIES } = 
  *          say: (text: string) => void, warn: (text: string) => void, emit: (object: object) => void,
  *          signal: AbortSignal, userAgent?: string, retryMs?: number[], lines?: {once: string, watch: string}}} args
  *   `lines` are what read the session's sockets, once and every 2 seconds: a test's stand-in for the session's /proc
- * @returns {Promise<{refused: Error}|null>}  null once stopped by `signal`; the refusal when the session could not be
- *   reached at the start
+ * @returns {Promise<{refused: Error}|null>}  null once stopped by `signal`; else why nothing was forwarded: a refusal
+ *   (`status` the console's, or 403 for the session's own ports), or no port free here (`status` null)
  */
 export async function runForward({ origin, token, session, specs, auto, say, warn, emit, signal, userAgent = 'woodshed-cli', retryMs = RETRY_MS, lines = { once: ONCE_LINE, watch: WATCH_LINE } }) {
   const forwards = new Map(); // session port -> {servers, local, sockets}
   const failures = new Map(); // session port -> the last failure said, so each is said once until it changes
-  const upgrade = (path, headers) => openUpgrade({ url: new URL(path, origin), token, headers, userAgent });
+  const upgrade = (path, headers) => openUpgrade({ url: new URL(path, origin), token, headers, userAgent, signal });
+  // A port that could not be listened on here: a failure of this computer's, not a refusal.
+  let localFailure = null;
 
   function connection(port) {
     return (client) => {
@@ -109,7 +112,7 @@ export async function runForward({ origin, token, session, specs, auto, say, war
         client.resume();
       }, (err) => {
         client.destroy();
-        if (failures.get(port) === err.message) return;
+        if (signal.aborted || failures.get(port) === err.message) return;
         failures.set(port, err.message);
         warn(`port ${port}: ${err.message}`);
         emit({ event: 'connection-failed', session, port, error: err.message });
@@ -126,6 +129,7 @@ export async function runForward({ origin, token, session, specs, auto, say, war
       listening = await listenFree(wanted, connection(port));
     } catch (err) {
       forwards.delete(port);
+      localFailure = err;
       warn(`port ${port}: ${err.message}`);
       emit({ event: 'error', session, port, error: err.message });
       return;
@@ -201,9 +205,10 @@ export async function runForward({ origin, token, session, specs, auto, say, war
   async function watch() {
     let attempt = 0;
     let lastFailure = null;
-    while (!stopped) {
+    while (!stopped && !signal.aborted) {
       try {
         const { socket, head } = await upgrade(`/api/tunnel/exec/${session}`, { [LINE_HEADER]: encodeLine(lines.watch) });
+        if (stopped) return socket.destroy();
         if (lastFailure) say(`Following session ${session}'s ports again.`);
         lastFailure = null;
         attempt = 0;
@@ -241,11 +246,20 @@ export async function runForward({ origin, token, session, specs, auto, say, war
         lastFailure = 'the connection to the session was cut';
         warn(`${lastFailure}: following its ports again shortly (the forwards stay open)`);
       } catch (err) {
-        if (stopped) return;
+        if (stopped || signal.aborted) return;
         if (err.message !== lastFailure) warn(`could not follow session ${session}'s ports: ${err.message}; trying again`);
         lastFailure = err.message;
       }
-      await new Promise((resolve) => setTimeout(resolve, retryMs[Math.min(attempt++, retryMs.length - 1)]));
+      // Ctrl-C ends the wait too: nothing is left holding the process open.
+      await new Promise((resolve) => {
+        const done = () => {
+          clearTimeout(timer);
+          signal.removeEventListener('abort', done);
+          resolve();
+        };
+        const timer = setTimeout(done, retryMs[Math.min(attempt++, retryMs.length - 1)]);
+        signal.addEventListener('abort', done, { once: true });
+      });
     }
   }
   if (auto) {
@@ -253,7 +267,8 @@ export async function runForward({ origin, token, session, specs, auto, say, war
     say(`Following session ${session}'s ports. Ctrl-C stops.`);
     watch();
   } else if (!forwards.size) {
-    // Nothing it was asked for can be forwarded: a refusal, not a forward that ended.
+    // Nothing it was asked for can be forwarded: a refusal (the session's own ports), or this computer's own failure.
+    if (localFailure && !own) return { refused: Object.assign(localFailure, { status: null }) };
     return { refused: Object.assign(new Error(own ?? 'nothing to forward'), { status: 403 }) };
   } else say('Ctrl-C stops.');
 

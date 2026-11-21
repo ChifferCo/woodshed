@@ -24,12 +24,14 @@ const plain = (text) => String(text).replace(/[^\x20-\x7e]/g, ' ').trim().slice(
 
 /**
  * One upgrade request to the console, as the tunnel and `woodshed forward` make them.
- * @param {{url: URL, token: string, headers?: object, userAgent?: string, answerMs?: number}} args
+ * @param {{url: URL, token: string, headers?: object, userAgent?: string, answerMs?: number, signal?: AbortSignal}} args
+ *   `signal` gives up on the request (Ctrl-C)
  * @returns {Promise<{socket: import('node:net').Socket, head: Buffer}>}  rejects with an Error whose `status` is the
  *   console's answer (absent when it was not reached) and whose message says why, printable
  */
-export function openUpgrade({ url, token, headers = {}, userAgent = 'woodshed-cli', answerMs = ANSWER_MS }) {
+export function openUpgrade({ url, token, headers = {}, userAgent = 'woodshed-cli', answerMs = ANSWER_MS, signal = null }) {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(Object.assign(new Error('stopped'), { status: null }));
     let settled = false;
     const failed = (message, status = null) => {
       if (settled) return;
@@ -55,7 +57,14 @@ export function openUpgrade({ url, token, headers = {}, userAgent = 'woodshed-cl
       });
       res.on('error', () => failed(`refused (${res.statusCode})`, res.statusCode));
     });
+    const stop = () => {
+      req.destroy();
+      failed('stopped');
+    };
+    signal?.addEventListener('abort', stop, { once: true });
+    req.on('close', () => signal?.removeEventListener('abort', stop));
     req.on('upgrade', (res, socket, head) => {
+      signal?.removeEventListener('abort', stop);
       req.setTimeout(0);
       socket.setTimeout(0);
       socket.setNoDelay(true);

@@ -12,7 +12,7 @@ import { createHandler } from '../console/server.mjs';
 import { handleExecUpgrade } from '../session/execPipe.mjs';
 import { handlePortUpgrade } from '../session/portPipe.mjs';
 import { createCredentials } from './credentials.mjs';
-import { MARK, parseSpec, runForward } from './forward.mjs';
+import { MARK, listenFree, parseSpec, runForward } from './forward.mjs';
 import { openUpgrade } from './tunnel.mjs';
 import { main } from './woodshed.mjs';
 
@@ -54,7 +54,7 @@ function procTcp(ports) {
 }
 
 // A session's statusd (the real /exec and /port), its app, a console in front, and @mia-dev signed in.
-async function setup(t) {
+async function setup(t, { tainted = () => false } = {}) {
   const app = http.createServer((req, res) => res.end(`app ${req.url}`));
   const appPort = await listen(app);
   const echo = net.createServer((socket) => socket.pipe(socket));
@@ -67,7 +67,7 @@ async function setup(t) {
   statusd.on('upgrade', (req, socket, head) => {
     const isAuthorized = (h) => h === `Bearer ${SESSION_TOKEN}`;
     if (req.url === '/exec') return handleExecUpgrade(req, socket, head, { isAuthorized, cwd: dir });
-    return handlePortUpgrade(req, socket, head, { isAuthorized, host: '127.0.0.1' });
+    return handlePortUpgrade(req, socket, head, { isAuthorized, host: '127.0.0.1', tainted });
   });
   const statusPort = await listen(statusd);
   const cli = createCliSignIn({ store: { state: {}, save() {} } });
@@ -242,7 +242,7 @@ async function signedInCli(t, { appDomain }) {
     let err = '';
     const code = await main(args, {
       env: { XDG_CONFIG_HOME: dir }, stdout: { write: (s) => { out += s; return true; } }, stderr: { write: (s) => { err += s; return true; } },
-      platform: 'test', credentials, signal: AbortSignal.abort(),
+      platform: 'test', credentials, signal: AbortSignal.timeout(5000),
     });
     return { code, out, err };
   };
@@ -273,4 +273,45 @@ test('woodshed forward\'s exit codes: a usage error 1, refused 3, a sign-in that
   assert.match(refused.err, /refused \(404\)/);
   cli.revoke('mia-dev', id);
   assert.equal((await run(['forward', '--auto', 'aaaa1111'])).code, 2);
+});
+
+test('statusd forwards nothing from a tainted session on its own word, whatever the console let through', async (t) => {
+  let tainted = false;
+  const s = await setup(t, { tainted: () => tainted });
+  tainted = true;
+  await assert.rejects(openUpgrade({ url: new URL(`/api/tunnel/port/aaaa1111/${s.appPort}`, s.origin), token: s.signedIn.token }),
+    (err) => err.status === 409 && /production data/.test(err.message));
+});
+
+test('a local port that cannot be had is this computer\'s failure, and Ctrl-C ends a wait to follow again at once', async (t) => {
+  const taken = net.createServer();
+  const port = await listen(taken);
+  t.after(() => taken.close());
+  await assert.rejects(listenFree(port, () => {}, { tries: 1 }), /no free port from/);
+
+  // The console is gone: the follower waits to try again, and Ctrl-C ends that wait, and the command, at once.
+  const s = await setup(t);
+  s.listening([]);
+  const run = s.forward({ auto: true });
+  await until(() => run.said.some((text) => text.startsWith('Following')));
+  s.cut();
+  const started = Date.now();
+  assert.equal(await run.stop(), null);
+  assert.ok(Date.now() - started < 1000, `stopped in ${Date.now() - started} ms`);
+});
+
+test('a client that ends its side still gets the whole answer', async (t) => {
+  const s = await setup(t);
+  const run = s.forward({ specs: [{ port: s.echoPort, local: await freePort() }] });
+  await until(() => run.events.some((e) => e.event === 'forwarding'));
+  const { local } = run.events[0];
+  const got = await new Promise((resolve, reject) => {
+    let text = '';
+    const socket = net.connect(local, '127.0.0.1', () => socket.end('half-closed'));
+    socket.on('data', (chunk) => { text += chunk; });
+    socket.on('close', () => resolve(text));
+    socket.on('error', reject);
+  });
+  assert.equal(got, 'half-closed');
+  await run.stop();
 });

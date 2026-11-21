@@ -67,7 +67,9 @@ before the line ends (Ctrl-C, a cut network) hangs up everything the line starte
 a tainted one, closed when the sign-in is revoked. A console restart or a dropped network cuts only the connections
 open at that moment; the next one opens again by itself, so a dev server's page reloads as if nothing happened. The
 session's own ports (its terminals, statusd, the viewers, the editor, Redis) are never forwarded: the console opens
-those.
+those. As with `ssh -L`, a forward listens on loopback with no sign-in of its own, so anyone with an account on
+this computer can connect to it while it runs: don't forward a session's port on a computer you share with people who
+should not reach it.
 
 `--auto` reads the session's socket tables (`/proc/net/tcp` and `tcp6`) every 2 seconds through one tunnel it holds
 open, and forwards each port something listens on where `localhost` reaches it. A port that stops listening has its
