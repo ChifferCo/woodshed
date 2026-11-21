@@ -15,7 +15,7 @@ const KEYS = ['terminal', 'reviews', 'codex-reviews', 'claude-token-shared', 'de
 
 // A console with the real My settings (userSettings.mjs) over a secret store that keeps nothing: mia-dev has a Claude
 // token saved and GitHub connected, octocat has neither. A command line token for each.
-async function consoleFor(t) {
+async function consoleFor(t, { writers = null } = {}) {
   const store = {
     state: {
       people: {
@@ -27,7 +27,8 @@ async function consoleFor(t) {
   };
   const secrets = { read: async () => null, save: async () => {}, remove: async () => {}, configured: () => true };
   const userSettings = createUserSettings({ store, secrets });
-  const cli = createCliSignIn({ store: { state: {}, save() {} } });
+  // GitHub's answer on write access, which cliSignIn.mjs's authenticate asks for every call a token makes.
+  const cli = createCliSignIn({ store: { state: {}, save() {} }, canWrite: async (login) => !writers || writers.has(login) });
   const defaults = new Map();
   const projects = [{ name: 'app', repo: 'acme/app' }, { name: 'tools', repo: 'acme/tools' }];
   const projectAccess = {
@@ -61,7 +62,7 @@ async function consoleFor(t) {
     });
     return { status: res.status, body: await res.json().catch(() => null) };
   }
-  return { origin, call, tokens, userSettings };
+  return { origin, call, tokens, userSettings, cli };
 }
 
 test('GET /api/cli/config answers its person\'s choices, exactly these keys and no secret', async (t) => {
@@ -112,6 +113,20 @@ test('a config write runs the page\'s own route and checks, and answers with the
     const out = await c.call(path, { method: 'POST', body });
     assert.equal(out.status, 403, `${path}: a secret is never set from the command line`);
   }
+});
+
+test('the config routes check a token as every other route does: a person who lost write access is refused, and changes nothing', async (t) => {
+  const writers = new Set(['mia-dev', 'octocat']);
+  const c = await consoleFor(t, { writers });
+  assert.equal((await c.call('/api/cli/config')).status, 200);
+  // GitHub is asked at a token's first call (then hourly): octocat's first is after GitHub stopped saying yes.
+  writers.delete('octocat');
+  const read = await c.call('/api/cli/config', { token: c.tokens.octocat });
+  assert.equal(read.status, 401);
+  const write = await c.call('/api/my/terminal', { method: 'POST', body: { terminal: 'tmux' }, token: c.tokens.octocat });
+  assert.equal(write.status, 401);
+  assert.equal(c.userSettings.terminal('octocat'), 'herdr', 'nothing was changed');
+  assert.deepEqual(c.cli.list('octocat'), [], 'and every command line sign-in of theirs ended');
 });
 
 test('answerWithView passes a refusal through, and answers a success with the view', async () => {
