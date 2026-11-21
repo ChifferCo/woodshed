@@ -414,10 +414,14 @@ test('decoded transcript credential headers refuse a move before push or upload'
 });
 
 for (const source of ['checkout', 'transcript']) {
-  test(`a second quoted Cookie header in the ${source} refuses a move before push or upload`, async (t) => {
+  for (const [label, header] of [
+    ['a second quoted Cookie header', (value) => `curl -H "Cookie: theme=\${THEME}" -H "Cookie: session=cookie:${value}" https://example.test`],
+    ['a Cookie value containing a colon', (value) => `Cookie: session=cookie:${value}`],
+    ['a quoted Digest field value', (value) => `Authorization: "Digest username=fixture, response=${value}"`],
+  ]) test(`${label} in the ${source} refuses a move before push or upload`, async (t) => {
     const l = laptop(t);
-    const value = 'cookie:inert-fixture-cookie-value';
-    const command = `curl -H "Cookie: theme=\${THEME}" -H "Cookie: session=${value}" https://example.test`;
+    const value = 'inert-fixture-cookie-value';
+    const command = header(value);
     const transcript = path.join(l.repo.dir, 'home', '.claude', 'projects', claudeProjectDir(l.cwd), `${CONVERSATION}.jsonl`);
     const trace = path.join(l.repo.root, 'request.log');
     fs.writeFileSync(path.join(l.repo.bare, 'hooks', 'pre-receive'), '#!/bin/sh\ntouch push-started\n', { mode: 0o755 });

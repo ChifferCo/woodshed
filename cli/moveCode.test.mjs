@@ -62,6 +62,9 @@ test('credential headers distinguish literals from references and placeholders',
   assert.deepEqual(secretsIn(digest('new-inert-response'), digest('old-inert-response'), options), [
     { line: 1, kind: 'a credential header' },
   ]);
+  assert.deepEqual(secretsIn('Authorization: "Digest username=fixture, response=inert-fixture"', '', options), [
+    { line: 1, kind: 'a credential header' },
+  ]);
   assert.deepEqual(secretsIn('Cookie: theme=${THEME}; session=abc==', '', options), [{ line: 1, kind: 'a credential header' }]);
   assert.deepEqual(secretsIn('Cookie: session=cookie:inert-fixture', '', options), [{ line: 1, kind: 'a credential header' }]);
 });

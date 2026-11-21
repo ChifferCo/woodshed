@@ -151,9 +151,10 @@ function headerTextPatterns(names, valueStart = '') {
   const double = `"${start}(?:\\\\[^\\r\\n\\0]|[^"\\\\\\r\\n\\0])*)`;
   const single = `'${start}[^'\\r\\n\\0]*)`;
   const inline = `(?:^|[\\t ])(?:-H[\\t ]*|--header(?:=|[\\t ]+))${field}(${valueStart}[^\\s"'\\0]*)`;
+  const plain = valueStart ? `${field}[\\t ]*["'\\x60]?(${valueStart}` : start;
   return {
     arguments: new RegExp(`${double}|${single}|${inline}`, 'gi'),
-    text: new RegExp(`(?:^|[^"'\\w-])${start}[^\\r\\n\\0]*)`, 'gi'),
+    text: new RegExp(`(?:^|[^"'\\w-])${plain}[^\\r\\n\\0]*)`, 'gi'),
   };
 }
 const RICH_HEADER_TEXT = [headerTextPatterns('cookie'), headerTextPatterns('(?:proxy-)?authorization', 'digest[\\t ]+')];
