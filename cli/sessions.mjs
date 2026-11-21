@@ -501,9 +501,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
   // Its machine in Herdr goes too, so ended sessions do not pile up in the sidebar. With no hc here there is none.
   const name = machineName(id);
   let machine = null;
-  if ((await hcVersion(ctx.hc)).installed) {
+  if ((await hcVersion(ctx.hc)).ok) {
     try {
-      machine = { name, removed: await removeMachine(ctx.hc, name) };
+      machine = { name, removed: await removeMachine(ctx.hc, name, { origin, session: id }) };
     } catch (err) {
       if (!err.hc) throw err;
       machine = { name, removed: false, error: printable(err.message, 500) };

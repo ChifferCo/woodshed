@@ -55,7 +55,7 @@ const iso = (ms) => new Date(ms).toISOString();
 // A console's real handler and command line sign-in over a made-up fleet: mia-dev's sessions, octocat's, and shared
 // ones. A session the fleet starts or resumes takes the next of `script`'s steps each time the list is read, as a start
 // moves while the command line waits. The command line is signed in as mia-dev before each test.
-async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app', writers = null, stopTimesOut = false, hc = fakeHc() } = {}) {
+async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app', writers = null, stopTimesOut = false, hc = fakeHc(), relativeConfig = false } = {}) {
   let clock = T0;
   const now = () => clock;
   const store = { state: {}, save() {} };
@@ -147,7 +147,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
     let out = '';
     let err = '';
     const code = await main(args, {
-      env: { XDG_CONFIG_HOME: dir }, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
+      env: { XDG_CONFIG_HOME: relativeConfig ? path.relative(process.cwd(), dir) : dir }, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
       sleep: async (ms) => { clock += ms; }, now, hostname: 'mia-laptop', platform: 'test', credentials, confirm: async () => answer,
       hc: hc.run, self: { node: '/usr/local/bin/node', script: '/home/mia/woodshed/cli/woodshed.mjs' },
       // A stop the console takes longer to answer than the command line waits.
@@ -161,7 +161,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
   };
   const signed = await run(['login', '--console', origin]);
   assert.equal(signed.code, EXIT.done, signed.err);
-  return { origin, run, calls, sessions, cli, hc, answer: (a) => { answer = a; } };
+  return { origin, run, calls, sessions, cli, hc, dir, answer: (a) => { answer = a; } };
 }
 
 // A start as the fleet moves it: in line, starting, each step, then running.
@@ -406,6 +406,17 @@ test('session connect makes your running session a machine in hc, through this c
   const moved = await c.run(['session', 'connect', 'aaaa0001', '--json']);
   assert.equal(moved.lines[0].machine.action, 'updated', 'a line of another command line\'s is replaced');
   assert.equal(c.hc.machines.get('woodshed-aaaa0001').target, via);
+  c.hc.machines.get('woodshed-aaaa0001').temporary = true;
+  const temp = await c.run(['session', 'connect', 'aaaa0001', '--json']);
+  assert.equal(temp.lines[0].machine.action, 'updated', 'a --temp one, which the sidebar hides, is replaced');
+  assert.equal(c.hc.machines.get('woodshed-aaaa0001').temporary, false);
+});
+
+test('a relative XDG_CONFIG_HOME is named absolute in the via line, since hc\'s core runs it from its own folder', async (t) => {
+  const c = await consoleFor(t, { relativeConfig: true });
+  assert.equal((await c.run(['session', 'connect', 'aaaa0001'])).code, EXIT.done);
+  const via = c.hc.added()[0][6];
+  assert.ok(via.startsWith(`XDG_CONFIG_HOME=${c.dir} `), via);
 });
 
 test('session connect resumes a paused session first, and waits for it to run', async (t) => {
@@ -485,6 +496,13 @@ test('session remove forgets the session\'s machine in hc too', async (t) => {
   assert.equal(out.code, EXIT.done, out.err);
   assert.match(out.out, /Removed session bbbb0002\.\nForgot woodshed-bbbb0002 in Herdr\.\n$/);
   assert.equal(c.hc.machines.size, 0);
+
+  // A machine of that name the person made, to somewhere else, is theirs: it stays.
+  const theirs = await consoleFor(t);
+  theirs.hc.machines.set('woodshed-bbbb0002', { name: 'woodshed-bbbb0002', target: 'ssh woodshed-box', via: true, state: 'connected' });
+  const kept = await theirs.run(['session', 'remove', 'bbbb0002', '--yes', '--json']);
+  assert.deepEqual(kept.lines.at(-1).machine, { name: 'woodshed-bbbb0002', removed: false });
+  assert.ok(theirs.hc.machines.has('woodshed-bbbb0002'));
 
   const none = await consoleFor(t, { hc: fakeHc({ missing: true }) });
   const removed = await none.run(['session', 'remove', 'bbbb0002', '--yes', '--json']);

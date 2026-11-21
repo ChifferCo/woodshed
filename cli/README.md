@@ -96,12 +96,14 @@ hc machine add --json --name woodshed-<id> --install \
 - **The `--via` line** names node and this script by absolute paths, quoted for `sh`, since `hc`'s core runs it later
   with its own environment (an app started from the Dock has no shell's PATH): the PATH's `node` when it is the same file
   as the one running (`/opt/homebrew/bin/node`, which outlives an upgrade), and the link you ran `woodshed` by. It names
-  the console, and `XDG_CONFIG_HOME` when you set one, so the tunnel finds this sign-in. `--install` lets `hc` copy itself
+  the console, and `XDG_CONFIG_HOME` (made absolute) when you set one, so the tunnel finds this sign-in. Moving or
+  deleting the checkout or link it names breaks the line: `session connect` again writes a new one. `--install` lets `hc` copy itself
   into the session when the session's is missing or older; the session image has its own.
 - **Run twice,** it leaves a `woodshed-<id>` that is connected through the same line alone. One that is not (a resumed
   session is a new container, whose `hc` core the old machine refuses as `a different core answers there`, or a line
-  from another install of this command) is forgotten and added again. `hc machine rm` leaves the terminals in the session
-  running.
+  from another install of this command, or one added with `--temp`) is forgotten and added again. `hc machine rm` leaves
+  the terminals in the session running. `session remove` forgets a `woodshed-<id>` only when its line is this command
+  line's tunnel to that session on that console, never a machine of that name you made yourself.
 - **The agent** is in the machine, as `woodshed-<id>/claude`, only when you picked Herdr under Agent terminal on My
   settings before the session started. Otherwise it runs in tmux, which `hc` cannot reach: the machine still works for
   new terminals and agents, and `connect` says where the agent is.
@@ -181,7 +183,9 @@ terminal runtime's `--via` machine) reconnect.
 ### Trying session connect
 
 `session connect` needs a session the dev console starts itself, in the session image built from this checkout, with an
-`hc` core of your own, never the one your Herdr app uses:
+`hc` core of your own, never the one your Herdr app uses. This recipe is for Docker Desktop or OrbStack, whose
+`host.docker.internal` reaches this machine's loopback: on Linux's own Docker a container cannot reach the loopback
+listeners below.
 
 - Build the image as install.sh does with no repository (`woodshed-session:<tag>`).
 - Serve a bare clone of a repo with a `.woodshed/project.yaml` over git's dumb HTTP (`git update-server-info`, then

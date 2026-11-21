@@ -446,7 +446,8 @@ export async function main(argv, deps = {}) {
       return await sessionCommand({ origin, rest: [...args.args, ...(args.rest ? ['--', ...args.rest] : [])] }, {
         call, token: signedIn(origin).token, stdout, stderr, say, emit, json, sleep, now, EXIT, platform, hc,
         // The line hc keeps for a session's machine: this command line's tunnel into it, on this console.
-        via: (session) => viaCommand({ ...(deps.self ?? selfCommand({ env })), origin, session, configHome: env.XDG_CONFIG_HOME || null }),
+        // A relative config folder is made absolute: hc's core runs the line from a folder of its own.
+        via: (session) => viaCommand({ ...(deps.self ?? selfCommand({ env })), origin, session, configHome: env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : null }),
         fail: (message, opts) => new CliError(message, opts),
         confirm: deps.confirm ?? ((question) => confirmOnTerminal(question, stderr)),
       });
