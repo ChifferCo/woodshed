@@ -58,3 +58,16 @@ test('a client is counted by its IPv4 address, or by the IPv6 /64 it is in', () 
   assert.equal(clientKey('::1'), '0:0:0:0::/64');
   assert.equal(clientKey(null), null);
 });
+
+test('an IPv4 client in IPv6 clothing is IPv4 however it is written, and an empty last hop is never passed over', () => {
+  for (const mapped of ['::ffff:192.0.2.1', '::FFFF:c000:201', '0:0:0:0:0:ffff:c000:0201', '0:0:0:0:0:ffff:192.0.2.1']) {
+    assert.equal(normalAddress(mapped), '192.0.2.1', mapped);
+    assert.equal(clientKey(mapped), '192.0.2.1', 'its own client, not the ::/64 every mapped address would share');
+  }
+  assert.equal(normalAddress('::c000:201'), '::c000:201', 'not mapped: left as IPv6');
+  assert.equal(clientAddress(req('127.0.0.1', '::ffff:c000:201'), parseTrustedProxies()), '192.0.2.1');
+  const loopbackOnly = parseTrustedProxies();
+  assert.equal(clientAddress(req('127.0.0.1', '198.51.100.9, '), loopbackOnly), '127.0.0.1', 'the older entry is never read past an empty one');
+  assert.equal(clientAddress(req('127.0.0.1', '198.51.100.9,,'), loopbackOnly), '127.0.0.1');
+  assert.equal(clientAddress(req('127.0.0.1', ' '), loopbackOnly), '127.0.0.1', 'an empty header is no header');
+});

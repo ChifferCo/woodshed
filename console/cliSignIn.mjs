@@ -41,9 +41,10 @@ const POLL_SECONDS = 5;
 // More than this many sign-ins waiting at once, and a new one is refused until some expire: each holds a little memory.
 const MAX_PENDING = 200;
 // And this many from one client address: a person who runs login again, or a few people behind one office's address.
-// A code collected or denied leaves at once; one left behind (a login stopped with Ctrl-C) waits out its 10 minutes.
+// A code collected or denied in the browser stops counting at once (a denied one is kept, uncounted, for its CLI's next
+// poll); one left behind (a login stopped with Ctrl-C) counts until its 10 minutes are up.
 export const MAX_PENDING_PER_CLIENT = 5;
-// A flood of refused starts is logged at most this often, with how many there were.
+// A flood of refused starts is logged at most this often for each limit, with how many there were.
 const REFUSAL_LOG_MS = 60_000;
 // A person's computers: past this, a new sign-in ends their oldest.
 const MAX_TOKENS_PER_PERSON = 20;
@@ -117,7 +118,8 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
       }
     }
   };
-  const refusals = { count: 0, loggedAt: -Infinity };
+  // For each limit: refused starts not logged yet, and when it last logged.
+  const refusals = { client: { count: 0, loggedAt: -Infinity }, console: { count: 0, loggedAt: -Infinity } };
 
   function tokens() {
     store.state.cliTokens ??= {};
@@ -141,15 +143,18 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
     return null;
   }
 
-  // Over a limit: refused with the seconds until the oldest of those it counted expires, and logged at most once a minute.
+  // Over a limit: refused with the seconds until the oldest of those it counted expires. Logged at most once a minute for
+  // each limit, with `refused`, how many of that limit's refusals since its last line (any addresses), and `lastFrom`,
+  // the address of the one that wrote it.
   function refuse({ scope, counted, from, most }) {
     const oldest = Math.min(...counted.map((device) => device.expiresAt));
     const retryAfter = Math.max(1, Math.ceil((oldest - now()) / 1000));
-    refusals.count += 1;
-    if (now() - refusals.loggedAt >= REFUSAL_LOG_MS) {
-      console.warn('cliSignIn: sign-in refused, too many waiting', { scope, from, most, retryAfter, refused: refusals.count });
-      refusals.count = 0;
-      refusals.loggedAt = now();
+    const tally = refusals[scope];
+    tally.count += 1;
+    if (now() - tally.loggedAt >= REFUSAL_LOG_MS) {
+      console.warn('cliSignIn: sign-in refused, too many waiting', { scope, lastFrom: from, most, retryAfter, refused: tally.count });
+      tally.count = 0;
+      tally.loggedAt = now();
     }
     const minutes = Math.ceil(retryAfter / 60);
     const later = `try again in ${minutes} minute${minutes === 1 ? '' : 's'}`;
@@ -169,9 +174,11 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
     sweep();
     // A request with no address at all (a stand-in in a test) is one client of its own: the console-wide cap still holds.
     const client = clientKey(from) ?? 'unknown';
-    const mine = [...pending.values()].filter((device) => device.client === client);
+    // A denied code only waits for its CLI to hear so: it holds no place.
+    const waitingNow = [...pending.values()].filter((device) => !device.denied);
+    const mine = waitingNow.filter((device) => device.client === client);
     if (mine.length >= MAX_PENDING_PER_CLIENT) throw refuse({ scope: 'client', counted: mine, from, most: MAX_PENDING_PER_CLIENT });
-    if (pending.size >= MAX_PENDING) throw refuse({ scope: 'console', counted: [...pending.values()], from, most: MAX_PENDING });
+    if (waitingNow.length >= MAX_PENDING) throw refuse({ scope: 'console', counted: waitingNow, from, most: MAX_PENDING });
     const deviceCode = crypto.randomBytes(32).toString('hex');
     let code = userCode();
     while (byUserCode(code)) code = userCode();

@@ -1512,8 +1512,9 @@ browser's call` or `refused, the token's person is no longer a member`.
 Starting a sign-in needs no identity, so at most 5 may wait from one client address (an IPv6 one counted by its /64),
 and 200 on the console as a backstop: one client filling its share leaves the rest to everyone else. Past either,
 `/api/cli/device` answers 429 with `Retry-After`, the seconds until the oldest of those waiting expires, and `scope`
-(`client` or `console`); the console logs `cliSignIn: sign-in refused, too many waiting` with the `scope`, the address
-and how many were `refused`, at most once a minute. The client's address is the socket's, or, when that is a trusted
+(`client` or `console`). A code stops counting once it is collected, or denied in the browser. The console logs `cliSignIn:
+sign-in refused, too many waiting` at most once a minute for each `scope`, with how many it `refused` since (from any
+address) and `lastFrom`, the address of the one that wrote the line. The client's address is the socket's, or, when that is a trusted
 proxy, the last entry of `X-Forwarded-For` that no trusted proxy wrote (`console/clientAddress.mjs`). Caddy writes the
 address it saw there and drops what the client sent, and the console's own Caddy (AWS's base box,
 providers/local/README.md) and Tailscale's serve reach it from loopback, which is trusted by default. A proxy that reaches

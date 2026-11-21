@@ -15,12 +15,35 @@ import net from 'node:net';
 
 const DEFAULT_TRUSTED = ['127.0.0.0/8', '::1/128'];
 
-/** An address as rules see it: an IPv4 one in IPv6 clothing (::ffff:1.2.3.4) is IPv4. @returns {string|null} */
+// An IPv6 address's eight groups as numbers, an IPv4 tail (::ffff:1.2.3.4) as the last two. Only for a valid address.
+function v6Groups(ip) {
+  let text = ip;
+  const tail = /(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+  if (tail) {
+    const [a, b, c, d] = tail.slice(1).map(Number);
+    text = `${text.slice(0, tail.index)}${((a << 8) | b).toString(16)}:${((c << 8) | d).toString(16)}`;
+  }
+  const [head, rest = null] = text.split('::');
+  const left = head ? head.split(':') : [];
+  const right = rest ? rest.split(':') : [];
+  const fill = rest === null ? [] : Array(8 - left.length - right.length).fill('0');
+  return [...left, ...fill, ...right].map((g) => parseInt(g, 16));
+}
+
+/**
+ * An address as rules see it: an IPv4 one in IPv6 clothing, however it is written (::ffff:1.2.3.4, ::ffff:c000:201),
+ * is IPv4.
+ * @returns {string|null}
+ */
 export function normalAddress(address) {
-  const text = String(address ?? '').trim();
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(text);
-  const plain = mapped ? mapped[1] : text.toLowerCase();
-  return net.isIP(plain) ? plain : null;
+  const text = String(address ?? '').trim().toLowerCase();
+  if (net.isIPv4(text)) return text;
+  if (!net.isIPv6(text)) return null;
+  const groups = v6Groups(text);
+  if (groups.slice(0, 5).every((g) => g === 0) && groups[5] === 0xffff) {
+    return [groups[6] >> 8, groups[6] & 0xff, groups[7] >> 8, groups[7] & 0xff].join('.');
+  }
+  return text;
 }
 
 /**
@@ -60,12 +83,14 @@ export function clientAddress(req, proxies = parseTrustedProxies()) {
   let address = normalAddress(req.socket?.remoteAddress);
   if (!address) return null;
   const header = req.headers?.['x-forwarded-for'];
-  // Node joins a header sent twice with ", ", which reads the same as one list.
-  const hops = String(Array.isArray(header) ? header.join(',') : header ?? '').split(',').map((h) => h.trim()).filter(Boolean);
+  // Node joins a header sent twice with ", ", which reads the same as one list. An empty entry is kept, so one at the
+  // end stops the walk below as any entry that is no address does.
+  const raw = String(Array.isArray(header) ? header.join(',') : header ?? '');
+  const hops = raw.trim() ? raw.split(',').map((h) => h.trim()) : [];
   while (trusted(proxies, address) && hops.length) {
     const next = normalAddress(hops.pop());
-    // An entry that is no address (`unknown`, one with a port): the proxy's own address is the client's, which only
-    // puts that request with the proxy's other unreadable ones.
+    // An entry that is no address (`unknown`, one with a port, an empty one): the proxy's own address is the client's,
+    // which only puts that request with the proxy's other unreadable ones.
     if (!next) break;
     address = next;
   }
@@ -80,11 +105,5 @@ export function clientAddress(req, proxies = parseTrustedProxies()) {
 export function clientKey(address) {
   const ip = normalAddress(address);
   if (!ip || net.isIPv4(ip)) return ip;
-  const [head, tail = null] = ip.split('::');
-  const left = head ? head.split(':') : [];
-  const right = tail ? tail.split(':') : [];
-  // An IPv4 tail (::1.2.3.4) is two groups; it falls past the first four either way.
-  const fill = tail === null ? [] : Array(Math.max(0, 8 - left.length - right.length)).fill('0');
-  const groups = [...left, ...fill, ...right].slice(0, 4).map((g) => (parseInt(g || '0', 16) || 0).toString(16));
-  return `${groups.join(':')}::/64`;
+  return `${v6Groups(ip).slice(0, 4).map((g) => g.toString(16)).join(':')}::/64`;
 }

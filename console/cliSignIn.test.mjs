@@ -241,6 +241,26 @@ test('a client address may have 5 sign-ins waiting, then is refused with how lon
   assert.ok(cli.start({ name: 'after one expired', from: '198.51.100.9' }).deviceCode);
 });
 
+test('a code denied in the browser holds no place, and its CLI still hears it was denied', () => {
+  const { cli } = signIn();
+  const codes = Array.from({ length: MAX_PENDING_PER_CLIENT }, () => cli.start({ from: '198.51.100.9' }));
+  assert.throws(() => cli.start({ from: '198.51.100.9' }), { status: 429 });
+  assert.equal(cli.decide({ code: codes[0].userCode, login: 'mia-dev', approve: false }), true);
+  assert.ok(cli.start({ from: '198.51.100.9' }).deviceCode, 'a place before the denied CLI polls');
+  assert.equal(cli.poll(codes[0].deviceCode).status, 'denied');
+});
+
+test('refusals are logged at most once a minute for each limit, with how many since', (t) => {
+  const { cli, tick } = signIn();
+  const lines = [];
+  t.mock.method(console, 'warn', (message, fields) => { if (message.includes('too many waiting')) lines.push(fields); });
+  for (let i = 0; i < MAX_PENDING_PER_CLIENT; i++) cli.start({ from: '198.51.100.9' });
+  for (let i = 0; i < 3; i++) assert.throws(() => cli.start({ from: '198.51.100.9' }), { status: 429 });
+  tick(60_000);
+  assert.throws(() => cli.start({ from: '198.51.100.9' }), { status: 429 });
+  assert.deepEqual(lines.map((l) => [l.scope, l.lastFrom, l.refused]), [['client', '198.51.100.9', 1], ['client', '198.51.100.9', 3]]);
+});
+
 test('IPv6 clients are counted by /64, so new addresses in one do not get new places', () => {
   const { cli } = signIn();
   for (let i = 1; i <= MAX_PENDING_PER_CLIENT; i++) cli.start({ name: `v6 ${i}`, from: `2001:db8:1:2::${i}` });
