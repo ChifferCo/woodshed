@@ -5,6 +5,7 @@
 //   woodshed login  [--console <url>] [--no-browser]   a code to approve in the browser, then a token kept in the keychain
 //   woodshed logout [--console <url>]                  ends that token at the console and forgets it here
 //   woodshed status [--console <url>]                  the console, its org, and who is signed in
+//   woodshed review enable|status|list                 turn on a repo's review by a request an admin approves (review.mjs)
 //
 // Every command takes --json. Exit codes: 0 done, 2 waiting on a person (a sign-in or an approval), 3 refused, 1 any
 // other failure.
@@ -16,6 +17,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { createCredentials } from './credentials.mjs';
+import { reviewCommand } from './review.mjs';
 
 export const VERSION = '0.1.0';
 export const DEFAULT_CONSOLE = 'https://console.woodshed.run';
@@ -29,6 +31,7 @@ Commands:
   login     sign in to a Woodshed console: approve the code it shows in your browser
   logout    sign out of the console, here and at the console
   status    the console, its org, and who is signed in
+  review    turn on Woodshed's review for a repo, approved by its admin: woodshed review --help
 
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};
@@ -47,11 +50,15 @@ class CliError extends Error {
   }
 }
 
+// Commands with subcommands and options of their own, which their module reads from `rest`.
+const NESTED = new Set(['review']);
+
 /**
- * @returns {{command: string|null, console: string|null, json: boolean, browser: boolean, help: boolean}}
+ * @returns {{command: string|null, console: string|null, json: boolean, browser: boolean, help: boolean, rest: string[]}}
+ *   `rest` is what follows a NESTED command, but --console, --json and --help: its subcommand, options and arguments
  */
 export function parseArgs(argv) {
-  const out = { command: null, console: null, json: false, browser: true, help: false };
+  const out = { command: null, console: null, json: false, browser: true, help: false, rest: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--json') out.json = true;
@@ -61,6 +68,7 @@ export function parseArgs(argv) {
       if (!argv[i + 1]) throw new CliError('--console needs a URL');
       out.console = argv[++i];
     } else if (arg.startsWith('--console=')) out.console = arg.slice('--console='.length);
+    else if (NESTED.has(out.command)) out.rest.push(arg);
     else if (arg.startsWith('-')) throw new CliError(`unknown option ${arg}\n\n${USAGE}`);
     else if (!out.command) out.command = arg;
     else throw new CliError(`unexpected ${arg}\n\n${USAGE}`);
@@ -177,7 +185,9 @@ export async function main(argv, deps = {}) {
         signal: AbortSignal.timeout(Math.max(1, Math.min(REQUEST_MS, timeoutMs))),
       });
     } catch (err) {
-      throw new CliError(`could not reach ${origin}: ${err.cause?.message ?? err.message}`);
+      // Marked, so a wait can tell a network that dropped from the console's own answer.
+      // A timeout is marked too: the console may still be doing what was asked.
+      throw Object.assign(new CliError(`could not reach ${origin}: ${err.cause?.message ?? err.message}`), { unreachable: true, timedOut: err?.name === 'TimeoutError' });
     }
     let answer = null;
     try {
@@ -339,6 +349,7 @@ export async function main(argv, deps = {}) {
   try {
     const args = parseArgs(argv);
     json = args.json;
+    if (args.command === 'review' && args.help) return await reviewCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.help || !args.command || args.command === 'help') {
       stdout.write(`${USAGE}\n`);
       return args.command || args.help ? EXIT.done : EXIT.failed;
@@ -348,6 +359,11 @@ export async function main(argv, deps = {}) {
     if (args.command === 'login') return await login(origin, { browser: args.browser });
     if (args.command === 'logout') return await logout(origin);
     if (args.command === 'status') return await status(origin);
+    if (args.command === 'review') {
+      return await reviewCommand({ origin, rest: args.rest }, {
+        call, token: signedIn(origin).token, stdout, stderr, say, emit, json, sleep, now, EXIT, fail: (message, opts) => new CliError(message, opts),
+      });
+    }
     throw new CliError(`unknown command ${args.command}\n\n${USAGE}`);
   } catch (err) {
     if (!(err instanceof CliError)) throw err;

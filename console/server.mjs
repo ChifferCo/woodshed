@@ -223,6 +223,7 @@ import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from '
 import { readMyPulls } from './myPulls.mjs';
 import { createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { REVIEW_SETUP_PAGE_RE, createReviewSetupApi, reviewSetupRoute } from './reviewSetup.mjs';
+import { handleCliReviewSetup, isCliReviewSetupCall } from './cliReviewSetup.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
 import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
 import { createMcpTester } from './mcpTest.mjs';
@@ -2437,6 +2438,8 @@ export function createHandler({
     const url = new URL(req.url || '/', 'http://console.invalid');
     // woodshed-prod-mcp fetches these to check a token the relay added: public, on whatever name the issuer is.
     if (url.pathname === DISCOVERY_PATH || url.pathname === JWKS_PATH) return oidcDocument(req, res, url.pathname);
+    // `woodshed review`: the command line's token on the review setup's few person routes (cliReviewSetup.mjs).
+    if (isCliReviewSetupCall(req.headers, url.pathname)) return handleCliReviewSetup({ req, res, url, cli, api: reviewSetupApi, reply });
     // woodshed-db.mjs has no cookie: its token is its sign-in.
     if (url.pathname === CONNECTION_PATH && req.method === 'GET') {
       return tunnel ? tunnel.connection(req, res) : reply(res, 404, { error: 'this console has no tunnel to your databases' });

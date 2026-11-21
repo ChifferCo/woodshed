@@ -1503,7 +1503,8 @@ asked. Only that page's button, a form POST from the console's own page (Origin 
 approves it; Deny refuses it. The CLI asks `POST /api/cli/token` every 5 seconds meanwhile, and gets its token once.
 Both of those refuse a call with an Origin header, which a browser always sends and the CLI never does, so no web page
 starts a sign-in to hand someone the link of. The code lasts 10 minutes. The token (`wsc_…`) is its own kind, not the
-database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer` to `/api/cli/*` alone for now. The console
+database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer` to `/api/cli/*`, and to
+the review setup's three person routes ("Turning on a repo's review"). The console
 keeps only its SHA-256, in `state.json` under `cliTokens`, and My settings' Command line row lists each computer with
 Revoke. Remove My Woodshed, People's Remove and leaving a hosting program's list end them all. The console logs
 `cliSignIn: sign-in started`, `sign-in approved` or `denied`, `token made`, `token revoked` with `by`, and `refused, a
@@ -2297,6 +2298,18 @@ and is handed a link and a status, never a credential:
    session, only a private one whose owner can: anyone signed in can open a shared session and read what it was
    told): anyone else reads `failed` and where to look. `status` is `pending`, `applying`, `applied`, `refused` or `failed`, with `why` and
    each step's outcome. A request nobody decides in 24 hours is refused as expired.
+
+**From the command line.** `woodshed review enable [--qa] <owner/repo>` (cli/README.md, "Review") asks as the person
+signed in with `woodshed login`, prints the approval page and waits; a session's agent asks with its `SESSION_TOKEN` as
+above, and no session is handed a command line token. The token (`wsc_…`) reaches exactly three routes
+(`console/cliReviewSetup.mjs`): `GET /api/review-setup`, `POST /api/review-setup` and `GET /api/review-setup/<id>`,
+each answered by the page's own code with the token's person as the one who asks or reads, and never as a console
+admin: a console admin's token lists only their own requests, and an approval is never made with one. `/approve` and
+`/refuse` answer it 403, as does any of the three for a call that carries an Origin header (a page's). The POST needs no
+`x-woodshed` header or Origin, which only stand between another site and the browser's cookie, and logs
+`cliReviewSetup: call` with the login, the token's id and the path; a refusal logs `cliReviewSetup: refused, not a route
+the command line may call` or `refused, a browser's call`. A hosting program's proxy passes the three through when they
+carry `Authorization: Bearer wsc_…`, as it does `/api/cli/*`.
 
 Who can write to a repo, and who is its admin, is GitHub's base `permission` for them, whatever custom role they have.
 

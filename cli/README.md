@@ -1,7 +1,8 @@
 # The woodshed command line
 
-`woodshed` signs in to a Woodshed console from your computer and says who is signed in. Later commands (sessions,
-tunnels, settings) are added here. It is plain Node 22 with no dependencies, like the rest of Woodshed.
+`woodshed` signs in to a Woodshed console from your computer, says who is signed in, and asks for a repo's review to be
+turned on. Later commands (sessions, tunnels, settings) are added here. It is plain Node 22 with no dependencies, like
+the rest of Woodshed.
 
 ## Running it
 
@@ -27,6 +28,7 @@ An installer (`curl … | bash`, npm) comes later.
 | `woodshed login` | Asks the console for a code, prints it, and opens the console's `/cli` page in your browser. Check the page shows the same code and press **Sign in the CLI**. The token it gets is kept as below. Signing in again on the same computer ends its earlier sign-in. | 0 signed in, 2 the code expired with nobody approving it, 3 denied |
 | `woodshed logout` | Ends the token at the console and forgets it here. | 0 |
 | `woodshed status` | The console's name and address, its org (the GitHub account its repos are on), and who is signed in. | 0 signed in, 2 not signed in or the sign-in ended |
+| `woodshed review enable\|status\|list` | Turn on Woodshed's review for a repo by a request an admin of it approves: see "Review". | 0 applied, 2 waiting on an approval or expired, 3 refused, 1 failed |
 
 Every command takes:
 
@@ -41,6 +43,32 @@ Every command takes:
 Exit codes, for every command: `0` done, `2` waiting on a person (sign in, or approve), `3` refused (denied, or an
 address it will not send a token to), `1` anything else (the console not reached, a console from before the command
 line).
+
+## Review
+
+`woodshed review` asks the console to turn on Woodshed's review (and QA) for a repo, as `scripts/enable-review.sh`
+does, without anyone holding an admin token or the Anthropic key: an admin of the repo approves the request on its page
+in the console, which applies it with its own GitHub App and key (console/README.md, "Turning on a repo's review").
+
+```sh
+woodshed review enable acme/game            # asks, prints the approval page, waits until it is decided
+woodshed review enable --qa acme/game       # QA too, in the repo's CI (--qa-runner woodshed: as a Woodshed session)
+woodshed review enable --no-wait acme/game  # returns at once with exit 2 and the page
+woodshed review status <id> [--wait]        # one request: its steps, and for those who can write to the repo, the plan
+woodshed review list                        # the requests you asked for, newest first
+```
+
+`enable` exits `0` once the request is applied, `3` when it is refused or withdrawn, `1` when a step failed (which one,
+and GitHub's reason, for those who can write to the repo), and `2` when it expired after 24 hours with nobody deciding,
+or at once with `--no-wait`. `status` exits the same for the request's state, `2` while it waits. Ctrl-C stops the wait,
+never the request. `--ref <commit>` pins an older commit of Woodshed's workflows, one Woodshed's main has. With `--json`,
+`enable` writes `{"event":"requested",…}` with the request and its `url`, then `status` and `step` events, and
+`{"event":"done",…}` with its `outcome`: `applied`, `refused`, `failed` or `expired`. An agent stops at exit `2` and
+hands the person the link.
+
+The token reaches only the review setup's `GET /api/review-setup`, `POST /api/review-setup` and
+`GET /api/review-setup/<id>`, as you and never as a console admin: approving and refusing are done on the page. In a
+Woodshed session there is no command line token: an agent there asks with the session API's `POST /review-setup`.
 
 ## Where the token is kept
 

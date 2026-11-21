@@ -238,6 +238,10 @@ URL on top of each env file's Repo settings values
   shown`) asks the approver to look again. `is not a commit of Woodshed's main`
   (`reviewSetup: ref refused`) is a ref that is a branch or a fork's commit. `reviewSetup: left applying by a stop, failed` is a console restarted
   mid-apply; the steps marked done were done. A 404 on `/api/review-setup` is a console with no GitHub App of its own.
+  `woodshed review enable` says the same in its message, with exit 3 for a refusal and 1 for a failure; exit 3 with
+  `approved or refused on its page` is a token on `/approve` or `/refuse` (`cliReviewSetup: refused, not a route the
+  command line may call`), and 1 with `from before woodshed review` a console, or a hosting proxy, that does not take the
+  token on `/api/review-setup`.
 - **A label or `/woodshed` comment does nothing.** A label on a pull request
   never starts a session (console/README.md, "How sessions start"): the console logs
   `fleet: trigger routed` with `action: ignore`. Otherwise `docker compose logs
