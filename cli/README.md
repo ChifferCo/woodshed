@@ -6,6 +6,20 @@ Later commands are added here. It is plain Node 22 with no dependencies, like th
 
 ## Running it
 
+With Node 22 or newer, install or upgrade the CLI on macOS or Linux:
+
+```sh
+curl -fsSL https://woodshed.run/cli | sh
+```
+
+The installer puts the command in `~/.woodshed/cli` and links it from `~/.local/bin` (or `~/bin` if that is on
+PATH instead). If needed, it prints the line to add to your shell profile. Then ask your agent to run `woodshed login`.
+To install the optional Claude Code and Codex skill, run:
+
+```sh
+curl -fsSL https://woodshed.run/cli | sh -s -- --yes
+```
+
 From a checkout of this repository:
 
 ```sh
@@ -19,7 +33,13 @@ To type `woodshed` instead, link it onto your PATH once:
 ln -s "$PWD/cli/woodshed.mjs" ~/.local/bin/woodshed
 ```
 
-An installer (`curl … | bash`, npm) comes later.
+### Packing the CLI for the website
+
+The repository-root `package.json` lists the runtime files and bundled skill. Update its `files` list when the CLI
+needs another file. Run `node --test cli/package.test.mjs` to pack, extract and run the standalone CLI.
+
+Woodshed Cloud's Site workflow pins a core commit, runs `npm pack --offline --ignore-scripts` on it, and publishes
+the tarball and its SHA-256 on woodshed.run. The site's installer checks that digest before installing the CLI.
 
 ## Commands
 

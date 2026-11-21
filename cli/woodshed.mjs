@@ -26,7 +26,7 @@ import { sessionCommand } from './sessions.mjs';
 import { configCommand } from './config.mjs';
 import { hcRunner, hcVersion, viaCommand } from './hc.mjs';
 
-export const VERSION = '0.1.0';
+export const { version: VERSION } = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 export const DEFAULT_CONSOLE = 'https://console.woodshed.run';
 // Each call to the console, its answer read included.
 const REQUEST_MS = 20_000;
