@@ -16,6 +16,7 @@ databases and running app. What you were asked decides what to read:
 - **Changing Woodshed**: `CLAUDE.md` first, for its rules on secrets and the design system, then the README of the
   folder you change. It is plain Node 22 with no dependencies and no build step; the checks are
   `node --test $(git ls-files '*.test.mjs' '**/*.test.mjs')`, and `node console/bin/devConsole.mjs` for a console page.
+- **Adding or renaming a CLI command**: follow [Command organization](cli/README.md#command-organization) in the CLI README.
 
 Never print a secret's value, and never put production credentials or a team-wide token in a session (`CLAUDE.md`,
 "Rules").
