@@ -5,6 +5,7 @@
 // Nothing here installs or updates hc: a missing or old one is said, and the person decides.
 
 import { execFile } from 'node:child_process';
+import { windowsExecutable } from '../shared/windowsExecutable.mjs';
 
 // The oldest hc whose machines, `--via` and `--install` this was checked against (the session image pins the same).
 export const HC_MINIMUM = '0.1.21';
@@ -54,7 +55,9 @@ export function compareVersions(a, b) {
  */
 export function hcRunner({ bin = 'hc', env = process.env } = {}) {
   return (args, { timeoutMs = CALL_MS } = {}) => new Promise((resolve) => {
-    execFile(bin, args, { env, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' }, (err, stdout, stderr) => {
+    const executable = process.platform === 'win32' ? windowsExecutable(bin, { searchPath: env.PATH ?? env.Path ?? '' }) : bin;
+    if (!executable) return resolve({ code: null, stdout: '', stderr: '', missing: true });
+    execFile(executable, args, { env, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' }, (err, stdout, stderr) => {
       if (err?.code === 'ENOENT' || err?.code === 'EACCES') return resolve({ code: null, stdout: '', stderr: '', missing: true });
       const code = !err ? 0 : Number.isInteger(err.code) ? err.code : null;
       resolve({ code, stdout: stdout ?? '', stderr: stderr ?? '', ...(err?.killed ? { timedOut: true } : {}) });

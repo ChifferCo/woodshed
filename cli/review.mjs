@@ -12,12 +12,12 @@
 // 2 waiting on a person (something only an admin can do, a sign-in, or the change not yet on the default branch),
 // 3 refused, 1 anything else (a project file that does not read, or a check that fails).
 
-import { execFileSync } from 'node:child_process';
+import { runGit } from '../shared/git.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { PROJECT_FILE, parseProject, readRepoFile, repoOf } from '../shared/project.mjs';
-import { checkSummary } from '../shared/projectCheck.mjs';
+import { checkSummary, checkoutEntry } from '../shared/projectCheck.mjs';
 import { parseYaml } from '../shared/yamlLite.mjs';
 import { enableReview } from './projectReview.mjs';
 
@@ -50,7 +50,7 @@ function printable(text, most = 400) {
 /** @returns {string|null}  the top of the git checkout `dir` is in */
 function checkoutOf(dir) {
   try {
-    return execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+    return runGit(dir, ['rev-parse', '--show-toplevel']).trim() || null;
   } catch {
     return null;
   }
@@ -134,6 +134,7 @@ export async function reviewCommand({ origin, rest }, deps) {
   function checkout(dirOption) {
     const dir = checkoutOf(path.resolve(deps.cwd ?? process.cwd(), dirOption ?? '.'));
     if (!dir) throw fail(`${dirOption ?? 'this folder'} is not in a git checkout: run woodshed review in a checkout of the repo, or give --dir`);
+    if (checkoutEntry(dir, PROJECT_FILE) === 'symlink') throw fail(`Review needs a regular ${PROJECT_FILE} in the checkout. Its path contains a symlink.`);
     return { dir, repo: repoOf(dir) };
   }
 
