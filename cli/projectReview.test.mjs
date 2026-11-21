@@ -112,12 +112,14 @@ test('a runner line is changed in place, keeping its comment; the same run twice
 });
 
 test('--rerun and --every-commit', () => {
-  const base = "version: 1\npullRequests:\n  review:\n    runner: woodshed\n    heading: '## R'\n    rerun: '[old]'\n";
-  assert.match(enableReview(base, { rerun: '[new]' }).text, /rerun: '\[new\]'/);
+  const base = "version: 1\npullRequests:\n  review:\n    runner: woodshed\n    heading: '## R'\n    rerun: '[old] # tagged'  # keep this explanation\n";
+  assert.match(enableReview(base, { rerun: '[new]' }).text, /rerun: '\[new\]' {2}# keep this explanation/);
   const every = enableReview(base, { everyCommit: true });
   assert.ok(!every.text.includes('rerun'));
+  assert.match(every.text, /^ {4}# keep this explanation$/m);
   assert.equal(read(every.text).pullRequests.review.rerun, null);
-  assert.match(enableReview(base).text, /rerun: '\[old\]'/, 'the file\'s own tag is kept');
+  assert.equal(enableReview(every.text, { everyCommit: true }).text, every.text);
+  assert.equal(enableReview(base).text, base, 'the file\'s own tag is kept');
 });
 
 test('none written as null, or {}, becomes a block; inline mappings and files that do not read are refused', () => {

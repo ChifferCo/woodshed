@@ -39,12 +39,9 @@ async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin
   const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
   handle = createHandler({
     config, fleet: { sessions: () => [], find: () => null }, auth, cli,
-    projectAccess: {
-      startable: async (login) => { if (state.startableError) throw new Error(state.startableError); return login === 'bob' ? [{ name: 'game', repo: 'acme/game' }] : []; },
-      view: async () => ({ projects: [] }),
-    },
     reviewReadiness: createReviewReadiness({
       publicUrl: origin, reviewer, ownReviewer: true, appLogin: async () => 'acme-woodshed[bot]', pullRequestsOf: async () => { if (state.gatesError) throw new Error(state.gatesError); return state.gates; },
+      canWrite: async (login) => { if (state.writeError) throw new Error(state.writeError); return login === 'bob'; },
     }),
   });
 
@@ -242,7 +239,7 @@ test('a default branch\'s project file the console could not read leaves enable 
 
 test('status is 1, not 2, when the console answered with a failure', async (t) => {
   const s = await setup(t);
-  s.state.startableError = 'GitHub did not answer';
+  s.state.writeError = 'GitHub did not answer';
   const run = await s.run(['review', 'status']);
   assert.equal(run.code, EXIT.failed);
   assert.match(run.out, /Console: not asked: .* answered 502: the console could not tell: GitHub did not answer/);

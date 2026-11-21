@@ -77,12 +77,12 @@ export function parseArgs(argv) {
     } else if (arg === '--json') out.json = true;
     else if (arg === '--no-browser') out.browser = false;
     else if (arg === '--help' || arg === '-h') out.help = true;
+    else if (out.command === 'review' && arg !== '--console' && !arg.startsWith('--console=')) out.args.push(arg);
     else if (arg === '--console') {
       if (!argv[i + 1]) throw new CliError('--console needs a URL');
       out.console = argv[++i];
     } else if (arg.startsWith('--console=')) out.console = arg.slice('--console='.length);
-    // Their subcommands and options are sessions.mjs's and review.mjs's to read.
-    else if (out.command === 'session' || out.command === 'review') out.args.push(arg);
+    else if (out.command === 'session') out.args.push(arg);
     else if (arg.startsWith('-')) throw new CliError(`unknown option ${arg}\n\n${USAGE}`);
     else if (!out.command) out.command = arg;
     else if (out.command === 'tunnel') out.args.push(arg);

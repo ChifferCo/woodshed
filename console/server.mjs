@@ -724,8 +724,6 @@ export function createHandler({
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
   cli = null, reviewReadiness = null,
 }) {
-  // The repos a person may ask review readiness about (reviewReadiness.mjs): those they may start sessions on.
-  const readinessProjects = async (login) => (projectAccess ? projectAccess.startable(login) : allProjects(config));
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
   const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
@@ -2460,7 +2458,7 @@ export function createHandler({
     if (carriesCliToken(req.headers)) {
       const read = async (r, pathname, login) => {
         // `woodshed review`'s one read (reviewReadiness.mjs), which asks GitHub for the person's write access itself.
-        if (pathname === REVIEW_READINESS_PATH) return reviewReadinessReply({ req, res: r, url, login, readiness: reviewReadiness, projects: readinessProjects, reply });
+        if (pathname === REVIEW_READINESS_PATH) return reviewReadinessReply({ req, res: r, url, login, readiness: reviewReadiness, config, reply });
         return reply(r, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
       };
       return handleCliCall({ req, res, url, cli, reply, read, write: writeRoute });
@@ -2508,7 +2506,7 @@ export function createHandler({
     if (pathname === '/setup/github') return html(res, pageShell({ title: consoleName, script: 'githubSetup.js' }));
     if (pathname === '/setup/github/created') return githubSetupCreated(res, url);
     if (pathname === '/setup/github/reviewer-created') return reviewerSetupCreated(res, url);
-    if (pathname === REVIEW_READINESS_PATH) return reviewReadinessReply({ req, res, url, login: user.login, readiness: reviewReadiness, projects: readinessProjects, reply });
+    if (pathname === REVIEW_READINESS_PATH) return reviewReadinessReply({ req, res, url, login: user.login, readiness: reviewReadiness, config, reply });
     if (pathname === REVIEWER_SETUP_PATH) return reviewerApp ? reply(res, 200, await reviewerApp.view()) : reply(res, 404, { error: 'this console cannot make a reviewer App' });
     if (pathname === '/api/setup/github') return githubSetup ? reply(res, 200, await githubSetup.view()) : reply(res, 404, { error: 'this console has no secret store, so it cannot keep a GitHub App' });
     if (pathname === '/api/console-settings') return consoleSettingsReply(res);

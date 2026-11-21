@@ -10,7 +10,7 @@
 // alone: nothing here writes or removes a GitHub workflow.
 
 import { parseProject } from '../shared/project.mjs';
-import { parseYaml } from '../shared/yamlLite.mjs';
+import { parseYaml, stripComment } from '../shared/yamlLite.mjs';
 
 export const DEFAULT_HEADING = '## Woodshed review';
 export const DEFAULT_RERUN = '[woodshed-review]';
@@ -25,14 +25,6 @@ export function yamlScalar(value) {
   const text = String(value);
   return /^[A-Za-z0-9][A-Za-z0-9_.\-/]*$/.test(text) && !/^(true|false|null|yes|no|on|off|~)$/i.test(text) && !/^[0-9.]+$/.test(text)
     ? text : `'${text.replace(/'/g, "''")}'`;
-}
-
-// The value written on a key's own line, without a comment after it: '' for a block.
-function inlineValue(rest) {
-  const text = rest.trim();
-  if (!text || text.startsWith('#')) return '';
-  if (text.startsWith("'") || text.startsWith('"')) return text;
-  return text.replace(/\s+#.*$/, '');
 }
 
 function unitOf(lines) {
@@ -51,13 +43,17 @@ function blockEnd(lines, at, indent, end) {
   return j;
 }
 
-/** @returns {{at: number, end: number, indent: number, value: string}|null}  the key at `indent` in [start, end) */
+/** @returns {{at: number, end: number, indent: number, value: string, comment: string}|null}  the key at `indent` in [start, end) */
 function findKey(lines, start, end, indent, key) {
   const re = KEY_RE(key);
   for (let i = start; i < end; i += 1) {
     if (isFiller(lines[i])) continue;
     const m = re.exec(lines[i]);
-    if (m && m[1].length === indent) return { at: i, end: blockEnd(lines, i, indent, end), indent, value: inlineValue(m[2]) };
+    if (m && m[1].length === indent) {
+      const value = stripComment(m[2]);
+      const comment = value.length < m[2].length ? m[2].slice(value.trimEnd().length) : '';
+      return { at: i, end: blockEnd(lines, i, indent, end), indent, value: value.trim(), comment };
+    }
   }
   return null;
 }
@@ -101,8 +97,7 @@ export function enableReview(text, { qa = false, rerun = null, everyCommit = fal
     if (found) {
       if (found.value === '') return found;
       if (!/^(null|~|\{\s*\})$/.test(found.value)) throw new Error(`${key} is written inline (${found.value.slice(0, 40)}): write it as a block, one key a line, and run this again`);
-      const comment = /(\s+#.*)$/.exec(lines[found.at])?.[1] ?? '';
-      lines[found.at] = `${' '.repeat(indent)}${key}:${comment}`;
+      lines[found.at] = `${' '.repeat(indent)}${key}:${found.comment}`;
       return findKey(lines, start, parent ? parent.end : lines.length, indent, key);
     }
     let at = parent ? blockEnd(lines, parent.at, parent.indent, lines.length) : lines.length;
@@ -119,19 +114,18 @@ export function enableReview(text, { qa = false, rerun = null, everyCommit = fal
     const found = findKey(lines, block.at + 1, block.end, indent, key);
     const written = yamlScalar(value);
     if (found) {
-      const m = KEY_RE(key).exec(lines[found.at]);
-      const comment = /^(?:'(?:[^']|'')*'|"[^"]*"|[^#'"]*?)(\s+#.*)$/.exec(m[2].trim())?.[1] ?? '';
-      lines[found.at] = `${' '.repeat(indent)}${key}: ${written}${comment}`;
+      lines[found.at] = `${' '.repeat(indent)}${key}: ${written}${found.comment}`;
       return;
     }
     lines.splice(block.end, 0, `${' '.repeat(indent)}${key}: ${written}`);
   }
 
-  function removeKey(block, key) {
+  function removeKey(block, key, { keepComment = false } = {}) {
     const indent = childIndent(lines, block, unit);
     const found = findKey(lines, block.at + 1, block.end, indent, key);
     if (!found) return false;
-    lines.splice(found.at, found.end - found.at);
+    const kept = keepComment && found.comment ? [`${' '.repeat(indent)}${found.comment.trimStart()}`] : [];
+    lines.splice(found.at, found.end - found.at, ...kept);
     return true;
   }
 
@@ -165,7 +159,7 @@ export function enableReview(text, { qa = false, rerun = null, everyCommit = fal
     if (was) changes.push(`pullRequests.review.heading: ${DEFAULT_HEADING}`);
   }
   if (everyCommit) {
-    if (removeKey(review(), 'rerun')) changes.push('pullRequests.review.rerun taken out: each new commit is reviewed');
+    if (removeKey(review(), 'rerun', { keepComment: true })) changes.push('pullRequests.review.rerun taken out: each new commit is reviewed');
   } else {
     const tag = rerun ?? was?.rerun ?? DEFAULT_RERUN;
     if (tag !== was?.rerun) {

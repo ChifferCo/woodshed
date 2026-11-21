@@ -18,6 +18,8 @@
 // Ready means: the repo is the asker's to start on, the reviewer App is made and known to be installed on it, and the
 // default branch's runsOn, when it names one, names this console as the fleet reads it (fleet.mjs, runsElsewhere).
 
+import { allProjects } from './projects.mjs';
+
 export const REVIEW_READINESS_PATH = '/api/review-readiness';
 const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const firstLine = (err) => String(err?.message ?? err).split('\n')[0].slice(0, 300);
@@ -42,7 +44,7 @@ export function runsOnHere(runsOn, { login, name = null }) {
  *   sign-in asks nothing (no sign-in, or a hosting proxy that says who is in)
  */
 export function createReviewReadiness({ publicUrl, reviewer, ownReviewer, appLogin, pullRequestsOf, runsOnName = null, canWrite = null }) {
-  // A token's person still writes to the repo, asked of GitHub now: no earlier answer is kept to stand in for it.
+  // Check the matched repo directly. The session picker's cached access list can lag behind a grant or revocation.
   async function stillWrites(login, project) {
     if (!canWrite) return true;
     const ok = Boolean(await canWrite(login, project));
@@ -52,8 +54,8 @@ export function createReviewReadiness({ publicUrl, reviewer, ownReviewer, appLog
 
   /**
    * @param {string} repo  owner/name
-   * @param {{projects: {name: string, repo: string}[], login?: string|null}} who  the projects the asker may start
-   *   sessions on, and who asks: GitHub is asked whether they still write to the repo
+   * @param {{projects: {name: string, repo: string}[], login?: string|null}} who  the console's projects and who asks:
+   *   GitHub is asked whether the person writes to the matched repo
    */
   async function check(repo, { projects, login = null }) {
     let project = projects.find((p) => String(p.repo).toLowerCase() === repo.toLowerCase()) ?? null;
@@ -130,16 +132,16 @@ export function createReviewReadiness({ publicUrl, reviewer, ownReviewer, appLog
 /**
  * GET /api/review-readiness?repo=<owner/name>, for someone signed in, by a cookie or the command line's token.
  * @param {{req, res, url: URL, login: string|null, readiness: ReturnType<typeof createReviewReadiness>|null,
- *          projects: (login: string|null) => Promise<{name: string, repo: string}[]>,
+ *          config: object,
  *          reply: (res, status: number, body: object) => void}} args
  */
-export async function reviewReadinessReply({ req, res, url, login, readiness, projects, reply }) {
+export async function reviewReadinessReply({ req, res, url, login, readiness, config, reply }) {
   if (req.method !== 'GET') return reply(res, 405, { error: 'method not allowed' });
   if (!readiness) return reply(res, 404, { error: 'this console cannot review pull requests in a session: it has no GitHub App' });
   const repo = String(url.searchParams.get('repo') ?? '').trim();
   if (!REPO_RE.test(repo)) return reply(res, 400, { error: 'repo must be owner/name' });
   try {
-    return reply(res, 200, await readiness.check(repo, { projects: await projects(login), login }));
+    return reply(res, 200, await readiness.check(repo, { projects: allProjects(config), login }));
   } catch (err) {
     console.error('reviewReadiness: not read', { repo, login, message: firstLine(err) });
     return reply(res, 502, { error: `the console could not tell: ${firstLine(err)}` });

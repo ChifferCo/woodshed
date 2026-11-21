@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 
 import { createCliSignIn } from './cliSignIn.mjs';
+import { createProjectAccess } from './projectAccess.mjs';
 import { createReviewReadiness } from './reviewReadiness.mjs';
 import { createHandler } from './server.mjs';
 
@@ -58,13 +59,14 @@ test('each missing step names who takes it and how', async () => {
 
 test('a repo the asker may not start on is told nothing of, and GitHub is not asked', async () => {
   const calls = [];
-  const answer = await readinessFor('installed', { calls }).check('acme/secret', { projects: PROJECTS });
+  const canWrite = async () => assert.fail('an unconnected repo needs no GitHub permission check');
+  const answer = await readinessFor('installed', { calls, canWrite }).check('acme/secret', { projects: PROJECTS });
   assert.deepEqual([answer.project, answer.reviewerApp, answer.defaultBranch, answer.missing.map((m) => m.key)], [null, null, null, ['repo']]);
   assert.deepEqual(calls, []);
 });
 
 // The route, by cookie and by the command line's token.
-async function serve(t, { readiness, startable = async () => PROJECTS }) {
+async function serve(t, { readiness, projects, githubFor = () => null }) {
   const store = { state: {}, save() {} };
   const cli = createCliSignIn({ store });
   let handle = null;
@@ -72,12 +74,11 @@ async function serve(t, { readiness, startable = async () => PROJECTS }) {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => server.close());
   const origin = `http://localhost:${server.address().port}`;
-  const config = { host: '127.0.0.1', publicUrl: origin, extraHosts: [], repo: 'acme/game', label: 'woodshed', consoleName: 'Acme', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const config = { host: '127.0.0.1', publicUrl: origin, extraHosts: [], repo: 'acme/game', projects, label: 'woodshed', consoleName: 'Acme', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
   const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => (cookie ? { login: /woodshed_session=([\w-]+)/.exec(cookie)[1] } : null) };
-  const asked = [];
+  const projectAccess = createProjectAccess({ config, githubFor });
   handle = createHandler({
-    config, fleet: { sessions: () => [], find: () => null }, auth, cli, reviewReadiness: readiness,
-    projectAccess: { startable: async (login) => { asked.push(login); return startable(login); }, view: async () => ({ projects: [] }) },
+    config, fleet: { sessions: () => [], find: () => null }, auth, cli, reviewReadiness: readiness, projectAccess,
   });
   const tokenFor = (login) => {
     const { deviceCode, userCode } = cli.start({ name: 'laptop' });
@@ -85,16 +86,18 @@ async function serve(t, { readiness, startable = async () => PROJECTS }) {
     return cli.poll(deviceCode);
   };
   const get = (p, headers = {}) => fetch(`${origin}${p}`, { headers, redirect: 'manual' });
-  return { origin, get, tokenFor, asked, cli };
+  return { origin, get, tokenFor, projectAccess, cli };
 }
 
 test('GET /api/review-readiness answers a cookie or the command line\'s token, as that person, and nothing else', async (t) => {
-  const s = await serve(t, { readiness: readinessFor('made'), startable: async (login) => (login === 'bob' ? PROJECTS : []) });
+  const asked = [];
+  const canWrite = async (login) => { asked.push(login); return login === 'bob'; };
+  const s = await serve(t, { readiness: readinessFor('made', { canWrite }) });
   const { token, id } = s.tokenFor('bob');
   const byToken = await s.get('/api/review-readiness?repo=acme/game', { authorization: `Bearer ${token}` });
   assert.equal(byToken.status, 200);
   assert.deepEqual((await byToken.json()).missing.map((m) => m.key), ['reviewer-installed']);
-  assert.deepEqual(s.asked, ['bob'], 'the projects are the token\'s person\'s');
+  assert.deepEqual(asked, ['bob'], 'access is checked for the token\'s person');
   const eve = s.tokenFor('eve').token;
   assert.equal((await (await s.get('/api/review-readiness?repo=acme/game', { authorization: `Bearer ${eve}` })).json()).project, null, 'not a repo eve may start on');
 
@@ -148,4 +151,25 @@ test('a token\'s person who lost write access to the repo reads nothing more of 
   assert.equal(asked.length, 3);
   writes = true;
   assert.equal((await read({ cookie: 'woodshed_session=bob' })).project, 'game');
+});
+
+test('readiness recognizes a new write grant while the session picker still has a cached denial', async (t) => {
+  const projects = [{ name: 'main', repo: 'acme/main', default: true }, ...PROJECTS];
+  let writes = false;
+  const asked = [];
+  const canWrite = async (login, project) => { asked.push([login, project.repo]); return writes; };
+  const s = await serve(t, {
+    projects, readiness: readinessFor('installed', { canWrite }),
+    githubFor: (project) => ({ canWrite: (login) => canWrite(login, project) }),
+  });
+  const { token } = s.tokenFor('bob');
+  const headers = { authorization: `Bearer ${token}` };
+  assert.deepEqual(await s.projectAccess.startable('bob'), [projects[0]]);
+  assert.equal((await (await s.get('/api/review-readiness?repo=acme/game', headers)).json()).project, null);
+  writes = true;
+  assert.deepEqual(await s.projectAccess.startable('bob'), [projects[0]]);
+  const answer = await s.get('/api/review-readiness?repo=Acme/Game', headers);
+  assert.equal(answer.status, 200);
+  assert.deepEqual((await answer.json()).missing, []);
+  assert.deepEqual(asked, Array.from({ length: 3 }, () => ['bob', 'acme/game']));
 });
