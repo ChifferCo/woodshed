@@ -1805,6 +1805,14 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
 - The command line's routes are core's own (`cliSignIn.mjs`): `/cli` is behind the program's sign-in like any page, and
   `/api/cli/*` carries its own token in `Authorization`, so the program's proxy passes those through without its
   sign-in, as it does `/api/tunnel/*`.
+- `cliDevices`, from `createCliDevices()` (`cliSignIn.mjs`): for a program serving several installations at one address,
+  one waiting room for the command line's sign-ins that it gives them all. `POST /api/cli/device` and `/api/cli/token`
+  carry no sign-in, so the program answers them itself, with `handleCliApi` and a `createCliSignIn` on that same room;
+  the installation whose `/cli` page the person approves the code on makes the token, in its own state and checked by
+  its own `allowed`, when the command line next asks, and the token's answer says that installation's `about`. The
+  page names the org it signs in to, and asks again if the browser has moved to another installation since it showed.
+  Every later call carries the token: `inst.cli.owns(headers)` says which installation holds it (no check of `allowed`,
+  nothing written), and the program sends the request there, which answers or refuses it as its own.
 - `repos: {list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`: where the program keeps the
   installation's repos, which it built `config.projects` from, so Console settings' Repos card changes them there and
   core keeps no list of its own (`addedProjects`, above under the Repos card). `list` answers what Add a repo offers:

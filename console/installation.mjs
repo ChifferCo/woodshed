@@ -291,10 +291,13 @@ function mcpAccess({ loaded: given, secrets, launcher }) {
  *   `slackEventsUrl` is the Slack events Request URL the Set up Slack dialog and its manifest show, over the
  *   provider's; `slackInstall` is the program's own way to put a Slack app in a workspace, offered beside "Use your
  *   own Slack app" (slackSetup.mjs, README.md "Embedding the console").
+ *   `cliDevices` (cliSignIn.mjs, createCliDevices) is the command line's waiting room for sign-ins, for a program that
+ *   gives several installations behind one address the same one: the token is made by the installation it is approved
+ *   on, and `cli.owns(headers)` says whose a request's token is (README.md "Embedding the console").
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null, mcpServers: mcpServersHook = null }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null, mcpServers: mcpServersHook = null, cliDevices = undefined }) {
   checkMembersHook(memberList, trusted);
   if (mcpServersHook && ['list', 'save', 'remove'].some((f) => typeof mcpServersHook[f] !== 'function')) throw new Error('mcpServers needs list, save and remove');
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
@@ -489,7 +492,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // Behind a hosting proxy, whoever leaves the program's list loses their token and open tunnels at once, as People's Remove does.
   members?.whenLeft?.((login) => tunnel.revoke(login), { also: () => Object.keys(store.state.tunnelTokens ?? {}) });
   // The woodshed command line's sign-ins, one per computer (cliSignIn.mjs): asked who may use them as the tunnel is.
-  const cli = createCliSignIn({ store, allowed: (login) => members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login) });
+  // `cliDevices` is a waiting room a program running several consoles gives them all (console/README.md, "Embedding the console").
+  const cli = createCliSignIn({ store, devices: cliDevices, allowed: (login) => members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login) });
   members?.whenLeft?.((login) => cli.revokeAll(login, 'the program\'s list'), { also: () => cli.logins().filter(Boolean) });
   const dbRestore = createDbRestore({
     store, dir: path.join(loaded.stateDir, 'restores'), databases, targets: databaseTargets,
