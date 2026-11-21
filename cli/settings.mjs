@@ -252,7 +252,7 @@ function serverCredential(server) {
   // A value is safe only when it is made of variables with no fallback, after an optional scheme (Bearer ${TOKEN}).
   const literal = (v) => {
     if (typeof v !== 'string' || !v.trim()) return false;
-    if (/\$\{[^}]*:-[^}]+\}/.test(v)) return true;
+    // Remove only complete references without a fallback value. Anything malformed or literal remains.
     return v.replace(/\$\{[A-Za-z_][A-Za-z0-9_]*(:-)?\}/g, '').replace(/^\s*(Bearer|Basic|Token)\s+/i, '').trim() !== '';
   };
   if (typeof server?.url === 'string') {

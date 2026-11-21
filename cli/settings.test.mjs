@@ -579,6 +579,8 @@ test('an MCP credential made of variables passes, one with a literal fallback or
   const entry = (server) => translate('.claude.json#mcpServers/s', JSON.stringify(server), opts);
   assert.equal(entry({ url: 'https://x', headers: { Authorization: 'Bearer ${TOKEN:-abc123}' } }).fate, 'refuse');
   assert.equal(entry({ url: 'https://x', headers: { Authorization: 'Bearer ${TOKEN}x' } }).fate, 'refuse');
+  assert.equal(entry({ url: 'https://x', headers: { Authorization: 'Bearer ${TOKEN:-${OTHER}}' } }).fate, 'refuse');
+  assert.equal(entry({ command: 'npx', env: { API_KEY: '${'.repeat(20_000) } }).fate, 'refuse');
   assert.equal(entry({ command: 'npx', env: { API_KEY: '${API_KEY:-}' } }).fate, undefined);
   assert.equal(entry({ command: 'npx', env: { API_KEY: '${A}${B}' } }).fate, undefined);
   const settings = translate('.claude/settings.json', b64({ hooks: { Stop: [{ hooks: [{ type: 'command', command: 'bash ~/bin/n.sh' }, { type: 'command', command: 'bash ~/.claude/skills/x/r.sh' }] }] }, permissions: { allow: ['Read(~/notes/**)'] } }), opts);
