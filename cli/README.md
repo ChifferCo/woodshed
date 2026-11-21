@@ -166,6 +166,8 @@ Then, in order (`move.mjs` says each step):
    including binary files, for recognized credentials. Files over 20 MB refuse the move. A remote that pushes to more
    than one place, or that git rewrites to another repo (`pushInsteadOf`), is refused.
    A new Git LFS pointer also refuses the move because its payload is outside the Git tree. The move's push skips LFS uploads.
+   Changed submodule commits must exist on a remote-tracking branch in their initialized checkout. The move pushes only
+   the parent repository.
    A conversation holding what looks like a credential refuses the move too.
 2. **The session.** `--to <id>` is one of your own sessions on the same repo, resumed when paused; `--to new` starts one
    per repo on its branch, with no prompt (`Moved from <computer>: <space>`). Each is added to Herdr as `session herdr` does (a resumed one is added again, since its core is new).

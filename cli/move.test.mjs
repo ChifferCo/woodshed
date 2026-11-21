@@ -426,6 +426,52 @@ process.stdout.write('version https://git-lfs.github.com/spec/v1\\noid sha256:' 
   assert.ok(!fs.existsSync(path.join(root, '.git', 'lfs-upload-started')));
 });
 
+test('recursive push config cannot publish an unverified submodule commit', async (t) => {
+  const l = laptop(t);
+  const child = repoFor(t, { name: 'acme/child' });
+  const { root, sh } = l.repo;
+  const submodule = 'vendor/fixture';
+  const cwd = path.join(root, submodule);
+  sh(['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', child.bare, submodule], root);
+  sh(['commit', '-qm', 'add fixture submodule'], root);
+  sh(['push', '-q', '--no-recurse-submodules', 'origin', 'main'], root);
+  const parentBase = sh(['rev-parse', 'HEAD'], root);
+  const refs = () => sh(['--git-dir', child.bare, 'for-each-ref', '--format=%(refname):%(objectname)'], child.root);
+  const before = refs();
+  fs.writeFileSync(path.join(child.bare, 'hooks', 'pre-receive'), '#!/bin/sh\ntouch upload-started\n', { mode: 0o755 });
+  sh(['config', 'push.recurseSubmodules', 'on-demand'], root);
+  fs.writeFileSync(path.join(cwd, 'fixture.txt'), `ghp_${'8a'.repeat(18)}`);
+  sh(['add', 'fixture.txt'], cwd);
+  sh(['commit', '-qm', 'unpublished child work'], cwd);
+  const unpublished = sh(['rev-parse', 'HEAD'], cwd);
+
+  const args = ['move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN];
+  const assertRefused = (out) => {
+    assert.equal(out.code, EXIT.refused, out.err);
+    assert.match(out.err, /could not verify these submodule commits on a remote-tracking branch:\n {2}.*vendor\/fixture/);
+    assert.ok(!out.err.includes('ghp_'));
+    assert.equal(l.onGithub('woodshed/move-c0ffee42'), null);
+    assert.equal(refs(), before);
+    assert.throws(() => sh(['--git-dir', child.bare, 'cat-file', '-e', unpublished], child.root));
+    assert.ok(!fs.existsSync(path.join(child.bare, 'upload-started')));
+  };
+  // The link is new in the working tree. Git config would publish the child before sending the parent.
+  assertRefused(await l.run(args));
+
+  // The same link in unpublished history must be rejected when Git itself has no local child to inspect.
+  sh(['add', submodule], root);
+  sh(['commit', '-qm', 'record unpublished child'], root);
+  sh(['submodule', 'deinit', '-f', '--', submodule], root);
+  fs.rmSync(path.join(root, '.git', 'modules', submodule), { recursive: true });
+  assertRefused(await l.run(args));
+  assert.ok(!l.calls.some(([method]) => method === 'POST'));
+
+  // An unchanged uninitialized submodule is fine. The move pushes only the checked parent.
+  sh(['reset', '--hard', parentBase], root);
+  assert.equal((await l.run(args)).code, EXIT.done);
+  assert.equal(refs(), before);
+});
+
 test('a concurrent transcript import is preserved and only the failed upload is cleaned up', async (t) => {
   const l = laptop(t, { machine: { collides: true } });
   const out = await l.run(['move', '--space', 'api', '--to', 'aaaa0001', '--restart', 'never', '--console', ORIGIN]);

@@ -175,7 +175,8 @@ export function secretsIn(text, before = '') {
  * have taken a secret out of while it stays in history. Each is read as git stores it, after its filters. A file
  * too large to read through refuses the move. The index used is a temporary one; the person's is left as it is.
  * @returns {Promise<{files: {path: string, status: string}[], secrets: {path: string, line: number|null, kind: string}[],
- *          ignoredEnv: string[], tree: string, index: string}>}  `index`: the temporary index, which the caller removes
+ *          ignoredEnv: string[], missingSubmodules?: string[], tree: string, index: string}>}
+ *          `index`: the temporary index, which the caller removes
  */
 export async function survey(git, checkout, { tempDir = os.tmpdir(), tag = 'move', scanBytes = SCAN_BYTES } = {}) {
   const index = path.join(fs.mkdtempSync(path.join(tempDir, `woodshed-${tag}-`)), 'index');
@@ -198,11 +199,9 @@ async function surveyIndex(git, checkout, index, scanBytes) {
   await step(head ? ['read-tree', head] : ['read-tree', '--empty']);
   await step(['add', '-A', '--', '.']);
   const tree = (await step(['write-tree'])).trim();
-  const diff = head ? await step(['diff', '--cached', '--name-status', '--no-renames', '-z', head]) : await step(['ls-files', '-z', '--cached']);
-  const words = diff.split('\0').filter(Boolean);
-  const files = [];
-  if (head) for (let i = 0; i + 1 < words.length; i += 2) files.push({ status: words[i], path: words[i + 1] });
-  else for (const word of words) files.push({ status: 'A', path: word });
+  const diffOptions = ['--raw', '-z', '--no-abbrev', '--no-renames', '--ignore-submodules=none'];
+  const staged = diffEntries(await step(['diff', '--cached', ...diffOptions, ...(head ? [head] : [])]));
+  const files = staged.map(({ status, path }) => ({ status, path }));
 
   // The objects the push sends: reachable from the snapshot and HEAD, and from no ref the remote has now. Its refs are
   // asked of it (ls-remote), not taken from this checkout's tracking refs, which can outlive a branch deleted there.
@@ -225,6 +224,9 @@ async function surveyIndex(git, checkout, index, scanBytes) {
   const trees = objects.filter(({ type }) => type === 'tree');
   const names = await treeNameSecrets(step, trees, tree.length / 2);
   if (names.length) return { files: [], secrets: names, ignoredEnv: [], tree, index };
+  const commits = objects.filter(({ type }) => type === 'commit').map(({ sha }) => sha);
+  const history = commits.length ? diffEntries(await step(['diff-tree', '--stdin', '--root', '-m', '-r', '--no-commit-id', ...diffOptions], { input: `${commits.join('\n')}\n` })) : [];
+  const missingSubmodules = await unpublishedSubmodules(git, root, [...staged, ...history]);
   // A secret the remote's copy of a file already held is not the move's doing: its branch's, as the remote has it now.
   const upstreamRef = (await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], { cwd: root })).stdout.trim();
   const upstreamSha = remoteHeads.get(`refs/heads/${upstreamRef.slice(remote.length + 1)}`) ?? remoteHeads.get(`refs/heads/${checkout.branch}`) ?? null;
@@ -269,7 +271,35 @@ async function surveyIndex(git, checkout, index, scanBytes) {
   const ignored = await git(['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--', ':(glob)**/.env', ':(glob)**/.env.*'], { cwd: root });
   const ignoredEnv = ignored.code === 0 ? ignored.stdout.split('\0').filter(Boolean).slice(0, 50) : [];
   const unique = [...new Map(secrets.map((x) => [`${x.path}:${x.line}:${x.kind}`, x])).values()];
-  return { files, secrets: unique, ignoredEnv, tree, index };
+  return { files, secrets: unique, ignoredEnv, missingSubmodules, tree, index };
+}
+
+function diffEntries(raw) {
+  const fields = raw.split('\0');
+  const entries = [];
+  for (let i = 0; i + 1 < fields.length; i += 2) {
+    const [, mode, , sha, status] = fields[i].split(' ');
+    entries.push({ mode, sha, status, path: fields[i + 1] });
+  }
+  return entries;
+}
+
+async function unpublishedSubmodules(git, root, entries) {
+  const missing = new Set();
+  const checked = new Set();
+  for (const { mode, sha, path: file } of entries) {
+    const key = `${sha}:${file}`;
+    if (mode !== '160000' || checked.has(key)) continue;
+    checked.add(key);
+    const cwd = path.join(root, file);
+    // Git's push check can skip a submodule whose repository is absent. Verify each changed link has a checkout
+    // and a remote-tracking ref containing its commit, even if the checkout has no entry in .gitmodules now.
+    const found = fs.existsSync(path.join(cwd, '.git'))
+      ? await git(['for-each-ref', '--count=1', `--contains=${sha}`, '--format=%(refname)', 'refs/remotes/'], { cwd })
+      : null;
+    if (found?.code !== 0 || !found.stdout.trim()) missing.add(file);
+  }
+  return [...missing];
 }
 
 // rev-list reports one path per object. Read the outgoing trees themselves to see every name, including a new name
@@ -353,7 +383,7 @@ export async function freeze(git, checkout, { tree, message }) {
 export async function pushBranch(git, checkout, { commit, branch }) {
   // To the one URL the survey asked (the remote's push URL, rewrites applied), and with no tags following the branch.
   // An existing LFS pointer can be part of the remote history. Keep its pre-push hook from sending any payloads.
-  const out = await git(['push', '--porcelain', '--no-follow-tags', checkout.pushUrl ?? checkout.remote, `${commit}:refs/heads/${branch}`], { cwd: checkout.root, timeoutMs: PUSH_MS, env: { GIT_LFS_SKIP_PUSH: '1' } });
+  const out = await git(['push', '--porcelain', '--no-follow-tags', '--recurse-submodules=check', checkout.pushUrl ?? checkout.remote, `${commit}:refs/heads/${branch}`], { cwd: checkout.root, timeoutMs: PUSH_MS, env: { GIT_LFS_SKIP_PUSH: '1' } });
   if (out.code === 0) return { ok: true };
   const rejected = out.stdout.split('\n').find((l) => l.startsWith('!'));
   return { ok: false, error: rejected ? rejected.split('\t').at(-1).trim() || lastLine(out) : lastLine(out) };
@@ -361,6 +391,6 @@ export async function pushBranch(git, checkout, { commit, branch }) {
 
 /** @returns {Promise<boolean>}  whether the branch is gone from the remote */
 export async function deleteBranch(git, checkout, branch) {
-  const out = await git(['push', '--porcelain', checkout.pushUrl ?? checkout.remote, '--delete', `refs/heads/${branch}`], { cwd: checkout.root, timeoutMs: PUSH_MS });
+  const out = await git(['push', '--porcelain', '--no-recurse-submodules', checkout.pushUrl ?? checkout.remote, '--delete', `refs/heads/${branch}`], { cwd: checkout.root, timeoutMs: PUSH_MS });
   return out.code === 0;
 }

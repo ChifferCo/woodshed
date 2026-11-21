@@ -252,6 +252,12 @@ async function runMove({ origin, rest }, ctx) {
     });
     throw refused(`These look like secrets, and the move would push them to GitHub:\n${lines.join('\n')}\nTake them out of the work (or add them to .gitignore), then move again. Nothing was moved.`);
   }
+  const missingSubmodules = [...surveys].flatMap(([root, survey]) => (survey.missingSubmodules ?? []).map((file) => path.join(root, file)));
+  if (missingSubmodules.length) {
+    cleanSurveys();
+    if (json) emit({ event: 'unavailable-submodules', paths: missingSubmodules });
+    throw refused(`The move could not verify these submodule commits on a remote-tracking branch:\n${missingSubmodules.map((file) => `  ${file}`).join('\n')}\nInitialize the submodules and use commits already on their remotes, then move again. Nothing was moved.`);
+  }
 
   // Where each terminal goes in the session: places, one per branch. A checkout's first agent, and its shells and
   // programs, take its first place; each other agent gets a place of its own, from the same commit.
