@@ -1,8 +1,9 @@
 # The woodshed command line
 
 `woodshed` signs in to a Woodshed console from your computer, says who is signed in, starts and manages your sessions,
-opens a pipe or a terminal into your running sessions, adds them to Herdr's sidebar, moves work from Herdr into a
-session, and reads and sets your choices on My settings. It is plain Node 22 with no dependencies, like the rest of Woodshed.
+opens a pipe or terminal into your running sessions, adds them to Herdr's sidebar, and moves work from Herdr into a
+session. It reads and sets your choices on My settings and carries your Claude settings between your computer and
+private sessions. It is plain Node 22 with no dependencies.
 
 ## Running it
 
@@ -50,9 +51,11 @@ the tarball and its SHA-256 on woodshed.run. The site's installer checks that di
 | `woodshed login` | Asks the console for a code, prints it, and opens the console's `/cli` page in your browser. Check the page shows the same code and press **Sign in the CLI**. The token it gets is kept as below. Signing in again on the same computer ends its earlier sign-in. | 0 signed in, 2 the code expired with nobody approving it, 3 denied, 1 too many sign-ins waiting (below) |
 | `woodshed logout` | Ends the token at the console and forgets it here. | 0 |
 | `woodshed status` | The console's name and address, its org (the GitHub account its repos are on), who is signed in, and the Herdr `hc` found here with its version (`hc` in `--json`: `installed`, `version`, `minimum`, `ok`), for `session herdr`. | 0 signed in, 2 not signed in or the sign-in ended |
-| `woodshed move [--terminal T\|--tab T\|--space S] --to <id>\|new` | Moves terminals here into a session, agents with their conversations: below. | 0 moved, 2 a moved agent needs you, 3 refused, 1 failed and undone |
+| `woodshed herdr move [--terminal T\|--tab T\|--space S] --to <id>\|new` | Moves terminals here into a session, agents with their conversations: below. | 0 moved, 2 a moved agent needs you, 3 refused, 1 failed and undone |
 | `woodshed review enable\|status` | In a checkout: reviews the repo's pull requests in Woodshed sessions, by its project file, and says what the console still needs. Below. | 0 done, 2 an admin's step, a sign-in or a merge still to come, 1 a project file that does not read or check |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
+| `woodshed config list\|get\|set` | Reads or sets [your choices on My settings](#your-choices-on-my-settings). | as below |
+| `woodshed settings plan\|push\|pull` | Sync [Claude settings and a checkout's ignored files](#settings) with private sessions, and MCP definitions between computers. | as below |
 
 Every command takes:
 
@@ -205,10 +208,9 @@ no others (`console/cliSessions.mjs`), each as its person:
 ## Your choices on My settings
 
 `woodshed config` reads and sets the choices on your My settings page, through the page's own routes and the same checks
-(`config.mjs`, `console/cliConfig.mjs`). It never reads or sets a secret: your Claude token, Codex sign-in, env file
-values, own files and tmux lines are saved on My settings only, and `config set claude-token` (or `get`, or any such key)
-refuses with a pointer there, without asking the console. No message repeats a key or value it refused, so a token pasted in the
-wrong place never lands in a terminal's scrollback or an agent's captured output.
+(`config.mjs`, `console/cliConfig.mjs`). `config` refuses keys for credentials, repo env values, own files and tmux
+lines with a pointer to My settings. Use `settings --own-files` to sync whole ignored files. No message repeats a key
+or value `config` refused, so a token pasted in the wrong place stays out of captured output.
 
 | Command | What it does | Exits |
 | --- | --- | --- |
@@ -237,12 +239,13 @@ The console reads them for the token at `GET /api/cli/config`, which answers the
 
 ## Moving work into a session
 
-`woodshed move` (`move.mjs`) takes terminals from this computer's Herdr into one of your sessions, as they are:
+`woodshed herdr move` (`move.mjs`) takes terminals from this computer's Herdr into one of your sessions, as they are.
+`woodshed herdr --help` lists the Herdr commands. Use `woodshed session herdr <id>` to add a session to Herdr's sidebar.
 
 ```sh
-woodshed move --space api --to new          # a new session for each repo the space's terminals are in
-woodshed move --terminal t3 --terminal t5 --to <id>   # into one of yours, on the same repo
-woodshed move --tab main --to new --dry-run --json    # the move bundle, and nothing done
+woodshed herdr move --space api --to new          # a new session for each repo the space's terminals are in
+woodshed herdr move --terminal t3 --terminal t5 --to <id>   # into one of yours, on the same repo
+woodshed herdr move --tab main --to new --dry-run --json    # the move bundle, and nothing done
 ```
 
 `--terminal` (repeatable; an `hc ls` address or a name), `--tab` or `--space` (an id or a name, as `herdr-app ls`
@@ -310,6 +313,77 @@ each step is a `step` event (`pushed`, `session`, `connected`, `conversation`, `
 last is `moved` with the sessions, branches, each terminal's new address and the move bundle; `--dry-run` writes one
 `bundle` event.
 
+## Settings
+
+`woodshed settings` joins this computer to the Claude settings your private sessions already keep in step (console/README.md,
+"Your Claude settings"), and saves a checkout's ignored files as your own files for its repo on My settings.
+
+| Command | What it does | Exits |
+| --- | --- | --- |
+| `woodshed settings plan` | Lists each item with its size and what push would do with it: `upload` (new or changed), `skip` or `refuse`, and why. Sends nothing. With `--pull` (and `--replace`), what pull would write instead, and what each item that runs here runs. Writes nothing. | 0 |
+| `woodshed settings push` | The same list, then the uploads. An item never listed before is asked about on a terminal; with no terminal (or `--json`) nothing is sent until `plan` has listed it. | 0 sent or nothing to send, 2 not shown before or not confirmed |
+| `woodshed settings pull` | Writes the shared copy here: what is missing, and with `--replace` what differs, keeping a copy of each replaced file under `~/.config/woodshed/backups/`. Never deletes. Anything but `keybindings.json` is held until its content was listed, below. | 0, 2 something held |
+
+Each takes:
+
+- `--only <what>,...`: a kind of item (`settings`, `keybindings`, `memory` for `CLAUDE.md`, `agents`, `commands`, `skills`,
+  `mcp`, `own-files`), or a name as the list shows it (`skills/review`, `mcp/github`, `.env.local`). Repeatable.
+- `--own-files <checkout>`: also the checkout's files that git ignores and does not track, saved as your own files for its
+  repo (told from its `origin`), which your next session on it writes where git ignores them. Env files (`.env.local`,
+  `*.local.json`, `.dev.vars`) are taken by default; any other ignored file only when `--only` names its path. A folder
+  git ignores whole (`node_modules/`) is not looked into. A path the repo's project file writes as an env file is
+  skipped: its values go on My settings' Repo settings.
+
+**What is carried.** The session sync's own items, from `~/.claude` and `~/.claude.json`: `settings.json`, `CLAUDE.md`,
+`keybindings.json`, `agents/`, `commands/`, `skills/`, and your user-scope MCP servers. Items merge as a session's do, and
+push never removes one from the copy (the console refuses a removal from a computer). Claude plugins, Codex's settings and
+shell dotfiles are not carried, nor a file's mode: a pulled script runs as `bash script.sh`, as it does in a session.
+
+MCP definitions pushed from a computer are available to the person's computers only. Pull can also bring in a server
+configured in a private session. If a laptop and a session save the same name, each keeps its definition. Servers the
+console provides to sessions are configured by an admin and use its relay.
+
+**What runs here is shown first.** Sessions write the shared copy, unattended, and everything in it but
+`keybindings.json` can make this computer's claude run something. So `pull` writes nothing else until a list has shown
+that exact content (by its hash), listed with what it does: an MCP server's command and args or URL; every key of
+`settings.json` (hooks, env, permissions, `defaultMode`, plugins); a skill's, command's or agent's frontmatter (its
+`allowed-tools`) and each line that runs shell as it loads (`` !`cmd` ``); a script's first line. Values of env variables
+named like credentials are not shown. On a terminal pull asks; with none it holds them (`hold`, exit 2) and writes the
+rest, until `woodshed settings plan --pull` has listed them. A changed item is held again, and one with a line over 2000
+characters is refused, since it cannot be shown whole.
+
+An MCP server whose URL carries a sign-in (`https://user:pass@…`, a `?api_key=`) is refused both ways, and an own file
+holding an AWS access key or a Slack token is not uploaded: sessions never get those.
+
+**A session's edit is not undone.** Push sends an item only when the shared copy still holds what this computer last
+pushed or pulled. One a session changed since is skipped with `pull it first, or --only <its name> sends yours over it`;
+naming it (`--only settings.json`, not `--only settings`) sends yours.
+
+**What changes on the way.** A session's home is `/home/node`, not yours:
+
+- A path into what is carried (`~/.claude/skills/review/format.sh` in a hook) is moved to the other home.
+- A setting naming any other path in your home (a hook running `~/bin/notify.sh`, a permission on `~/notes`) is left out,
+  and the list says which. An MCP server naming one is skipped.
+- `~/x`, `$HOME/x` and `${HOME}/x` follow the same rules: kept when they are carried, left out when they are not.
+- `statusLine` stays each side's own. `apiKeyHelper` and the other credential helpers, and `env` variables named like
+  credentials, stay here, and a `pull --replace` keeps yours.
+- An MCP server run as `/opt/homebrew/bin/npx` (or from `/usr/local/bin`, `/usr/bin`, `/bin`) runs as `npx`, from the
+  session's PATH. Any other absolute program path is skipped.
+
+**What is refused**, by name or kind, never by showing it: MCP logins (sign in to the server where you use it), an MCP server
+whose `env` holds a literal key, literal HTTP headers on an MCP definition or hook (`${VARIABLE}` is fine), a file named like a secret (`.env`, `*.pem`, `id_rsa`,
+`credentials.json`) in a skills, agents or commands folder, and one holding what looks like a private key or a GitHub,
+Anthropic, OpenAI, Slack, AWS, Stripe live or Google key. For own files, keys and certificates, files named for production
+(`.env.production`) and live keys.
+
+A symlink in `~/.claude` (a linked `skills/`, a linked `settings.json`) is neither read by push nor written through by
+pull, nor is an empty own file pushed (My settings would take it as removing yours). `CLAUDE_CONFIG_DIR` is not
+followed: settings reads `~/.claude` and `~/.claude.json` only, and says so when it is set.
+
+`~/.config/woodshed/settings-state.json` keeps, for each console, the names of the items a push list has shown, the
+hashes of what a pull list has shown that runs here, and each item's hash as it last went to or from this computer.
+Never an item's content.
+
 ## Where the token is kept
 
 One token per console, never in a command's arguments:
@@ -353,7 +427,8 @@ wait, and exits 1.
 
 ## Checking a change
 
-`node --test cli/*.test.mjs` runs the commands against the console's real handler, with a stand-in for your browser.
+`node --test cli/*.test.mjs` runs the commands against the console's real handler, with a stand-in for your browser,
+and `settings` on a made-up laptop home and checkout.
 To try it by hand against `node console/bin/devConsole.mjs 7712` (no sign-in, so you are `@local`):
 
 ```sh

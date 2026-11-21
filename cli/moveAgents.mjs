@@ -1,4 +1,4 @@
-// `woodshed move`'s terminals: what each one runs (an agent with its conversation, a shell, or a program), and an
+// `woodshed herdr move`'s terminals: what each one runs (an agent with its conversation, a shell, or a program), and an
 // agent's conversation carried to a session with its folders said as the session's.
 //
 // A Claude Code conversation is `<claude home>/projects/<encoded folder>/<id>.jsonl`, the folder encoded with every

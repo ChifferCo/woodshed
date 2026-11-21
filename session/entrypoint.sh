@@ -1010,7 +1010,7 @@ startClaude() {
     tmux new-session -d -s claude -x 200 -y 50 -c "$REPO_DIR"
     tmux set-option -t claude remain-on-exit on
   fi
-  # woodshed-login reopens claude with the same flags once it signed in, and `woodshed move` opens a conversation moved
+  # woodshed-login reopens claude with the same flags once it signed in, and `woodshed herdr move` opens a conversation moved
   # from a laptop with the agent's own (cli/move.mjs).
   if [ "${AGENT:-claude}" = codex ]; then codexFlags > /tmp/woodshed-codex-flags; else claudeFlags > /tmp/woodshed-claude-flags; fi
   if [ "${SESSION_MODE:-}" = qa ]; then

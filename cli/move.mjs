@@ -1,8 +1,8 @@
-// `woodshed move`: terminals on this computer moved into a Woodshed session, as they are: an agent with its
+// `woodshed herdr move`: terminals on this computer moved into a Woodshed session, as they are: an agent with its
 // conversation, a shell in its folder, a program started again there, in the same spaces, tabs and splits of the Herdr
 // app. Laptop to session only.
 //
-//   woodshed move [--terminal T ...|--tab T|--space S] --to <session id>|new [--restart ask|auto|never] [--dry-run]
+//   woodshed herdr move [--terminal T ...|--tab T|--space S] --to <session id>|new [--restart ask|auto|never] [--dry-run]
 //
 // In order, and nothing local is touched before the last step:
 //   1. The chosen terminals, read from hc (moveLayout.mjs) and each classified (moveAgents.mjs).
@@ -39,7 +39,7 @@ const LIVE_MS = 120_000;
 const END_MS = 20_000;
 const POLL_MS = 1000;
 
-export const MOVE_USAGE = `Usage: woodshed move [--terminal <t> ...|--tab <tab>|--space <space>] --to <session id>|new [options]
+export const MOVE_USAGE = `Usage: woodshed herdr move [--terminal <t> ...|--tab <tab>|--space <space>] --to <session id>|new [options]
 
 Moves terminals on this computer into a Woodshed session: each agent with its conversation (Claude Code or Codex),
 each shell in its folder, each program started again there, in the same spaces, tabs and splits in Herdr.
@@ -137,7 +137,7 @@ async function runMove({ origin, rest }, ctx) {
     else say(text);
   };
 
-  if (ctx.platform === 'win32') throw refused('woodshed move does not run on Windows yet');
+  if (ctx.platform === 'win32') throw refused('woodshed herdr move does not run on Windows yet');
   // A program's command line as it is printed: what may be a credential in it hidden. The real one is for its restart.
   const shown = (argv) => shownCommand(argv, (word) => secretsIn(word).length > 0);
   const version = await hcVersion(hc);
@@ -393,7 +393,7 @@ async function runMove({ origin, rest }, ctx) {
     // ---- 2. Frozen and pushed: one commit per checkout, a branch per place.
     for (const c of checkouts.values()) {
       // Nothing of this computer's in it, not even the branch's name (which could hold anything): it goes to GitHub.
-      const message = `woodshed move ${id}: work in progress, moved into a session`;
+      const message = `woodshed herdr move ${id}: work in progress, moved into a session`;
       commits.set(c.root, await freeze(git, c, { tree: surveys.get(c.root).tree, message }));
     }
     cleanSurveys();
@@ -453,7 +453,7 @@ async function runMove({ origin, rest }, ctx) {
     for (const a of agents) {
       const sid = sessionOf.get(placeOf.get(a).repo);
       if (kinds.get(a).agent === 'codex' && !facts.get(sid).codexFlags.trim()) {
-        throw refused(`Session ${sid} did not provide its Codex flags. Restart it with a session image that supports woodshed move, or move to a new session.`);
+        throw refused(`Session ${sid} did not provide its Codex flags. Restart it with a session image that supports woodshed herdr move, or move to a new session.`);
       }
     }
 
