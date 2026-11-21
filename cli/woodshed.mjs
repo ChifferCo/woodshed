@@ -189,7 +189,8 @@ export async function main(argv, deps = {}) {
   const emit = (object) => stdout.write(`${JSON.stringify(object)}\n`);
   const say = (text) => { if (!json) stdout.write(`${text}\n`); };
 
-  async function call(origin, pathname, { method = 'GET', body, token, timeoutMs = REQUEST_MS } = {}) {
+  // `deadlineMs` in place of the usual 20 s, for a write the console answers only once it is done (a session's stop).
+  async function call(origin, pathname, { method = 'GET', body, token, timeoutMs = REQUEST_MS, deadlineMs = null } = {}) {
     let res;
     try {
       res = await fetchFn(`${origin}${pathname}`, {
@@ -203,11 +204,12 @@ export async function main(argv, deps = {}) {
         body: body ? JSON.stringify(body) : undefined,
         redirect: 'manual',
         // The answer too, read below: a console that stalls never holds a login past its code's expiry.
-        signal: AbortSignal.timeout(Math.max(1, Math.min(REQUEST_MS, timeoutMs))),
+        signal: AbortSignal.timeout(deadlineMs ?? Math.max(1, Math.min(REQUEST_MS, timeoutMs))),
       });
     } catch (err) {
       // Marked, so a wait can tell a network that dropped from the console's own answer.
-      throw Object.assign(new CliError(`could not reach ${origin}: ${err.cause?.message ?? err.message}`), { unreachable: true });
+      // A timeout is marked too: the console may still be doing what was asked.
+      throw Object.assign(new CliError(`could not reach ${origin}: ${err.cause?.message ?? err.message}`), { unreachable: true, timedOut: err?.name === 'TimeoutError' });
     }
     let answer = null;
     try {

@@ -21,7 +21,7 @@ const iso = (ms) => new Date(ms).toISOString();
 // A console's real handler and command line sign-in over a made-up fleet: mia-dev's sessions, octocat's, and shared
 // ones. A session the fleet starts or resumes takes the next of `script`'s steps each time the list is read, as a start
 // moves while the command line waits. The command line is signed in as mia-dev before each test.
-async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app' } = {}) {
+async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app', writers = null, stopTimesOut = false } = {}) {
   let clock = T0;
   const now = () => clock;
   const store = { state: {}, save() {} };
@@ -69,9 +69,11 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       calls.push(['remove', { owner, id }]);
       sessions.splice(sessions.findIndex((x) => x.id === id && x.owner === owner), 1);
     },
+    // As the fleet's: one that stopped by itself is marked stopped by the person, and waits on nobody.
     stop: async (session, reason, { by }) => {
       calls.push(['stop', { id: session.id, by }]);
-      session.status = 'stopping';
+      if (session.status === 'stopped' || session.status === 'failed') session.stoppedBy ??= by;
+      else session.status = 'stopping';
     },
     limitsOf: (s) => ({ idleMs: (s.limits?.idleHours ?? 2) * 3_600_000, lifetimeMs: (s.limits?.lifetimeHours ?? 12) * 3_600_000 }),
     pauseOf: (s) => (s.status === 'running' ? { at: iso(T0 + (s.extendedUntil ? 102 : 42) * 60_000), why: 'idle' } : null),
@@ -94,7 +96,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
     view: async () => ({ projects: [{ name: 'app', repo: 'acme/app' }, { name: 'tools', repo: 'acme/tools' }], defaultProject: savedDefault, saved: savedDefault !== 'app' }),
     forStart: async (login, name) => (name === undefined ? { name: 'app', repo: 'acme/app' } : ['app', 'tools'].includes(name) ? { name, repo: `acme/${name}` } : null),
   };
-  const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async () => null, canWrite: async (login) => !writers || writers.has(login) };
   const config = { host: '127.0.0.1', publicUrl: 'http://pending', extraHosts: [], repo: 'acme/app', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
   const handle = createHandler({ config, fleet, auth, cli, userSettings, projectAccess });
   const server = http.createServer((req, res) => { handle(req, res); });
@@ -113,6 +115,10 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
     const code = await main(args, {
       env: { XDG_CONFIG_HOME: dir }, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
       sleep: async (ms) => { clock += ms; }, now, hostname: 'mia-laptop', platform: 'test', credentials, confirm: async () => answer,
+      // A stop the console takes longer to answer than the command line waits.
+      fetch: (url, init) => (stopTimesOut && String(url).endsWith('/stop')
+        ? Promise.reject(Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }))
+        : fetch(url, init)),
       // The person approves the code at once, as signed in to the console.
       openBrowser: (url) => { cli.decide({ code: new URL(url).searchParams.get('code'), login: 'mia-dev', approve: true }); },
     });
@@ -237,10 +243,15 @@ test('session stop, resume and remove act on your own sessions, and remove asks 
   const stopped = await c.run(['session', 'stop', 'aaaa0001']);
   assert.equal(stopped.code, EXIT.done);
   assert.deepEqual(c.calls.at(-1), ['stop', { id: 'aaaa0001', by: 'mia-dev' }]);
-  const again = await c.run(['session', 'stop', 'bbbb0002']);
-  assert.equal(again.code, EXIT.done);
-  assert.match(again.out, /is not running: it is paused/);
-  assert.equal(c.calls.length, 1, 'no second stop');
+  const paused = await c.run(['session', 'stop', 'bbbb0002']);
+  assert.equal(paused.code, EXIT.done);
+  assert.match(paused.out, /was already paused: it is marked stopped by you, and waits on nobody now/);
+  assert.deepEqual(c.calls.at(-1), ['stop', { id: 'bbbb0002', by: 'mia-dev' }], 'sent, as the page\'s Stop on a paused session');
+  const again = await c.run(['session', 'stop', 'aaaa0001']);
+  assert.match(again.out, /is not running: it is stopping/);
+  assert.equal(c.calls.length, 2, 'no stop of one stopping');
+  assert.match((await c.run(['session', 'stop', 'bbbb0002'])).out, /is not running: it is stopped/);
+  assert.equal(c.calls.length, 2, 'nor of one a person stopped');
 
   const shared = await c.run(['session', 'resume', 'cccc0003']);
   assert.equal(shared.code, EXIT.refused);
@@ -309,4 +320,16 @@ test('the state words and pause times are the page\'s', () => {
   assert.deepEqual(stateOf({ status: 'stopped', owner: 'mia', stoppedBy: 'mia', stopReason: 'stopped from the console' }), { key: 'stopped', word: 'stopped' });
   assert.equal(pauseText({ at: iso(T0 + 125 * 60_000), why: 'lifetime' }, T0), 'in 2h 5m, lifetime');
   assert.equal(pauseText(null, T0), '');
+});
+
+test('a stop the console has not answered in time says so, and a refused sign-in says why', async (t) => {
+  const slow = await consoleFor(t, { stopTimesOut: true });
+  const stop = await slow.run(['session', 'stop', 'aaaa0001']);
+  assert.equal(stop.code, EXIT.failed);
+  assert.match(stop.err, /did not answer in time; it may still be doing it\. Check with: woodshed session get aaaa0001/);
+
+  const gone = await consoleFor(t, { writers: new Set(['octocat']) });
+  const out = await gone.run(['session', 'list']);
+  assert.equal(out.code, EXIT.waiting);
+  assert.match(out.err, /ended: you no longer have write access to the repository/);
 });
