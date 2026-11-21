@@ -512,7 +512,8 @@ export async function sessionCommand({ origin, rest }, ctx) {
   if (json) emit({ event: 'removed', id, machine });
   say(`Removed session ${id}.`);
   if (machine?.removed) say(`Forgot ${name} in Herdr.`);
-  if (machine?.error) stderr.write(`woodshed: ${machine.error}. Forget it with: hc machine rm ${name}\n`);
+  // Not looked at, so not named as this session's: the person checks its line before forgetting it.
+  if (machine?.error) stderr.write(`woodshed: ${machine.error}. If hc machine ls shows ${name} reached by woodshed tunnel ${id}, forget it with: hc machine rm ${name}\n`);
   return EXIT.done;
 }
 

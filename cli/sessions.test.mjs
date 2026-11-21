@@ -509,4 +509,13 @@ test('session remove forgets the session\'s machine in hc too', async (t) => {
   const removed = await none.run(['session', 'remove', 'bbbb0002', '--yes', '--json']);
   assert.equal(removed.code, EXIT.done, 'no hc here: nothing to forget');
   assert.deepEqual(removed.lines, [{ event: 'removed', id: 'bbbb0002', machine: null }]);
+
+  // hc that cannot list its machines: the session is removed, and the person is told to check before forgetting one.
+  const broken = fakeHc();
+  const run = broken.run;
+  broken.run = async (args) => (args[1] === 'ls' ? { code: 1, stdout: '', stderr: 'core not running\n' } : run(args));
+  const unsure = await consoleFor(t, { hc: broken });
+  const out2 = await unsure.run(['session', 'remove', 'bbbb0002', '--yes']);
+  assert.equal(out2.code, EXIT.done, 'the session is removed all the same');
+  assert.match(out2.err, /hc machine ls failed: core not running\. If hc machine ls shows woodshed-bbbb0002 reached by woodshed tunnel bbbb0002, forget it with: hc machine rm woodshed-bbbb0002\n/);
 });
