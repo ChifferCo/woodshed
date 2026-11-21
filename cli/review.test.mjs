@@ -138,6 +138,20 @@ test('--dry-run writes nothing; a file that does not read is left alone with 1',
   assert.equal(bad.file(), 'version: 1\npullRequest: {}\n');
 });
 
+test('an omitted review option value cannot consume --dry-run', async (t) => {
+  const s = await setup(t);
+  for (const option of ['--rerun', '--dir']) {
+    const missing = await s.run(['review', 'enable', option, '--dry-run']);
+    assert.equal(missing.code, EXIT.failed);
+    assert.ok(missing.err.includes(`${option} needs a value`));
+    assert.equal(s.file(), null);
+  }
+  const dry = await s.run(['review', 'enable', '--rerun=--tag', '--dry-run']);
+  assert.equal(dry.code, EXIT.done);
+  assert.match(dry.out, /rerun: --tag/);
+  assert.equal(s.file(), null);
+});
+
 test('project check\'s problems stop the write', async (t) => {
   const s = await setup(t, { projectFile: 'version: 1\nrules: docs/missing.md\n' });
   const run = await s.run(['review', 'enable']);

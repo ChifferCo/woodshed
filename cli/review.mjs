@@ -122,7 +122,9 @@ export async function reviewCommand({ origin, rest }, deps) {
       if (allowed[name] === 'flag') out[name] = true;
       else {
         const value = inline ?? words[++i];
-        if (value === undefined || value === '') throw fail(`${name} needs a value`);
+        if (!value || (inline === null && value.startsWith('-'))) {
+          throw fail(`${name} needs a value. For a value that starts with a dash, use ${name}=VALUE.`);
+        }
         out[name] = value;
       }
     }
