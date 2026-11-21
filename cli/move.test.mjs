@@ -438,6 +438,35 @@ test('credential headers in an untracked request log refuse the move before push
   }
 });
 
+test('header expressions and credentials already on the remote do not block other edits', async (t) => {
+  const l = laptop(t);
+  const { root, sh } = l.repo;
+  const client = 'api.js';
+  const trace = 'request.json';
+  const earlier = { headers: { Authorization: 'Bearer inert-already-published' }, method: 'GET' };
+  fs.writeFileSync(path.join(root, client), 'export const headers = (token, req) => ({ authorization: `Bearer ${token}`, cookie: req.headers.cookie });\n');
+  fs.writeFileSync(path.join(root, trace), JSON.stringify(earlier, null, 2));
+  sh(['add', client, trace], root);
+  sh(['commit', '-m', 'add inert request fixture and client'], root);
+  sh(['push', '-u', 'origin', 'main'], root);
+  fs.appendFileSync(path.join(root, client), 'export const method = "POST";\n');
+  fs.writeFileSync(path.join(root, trace), JSON.stringify({ ...earlier, method: 'POST' }, null, 2));
+  const file = path.join(l.repo.dir, 'home', '.claude', 'projects', claudeProjectDir(l.cwd), `${CONVERSATION}.jsonl`);
+  fs.appendFileSync(file, JSON.stringify({ type: 'tool_result', content: 'curl -H "Authorization: Bearer $GITHUB_TOKEN" https://example.invalid' }) + '\n');
+
+  const args = ['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json'];
+  const out = await l.run(args);
+  assert.equal(out.code, EXIT.done);
+  assert.ok(l.onGithub('woodshed/move-c0ffee42'));
+
+  const next = 'inert-newly-disclosed';
+  fs.writeFileSync(path.join(root, trace), JSON.stringify({ ...earlier, headers: { ...earlier.headers, 'X-Api-Key': next } }, null, 2));
+  const dry = await l.run(['move', '--from', 'herdr', '--terminal', 't2', '--to', 'new', '--console', ORIGIN, '--json', '--dry-run']);
+  assert.equal(dry.code, EXIT.refused);
+  assert.equal(dry.events.find((event) => event.event === 'secrets')?.files[0]?.path, trace);
+  assert.ok(!(dry.out + dry.err).includes(next));
+});
+
 test('filename-only and binary credentials stop the move without printing their values', async (t) => {
   const l = laptop(t);
   const synthetic = `ghp_${'f4'.repeat(18)}`;
@@ -621,6 +650,27 @@ test('a program with a credential on its command line is never started again in 
   Object.assign(l.h.terminals.get(l.dev).foreground, { argv: ['curl', '-u', 'me:hunter2', `--header=x-k: sk_live_${'z'.repeat(24)}`] });
   const curl = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--dry-run', '--json', '--console', ORIGIN]);
   assert.equal(curl.events.find((e) => e.event === 'bundle').bundle.terminals.find((x) => x.process).process.command, 'curl -u … …');
+});
+
+test('curl inline cookies stay out of the move preview and remote command', async (t) => {
+  const value = 'inert-inline-cookie';
+  const cookie = `session=${value}`;
+  for (const flag of [['-b', cookie], ['--cookie', cookie], [`-b${cookie}`], [`--cookie=${cookie}`]]) {
+    const l = laptop(t);
+    Object.assign(l.h.terminals.get(l.dev).foreground, { name: 'curl', argv: ['/usr/bin/curl', ...flag, 'https://example.invalid'] });
+    const args = ['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'auto', '--console', ORIGIN, '--json'];
+    const dry = await l.run([...args, '--dry-run']);
+    assert.equal(dry.code, EXIT.done);
+    assert.ok(!(dry.out + dry.err).includes(value));
+    assert.equal(dry.events.find((event) => event.event === 'bundle').bundle.terminals[1].process.restart, 'never');
+
+    const out = await l.run(args);
+    assert.equal(out.code, EXIT.done);
+    assert.ok(!(out.out + out.err).includes(value));
+    const split = JSON.parse(l.h.calls.find((call) => call.app?.[1] === 'pane.split').app[2]);
+    assert.equal(split.argv[2], 'cd /home/node/work/app/services/api && exec bash -l');
+    assert.ok(!JSON.stringify(l.h.calls).includes(value));
+  }
 });
 
 test('a switch immediately before a password flag cannot disclose the password in the plan or result', async (t) => {

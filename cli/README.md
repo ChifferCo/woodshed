@@ -268,7 +268,7 @@ shows them) choose what moves. Each terminal is read from `hc` and is one of:
 - **a shell,** in its folder;
 - **a program** (`Terminal.foreground`'s argv): started again there only when you say so, with `--restart auto`, or yes
   to the question (`--restart ask`, the default; with no terminal to ask on, it is not). One whose command line holds
-  what may be a credential (a known token's shape, the value after `--token`, `--api-key`, `-u`, or `PASSWORD=…`) is
+  what may be a credential (a known token's shape, a password argument, or an inline curl cookie) is
   never started again there, whatever `--restart` says: the session gets a shell in its place. Its command line is
   printed with those values as `…`, everywhere.
 
@@ -287,9 +287,10 @@ Then, in order (`move.mjs` says each step):
    Anthropic, OpenAI, Slack or Stripe key, an npm token), refuses the move with its path, line and kind, never the value.
    What is read is everything the push would send that the remote does not have (its branches asked of it with
    `ls-remote`), commits not pushed yet included. The move checks outgoing file and directory names and scans blobs,
-   including binary files, for recognized credentials. It also refuses explicit credential headers in outgoing content,
-   such as an `Authorization` header in a plain-text or JSON request log. Embedded JSON strings are screened with
-   a bounded decoding budget. Files over 20 MB refuse the move. A remote that pushes to more than one place, or that
+   including binary files, for recognized credentials. It also refuses literal credential header values in outgoing
+   content, such as a bearer token in a plain-text or JSON request log. The Git scan allows values the remote's copy of
+   the file already holds. Embedded JSON strings are screened with a bounded decoding budget. Files over 20 MB refuse
+   the move. A remote that pushes to more than one place, or that
    git rewrites to another repo (`pushInsteadOf`), is refused.
    A new Git LFS pointer also refuses the move because its payload is outside the Git tree. The move's push skips LFS uploads.
    Changed submodule commits must exist on a remote-tracking branch in their initialized checkout. The move pushes only

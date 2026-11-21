@@ -61,8 +61,8 @@ Pass `--json` when you will read the output: each command then writes one JSON o
   `session remove` deletes the saved conversation. Do either only when asked, and pass `--yes` to `remove` only then.
 - **Moving is the person's call.** `woodshed move --from herdr` ends the local agents it moves and pushes the work to a branch.
   Run it only when asked, and `--dry-run` first to show them what would move. Programs restart in the session only with
-  `--restart auto` or their yes; never pass `--restart auto` for them unasked. Exit 3 listing secret-looking files means
-  those files must leave the work (or go in `.gitignore`): do not move them some other way.
+  `--restart auto` or their yes; never pass `--restart auto` for them unasked. For an exit 3 listing secret-looking
+  files, tell the person which paths and kinds were flagged. Let them decide how to remove credentials from the work.
 - **Use the console the person gave you.** `--console <url>`, else `WOODSHED_CONSOLE`, else the last one signed in to,
   else the hosted `https://console.woodshed.run`. On a fresh computer that is the hosted one, so for a self-hosted
   console pass its `--console <url>` to `login` and `status` alike. Plain `http://` is refused except on `localhost`.
@@ -167,10 +167,10 @@ woodshed move --from herdr --space api --to new                    # or --to <id
 ```
 
 `--terminal <t>` (repeatable, `hc ls` addresses), `--tab` or `--space` (by id or name, `herdr-app ls`) choose what moves.
-Each agent between turns moves with its conversation; one mid-turn exits 3, so wait for it. Two agents in one folder
-need a `claude.session=<id>` label each (`hc label <t> claude.session=<id>`), or which conversation is whose cannot be
-told. Databases do not move: the session has its own. Ignored files (`.env`) stay: `settings push --own-files` gives
-their sessions their own.
+Each agent between turns moves with its conversation. If one is mid-turn, wait for it to finish. When the CLI cannot
+tell which conversation belongs to a terminal, use `hc label <t> claude.session=<id>` for Claude Code or
+`hc label <t> codex.session=<id>` for Codex. The session uses its own databases. Ignored files (`.env`) stay local.
+`settings push --own-files` gives their sessions their own.
 
 ### See a session's app
 

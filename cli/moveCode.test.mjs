@@ -38,6 +38,25 @@ test('secrets are found by name and by content, said by kind and line, and an ex
   assert.deepEqual(secretsIn(`x ${aws} AKIA${'N'.repeat(16)}`, `old ${aws}`), [{ line: 1, kind: 'an AWS access key' }], 'a new one beside it is new');
 });
 
+test('credential headers distinguish literals from references and placeholders', () => {
+  const options = { credentialHeaders: true };
+  const inputs = [
+    'curl -H "Authorization: Bearer $TOKEN"',
+    'Authorization: Bearer <token>',
+    'interface Request { authorization: string; }',
+    'const headers = { authorization: token, cookie: req.headers.cookie };',
+    'const headers = { authorization: getToken() };',
+    'Authorization: process.env.API_TOKEN',
+    '{"cookie":"Cookie preferences","headers":{"Authorization":"Bearer ${token}"}}',
+    'Cookie: session=$SESSION',
+  ];
+  for (const input of inputs) assert.deepEqual(secretsIn(input, '', options), [], input);
+  for (const input of ['Authorization: Basic abc=', 'X-Api-Key: abc', 'Cookie: theme=$THEME; session=abc==']) {
+    assert.deepEqual(secretsIn(input, '', options), [{ line: 1, kind: 'a credential header' }]);
+    assert.deepEqual(secretsIn(input, input, options), []);
+  }
+});
+
 test('embedded JSON inspection allows ordinary tool output and refuses when decoding exceeds its budget', () => {
   let output = JSON.stringify({ headers: { Accept: 'application/json' }, note: 'x'.repeat(4096) });
   output = JSON.stringify({ stdout: output });

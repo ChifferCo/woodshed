@@ -327,6 +327,7 @@ const USER_FLAG_RE = /^(-u|-U|--user|--proxy-user)$/;
  */
 export function shownCommand(argv, looksSecret = () => false) {
   const out = [];
+  const curl = path.basename(String(argv[0])) === 'curl';
   let hideNext = false;
   for (let i = 0; i < argv.length; i++) {
     const word = String(argv[i]);
@@ -338,9 +339,13 @@ export function shownCommand(argv, looksSecret = () => false) {
     const hide = hideNext;
     // A word hidden as the preceding switch's value can still be an option with a secret value of its own.
     hideNext = i + 1 < argv.length && ((credentialName && flag && equals < 0)
-      || (USER_FLAG_RE.test(word) && String(argv[i + 1]).includes(':')));
+      || (USER_FLAG_RE.test(word) && String(argv[i + 1]).includes(':'))
+      || (curl && (word === '-b' || word === '--cookie') && String(argv[i + 1]).includes('=')));
     if (hide || looksSecret(safeUrl)) out.push('…');
     else if (CREDENTIAL_HEADER_ARGUMENT.test(word)) out.push(`${word.split(':')[0]}: …`);
+    // curl reads a cookie file when there is no '=' and uses the value inline when there is.
+    else if (curl && word.startsWith('--cookie=') && word.slice('--cookie='.length).includes('=')) out.push('--cookie=…');
+    else if (curl && word.startsWith('-b') && equals >= 0) out.push('-b…');
     else if (safeUrl !== word) out.push(safeUrl);
     // curl's user:password joined to its flag: -uuser:pass, --user=user:pass.
     else if (/^(-[uU][^-\s]|--(proxy-)?user=)[^:]*:/.test(word)) out.push(`${word.startsWith('--') ? word.split('=')[0] : word.slice(0, 2)}…`);

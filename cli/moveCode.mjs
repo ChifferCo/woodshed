@@ -143,19 +143,56 @@ const SECRET_CONTENT = [
 const CREDENTIAL_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'x-api-key', 'api-key', 'x-auth-token'];
 const headerNames = CREDENTIAL_HEADERS.join('|');
 export const CREDENTIAL_HEADER_ARGUMENT = new RegExp(`^(--header=|-H)?\\s*(?:${headerNames})\\s*:`, 'i');
-const CREDENTIAL_HEADER_TEXT = new RegExp(`(?:^|[^\\w-])(?:${headerNames})[\\t ]*:[\\t ]*\\S`, 'i');
+const CREDENTIAL_HEADER_TEXT = new RegExp(`(?:^|[^\\w-])(${headerNames})[\\t ]*:[\\t ]*(["'\\x60]?)([^"'\\x60,()}\\r\\n\\0]+)`, 'gi');
 const isCredentialHeader = (name) => typeof name === 'string' && CREDENTIAL_HEADERS.includes(name.trim().toLowerCase());
-const hasHeaderValue = (value) => (Array.isArray(value) ? value : [value]).some((part) => typeof part === 'string' && part.trim());
+const AUTH_SCHEME = /^(?:bearer|basic|token)[\t ]+/i;
+const PLACEHOLDER = /^(?:\$|<[^>]+>|…|\.{3}|(?:process\.env|os\.environ|req(?:uest)?\.headers)(?:\.|\[|$))/i;
+const TYPE_OR_SCHEME = /^(?:string|number|boolean|unknown|any|null|undefined|never|object|bearer|basic|token)(?:\[\])?;?$/i;
 
-function credentialHeaderKind(text) {
+function isLiteral(value) {
+  return value && !PLACEHOLDER.test(value) && !value.includes('${') && !value.includes('{{');
+}
+
+function headerLiteral(name, raw) {
+  const text = raw.trim();
+  const value = text.replace(AUTH_SCHEME, '');
+  // Cookie headers carry name=value pairs. A source member access or a "cookie" translation is not one.
+  if (name === 'cookie') {
+    const hasCookie = value.split(';').some((pair) => {
+      const equals = pair.indexOf('=');
+      return equals > 0 && isLiteral(pair.slice(equals + 1).trim());
+    });
+    return hasCookie ? value : null;
+  }
+  return isLiteral(value) && (value !== text || !TYPE_OR_SCHEME.test(value)) ? value : null;
+}
+
+function credentialHeaderKind(text, isNew) {
   const header = 'a credential header';
+  const hasValue = (name, value) => {
+    name = name.trim().toLowerCase();
+    return (Array.isArray(value) ? value : [value]).some((part) => {
+      const literal = typeof part === 'string' ? headerLiteral(name, part) : null;
+      return literal !== null && isNew(name, literal);
+    });
+  };
   const pending = [text];
   // Keep the existing per-record scan and bound extra decoding by both the input length and the blob scan limit.
   let remaining = text.length + Math.min(text.length * 4, SCAN_BYTES);
   while (pending.length) {
     const item = pending.pop();
     if (typeof item === 'string') {
-      if (CREDENTIAL_HEADER_TEXT.test(item)) return header;
+      for (const match of item.matchAll(CREDENTIAL_HEADER_TEXT)) {
+        const [whole, name, quote, value] = match;
+        const next = item[match.index + whole.length];
+        const bare = value.trim();
+        // Unquoted calls and identifiers before JS object delimiters are expressions.
+        if (!quote && !AUTH_SCHEME.test(bare)
+            && (next === '(' || ((next === ',' || next === '}') && /^[\w.$]+$/.test(bare)))) continue;
+        // A short bare identifier in an Authorization field can also be a source variable at the end of a line.
+        if (!quote && name.toLowerCase() === 'authorization' && bare.length < 16 && /^[a-z_$][\w$]*$/i.test(bare)) continue;
+        if (hasValue(name, value)) return header;
+      }
       if (!/^\ufeff?[\t\r\n ]*(?:\{|\[|")/.test(item)) continue;
       remaining -= item.length;
       if (remaining < 0) return 'embedded JSON exceeds the credential scan budget';
@@ -164,10 +201,10 @@ function credentialHeaderKind(text) {
     }
     if (!item || typeof item !== 'object') continue;
     // Structured request logs also record headers as [name, value] pairs and name/value objects.
-    if (Array.isArray(item) && item.length === 2 && isCredentialHeader(item[0]) && hasHeaderValue(item[1])) return header;
-    if (isCredentialHeader(item.name) && hasHeaderValue(item.value)) return header;
+    if (Array.isArray(item) && item.length === 2 && isCredentialHeader(item[0]) && hasValue(item[0], item[1])) return header;
+    if (isCredentialHeader(item.name) && hasValue(item.name, item.value)) return header;
     for (const [key, value] of Object.entries(item)) {
-      if (isCredentialHeader(key) && hasHeaderValue(value)) return header;
+      if (isCredentialHeader(key) && hasValue(key, value)) return header;
       pending.push(value);
     }
   }
@@ -221,10 +258,24 @@ export function secretsIn(text, before = '', { credentialHeaders = false } = {})
   const found = [];
   const source = String(text);
   const lines = source.split('\n');
+  let earlierHeaders;
+  const isNewHeader = (name, value) => {
+    if (!before) return true;
+    if (!earlierHeaders) {
+      earlierHeaders = new Set();
+      const remember = (key, literal) => {
+        earlierHeaders.add(`${key}\0${literal}`);
+        return false;
+      };
+      for (const line of before.split('\n')) credentialHeaderKind(line, remember);
+      if (before.length <= SCAN_BYTES && before.includes('\n')) credentialHeaderKind(before, remember);
+    }
+    return !earlierHeaders.has(`${name}\0${value}`);
+  };
   let headerFinding = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const kind = credentialHeaders ? credentialHeaderKind(line) : null;
+    const kind = credentialHeaders ? credentialHeaderKind(line, isNewHeader) : null;
     if (kind) {
       found.push({ line: i + 1, kind });
       headerFinding = true;
@@ -242,7 +293,7 @@ export function secretsIn(text, before = '', { credentialHeaders = false } = {})
   }
   // JSONL is checked by line above. Also check a complete document within the blob scan budget.
   if (credentialHeaders && !headerFinding && lines.length > 1 && source.length <= SCAN_BYTES) {
-    const kind = credentialHeaderKind(source);
+    const kind = credentialHeaderKind(source, isNewHeader);
     if (kind) found.push({ line: null, kind });
   }
   return found;
