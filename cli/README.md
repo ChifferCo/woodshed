@@ -151,6 +151,8 @@ shows them) choose what moves. Each terminal is read from `hc` and is one of:
 A session runs one kind of agent, with that kind's flags and guards (the ask before `gh pr merge`, the ready gate), so a
 Claude terminal is not moved into a Codex session, nor the other way round, and `--to new` refuses a repo whose terminals
 mix them.
+A Codex move also needs a session image that reports the session's Codex launch flags, so the conversation resumes
+with the sandbox and approval policy picked for that session.
 
 Then, in order (`move.mjs` says each step):
 
@@ -166,7 +168,8 @@ Then, in order (`move.mjs` says each step):
 2. **The session.** `--to <id>` is one of your own sessions on the same repo, resumed when paused; `--to new` starts one
    per repo on its branch, with no prompt (`Moved from <computer>: <space>`). Each is added to Herdr as `session herdr` does (a resumed one is added again, since its core is new).
 3. **The conversations,** with every folder in them said as the session's, written with `hc file write --on` where the
-   session's agent reads them. Nothing else of your home goes.
+   session's agent reads them. If a copy of the conversation is already there, the move keeps it and refuses the import.
+   Nothing else of your home goes.
 4. **The layout:** the same spaces, tabs and splits, with `herdr-app do space.new --machine woodshed-<id>`, `tab.new` and
    `pane.split`, read from the `herdr-app` document in `hc` (never written). With no Herdr window open, each terminal is
    started with the `herdr.space` and `herdr.tab` labels the app adopts it by, its splits side by side. A split's size is

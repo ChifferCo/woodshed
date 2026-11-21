@@ -208,8 +208,16 @@ test('a UTF-16 text file is read for secrets, not skipped as binary', async (t) 
 });
 
 test('a push reached through a chain of url rewrites is refused', async (t) => {
-  const { root, sh, git } = repoFor(t);
-  sh(['config', 'url.https://github.com/acme/app-staging.git.pushInsteadOf', 'https://github.com/acme/app.git'], root);
-  sh(['config', 'url.https://github.com/someone/mirror.git.insteadOf', 'https://github.com/acme/app-staging.git'], root);
-  assert.match((await checkoutOf(git, root)).error, /through more than one url rewrite|git pushes it to/);
+  const { root, bare, sh, git } = repoFor(t);
+  const url = 'https://github.com/acme/app.git';
+  sh(['config', `url.${bare}.pushInsteadOf`, url], root);
+  for (const rule of ['insteadOf', 'pushInsteadOf']) {
+    const key = `url.https://github.com/someone/mirror.git.${rule}`;
+    sh(['config', key, bare], root);
+    assert.equal(sh(['remote', 'get-url', '--push', 'origin'], root), bare);
+    assert.match((await checkoutOf(git, root)).error, /through more than one url rewrite/);
+    sh(['config', '--unset', key], root);
+  }
+  const cannotResolve = (args, opts) => args[0] === 'ls-remote' ? { code: 128, stdout: '' } : git(args, opts);
+  assert.match((await checkoutOf(cannotResolve, root)).error, /no verifiable push URL/);
 });

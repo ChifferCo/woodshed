@@ -175,7 +175,8 @@ export async function moveCommand({ origin, rest }, ctx) {
   const lost = agents.filter((a) => conversations.get(a)?.error);
   if (lost.length) throw fail(`The conversation of ${lost.map((a) => `${a}: ${conversations.get(a).error}`).join('; ')}. Nothing was moved.`, { status: 'no-conversation' });
   // A conversation holds what its agent read and ran: a credential in it would reach the session. Said by line and kind.
-  const heldSecrets = agents.flatMap((a) => secretsIn(fs.readFileSync(conversations.get(a).file, 'utf8')).map((hit) => ({ address: a, ...hit })));
+  const transcripts = new Map(agents.map((a) => [a, fs.readFileSync(conversations.get(a).file, 'utf8')]));
+  const heldSecrets = agents.flatMap((a) => secretsIn(transcripts.get(a)).map((hit) => ({ address: a, ...hit })));
   if (heldSecrets.length) {
     if (json) emit({ event: 'secrets', conversations: heldSecrets });
     throw refused(`These conversations hold what looks like a secret, and the move would carry it into the session:\n${heldSecrets.map((h) => `  ${h.address}'s conversation ${conversations.get(h.address).id}, line ${h.line}: ${h.kind}`).join('\n')}\nRevoke the credential, then move a new conversation, or work on here. Nothing was moved.`);
@@ -313,7 +314,7 @@ export async function moveCommand({ origin, rest }, ctx) {
   }
 
   // ---- From here on, everything made is undone on a failure before the hand-over.
-  const made = { branches: [], sessions: [], worktrees: [], files: [], spaces: [], terminals: [] };
+  const made = { branches: [], sessions: [], worktrees: [], files: [], uploads: [], spaces: [], terminals: [] };
   const machinesOf = new Map();
   const commits = new Map();
   // Each step of the undo that did not work is named, so it can be done by hand.
@@ -332,6 +333,12 @@ export async function moveCommand({ origin, rest }, ctx) {
       if (!(await execOk(w.machine, ['sh', '-c', 'git -C "$1" worktree remove --force "$2" && git -C "$1" branch -D "$3"', 'sh', w.repoDir, w.path, w.branch]))) left.push(`the worktree ${w.path} on ${w.machine}`);
     }
     for (const f of made.files) if (!made.sessions.some((s) => machineName(s.id) === f.machine) && !(await execOk(f.machine, ['rm', '-f', f.path]))) left.push(`${f.path} on ${f.machine}`);
+    for (const { machine, dir, staged, dest } of made.uploads) {
+      if (made.sessions.some((s) => machineName(s.id) === machine)) continue;
+      // A lost reply can leave a published link. Remove it only if it still names this upload's file.
+      const clean = 'if [ "$1" -ef "$2" ]; then rm -f -- "$2" || exit 1; fi; rm -rf -- "$3"';
+      if (!(await execOk(machine, ['sh', '-c', clean, 'sh', staged, dest, dir]))) left.push(`${dir} on ${machine}`);
+    }
     for (const s of made.sessions) {
       const out = await call(origin, `/api/my/sessions/${s.id}/remove`, { method: 'POST', body: {}, token: ctx.token, deadlineMs: 180_000 }).catch(() => null);
       if (out?.status !== 200) left.push(`session ${s.id} (woodshed session remove ${s.id})`);
@@ -418,6 +425,12 @@ export async function moveCommand({ origin, rest }, ctx) {
         codexProvider: codexAuth === 'key' ? 'woodshed' : 'openai',
       });
     }
+    for (const a of agents) {
+      const sid = sessionOf.get(placeOf.get(a).repo);
+      if (kinds.get(a).agent === 'codex' && !facts.get(sid).codexFlags.trim()) {
+        throw refused(`Session ${sid} did not provide its Codex flags. Restart it with a session image that supports woodshed move, or move to a new session.`);
+      }
+    }
 
     // A place's folder there: the session's checkout for its main place, else a worktree of its own.
     const sessionFor = (place) => sessionOf.get(place.repo);
@@ -459,29 +472,40 @@ export async function moveCommand({ origin, rest }, ctx) {
 
     // ---- 4. The conversations, written where the session's agent reads them. Folders said as the session's.
     async function writeThere(machine, dest, data) {
-      // A conversation already there (moved before, and gone on there) is never written over: its later turns would go.
-      const there = parsed((await hc(['exec', '--json', '--on', machine, '--', 'test', '-e', dest])).stdout);
-      if (there?.code === 0) throw refused(`${dest} is already in ${machine}: this conversation was moved there before. Open it there, or move a new one.`);
+      const exec = async (...argv) => parsed((await hc(['exec', '--json', '--on', machine, '--', ...argv])).stdout);
+      const parent = path.posix.dirname(dest);
+      const temp = await exec('sh', '-c', 'mkdir -p -- "$1" && mktemp -d -- "$1/.woodshed-move.XXXXXX"', 'sh', parent);
+      const dir = Buffer.from(temp?.stdout ?? '', 'base64').toString().trimEnd();
+      if (temp?.code !== 0 || path.posix.dirname(dir) !== parent || !/^\.woodshed-move\.[a-zA-Z0-9]{6}$/.test(path.posix.basename(dir))) {
+        throw fail(`Could not stage the conversation for ${dest} on ${machine}`);
+      }
+      const staged = `${dir}/conversation`;
+      const upload = { machine, dir, staged, dest };
+      made.uploads.push(upload);
       const write = async (to, bytes) => {
         const out = await hc(['file', 'write', '--json', '--on', machine, to], { input: bytes, timeoutMs: 120_000 });
         if (out.code !== 0) throw fail(`hc file write ${to} on ${machine}: ${printable(failureOf(out), 300)}`);
       };
       if (data.length <= FILE_PART) {
-        await write(dest, data);
-        made.files.push({ machine, path: dest });
-        return;
+        await write(staged, data);
+      } else {
+        const packed = zlib.gzipSync(data);
+        const parts = [];
+        for (let i = 0; i * FILE_PART < packed.length; i++) {
+          const part = `${dir}/.woodshed-part-${String(i).padStart(3, '0')}`;
+          await write(part, packed.subarray(i * FILE_PART, (i + 1) * FILE_PART));
+          parts.push(part);
+        }
+        const out = await exec('bash', '-c', 'set -o pipefail; out=$1; shift; cat -- "$@" | gunzip > "$out"', 'bash', staged, ...parts);
+        if (out?.code !== 0) throw fail(`${dest} could not be put together on ${machine}`);
       }
-      const packed = zlib.gzipSync(data);
-      const parts = [];
-      for (let i = 0; i * FILE_PART < packed.length; i++) {
-        const part = `${dest}.woodshed-part-${String(i).padStart(3, '0')}`;
-        await write(part, packed.subarray(i * FILE_PART, (i + 1) * FILE_PART));
-        made.files.push({ machine, path: part });
-        parts.push(part);
-      }
-      const out = parsed((await hc(['exec', '--json', '--on', machine, '--', 'sh', '-c', 'out=$1; shift; if cat "$@" | gunzip > "$out"; then rm -f "$@"; else rm -f "$out" "$@"; exit 1; fi', 'sh', dest, ...parts])).stdout);
-      if (!out || out.code !== 0) throw fail(`${dest} could not be put together on ${machine}`);
+      // Publish atomically on the same filesystem. Another copy might have arrived during the upload.
+      const out = await exec('sh', '-c', 'chmod 600 -- "$1" || exit 1; ln -T -- "$1" "$2" && exit 0; if [ -e "$2" ] || [ -L "$2" ]; then exit 3; fi; exit 1', 'sh', staged, dest);
+      if (out?.code === 3) throw refused(`${dest} is already in ${machine}: this conversation was moved there before. Open it there, or move a new one.`);
+      if (out?.code !== 0) throw fail(`Could not publish the conversation to ${dest} on ${machine}`);
       made.files.push({ machine, path: dest });
+      if ((await exec('rm', '-rf', '--', dir))?.code !== 0) throw fail(`Could not clean up ${dir} on ${machine}`);
+      made.uploads.splice(made.uploads.indexOf(upload), 1);
     }
     for (const a of agents) {
       const k = kinds.get(a);
@@ -491,7 +515,7 @@ export async function moveCommand({ origin, rest }, ctx) {
       const machine = machinesOf.get(sid).name;
       const cwd = remoteCwd(a);
       const local = checkoutFor.get(a);
-      const text = rewriteConversation(fs.readFileSync(conversation.file, 'utf8'), { from: rootsOf(local.root), to: folderOf.get(placeOf.get(a)), codexProvider: k.agent === 'codex' ? f.codexProvider : null });
+      const text = rewriteConversation(transcripts.get(a), { from: rootsOf(local.root), to: folderOf.get(placeOf.get(a)), codexProvider: k.agent === 'codex' ? f.codexProvider : null });
       const dest = k.agent === 'claude'
         ? path.posix.join(f.claudeDir, 'projects', claudeProjectDir(cwd), `${conversation.id}.jsonl`)
         : path.posix.join(f.codexDir, 'sessions', conversation.relative);
@@ -609,6 +633,12 @@ export async function moveCommand({ origin, rest }, ctx) {
       if (!state) throw fail(`The moved ${k.agent} in ${terminal} said nothing in ${LIVE_MS / 1000} s: hc read ${terminal} shows its screen.`);
       live.set(a, state);
       step('live', `${terminal} is ${state}`, { address: a, terminal, state });
+    }
+    // A local turn can arrive while the remote session starts. Keep the local agent if its copy has advanced.
+    for (const a of agents) {
+      if (fs.readFileSync(conversations.get(a).file, 'utf8') !== transcripts.get(a)) {
+        throw refused(`${a}'s conversation changed during the move. Wait for the agent to finish, then move again.`);
+      }
     }
     // A program started again that ended at once is said, not undone: the move itself worked, and its log is there.
     for (const a of processes.filter((x) => restart.get(x))) {

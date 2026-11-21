@@ -15,6 +15,7 @@ const ORIGIN = 'http://localhost:7799';
 const CONVERSATION = '11111111-2222-4333-8444-555555555555';
 const SESSION_SETTINGS = fs.readFileSync(new URL('../session/claudeHooks.json', import.meta.url), 'utf8');
 const FLAGS = ' --settings /opt/woodshed/session/claudeHooks.json --append-system-prompt-file /tmp/woodshed-rules.md --permission-mode auto';
+const CODEX_FLAGS = ' --sandbox read-only --ask-for-approval on-request';
 
 /**
  * Mia's laptop: a checkout of acme/app with work in it, a Herdr space `api` with Claude in one pane and `npm run dev`
@@ -51,19 +52,38 @@ function laptop(t, { window = true, sessions = [], conversation = true, agentSta
         if (machine.unreachable) return { code: 255, stderr: 'the session is not running' };
         const script = argv[2] ?? '';
         if (script.includes('woodshed-claude-flags')) {
-          return { code: 0, stdout: `/home/node\n/home/node/work/app\n/opt/woodshed/session\n/home/node/.claude\n/home/node/.codex\nyes\n${Buffer.from(FLAGS).toString('base64')}\n\n` };
+          const codexFlags = list.find((s) => `woodshed-${s.id}` === name)?.options?.agent === 'codex' && !machine.noCodexFlags ? CODEX_FLAGS : '';
+          return { code: 0, stdout: `/home/node\n/home/node/work/app\n/opt/woodshed/session\n/home/node/.claude\n/home/node/.codex\nyes\n${Buffer.from(FLAGS).toString('base64')}\n${Buffer.from(codexFlags).toString('base64')}\n` };
         }
         if (script.includes('worktree add') && machine.worktreeFails) return { code: 128, stderr: 'fatal: could not fetch' };
-        // What is already in the session: the files written, and those it had before.
-        if (argv[0] === 'test' && argv[1] === '-e') return { code: h.files.has(`${name}:${argv[2]}`) || (machine.has ?? []).includes(argv[2]) ? 0 : 1 };
         if (argv[0] === 'cat' && argv[1] === '/opt/woodshed/session/claudeHooks.json') return { code: 0, stdout: SESSION_SETTINGS };
+        if (script.includes('mktemp -d')) return { code: 0, stdout: `${argv[4]}/.woodshed-move.staged\n` };
         // A large conversation put together from its gzipped parts, as the session's sh does.
-        if (script.startsWith('out=$1; shift; if cat "$@" | gunzip')) {
+        if (script.includes('cat -- "$@" | gunzip')) {
           const [, , , , out, ...parts] = argv;
           h.files.set(`${name}:${out}`, zlib.gunzipSync(Buffer.concat(parts.map((p) => h.files.get(`${name}:${p}`)))));
-          for (const p of parts) h.files.delete(`${name}:${p}`);
           return { code: 0 };
         }
+        if (script.includes('ln -T --')) {
+          const [, , , , from, to] = argv;
+          const dest = `${name}:${to}`;
+          // Simulate another import publishing this conversation as our upload finishes.
+          if (machine.collides) h.files.set(dest, Buffer.from('the other import'));
+          if (h.files.has(dest)) return { code: 3 };
+          h.files.set(dest, h.files.get(`${name}:${from}`));
+          return { code: 0 };
+        }
+        const removeDir = (dir) => {
+          for (const file of h.files.keys()) if (file.startsWith(`${name}:${dir}/`)) h.files.delete(file);
+        };
+        if (script.includes(' -ef ')) {
+          const [, , , , from, to, dir] = argv;
+          const staged = h.files.get(`${name}:${from}`);
+          if (staged && staged === h.files.get(`${name}:${to}`)) h.files.delete(`${name}:${to}`);
+          removeDir(dir);
+        }
+        if (argv[0] === 'rm' && argv[1] === '-rf') removeDir(argv.at(-1));
+        if (argv[0] === 'rm' && argv[1] === '-f') h.files.delete(`${name}:${argv.at(-1)}`);
         return { code: 0, stdout: '' };
       },
     };
@@ -327,24 +347,43 @@ test('into a running session of yours, the agent gets a worktree and a branch of
   assert.ok(!l.calls.some(([m]) => m === 'POST'), 'nothing started or resumed: it was running');
 });
 
-test('a conversation that holds a secret, or one already moved into the session, is not carried', async (t) => {
+test('a conversation that holds a secret is refused before the push', async (t) => {
   const l = laptop(t);
   const file = fs.readdirSync(path.join(l.repo.dir, 'home', '.claude', 'projects')).map((d) => path.join(l.repo.dir, 'home', '.claude', 'projects', d, `${CONVERSATION}.jsonl`))[0];
-  const clean = fs.readFileSync(file, 'utf8');
   fs.appendFileSync(file, `${JSON.stringify({ type: 'user', message: { content: `my key is AKIA${'R'.repeat(16)}` } })}\n`);
   const held = await l.run(['move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
   assert.equal(held.code, EXIT.refused);
   assert.match(held.err, /These conversations hold what looks like a secret.*\n {2}t1's conversation 11111111-2222-4333-8444-555555555555, line 3: an AWS access key\n/s);
   assert.ok(!held.err.includes('AKIA'), 'never the value');
   assert.equal(l.onGithub('woodshed/move-c0ffee42'), null);
+});
 
-  fs.writeFileSync(file, clean);
-  const again = laptop(t, { machine: { has: [`/home/node/.claude/projects/${claudeProjectDir('/home/node/work/app/services/api')}/${CONVERSATION}.jsonl`] } });
-  const out = await again.run(['move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
+test('a concurrent transcript import is preserved and only the failed upload is cleaned up', async (t) => {
+  const l = laptop(t, { machine: { collides: true } });
+  const out = await l.run(['move', '--space', 'api', '--to', 'aaaa0001', '--restart', 'never', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.refused, out.out);
-  assert.match(out.err, /is already in woodshed-dddd0004: this conversation was moved there before/);
-  assert.equal(again.onGithub('woodshed/move-c0ffee42'), null, 'undone');
-  assert.equal(again.h.terminals.get(again.claude).state, 'live');
+  assert.match(out.err, /is already in woodshed-aaaa0001: this conversation was moved there before/);
+  const dest = `woodshed-aaaa0001:/home/node/.claude/projects/${claudeProjectDir('/home/node/woodshed-move-c0ffee42/services/api')}/${CONVERSATION}.jsonl`;
+  assert.deepEqual([...l.h.files], [[dest, Buffer.from('the other import')]]);
+  assert.equal(l.onGithub('woodshed/move-c0ffee42'), null, 'undone');
+  assert.equal(l.h.terminals.get(l.claude).state, 'live');
+});
+
+test('a changed local transcript stays local and only the screened copy reaches the session', async (t) => {
+  const l = laptop(t);
+  const file = path.join(l.repo.dir, 'home', '.claude', 'projects', claudeProjectDir(l.cwd), `${CONVERSATION}.jsonl`);
+  const before = fs.readFileSync(file, 'utf8');
+  const out = await l.run(['move', '--space', 'api', '--to', 'aaaa0001', '--console', ORIGIN], {
+    confirm: true,
+    onAsk: () => fs.appendFileSync(file, `${JSON.stringify({ type: 'user', message: { content: `AKIA${'T'.repeat(16)}` } })}\n`),
+  });
+  assert.equal(out.code, EXIT.refused, out.err);
+  assert.match(out.err, /conversation changed during the move/);
+  assert.notEqual(fs.readFileSync(file, 'utf8'), before);
+  const upload = l.h.calls.find((c) => c.args?.[0] === 'file' && c.args.at(-1).endsWith('/conversation'));
+  assert.equal(upload.input.toString('utf8'), before.split(l.cwd).join('/home/node/woodshed-move-c0ffee42/services/api'));
+  assert.deepEqual(sends(l.h, l.claude), []);
+  assert.equal(l.h.files.size, 0, 'the uploaded copy was rolled back');
 });
 
 test('a program with a credential on its command line is never started again in the session, nor printed', async (t) => {
@@ -369,18 +408,25 @@ test('a program with a credential on its command line is never started again in 
 });
 
 test('a Codex terminal moves with its rollout and is ended here with /quit though it never says it is idle', async (t) => {
-  const l = laptop(t, { conversation: false, sessions: [{ id: 'c0dec0de', owner: 'mia-dev', repo: 'acme/app', project: 'app', status: 'running', state: 'done', title: 'Codex one', options: { agent: 'codex' } }] });
+  const machine = { noCodexFlags: true };
+  const l = laptop(t, { machine, conversation: false, sessions: [{ id: 'c0dec0de', owner: 'mia-dev', repo: 'acme/app', project: 'app', status: 'running', state: 'done', title: 'Codex one', options: { agent: 'codex' } }] });
   const codexDir = path.join(l.repo.dir, 'home', '.codex');
   const day = path.join(codexDir, 'sessions', '2026', '11', '20');
   fs.mkdirSync(day, { recursive: true });
   const id = '22222222-3333-4444-8555-666666666666';
   fs.writeFileSync(path.join(day, `rollout-2026-11-20T09-00-00-${id}.jsonl`), `${JSON.stringify({ type: 'session_meta', payload: { id, cwd: l.cwd } })}\n`);
   Object.assign(l.h.terminals.get(l.claude), { foreground: { name: 'codex', argv: ['codex'], cwd: l.cwd, pid: 9 }, status: null, status_ms: null });
+  const refused = await l.run(['move', '--space', 'api', '--to', 'c0dec0de', '--restart', 'never', '--console', ORIGIN], { env: { CODEX_HOME: codexDir } });
+  assert.equal(refused.code, EXIT.refused, refused.err);
+  assert.match(refused.err, /did not provide its Codex flags/);
+  assert.equal(l.h.files.size, 0);
+  assert.deepEqual(sends(l.h, l.claude), []);
+  machine.noCodexFlags = false;
   const out = await l.run(['move', '--space', 'api', '--to', 'c0dec0de', '--restart', 'never', '--json', '--console', ORIGIN], { env: { CODEX_HOME: codexDir } });
   assert.equal(out.code, EXIT.done, out.err + out.out);
   assert.ok(l.h.files.has(`woodshed-c0dec0de:/home/node/.codex/sessions/2026/11/20/rollout-2026-11-20T09-00-00-${id}.jsonl`));
   const run = l.h.calls.find((c) => c.app?.[1] === 'space.new' || c.app?.[1] === 'pane.split');
-  assert.match(JSON.parse(run.app[2]).argv[2], new RegExp(`exec /opt/woodshed/session/bin/codex resume ${id}$`));
+  assert.match(JSON.parse(run.app[2]).argv[2], new RegExp(`exec /opt/woodshed/session/bin/codex resume${CODEX_FLAGS} ${id}$`));
   assert.deepEqual(sends(l.h, l.claude), ['/quit']);
   assert.ok(!l.h.calls.some((c) => c.args?.[0] === 'send' && c.args.includes('--if') && c.args.includes(l.claude)), 'no idle check codex could never pass');
   assert.equal(l.h.terminals.get(l.claude).labels['woodshed.moved'], 'woodshed-c0dec0de/t2');
@@ -418,7 +464,7 @@ test('a new session runs the kind of the repo\'s agents, whichever checkout of i
 test('a conversation over hc\'s 8 MB goes in gzipped parts, and is put together there byte for byte', async (t) => {
   const l = laptop(t);
   const file = fs.readdirSync(path.join(l.repo.dir, 'home', '.claude', 'projects')).map((d) => path.join(l.repo.dir, 'home', '.claude', 'projects', d, `${CONVERSATION}.jsonl`))[0];
-  // Ten megabytes of turns that do not compress to nothing.
+  // Twelve MiB of turns that still span several parts after compression.
   const lines = [];
   for (let i = 0, size = 0; size < 12 * 1024 * 1024; i++) {
     lines.push(JSON.stringify({ type: 'assistant', cwd: l.cwd, message: { content: `${i} ${crypto.randomBytes(600).toString('base64')}` } }));

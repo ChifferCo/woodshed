@@ -89,15 +89,20 @@ export async function checkoutOf(git, cwd) {
   const repo = githubRepo(url);
   if (!repo) return { error: `${root}'s remote ${remote} is not a GitHub repo (${url.replace(/\/\/[^@/]*@/, '//')})` };
   // A remote that pushes to several places (two pushurls) would send the work to each: only one is the repo checked.
-  const pushes = (await git(['remote', 'get-url', '--push', '--all', remote], { cwd: root })).stdout.split('\n').filter(Boolean);
+  const resolved = await git(['remote', 'get-url', '--push', '--all', remote], { cwd: root });
+  const pushes = resolved.stdout.split('\n').filter(Boolean);
+  const unresolved = { error: `${root}'s remote ${remote} has no verifiable push URL` };
+  if (resolved.code !== 0 || !pushes.length) return unresolved;
   if (pushes.length > 1) return { error: `${root}'s remote ${remote} pushes to ${pushes.length} places, and the move pushes to one: give it one pushurl` };
   // Where git really pushes, after its url.*.pushInsteadOf rewriting, is that repo on GitHub, or a folder on this
   // computer (a local mirror, which publishes nothing). Anywhere else, the work would go somewhere not checked.
-  const pushTo = pushes[0] ?? url;
+  const [pushTo] = pushes;
   // Pushing to that URL must not be rewritten again (a chain of url.* rules): then it is where the push really goes.
-  const again = (await git(['ls-remote', '--get-url', pushTo], { cwd: root })).stdout.trim();
-  const pushRules = (await git(['config', '--get-regexp', '^url\\..*\\.pushinsteadof$'], { cwd: root })).stdout.split('\n').filter(Boolean).map((l) => l.split(' ').slice(1).join(' '));
-  if ((again && again !== pushTo) || pushRules.some((prefix) => prefix && pushTo.startsWith(prefix))) {
+  const again = await git(['ls-remote', '--get-url', '--', pushTo], { cwd: root });
+  const rules = await git(['config', '--null', '--get-regexp', '^url\\..*\\.pushinsteadof$'], { cwd: root });
+  if (again.code !== 0 || ![0, 1].includes(rules.code)) return unresolved;
+  const pushRules = rules.stdout.split('\0').filter(Boolean).map((entry) => entry.slice(entry.indexOf('\n') + 1));
+  if (again.stdout.trimEnd() !== pushTo || pushRules.some((prefix) => pushTo.startsWith(prefix))) {
     return { error: `${root}'s remote ${remote} reaches its push URL through more than one url rewrite: give it a pushurl git does not rewrite` };
   }
   const local = /^(file:\/\/|\/|\.\.?\/)/.test(pushTo);

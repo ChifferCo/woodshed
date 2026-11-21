@@ -895,7 +895,7 @@ test('a Codex session starts codex with the picked flags, and the rules go in co
   const flags = execFileSync('bash', ['-c', `${fn('codexFlags')}\ncodexFlags`], {
     encoding: 'utf8', env: { PATH: process.env.PATH, PERMISSION_MODE: 'plan', MODEL: 'gpt-5.5', EFFORT: 'high' },
   });
-  assert.equal(flags, ' --add-dir /tmp/uploads --sandbox read-only --ask-for-approval on-request --model gpt-5.5 -c model_reasoning_effort=\\"high\\"');
+  assert.equal(flags, ' --sandbox read-only --ask-for-approval on-request --model gpt-5.5 -c model_reasoning_effort=\\"high\\"');
   assert.match(fn('configureCodex'), /cp \/tmp\/woodshed-rules\.md "\$CODEX_HOME_DIR\/AGENTS\.md"/);
   assert.ok(ENTRYPOINT.indexOf('  writeRules\n  if [ "${AGENT:-claude}" = codex ]') > 0, 'the rules are written before codex is configured');
 });

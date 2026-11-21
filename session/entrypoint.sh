@@ -951,7 +951,8 @@ configureCodex() {
 # with no inner sandbox, plan is read-only, and default leaves codex's own policy.
 codexFlags() {
   local mode=${PERMISSION_MODE:-auto}
-  printf ' --add-dir %s' "${UPLOADS_DIR:-/tmp/uploads}"
+  # Codex rejects additional writable roots when its sandbox is read-only.
+  [ "$mode" = plan ] || printf ' --add-dir %s' "${UPLOADS_DIR:-/tmp/uploads}"
   case "$mode" in
     auto) printf ' --sandbox danger-full-access --ask-for-approval on-request' ;;
     plan) printf ' --sandbox read-only --ask-for-approval on-request' ;;
