@@ -578,6 +578,24 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     call: async () => { projects = await W.postJson('/api/my/projects/default', { project: projectSelect.value }); },
   }));
 
+  // What your private sessions run claude or codex in (session/agentPane.mjs): tmux, or Herdr's terminal runtime, which
+  // your own Herdr can attach to. One pick, saved as it is picked (designSystem/components/SettingsRows). Your next
+  // private session reads it; shared sessions, reviews, QA and questions are in tmux whatever it says.
+  const terminalStatus = h('p', { class: 'form-note', role: 'status' });
+  function terminalCard() {
+    const current = me.terminal === 'herdr' ? 'herdr' : 'tmux';
+    const pick = (terminal) => act({
+      card: 'terminal', note: terminalStatus, done: 'Saved. Your next private session starts in it; running ones keep theirs.',
+      call: async () => { me = { ...me, ...(await W.postJson('/api/my/terminal', { terminal })) }; },
+    });
+    return line('Agent terminal', [
+      current === 'herdr'
+        ? 'Your private sessions run their agent in Herdr: the TUI tab attaches to it, and so can your own Herdr.'
+        : 'Your private sessions run their agent in tmux, as every session does.',
+      ' Shared sessions, reviews and the Terminal tab use tmux either way.', terminalStatus,
+    ], seg('Agent terminal', [['tmux', 'tmux', 'Run the agent in tmux'], ['herdr', 'Herdr', 'Run the agent in Herdr’s terminal runtime']], current, pick, busy.has('terminal') || !me.available), { id: 'my-terminal' });
+  }
+
   // How the console looks to you, once a sheet of its own (⇧⌘, comes here now). The theme and review files are this
   // browser's (localStorage, as theme.js and the shed's review page read them); the tab a session opens on is yours on
   // every device (viewPrefs.mjs), one for a desktop and one for a phone, since a phone's narrow screen is where TUI and
@@ -783,7 +801,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       blockersCard(),
       // What a new person does first, then how their sessions run, what is kept between them, each repo's own, and the look.
       group({ id: 'set-signins', label: 'Sign-ins' }, tokenCard(), codexCard(), githubCard()),
-      group({ id: 'set-sessions', label: 'Sessions' }, projectCard(), reviewsCard(), limitsCard()),
+      group({ id: 'set-sessions', label: 'Sessions' }, projectCard(), terminalCard(), reviewsCard(), limitsCard()),
       group({ id: 'set-kept', label: 'Kept for you' }, databasesCard(), homeCard()),
       group({
         id: 'repo-settings', label: 'Repos and files',

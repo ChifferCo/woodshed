@@ -107,7 +107,16 @@ change to the stage by the workflow's run, about the time the build takes.
    (what Set up app does, for claude to offer it in a private session, and in a shared one to run the app for its proof without committing the file;
    `appRules`), then the project's own (`.woodshed/rules.md` here), then the installation's instructions for the
    repo and the private session's owner's own from the repo settings, with which of them win (`Instructions added to
-   the rules` in the log, with their sizes), as a system prompt, then `ttyd` on 7681 and `statusd` on 7682. Auto mode runs
+   the rules` in the log, with their sizes), as a system prompt, then `ttyd` on 7681 and `statusd` on 7682. A private
+   session whose owner picked Herdr on My settings (Agent terminal, the `/settings` answer's `terminal`, logged in
+   `Owner's settings fetched`) runs claude or codex in Herdr instead of tmux: the image's pinned herdr-core
+   (`hc`, `HERDR_CORE_VERSION` in the `Dockerfile`) starts a core, a kept shell terminal named `claude` in the checkout,
+   and the agent's command typed into it (`Herdr started` in the log; `WARNING: Herdr did not start, the agent runs in
+   tmux` with `hc`'s last line otherwise, and `/tmp/woodshed-herdr.log` has the rest). The TUI tab's ttyd then runs
+   `hc attach claude`. A shared session, a question, a review and a QA run use tmux either way, and so does the
+   Terminal tab. The choice
+   reaches statusd, claude and `woodshed-login` as `WOODSHED_TERMINAL` (`tmux` or `herdr`); `Claude started` logs it as
+   `terminal`. Auto mode runs
    routine work without asking and refuses risky actions; a session stuck on
    one shows as needing you. A shared session does not stop to ask: it follows
    the project's rules for working unattended (a repo's own pipeline may approve
@@ -213,6 +222,22 @@ The console's only way into a running session besides the terminal:
 - `not-running` when the pane holds a shell after that.
 
 Before the first hook, Woodshed's `classifyPane` reads the pane instead.
+
+Each source is a reader in `session/agentState.mjs`: claude's (above), codex's (its pane alone, `codexState.mjs`), a
+QA run's (its marker file), and Herdr's. An agent in Herdr (`WOODSHED_TERMINAL=herdr`) is read by Herdr first: the status
+herdr-core keeps for its terminal, the agent's own OSC 7501 record (`hc get claude`; claude sends them, codex 0.167
+does not), `idle` or `done` as `done`, `working` as `working` and `blocked` as `needs-you` (`source: 'herdr'`). Its own
+reader stays behind it and wins when it says more: claude's PermissionRequest hook on a prompt the record does not call
+blocked, or a background agent still running after its Stop. With no record (`error`, a shell, codex) the agent's own
+reader stands alone.
+
+statusd reads and types into the agent's terminal through `session/agentPane.mjs`, tmux's `claude` pane or Herdr's
+`claude` terminal through `hc`. Herdr reads the screen without its colours and types text only as a paste with its
+Enter, so in Herdr `POST /send` is `hc send --if idle` (`--if` left out for codex, which reports no status), which also
+holds for a person's draft in an attached client; `boxText` is null, as statusd cannot tell a draft from claude's dim
+suggestion; a file dropped on the TUI tab is saved and not typed in; and `POST /scroll` on the agent answers 409, as the
+attached `hc` client takes the wheel itself. `POST /answer`, `GET /prompt` and `POST /interrupt` work as in tmux, with
+`hc keys` and `hc read`.
 
 ## A tainted session
 
