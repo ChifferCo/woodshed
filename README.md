@@ -21,6 +21,9 @@ over any of them.
 
 **Hosted:** sign up at [woodshed.run](https://woodshed.run) and connect a GitHub repository.
 
+**Command line:** with Node 22 or newer, install `npm install --global @chifferco/woodshed-cli`, then run
+`woodshed login`. See the [CLI guide](cli/README.md) for the one-command installer and optional agent skill.
+
 **Self-hosted:** you need Docker, Node 22 or later, git, the GitHub CLI (`gh`), and a Claude plan or an Anthropic API
 key.
 

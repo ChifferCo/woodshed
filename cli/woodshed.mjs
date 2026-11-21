@@ -19,13 +19,12 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import pkg from '../package.json' with { type: 'json' };
 import { createCredentials } from './credentials.mjs';
 import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
 import { hcRunner, hcVersion, viaCommand } from './hc.mjs';
 
-export const VERSION = pkg.version;
+export const { version: VERSION } = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 export const DEFAULT_CONSOLE = 'https://console.woodshed.run';
 // Each call to the console, its answer read included.
 const REQUEST_MS = 20_000;
