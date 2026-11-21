@@ -2176,8 +2176,11 @@
     // stays where it was.
     const focusedChip = document.activeElement?.closest?.('.rail-projects') ? document.activeElement.dataset.project ?? null : null;
     // The list is its own scroller, and a new one starts at the top: it keeps the old one's place, or each refresh
-    // would throw someone reading the reviews at the bottom back up.
-    const listTop = slots.railBody.querySelector('.rail-list')?.scrollTop ?? 0;
+    // would throw someone reading the reviews at the bottom back up. Another list (Mine or Everyone, a project, people
+    // or a status picked) starts at the top: the old place means nothing in it.
+    const listKey = JSON.stringify([railMine(), railProject(), picked, !railMine() && narrow.matches ? railStatus() : 'all']);
+    const listTop = slots.railListKey === listKey ? slots.railBody.querySelector('.rail-list')?.scrollTop ?? 0 : 0;
+    slots.railListKey = listKey;
     slots.railBody.replaceChildren(...railBody());
     const list = slots.railBody.querySelector('.rail-list');
     if (list && listTop) list.scrollTop = listTop;
