@@ -20,13 +20,12 @@ const REACHABLE = [
 
 const refusal = (message, link) => Object.assign(new Error(message), { shown: true, link });
 
-/** A repos hook in the shape createInstallation takes, over a list kept in memory. */
+/** A repos hook in the shape createInstallation takes. The console keeps the changed projects in memory. */
 export function devHostRepos() {
-  const kept = new Map();
   return {
     names: false,
     async list() {
-      return { repos: REACHABLE.filter((r) => !kept.has(r.repo.toLowerCase())), grant: [GRANT], install: INSTALL };
+      return { repos: REACHABLE, grant: [GRANT], install: INSTALL };
     },
     async add({ repo, by }) {
       const wanted = repo.toLowerCase();
@@ -40,12 +39,10 @@ export function devHostRepos() {
           { href: INSTALL, text: 'Install the App' });
       }
       const project = { name: found.repo.split('/')[1], repo: found.repo };
-      kept.set(wanted, project);
       console.log('devHostRepos: repo kept', { repo: found.repo, by });
       return project;
     },
     async remove({ repo, by }) {
-      kept.delete(repo.toLowerCase());
       console.log('devHostRepos: repo dropped', { repo, by });
     },
   };

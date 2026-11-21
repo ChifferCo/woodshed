@@ -1871,8 +1871,9 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
 - `repos: {list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`: where the program keeps the
   installation's repos, which it built `config.projects` from, so Console settings' Repos card changes them there and
   core keeps no list of its own (`addedProjects`, above under the Repos card). `list` answers what Add a repo offers:
-  `{repos: [{repo, private}] (or owner/name strings), grant: [{account, href}], install}`, the links `https://` only,
-  less the projects (core takes those out). `add` checks the repo, keeps it, and answers the project as the program
+  `{repos: [{repo, private}] (or owner/name strings), grant: [{account, href}], install}`, the links `https://` only.
+  Include connected repos so the CLI can report their access. Core takes them out of the Add a repo picker.
+  `add` checks the repo, keeps it, and answers the project as the program
   named it, `{name, repo}`; `remove` takes one off. Either throws an error with `shown: true` (and `link: {href, text}`
   where the fix is a page, such as giving the GitHub App access) for a refusal the page shows as it is; core refuses
   the default project, a repo with sessions on it, and a repo or name already there before it asks. `names: false` when
@@ -2457,6 +2458,12 @@ list stays in `addedProjects` and is removed from it. A program that names each 
 name field. The change applies to the installation at once, until the program builds it again from its own list; the
 program's refusal is shown under the field with its link, and a failure that is not a refusal answers `The change failed;
 the console log says why`.
+
+`woodshed repo` uses `GET /api/cli/repos` to list, `POST /api/cli/repos` with `{repo, name?}` to add, and
+`POST /api/cli/repos/remove` with `{repo}` to remove. Each authenticates the `wsc_` token and refuses any `Origin`
+header. The add and remove go through the same project code as the Repos card, including the hosting program's `repos`
+hook and the usual settings cleanup on remove. Hosted CLI changes require the `members` hook to check the token
+holder's admin role. Other signed-in members see only the repos they can start sessions on.
 
 Each repo on the card has a row of six colours, its colour on the rail (`public/projectColors.cjs` holds the palette and
 the rule, for the server and the pages alike). A pick is saved at once (`POST /api/console-settings/projects/color`,

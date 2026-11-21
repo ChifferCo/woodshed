@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { createCredentials } from './credentials.mjs';
 import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
+import { repoCommand } from './repos.mjs';
 import { hcRunner, hcVersion, viaCommand } from './hc.mjs';
 
 export const VERSION = '0.1.0';
@@ -36,6 +37,7 @@ Commands:
   login     sign in to a Woodshed console: approve the code it shows in your browser
   logout    sign out of the console, here and at the console
   status    the console, its org, who is signed in, and the hc found here (Herdr's, for session herdr)
+  repo      list, add and remove repos: woodshed repo --help
   tunnel <id> -- <line>
             run <line> in your running session, with this command's stdin, stdout and stderr; exits with its
             exit code, or 255 when the pipe could not open or broke
@@ -45,7 +47,7 @@ Commands:
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};
                    WOODSHED_CONSOLE sets it too)
-  --no-browser     login prints the address to open instead of opening it
+  --no-browser     print the address to open instead of opening it
   --json           machine-readable output: one JSON object per line
   --help           this text
 
@@ -78,7 +80,7 @@ export function parseArgs(argv) {
       if (!argv[i + 1]) throw new CliError('--console needs a URL');
       out.console = argv[++i];
     } else if (arg.startsWith('--console=')) out.console = arg.slice('--console='.length);
-    else if (out.command === 'session') out.args.push(arg);
+    else if (out.command === 'session' || out.command === 'repo') out.args.push(arg);
     else if (arg.startsWith('-')) throw new CliError(`unknown option ${arg}\n\n${USAGE}`);
     else if (!out.command) out.command = arg;
     else if (out.command === 'tunnel') out.args.push(arg);
@@ -148,8 +150,7 @@ export function selfCommand({ execPath = process.execPath, argv1 = process.argv[
   return { node: onPath ?? execPath, script: linked ?? script };
 }
 
-// Only an address this command line built (approvalUrl), and never through a shell: cmd's `start` would read & and | in
-// it as commands of their own.
+// Only a checked web address, and never through a shell: cmd's `start` would read & and | as commands of their own.
 function openBrowser(url, platform) {
   const [command, args] = platform === 'darwin' ? ['open', [url]]
     : platform === 'win32' ? ['rundll32', ['url.dll,FileProtocolHandler', url]]
@@ -210,6 +211,7 @@ export async function main(argv, deps = {}) {
   // Herdr's hc, as the person's shell finds it, on the core their environment names (HC_SESSION and the XDG folders).
   const hc = deps.hc ?? hcRunner({ bin: env.WOODSHED_HC_BIN || 'hc', env });
   let json = argv.includes('--json');
+  let command;
 
   const emit = (object) => stdout.write(`${JSON.stringify(object)}\n`);
   const say = (text) => { if (!json) stdout.write(`${text}\n`); };
@@ -429,7 +431,9 @@ export async function main(argv, deps = {}) {
 
   try {
     const args = parseArgs(argv);
+    command = args.command;
     json = args.json;
+    if (args.command === 'repo' && args.help) return repoCommand(args, { stdout, EXIT });
     if (args.command === 'session' && args.help) return await sessionCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.help || !args.command || args.command === 'help') {
       stdout.write(`${USAGE}\n`);
@@ -441,6 +445,10 @@ export async function main(argv, deps = {}) {
     if (args.command === 'logout') return await logout(origin);
     if (args.command === 'status') return await status(origin);
     if (args.command === 'tunnel') return await tunnel(origin, args);
+    if (args.command === 'repo') return await repoCommand({ ...args, origin }, {
+      stdout, call, token: signedIn(origin).token, open, isTerminal: deps.isTerminal ?? Boolean(stdout.isTTY), json, emit, say, EXIT,
+      fail: (message, opts) => new CliError(message, opts),
+    });
     if (args.command === 'session') {
       // Its prompt may follow `--`, so a word of it is never read as an option.
       return await sessionCommand({ origin, rest: [...args.args, ...(args.rest ? ['--', ...args.rest] : [])] }, {
@@ -455,7 +463,7 @@ export async function main(argv, deps = {}) {
     throw new CliError(`unknown command ${args.command}\n\n${USAGE}`);
   } catch (err) {
     if (!(err instanceof CliError)) throw err;
-    if (argv.slice(0, argv.includes('--') ? argv.indexOf('--') : argv.length).includes('tunnel')) {
+    if (command === 'tunnel' || (command === undefined && argv[0] === 'tunnel')) {
       stderr.write(`woodshed: ${err.message}\n`);
       return TUNNEL_FAILED;
     }
