@@ -429,10 +429,21 @@ Still specific to one repo, and not yet settings:
 - The db-admin task's drivers, borrowed from each database's `dir`'s `node_modules` (`pg`, and `mongoose` for Mongo),
   until the image ships its own.
 
+## Merge risk in a review session
+
+A Woodshed review session assigns High when the change introduces a plausible serious failure. The risk check names
+the failure, who or what it affects, and a verification step. Medium covers meaningful changes with contained or
+reversible consequences, or changes that need more than a quick check. Low covers narrow changes with limited
+consequences that are easy to verify. The base branch's `.woodshed/riskAreas.md` helps reviewers look for failures
+specific to the repo.
+
+When both session reviewers finish and only one rates the change High, that reviewer needs to provide a reason and a
+verification step to set the combined tier. In their absence the check reports Medium and explains what is missing.
+
 ## The review in another repo
 
-`.github/workflows/review.yml` reviews Woodshed's own pull requests, and any repo can run the same review on its own by
-calling it. A workflow of the repo's, with a `pull_request` trigger, calls it pinned to a commit:
+A repo can run the reusable `.github/workflows/review.yml` review instead of a Woodshed session. A workflow of the
+repo's, with a `pull_request` trigger, calls it pinned to a commit:
 
 ```yaml
 on:
