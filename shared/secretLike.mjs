@@ -45,6 +45,8 @@ export function shellCredential(text) {
   // A header's value read from a variable ("Authorization: Bearer $TOKEN") is none.
   const header = /(?:-H|--header)[\s=]*['"]?\s*(authorization|proxy-authorization|x-api-key|api-key|cookie)\s*:\s*(?!(?:(?:bearer|basic|token)\s+)?\$)(?![\s'"])/i.exec(text);
   if (header) return `the ${header[1]} header`;
+  // curl requires a bearer argument, even if its first character is a dash.
+  if (/--oauth2-bearer(?:=|\s+)['"]?(?![$\s'"])/i.test(text)) return 'a --oauth2-bearer value';
   const option = /--(token|password|passwd|api-?key|secret|auth)(?:=|\s+)['"]?(?![$\s'"-])/i.exec(text);
   if (option) return `a --${option[1]} value`;
   if (/[a-z][a-z0-9+.-]*:\/\/[^\s/:@'"]+:[^\s/@'"]+@/i.test(text)) return 'a URL with a sign-in';

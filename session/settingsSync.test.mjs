@@ -359,6 +359,20 @@ test('dotted and quoted keys in inline Codex tables keep credentials out of sync
   }
 });
 
+test('a literal curl OAuth bearer credential keeps its Codex server local', async (t) => {
+  const c = fakeConsole();
+  const model = 'model = "o3"\n';
+  const config = model + '[mcp_servers.api]\ncommand = "curl"\nargs = ["--oauth2-bearer", "-dummy-bearer", "https://example.com/mcp"]\n';
+  const home = await makeHome({ '.codex/config.toml': config });
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  await session(home, c.send('aaaaaaaa')).round({ live: false });
+  const shared = JSON.parse([...c.objects.values()][0]).items['.codex/config.toml'];
+  assert.ok(Buffer.from(shared, 'base64').toString() === model, 'only the model is shared');
+  await assert.rejects(c.settings.sync({
+    login: 'octocat', sessionId: 'old', version: 1, removed: [], changed: { '.codex/config.toml': Buffer.from(config).toString('base64') },
+  }), (err) => err.status === 400 && err.message.includes('--oauth2-bearer') && !err.message.includes('dummy-bearer'));
+});
+
 test('a local Codex credential shadows a shared server without changing the shared copy', async (t) => {
   const c = fakeConsole();
   const shared = '[mcp_servers.demo]\ncommand = "shared-server"\n';

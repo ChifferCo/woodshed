@@ -64,7 +64,7 @@ test('a credential in a line of shell is named by kind or variable, and a variab
   assert.equal(shellCredential('deploy --token=abc'), 'a --token value');
   assert.equal(shellCredential('git clone https://mia:abc@example.com/x.git'), 'a URL with a sign-in');
   assert.equal(shellCredential('git -c credential.helper=store push'), 'a credential helper');
-  for (const fine of ['NPM_TOKEN=$NPM_TOKEN npm publish', 'curl -H "Authorization: Bearer $TOKEN" x', 'deploy --token "$TOKEN"', 'ls -la', 'DEBUG=1 run']) {
+  for (const fine of ['NPM_TOKEN=$NPM_TOKEN npm publish', 'curl -H "Authorization: Bearer $TOKEN" x', 'curl --oauth2-bearer "$TOKEN" x', 'deploy --token "$TOKEN"', 'ls -la', 'DEBUG=1 run']) {
     assert.equal(shellCredential(fine), null, fine);
   }
 });

@@ -919,9 +919,15 @@ test('the console checks a computer\'s dotfile as My settings does, and a pull l
   assert.ok(!JSON.stringify(body).includes(FAKE_GITHUB_TOKEN));
   assert.equal((await post('gitconfig', '[user]\n\temail = x@example.com\n')).status, 400);
   assert.equal((await post('gitconfig', '[constructor]\n\tkey = fixture\n')).status, 400);
+  const bearer = await post('bash-aliases', "alias api='curl --oauth2-bearer=dummy-bearer https://example.com'\n");
+  assert.equal(bearer.status, 400);
+  const bearerError = (await bearer.json()).error;
+  assert.match(bearerError, /--oauth2-bearer/);
+  assert.ok(!bearerError.includes('dummy-bearer'));
   assert.equal((await post('secrets', 'x')).status, 404);
   assert.equal((await post('constructor', 'x')).status, 404);
   assert.equal((await post('inputrc', '  ')).status, 400, 'a computer never clears them');
+  assert.equal((await post('bash-aliases', "; shell aliases\nalias ll='ls -l'\n")).status, 400);
   assert.equal(c.secrets.values.size, 0);
 
   const pull = await c.run(['settings', 'plan', '--pull', '--json']);

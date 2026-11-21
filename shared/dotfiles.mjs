@@ -55,6 +55,7 @@ const GIT_SUBSECTIONS = new Set(['color']);
 const HEADER_RE = /^\s*\[([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\\n]|\\.)*)")?\]\s*(?:[#;].*)?$/;
 const KEY_RE = /^\s*([A-Za-z][A-Za-z0-9-]*)\s*(?:=(.*))?$/;
 const COMMENT_RE = /^\s*(?:[#;].*)?$/;
+const BASH_COMMENT_RE = /^\s*(?:#.*)?$/;
 
 /** A gitconfig's lines as sections and keys, continuations joined. null at a line it cannot read. */
 function gitLines(text) {
@@ -183,8 +184,9 @@ export function dotfileProblem(key, text) {
     return null;
   }
   const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const comment = key === 'bash-aliases' ? BASH_COMMENT_RE : COMMENT_RE;
   for (const [i, line] of lines.entries()) {
-    if (COMMENT_RE.test(line)) continue;
+    if (comment.test(line)) continue;
     const credential = shellCredential(line);
     if (credential) return `line ${i + 1} holds ${credential}: credentials stay off sessions`;
     if (key === 'inputrc') {
@@ -253,7 +255,7 @@ export function fromComputer(key, files, { home }) {
   let other = 0;
   for (const name of DOTFILES[key].from) {
     for (const line of (files[name] ?? '').replace(/\r\n/g, '\n').split('\n')) {
-      if (COMMENT_RE.test(line)) continue;
+      if (BASH_COMMENT_RE.test(line)) continue;
       const alias = aliasOf(line);
       if (!alias) {
         other += 1;
