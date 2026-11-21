@@ -28,7 +28,6 @@
     "shared/databases/postgres.mjs",
     "shared/defaultBranch.mjs",
     "shared/envNames.mjs",
-    "shared/execFrames.mjs",
     "shared/isMain.mjs",
     "shared/project.mjs",
     "shared/projectCheck.mjs",
@@ -36,6 +35,7 @@
     "shared/reservedNames.mjs",
     "shared/workflowFile.mjs",
     "shared/yamlLite.mjs",
+    "shared/execFrames.mjs",
     "skills/woodshed/SKILL.md",
     "COPYRIGHT",
     "LICENSE-AGPL"
