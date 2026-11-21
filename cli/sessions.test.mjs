@@ -170,7 +170,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
   };
   const signed = await run(['login', '--console', origin]);
   assert.equal(signed.code, EXIT.done, signed.err);
-  return { origin, run, calls, sessions, cli, hc, dir, answer: (a) => { answer = a; }, listFailures };
+  return { origin, run, calls, sessions, cli, hc, dir, answer: (a) => { answer = a; }, listFailures, now };
 }
 
 // A start as the fleet moves it: in line, starting, each step, then running.
@@ -643,4 +643,22 @@ test('a console out of reach while a dropped connection is opened again is tried
   const out = await c.run(['session', 'connect', 'aaaa0001']);
   assert.equal(out.code, EXIT.done, out.err);
   assert.equal(terminal.calls.length, 2);
+});
+
+test('session connect does not start another retry at the reconnect deadline', async (t) => {
+  let c;
+  let droppedAt;
+  const terminal = fakeTerminal([{ status: 'attached-then-cut', message: 'the connection closed' }], {
+    during: () => {
+      droppedAt = c.now();
+      c.listFailures.push(...Array(20).fill(502));
+    },
+  });
+  c = await consoleFor(t, { terminal });
+  const out = await c.run(['session', 'connect', 'aaaa0001']);
+  assert.equal(out.code, EXIT.failed);
+  assert.match(out.err, /Could not connect to aaaa0001 again in 60 s: .* answered 502/);
+  assert.equal(c.now() - droppedAt, 60_000, 'the last wait ends at the deadline');
+  assert.equal(c.listFailures.length, 10, 'no status check starts at the deadline');
+  assert.equal(terminal.calls.length, 1);
 });

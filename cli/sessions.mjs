@@ -365,12 +365,18 @@ export async function sessionCommand({ origin, rest }, ctx) {
   async function onTerminal(s, kind) {
     const what = kind === 'shell' ? 'shell' : `${s.options?.agent === 'codex' ? 'codex' : 'claude'}'s terminal`;
     stderr.write(`Connecting to ${s.id}'s ${what}. Ctrl-\\ disconnects; the session goes on.\n`);
-    let droppedAt = null;
+    let reconnectUntil = null;
     let tries = 0;
+    let lastFailure;
+    const giveUp = () => fail(`Could not connect to ${s.id} again in ${RECONNECT_GIVE_UP_MS / 1000} s: ${lastFailure}. Run woodshed session connect ${s.id} to try again.`);
     for (;;) {
       let out;
-      if (droppedAt !== null) {
-        await sleep(RECONNECT_WAITS_MS[Math.min(tries, RECONNECT_WAITS_MS.length - 1)]);
+      if (reconnectUntil !== null) {
+        const remaining = reconnectUntil - now();
+        if (remaining <= 0) throw giveUp();
+        const backoff = RECONNECT_WAITS_MS[Math.min(tries, RECONNECT_WAITS_MS.length - 1)];
+        await sleep(Math.min(backoff, remaining));
+        if (now() >= reconnectUntil) throw giveUp();
         tries += 1;
         // The console may still be restarting behind its proxy. Check the session again before opening the terminal.
         try {
@@ -382,6 +388,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
           if (!err.unreachable && ![502, 503, 504].includes(err.http)) throw err;
           out = { status: 'unreachable', message: err.message };
         }
+        if (!out && now() >= reconnectUntil) throw giveUp();
       }
       out ??= await ctx.terminal(s.id, kind);
       // ttyd sends 1000 on a normal close and a different code on an error.
@@ -398,18 +405,18 @@ export async function sessionCommand({ origin, rest }, ctx) {
       }
       if (out.status === 'refused' && /production data/.test(out.message)) throw fail(`Session ${s.id}: ${out.message}`, { code: EXIT.refused, status: 'refused' });
       const held = out.status === 'attached-then-cut' && (out.ms ?? 0) >= RECONNECT_HELD_MS;
-      if (out.status === 'attached-then-cut' && (held || droppedAt === null)) {
-        droppedAt = now();
+      if (out.status === 'attached-then-cut' && (held || reconnectUntil === null)) {
+        reconnectUntil = now() + RECONNECT_GIVE_UP_MS;
         tries = 0;
         stderr.write(`\r\nwoodshed: the connection to ${s.id} dropped (${out.message}); connecting again. Ctrl-C stops.\n`);
-      } else if (out.status === 'attached-then-cut' && now() - droppedAt < RECONNECT_GIVE_UP_MS) {
-        stderr.write(`\r\nwoodshed: it dropped again at once (${out.message}); still trying, for up to ${Math.ceil((RECONNECT_GIVE_UP_MS - (now() - droppedAt)) / 1000)} s more.\n`);
-      } else if (droppedAt === null) {
+      } else if (reconnectUntil === null) {
         // Never connected: said as it is, not tried again.
         throw fail(out.status === 'refused' ? `${origin} refused the terminal: ${out.message}` : out.message);
-      } else if (now() - droppedAt >= RECONNECT_GIVE_UP_MS) {
-        throw fail(`Could not connect to ${s.id} again in ${RECONNECT_GIVE_UP_MS / 1000} s: ${out.message}. Run woodshed session connect ${s.id} to try again.`);
+      } else if (out.status === 'attached-then-cut') {
+        const remaining = reconnectUntil - now();
+        if (remaining > 0) stderr.write(`\r\nwoodshed: it dropped again at once (${out.message}); still trying, for up to ${Math.ceil(remaining / 1000)} s more.\n`);
       }
+      lastFailure = out.message;
     }
   }
 
