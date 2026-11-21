@@ -45,7 +45,9 @@ async function consoleFor(t, { decision = 'approve', approves = true, people = n
     assert.ok(text.includes('@mia-dev'), 'and who it signs in as');
     const done = await fetch(`${origin}/cli`, {
       method: 'POST', headers: { cookie, origin, 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ code, login: 'mia-dev', decision }).toString(),
+      // What the page's form sends: each hidden field it holds, as a browser would, and the button pressed.
+      body: new URLSearchParams([...[...text.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)]
+        .map(([, name, value]) => [name, value.replaceAll('&quot;', '"').replaceAll('&amp;', '&')]), ['decision', decision]]).toString(),
     });
     assert.equal(done.status, 200);
   }

@@ -2466,7 +2466,7 @@ export function createHandler({
       return redirect(res, location, setCookie);
     }
     // The page a command line's sign-in code is approved on: its form posts without x-woodshed, as a page's form does.
-    if (cli && await handleCliPage({ req, res, url, cli, login: user.login, consoleName })) return;
+    if (cli && await handleCliPage({ req, res, url, cli, login: user.login, consoleName, about: cliAbout })) return;
     if (handleTerminalRequest(req, res, { targetFor: terminalTarget(fleet, user.login, access) })) return;
     if (isReviewPath(url.pathname)) return proxyReview(req, res, url, user.login);
     const { pathname } = url;

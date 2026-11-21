@@ -17,7 +17,14 @@
 // A browser sends Origin with every cross-site POST and the CLI sends none, so /api/cli/device and /api/cli/token
 // refuse a request that has one: no web page starts a sign-in to hand someone the code of. The code is only ever
 // approved on the console's own page, by a signed-in person who sees which computer asked and when.
+//
+// A program that runs several consoles behind one address (console/README.md, "Embedding the console") gives them one
+// waiting room (`devices`, from createCliDevices): the CLI's first calls carry no sign-in, so nothing says which console
+// they are for until a person approves the code on one. The console that approved it makes the token, in its own state,
+// checked by its own `allowed`, whichever console the CLI's next poll reaches; and `owns` says which console holds a
+// token, so the program can send each of the token's calls there.
 
+import { AsyncResource } from 'node:async_hooks';
 import crypto from 'node:crypto';
 import { isSameOrigin } from '../shared/sameOrigin.mjs';
 import { PAGE_HEADERS, PAGE_STYLE } from './desktopSignIn.mjs';
@@ -63,14 +70,28 @@ function deviceName(name) {
 }
 
 /**
- * @param {{store: {state: object, save: () => void}, now?: () => number,
- *          allowed?: (login: string|null) => boolean}} deps
- *   `allowed` says whether a login may still use the console (on the People list): a token whose person was taken off it
- *   stops working at once, not when it expires
+ * The sign-ins waiting for a person, for createCliSignIn's `devices`: one per console, or one several consoles share.
+ * @returns {Map<string, object>}  deviceCode's hash -> {userCode, name, from, createdAt, expiresAt, lastPollAt,
+ *   approved: {login, by, issue}|null, denied}: `by` is the console that approved, `issue` makes its token
  */
-export function createCliSignIn({ store, now = Date.now, allowed = () => true }) {
-  // deviceCode's hash -> {userCode, name, from, createdAt, expiresAt, lastPollAt, approved: {login}|null, denied}
-  const pending = new Map();
+export function createCliDevices() {
+  return new Map();
+}
+
+/**
+ * @param {{store: {state: object, save: () => void}, now?: () => number,
+ *          allowed?: (login: string|null) => boolean, devices?: ReturnType<typeof createCliDevices>}} deps
+ *   `allowed` says whether a login may still use the console (on the People list): a token whose person was taken off it
+ *   stops working at once, not when it expires. `devices` is the waiting room, the console's own unless it shares one
+ */
+export function createCliSignIn({ store, now = Date.now, allowed = () => true, devices = createCliDevices() }) {
+  const pending = devices;
+  // This console, as an approval names it: a shared room holds other consoles' approvals too.
+  const self = Symbol('cliSignIn');
+  // This console, as its consent page names it: consoles at one address can share every label the page shows (a name,
+  // an org, or none), so the form carries this, and a form from another console's page asks again. Not a secret: it
+  // only tells consoles apart, and a code outlives no restart, so one made at each start is enough.
+  const consoleId = crypto.randomBytes(12).toString('hex');
   // Told of each token that ends before its time, so what it holds open closes with it (execPipe.mjs).
   const endedListeners = [];
   const ended = (id, login, why) => {
@@ -131,12 +152,22 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true })
     return { userCode: device.userCode, name: device.name, from: device.from, createdAt: new Date(device.createdAt).toISOString() };
   }
 
-  /** @returns {boolean}  false when there is no such code waiting */
-  function decide({ code, login, approve }) {
+  /**
+   * @param {{code: string, login: string|null, approve: boolean, about?: object|null}} args  `about` is what the CLI is
+   *   told of the console with its token (handleCliApi), as this console says it now
+   * @returns {boolean}  false when there is no such code waiting
+   */
+  function decide({ code, login, approve, about = null }) {
     const device = byUserCode(normalUserCode(code));
     if (!device || device.approved || device.denied) return false;
-    if (approve) device.approved = { login };
-    else device.denied = true;
+    // The token is this console's, made when the CLI next asks, through whichever console sharing the room it reaches.
+    // Bound to this call's context, so what making it logs is this console's, as everything else it does here is.
+    if (approve) {
+      device.approved = {
+        login, by: self,
+        issue: AsyncResource.bind((name) => (allowed(login) ? { status: 'approved', login, about, ...issue({ login, name }) } : { status: 'denied' })),
+      };
+    } else device.denied = true;
     console.log(approve ? 'cliSignIn: sign-in approved' : 'cliSignIn: sign-in denied', { login, name: device.name });
     return true;
   }
@@ -160,7 +191,8 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true })
 
   /**
    * The CLI asking whether its sign-in was approved yet. A token is handed out once: the code is gone after.
-   * @returns {{status: 'pending'|'slow_down'|'denied'|'expired'}|{status: 'approved', token: string, id: string, login: string|null, expiresAt: string}}
+   * @returns {{status: 'pending'|'slow_down'|'denied'|'expired'}|{status: 'approved', token: string, id: string,
+   *   login: string|null, expiresAt: string, about: object|null}}  `about` is the approving console's
    */
   function poll(deviceCode) {
     if (typeof deviceCode !== 'string' || !/^[0-9a-f]{64}$/.test(deviceCode)) return { status: 'expired' };
@@ -176,14 +208,26 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true })
     }
     if (device.approved) {
       pending.delete(key);
-      if (!allowed(device.approved.login)) return { status: 'denied' };
-      return { status: 'approved', login: device.approved.login, ...issue({ login: device.approved.login, name: device.name }) };
+      return device.approved.issue(device.name);
     }
     // A second earlier than the interval is let through: timers on a busy laptop run late, never early, but the
     // round trip can make two polls look closer than they were sent.
     const tooSoon = now() - device.lastPollAt < (POLL_SECONDS - 1) * 1000;
     device.lastPollAt = now();
     return { status: tooSoon ? 'slow_down' : 'pending' };
+  }
+
+  /**
+   * Whether the request carries a live token of this console's, for a program routing requests between consoles: no
+   * check of `allowed` and nothing written, so the console it is sent to refuses it, and logs why, as its own.
+   * @returns {boolean}
+   */
+  function owns(headers) {
+    const token = BEARER_RE.exec(String(headers?.authorization || ''))?.[1];
+    if (!token) return false;
+    const hash = sha256(token);
+    // Read as it is: a console that never made a token has no `cliTokens`, and routing writes nothing to it.
+    return Object.values(store.state.cliTokens ?? {}).some((r) => r.hash === hash && Date.parse(r.expiresAt) > now());
   }
 
   /** @returns {{id: string, login: string|null, record: object}|null}  the live token a request carries */
@@ -226,9 +270,10 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true })
 
   /** Every CLI sign-in of a person's: Remove My Woodshed, or taken off People. */
   function revokeAll(login, by) {
-    // A code approved for them and not collected yet would otherwise sign them in again after this.
+    // A code approved for them and not collected yet would otherwise sign them in again after this. Only this
+    // console's: in a shared room, their approval on another console is that one's.
     for (const device of pending.values()) {
-      if (device.approved?.login === login) {
+      if (device.approved?.by === self && device.approved.login === login) {
         device.approved = null;
         device.denied = true;
       }
@@ -246,7 +291,7 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true })
     endedListeners.push(fn);
   }
 
-  return { start, waiting, decide, poll, tokenFor, list, revoke, revokeAll, whenEnded, logins: () => [...new Set(Object.values(tokens()).map((r) => r.login))] };
+  return { id: consoleId, start, waiting, decide, poll, owns, tokenFor, list, revoke, revokeAll, whenEnded, logins: () => [...new Set(Object.values(tokens()).map((r) => r.login))] };
 }
 
 function json(res, status, body) {
@@ -311,7 +356,7 @@ export async function handleCliApi({ req, res, url, cli, publicUrl, about }) {
     };
     if (answer.status === 'approved') {
       const { token, id, login, expiresAt } = answer;
-      return json(res, 200, { status: 'approved', token, id, login, expiresAt, ...about(login) }), true;
+      return json(res, 200, { status: 'approved', token, id, login, expiresAt, ...(answer.about ?? about(login)) }), true;
     }
     const [status, reply] = statuses[answer.status];
     return json(res, status, reply), true;
@@ -367,17 +412,28 @@ function typePage({ consoleName, error = null, code = '' }) {
   });
 }
 
-// The question before the token: who signs in, on which computer, and that it is only for a sign-in the person started.
-function consentPage({ consoleName, login, device }) {
+// What the page says the token is for, which its form sends back: a page left open while the browser moved to another
+// console at the same address (an embedding program's) asks again, as one left open while it signed in as someone
+// else does, so the token is never another console's than the page named.
+function shownAbout(about) {
+  return JSON.stringify(about ?? null);
+}
+
+// The question before the token: who signs in, on which computer and to what, and that it is only for a sign-in the
+// person started.
+function consentPage({ consoleName, consoleId, login, device, about }) {
   const who = login ? `as <strong>@${escapeHtml(login)}</strong>` : '';
+  const org = about?.org ? ` for <strong>${escapeHtml(about.org)}</strong>` : '';
   return page({
     consoleName, title: 'sign in the command line', body: `  <h1>Sign in the woodshed command line?</h1>
-  <p>The woodshed command line on <strong>${escapeHtml(device.name)}</strong> asks to sign in to ${escapeHtml(consoleName)} ${who}. Sign in only if you just ran <code>woodshed login</code> and your terminal shows this code:</p>
+  <p>The woodshed command line on <strong>${escapeHtml(device.name)}</strong> asks to sign in to ${escapeHtml(consoleName)}${org} ${who}. Sign in only if you just ran <code>woodshed login</code> and your terminal shows this code:</p>
   <span class="code">${escapeHtml(device.userCode)}</span>
   <p class="meta">Asked ${escapeHtml(device.createdAt.replace('T', ' ').slice(0, 16))} UTC</p>
   <form method="post" action="${CLI_PAGE_PATH}">
     <input type="hidden" name="code" value="${escapeHtml(device.userCode)}">
     <input type="hidden" name="login" value="${escapeHtml(login ?? '')}">
+    <input type="hidden" name="about" value="${escapeHtml(shownAbout(about))}">
+    <input type="hidden" name="console" value="${escapeHtml(consoleId)}">
     <button class="btn" type="submit" name="decision" value="approve">Sign in the CLI</button><button class="quiet" type="submit" name="decision" value="deny">Deny</button>
   </form>`,
   });
@@ -398,10 +454,12 @@ function donePage({ consoleName, approved, name }) {
 
 /**
  * The page the person approves the code on, behind the console's sign-in.
- * @param {{req, res, url: URL, cli: ReturnType<typeof createCliSignIn>, login: string|null, consoleName: string}} args
+ * @param {{req, res, url: URL, cli: ReturnType<typeof createCliSignIn>, login: string|null, consoleName: string,
+ *          about?: (login: string|null) => {console: string, org: string|null}}} args
+ *   `about` is what the CLI is told of the console, as handleCliApi's: the page names its org, and the token carries it
  * @returns {Promise<boolean>}  whether it answered
  */
-export async function handleCliPage({ req, res, url, cli, login, consoleName }) {
+export async function handleCliPage({ req, res, url, cli, login, consoleName, about = () => null }) {
   if (url.pathname !== CLI_PAGE_PATH) return false;
   const send = (body, status = 200) => {
     res.writeHead(status, PAGE_HEADERS);
@@ -413,7 +471,7 @@ export async function handleCliPage({ req, res, url, cli, login, consoleName }) 
     if (!typed) return send(typePage({ consoleName }));
     const device = cli.waiting(typed);
     if (!device) return send(typePage({ consoleName, code: typed.slice(0, 20), error: 'No sign-in is waiting with that code. It lasts 10 minutes: run woodshed login again for a new one.' }), 404);
-    return send(consentPage({ consoleName, login, device }));
+    return send(consentPage({ consoleName, consoleId: cli.id, login, device, about: about(login) }));
   }
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' }), true;
   // The consent page's own buttons: a browser always sends Origin with a form's POST, and another site's is refused.
@@ -425,16 +483,22 @@ export async function handleCliPage({ req, res, url, cli, login, consoleName }) 
     return json(res, 400, { error: 'the form was too large' }), true;
   }
   const code = form.get('code') ?? '';
-  // A page left open while this browser signed in as someone else asks again, naming who it is now.
-  if ((form.get('login') ?? '') !== (login ?? '')) {
-    console.warn('cliSignIn: the consent page named another account, asked again', { shown: String(form.get('login') ?? '').slice(0, 40), now: login });
+  // A page left open while this browser signed in as someone else, or moved to another console at this address, asks
+  // again, naming who and where it is now. The console is told by its id, not its labels, which two consoles can share;
+  // the labels are checked too, so a page that named an org this console no longer says is asked again. A form with no
+  // id is from no page that can still approve: codes are kept in memory, so none outlives the restart that brought it.
+  const aboutNow = about(login);
+  const otherConsole = form.get('console') !== cli.id || form.get('about') !== shownAbout(aboutNow);
+  if ((form.get('login') ?? '') !== (login ?? '') || otherConsole) {
+    console.warn(otherConsole ? 'cliSignIn: the consent page named another console, asked again' : 'cliSignIn: the consent page named another account, asked again',
+      { shown: String(form.get('login') ?? '').slice(0, 40), now: login });
     res.writeHead(303, { location: `${CLI_PAGE_PATH}?code=${encodeURIComponent(code)}`, 'cache-control': 'no-store' });
     res.end();
     return true;
   }
   const device = cli.waiting(code);
   const approve = form.get('decision') === 'approve';
-  if (!device || !cli.decide({ code, login, approve })) {
+  if (!device || !cli.decide({ code, login, approve, about: aboutNow })) {
     return send(typePage({ consoleName, error: 'That sign-in has expired or was already answered. Run woodshed login again.' }), 410);
   }
   return send(donePage({ consoleName, approved: approve, name: device.name }));
