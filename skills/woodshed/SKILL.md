@@ -82,6 +82,8 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed settings plan [--pull] [--only …] [--own-files <checkout>]` | Lists what push (or pull) would do with each item; sends and writes nothing | 0 | #278 |
 | `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude settings, skills, MCP servers, and a checkout's ignored env files | 0, 2 not listed before or not confirmed | #278 |
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | #278 |
+| `woodshed review enable [--qa] [--rerun <tag>\|--every-commit] [--dry-run]` | In a checkout: writes `pullRequests.review` with `runner: woodshed` (and with `--qa`, QA in a session) into `.woodshed/project.yaml`, checks it, and asks the console what is missing | 0 ready to commit, 2 an admin's step or a sign-in, 1 the file does not read or check, or the console could not confirm | main |
+| `woodshed review status` | In a checkout: whether review is on, in the checkout's file, on the default branch, and on the console | 0 on, 2 not yet, 1 the console could not tell | main |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in their running session, in its checkout | the line's code, 255 the pipe failed | main |
 
 "main" is in every copy. A pull request number means the command arrives when that pull request merges; until then,
@@ -175,14 +177,17 @@ rename or edit a file to get it past the check.
 ### Turn on a repo's review
 
 Woodshed's review runs in a review session the console starts, and is turned on in the repo's own project file,
-`.woodshed/project.yaml`: its `pullRequests.review` with `runner: woodshed`. The verdict is posted by the console's
-reviewer App, so `author` is that App's `<slug>[bot]` login, and `commentAuthor` the console's own App's; `heading`
-(required) is how the review's body starts, `rerun` what a commit subject carries to run the review again, and
-`workflow` may be left out. Check the file with `node <a Woodshed checkout>/shared/project.mjs check`, run from the
-repo, before proposing it. `project.reference.yaml` in a
-Woodshed checkout has every field. No GitHub workflow, Actions secret or Anthropic key is involved, so nothing here needs a credential.
+`.woodshed/project.yaml`: its `pullRequests.review` with `runner: woodshed`. In a checkout of the repo, on a branch:
 
-A `woodshed review enable` command that writes this and checks the console is ready for it is being built; it is in no
-copy of the CLI yet. Until `woodshed --help` lists `review`, make the edit as you would any change to the repo: on a
-branch, in a pull request the person reviews. If you don't know the reviewer App's login, ask the person: an admin
-makes the App on the console's settings, and it is not something to guess.
+```sh
+woodshed review enable --dry-run   # what it would change
+woodshed review enable             # writes it, checks it, and asks the console what is missing
+```
+
+It changes those lines alone and leaves out `author` and `commentAuthor`, which the console fills in with its reviewer
+App's and its own App's logins: do not add them. Exit 0: commit the file and open a pull request the person reviews;
+the review starts once it is merged. Exit 2: each missing step is printed (the reviewer App not made, or not installed
+on the repo, or `runsOn` naming another console): tell the person and stop. Those are an admin's, on the console or
+on GitHub. Exit 1: the file does not read, `project check` found a problem, or the console could not say it can run
+the review; it says which. `woodshed review status` says later whether it is on. No GitHub workflow, Actions secret or
+Anthropic key is involved, so nothing here needs a credential.
