@@ -39,7 +39,10 @@ async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin
   const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
   handle = createHandler({
     config, fleet: { sessions: () => [], find: () => null }, auth, cli,
-    projectAccess: { startable: async (login) => (login === 'bob' ? [{ name: 'game', repo: 'acme/game' }] : []), view: async () => ({ projects: [] }) },
+    projectAccess: {
+      startable: async (login) => { if (state.startableError) throw new Error(state.startableError); return login === 'bob' ? [{ name: 'game', repo: 'acme/game' }] : []; },
+      view: async () => ({ projects: [] }),
+    },
     reviewReadiness: createReviewReadiness({
       publicUrl: origin, reviewer, ownReviewer: true, appLogin: async () => 'acme-woodshed[bot]', pullRequestsOf: async () => { if (state.gatesError) throw new Error(state.gatesError); return state.gates; },
     }),
@@ -235,4 +238,14 @@ test('a default branch\'s project file the console could not read leaves enable 
   assert.match(run.out, /the default branch's \.woodshed\/project\.yaml was not read: the project file could not be read: HTTP 502/);
   assert.ok(s.file().includes('runner: woodshed'), 'the edit is kept');
   assert.equal((await s.run(['review', 'status'])).code, EXIT.failed);
+});
+
+test('status is 1, not 2, when the console answered with a failure', async (t) => {
+  const s = await setup(t);
+  s.state.startableError = 'GitHub did not answer';
+  const run = await s.run(['review', 'status']);
+  assert.equal(run.code, EXIT.failed);
+  assert.match(run.out, /Console: not asked: .* answered 502: the console could not tell: GitHub did not answer/);
+  const enable = await s.run(['review', 'enable']);
+  assert.equal(enable.code, EXIT.failed);
 });

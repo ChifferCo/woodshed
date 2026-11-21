@@ -152,7 +152,7 @@ export async function reviewCommand({ origin, rest }, deps) {
       return { readiness: null, unasked: `the sign-in to ${origin} ended: run woodshed login --console ${origin}`, signIn: true };
     }
     const said = printable(got.body?.error, 200);
-    return { readiness: null, unasked: `${origin} answered ${got.status}${said ? `: ${said}` : ''}` };
+    return { readiness: null, unasked: `${origin} answered ${got.status}${said ? `: ${said}` : ''}`, failed: true };
   }
 
   function sayConsole(readiness, unasked, { missing, warnings }) {
@@ -257,7 +257,7 @@ export async function reviewCommand({ origin, rest }, deps) {
       fileError = printable(err.message);
     }
     const local = gates?.review ?? null;
-    const { readiness, unasked, signIn, unreachable } = await askConsole(repo);
+    const { readiness, unasked, signIn, unreachable, failed } = await askConsole(repo);
     const findings = readiness ? readinessFindings(readiness, gates) : { missing: [], warnings: [] };
     const remote = readiness?.defaultBranch ?? null;
     // On: the default branch says it, the console runs its reviews (runsOn), and its reviewer App is known installed.
@@ -276,7 +276,7 @@ export async function reviewCommand({ origin, rest }, deps) {
     say(`This checkout:   ${fileError ? `${PROJECT_FILE} does not read: ${fileError}` : `review ${words(local)}${gates?.qa ? `; QA ${gates.qa.runner === 'woodshed' ? 'in a Woodshed session' : 'in GitHub Actions'}` : ''}`}`);
     if (remote) say(`Default branch:  ${remote.error ? `not read: ${printable(remote.error, 200)}` : `review ${words(remote.review)}`}`);
     sayConsole(readiness, unasked, findings);
-    if (fileError || unreachable || remote?.error) return EXIT.failed;
+    if (fileError || unreachable || failed || remote?.error) return EXIT.failed;
     if (on) {
       say('Review is on.');
       return EXIT.done;

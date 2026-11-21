@@ -10,9 +10,10 @@
 //
 // It answers about a repo the asker may start sessions on, and about no other: for any other repo it says only that
 // the console does not have it for them, and asks GitHub nothing more. The command line's token (wsc_, cliSignIn.mjs)
-// may call it, as its person; a call that carries an Origin with that token is a page's, and is refused. A token's
-// call is held to write access on the repo, asked of GitHub each time (a command asks it once, never in a loop): a
-// person who lost it reads nothing more of the repo from that moment, though still on People.
+// may call it, as its person; a call that carries an Origin with that token is a page's, and is refused. Every call,
+// a cookie's or a token's, is held to write access on the repo, asked of GitHub each time (a command asks once, never
+// in a loop): a person who lost it reads nothing more of the repo from that moment, though still on People and still
+// holding a cookie auth.mjs has not rechecked yet.
 //
 // Ready means: the repo is the asker's to start on, the reviewer App is made and known to be installed on it, and the
 // default branch's runsOn, when it names one, names this console as the fleet reads it (fleet.mjs, runsElsewhere).
@@ -51,12 +52,12 @@ export function createReviewReadiness({ publicUrl, reviewer, ownReviewer, appLog
 
   /**
    * @param {string} repo  owner/name
-   * @param {{projects: {name: string, repo: string}[], login?: string|null, recheck?: boolean}} who  the projects the
-   *   asker may start sessions on; `recheck` asks GitHub whether `login` still writes to the repo (a token's call)
+   * @param {{projects: {name: string, repo: string}[], login?: string|null}} who  the projects the asker may start
+   *   sessions on, and who asks: GitHub is asked whether they still write to the repo
    */
-  async function check(repo, { projects, login = null, recheck = false }) {
+  async function check(repo, { projects, login = null }) {
     let project = projects.find((p) => String(p.repo).toLowerCase() === repo.toLowerCase()) ?? null;
-    if (project && recheck && !(await stillWrites(login, project))) project = null;
+    if (project && !(await stillWrites(login, project))) project = null;
     const missing = [];
     if (!project) {
       missing.push({ key: 'repo', by: 'admin', step: `An admin of the console adds ${repo} on Console settings, Repos (${publicUrl}/settings), and you need write access to it.` });
@@ -132,13 +133,13 @@ export function createReviewReadiness({ publicUrl, reviewer, ownReviewer, appLog
  *          projects: (login: string|null) => Promise<{name: string, repo: string}[]>,
  *          reply: (res, status: number, body: object) => void}} args
  */
-export async function reviewReadinessReply({ req, res, url, login, readiness, projects, reply, recheck = false }) {
+export async function reviewReadinessReply({ req, res, url, login, readiness, projects, reply }) {
   if (req.method !== 'GET') return reply(res, 405, { error: 'method not allowed' });
   if (!readiness) return reply(res, 404, { error: 'this console cannot review pull requests in a session: it has no GitHub App' });
   const repo = String(url.searchParams.get('repo') ?? '').trim();
   if (!REPO_RE.test(repo)) return reply(res, 400, { error: 'repo must be owner/name' });
   try {
-    return reply(res, 200, await readiness.check(repo, { projects: await projects(login), login, recheck }));
+    return reply(res, 200, await readiness.check(repo, { projects: await projects(login), login }));
   } catch (err) {
     console.error('reviewReadiness: not read', { repo, login, message: firstLine(err) });
     return reply(res, 502, { error: `the console could not tell: ${firstLine(err)}` });
@@ -166,5 +167,5 @@ export async function cliReviewReadinessReply({ req, res, url, cli, readiness, p
   }
   const signedIn = cli.tokenFor(req.headers);
   if (!signedIn) return reply(res, 401, { error: 'not signed in, or the sign-in ended: run woodshed login' });
-  return reviewReadinessReply({ req, res, url, login: signedIn.login, readiness, projects, reply, recheck: true });
+  return reviewReadinessReply({ req, res, url, login: signedIn.login, readiness, projects, reply });
 }

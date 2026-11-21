@@ -143,6 +143,9 @@ test('a token\'s person who lost write access to the repo reads nothing more of 
   const gone = await read({ authorization: `Bearer ${token}` });
   assert.deepEqual([gone.project, gone.reviewerApp, gone.defaultBranch], [null, null, null], 'the very next call, no earlier answer kept');
   assert.equal(asked.length, 2);
-  assert.equal((await read({ cookie: 'woodshed_session=bob' })).project, 'game', 'a browser\'s sign-in is rechecked by auth.mjs, not here');
-  assert.equal(asked.length, 2);
+  const byCookie = await read({ cookie: 'woodshed_session=bob' });
+  assert.deepEqual([byCookie.project, byCookie.reviewerApp, byCookie.defaultBranch], [null, null, null], 'a cookie auth.mjs has not rechecked yet gets nothing either');
+  assert.equal(asked.length, 3);
+  writes = true;
+  assert.equal((await read({ cookie: 'woodshed_session=bob' })).project, 'game');
 });
