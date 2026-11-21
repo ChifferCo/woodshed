@@ -1,6 +1,8 @@
 # Where to look for serious merge risk in Woodshed
 
-These examples supplement the review rubric. Tie a High rating to a plausible failure introduced by the diff.
+In a Woodshed session, use these examples to supplement the review rubric and tie a High rating to a plausible
+failure introduced by the diff. The reusable Actions workflow reads this file by default and treats listed areas
+as High.
 
 - Session boundaries: can a session gain access to another person's data, production credentials, or resources
   outside its intended network or mounts?

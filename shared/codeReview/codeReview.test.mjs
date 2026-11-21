@@ -155,18 +155,23 @@ test('when High ratings tie, the report with a pre-merge check wins', () => {
   assert.deepEqual(merged.mergeRisk, codex.mergeRisk);
 });
 
-test('the failure reason and pre-merge check can appear in either order', (t) => {
+test('a High tie prefers the complete report with the reason and check in either order', (t) => {
   const d = dir(t);
   fs.writeFileSync(path.join(d, 'verdict.txt'), 'APPROVE');
+  const claude = verdictOf('APPROVE', { tier: 'High' });
+  claude.mergeRisk.summary = 'HIGH\nHigh reason';
   const merge = (report) => {
     fs.writeFileSync(path.join(d, 'merge-risk.md'), report);
     return mergeVerdicts([
-      { name: 'Claude Code', verdict: verdictOf('APPROVE') },
+      { name: 'Claude Code', verdict: claude },
       { name: 'Codex', verdict: verdictIn(d) },
-    ]).mergeRisk.tier;
+    ]).mergeRisk;
   };
-  assert.equal(merge(`HIGH\n${highRiskCheck}\nA new route could expose a private session.\n`), 'High');
-  assert.equal(merge(`HIGH\n${highRiskCheck}\n`), 'High');
+  const reason = 'A new route could expose a private session.';
+  for (const summary of [`HIGH\n${highRiskCheck}\n${reason}`, `HIGH\n${reason}\n${highRiskCheck}`]) {
+    assert.deepEqual(merge(summary), { tier: 'High', reason, summary });
+  }
+  assert.deepEqual(merge(`HIGH\n${highRiskCheck}\n`), claude.mergeRisk);
 });
 
 test('a High rating survives an unrated verdict without a pre-merge check', () => {
