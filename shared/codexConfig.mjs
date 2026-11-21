@@ -27,18 +27,18 @@ export function keyText(parts) {
   return parts.map((p) => (BARE.test(p) ? p : JSON.stringify(p))).join('.');
 }
 
+const BASIC_ESCAPES = { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', e: '\x1b', '"': '"', '\\': '\\' };
+
 function decodeBasic(raw) {
-  try {
-    // TOML's long Unicode escape has no JSON equivalent.
-    const json = raw.replace(/\\(?:\\|U([0-9A-Fa-f]{8}))/g, (match, hex) => {
-      if (!hex) return match;
-      return JSON.stringify(String.fromCodePoint(Number.parseInt(hex, 16))).slice(1, -1);
-    });
-    return JSON.parse(json);
-  } catch {
-    // An escape JSON has not (\e, \x): what is between the quotes is near enough for a name.
-    return raw.slice(1, -1);
-  }
+  const multiline = raw.startsWith('"""');
+  const content = multiline ? raw.slice(3, -3).replace(/^\r?\n/, '') : raw.slice(1, -1);
+  // Decode a single escape at a time: an escaped backslash cannot start a line continuation.
+  return content.replace(/\\(?:([btnfre"\\])|(u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|x[0-9A-Fa-f]{2})|[ \t]*\r?\n[ \t\r\n]*)/g, (match, escape, unicode) => {
+    if (escape) return BASIC_ESCAPES[escape];
+    if (!unicode) return '';
+    const point = Number.parseInt(unicode.slice(1), 16);
+    return point <= 0x10ffff ? String.fromCodePoint(point) : match;
+  });
 }
 
 function skipSpace(text, at) {
@@ -247,11 +247,11 @@ export function compose(base, own) {
   return tail ? `${ends(out)}${out.trim() ? tail : tail.replace(/^\n/, '')}` : out;
 }
 
-const STRING_RE = /"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:[^"\\\n]|\\.)*"|'[^'\n]*'/g;
+const STRING_RE = /"""(?:[^"\\]|\\[\s\S]|"{1,2}(?!"))*"{3,5}|'''(?:[^']|'{1,2}(?!'))*'{3,5}|"(?:[^"\\\n]|\\.)*"|'[^'\n]*'/g;
 
 function said(raw) {
-  if (raw.startsWith('"""') || raw.startsWith("'''")) return raw.slice(3, -3);
   if (raw.startsWith('"')) return decodeBasic(raw);
+  if (raw.startsWith("'''")) return raw.slice(3, -3).replace(/^\r?\n/, '');
   return raw.startsWith("'") ? raw.slice(1, -1) : raw;
 }
 

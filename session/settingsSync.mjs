@@ -12,6 +12,7 @@
 // statusd runs syncSettings every SYNC_EVERY_MS after that.
 
 import fs from 'node:fs/promises';
+import { lstatSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -129,16 +130,35 @@ function inside(home, id) {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
+/** The first symlink on a settings path under the home, relative to the home. */
+export function linkOnPath(home, file) {
+  let at = home;
+  for (const part of file.split('/')) {
+    at = path.join(at, part);
+    try {
+      const stat = lstatSync(at, { throwIfNoEntry: false });
+      if (!stat) return null;
+      if (stat.isSymbolicLink()) return path.relative(home, at);
+    } catch (err) {
+      if (err.code === 'ENOTDIR') return null;
+      throw err;
+    }
+  }
+  return null;
+}
+
+const pathGuard = (home, skipPath) => skipPath ?? ((file) => Boolean(linkOnPath(home, file)));
+
 async function filesUnder(home, dir, skipPath) {
   const found = [];
-  if (skipPath?.(dir, true)) return found;
+  if (skipPath(dir, true)) return found;
   const entries = await fs.readdir(path.join(home, dir), { withFileTypes: true }).catch(() => []);
   for (const e of entries) {
     const rel = `${dir}/${e.name}`;
     if (NOT_SYNCED.includes(rel)) continue;
     if (e.isDirectory()) found.push(...await filesUnder(home, rel, skipPath));
     else if (e.isFile()) found.push(rel);
-    else if (e.isSymbolicLink()) skipPath?.(rel);
+    else if (e.isSymbolicLink()) skipPath(rel);
   }
   return found;
 }
@@ -159,10 +179,10 @@ async function readJson(file) {
  * while claude is writing the list: they are never taken as removed, so a round without them loses nothing.
  * @returns {Promise<Record<string, string>>}
  */
-export async function pluginItems(home, skipPath) {
-  if (skipPath?.(PLUGINS_FILE)) return {};
+export async function pluginItems(home, skipPath = pathGuard(home)) {
+  if (skipPath(PLUGINS_FILE)) return {};
   const installed = await readJson(path.join(home, PLUGINS_FILE)).catch(() => null);
-  const known = skipPath?.(MARKETPLACES_FILE) ? null : await readJson(path.join(home, MARKETPLACES_FILE)).catch(() => null);
+  const known = skipPath(MARKETPLACES_FILE) ? null : await readJson(path.join(home, MARKETPLACES_FILE)).catch(() => null);
   const items = {};
   const plugins = installed?.plugins;
   if (!plugins || typeof plugins !== 'object') return items;
@@ -187,10 +207,11 @@ export async function readSnapshot(home, { skipPath } = {}) {
   const oversized = [];
   const unparsed = [];
   let codexConfig;
+  const blocked = pathGuard(home, skipPath);
   const files = [...SYNCED_FILES];
-  for (const dir of SYNCED_DIRS) files.push(...await filesUnder(home, dir, skipPath));
+  for (const dir of SYNCED_DIRS) files.push(...await filesUnder(home, dir, blocked));
   for (const rel of files) {
-    if (skipPath?.(rel)) continue;
+    if (blocked(rel)) continue;
     const content = await fs.readFile(path.join(home, rel)).catch((err) => (err.code === 'ENOENT' || err.code === 'EISDIR' ? null : Promise.reject(err)));
     if (!content) continue;
     if (content.length > MAX_ITEM_BYTES) oversized.push(rel);
@@ -205,10 +226,10 @@ export async function readSnapshot(home, { skipPath } = {}) {
       if (shared) items[rel] = Buffer.from(shared).toString('base64');
     } else items[rel] = content.toString('base64');
   }
-  Object.assign(items, await pluginItems(home, skipPath));
+  Object.assign(items, await pluginItems(home, blocked));
   const unreadable = [];
   for (const { file, key } of SYNCED_ENTRIES) {
-    if (skipPath?.(file)) continue;
+    if (blocked(file)) continue;
     const json = await readJson(path.join(home, file));
     if (json === null) {
       unreadable.push(file);
@@ -245,7 +266,7 @@ export function localChanges(synced, local, oversized = []) {
  *   start are left alone. before: the snapshot the round sent; an item changed on disk since is someone's edit made
  *   while the request was out, so it is left for the next round to send rather than overwritten or deleted.
  *   skipPath: paths to leave alone both when reading and when applying the shared copy.
- * @returns {Promise<{written: number, deleted: number, skipped: string[]}>}  skipped: the entries left alone for `live`
+ * @returns {Promise<{written: number, deleted: number, skipped: string[]}>}  skipped: items held back from this write
  */
 export async function applyItems(home, items, { live = false, before = null, skipPath } = {}) {
   let written = 0;
@@ -253,13 +274,18 @@ export async function applyItems(home, items, { live = false, before = null, ski
   const skipped = [];
   const { items: local, oversized: tooBig, unparsed, codexConfig } = await readSnapshot(home, { skipPath });
   const oversized = [...tooBig, ...unparsed];
+  const blocked = pathGuard(home, skipPath);
   const untouched = (id) => !before || before[id] === (id === CODEX_CONFIG && skipPath ? codexConfig : local[id]);
   for (const [id, shared] of Object.entries(items)) {
     // This session's own status line stays (see SETTINGS).
     const value = id === SETTINGS && local[id] ? withStatusLineOf(shared, local[id]) : shared;
     const same = local[id] === value || (id === SETTINGS && local[id] && sameSettings(local[id], value));
     if (!isSyncedFile(id) || !inside(home, id) || same) continue;
-    if (skipPath?.(id) || oversized.includes(id) || !untouched(id)) {
+    if (blocked(id)) {
+      skipped.push(id);
+      continue;
+    }
+    if (oversized.includes(id) || !untouched(id)) {
       if (skipPath) skipped.push(id);
       continue;
     }
@@ -269,7 +295,7 @@ export async function applyItems(home, items, { live = false, before = null, ski
     written += 1;
   }
   for (const id of Object.keys(local)) {
-    if (!isSyncedFile(id) || !inside(home, id) || id in items || !untouched(id) || skipPath?.(id)) continue;
+    if (!isSyncedFile(id) || !inside(home, id) || id in items || !untouched(id) || blocked(id)) continue;
     // config.toml gone from the shared copy leaves this side's own entries.
     if (id === CODEX_CONFIG) await fs.writeFile(path.join(home, id), await withOwnEntriesOf(path.join(home, id), ''));
     else await fs.rm(path.join(home, id), { force: true });
@@ -279,7 +305,7 @@ export async function applyItems(home, items, { live = false, before = null, ski
     const wanted = Object.entries(items).filter(([id]) => parseEntryId(id)?.file === file && parseEntryId(id)?.key === key);
     if (!wanted.length) continue;
     const target = path.join(home, file);
-    const json = (live && !readLive) || skipPath?.(file) ? null : await readJson(target);
+    const json = (live && !readLive) || blocked(file) ? null : await readJson(target);
     if (json === null) {
       skipped.push(...wanted.map(([id]) => id));
       continue;
@@ -400,6 +426,8 @@ export async function syncOnce({ home, state, live, send }) {
   const oversized = [...tooBig, ...unparsed];
   const known = state.version !== null;
   let { changed, removed } = known ? localChanges(state.synced, local, oversized) : { changed: {}, removed: [] };
+  // An item behind a link is held locally. It has not been deleted from the shared copy.
+  removed = removed.filter((id) => !linkOnPath(home, id));
   // A JSON file read mid-write is left out of this round entirely: its entries are neither sent nor counted as gone.
   for (const file of unreadable) for (const id of Object.keys(changed)) if (parseEntryId(id)?.file === file) delete changed[id];
   // The shared copy's status line goes back as it was, and a difference in it alone is no change. With no shared copy
@@ -441,6 +469,7 @@ async function pullAtStart() {
   if (!consoleUrl || !token) return;
   const home = os.homedir();
   for (const { file } of SYNCED_ENTRIES) {
+    if (linkOnPath(home, file)) continue;
     const dir = path.dirname(path.join(home, file));
     const prefix = `${path.basename(file)}${TEMP_SUFFIX}`;
     for (const name of await fs.readdir(dir).catch(() => [])) if (name.startsWith(prefix)) await fs.rm(path.join(dir, name), { force: true });

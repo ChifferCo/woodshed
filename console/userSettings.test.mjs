@@ -90,6 +90,7 @@ test('tmux is the image\'s file plus the person\'s own lines, kept apart by logi
 
   await assert.rejects(settings.saveFile('octocat', 'tmux-conf', 'x'.repeat(70_000)), /64 KB/);
   await assert.rejects(settings.file('octocat', 'secrets'), /no file called/);
+  await assert.rejects(settings.saveFile('octocat', 'constructor', 'fixture'), /no file called constructor/);
   await settings.saveFile('octocat', 'tmux-conf', 'set -g mouse off');
   await settings.removeAll('octocat');
   assert.equal(secrets.values.size, 0, 'Remove deletes the files too');

@@ -232,7 +232,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   function requireFile(key) {
-    if (!FILES[key]) throw Object.assign(new Error(`no file called ${key}`), { shown: true });
+    if (!Object.hasOwn(FILES, key)) throw Object.assign(new Error(`no file called ${key}`), { shown: true });
   }
 
   /** @returns {string}  the image's file: what every session starts from; empty for one the image has none of */
@@ -262,7 +262,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     requireFile(key);
     const value = checkFile(text);
     if (!value) return resetFile(login, key);
-    const problem = DOTFILES[key] ? dotfileProblem(key, value) : null;
+    const problem = Object.hasOwn(DOTFILES, key) ? dotfileProblem(key, value) : null;
     if (problem) {
       console.log('userSettings: file refused', { login, key, why: problem.split(':')[0] });
       throw Object.assign(new Error(problem), { shown: true });
@@ -467,7 +467,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     if (secrets) {
       // Own lines saved on My settings' env file tabs before Repo settings (`users/<login>/<env secret>`) are known only
       // by this record's `files`, which goes below: they go first, or nothing would know of them again.
-      const old = Object.keys(recordFor(login)?.files ?? {}).filter((key) => !FILES[key] && /^[a-z0-9-]+$/.test(key));
+      const old = Object.keys(recordFor(login)?.files ?? {}).filter((key) => !Object.hasOwn(FILES, key) && /^[a-z0-9-]+$/.test(key));
       for (const key of [CLAUDE_TOKEN, CODEX_AUTH, GITHUB, OWN_FILES, 'database', ...Object.keys(FILES), ...old]) await secrets.remove(userSecretName(login, key));
     }
     delete people()[loginKey(login)];

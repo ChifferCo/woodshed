@@ -359,6 +359,61 @@ test('dotted and quoted keys in inline Codex tables keep credentials out of sync
   }
 });
 
+test('a session never syncs through a link to its Codex sign-in or a linked settings directory', async (t) => {
+  const c = fakeConsole();
+  const auth = '{"access_token":"dummy-sign-in"}';
+  const home = await makeHome({
+    '.codex/auth.json': auth,
+    '.codex/config.toml': 'model = "o3"\n',
+    '.codex/local-skills/private/SKILL.md': '# Local only\n',
+  });
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  await fs.symlink('auth.json', path.join(home, '.codex/AGENTS.md'));
+  await fs.symlink('local-skills', path.join(home, '.codex/skills'));
+
+  const a = session(home, c.send('aaaaaaaa'));
+  const started = await a.round({ live: false });
+  assert.equal(started.sent, 1);
+  assert.deepEqual(Object.keys(JSON.parse([...c.objects.values()][0]).items), ['.codex/config.toml']);
+  await assert.rejects(c.settings.sync({
+    login: 'octocat', sessionId: 'old', version: 1, removed: [], changed: { '.codex/auth.json': Buffer.from(auth).toString('base64') },
+  }), (err) => err.status === 400 && err.message === 'a Codex sign-in stays where it was set');
+
+  const b = session(await makeHome({}), c.send('bbbbbbbb'));
+  t.after(() => fs.rm(b.home, { recursive: true, force: true }));
+  await b.round();
+  await fs.writeFile(path.join(b.home, '.codex/AGENTS.md'), 'Shared instructions.\n');
+  await fs.mkdir(path.join(b.home, '.codex/skills/shared'), { recursive: true });
+  await fs.writeFile(path.join(b.home, '.codex/skills/shared/SKILL.md'), '# Shared\n');
+  await b.round();
+
+  assert.equal((await a.round()).written, 0);
+  assert.equal((await a.round()).removed, 0);
+  assert.equal(await read(home, '.codex/auth.json'), auth);
+  assert.equal(await fs.readlink(path.join(home, '.codex/AGENTS.md')), 'auth.json');
+  await assert.rejects(read(home, '.codex/local-skills/shared/SKILL.md'), { code: 'ENOENT' });
+  await fs.rm(path.join(home, '.codex/config.toml'));
+  await fs.symlink('auth.json', path.join(home, '.codex/config.toml'));
+  assert.equal((await a.round()).removed, 0, 'replacing a synced file with a link does not remove the shared item');
+});
+
+test('a token folded across a multiline TOML string stays local and the console refuses that config', async (t) => {
+  const c = fakeConsole();
+  const model = 'model = "o3"\n';
+  const firstHalf = 'gh' + 'p_' + 'x1'.repeat(9);
+  const secondHalf = 'x1'.repeat(9);
+  const config = `${model}notify = ["""\n  ${firstHalf}\\\n  ${secondHalf}"""]\n`;
+  const home = await makeHome({ '.codex/config.toml': config });
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const a = session(home, c.send('aaaaaaaa'));
+  await a.round({ live: false });
+  const items = JSON.parse([...c.objects.values()][0]).items;
+  assert.equal(Buffer.from(items['.codex/config.toml'], 'base64').toString() === model, true, 'only the model is shared');
+  await assert.rejects(c.settings.sync({
+    login: 'octocat', sessionId: 'old', version: 1, removed: [], changed: { '.codex/config.toml': Buffer.from(config).toString('base64') },
+  }), (err) => err.status === 400 && err.message.includes('GitHub token') && !err.message.includes(firstHalf));
+});
+
 test('a config.toml that does not read as TOML is held out of the round, neither sent nor written over, until it reads', async () => {
   const c = fakeConsole();
   const a = session(await makeHome({ '.codex/config.toml': 'model = "o3"\n' }), c.send('aaaaaaaa'));

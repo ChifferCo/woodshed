@@ -128,7 +128,7 @@ const sectionName = (section) => (section.sub === null ? `[${section.name}]` : `
 const sectionText = (section) => (section.sub === null ? `[${section.name}]` : `[${section.name} "${section.sub}"]`);
 
 function gitSectionAllowed(section) {
-  return Boolean(section && GIT_KEYS[section.name] && (section.sub === null || GIT_SUBSECTIONS.has(section.name)));
+  return Boolean(section && Object.hasOwn(GIT_KEYS, section.name) && (section.sub === null || GIT_SUBSECTIONS.has(section.name)));
 }
 
 function gitKeyAllowed(section, key) {
@@ -159,7 +159,7 @@ export function aliasOf(line) {
  * @returns {string|null}
  */
 export function dotfileProblem(key, text) {
-  if (!DOTFILES[key]) return `no file called ${key}`;
+  if (!Object.hasOwn(DOTFILES, key)) return `no file called ${key}`;
   // Every line, comments and section names too: what is saved is written whole into the session.
   for (const [i, line] of text.replace(/\r\n/g, '\n').split('\n').entries()) {
     const kind = secretContent(line);

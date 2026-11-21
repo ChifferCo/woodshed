@@ -148,7 +148,7 @@ async function dotfileReply(req, res, { login, token, key, userSettings }) {
     req.resume();
     return reply(res, 405, { error: 'method not allowed' });
   }
-  if (!DOTFILES[key]) {
+  if (!Object.hasOwn(DOTFILES, key)) {
     req.resume();
     return reply(res, 404, { error: `no dotfile called ${key}` });
   }

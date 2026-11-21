@@ -42,6 +42,7 @@ const PLUGIN_ITEM = '.claude/plugins/installed_plugins.json#plugins/';
  * marketplace with more than a session can add again.
  */
 export function itemProblem(id, value) {
+  if (id === '.codex/auth.json') return 'a Codex sign-in stays where it was set';
   if (id === CODEX_CONFIG) {
     const credential = configCredential(Buffer.from(value, 'base64').toString('utf8'));
     return credential ? `~/.codex/config.toml ${credential}: a credential stays where it was set` : null;

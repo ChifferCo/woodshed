@@ -35,7 +35,7 @@ import {
   CODEX_CONFIG, commandsOf, credentialOf, keyText, pathOf, readToml, sharedPart, stringsOf, textOf, unitOf, withEntries,
 } from '../shared/codexConfig.mjs';
 import {
-  applyItems, isSyncedFile, localChanges, MARKETPLACES_FILE, MAX_ITEM_BYTES, NO_STATUS_LINE, parseEntryId, parsePluginId, PLUGINS_FILE, readSnapshot,
+  applyItems, isSyncedFile, linkOnPath, localChanges, MARKETPLACES_FILE, MAX_ITEM_BYTES, NO_STATUS_LINE, parseEntryId, parsePluginId, PLUGINS_FILE, readSnapshot,
   sameSettings, SETTINGS, SYNCED_DIRS, withStatusLineOf,
 } from '../session/settingsSync.mjs';
 import { marketplaceArg } from '../shared/pluginSource.mjs';
@@ -123,26 +123,6 @@ export function itemHash(id, value) {
 function printable(text, max = 200) {
   const out = String(text).replace(/[^\x20-\x7e]/g, '?');
   return out.length > max ? `${out.slice(0, max)}…` : out;
-}
-
-/**
- * The first folder or file on a path under `root` that is a symlink, which the sync never reads or writes through: a
- * linked skills folder would send another checkout's files, and a pull would write into it.
- * @returns {string|null}  the symlink's path under root
- */
-export function linkOnPath(root, rel) {
-  let at = root;
-  for (const part of rel.split('/')) {
-    at = path.join(at, part);
-    let stat;
-    try {
-      stat = fs.lstatSync(at);
-    } catch {
-      return null;
-    }
-    if (stat.isSymbolicLink()) return path.relative(root, at);
-  }
-  return null;
 }
 
 const fileOf = (id) => (parsePluginId(id) ? PLUGINS_FILE : parseEntryId(id)?.file ?? id);

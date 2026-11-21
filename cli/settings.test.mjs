@@ -916,7 +916,9 @@ test('the console checks a computer\'s dotfile as My settings does, and a pull l
   assert.match(body.error, /line 1 holds what looks like a GitHub token/);
   assert.ok(!JSON.stringify(body).includes(FAKE_GITHUB_TOKEN));
   assert.equal((await post('gitconfig', '[user]\n\temail = x@example.com\n')).status, 400);
+  assert.equal((await post('gitconfig', '[constructor]\n\tkey = fixture\n')).status, 400);
   assert.equal((await post('secrets', 'x')).status, 404);
+  assert.equal((await post('constructor', 'x')).status, 404);
   assert.equal((await post('inputrc', '  ')).status, 400, 'a computer never clears them');
   assert.equal(c.secrets.values.size, 0);
 
