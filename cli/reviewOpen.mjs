@@ -41,12 +41,16 @@ export function sessionPulls(s) {
 /**
  * The session a target names, among those listed: by id, or the newest of the sessions that opened that pull request,
  * the person's own first.
- * @returns {{session: object|null, others: object[]}}  `others`: sessions with that pull request that are not theirs
+ * @returns {{session: object|null, others: object[], ambiguous?: string[]}}  `others`: sessions with that pull request that
+ *   are not theirs; `ambiguous`: the repos a bare number matched more than one of
  */
 export function findTarget(target, sessions, login) {
   if (target.id) return { session: sessions.find((s) => s.id === target.id) ?? null, others: [] };
   const matching = sessions.filter((s) => sessionPulls(s).some((p) => p.number === target.number && (!target.repo || p.repo === target.repo)));
   const mine = matching.filter((s) => s.owner && s.owner === login);
+  // A bare number on sessions of more than one repo names no one pull request: the person says which, by its URL.
+  const repos = [...new Set(mine.flatMap((s) => sessionPulls(s).filter((p) => p.number === target.number).map((p) => p.repo)))].sort();
+  if (!target.repo && repos.length > 1) return { session: null, others: [], ambiguous: repos };
   const live = mine.find((s) => s.status === 'running') ?? mine.find((s) => !s.cleanedAt && s.status !== 'failed') ?? mine[0] ?? null;
   return { session: live, others: matching.filter((s) => !mine.includes(s)) };
 }
@@ -74,7 +78,10 @@ export async function reviewOpenCommand({ origin, words }, ctx) {
   if (listed.status >= 400 || !Array.isArray(listed.body?.sessions)) throw fail(printable(listed.body?.error) ?? `${origin} answered ${listed.status}: a console from before the command line could start sessions`);
   const login = typeof listed.body.login === 'string' ? listed.body.login : null;
   const sessions = listed.body.sessions.filter((s) => s && ID_RE.test(s.id));
-  const { session: found, others } = findTarget(target, sessions, login);
+  const { session: found, others, ambiguous } = findTarget(target, sessions, login);
+  if (ambiguous) {
+    throw fail(`Pull request #${target.number} is on more than one of your sessions' repos (${ambiguous.map((r) => printable(r, 100)).join(', ')}): give its URL, woodshed review https://github.com/<owner>/<name>/pull/${target.number}`, { code: EXIT.refused, status: 'refused' });
+  }
   if (!found) {
     if (target.id) throw fail(`No session ${target.id} that you can see on ${origin}. woodshed session list shows yours.`);
     if (others.length) throw fail(`Pull request #${target.number} is ${others[0].owner ? `@${printable(others[0].owner, 60)}'s` : 'a shared'} session's, ${others[0].id}: woodshed review opens your own My Woodshed sessions only. Open ${origin}/s/${others[0].id}?tab=review`, { code: EXIT.refused, status: 'refused' });
@@ -116,6 +123,17 @@ export async function reviewOpenCommand({ origin, words }, ctx) {
     if (err.status === 409 && /production data/.test(err.message)) throw fail(`Session ${id}: ${err.message}`, { code: EXIT.refused, status: 'refused' });
     if (err.status === 404 && /from before/.test(err.message)) throw fail(err.message);
     throw fail(`Session ${id}'s review: ${err.message}`);
+  }
+
+  // A pull request asked for by number or URL: the review must post to that one. A session that opened another since
+  // (one that replaced it) reviews its branch's current pull request, so a verdict or merge would land there instead.
+  if (target.number) {
+    const wanted = target.repo ?? sessionPulls(found).find((p) => p.number === target.number)?.repo ?? null;
+    const live = status.livePr ? parsePullUrl(status.livePr.url) : null;
+    const elsewhere = status.livePr && (status.livePr.number !== target.number || (wanted && live && live.repo.toLowerCase() !== wanted));
+    if (elsewhere) {
+      throw fail(`Session ${id} opened #${target.number}, but its review now posts to #${status.livePr.number}${live ? ` (${live.repo})` : ''}, its branch's pull request: open that with woodshed review ${id}, or review #${target.number} on GitHub.`, { code: EXIT.refused, status: 'refused' });
+    }
   }
 
   if (json || !ctx.tty) return printReview({ id, origin, status, diff }, ctx);

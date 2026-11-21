@@ -28,55 +28,94 @@ const SEQUENCES = {
   '\x1b[1~': 'home', '\x1b[F': 'end', '\x1bOF': 'end', '\x1b[4~': 'end', '\x1b[Z': 'shift-tab', '\x1b[3~': 'delete',
 };
 
+const PASTE_START = '\x1b[200~';
+const PASTE_END = '\x1b[201~';
+// The longest tail of `text` that could be the start of `marker`, kept for the next chunk.
+function partialTail(text, marker) {
+  for (let n = Math.min(marker.length - 1, text.length); n > 0; n -= 1) if (marker.startsWith(text.slice(-n))) return n;
+  return 0;
+}
+
 /**
- * What a chunk of raw stdin holds, as keys: a name for a special key, the character for a printable one, and
- * `{paste}` for a bracketed paste, its newlines kept.
- * @returns {Array<string|{paste: string}>}
+ * A reader of raw stdin as keys: a name for a special key, the character for a printable one, and `{paste}` for a
+ * bracketed paste, its newlines kept. It holds what one chunk leaves open for the next: a paste whose end marker has
+ * not come yet is never read as typing, so a newline in it is never Enter (which would send what is in the box), and
+ * an escape sequence cut between chunks is read whole.
+ * @returns {(chunk: Buffer|string) => Array<string|{paste: string}>}
  */
+export function createKeyReader() {
+  let pasting = null;
+  let held = '';
+  return function read(chunk) {
+    let text = held + (Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk));
+    held = '';
+    const keys = [];
+    let i = 0;
+    while (i < text.length) {
+      if (pasting !== null) {
+        const end = text.indexOf(PASTE_END, i);
+        if (end < 0) {
+          const rest = text.slice(i);
+          const keep = partialTail(rest, PASTE_END);
+          pasting += rest.slice(0, rest.length - keep);
+          held = rest.slice(rest.length - keep);
+          return keys;
+        }
+        pasting += text.slice(i, end);
+        keys.push({ paste: pasting.replace(/\r\n?/g, '\n') });
+        pasting = null;
+        i = end + PASTE_END.length;
+        continue;
+      }
+      if (text.startsWith(PASTE_START, i)) {
+        pasting = '';
+        i += PASTE_START.length;
+        continue;
+      }
+      if (text[i] === '\x1b') {
+        const seq = Object.keys(SEQUENCES).find((q) => text.startsWith(q, i));
+        if (seq) {
+          keys.push(SEQUENCES[seq]);
+          i += seq.length;
+          continue;
+        }
+        // Another sequence this does not read: skipped whole, so its letters are not typed.
+        const other = /^\x1b(\[[0-9;?]*[ -/]*[@-~]|O.)/.exec(text.slice(i, i + 32));
+        if (other) {
+          i += other[0].length;
+          continue;
+        }
+        // A sequence the chunk cut short (ESC [ and digits, or ESC O): finished by the next chunk.
+        if (/^\x1b(\[[0-9;?]*[ -/]*|O)$/.test(text.slice(i)) && text.length - i > 1) {
+          held = text.slice(i);
+          return keys;
+        }
+        keys.push('escape');
+        i += 1;
+        continue;
+      }
+      const ch = String.fromCodePoint(text.codePointAt(i));
+      i += ch.length;
+      if (ch === '\r' || ch === '\n') keys.push('enter');
+      else if (ch === '\t') keys.push('tab');
+      else if (ch === '\x7f' || ch === '\b') keys.push('backspace');
+      else if (ch === '\x03') keys.push('ctrl-c');
+      else if (ch === '\x15') keys.push('ctrl-u');
+      else if (ch === '\x17') keys.push('ctrl-w');
+      else if (ch === '\x01') keys.push('home');
+      else if (ch === '\x05') keys.push('end');
+      else if (ch === '\x04') keys.push('ctrl-d');
+      else if (ch === '\x0c') keys.push('ctrl-l');
+      else if (ch.codePointAt(0) >= 0x20) keys.push(ch);
+    }
+    text = '';
+    return keys;
+  };
+}
+
+/** One chunk's keys, with nothing held over: for a test. */
 export function parseKeys(chunk) {
-  const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
-  const keys = [];
-  let i = 0;
-  while (i < text.length) {
-    if (text.startsWith('\x1b[200~', i)) {
-      const end = text.indexOf('\x1b[201~', i + 6);
-      const body = text.slice(i + 6, end < 0 ? text.length : end);
-      keys.push({ paste: body.replace(/\r\n?/g, '\n') });
-      i = end < 0 ? text.length : end + 6;
-      continue;
-    }
-    if (text[i] === '\x1b') {
-      const seq = Object.keys(SEQUENCES).find((s) => text.startsWith(s, i));
-      if (seq) {
-        keys.push(SEQUENCES[seq]);
-        i += seq.length;
-        continue;
-      }
-      // Another sequence this does not read: skipped whole, so its letters are not typed.
-      const other = /^\x1b(\[[0-9;?]*[ -/]*[@-~]|O.)/.exec(text.slice(i));
-      if (other) {
-        i += other[0].length;
-        continue;
-      }
-      keys.push('escape');
-      i += 1;
-      continue;
-    }
-    const ch = String.fromCodePoint(text.codePointAt(i));
-    i += ch.length;
-    if (ch === '\r' || ch === '\n') keys.push('enter');
-    else if (ch === '\t') keys.push('tab');
-    else if (ch === '\x7f' || ch === '\b') keys.push('backspace');
-    else if (ch === '\x03') keys.push('ctrl-c');
-    else if (ch === '\x15') keys.push('ctrl-u');
-    else if (ch === '\x17') keys.push('ctrl-w');
-    else if (ch === '\x01') keys.push('home');
-    else if (ch === '\x05') keys.push('end');
-    else if (ch === '\x04') keys.push('ctrl-d');
-    else if (ch === '\x0c') keys.push('ctrl-l');
-    else if (ch.codePointAt(0) >= 0x20) keys.push(ch);
-  }
-  return keys;
+  return createKeyReader()(chunk);
 }
 
 // --- a line being typed ---------------------------------------------------------------
@@ -976,8 +1015,9 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
         }
       }
     }
+    const readKeys = createKeyReader();
     function onData(chunk) {
-      for (const key of parseKeys(chunk)) {
+      for (const key of readKeys(chunk)) {
         if (finished) return;
         try {
           const out = onKey(key);

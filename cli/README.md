@@ -166,7 +166,9 @@ name, as its fleet reads it) and its reviewer App is known to be installed; else
 
 `woodshed review <id>` opens one of your My Woodshed sessions' review full-screen, the review the console's Review tab
 shows (`shared/review`, in the session). `123`, `#123` or a pull request's URL open the session of yours that opened
-it, your running one first. A paused one is resumed first, as `session connect` does. It draws, in the page's order:
+it, your running one first. A bare number on more than one of your sessions' repos is refused (give the URL), and so is
+a pull request whose session's review now posts to another one, such as one that replaced it: a verdict or a merge
+would land there, so open that session by its id instead. A paused one is resumed first, as `session connect` does. It draws, in the page's order:
 
 - **The header**: the title (the pull request's own once there is one), its branch, the pull request's state, verdict
   and checks, the commit, `+`/`−`, what was read (the working tree as of when, or the pull request at which commit),

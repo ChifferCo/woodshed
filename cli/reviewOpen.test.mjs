@@ -98,6 +98,12 @@ async function consoleFor(t) {
     { ...base, id: 'cccc0003', owner: null, kind: 'pr', title: 'Shared work', status: 'running', state: 'done', assignee: 'mia-dev', kept: true, endpoint, prUrl: 'https://github.com/acme/app/pull/13' },
     { ...base, id: 'dddd0004', owner: 'mia-dev', title: 'Saw production', status: 'running', state: 'done', endpoint, taintedAt: iso(T0), prUrl: 'https://github.com/acme/app/pull/14' },
     { ...base, id: 'eeee0005', owner: 'octocat', title: 'Octocat\'s', status: 'running', state: 'done', endpoint, prUrl: 'https://github.com/acme/app/pull/15' },
+    // Opened #11, then #12 in its place: its review posts to #12 now.
+    { ...base, id: 'abab0006', owner: 'mia-dev', title: 'Replaced its pull request', status: 'running', state: 'done', endpoint,
+      prUrl: 'https://github.com/acme/app/pull/11', prs: [{ url: 'https://github.com/acme/app/pull/11' }, { url: 'https://github.com/acme/app/pull/12' }] },
+    // #16 on two repos.
+    { ...base, id: 'abab0007', owner: 'mia-dev', title: 'On app', status: 'running', state: 'done', endpoint, prUrl: 'https://github.com/acme/app/pull/16' },
+    { ...base, id: 'abab0008', owner: 'mia-dev', repo: 'acme/tools', title: 'On tools', status: 'running', state: 'done', endpoint, prUrl: 'https://github.com/acme/tools/pull/16' },
   ];
   const fleet = {
     sessions: () => sessions,
@@ -225,7 +231,17 @@ test('review refuses a session that is not your own, one that saw production dat
   assert.equal(none.code, EXIT.failed);
   assert.match(none.err, /No session of yours has pull request #40\. Start one on it: woodshed session new --branch 40/);
   assert.match((await c.run(['review', 'nonsense'])).err, /takes a session id/);
+  const both = await c.run(['review', '16']);
+  assert.equal(both.code, EXIT.refused);
+  assert.match(both.err, /#16 is on more than one of your sessions' repos \(acme\/app, acme\/tools\): give its URL/);
   assert.equal(c.seen.length, 0, 'nothing refused reached a session');
+  // By its URL it is one; that session's review posts to #12, which is the one asked for here.
+  assert.equal((await c.run(['review', 'https://github.com/acme/app/pull/16', '--json'])).code, EXIT.refused, 'its review posts to #12, not #16');
+  const replaced = await c.run(['review', '11', '--json']);
+  assert.equal(replaced.code, EXIT.refused);
+  assert.match(replaced.lines[0].error, /Session abab0006 opened #11, but its review now posts to #12 \(acme\/app\)/);
+  assert.equal((await c.run(['review', 'abab0006', '--json'])).code, EXIT.done, 'by its id it opens, on the pull request its header names');
+  assert.ok(c.seen.every((x) => x.method === 'GET'), 'nothing was written');
 });
 
 // A terminal: keys typed into stdin, frames read off stdout.
@@ -270,7 +286,14 @@ test('the review on a terminal: every frame fits 80 columns, and a comment, a ve
   term.type('s');
   await until(() => /Submit review on #12/.test(lastFrame()), 'the submit sheet');
   term.type('\t');
-  term.type('LGTM\r');
+  // A paste the terminal delivers in pieces: its newline is not Enter, so nothing is posted until Enter is typed.
+  term.type('\x1b[200~Looks right,\r');
+  term.type('and tested\x1b[20');
+  term.type('1~');
+  await wait(50);
+  assert.equal(said('POST', '/submit').length, 0, 'a newline in a paste posts nothing');
+  assert.match(lastFrame(), /Comment: Looks right,⏎and tested/);
+  term.type('\x15LGTM\r');
   await until(() => said('POST', '/submit').length === 1, 'the verdict');
   assert.deepEqual(said('POST', '/submit')[0].body, { event: 'approve', body: 'LGTM' });
 

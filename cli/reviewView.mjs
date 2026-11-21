@@ -447,7 +447,7 @@ export function diagramLines(diagram, columns) {
   const lines = [];
   for (const edge of diagram.edges ?? []) {
     const [tone, mark] = CHANGE[edge.change] ?? CHANGE.unchanged;
-    lines.push(...wrapSegments([[tone, `${mark} `], [null, label.get(edge.from) ?? edge.from], ['dim', ' → '], [null, label.get(edge.to) ?? edge.to],
+    lines.push(...wrapSegments([[tone, `${mark} `], [null, label.get(edge.from) ?? clean(edge.from)], ['dim', ' → '], [null, label.get(edge.to) ?? clean(edge.to)],
       ...(edge.label ? [['dim', `  ${clean(edge.label)}`]] : [])], columns, { rest: '    ' }));
   }
   const alone = diagram.nodes.filter((n) => !(diagram.edges ?? []).some((e) => e.from === n.id || e.to === n.id));

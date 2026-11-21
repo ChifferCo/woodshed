@@ -1,14 +1,28 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { editKey, frame, initialState, mergeHint, parseKeys } from './reviewTui.mjs';
-import { clean, fileOrder, markdownLines, plainText, toAnsi, width, wrapSegments } from './reviewView.mjs';
+import { createKeyReader, editKey, frame, initialState, mergeHint, parseKeys } from './reviewTui.mjs';
+import { clean, diagramLines, fileOrder, markdownLines, plainText, toAnsi, width, wrapSegments } from './reviewView.mjs';
 
 test('raw stdin reads as keys: arrows, a paste with its newlines, and an escape sequence it does not know is skipped whole', () => {
   assert.deepEqual(parseKeys('\x1b[A\x1b[B\x1bOC\x1b[5~\x1b[Z\t\r\x7f\x03q'), ['up', 'down', 'right', 'pageup', 'shift-tab', 'tab', 'enter', 'backspace', 'ctrl-c', 'q']);
   assert.deepEqual(parseKeys('\x1b[200~two\r\nlines\x1b[201~'), [{ paste: 'two\nlines' }]);
   assert.deepEqual(parseKeys('\x1b[1;5Pé'), ['é'], 'F1 with a modifier types nothing');
   assert.deepEqual(parseKeys('\x1b'), ['escape']);
+});
+
+test('a paste or an escape sequence cut between chunks of stdin is read whole, and a newline in a paste is never Enter', () => {
+  const read = createKeyReader();
+  assert.deepEqual(read('\x1b[200~one\r'), []);
+  assert.deepEqual(read('two\r\n'), []);
+  assert.deepEqual(read('three\x1b[2'), []);
+  assert.deepEqual(read('01~x\x1b['), [{ paste: 'one\ntwo\nthree' }, 'x']);
+  assert.deepEqual(read('A\r'), ['up', 'enter']);
+});
+
+test('a diagram\'s ids reach the terminal clean, named or not', () => {
+  const lines = diagramLines({ nodes: [{ id: 'a', label: 'A\x1b[2J', change: 'added' }], edges: [{ from: 'a', to: 'b\x1b]0;x\x07', change: 'added' }] }, 80).map(plainText);
+  assert.ok(lines.every((l) => !/[\x1b\x07]/.test(l)), lines.join('|'));
 });
 
 test('the line being typed edits as a terminal\'s does', () => {
