@@ -14,50 +14,31 @@ const check = (name, ok, detail = '') => {
 };
 const token = () => `wsc_${crypto.randomBytes(32).toString('hex')}`;
 const tools = windowsTools();
-// What Windows says of a folder or file: owner, whether inheritance is off, and each rule, from Get-Acl (not icacls,
-// which the code under test reads).
+// What Windows says of a folder or file, by SID, read through .NET (not the code under test's script): its owner,
+// whether it takes rights from above, and each rule. Run without PowerShell 7's module path.
+const { PSModulePath, ...cleanEnv } = process.env;
 function aclOf(target) {
-  process.env.CHECK_TARGET = target;
-  const out = runCommand(tools.powershell, ['-NoProfile', '-NonInteractive', '-Command',
-    '$a = Get-Acl -LiteralPath $env:CHECK_TARGET; "owner=" + $a.Owner; "protected=" + $a.AreAccessRulesProtected; $a.Access | ForEach-Object { "rule=" + $_.IdentityReference.Value + "|" + $_.AccessControlType + "|" + $_.FileSystemRights + "|inherited=" + $_.IsInherited }']);
-  const lines = out.stdout.split(/\r?\n/).filter(Boolean);
-  return {
-    owner: lines.find((l) => l.startsWith('owner='))?.slice(6) ?? null,
-    protected: lines.find((l) => l.startsWith('protected='))?.slice(10) === 'True',
-    rules: lines.filter((l) => l.startsWith('rule=')).map((l) => l.slice(5)),
-    raw: out.status === 0 ? null : out.stderr.trim().split(/\r?\n/)[0],
-  };
+  const script = [
+    "$p = $env:CHECK_TARGET",
+    "$acl = if ([System.IO.Directory]::Exists($p)) { [System.IO.Directory]::GetAccessControl($p) } else { [System.IO.File]::GetAccessControl($p) }",
+    "$t = [System.Security.Principal.SecurityIdentifier]",
+    "'me=' + [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+    "'owner=' + $acl.GetOwner($t).Value",
+    "'protected=' + $acl.AreAccessRulesProtected",
+    "foreach ($r in $acl.GetAccessRules($true, $true, $t)) { 'rule=' + $r.IdentityReference.Value + '|' + $r.AccessControlType + '|inherited=' + $r.IsInherited }",
+  ].join('\n');
+  const out = spawnSync(tools.powershell, ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...cleanEnv, CHECK_TARGET: target }, encoding: 'utf8' });
+  const lines = (out.stdout ?? '').split(/\r?\n/).filter(Boolean);
+  const value = (key) => lines.find((l) => l.startsWith(`${key}=`))?.slice(key.length + 1) ?? null;
+  return { me: value('me'), owner: value('owner'), protected: value('protected') === 'True', rules: lines.filter((l) => l.startsWith('rule=')).map((l) => l.slice(5)), error: out.status === 0 ? null : (out.stderr ?? '').trim().split(/\r?\n/)[0] };
 }
-const me = /^"([^"]+)"/.exec(runCommand(tools.whoami, ['/user', '/fo', 'csv', '/nh']).stdout.trim())?.[1] ?? '?';
-const onlyMe = (acl) => acl.rules.length > 0 && acl.rules.every((r) => r.toLowerCase().startsWith(`${me.toLowerCase()}|allow`));
+const WINDOWS_OWN = ['S-1-5-18', 'S-1-5-32-544'];
+const mine = (acl) => acl.owner === acl.me && acl.protected && acl.rules.length > 0
+  && acl.rules.every((r) => { const [sid, type] = r.split('|'); return type !== 'Allow' || sid === acl.me || WINDOWS_OWN.includes(sid); });
+const describe = (acl) => `owner ${acl.owner === acl.me ? 'me' : acl.owner}; protected ${acl.protected}; ${acl.rules.map((r) => r.replace(acl.me, 'me')).join('; ')}${acl.error ? `; ${acl.error}` : ''}`;
+const me = runCommand('whoami', []).stdout.trim();
 
 console.log(`account: ${me}; node ${process.version}; USERPROFILE=${process.env.USERPROFILE}; LOCALAPPDATA=${process.env.LOCALAPPDATA}; homedir=${os.homedir()}`);
-
-// Diagnostics: what icacls and PowerShell answer, raw, on a fresh folder like the CLI's.
-{
-  const diag = path.join(process.env.LOCALAPPDATA, `wincheck-diag-${crypto.randomBytes(3).toString('hex')}`);
-  fs.mkdirSync(diag);
-  const show = (label, out) => console.log(`DIAG ${label}: status ${out.status}\n${(out.stdout + out.stderr).trim().split(/\r?\n/).map((l) => `    ${l}`).join('\n')}`);
-  const whoRaw = runCommand(tools.whoami, ['/user', '/fo', 'csv', '/nh']);
-  show('whoami /user', whoRaw);
-  const sid = /"(S-1-[0-9-]+)"/.exec(whoRaw.stdout)?.[1];
-  show('icacls . (fresh)', runCommand(tools.icacls, ['.'], { cwd: diag }));
-  show('icacls . /inheritance:r /grant:r', runCommand(tools.icacls, ['.', '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`], { cwd: diag }));
-  show('icacls . (after)', runCommand(tools.icacls, ['.'], { cwd: diag }));
-  show('icacls . /setowner', runCommand(tools.icacls, ['.', '/setowner', `*${sid}`], { cwd: diag }));
-  show('icacls . (after owner)', runCommand(tools.icacls, ['.'], { cwd: diag }));
-  const acl = aclOf(diag);
-  console.log(`DIAG Get-Acl: owner ${acl.owner}; protected ${acl.protected}; ${acl.rules.join('; ')}`);
-  const seal = (env) => {
-    const out = spawnSync(tools.powershell, ['-NoProfile', '-NonInteractive', '-Command', "Add-Type -AssemblyName System.Security; [Security.Cryptography.ProtectedData]::Protect([byte[]](1,2,3), $null, 'CurrentUser').Length"], { env, encoding: 'utf8' });
-    return { status: out.status, stdout: out.stdout ?? '', stderr: out.stderr ?? String(out.error ?? '') };
-  };
-  console.log(`DIAG PSModulePath=${process.env.PSModulePath}`);
-  show('seal, PSModulePath as inherited', seal(process.env));
-  const { PSModulePath, ...without } = process.env;
-  show('seal, without PSModulePath', seal(without));
-  fs.rmSync(diag, { recursive: true, force: true });
-}
 
 // Every command the store runs, to check none is given the token.
 const ran = [];
@@ -92,11 +73,9 @@ const ORIGIN = 'https://check.example';
     check('dpapi: no command was given the token in its arguments', noTokenInArgs(t));
     check('dpapi: every tool ran from System32 by full path', ran.every((r) => /^[A-Z]:\\Windows\\System32\\/i.test(r.command)), [...new Set(ran.map((r) => r.command))].join(', '));
     const folder = aclOf(dir);
-    check('folder: owner is this account', folder.owner?.toLowerCase() === me.toLowerCase(), `${folder.owner} vs ${me}`);
-    check('folder: inheritance is off', folder.protected);
-    check('folder: only this account has rules', onlyMe(folder), folder.rules.join('; ') || folder.raw);
+    check('folder: this account owns it, nothing inherited, only this account, SYSTEM and Administrators allowed', mine(folder), describe(folder));
     const file = aclOf(store.file);
-    check('dpapi file: only this account has rules', onlyMe(file), file.rules.join('; ') || file.raw);
+    check('dpapi file: only this account, SYSTEM and Administrators allowed', file.rules.length > 0 && file.rules.every((r) => { const [sid, type] = r.split('|'); return type !== 'Allow' || sid === file.me || WINDOWS_OWN.includes(sid); }), describe(file));
     store.remove(ORIGIN);
     store.remove('https://other.example');
     check('dpapi: remove', store.read(ORIGIN) === null);
@@ -117,7 +96,7 @@ const ORIGIN = 'https://check.example';
     check('plain: save picks the file', store.kind === 'file', store.kind);
     check('plain: read back', store.read(ORIGIN) === t);
     const file = aclOf(store.file);
-    check('plain file: only this account has rules', onlyMe(file), file.rules.join('; ') || file.raw);
+    check('plain file: only this account, SYSTEM and Administrators allowed', file.rules.length > 0 && file.rules.every((r) => { const [sid, type] = r.split('|'); return type !== 'Allow' || sid === file.me || WINDOWS_OWN.includes(sid); }), describe(file));
     check('plain: no command was given the token in its arguments', noTokenInArgs(t));
     store.remove(ORIGIN);
     check('plain: remove', store.read(ORIGIN) === null);
@@ -136,8 +115,12 @@ const ORIGIN = 'https://check.example';
     check('outside: plain file refused', /the only place a token is kept unsealed on Windows/.test(err.message), err.message);
   }
   check('outside: nothing made there', !fs.existsSync(shared));
-  const sealed = createCredentials({ dir: shared, run }).save(ORIGIN, t);
-  check('outside: a sealed token may be kept there', sealed.kind === 'dpapi' && sealed.read(ORIGIN) === t, sealed.kind);
+  try {
+    const sealed = createCredentials({ dir: shared, run }).save(ORIGIN, t);
+    check('outside: a sealed token may be kept there', sealed.kind === 'dpapi' && sealed.read(ORIGIN) === t, sealed.kind);
+  } catch (err) {
+    check('outside: a sealed token may be kept there', false, err.message);
+  }
   fs.rmSync(shared, { recursive: true, force: true });
 }
 

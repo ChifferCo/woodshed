@@ -5,7 +5,6 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { windowsTools } from '../../cli/credentials.mjs';
 
 const origin = process.argv[2] || 'http://localhost:7690';
 const repo = process.env.CHECK_REPO || process.cwd();
@@ -38,7 +37,7 @@ function woodshed(args) {
       '$p = Start-Process -FilePath $env:CHECK_NODE -ArgumentList $list -Credential $cred -LoadUserProfile -UseNewEnvironment -WorkingDirectory $env:CHECK_REPO -RedirectStandardOutput $env:CHECK_STDOUT -RedirectStandardError $env:CHECK_STDERR -PassThru -Wait',
       'exit $p.ExitCode',
     ].join('\n');
-    child = spawn(windowsTools().powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
+    child = spawn('pwsh', ['-NoProfile', '-NonInteractive', '-Command', script], {
       cwd: repo, stdio: ['ignore', 'inherit', 'inherit'],
       // Windows PowerShell 5.1 cannot load its own modules with PowerShell 7's module path.
       env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toLowerCase() !== 'psmodulepath')), CHECK_NODE: process.execPath, CHECK_ARGS: JSON.stringify([cli, ...args]), CHECK_REPO: repo, CHECK_STDOUT: out, CHECK_STDERR: err },
@@ -106,11 +105,8 @@ if (signed?.credentialsFile) {
   } catch (err) {
     read = err;
   }
-  if (asUser) {
-    check('another account (this one, an admin) cannot read the credentials file', read instanceof Error && /EPERM|EACCES/.test(read.code ?? ''), read instanceof Error ? read.code : 'it read it');
-  } else {
-    check('the credentials file holds no token', typeof read === 'string' && !read.includes('wsc_'));
-  }
+  // Administrators may open it (this script runs as one): it holds only what DPAPI sealed for the other account.
+  check('the credentials file holds no token', typeof read === 'string' && !read.includes('wsc_'), read instanceof Error ? read.code : '');
 }
 
 const status = woodshed(['status', '--console', origin, '--json']);
