@@ -164,7 +164,11 @@ test('a terminal is refused for no token, another person\'s session, a tainted o
   assert.equal(tainted.refused.status, 409);
   assert.match(tainted.refused.message, /production data/);
   assert.equal((await open('ffff6666', 'shell')).refused.status, 404, 'an image from before the Terminal tab');
-  assert.equal(ttyd.seen.requests.length, 0, 'nothing reached ttyd');
+  c.sessions.get('aaaa1111').terminalToken = 'w'.repeat(40);
+  const wrong = await open('aaaa1111');
+  assert.equal(wrong.refused.status, 502, 'ttyd refusing the console\'s credential is not the person\'s sign-in ending');
+  assert.match(wrong.refused.message, /the session's terminal did not open \(it answered 401\)/);
+  assert.equal(ttyd.seen.requests.length, 1, 'the refusals before it never reached ttyd: only the one it refused did');
 });
 
 test('revoking the sign-in, or the session\'s lockdown, cuts an open terminal', async (t) => {

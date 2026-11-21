@@ -107,6 +107,8 @@ export function attach({ socket, head = null, stdin, stdout, pingMs = PING_MS })
       send(message('3', ''));
     };
     const read = createFrameReader(({ opcode, payload }) => {
+      // Disconnected here: what is still on its way is not drawn under the closing line.
+      if (result) return undefined;
       if (opcode === OP.ping) return send(encodeFrame(OP.pong, payload));
       if (opcode === OP.pong) {
         awaitingPong = false;

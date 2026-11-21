@@ -618,7 +618,8 @@ test('a connection that drops at once, again and again, is given up on a minute 
   const out = await c.run(['session', 'connect', 'aaaa0001']);
   assert.equal(out.code, EXIT.failed);
   assert.match(out.err, /Could not connect to aaaa0001 again in 60 s: the connection closed/);
-  assert.equal(out.err.match(/dropped/g).length, 1, 'said once, at the first drop');
+  assert.equal(out.err.match(/connecting again/g).length, 1, 'the first drop starts the minute');
+  assert.match(out.err, /it dropped again at once \(the connection closed\); still trying, for up to \d+ s more/);
   assert.ok(terminal.calls.length < 15, `${terminal.calls.length} tries`);
 });
 

@@ -382,6 +382,8 @@ export async function sessionCommand({ origin, rest }, ctx) {
         droppedAt = now();
         tries = 0;
         stderr.write(`\r\nwoodshed: the connection to ${s.id} dropped (${out.message}); connecting again. Ctrl-C stops.\n`);
+      } else if (out.status === 'attached-then-cut' && now() - droppedAt < RECONNECT_GIVE_UP_MS) {
+        stderr.write(`\r\nwoodshed: it dropped again at once (${out.message}); still trying, for up to ${Math.ceil((RECONNECT_GIVE_UP_MS - (now() - droppedAt)) / 1000)} s more.\n`);
       } else if (droppedAt === null) {
         // Never connected: said as it is, not tried again.
         throw fail(out.status === 'refused' ? `${origin} refused the terminal: ${out.message}` : out.message);

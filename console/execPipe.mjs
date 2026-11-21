@@ -238,6 +238,13 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
       const status = Number(/^HTTP\/1\.[01] (\d{3})/.exec(buffered.subarray(0, end).toString('latin1'))?.[1]);
       if (status !== 101) {
         console.warn('execPipe: refused by the session', { login: pipe.login, session: pipe.session, kind, status: status || null });
+        // ttyd's refusal is of the console's credential, not the person's token: a 401 passed on would read as their
+        // sign-in ending. statusd's answers to the pipe are its own (a tainted session's 409), and pass as they are.
+        if (kind !== 'exec') {
+          refuse(socket, 502, 'Bad Gateway', `the session's terminal did not open (it answered ${status || 'nothing'})\n`);
+          upstream.destroy();
+          return;
+        }
         socket.write(buffered);
         upstream.pipe(socket);
         return;
