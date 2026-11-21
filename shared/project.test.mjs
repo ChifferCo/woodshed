@@ -326,16 +326,6 @@ test('a wrong pullRequests section names the field', () => {
   assert.throws(() => full({ ...PULL_REQUESTS, review: null, mergeRisk: null, qa: { ...noRunner, runner: 'woodshed', autoLabel: true } }), /autoLabel needs/);
 });
 
-test('terminal is tmux or herdr, and tmux when left out, so every project from before it runs as it did', () => {
-  assert.equal(parseProject({ ...EMPTY_PROJECT, terminal: 'herdr' }).terminal, 'herdr');
-  assert.equal(parseProject({ ...EMPTY_PROJECT, terminal: 'tmux' }).terminal, 'tmux');
-  const { terminal, ...without } = EMPTY_PROJECT;
-  assert.equal(parseProject(without).terminal, 'tmux');
-  assert.equal(EMPTY_PROJECT.terminal, 'tmux', 'a repo with no project file');
-  assert.throws(() => parseProject({ ...EMPTY_PROJECT, terminal: 'screen' }), /terminal must be one of tmux, herdr \(it is "screen"\)/);
-  assert.throws(() => parseProject({ ...EMPTY_PROJECT, terminal: null }), /terminal must be one of tmux, herdr/);
-});
-
 test('editor is true or false, and off when left out, so a branch from before it still starts', () => {
   assert.equal(parseProject({ ...EMPTY_PROJECT, editor: true }).editor, true);
   assert.equal(parseProject({ ...EMPTY_PROJECT, editor: false }).editor, false);

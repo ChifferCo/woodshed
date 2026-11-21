@@ -59,7 +59,7 @@ export function checkoutDir(repo) {
 
 // Each section's fields, by its path ('' is the file): project.reference.yaml writes each one, which a test checks.
 export const PROJECT_FIELDS = Object.freeze({
-  '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'services', 'app', 'apps', 'editor', 'terminal', 'consoleLinks', 'workflowLinks', 'githubAccess', 'rules', 'setup', 'pullRequests'],
+  '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'services', 'app', 'apps', 'editor', 'consoleLinks', 'workflowLinks', 'githubAccess', 'rules', 'setup', 'pullRequests'],
   dependencies: ['installs'],
   'dependencies.installs': ['dir', 'files', 'command', 'output'],
   envFiles: ['path', 'secret', 'defaults', 'overrides'],
@@ -111,15 +111,6 @@ export const GITHUB_ACCESS = Object.freeze(['full', 'repo']);
 
 function githubAccess(value) {
   if (!GITHUB_ACCESS.includes(value)) fail(`githubAccess must be one of ${GITHUB_ACCESS.join(', ')} (it is ${JSON.stringify(value)})`);
-  return value;
-}
-
-// What a session runs its agent (claude or codex) in: `tmux`, as every session has, or `herdr`, an agent terminal the
-// person's own Herdr can also attach to. Only a coding session's agent: a question, a review and a QA run stay in tmux.
-export const TERMINALS = Object.freeze(['tmux', 'herdr']);
-
-function terminal(value) {
-  if (!TERMINALS.includes(value)) fail(`terminal must be one of ${TERMINALS.join(', ')} (it is ${JSON.stringify(value)})`);
   return value;
 }
 
@@ -603,8 +594,8 @@ function workflowLinks(value) {
 
 // Only `version` must be written: everything else left out is none.
 const TOP_DEFAULTS = {
-  dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], services: [], app: null, apps: null, editor: false, terminal: 'tmux', consoleLinks: true,
-  workflowLinks: null, githubAccess: 'full', rules: null, setup: null, pullRequests: null,
+  dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], services: [], app: null, apps: null, editor: false, consoleLinks: true, workflowLinks: null,
+  githubAccess: 'full', rules: null, setup: null, pullRequests: null,
 };
 
 /**
@@ -616,7 +607,7 @@ const TOP_DEFAULTS = {
  *   files: Record<string, string>, memory: string, data: {dir: string, keep: 'person'|'session'}|null, docker: boolean}[],
  *   app: object|null,
  *   apps: {name: string, label: string}[],
- *   editor: boolean, terminal: 'tmux'|'herdr', consoleLinks: boolean, workflowLinks: {label: string, workflow: string}[]|null, githubAccess: 'full'|'repo',
+ *   editor: boolean, consoleLinks: boolean, workflowLinks: {label: string, workflow: string}[]|null, githubAccess: 'full'|'repo',
  *   rules: string|null, setup: string|null, pullRequests: object|null}}
  * @throws {Error}  naming the field that is wrong or missing
  */
@@ -636,7 +627,6 @@ export function parseProject(raw) {
     services: services(project.services),
     ...projectApps(project),
     editor: boolean(project.editor, 'editor'),
-    terminal: terminal(project.terminal),
     consoleLinks: boolean(project.consoleLinks, 'consoleLinks'),
     workflowLinks: nullable(project.workflowLinks, 'workflowLinks', workflowLinks),
     githubAccess: githubAccess(project.githubAccess),
@@ -648,8 +638,8 @@ export function parseProject(raw) {
 
 /** What a repo with no project file gets: Woodshed's own rules, and nothing else. */
 export const EMPTY_PROJECT = Object.freeze({
-  version: PROJECT_VERSION, dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], services: [], app: null, apps: [], editor: false, terminal: 'tmux',
-  consoleLinks: true, workflowLinks: null, githubAccess: 'full', rules: null, setup: null, pullRequests: null,
+  version: PROJECT_VERSION, dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], services: [], app: null, apps: [], editor: false, consoleLinks: true,
+  workflowLinks: null, githubAccess: 'full', rules: null, setup: null, pullRequests: null,
 });
 
 // The default branch's copy, or null when it has no such file. Anything else git fails on (no remote branch, not a

@@ -5,7 +5,7 @@
 //   claude  its own hooks (hookState.mjs), the transcript for a turn ended by Esc, the pane until the first hook
 //   codex   its pane alone (codexState.mjs): codex has no hooks
 //   qa      the QA run's marker file: the run is a script, not an agent
-//   herdr   for an agent run in Herdr (the project file's `terminal: herdr`): the status herdr-core keeps for its
+//   herdr   for an agent run in Herdr (its owner's Agent terminal on My settings): the status herdr-core keeps for its
 //           terminal (`hc get claude`), the agent's own word in an OSC 7501 record (claude sends them; codex 0.167
 //           does not, and is read from its pane), mapped onto statusd's states
 //

@@ -1,11 +1,12 @@
-// The terminal the session's agent runs in, as statusd reads it and types into it: tmux's `claude` session (every
-// session before the project file's `terminal`), or the Herdr terminal the entrypoint started it in (`terminal: herdr`),
-// a terminal named `claude` on the session's own herdr-core (`hc`). Both answer the same calls where they can, so
-// statusd's reading, answering and lockdown reopen do not care which it is; where hc cannot (it types no text without an
-// Enter, and reads no colours), the pane says so (`typesText`, `colours`) and statusd takes hc's own way instead.
+// The terminal the session's agent runs in, as statusd reads it and types into it: tmux's `claude` session, as every
+// session has, or the Herdr terminal the entrypoint started it in, a terminal named `claude` on the session's own
+// herdr-core (`hc`). Both answer the same calls where they can, so statusd's reading, answering and lockdown reopen do
+// not care which it is; where hc cannot (it types no text without an Enter, and reads no colours), the pane says so
+// (`typesText`, `colours`) and statusd takes hc's own way instead.
 //
-// The entrypoint decides which, and hands it to statusd and to what claude runs as WOODSHED_TERMINAL. Only a coding
-// session's agent can be in Herdr: a question, a review and a QA run, and the Terminal tab's shell, are in tmux always.
+// The entrypoint decides which, and hands it to statusd and to what claude runs as WOODSHED_TERMINAL. Only a private
+// coding session's agent can be in Herdr, when its owner picked it on My settings (Agent terminal): a shared session, a
+// question, a review and a QA run, and the Terminal tab's shell, are in tmux always.
 
 import path from 'node:path';
 

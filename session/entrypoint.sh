@@ -725,7 +725,9 @@ fetchOwnerSettings() {
   fi
   OWNER_GIT_NAME=$(jq -r '.git.name // empty' <<< "$answer")
   OWNER_GIT_EMAIL=$(jq -r '.git.email // empty' <<< "$answer")
-  log "Owner's settings fetched" "(started_by: ${STARTED_BY:-unknown}, database: ${WOODSHED_DB_NAME:-none}, own lines in: ${owned:-none}, commits as owner: $([ -n "$OWNER_GIT_EMAIL" ] && echo yes || echo no))"
+  # What the owner picked on My settings for the agent's terminal (agentTerminal); a console from before it sends none.
+  OWNER_TERMINAL=$(jq -r '.terminal // empty' <<< "$answer")
+  log "Owner's settings fetched" "(started_by: ${STARTED_BY:-unknown}, database: ${WOODSHED_DB_NAME:-none}, own lines in: ${owned:-none}, commits as owner: $([ -n "$OWNER_GIT_EMAIL" ] && echo yes || echo no), terminal: ${OWNER_TERMINAL:-tmux})"
 }
 
 # The console's repo settings for the session's own project (POST /repo-settings, console/repoSettings.mjs): the
@@ -958,13 +960,11 @@ codexFlags() {
   [ -z "${EFFORT:-}" ] || printf ' -c model_reasoning_effort=\\"%s\\"' "$EFFORT"
 }
 
-# What the agent runs in (session/agentPane.mjs): the project file's `terminal`, for a coding session. A question, a
-# review and a QA run are in tmux whatever it says: they are scripts, or an ask's claude, that nobody attaches to.
+# What the agent runs in (session/agentPane.mjs): Herdr only in a private coding session whose owner picked it on My
+# settings (fetchOwnerSettings), and tmux everywhere else: a shared session, a question, a review and a QA run.
 agentTerminal() {
   case "${SESSION_MODE:-}" in ask | qa | review) echo tmux; return ;; esac
-  local terminal
-  terminal=$(project get terminal 2>/dev/null) || terminal=tmux
-  echo "${terminal:-tmux}"
+  if [ "${SESSION_KIND:-}" = private ] && [ "${OWNER_TERMINAL:-}" = herdr ]; then echo herdr; else echo tmux; fi
 }
 
 # Herdr's core (herdr-core, `hc`) for this session, with a terminal named claude in the checkout for the agent: a

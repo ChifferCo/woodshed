@@ -22,8 +22,9 @@ LOG_FILE=$RUN_DIR/woodshed-login.log
 STATE_FILE=$RUN_DIR/woodshed-claude-state.json
 FLAGS_FILE=$RUN_DIR/woodshed-claude-flags
 CLAUDE_PANE=claude
-# Where claude runs: tmux's `claude` session, or with the project file's `terminal: herdr` the Herdr terminal of that name
-# on the session's herdr-core (session/agentPane.mjs). The sign-in's own terminal is tmux's either way.
+# Where claude runs: tmux's `claude` session, or, in a private session whose owner picked Herdr on My settings, the
+# Herdr terminal of that name on the session's herdr-core (session/agentPane.mjs). The sign-in's own terminal is tmux's
+# either way.
 TERMINAL=${WOODSHED_TERMINAL:-tmux}
 HC=${WOODSHED_HC_BIN:-hc}
 CREDENTIALS=$HOME/.claude/.credentials.json

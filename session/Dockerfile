@@ -56,7 +56,8 @@ FROM node:22.16.0-bookworm-slim AS base
 ARG TTYD_VERSION=1.7.7
 ARG TTYD_SHA256_AMD64=8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
 ARG TTYD_SHA256_ARM64=b38acadd89d1d396a0f5649aa52c539edbad07f4bc7348b27b4f4b7219dd4165
-# Herdr's terminal runtime, herdr-core (`hc`), for a project whose file says `terminal: herdr` (session/agentPane.mjs).
+# Herdr's terminal runtime, herdr-core (`hc`), for a private session whose owner picked Herdr on My settings
+# (session/agentPane.mjs).
 # The sha256 are its release's manifest.json (releases.herdr.dev/core/<version>/manifest.json).
 ARG HERDR_CORE_VERSION=0.1.21
 ARG HERDR_CORE_SHA256_AMD64=78424755c10a40dde38a0bdb55c20ac19706e9ae05ed68fc2acf1fcff0d941c1

@@ -21,6 +21,7 @@
 //   POST /api/my/codex-auth/reviews  {"on": true|false}   reviews of my pull requests run Codex on this sign-in (reviewAgents.mjs)
 //   GET  /api/my/reviews              who reviews my pull requests, and the choices this console can run for me
 //   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|null}   null is the most there is
+//   POST /api/my/terminal             {"terminal": "tmux"|"herdr"}   what my private sessions run their agent in
 //   POST /api/my/claude-token/remove
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
 //   POST /api/my/remove          {"confirm": "<your login>"}  Remove My Woodshed: stops your sessions, deletes your settings
@@ -2091,6 +2092,25 @@ export function createHandler({
     return reply(res, 200, await myReviewsView(login));
   }
 
+  /** My settings' Terminal row: what the person's private sessions run claude or codex in (userSettings.setTerminal). */
+  async function myTerminalWrite(req, res, login) {
+    if (!login) return reply(res, 409, { error: 'My Woodshed needs GitHub sign-in, which this console does not have' });
+    if (!userSettings) return reply(res, 409, { error: 'this console has no secret store, so My settings cannot be saved' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    try {
+      userSettings.setTerminal(login, body?.terminal);
+    } catch (err) {
+      if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
+      throw err;
+    }
+    return reply(res, 200, { terminal: userSettings.terminal(login) });
+  }
+
   // Kept with the person's pins, so it needs no secret store, and with no sign-in it is the console's one person's.
   async function mySessionViewWrite(req, res, login) {
     if (!viewPrefs) return reply(res, 404, { error: 'this console keeps no view preferences' });
@@ -2282,6 +2302,7 @@ export function createHandler({
     const slackWrite = SLACK_SETUP_WRITE_RE.exec(pathname);
     if (slackWrite) return slackSetupWrite(req, res, slackWrite[1] ?? null, login);
     if (pathname === '/api/my/reviews') return myReviewsWrite(req, res, login);
+    if (pathname === '/api/my/terminal') return myTerminalWrite(req, res, login);
     if (pathname === MY_SESSION_VIEW_PATH) return mySessionViewWrite(req, res, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH || pathname === PROJECT_TRIGGERS_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
