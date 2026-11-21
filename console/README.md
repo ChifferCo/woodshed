@@ -1503,7 +1503,7 @@ asked. Only that page's button, a form POST from the console's own page (Origin 
 approves it; Deny refuses it. The CLI asks `POST /api/cli/token` every 5 seconds meanwhile, and gets its token once.
 `woodshed setup` uses `login --no-wait` to return the approval link immediately and collect the result on the next run.
 `GET /api/cli/me` reports `sessionSignIns`, one boolean per personal agent sign-in of the CLI token's owner.
-Both of those refuse a call with an Origin header, which a browser always sends and the CLI never does, so no web page
+The device-flow POST routes (`/api/cli/device` and `/api/cli/token`) refuse a call with an Origin header, so no web page
 starts a sign-in to hand someone the link of. The code lasts 10 minutes. The token (`wsc_…`) is its own kind, not the
 database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. Besides `/api/cli/*` and
 `/api/tunnel/exec/*` it signs in to `woodshed session`'s routes alone (`console/cliSessions.mjs`): `GET /api/sessions`, `GET /api/my/projects`,

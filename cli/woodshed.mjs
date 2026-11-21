@@ -23,7 +23,7 @@ import { createCredentials } from './credentials.mjs';
 import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
 import { hcRunner, hcVersion, viaCommand } from './hc.mjs';
-import { setupCommand, SETUP_USAGE } from './setup.mjs';
+import { setupCommand, SETUP_USAGE, SETUP_VALUE_OPTIONS } from './setup.mjs';
 
 export const VERSION = '0.1.0';
 export const DEFAULT_CONSOLE = 'https://console.woodshed.run';
@@ -80,8 +80,15 @@ export function parseArgs(argv) {
       if (!argv[i + 1]) throw new CliError('--console needs a URL');
       out.console = argv[++i];
     } else if (arg.startsWith('--console=')) out.console = arg.slice('--console='.length);
-    else if (out.command === 'session') out.args.push(arg);
-    else if (out.command === 'setup' || (out.command === 'login' && arg === '--no-wait')) out.args.push(arg);
+    else if (out.command === 'setup' && arg === '--prompt') {
+      const value = argv[++i];
+      if (!value?.trim() || value.startsWith('--') || value === '-h') throw new CliError('--prompt needs text. For a prompt that starts with an option, use --prompt=TEXT.');
+      out.args.push(arg, value);
+    } else if (out.command === 'session') out.args.push(arg);
+    else if (out.command === 'setup') {
+      out.args.push(arg);
+      if (SETUP_VALUE_OPTIONS.includes(arg) && i + 1 < argv.length) out.args.push(argv[++i]);
+    } else if (out.command === 'login' && arg === '--no-wait') out.args.push(arg);
     else if (arg.startsWith('-')) throw new CliError(`unknown option ${arg}\n\n${USAGE}`);
     else if (!out.command) out.command = arg;
     else if (out.command === 'tunnel') out.args.push(arg);

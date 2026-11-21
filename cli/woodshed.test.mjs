@@ -180,6 +180,14 @@ test('Revoke on My settings ends a computer\'s sign-in, and status says so', asy
   assert.deepEqual(status.lines[0], { console: c.origin, signedIn: false, ended: true, hc: { installed: true, version: '0.1.21', minimum: '0.1.21', ok: true } });
 });
 
+test('a flag-shaped setup prompt cannot silently select a global option', () => {
+  assert.throws(() => parseArgs(['setup', '--prompt', '--help']), /use --prompt=TEXT/);
+  const result = parseArgs(['setup', '--prompt=--help', '--json']);
+  assert.deepEqual(result.args, ['--prompt=--help']);
+  assert.equal(result.help, false);
+  assert.equal(result.json, true);
+});
+
 test('logout forgets an uncollected setup approval, even before this computer has a token', async (t) => {
   const c = await consoleFor(t);
   const args = ['login', '--no-wait', '--json', '--console', c.origin];
@@ -251,6 +259,8 @@ test('the arguments: one command, --console, --json, and the default console', (
   const session = parseArgs(['session', 'new', '--repo', 'a/b', '--json', '--', 'use --json here']);
   assert.deepEqual([session.args, session.rest, session.json], [['new', '--repo', 'a/b'], ['use --json here'], true]);
   assert.equal(parseArgs(['session', 'list', '--json']).json, true);
+  const setup = parseArgs(['setup', '--yes', '--prompt', '--help', '--json']);
+  assert.deepEqual([setup.args, setup.help, setup.json], [['--yes', '--prompt', '--help'], false, true]);
   assert.equal(DEFAULT_CONSOLE, 'https://console.woodshed.run');
 });
 

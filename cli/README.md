@@ -34,7 +34,7 @@ follow the link or supply the choice it asks for, then run it again with the sam
 in your browser and setup collects the approval the next time you run it. Connect Claude or Codex for sessions on
 My settings.
 
-Repeat `--repo` to choose several repos. The first is for the session. For each repo, setup uses the current checkout
+Use `--prompt=--help` for a prompt that looks like an option. Repeat `--repo` to choose several repos. The first is for the session. For each repo, setup uses the current checkout
 when its GitHub origin matches, or a checkout supplied by `--repo-dir`. Repo review setup prepares the project file
 change for a pull request. `--reviews` sets your own reviewer choice. Use `--skip-reviews` to skip both, or
 `--no-session` to finish without starting an environment. With a compatible `hc` on the path, setup uses
