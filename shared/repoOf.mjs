@@ -9,7 +9,7 @@ import { windowsExecutable } from './windowsExecutable.mjs';
 export function repoOf(repoDir) {
   let url;
   try {
-    const git = process.platform === 'win32' ? windowsExecutable('git', { exclude: [process.cwd(), repoDir] }) : 'git';
+    const git = process.platform === 'win32' ? windowsExecutable('git', { from: [process.cwd(), repoDir] }) : 'git';
     if (!git) return null;
     url = execFileSync(git, ['-C', repoDir, 'remote', 'get-url', 'origin'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   } catch {
