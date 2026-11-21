@@ -15,7 +15,7 @@ function listen(server) {
 }
 
 // A console with the command line's sign-in, a clock the CLI's sleeps move, and a person signed in by cookie.
-async function consoleFor(t, { decision = 'approve', approves = true, people = null, hcVersion = '0.1.21' } = {}) {
+async function consoleFor(t, { decision = 'approve', approves = true, people = null, hcVersion = '0.1.21', userSettings = null } = {}) {
   let clock = Date.parse('2026-11-20T10:00:00Z');
   const now = () => clock;
   const store = { state: {}, save() {} };
@@ -25,7 +25,7 @@ async function consoleFor(t, { decision = 'approve', approves = true, people = n
     host: '127.0.0.1', publicUrl: 'http://pending', extraHosts: [], repo: 'acme/app', label: 'woodshed', consoleName: 'Acme Woodshed',
     maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
   };
-  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, cli });
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, cli, userSettings });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
@@ -68,8 +68,61 @@ async function consoleFor(t, { decision = 'approve', approves = true, people = n
     await new Promise((resolve) => setTimeout(resolve, 20));
     return { code, out, err, lines: out.trim().split('\n').filter(Boolean).map((l) => (l.startsWith('{') ? JSON.parse(l) : l)) };
   };
-  return { origin, run, dir, cookie, opened, cli, tick: (ms) => { clock += ms; } };
+  return { origin, run, dir, cookie, opened, approve, cli, tick: (ms) => { clock += ms; } };
 }
+
+test('login --no-wait holds one pending approval and the next invocation collects it', async (t) => {
+  const c = await consoleFor(t);
+  const args = ['login', '--console', c.origin, '--no-browser', '--no-wait', '--json'];
+  const first = await c.run(args);
+  assert.equal(first.code, EXIT.waiting);
+  assert.equal(first.lines.length, 1);
+  const [code] = first.lines;
+  assert.equal(code.event, 'code');
+  assert.deepEqual(c.opened, []);
+  const pending = path.join(c.dir, 'woodshed', 'pending-sign-ins.json');
+  assert.equal(fs.statSync(pending).mode & 0o777, 0o600);
+  const waiting = await c.run(args);
+  assert.equal(waiting.code, EXIT.waiting);
+  assert.deepEqual(waiting.lines, first.lines, 'the same code is still waiting');
+  await c.approve(code.verificationUrlComplete);
+  const collected = await c.run(args);
+  assert.equal(collected.code, EXIT.done);
+  assert.equal(collected.lines[0].event, 'signed-in');
+  assert.equal(c.cli.list('mia-dev').length, 1);
+  assert.equal(createCredentials({ dir: path.dirname(pending), platform: 'test', pending: true }).find(c.origin), null);
+});
+
+test('login --no-wait replaces an expired code and clears a denied approval', async (t) => {
+  const c = await consoleFor(t, { decision: 'deny' });
+  const args = ['login', '--console', c.origin, '--no-browser', '--no-wait', '--json'];
+  const first = await c.run(args);
+  c.tick(10 * 60_000);
+  const next = await c.run(args);
+  assert.equal(next.code, EXIT.waiting);
+  assert.notEqual(next.lines[0].expiresAt, first.lines[0].expiresAt);
+  await c.approve(next.lines[0].verificationUrlComplete);
+  const denied = await c.run(args);
+  assert.equal(denied.code, EXIT.refused);
+  assert.equal(denied.lines[0].status, 'denied');
+  assert.equal(c.cli.list('mia-dev').length, 0);
+  assert.equal((await c.run(args)).code, EXIT.waiting, 'another sign-in can be started after denial');
+});
+
+test('status shows only whether the CLI token owner has personal session sign-ins', async (t) => {
+  let refreshed;
+  const c = await consoleFor(t, { userSettings: {
+    async refresh(login) { refreshed = login; },
+    view(login) {
+      assert.equal(login, 'mia-dev');
+      return { claudeToken: { set: false }, codexAuth: { set: refreshed === login, savedAt: 'private timestamp' } };
+    },
+  } });
+  assert.equal((await c.run(['login', '--console', c.origin])).code, EXIT.done);
+  const status = await c.run(['status', '--json']);
+  assert.deepEqual(status.lines[0].sessionSignIns, { claude: false, codex: true });
+  assert.ok(!status.out.includes('private timestamp'));
+});
 
 test('login prints a code, the person approves it in the console, and status says the console, org and who is signed in', async (t) => {
   const c = await consoleFor(t);
@@ -125,6 +178,18 @@ test('Revoke on My settings ends a computer\'s sign-in, and status says so', asy
   const status = await c.run(['status', '--json']);
   assert.equal(status.code, EXIT.waiting);
   assert.deepEqual(status.lines[0], { console: c.origin, signedIn: false, ended: true, hc: { installed: true, version: '0.1.21', minimum: '0.1.21', ok: true } });
+});
+
+test('logout forgets an uncollected setup approval, even before this computer has a token', async (t) => {
+  const c = await consoleFor(t);
+  const args = ['login', '--no-wait', '--json', '--console', c.origin];
+  const waiting = await c.run(args);
+  assert.equal(waiting.code, EXIT.waiting);
+  assert.equal((await c.run(['logout', '--console', c.origin])).code, EXIT.done);
+  const next = await c.run(args);
+  assert.equal(next.code, EXIT.waiting, 'setup asks for a fresh approval after an explicit logout');
+  assert.notEqual(next.lines[0].userCode, waiting.lines[0].userCode);
+  assert.equal(c.cli.list('mia-dev').length, 0, 'neither approval has been collected');
 });
 
 test('status says when there is no hc, or one too old for session herdr, signed in or not', async (t) => {

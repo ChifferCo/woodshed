@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process';
 
 const SERVICE = 'woodshed-cli';
 const TOKEN_RE = /^wsc_[0-9a-f]{64}$/;
+const DEVICE_RE = /^wsd_[0-9a-f]{64}\.[A-Z]{4}-[A-Z]{4}\.\d{1,15}$/;
 // What may follow `-a` in a `security -i` line: an origin has no spaces or quotes, and anything else is refused.
 const ORIGIN_RE = /^https?:\/\/[A-Za-z0-9.\-[\]:]+$/;
 
@@ -23,41 +24,41 @@ export function runCommand(command, args, { input } = {}) {
   return { status: out.status, stdout: out.stdout ?? '', stderr: out.stderr ?? '' };
 }
 
-function checkArgs(origin, token) {
+function checkArgs(origin, token, pattern = TOKEN_RE) {
   if (!ORIGIN_RE.test(origin)) throw new Error(`not a console address: ${origin}`);
-  if (token !== undefined && !TOKEN_RE.test(token)) throw new Error('not a woodshed command line token');
+  if (token !== undefined && !pattern.test(token)) throw new Error('not a woodshed command line token');
 }
 
-function keychain(run) {
+function keychain(run, service, pattern) {
   return {
     kind: 'keychain',
     label: 'the macOS Keychain',
     save(origin, token) {
-      checkArgs(origin, token);
+      checkArgs(origin, token, pattern);
       // -U replaces an item of the same account and service.
-      run('security', ['-i'], { input: `add-generic-password -U -a ${origin} -s ${SERVICE} -l ${SERVICE} -w ${token}\n` });
+      run('security', ['-i'], { input: `add-generic-password -U -a ${origin} -s ${service} -l ${service} -w ${token}\n` });
       return this.read(origin) === token;
     },
     read(origin) {
       checkArgs(origin);
-      const out = run('security', ['find-generic-password', '-a', origin, '-s', SERVICE, '-w']);
+      const out = run('security', ['find-generic-password', '-a', origin, '-s', service, '-w']);
       const token = out.status === 0 ? out.stdout.trim() : '';
-      return TOKEN_RE.test(token) ? token : null;
+      return pattern.test(token) ? token : null;
     },
     remove(origin) {
       checkArgs(origin);
-      run('security', ['delete-generic-password', '-a', origin, '-s', SERVICE]);
+      run('security', ['delete-generic-password', '-a', origin, '-s', service]);
     },
   };
 }
 
-function libsecret(run) {
-  const attrs = (origin) => ['service', SERVICE, 'console', origin];
+function libsecret(run, service, pattern) {
+  const attrs = (origin) => ['service', service, 'console', origin];
   return {
     kind: 'libsecret',
     label: 'the Secret Service keyring (libsecret)',
     save(origin, token) {
-      checkArgs(origin, token);
+      checkArgs(origin, token, pattern);
       const out = run('secret-tool', ['store', `--label=Woodshed command line (${origin})`, ...attrs(origin)], { input: token });
       return out.status === 0 && this.read(origin) === token;
     },
@@ -65,7 +66,7 @@ function libsecret(run) {
       checkArgs(origin);
       const out = run('secret-tool', ['lookup', ...attrs(origin)]);
       const token = out.status === 0 ? out.stdout.trim() : '';
-      return TOKEN_RE.test(token) ? token : null;
+      return pattern.test(token) ? token : null;
     },
     remove(origin) {
       checkArgs(origin);
@@ -74,8 +75,8 @@ function libsecret(run) {
   };
 }
 
-function file(dir, platform) {
-  const where = path.join(dir, 'credentials.json');
+function file(dir, platform, filename, pattern) {
+  const where = path.join(dir, filename);
   const all = () => {
     try {
       const parsed = JSON.parse(fs.readFileSync(where, 'utf8'));
@@ -114,7 +115,7 @@ function file(dir, platform) {
     label: where,
     file: where,
     save(origin, token) {
-      checkArgs(origin, token);
+      checkArgs(origin, token, pattern);
       // Windows has no file mode: a file under a folder others may read would be readable by them too.
       if (platform === 'win32') throw new Error('this command line cannot keep a token safely on Windows yet');
       write({ ...all(), [origin]: token });
@@ -122,7 +123,7 @@ function file(dir, platform) {
     },
     read(origin) {
       const token = all()[origin];
-      return TOKEN_RE.test(String(token)) ? token : null;
+      return pattern.test(String(token)) ? token : null;
     },
     remove(origin) {
       const data = all();
@@ -134,13 +135,20 @@ function file(dir, platform) {
 }
 
 /**
- * @param {{platform?: string, run?: typeof runCommand, dir: string, has?: (command: string) => boolean}} opts
- *   `dir` is the command line's config folder, for the file; `has` says whether a command is on the PATH
- * @returns {{storeFor: (kind: string) => object, save: (origin: string, token: string) => object}}
+ * @param {{platform?: string, run?: typeof runCommand, dir: string, has?: (command: string) => boolean, pending?: boolean}} opts
+ *   `dir` is the CLI's config folder. `pending` uses separate storage for a short-lived device approval.
+ * @returns {{storeFor: (kind: string) => object, find: (origin: string) => {store: object, token: string}|null,
+ *            save: (origin: string, token: string) => object}}
  *   `save` keeps the token in the first store that takes it and gives back that store
  */
-export function createCredentials({ platform = process.platform, run = runCommand, dir, has = (command) => onPath(command) }) {
-  const stores = { keychain: keychain(run), libsecret: libsecret(run), file: file(dir, platform) };
+export function createCredentials({ platform = process.platform, run = runCommand, dir, has = (command) => onPath(command), pending = false }) {
+  const service = pending ? `${SERVICE}-pending` : SERVICE;
+  const pattern = pending ? DEVICE_RE : TOKEN_RE;
+  const stores = {
+    keychain: keychain(run, service, pattern),
+    libsecret: libsecret(run, service, pattern),
+    file: file(dir, platform, pending ? 'pending-sign-ins.json' : 'credentials.json', pattern),
+  };
   const order = [
     ...(platform === 'darwin' && has('security') ? ['keychain'] : []),
     ...(platform === 'linux' && has('secret-tool') ? ['libsecret'] : []),
@@ -148,6 +156,14 @@ export function createCredentials({ platform = process.platform, run = runComman
   ];
   return {
     storeFor: (kind) => stores[kind] ?? null,
+    find(origin) {
+      for (const kind of order) {
+        const store = stores[kind];
+        const token = store.read(origin);
+        if (token) return { store, token };
+      }
+      return null;
+    },
     save(origin, token) {
       for (const kind of order) {
         if (stores[kind].save(origin, token)) return stores[kind];

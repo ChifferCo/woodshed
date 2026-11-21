@@ -21,10 +21,34 @@ ln -s "$PWD/cli/woodshed.mjs" ~/.local/bin/woodshed
 
 An installer (`curl … | bash`, npm) comes later.
 
+## Start here with `woodshed setup`
+
+Run `woodshed setup` on a terminal, or give your coding agent the repo and the first task:
+
+```sh
+woodshed setup --yes --repo acme/app --repo-dir ~/code/app --reviews default --prompt "Fix the login redirect"
+```
+
+Use `--console <url>` for your own console and `--no-browser` to print links without opening them. When setup exits 2,
+follow the link or supply the choice it asks for, then run it again with the same options. A new CLI sign-in starts
+in your browser and setup collects the approval the next time you run it. Connect Claude or Codex for sessions on
+My settings.
+
+Repeat `--repo` to choose several repos. The first is for the session. For each repo, setup uses the current checkout
+when its GitHub origin matches, or a checkout supplied by `--repo-dir`. Repo review setup prepares the project file
+change for a pull request. `--reviews` sets your own reviewer choice. Use `--skip-reviews` to skip both, or
+`--no-session` to finish without starting an environment. With a compatible `hc` on the path, setup uses
+`session new --herdr`. If a private session already exists for the first repo, setup gives you its link.
+
+`--yes` and runs without a terminal never prompt. `--json` prints one checklist entry per line with
+`event: "setup"`, `step`, `status`, `message`, and a `url` when relevant. When this CLI lacks a repo, review,
+or config command, setup skips that step and says where to do it.
+
 ## Commands
 
 | Command | What it does | Exits |
 | --- | --- | --- |
+| `woodshed setup` | Guides sign-in, repo and review setup, and the first private session. | 0 done, 2 needs you, 3 refused, 1 failed |
 | `woodshed login` | Asks the console for a code, prints it, and opens the console's `/cli` page in your browser. Check the page shows the same code and press **Sign in the CLI**. The token it gets is kept as below. Signing in again on the same computer ends its earlier sign-in. | 0 signed in, 2 the code expired with nobody approving it, 3 denied, 1 too many sign-ins waiting (below) |
 | `woodshed logout` | Ends the token at the console and forgets it here. | 0 |
 | `woodshed status` | The console's name and address, its org (the GitHub account its repos are on), who is signed in, and the Herdr `hc` found here with its version (`hc` in `--json`: `installed`, `version`, `minimum`, `ok`), for `session herdr`. | 0 signed in, 2 not signed in or the sign-in ended |
@@ -39,6 +63,9 @@ Every command takes:
   then `{"event":"signed-in",…}`; a failure is `{"event":"error","status":…,"error":…}`.
 
 `login` also takes `--no-browser`, which prints the address instead of opening it (on a server over SSH, say).
+`login --no-wait` returns 2 with the approval link and keeps the short-lived device code in the same kind of
+credential store as the CLI token. Run it again on the same console to collect the approval. `status --json`
+includes `sessionSignIns` when the console supports it, with a boolean for each personal Claude and Codex sign-in.
 
 Exit codes, for every command: `0` done, `2` waiting on a person (sign in, or approve), `3` refused (denied, or an
 address it will not send a token to), `1` anything else (the console not reached, a console from before the command
