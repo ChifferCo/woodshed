@@ -336,7 +336,7 @@ export async function main(argv, deps = {}) {
       if (json) emit({ event: 'code', console: origin, userCode, verificationUrl: `${origin}/cli`, verificationUrlComplete, expiresAt: new Date(expiresAt).toISOString() });
       say(`Your code: ${userCode}`);
       say(openPage ? `Opening ${verificationUrlComplete}` : `Open ${verificationUrlComplete}`);
-      say(`Check the page shows the same code, then press Sign in the CLI. ${noWait ? 'Then run woodshed login --no-wait again.' : 'Waiting…'}`);
+      say(`Check the page shows the same code, then press Sign in the CLI. ${noWait ? 'Then repeat your login command with the same options.' : 'Waiting…'}`);
       if (openPage) open(verificationUrlComplete);
     }
     async function start() {

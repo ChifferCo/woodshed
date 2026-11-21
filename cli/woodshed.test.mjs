@@ -85,6 +85,9 @@ test('login --no-wait holds one pending approval and the next invocation collect
   const waiting = await c.run(args);
   assert.equal(waiting.code, EXIT.waiting);
   assert.deepEqual(waiting.lines, first.lines, 'the same code is still waiting');
+  const human = await c.run(args.filter((arg) => arg !== '--json'));
+  assert.equal(human.code, EXIT.waiting);
+  assert.ok(human.out.includes('repeat your login command with the same options'));
   await c.approve(code.verificationUrlComplete);
   const collected = await c.run(args);
   assert.equal(collected.code, EXIT.done);
