@@ -2175,7 +2175,12 @@
     // The rail's list is drawn again on every refresh: a project chip that had the focus gets it back, so the keyboard
     // stays where it was.
     const focusedChip = document.activeElement?.closest?.('.rail-projects') ? document.activeElement.dataset.project ?? null : null;
+    // The list is its own scroller, and a new one starts at the top: it keeps the old one's place, or each refresh
+    // would throw someone reading the reviews at the bottom back up.
+    const listTop = slots.railBody.querySelector('.rail-list')?.scrollTop ?? 0;
     slots.railBody.replaceChildren(...railBody());
+    const list = slots.railBody.querySelector('.rail-list');
+    if (list && listTop) list.scrollTop = listTop;
     if (focusedChip !== null) slots.railBody.querySelector(`.rail-projects [data-project="${CSS.escape(focusedChip)}"]`)?.focus();
     syncCardMenu();
     // A tab's own page puts what it is in the pane: Shared's sessions on /all, New session on /.
