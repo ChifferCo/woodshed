@@ -42,7 +42,7 @@ async function serve(t, repoDir, sessionId, options = {}) {
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.address().port}/shed-review`;
   // The JSON of a call, or the response itself for the page.
-  return (p) => fetch(base + p).then((r) => (r.headers.get('content-type')?.startsWith('application/json') ? r.json() : r));
+  return (p, options) => fetch(base + p, options).then((r) => (r.headers.get('content-type')?.startsWith('application/json') ? r.json() : r));
 }
 
 test('opening the review of a checkout with changes makes the review, with its diff, and starts the analysis', async (t) => {
@@ -122,4 +122,49 @@ for (const event of [
   assert.deepEqual(saved, status.review);
   assert.equal(saved.overview, 'Codex explained the export changes.');
   assert.equal(saved.groups[0].files[0].path, 'a.mjs');
+});
+
+test('Codex chat gets the named file before the excerpt cutoff and is told to identify missing context', { timeout: 10_000 }, async (t) => {
+  const repo = checkout(t, { dirty: true });
+  fs.writeFileSync(path.join(repo, 'a-large.txt'), ('x'.repeat(2_000) + '\n').repeat(80));
+  fs.writeFileSync(path.join(repo, 'z-feature.mjs'), 'export const contextCanary = true;\n');
+  execFileSync('git', ['-C', repo, 'add', 'a-large.txt', 'z-feature.mjs']);
+  const bin = path.join(repo, '..', 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'codex'), `#!${process.execPath}
+const fs = require('node:fs');
+const prompt = fs.readFileSync(0, 'utf8');
+if (process.argv.includes('--output-schema')) process.exit(1);
+const problems = [];
+if (/current working directory/.test(prompt)) problems.push('prompt promises checkout access');
+if (!prompt.includes('explain what context is missing')) problems.push('missing context guidance absent');
+if (!prompt.includes('export const contextCanary = true')) problems.push('named hunk was omitted');
+if (!prompt.includes('Remaining diff omitted')) problems.push('expected a truncated excerpt');
+if (problems.length) {
+  console.error(problems.join(', '));
+  process.exit(1);
+}
+console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'The named change was included.' } }));
+console.log(JSON.stringify({ type: 'turn.completed' }));
+`, { mode: 0o755 });
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${bin}:${oldPath}`;
+  t.after(() => { process.env.PATH = oldPath; });
+
+  const base = '/reviews/claude-eeeeeee5';
+  const get = await serve(t, repo, 'eeeeeee5', { agent: 'codex' });
+  await get(base);
+  const chat = await get(`${base}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question: 'What changed in z-feature.mjs?' }),
+  });
+  assert.equal(chat.ok, true, chat.error);
+  let status = await get(`${base}/explain/${chat.askId}`);
+  for (let attempt = 0; attempt < 100 && status.status === 'running'; attempt += 1) {
+    await delay(50);
+    status = await get(`${base}/explain/${chat.askId}`);
+  }
+  assert.equal(status.status, 'ready', status.error);
+  assert.equal(status.answer.text, 'The named change was included.');
 });

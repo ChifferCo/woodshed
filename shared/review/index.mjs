@@ -87,11 +87,11 @@ const MAX_INFLIGHT_CHECKOUTS = 2;
 let inflightRequests = 0;
 let inflightCheckouts = 0;
 
-function startReviewJob(ctx, spec) {
+function startReviewJob(ctx, { files, ...spec }) {
   const options = ctx.reviewAgent;
   return startJob({
     ...spec, ...options, log: ctx.log, readMeminfo: ctx.readMeminfo,
-    files: options?.agent === 'codex' ? readDiff(spec.session)?.files : undefined,
+    files: options?.agent === 'codex' ? (files ?? readDiff(spec.session)?.files) : undefined,
   });
 }
 
@@ -1778,7 +1778,7 @@ async function runAnalysis({ ctx, session, review, diff, gen }) {
         return;
       }
       const reason = attempt === 0 ? null : reviewState.get(session)?.retryReason || 'no structured output';
-      const prompt = buildAnalysisPrompt({ meta: review.meta, files: diff.files, retryReason: reason });
+      const prompt = buildAnalysisPrompt({ meta: review.meta, files: diff.files, retryReason: reason, diffOnly: ctx.reviewAgent?.agent === 'codex' });
 
       const started = await startWithBackoff({ ctx, session, review, prompt, gen });
       if (!started) return;
@@ -1961,7 +1961,7 @@ async function handleExplain(payload, res, ctx, session) {
   }
 
   const prompt = buildExplainPrompt({
-    meta: review.meta, file: valid.file, filePath: valid.filePath,
+    meta: review.meta, file: valid.file, filePath: valid.filePath, diffOnly: ctx.reviewAgent?.agent === 'codex',
     line: valid.line, endLine: valid.endLine, side: valid.side, question: valid.question, history: valid.history,
   });
   const started = startReviewJob(ctx, {
@@ -2081,11 +2081,18 @@ async function handleChat(payload, res, ctx, session) {
     artifact: readArtifact(session),
     files: diff.files,
     history: readChat(session),
+    diffOnly: ctx.reviewAgent?.agent === 'codex',
     question: valid.question,
   });
   const started = startReviewJob(ctx, {
     kind: 'chat',
     session,
+    files: ctx.reviewAgent?.agent === 'codex'
+      ? [
+        ...diff.files.filter((file) => valid.question.includes(file.path)),
+        ...diff.files.filter((file) => !valid.question.includes(file.path)),
+      ]
+      : undefined,
     argv: explainArgv({ prompt }),
     cwd: review.worktree,
   });
@@ -2288,7 +2295,7 @@ async function answerUserQuestion({ ctx, session, review, item }) {
       ctx, session, review, gen: null, live, kind: 'qa-ask',
       argv: seniorArgv({
         prompt: buildAnswersPrompt({
-          meta: review.meta, files, overview: readArtifact(session)?.overview || '', items, open: [{ ...item, answer: null }],
+          meta: review.meta, files, diffOnly: ctx.reviewAgent?.agent === 'codex', overview: readArtifact(session)?.overview || '', items, open: [{ ...item, answer: null }],
         }),
       }),
       cwd: snapshot.dir,
@@ -2511,7 +2518,7 @@ async function runQaRounds({ ctx, session, review, gen, pin }) {
     save();
     const answered = await qaRun({
       ctx, session, review, gen,
-      argv: seniorArgv({ prompt: buildAnswersPrompt({ meta: review.meta, files, overview: overviewNow(), items: qa.items, open }) }),
+      argv: seniorArgv({ prompt: buildAnswersPrompt({ meta: review.meta, files, overview: overviewNow(), items: qa.items, open, diffOnly: ctx.reviewAgent?.agent === 'codex' }) }),
       cwd: snapshot.dir,
     });
     if (!answered) return;

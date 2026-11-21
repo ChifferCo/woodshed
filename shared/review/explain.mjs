@@ -105,7 +105,7 @@ export function explainArgv({ prompt }) {
   ];
 }
 
-export function buildExplainPrompt({ meta, file, filePath, line, endLine, side, question, history }) {
+export function buildExplainPrompt({ meta, file, filePath, line, endLine, side, question, history, diffOnly = false }) {
   // One line or a span, said the same way everywhere below.
   const span = line === null
     ? null
@@ -119,9 +119,13 @@ export function buildExplainPrompt({ meta, file, filePath, line, endLine, side, 
   const excerptTag = `diff-excerpt-${nonce}`;
 
   lines.push(
-    'You are answering a reviewer reading a pull request. The pull request head is checked out',
-    'at your current working directory: read the file in question and anything else you need —',
-    'callers, definitions, related changes — to give an answer the diff alone could not.',
+    ...(diffOnly ? [
+      'You are answering a reviewer reading a pull request. Use the supplied code excerpts.',
+    ] : [
+      'You are answering a reviewer reading a pull request. The pull request head is checked out',
+      'at your current working directory: read the file in question and anything else you need —',
+      'callers, definitions, related changes — to give an answer the diff alone could not.',
+    ]),
     '',
     'Answer in at most three short paragraphs of plain prose. Cite concrete places as',
     'path:line when it helps. Do not restate the diff; explain what it means and why it is',

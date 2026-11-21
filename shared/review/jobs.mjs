@@ -197,7 +197,7 @@ function codexPrompt(job) {
   const parts = [
     claudeOption(job.argv, '--system-prompt'),
     claudeOption(job.argv, '-p'),
-    'Use the supplied review material. Repository browsing is unavailable in this run.',
+    'Repository browsing is unavailable. Base claims about the code on the supplied excerpts. If the excerpts omit code needed to answer, explain what context is missing.',
   ];
   if (claudeOption(job.argv, '--tools')) {
     // Supply the same diff the page shows. Codex runs outside the checkout with
