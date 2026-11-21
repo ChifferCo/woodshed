@@ -2463,8 +2463,9 @@ the console log says why`.
 `woodshed repo` uses `GET /api/cli/repos` to list, `POST /api/cli/repos` with `{repo, name?}` to add, and
 `POST /api/cli/repos/remove` with `{repo}` to remove. Each authenticates the `wsc_` token and refuses any `Origin`
 header. The add and remove go through the same project code as the Repos card, including the hosting program's `repos`
-hook and the usual settings cleanup on remove. Hosted CLI changes require the `members` hook to check the token
-holder's admin role. Other signed-in members see only the repos they can start sessions on.
+hook and the usual settings cleanup on remove. Hosted CLI requests check current membership and role when the host
+supplies the `members` hook. Hosted changes require a verified owner role. Other signed-in members see only the
+repos they can start sessions on.
 
 Each repo on the card has a row of six colours, its colour on the rail (`public/projectColors.cjs` holds the palette and
 the rule, for the server and the pages alike). A pick is saved at once (`POST /api/console-settings/projects/color`,

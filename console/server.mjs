@@ -796,9 +796,9 @@ export function createHandler({
     return !auth?.enabled() || !login || !members || !members.hasAdmin() || members.isAdmin(login);
   }
 
-  function canManageRepos(login) {
-    if (!trusted) return isAdmin({ login });
-    return members?.hosted ? members.isCurrentAdmin(login) : null;
+  function cliRepoRole(login) {
+    if (!trusted) return isAdmin({ login }) ? 'owner' : 'member';
+    return members?.hosted ? members.currentRole(login) : undefined;
   }
 
   function redirect(res, location, setCookie) {
@@ -2457,7 +2457,7 @@ export function createHandler({
     if (url.pathname.startsWith('/api/cli/')) {
       if (!cli) return reply(res, 404, { error: 'this console has no command line sign-in' });
       if (url.pathname === CLI_REPOS_PATH || url.pathname === `${CLI_REPOS_PATH}/remove`) {
-        return handleCliRepos({ req, res, url, cli, reply, readJson, addedProjects, canManageRepos, projectsView, removeRepo });
+        return handleCliRepos({ req, res, url, cli, reply, readJson, addedProjects, roleFor: cliRepoRole, projectsView, removeRepo });
       }
       return handleCliApi({ req, res, url, cli, publicUrl: config.publicUrl, about: cliAbout });
     }

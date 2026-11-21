@@ -217,10 +217,11 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
     return personOf(login)?.role === 'owner';
   }
 
-  // CLI repo administration has no browser identity from the host. Require a successful roster read for it,
+  // CLI repo requests have no browser identity from the host. Require a successful roster read for them,
   // even if the cached list is still used for other work after an error or an unexpected empty reply.
-  async function isCurrentAdmin(login) {
-    return await refresh() && isAdmin(login);
+  async function currentRole(login) {
+    if (!(await refresh())) throw new Error('the host returned an unexpectedly empty member list');
+    return personOf(login)?.role ?? null;
   }
 
   function hasAdmin() {
@@ -349,7 +350,7 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
   }
 
   return {
-    hosted: true, stop, refresh, load, whenGone, whenLeft, isMember, isAdmin, isCurrentAdmin, hasAdmin, hasGithubSessions, setGithubSessions, isAssignable, assignables,
+    hosted: true, stop, refresh, load, whenGone, whenLeft, isMember, isAdmin, currentRole, hasAdmin, hasGithubSessions, setGithubSessions, isAssignable, assignables,
     setAssignable, add, remove, setRole, view, requestOf: () => null,
   };
 }

@@ -31,7 +31,7 @@ function repoList(projects, choices, canChange) {
   };
 }
 
-export async function handleCliRepos({ req, res, url, cli, reply, readJson, addedProjects, canManageRepos, projectsView, removeRepo }) {
+export async function handleCliRepos({ req, res, url, cli, reply, readJson, addedProjects, roleFor, projectsView, removeRepo }) {
   const remove = url.pathname === `${CLI_REPOS_PATH}/remove`;
   const { method } = req;
   if (req.headers.origin !== undefined) return reply(res, 403, { error: 'a command line token is for the woodshed command line, not a page' });
@@ -41,7 +41,13 @@ export async function handleCliRepos({ req, res, url, cli, reply, readJson, adde
   const { login, id } = signedIn;
   let repo;
   try {
-    const canChange = await canManageRepos(login);
+    // Read a write's body before checking the role, so a slow upload cannot hold a prior admin decision open.
+    const body = method === 'POST' ? await readJson(req).catch(() => null) : null;
+    // The fresh roster can take the caller off the workspace even if the token first passed against the cached roster.
+    const role = await roleFor(login);
+    if (role === null) return reply(res, 401, { error: 'you are no longer a member of this workspace' });
+    if (!cli.owns(req.headers)) return reply(res, 401, { error: 'the command line sign-in ended' });
+    const canChange = role === 'owner';
     if (method === 'GET') {
       if (!canChange) return reply(res, 200, repoList((await projectsView(login)).projects, null, false));
       if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
@@ -54,11 +60,10 @@ export async function handleCliRepos({ req, res, url, cli, reply, readJson, adde
       return reply(res, 200, { ...repoList(addedProjects.view(), choices, true), ...(choicesError && { choicesError }) });
     }
     if (!canChange) {
-      const reason = canChange === null ? 'This hosted console does not give the command line admin roles. Use Console settings.' : "only an admin can change the console's repos";
+      const reason = role === undefined ? 'This hosted console does not give the command line admin roles. Use Console settings.' : "only an admin can change the console's repos";
       return reply(res, 403, { error: reason });
     }
     if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
-    const body = await readJson(req).catch(() => null);
     if (!validRepo(body?.repo) || (body.name !== undefined && (remove || typeof body.name !== 'string'))) {
       return reply(res, 400, { error: 'give the repo as owner/name, such as acme/api' });
     }

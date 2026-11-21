@@ -57,6 +57,7 @@ async function consoleFor(t, { hosted = false, roster = true, hostComplete = fal
   const cli = createCliSignIn({
     store, allowed: (login) => !members?.hosted || members.isMember(login), canWrite: async (login) => login !== 'former-writer',
   });
+  members?.whenLeft?.((login) => cli.revokeAll(login, 'the program\'s list'), { also: () => cli.logins().filter(Boolean) });
   const tokens = Object.fromEntries(['octocat', 'mia-dev', 'former-writer'].map((login) => {
     const { deviceCode, userCode } = cli.start({ name: `${login}-laptop` });
     cli.decide({ code: userCode, login, approve: true });
@@ -82,7 +83,7 @@ async function consoleFor(t, { hosted = false, roster = true, hostComplete = fal
   const change = (repo, { remove, body, ...options } = {}) => request(remove ? `${REPOS}/remove` : REPOS, {
     method: 'POST', body: { repo, ...body }, ...options,
   });
-  return { request, change, app, calls, people, store, tick: (ms) => { now += ms; }, setRosterDown: (down) => { rosterDown = down; } };
+  return { request, change, app, calls, cli, people, store, tick: (ms) => { now += ms; }, setRosterDown: (down) => { rosterDown = down; } };
 }
 
 test('admins see both connected and addable repos and their GitHub App access', async (t) => {
@@ -197,9 +198,21 @@ test('a cached hosted owner cannot read inventory or change repos after a failed
 
   c.setRosterDown(false);
   c.people.length = 0;
-  assert.equal((await c.request()).body.available, null);
-  assert.equal((await c.change('acme/web')).code, 403, 'an unexpected empty roster cannot confirm the cached owner role');
+  assert.equal((await c.request()).code, 502);
+  assert.equal((await c.change('acme/web')).code, 502, 'an unexpected empty roster cannot confirm the cached owner role');
   assert.deepEqual(c.calls, []);
+});
+
+test('a removed hosted member is refused on the same request that refreshes the roster', async (t) => {
+  const c = await consoleFor(t, { hosted: true });
+  const options = { login: 'mia-dev' };
+  assert.equal((await c.request(REPOS, options)).code, 200);
+  c.people.pop();
+  assert.equal(c.cli.list(options.login).length, 1, 'the cache has not expired and has not revoked the token yet');
+  const first = await c.request(REPOS, options);
+  assert.deepEqual(first, { code: 401, body: { error: 'you are no longer a member of this workspace' } });
+  assert.equal(c.cli.list(options.login).length, 0);
+  assert.equal((await c.request(REPOS, options)).code, 401);
 });
 
 test('a hosted link for another account cannot be used to grant access to the requested repo', async (t) => {
