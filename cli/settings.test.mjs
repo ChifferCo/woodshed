@@ -338,7 +338,10 @@ test('laptop MCP definitions can be pulled by another computer, and literal cust
   assert.equal(res.status, 400);
   assert.match((await res.json()).error, /literal HTTP header/);
 
-  assert.equal((await c.run(['settings', 'push', '--only', 'mcp'])).code, EXIT.done);
+  const pushed = await c.run(['settings', 'push', '--only', 'mcp']);
+  assert.equal(pushed.code, EXIT.done, pushed.err);
+  assert.match(pushed.out, /Saved 1 MCP definition for your computers/);
+  assert.doesNotMatch(pushed.out, /Running sessions/);
   const { version, items, laptopMcp } = await c.copy();
   assert.equal(version, 0, 'the laptop-only push does not initialize the session copy');
   assert.deepEqual(items, {});
@@ -698,21 +701,44 @@ test('a pulled MCP server shows each env value but a credential\'s, and its argu
   assert.deepEqual(skill, ['frontmatter: allowed-tools: Bash(*)', '4 lines of instructions claude follows']);
 });
 
-test('a hook carrying a credential is left out both ways, and never printed', () => {
+test('a hook carrying a credential is left out both ways, and never printed', async (t) => {
   const hooks = { Stop: [{ hooks: [
     { type: 'http', url: 'https://hooks.example/stop', headers: { Authorization: 'Bearer dummy-hook-secret' } },
+    { type: 'http', url: 'https://hooks.example/custom', headers: { 'X-Service-Access': 'opaque-hook-fixture' } },
     { type: 'http', url: 'https://hooks.example/ok', headers: { Authorization: 'Bearer ${HOOK_TOKEN}' } },
+    { type: 'http', url: 'https://hooks.example/ref', headers: { 'X-Service-Access': '${HOOK_ACCESS}' } },
     { type: 'command', command: 'echo done' },
   ] }] };
-  const up = translate('.claude/settings.json', b64({ hooks }), { from: '/Users/mia', to: SESSION_HOME });
+  const item = '.claude/settings.json';
+  const value = b64({ hooks });
+  const up = translate(item, value, { from: '/Users/mia', to: SESSION_HOME });
   const sent = JSON.parse(unb64(up.value));
-  assert.deepEqual(sent.hooks.Stop[0].hooks.map((h) => h.url ?? h.command), ['https://hooks.example/ok', 'echo done']);
+  const allowed = ['https://hooks.example/ok', 'https://hooks.example/ref', 'echo done'];
+  assert.deepEqual(sent.hooks.Stop[0].hooks.map((h) => h.url ?? h.command), allowed);
   assert.match(up.notes.join(' '), /hooks\.Stop\[0\]\.hooks\[0\] \(sends its Authorization header, a credential\)/);
-  assert.ok(!up.notes.join(' ').includes('dummy-hook-secret'));
-  const down = translate('.claude/settings.json', b64({ hooks }), { from: SESSION_HOME, to: '/Users/mia' });
-  const runs = runsOf('.claude/settings.json', down.value);
-  assert.ok(!runs.join('\n').includes('dummy-hook-secret'), 'a pull\'s preview never shows it');
-  assert.equal(JSON.parse(unb64(down.value)).hooks.Stop[0].hooks.length, 2);
+  assert.match(up.notes.join(' '), /hooks\.Stop\[0\]\.hooks\[1\] \(sends a literal HTTP header, a credential\)/);
+  const secrets = /dummy-hook-secret|opaque-hook-fixture/;
+  assert.doesNotMatch(up.notes.join(' '), secrets);
+
+  const c = await setUp(t);
+  const patch = { version: 0, changed: { [item]: value }, removed: [] };
+  const raw = await fetch(`${c.origin}/api/cli/settings`, {
+    method: 'POST', headers: { authorization: `Bearer ${c.token}` }, body: JSON.stringify(patch),
+  });
+  assert.equal(raw.status, 400, 'a direct laptop upload cannot bypass the hook check');
+  assert.match((await raw.json()).error, /hook sends a literal HTTP header/);
+  assert.equal((await c.copy()).version, 0);
+
+  await c.claudeSettings.sync({ login: 'mia-dev', sessionId: 'aaaa1111', ...patch });
+  for (const opts of [[], ['--json']]) {
+    const plan = await c.run(['settings', 'plan', '--pull', '--replace', '--only', 'settings', ...opts]);
+    assert.equal(plan.code, EXIT.done, plan.err);
+    assert.match(plan.out, /HOOK_ACCESS/);
+    assert.doesNotMatch(plan.out, secrets);
+  }
+  assert.equal((await c.run(['settings', 'pull', '--replace', '--only', 'settings'])).code, EXIT.done);
+  const pulled = JSON.parse(fs.readFileSync(path.join(c.home, item), 'utf8'));
+  assert.deepEqual(pulled.hooks.Stop[0].hooks.map((h) => h.url ?? h.command), allowed);
 });
 
 test('a dropped path is shown by its first plain names only, so a token in an argument is never printed', async (t) => {

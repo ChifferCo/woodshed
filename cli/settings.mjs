@@ -30,7 +30,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 
 import { isLoginItem } from '../console/cliSettings.mjs';
-import { hasLiteralCredential, hasLiteralMcpHeader, MAX_SETTINGS_BYTES } from '../console/claudeSettings.mjs';
+import { hasLiteralCredential, hasLiteralHttpHeader, MAX_SETTINGS_BYTES } from '../console/claudeSettings.mjs';
 import {
   applyItems, isSyncedFile, localChanges, MAX_ITEM_BYTES, NO_STATUS_LINE, parseEntryId, readSnapshot, sameSettings,
   SETTINGS, SYNCED_DIRS, withStatusLineOf,
@@ -285,7 +285,7 @@ export function translate(id, value, { from, to, statusLineOf }) {
     }
     const credential = serverCredential(server);
     if (credential) return { fate: 'refuse', reason: `${credential}, a credential: API keys stay where they are` };
-    if (hasLiteralMcpHeader(server)) return { fate: 'refuse', reason: 'sends a literal HTTP header: use a variable reference' };
+    if (hasLiteralHttpHeader(server)) return { fate: 'refuse', reason: 'sends a literal HTTP header: use a variable reference' };
     const notes = [];
     if (typeof server?.command === 'string' && path.posix.isAbsolute(server.command) && !server.command.startsWith(`${from}/`)) {
       if (!PATH_DIRS.includes(path.posix.dirname(server.command))) return { fate: 'skip', reason: `runs a program at ${shownPath(server.command, '', { prefix: '/' })}, a path the other side may not have` };
@@ -327,7 +327,9 @@ export function translate(id, value, { from, to, statusLineOf }) {
       hooks[event] = !Array.isArray(groups) ? groups : groups.map((group, i) => {
         if (!Array.isArray(group?.hooks)) return group;
         const kept = group.hooks.filter((hook, j) => {
-          const credential = hook && typeof hook === 'object' ? serverCredential(hook) : null;
+          const credential = hook && typeof hook === 'object'
+            ? serverCredential(hook) ?? (hasLiteralHttpHeader(hook) ? 'it sends a literal HTTP header' : null)
+            : null;
           if (credential) notes.push(`hooks.${event}[${i}].hooks[${j}] (${credential.replace(/^its |^it /, '')}, a credential)`);
           return !credential;
         });
@@ -1021,12 +1023,13 @@ export async function settingsCommand(ctx) {
   outgoing.forEach((r) => kept.shown.add(r.id));
   state.save(kept);
   let version = shared.version;
-  if (Object.keys(claude.changed).length) {
+  const claudeChanges = Object.entries(claude.changed);
+  if (claudeChanges.length) {
     // removed is always empty: a computer never takes an item out of the copy, as a session's removal does not spread.
     const answer = await call(origin, '/api/cli/settings', { method: 'POST', token, body: { version: shared.version, changed: claude.changed, removed: [] } });
     if (answer.status !== 200) throw fail(`${origin} did not take your Claude settings (${answer.status}): ${String(answer.body?.error ?? '').slice(0, 200)}`);
     version = answer.body.version;
-    for (const [id, value] of Object.entries(claude.changed)) kept.synced[id] = itemHash(id, value);
+    for (const [id, value] of claudeChanges) kept.synced[id] = itemHash(id, value);
   }
   recordSame();
   state.save(kept);
@@ -1036,8 +1039,11 @@ export async function settingsCommand(ctx) {
     if (answer.status !== 200) failed.push({ file, error: String(answer.body?.error ?? answer.status).slice(0, 200) });
   }
   const sentOwn = Object.keys(ownPlan.upload).length - failed.length;
-  if (json) emit({ event: 'pushed', console: origin, version, sent: Object.keys(claude.changed).length, ownFilesSent: sentOwn, failed, ...counts });
-  if (Object.keys(claude.changed).length) say(`Sent ${Object.keys(claude.changed).length} Claude item${Object.keys(claude.changed).length === 1 ? '' : 's'}: your shared copy is version ${version}. Running sessions take them within a minute; MCP servers as a session starts.`);
+  const sentMcp = claudeChanges.filter(([id]) => parseEntryId(id)?.key === 'mcpServers').length;
+  const sentSessions = claudeChanges.length - sentMcp;
+  if (json) emit({ event: 'pushed', console: origin, version, sent: claudeChanges.length, ownFilesSent: sentOwn, failed, ...counts });
+  if (sentSessions) say(`Sent ${sentSessions} Claude item${sentSessions === 1 ? '' : 's'} to your shared copy (version ${version}). Running sessions take them within a minute.`);
+  if (sentMcp) say(`Saved ${sentMcp} MCP definition${sentMcp === 1 ? '' : 's'} for your computers (version ${version}).`);
   if (own) say(`Saved ${sentOwn} own file${sentOwn === 1 ? '' : 's'} for ${own.repo}: your next session on it writes them.`);
   for (const { file, error } of failed) ctx.warn(`${file} not saved: ${error}`);
   return failed.length ? EXIT.failed : EXIT.done;

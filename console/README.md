@@ -611,7 +611,7 @@ session's own.
   definitions pushed from a computer are kept in the same stored settings object in a map only the CLI can read. They
   take precedence on computers if a session has saved the same server name. The session API returns only the session's
   copy. Admin-configured MCPs reach sessions through the relay. The console logs `cliSettings: pushed` with the token's
-  id and the counts, `cliSettings: refused` when the copy exceeds 5 MB or an MCP definition has a literal header, and
+  id and the counts, `cliSettings: refused` when the copy exceeds 5 MB or an MCP definition or hook has a literal header, and
   `cliSettings: refused, a removal from a computer` or
   `MCP logins from a computer` for a client other than the command line's. `--own-files` saves into your own files on My settings
   through the Repo settings routes, with their checks and log lines.

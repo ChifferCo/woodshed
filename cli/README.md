@@ -258,7 +258,7 @@ naming it (`--only settings.json`, not `--only settings`) sends yours.
   session's PATH. Any other absolute program path is skipped.
 
 **What is refused**, by name or kind, never by showing it: MCP logins (sign in to the server where you use it), an MCP server
-whose `env` holds a literal key or whose HTTP headers contain literal values (`${VARIABLE}` is fine), a file named like a secret (`.env`, `*.pem`, `id_rsa`,
+whose `env` holds a literal key, literal HTTP headers on an MCP definition or hook (`${VARIABLE}` is fine), a file named like a secret (`.env`, `*.pem`, `id_rsa`,
 `credentials.json`) in a skills, agents or commands folder, and one holding what looks like a private key or a GitHub,
 Anthropic, OpenAI, Slack, AWS, Stripe live or Google key. For own files, keys and certificates, files named for production
 (`.env.production`) and live keys.
