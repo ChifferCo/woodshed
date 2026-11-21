@@ -1568,6 +1568,8 @@ export function createHandler({
           return reply(res, 200, { removed: actionMatch[1] });
         }
         const resuming = fleet.find(actionMatch[1]);
+        // Whose it is before anything of it is read: someone else's private session answers as one that does not exist.
+        if (!resuming || resuming.owner !== login) return reply(res, 409, { error: 'no session you can open with that id' });
         await userSettings?.refresh?.(login, { force: true });
         if (resuming?.options?.agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
         if (!databasesReady(login)) return reply(res, 409, { error: DATABASES_NOT_READY });
