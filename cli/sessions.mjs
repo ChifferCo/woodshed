@@ -10,6 +10,7 @@
 //   woodshed session stop <id>
 //   woodshed session resume <id> [--no-wait]
 //   woodshed session remove <id> [--yes]
+//   woodshed session prune
 //   woodshed session extend <id>
 //   woodshed session limits <id> [--idle-hours <n>|default] [--lifetime-hours <n>|default]
 //
@@ -19,11 +20,13 @@
 // connect puts this terminal on one of your sessions' (terminal.mjs): its agent's, or with --shell the Terminal tab's
 // shell, resuming it first when it paused.
 // herdr makes one of your sessions a machine in Herdr's hc, `woodshed-<id>`, reached through `woodshed tunnel` (hc.mjs),
-// resuming it first when it paused; remove forgets that machine too. With --parent the session's agent's terminal is
-// made from here, a child of a terminal of this computer's (hc's `run --on` from that terminal), so an agent there can
-// `hc wait --children` on it: the session, started or resumed with herdrParent, waits for it rather than make its own.
+// resuming it first when it paused; remove forgets that machine too. A session removed elsewhere (the console's page, or
+// the console cleaning it up) leaves its machine behind, unreachable: list says so, and prune forgets those. With
+// --parent the session's agent's terminal is made from here, a child of a terminal of this computer's (hc's `run --on`
+// from that terminal), so an agent there can `hc wait --children` on it: the session, started or resumed with
+// herdrParent, waits for it rather than make its own.
 
-import { HC_MINIMUM, addMachine, agentOn, hcVersion, machineName, parentTerminal, removeMachine, shellQuote, startAgentTerminal } from './hc.mjs';
+import { HC_MINIMUM, addMachine, agentOn, hcVersion, leftoverMachines, machineName, nameAgentPlace, parentTerminal, removeMachine, shellQuote, startAgentTerminal } from './hc.mjs';
 
 // A terminal whose connection dropped is opened again for this long, waiting a little longer each time.
 const RECONNECT_GIVE_UP_MS = 60_000;
@@ -70,6 +73,8 @@ Commands:
   resume <id> [--no-wait]    start one of your stopped sessions again, its conversation and all, and wait for it
   remove <id> [--yes]        take one of your sessions off the list, with its saved conversation (stopped first),
                              and forget its machine in Herdr
+  prune                      forget the woodshed-<id> machines in Herdr whose session is no longer on this console
+                             (removed on the page, or cleaned up); paused and stopped sessions' machines stay
   extend <id>                put its pause or stop off by an hour; the console allows it in the last 15 minutes
   limits <id> [options]      its own idle pause and lifetime, in place of yours or the console's
       --idle-hours <n>       pause after this many hours with nothing to do; default goes back to yours
@@ -369,13 +374,26 @@ export async function sessionCommand({ origin, rest }, ctx) {
     }
     const agent = await agentOn(ctx.hc, name, { place: ctx.placeHerdrAgent !== false }).catch(() => ({ inHerdr: null, address: null }));
     const shown = summary(s, { origin, login });
+    // Its space named after the session's title and its tab after its agent, in the Herdr app's window. The console
+    // names a session a few seconds after it starts: running this again picks the title up. Not for move, which lays
+    // out its own spaces.
+    if (agent.inHerdr && ctx.placeHerdrAgent !== false && ctx.app) {
+      const named = await nameAgentPlace(ctx.hc, ctx.app, { machine: name, address: agent.address, title: shown.title, agent: shown.agent, sleep })
+        .catch((err) => ({ space: null, tab: null, error: err.message }));
+      if (named.space || named.tab) agent.named = { space: named.space, tab: named.tab };
+      if (named.error) agent.namingError = printable(named.error, 500);
+    }
     let code = shown.state === 'needs-you' ? EXIT.waiting : EXIT.done;
     // Asked for and not given: the machine stays added, and the exit says the parent was not.
+    // What it has as its parent now is read from hc, never assumed: a run of this one may have made it already.
     const noParent = child && !child.made
-      ? `Its agent's terminal ${child.why === 'taken' ? 'was started by the session itself, its wait for this one over,' : 'was already there,'} with no parent: hc gives a terminal its parent only as it starts. Run woodshed session new --herdr --parent for a session whose agent is a child of this terminal.`
+      ? `Could not make ${parent} the parent of its agent's terminal: ${child.why === 'taken' ? 'it was made while this was on its way' : 'it was already there'}, ${child.parent ? `a child of ${child.parent}` : 'with no parent'}, and hc gives a terminal its parent only as it starts. Run woodshed session new --herdr --parent for a session whose agent is a child of this terminal.`
       : null;
     if (noParent) code = EXIT.failed;
-    const parentField = child ? { parent: child.made ? { made: true, terminal: parent, address: child.address, outlives: !opts['end-with-parent'], notify: !opts['no-notify'] } : { made: false, why: child.why } } : {};
+    // Herdr hears of a turn ending or the agent blocking from the agent's own status records: claude sends them, the
+    // pinned codex none (session/agentPane.mjs), so a codex child wakes its parent's hc wait only by exiting.
+    const reportsStatus = shown.agent !== 'codex';
+    const parentField = child ? { parent: child.made ? { made: true, terminal: parent, address: child.address, outlives: !opts['end-with-parent'], notify: !opts['no-notify'], reportsStatus } : { made: false, why: child.why, has: child.parent } } : {};
     if (json) {
       emit({ event: 'connected', session: shown, machine: { name, action: added.action, state: added.state }, agent, ...parentField });
       if (noParent) emit({ event: 'error', status: 'no-parent', error: noParent });
@@ -383,10 +401,13 @@ export async function sessionCommand({ origin, rest }, ctx) {
     }
     say(added.action === 'kept' ? `${name} was already in Herdr, connected.` : `${name} is in Herdr: it shows in the app's sidebar.`);
     if (child?.made) {
-      say(`Its agent's terminal ${child.address} is a child of ${parent} here${opts['end-with-parent'] ? ', and ends with it' : ', and outlives it'}: hc wait --children any wakes ${parent} when it ends a turn, blocks, errors or exits.`);
+      const wakes = reportsStatus ? 'when it ends a turn, blocks, errors or exits' : 'only when it exits: codex tells Herdr nothing of its turns';
+      say(`Its agent's terminal ${child.address} is a child of ${parent} here${opts['end-with-parent'] ? ', and ends with it' : ', and outlives it'}: hc wait --children any wakes ${parent} ${wakes}.`);
     }
     if (noParent) stderr.write(`woodshed: ${noParent}\n`);
     if (agent.placementError) say(`Could not put the agent in a Herdr space: ${printable(agent.placementError, 500)}`);
+    if (agent.named?.space) say(`Named its Herdr space "${agent.named.space}".`);
+    if (agent.namingError) say(`Could not name its Herdr space or tab: ${agent.namingError}`);
     if (agent.inHerdr) say(`Its agent is ${agent.address}: hc attach ${agent.address}`);
     else if (agent.inHerdr === false) {
       say(`Its agent runs in tmux, not Herdr: Agent terminal on My settings was tmux when the session started. New terminals and agents on ${name} work; the agent itself is at ${shown.url}. Pick Herdr on My settings for your next sessions.`);
@@ -495,22 +516,76 @@ export async function sessionCommand({ origin, rest }, ctx) {
     return connect(found.s, found.login, parent);
   }
 
+  // The machines in Herdr this command line added for sessions no longer on the console's list. Every session it lists
+  // counts as there, ended or not: only one gone from the list altogether has nothing to bring back. null: no hc here
+  // new enough to have added one, or hc could not list its machines.
+  async function leftovers(sessions) {
+    if (ctx.platform === 'win32' || !ctx.hc) return null;
+    try {
+      if (!(await hcVersion(ctx.hc)).ok) return null;
+      const listed = new Set(sessions.map((s) => s.id));
+      return await leftoverMachines(ctx.hc, { origin, exists: (id) => listed.has(id) });
+    } catch (err) {
+      if (!err.hc) throw err;
+      return null;
+    }
+  }
+
   if (sub === 'list') {
     const { login, sessions } = await list();
     const shown = sessions.filter((s) => opts.all || !ended(s)).map((s) => summary(s, { origin, login }));
+    const gone = await leftovers(sessions);
     if (json) {
-      emit({ console: origin, login, sessions: shown });
+      emit({ console: origin, login, sessions: shown, ...(gone ? { herdrLeftovers: gone.map((m) => m.name) } : {}) });
       return EXIT.done;
     }
-    if (!shown.length) {
-      say(opts.all ? 'No sessions.' : 'No sessions. --all also lists those that ended.');
-      return EXIT.done;
+    if (!shown.length) say(opts.all ? 'No sessions.' : 'No sessions. --all also lists those that ended.');
+    else {
+      const whose = (x) => (x.mine ? 'mine' : x.shared ? (x.assignee ? (x.assignee === login ? 'you' : `@${x.assignee}`) : 'shared') : `@${x.owner}`);
+      const rows = [['ID', 'STATE', 'WHOSE', 'PAUSES', 'PROJECT', 'TITLE'], ...shown.map((x) => [x.id, x.stateWord, whose(x), pauseText(x.pause, now()) || '-', x.project ?? '', x.title ?? ''])];
+      const widths = rows[0].map((_, i) => Math.max(...rows.map((r) => r[i].length)));
+      for (const row of rows) say(row.map((cell, i) => (i === row.length - 1 ? cell : cell.padEnd(widths[i]))).join('  ').trimEnd());
     }
-    const whose = (x) => (x.mine ? 'mine' : x.shared ? (x.assignee ? (x.assignee === login ? 'you' : `@${x.assignee}`) : 'shared') : `@${x.owner}`);
-    const rows = [['ID', 'STATE', 'WHOSE', 'PAUSES', 'PROJECT', 'TITLE'], ...shown.map((x) => [x.id, x.stateWord, whose(x), pauseText(x.pause, now()) || '-', x.project ?? '', x.title ?? ''])];
-    const widths = rows[0].map((_, i) => Math.max(...rows.map((r) => r[i].length)));
-    for (const row of rows) say(row.map((cell, i) => (i === row.length - 1 ? cell : cell.padEnd(widths[i]))).join('  ').trimEnd());
+    if (gone?.length) {
+      const names = gone.map((m) => m.name).join(', ');
+      say(`\nHerdr still has ${gone.length === 1 ? 'a machine' : `${gone.length} machines`} of ${gone.length === 1 ? 'a session' : 'sessions'} no longer on ${origin}: ${names}. Forget ${gone.length === 1 ? 'it' : 'them'} with: woodshed session prune`);
+    }
     return EXIT.done;
+  }
+
+  if (sub === 'prune') {
+    if (ctx.platform === 'win32') throw fail('woodshed session prune does not run on Windows yet', { code: EXIT.refused, status: 'refused' });
+    const hc = await hcVersion(ctx.hc);
+    if (!hc.ok) {
+      if (json) emit({ event: 'pruned', forgot: [], failed: [], hc: false });
+      say(hc.installed ? `Your hc is older than ${HC_MINIMUM}: this command line added no machines to it.` : 'No hc on your PATH: there is no machine in Herdr to forget.');
+      return EXIT.done;
+    }
+    const { sessions } = await list();
+    const listed = new Set(sessions.map((s) => s.id));
+    let gone;
+    try {
+      gone = await leftoverMachines(ctx.hc, { origin, exists: (id) => listed.has(id) });
+    } catch (err) {
+      if (!err.hc) throw err;
+      throw fail(printable(err.message, 500));
+    }
+    const forgot = [];
+    const failed = [];
+    for (const m of gone) {
+      try {
+        // Looked up again by its line: never another machine that took the name since.
+        if (await removeMachine(ctx.hc, m.name, { origin, session: m.session })) forgot.push(m.name);
+      } catch (err) {
+        if (!err.hc) throw err;
+        failed.push({ name: m.name, error: printable(err.message, 500) });
+      }
+    }
+    if (json) emit({ event: 'pruned', forgot, failed });
+    if (!gone.length) say(`Herdr has no machine of a session no longer on ${origin}.`);
+    for (const name of forgot) say(`Forgot ${name} in Herdr: its session is no longer on ${origin}.`);
+    for (const f of failed) stderr.write(`woodshed: ${f.error}\n`);
+    return failed.length ? EXIT.failed : EXIT.done;
   }
 
   const id = opts.id;
@@ -679,6 +754,7 @@ export function parseSessionArgs(sub, words, fail) {
     stop: { values: [], flags: [], words: 'id' },
     resume: { values: [], flags: ['no-wait'], words: 'id' },
     remove: { values: [], flags: ['yes'], words: 'id' },
+    prune: { values: [], flags: [], words: null },
   };
   // Its own keys only: `constructor` or `toString` is no command.
   const takes = Object.hasOwn(commands, sub) ? commands[sub] : null;

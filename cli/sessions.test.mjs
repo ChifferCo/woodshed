@@ -8,6 +8,7 @@ import path from 'node:path';
 import { createCliSignIn } from '../console/cliSignIn.mjs';
 import { createHandler } from '../console/server.mjs';
 import { createCredentials } from './credentials.mjs';
+import { viaCommand } from './hc.mjs';
 import { parseSessionArgs, pauseText, stateOf } from './sessions.mjs';
 import { EXIT, main } from './woodshed.mjs';
 
@@ -20,7 +21,7 @@ const T0 = Date.parse('2026-11-20T10:00:00Z');
 // hc as `session herdr` drives it: its machines, and whether a machine has the agent's terminal. Each call is kept.
 // `waiting`: the session waits for its agent's terminal from here (started with --parent), until a run makes it, or
 // `taken`: the session made it itself as that run was on its way. `local`: this computer's terminals, by name.
-export function fakeHc({ version = '0.1.21', missing = false, agent = true, addFails = null, waiting = false, taken = false, local = { boss: 't9' } } = {}) {
+export function fakeHc({ version = '0.1.21', missing = false, agent = true, addFails = null, waiting = false, taken = false, local = { boss: 't9' }, hasParent = null } = {}) {
   const machines = new Map();
   const labels = new Map();
   const calls = [];
@@ -66,23 +67,62 @@ export function fakeHc({ version = '0.1.21', missing = false, agent = true, addF
       const [machine, terminal] = args.at(-1).split('/');
       if (!machines.has(machine)) return err('machine_unknown', `no machine "${machine}"`);
       const address = `${machine}/t1`;
-      return agent ? ok({ address, name: terminal, labels: labels.get(address) ?? {} }) : err('not_found', `no terminal "${terminal}"`, 3);
+      // The agent's terminal's parent as the session's core names it: the one this run gave it, or `hasParent`.
+      const parent = made ? 'core1/t4' : hasParent;
+      return agent ? ok({ address, name: terminal, cwd: '/work/app', state: 'live', labels: labels.get(address) ?? {}, parent }) : err('not_found', `no terminal "${terminal}"`, 3);
     }
     if (first === 'label') {
       const [, , address, ...pairs] = args;
-      labels.set(address, Object.fromEntries(pairs.map((pair) => pair.split('='))));
+      // As hc does: each pair sets its label, the others are kept.
+      labels.set(address, { ...labels.get(address), ...Object.fromEntries(pairs.map((pair) => pair.split(/=(.*)/s).slice(0, 2))) });
       return ok({ address, labels: labels.get(address) });
     }
     return err('usage', `unexpected ${args.join(' ')}`);
   };
   return { run, calls, runs, machines, labels, added: () => calls.filter((a) => a[0] === 'machine' && a[1] === 'add') };
 }
+
+// The Herdr app's window, as `herdr-app ls` and `do space.rename|tab.rename` answer: it shows a machine's terminal in the
+// space and tab its labels name, on Herdr's default names (the checkout's folder, the tab's number), once it has seen
+// it `seenAfter` times. Each call is kept.
+export function fakeApp(hc, { missing = false, window = true, seenAfter = 2, renameFails = null } = {}) {
+  const names = new Map();
+  const calls = [];
+  let looks = 0;
+  const run = async (args) => {
+    calls.push(args);
+    if (missing) return { code: null, stdout: '', stderr: '', missing: true };
+    if (!window) return { code: 2, stdout: '', stderr: 'herdr-app: no Herdr window at /x/herdr-app.sock\n' };
+    if (args[0] === 'ls') {
+      const spaces = [];
+      if (++looks >= seenAfter) {
+        for (const [terminal, l] of hc.labels) {
+          if (!l['herdr.space'] || !l['herdr.tab']) continue;
+          const machine = terminal.split('/')[0];
+          const space = `${machine}/${l['herdr.space']}`;
+          const tab = `${machine}/${l['herdr.tab']}`;
+          spaces.push({ id: space, name: names.get(space) ?? 'app', machine, tabs: [{ id: tab, name: names.get(tab) ?? '1', terminals: [{ terminal, pane: 'p1' }] }] });
+        }
+      }
+      return { code: 0, stdout: `${JSON.stringify({ spaces })}\n`, stderr: '' };
+    }
+    const [, command, body] = args;
+    if (args[0] === 'do' && ['space.rename', 'tab.rename'].includes(command)) {
+      if (renameFails) return { code: 1, stdout: `${JSON.stringify({ error: renameFails })}\n`, stderr: '' };
+      const { id, name } = JSON.parse(body);
+      names.set(id, name);
+      return { code: 0, stdout: '{"ok":true}\n', stderr: '' };
+    }
+    return { code: 1, stdout: `{"error":"unknown command ${command}"}`, stderr: '' };
+  };
+  return { run, calls, names, renamed: () => calls.filter((a) => a[0] === 'do') };
+}
 const iso = (ms) => new Date(ms).toISOString();
 
 // A console's real handler and command line sign-in over a made-up fleet: mia-dev's sessions, octocat's, and shared
 // ones. A session the fleet starts or resumes takes the next of `script`'s steps each time the list is read, as a start
 // moves while the command line waits. The command line is signed in as mia-dev before each test.
-async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app', writers = null, stopTimesOut = false, hc = fakeHc(), relativeConfig = false, tty = true, terminal = null, env = {} } = {}) {
+async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app', writers = null, stopTimesOut = false, hc = fakeHc(), app = fakeApp(null, { missing: true }), relativeConfig = false, tty = true, terminal = null, env = {} } = {}) {
   let clock = T0;
   const now = () => clock;
   const store = { state: {}, save() {} };
@@ -153,7 +193,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       s.limits = values;
     },
   };
-  const userSettings = { view: () => ({ claudeToken: { set: claudeToken } }), refresh: async () => {}, limitsFor: () => ({ idleMs: 2 * 3_600_000, lifetimeMs: 12 * 3_600_000 }) };
+  const userSettings = { view: () => ({ claudeToken: { set: claudeToken }, codexAuth: { set: true } }), refresh: async () => {}, limitsFor: () => ({ idleMs: 2 * 3_600_000, lifetimeMs: 12 * 3_600_000 }) };
   const projectAccess = {
     view: async () => ({ projects: [{ name: 'app', repo: 'acme/app' }, { name: 'tools', repo: 'acme/tools' }], defaultProject: savedDefault, saved: savedDefault !== 'app' }),
     forStart: async (login, name) => (name === undefined ? { name: 'app', repo: 'acme/app' } : ['app', 'tools'].includes(name) ? { name, repo: `acme/${name}` } : null),
@@ -179,7 +219,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       env: { XDG_CONFIG_HOME: relativeConfig ? path.relative(process.cwd(), dir) : dir, ...env }, stdout: { write: (s) => { out += s; }, isTTY: tty },
       stdin: { isTTY: tty }, stderr: { write: (s) => { err += s; } }, terminal: terminal?.run,
       sleep: async (ms) => { clock += ms; }, now, hostname: 'mia-laptop', platform: 'test', credentials, confirm: async () => answer,
-      hc: hc.run, self: { node: '/usr/local/bin/node', script: '/home/mia/woodshed/cli/woodshed.mjs' },
+      hc: hc.run, app: app.run, self: { node: '/usr/local/bin/node', script: '/home/mia/woodshed/cli/woodshed.mjs' },
       // A stop the console takes longer to answer than the command line waits.
       fetch: (url, init) => {
         if (stopTimesOut && String(url).endsWith('/stop')) return Promise.reject(Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }));
@@ -197,7 +237,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
   };
   const signed = await run(['login', '--console', origin]);
   assert.equal(signed.code, EXIT.done, signed.err);
-  return { origin, run, calls, sessions, cli, hc, dir, answer: (a) => { answer = a; }, listFailures, now };
+  return { origin, run, calls, sessions, cli, hc, app, dir, answer: (a) => { answer = a; }, listFailures, now };
 }
 
 // A start as the fleet moves it: in line, starting, each step, then running.
@@ -413,6 +453,70 @@ test('an unknown session command is a usage error, even one named like an object
   }
 });
 
+test('session list names Herdr machines of sessions gone from the console, and prune forgets only those', async (t) => {
+  const c = await consoleFor(t);
+  // This command line's own line to a session on this console, as session herdr writes it.
+  const ours = (session, origin = c.origin) => viaCommand({ node: '/usr/local/bin/node', script: '/home/mia/woodshed/cli/woodshed.mjs', origin, session, configHome: c.dir });
+  const machine = (name, target, more = {}) => c.hc.machines.set(name, { name, target, via: true, temporary: false, state: 'unreachable', ...more });
+  machine('woodshed-aaaa0001', ours('aaaa0001'), { state: 'connected' });
+  machine('woodshed-bbbb0002', ours('bbbb0002'));
+  machine('woodshed-ffff0006', ours('ffff0006'));
+  machine('woodshed-9999aaaa', ours('9999aaaa'));
+  machine('woodshed-8888bbbb', ours('8888bbbb', 'https://other-console.example'));
+  machine('woodshed-7777cccc', 'mia@dev-box', { via: false });
+  machine('woodshed-6666dddd', ours('9999aaaa'));
+  machine('woodshed-5555eeee', 'docker exec -i box sh -c');
+  machine('dev-box', 'mia@dev-box', { via: false, state: 'connected' });
+  const before = [...c.hc.machines.keys()];
+
+  const text = await c.run(['session', 'list']);
+  assert.equal(text.code, EXIT.done, text.err);
+  assert.match(text.out, /aaaa0001 +working/);
+  assert.ok(text.out.endsWith(`\nHerdr still has a machine of a session no longer on ${c.origin}: woodshed-9999aaaa. Forget it with: woodshed session prune\n`), text.out);
+  const json = await c.run(['session', 'list', '--json']);
+  assert.deepEqual(json.lines[0].herdrLeftovers, ['woodshed-9999aaaa'], 'not a paused, a stopped or a deleted session still listed; not another console\'s, an ssh or docker one, or one whose line is another session\'s');
+  assert.deepEqual([...c.hc.machines.keys()], before, 'list forgets nothing');
+  assert.ok(!c.hc.calls.some((a) => a[1] === 'rm'));
+
+  const pruned = await c.run(['session', 'prune', '--json']);
+  assert.equal(pruned.code, EXIT.done, pruned.err);
+  assert.deepEqual(pruned.lines, [{ event: 'pruned', forgot: ['woodshed-9999aaaa'], failed: [] }]);
+  assert.deepEqual([...c.hc.machines.keys()], before.filter((n) => n !== 'woodshed-9999aaaa'));
+  assert.deepEqual(c.hc.calls.filter((a) => a[1] === 'rm'), [['machine', 'rm', '--json', 'woodshed-9999aaaa']]);
+
+  const again = await c.run(['session', 'prune']);
+  assert.equal(again.code, EXIT.done);
+  assert.equal(again.out, `Herdr has no machine of a session no longer on ${c.origin}.\n`);
+  assert.doesNotMatch((await c.run(['session', 'list'])).out, /Herdr still has/);
+  assert.equal((await c.run(['session', 'list', '--json'])).lines[0].herdrLeftovers.length, 0);
+
+  // Two gone at once, said in the plural.
+  machine('woodshed-9999aaab', ours('9999aaab'));
+  machine('woodshed-9999aaac', ours('9999aaac'));
+  assert.match((await c.run(['session', 'list'])).out, /Herdr still has 2 machines of sessions no longer on .*: woodshed-9999aaab, woodshed-9999aaac\. Forget them with: woodshed session prune\n$/);
+  assert.equal((await c.run(['session', 'prune', 'aaaa0001'])).code, EXIT.failed, 'prune takes no session id');
+});
+
+test('session list says nothing of Herdr with no hc, or one that cannot list its machines, and prune touches nothing', async (t) => {
+  const none = await consoleFor(t, { hc: fakeHc({ missing: true }) });
+  const list = await none.run(['session', 'list', '--json']);
+  assert.equal(list.code, EXIT.done);
+  assert.equal(list.lines[0].herdrLeftovers, undefined);
+  const prune = await none.run(['session', 'prune']);
+  assert.equal(prune.code, EXIT.done);
+  assert.match(prune.out, /No hc on your PATH: there is no machine in Herdr to forget/);
+
+  const hc = fakeHc();
+  const broken = { ...hc, run: async (args) => (args[0] === 'machine' ? { code: 1, stdout: '', stderr: 'core not running\n' } : hc.run(args)) };
+  const c = await consoleFor(t, { hc: broken });
+  const text = await c.run(['session', 'list']);
+  assert.equal(text.code, EXIT.done, 'the list is still shown');
+  assert.doesNotMatch(text.out, /Herdr/);
+  const failed = await c.run(['session', 'prune']);
+  assert.equal(failed.code, EXIT.failed);
+  assert.match(failed.err, /hc machine ls failed: core not running/);
+});
+
 test('session herdr makes your running session a machine in hc, through this command line\'s tunnel, once', async (t) => {
   const c = await consoleFor(t);
   const out = await c.run(['session', 'herdr', 'aaaa0001', '--json']);
@@ -448,6 +552,79 @@ test('session herdr makes your running session a machine in hc, through this com
   const temp = await c.run(['session', 'herdr', 'aaaa0001', '--json']);
   assert.equal(temp.lines[0].machine.action, 'updated', 'a --temp one, which the sidebar hides, is replaced');
   assert.equal(c.hc.machines.get('woodshed-aaaa0001').temporary, false);
+});
+
+test('session herdr names the agent\'s space after the session and its tab after the agent, never over the person\'s names', async (t) => {
+  const hc = fakeHc();
+  const app = fakeApp(hc);
+  const c = await consoleFor(t, { hc, app });
+  const out = await c.run(['session', 'herdr', 'aaaa0001', '--json']);
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.deepEqual(out.lines[0].agent, { inHerdr: true, address: 'woodshed-aaaa0001/t1', named: { space: 'Fix the login bug', tab: 'claude' } });
+  assert.deepEqual(app.renamed(), [
+    ['do', 'space.rename', JSON.stringify({ id: 'woodshed-aaaa0001/woodshed-aaaa0001', name: 'Fix the login bug' })],
+    ['do', 'tab.rename', JSON.stringify({ id: 'woodshed-aaaa0001/woodshed-aaaa0001-agent', name: 'claude' })],
+  ], 'once the window showed the newly placed terminal, by the app\'s own commands');
+  assert.equal(c.hc.machines.get('woodshed-aaaa0001').name, 'woodshed-aaaa0001', 'the machine keeps its name');
+  assert.deepEqual(hc.labels.get('woodshed-aaaa0001/t1'), {
+    'herdr.space': 'woodshed-aaaa0001', 'herdr.tab': 'woodshed-aaaa0001-agent', 'woodshed.space-name': 'Fix the login bug', 'woodshed.tab-name': 'claude',
+  });
+
+  // Run again: nothing to do. Then the console's title changes, and a later run picks it up, the tab left as it is.
+  assert.equal((await c.run(['session', 'herdr', 'aaaa0001'])).out.includes('Named'), false);
+  assert.equal(app.renamed().length, 2);
+  c.sessions.find((x) => x.id === 'aaaa0001').title = 'Herdr session recovery fixes';
+  const retitled = await c.run(['session', 'herdr', 'aaaa0001']);
+  assert.match(retitled.out, /Named its Herdr space "Herdr session recovery fixes"\./);
+  assert.equal(app.names.get('woodshed-aaaa0001/woodshed-aaaa0001'), 'Herdr session recovery fixes');
+  assert.equal(app.renamed().length, 3);
+
+  // The person renames both in the app: a later title never goes over their names.
+  app.names.set('woodshed-aaaa0001/woodshed-aaaa0001', 'My work');
+  app.names.set('woodshed-aaaa0001/woodshed-aaaa0001-agent', 'main');
+  c.sessions.find((x) => x.id === 'aaaa0001').title = 'Yet another title';
+  const theirs = await c.run(['session', 'herdr', 'aaaa0001', '--json']);
+  assert.equal(theirs.code, EXIT.done);
+  assert.equal(theirs.lines[0].agent.named, undefined);
+  assert.equal(app.renamed().length, 3);
+  assert.equal(app.names.get('woodshed-aaaa0001/woodshed-aaaa0001'), 'My work');
+});
+
+test('session herdr names a codex session\'s tab codex, leaves an untitled one\'s space on Herdr\'s name, and names a space the person placed only while it has the default', async (t) => {
+  const hc = fakeHc();
+  const app = fakeApp(hc, { seenAfter: 1 });
+  const c = await consoleFor(t, { hc, app });
+  Object.assign(c.sessions.find((x) => x.id === 'aaaa0001'), { title: null, options: { agent: 'codex' } });
+  const out = await c.run(['session', 'herdr', 'aaaa0001', '--json']);
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.deepEqual(out.lines[0].agent.named, { space: null, tab: 'codex' });
+  assert.equal(app.names.get('woodshed-aaaa0001/woodshed-aaaa0001'), undefined, 'no title yet: the space keeps Herdr\'s name');
+
+  // A terminal the person had already placed in a space of their own (on Herdr's default name) is named; once they
+  // have named that space, it is not.
+  const placed = fakeHc();
+  const mine = fakeApp(placed, { seenAfter: 1 });
+  const p = await consoleFor(t, { hc: placed, app: mine });
+  placed.labels.set('woodshed-aaaa0001/t1', { 'herdr.space': 'sp9', 'herdr.tab': 'tb9' });
+  mine.names.set('woodshed-aaaa0001/sp9', 'Their space');
+  const kept = await p.run(['session', 'herdr', 'aaaa0001', '--json']);
+  assert.deepEqual(kept.lines[0].agent.named, { space: null, tab: 'claude' }, 'their space keeps its name; the tab was still on its number');
+  assert.deepEqual(placed.labels.get('woodshed-aaaa0001/t1')['herdr.space'], 'sp9', 'their layout is kept');
+});
+
+test('session herdr names nothing, and still succeeds, with no herdr-app, no window, or a rename the app refuses', async (t) => {
+  for (const [opts, words] of [[{ missing: true }, null], [{ window: false }, null], [{ renameFails: 'no such space', seenAfter: 1 }, /Could not name its Herdr space or tab: herdr-app space\.rename: no such space/]]) {
+    const hc = fakeHc();
+    const app = fakeApp(hc, opts);
+    const c = await consoleFor(t, { hc, app });
+    const out = await c.run(['session', 'herdr', 'aaaa0001']);
+    assert.equal(out.code, EXIT.done, JSON.stringify(opts));
+    assert.match(out.out, /woodshed-aaaa0001 is in Herdr/);
+    assert.doesNotMatch(out.out, /Named/);
+    if (words) assert.match(out.out, words);
+    else assert.doesNotMatch(out.out, /Could not name/, 'quietly');
+    assert.equal(app.calls.filter((a) => a[0] === 'ls').length, 1, 'asked once, not waited on');
+  }
 });
 
 test('a relative XDG_CONFIG_HOME is named absolute in the via line, since hc\'s core runs it from its own folder', async (t) => {
@@ -709,7 +886,7 @@ test('session new --herdr --parent makes its agent\'s terminal from here, a chil
   assert.ok(hc.calls.findIndex((a) => a[0] === 'machine' && a[1] === 'add') < hc.calls.findIndex((a) => a[0] === 'run'), 'once the machine is there');
   const connected = out.lines.at(-1);
   assert.equal(connected.event, 'connected');
-  assert.deepEqual(connected.parent, { made: true, terminal: 't4', address: 'woodshed-dddd0004/t1', outlives: true, notify: true });
+  assert.deepEqual(connected.parent, { made: true, terminal: 't4', address: 'woodshed-dddd0004/t1', outlives: true, notify: true, reportsStatus: true });
 
   const text = await consoleFor(t, { hc: fakeHc({ waiting: true }), env: IN_HERDR, script: [...START, { status: 'running', state: 'starting' }] });
   const said = await text.run(['session', 'new', '--herdr', '--parent', 'go']);
@@ -724,7 +901,7 @@ test('--parent names another terminal here, and --no-notify and --end-with-paren
   assert.equal(out.code, EXIT.done, out.err);
   assert.deepEqual(hc.runs[0].args.slice(-1), ['--no-notify'], 'no --outlive-parent: it ends with its parent, hc\'s default');
   assert.deepEqual(hc.runs[0].env, { HC_TERMINAL_ID: 't9' }, 'boss, by its address here');
-  assert.deepEqual(out.lines.at(-1).parent, { made: true, terminal: 't9', address: 'woodshed-dddd0004/t1', outlives: false, notify: false });
+  assert.deepEqual(out.lines.at(-1).parent, { made: true, terminal: 't9', address: 'woodshed-dddd0004/t1', outlives: false, notify: false, reportsStatus: true });
 });
 
 test('--parent is refused before anything starts outside a Herdr terminal, for a terminal not here, or without --herdr', async (t) => {
@@ -762,8 +939,8 @@ test('session herdr --parent resumes a paused session waiting for its terminal, 
   const late = await running.run(['session', 'herdr', 'aaaa0001', '--parent', '--json']);
   assert.equal(late.code, EXIT.failed);
   assert.equal(running.hc.added().length, 1);
-  assert.deepEqual(late.lines.find((l) => l.event === 'connected').parent, { made: false, why: 'not-waiting' });
-  assert.match(late.lines.at(-1).error, /Its agent's terminal was already there, with no parent: hc gives a terminal its parent only as it starts\. Run woodshed session new --herdr --parent/);
+  assert.deepEqual(late.lines.find((l) => l.event === 'connected').parent, { made: false, why: 'not-waiting', has: null });
+  assert.match(late.lines.at(-1).error, /Could not make t4 the parent of its agent's terminal: it was already there, with no parent, and hc gives a terminal its parent only as it starts\. Run woodshed session new --herdr --parent/);
   assert.equal(running.hc.runs.length, 0, 'no second terminal, and the running agent is left as it is');
   assert.ok(!running.calls.length, 'not resumed or restarted');
 
@@ -771,7 +948,14 @@ test('session herdr --parent resumes a paused session waiting for its terminal, 
   const raced = await consoleFor(t, { hc: fakeHc({ waiting: true, taken: true }), env: IN_HERDR });
   const lost = await raced.run(['session', 'herdr', 'aaaa0001', '--parent']);
   assert.equal(lost.code, EXIT.failed);
-  assert.match(lost.err, /was started by the session itself, its wait for this one over, with no parent/);
+  assert.match(lost.err, /Could not make t4 the parent of its agent's terminal: it was made while this was on its way, with no parent/);
+
+  // Already a child, of an earlier run's terminal: said as it is, never as having none.
+  const earlier = await consoleFor(t, { hc: fakeHc({ hasParent: 'core1/t2' }), env: IN_HERDR });
+  const again = await earlier.run(['session', 'herdr', 'aaaa0001', '--parent', '--json']);
+  assert.equal(again.code, EXIT.failed);
+  assert.deepEqual(again.lines.find((l) => l.event === 'connected').parent, { made: false, why: 'not-waiting', has: 'core1/t2' });
+  assert.match(again.lines.at(-1).error, /it was already there, a child of core1\/t2, and hc gives/);
 });
 
 test('--parent takes the next word as its terminal only when it reads as an hc address', () => {
@@ -783,4 +967,13 @@ test('--parent takes the next word as its terminal only when it reads as an hc a
   assert.throws(() => parseSessionArgs('new', ['--parent=', 'go'], fail), /--parent= needs a terminal/);
   assert.deepEqual(parseSessionArgs('herdr', ['--parent', 't1b', 'aaaa0001'], fail), { parent: 't1b', id: 'aaaa0001' });
   assert.deepEqual(parseSessionArgs('new', ['--herdr', '--parent', `t${'0'.repeat(40)}`], fail), { herdr: true, parent: true, prompt: `t${'0'.repeat(40)}` }, 'past hc\'s 32 characters: the prompt\'s');
+});
+
+test('a codex child wakes its parent only by exiting: the pinned codex tells Herdr nothing of its turns', async (t) => {
+  const c = await consoleFor(t, { hc: fakeHc({ waiting: true }), env: IN_HERDR, script: [...START, { status: 'running', state: 'starting' }] });
+  const out = await c.run(['session', 'new', '--agent', 'codex', '--herdr', '--parent', 'go']);
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.match(out.out, /is a child of t4 here, and outlives it: hc wait --children any wakes t4 only when it exits: codex tells Herdr nothing of its turns\.\n/);
+  const json = await consoleFor(t, { hc: fakeHc({ waiting: true }), env: IN_HERDR, script: [...START, { status: 'running', state: 'starting' }] });
+  assert.equal((await json.run(['session', 'new', '--agent', 'codex', '--herdr', '--parent', '--json', 'go'])).lines.at(-1).parent.reportsStatus, false);
 });

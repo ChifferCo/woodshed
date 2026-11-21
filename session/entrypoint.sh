@@ -1051,9 +1051,10 @@ agentTerminal() {
 }
 
 # Where the session says it waits for its agent's terminal from its owner's Herdr (cli/hc.mjs, AGENT_WAIT_FILE), and for
-# how long before it makes the terminal itself, with no parent.
+# how long before it makes the terminal itself, with no parent. A constant: nothing per session sets it, so the ECS
+# launcher's allowlist (PER_SESSION_ENV) has nothing to carry.
 AGENT_TERMINAL_WAIT=/tmp/woodshed-agent-terminal.json
-HERDR_PARENT_WAIT_SECONDS=${WOODSHED_HERDR_PARENT_WAIT_SECONDS:-300}
+HERDR_PARENT_WAIT_SECONDS=300
 
 # Herdr's core (herdr-core, `hc`) for this session, with a terminal named claude in the checkout for the agent: a
 # shell, kept (a lost one is replaced in place), as tmux's pane is. Its programs get the environment it starts with, as
@@ -1164,9 +1165,10 @@ startClaude() {
   # from a laptop with the agent's own (cli/move.mjs).
   if [ "${AGENT:-claude}" = codex ]; then codexFlags > /tmp/woodshed-codex-flags; else claudeFlags > /tmp/woodshed-claude-flags; fi
   # A terminal its owner's Herdr makes comes once the session runs, after statusd opened the tunnel it comes through:
-  # the agent is typed into it then, in the background, as into the session's own.
+  # the agent is typed into it then, in the background, as into the session's own. Handed to the init like progress's
+  # reports: this shell becomes statusd, which would never reap it, and it would stay a zombie once done.
   if [ -f "$AGENT_TERMINAL_WAIT" ]; then
-    { awaitAgentTerminal && startAgent; } &
+    ( { awaitAgentTerminal && startAgent; } & )
   else
     startAgent
   fi

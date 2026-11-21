@@ -103,3 +103,25 @@ test('a machine is this command line\'s tunnel to a session only by its saved li
   assert.equal(isTunnelTo({ via: false, target: 'dev-box' }, { origin: 'https://console.example', session: 'aaaa0001' }), false, 'an ssh machine');
   assert.equal(isTunnelTo({ via: true, target: 'docker exec -i box sh -c' }, { origin: 'https://console.example', session: 'aaaa0001' }), false);
 });
+
+test('the agent\'s terminal with no labels at all is placed in a space and tab; one already placed keeps its layout', async () => {
+  // What hc 0.1.21's `get --json` answers for a terminal nobody labelled (its address local to the machine).
+  const real = { address: 't1', argv: ['claude'], cwd: '/work/app', labels: {}, name: 'claude', state: 'live', title: '' };
+  for (const terminal of [real, { ...real, labels: undefined }, { address: 't1', state: 'live' }]) {
+    const calls = [];
+    const run = async (args) => {
+      calls.push(args);
+      if (args[0] === 'get') return { code: 0, stdout: `${JSON.stringify(terminal)}\n`, stderr: '' };
+      return { code: 0, stdout: '{}\n', stderr: '' };
+    };
+    assert.deepEqual(await agentOn(run, 'woodshed-aaaa0001', { place: true }), { inHerdr: true, address: 'woodshed-aaaa0001/t1' });
+    assert.deepEqual(calls.at(-1), ['label', '--json', 'woodshed-aaaa0001/t1', 'herdr.space=woodshed-aaaa0001', 'herdr.tab=woodshed-aaaa0001-agent'], JSON.stringify(terminal));
+  }
+  const placed = [];
+  const own = async (args) => {
+    placed.push(args);
+    return { code: 0, stdout: `${JSON.stringify({ ...real, labels: { 'herdr.space': 'sp9', 'herdr.tab': 'tb9' } })}\n`, stderr: '' };
+  };
+  await agentOn(own, 'woodshed-aaaa0001', { place: true });
+  assert.ok(!placed.some((a) => a[0] === 'label'), 'a terminal the person placed stays where it is');
+});

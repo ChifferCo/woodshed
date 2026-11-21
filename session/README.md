@@ -125,8 +125,7 @@ change to the stage by the workflow's run, about the time the build takes.
    session's agent as a child of a terminal here"): hc gives a terminal its parent only as it starts, and only from the
    caller's side. It writes `/tmp/woodshed-agent-terminal.json` with the checkout, starts statusd (the tunnel the
    terminal comes through), and types the agent in once the terminal is there (`Agent's terminal made by its parent`
-   with the parent), or after `WOODSHED_HERDR_PARENT_WAIT_SECONDS` (300) makes it itself with none (`WARNING: no parent
-   made the agent's terminal`). The choice
+   with the parent), or after 5 minutes makes it itself with none (`WARNING: no parent made the agent's terminal`). The choice
    reaches statusd, claude and `woodshed-login` as `WOODSHED_TERMINAL` (`tmux` or `herdr`); `Claude started` logs it as
    `terminal`. Auto mode runs
    routine work without asking and refuses risky actions; a session stuck on

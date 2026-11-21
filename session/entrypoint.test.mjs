@@ -1224,7 +1224,8 @@ function agentTerminalRun({ terminal = null, kind = 'private', mode = '', hc = '
     'log() { echo "[woodshed] $*"; }',
     fn('agentTerminal'),
     `AGENT_TERMINAL_WAIT=${tmp}/woodshed-agent-terminal.json`,
-    'HERDR_PARENT_WAIT_SECONDS=${WOODSHED_HERDR_PARENT_WAIT_SECONDS:-300}',
+    // The test's own wait, in place of the entrypoint's constant.
+    'HERDR_PARENT_WAIT_SECONDS=${TEST_WAIT_SECONDS:-300}',
     fn('startHerdr').replaceAll('/tmp/', `${tmp}/`),
     fn('awaitAgentTerminal').replaceAll('/tmp/', `${tmp}/`),
     fn('agentRun'),
@@ -1316,7 +1317,7 @@ test('the agent is typed into the terminal its parent made, once it is there, an
 });
 
 test('with no parent in time, the session makes the terminal itself, with none, and the agent starts all the same', () => {
-  const env = { WOODSHED_HERDR_PARENT: '1', WOODSHED_HERDR_PARENT_WAIT_SECONDS: '1' };
+  const env = { WOODSHED_HERDR_PARENT: '1', TEST_WAIT_SECONDS: '1' };
   const body = 'startHerdr; awaitAgentTerminal && WOODSHED_TERMINAL=herdr agentRun "claude go"; [ -f "$AGENT_TERMINAL_WAIT" ] && echo "still waiting" || true';
   const alone = agentTerminalRun({ hcScript: WAITING_HC, env, body });
   assert.match(alone.out, /WARNING: no parent made the agent's terminal \(waited: 1s, started: with no parent\)/);
@@ -1331,5 +1332,7 @@ test('with no parent in time, the session makes the terminal itself, with none, 
 
 test('startClaude types the agent at once, or once its parent made its terminal, in the background past statusd\'s start', () => {
   const start = fn('startClaude');
-  assert.match(start, /if \[ -f "\$AGENT_TERMINAL_WAIT" \]; then\n\s+\{ awaitAgentTerminal && startAgent; \} &\n\s+else\n\s+startAgent\n\s+fi/);
+  assert.match(start, /if \[ -f "\$AGENT_TERMINAL_WAIT" \]; then\n\s+\( \{ awaitAgentTerminal && startAgent; \} & \)\n\s+else\n\s+startAgent\n\s+fi/,
+    'handed to the init: the shell becomes statusd, which reaps nothing');
+  assert.match(ENTRYPOINT, /^HERDR_PARENT_WAIT_SECONDS=300$/m, 'a constant: no per-session variable for the ECS launcher to drop');
 });

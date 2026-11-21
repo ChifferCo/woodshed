@@ -61,8 +61,16 @@ export function runTunnel({ origin, token, session, line, stdin, stdout, stderr,
       res.setEncoding('utf8');
       res.on('data', (chunk) => { if (text.length < 4096) text += chunk; });
       res.on('end', () => {
+        const said = plain(text);
+        // A paused or stopped session (console/execPipe.mjs, check()). This is the why hc shows for the session's
+        // machine, and a resume alone does not bring it back: the resumed session runs a new hc core, which hc does not
+        // take for the one it knew. `session herdr` resumes it and adds the machine again (hc.mjs, addMachine).
+        if (res.statusCode === 409 && / not running\b/.test(said)) {
+          const state = said.replace(/: resume it first$/, '');
+          return finish(fail(`refused (409): ${state}. To reconnect it in Herdr, run: woodshed session herdr ${session} --console ${url.origin} (it resumes the session and adds its machine again; resuming alone leaves the machine unreachable)`));
+        }
         const hint = res.statusCode === 401 ? ' (run woodshed login)' : '';
-        finish(fail(`refused (${res.statusCode}): ${plain(text) || 'no reason given'}${hint}`));
+        finish(fail(`refused (${res.statusCode}): ${said || 'no reason given'}${hint}`));
       });
       res.on('error', () => finish(fail(`refused (${res.statusCode})`)));
     });
