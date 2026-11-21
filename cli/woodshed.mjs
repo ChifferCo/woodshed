@@ -30,6 +30,7 @@ import { sessionCommand } from './sessions.mjs';
 import { configCommand } from './config.mjs';
 import { hcRunner, hcVersion, viaCommand } from './hc.mjs';
 import { settingsCommand } from './settings.mjs';
+import { setupCommand, SETUP_USAGE } from './setup.mjs';
 import { attach, openTerminal } from './terminal.mjs';
 
 export const { version: VERSION } = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
@@ -39,12 +40,13 @@ const REQUEST_MS = 20_000;
 export const EXIT = Object.freeze({ done: 0, failed: 1, waiting: 2, refused: 3 });
 
 // Commands that read their own options: what follows them, but --console, --json and --help, is theirs (in `args`).
-const OWN_ARGS = new Set(['session', 'config', 'settings']);
+const OWN_ARGS = new Set(['session', 'config', 'settings', 'setup']);
 
 const USAGE = `Usage: woodshed <command> [--console <url>] [--json]
 
 Commands:
-  login     sign in to a Woodshed console: approve the code it shows in your browser
+  setup     get signed in, choose repos and reviews, and start your first session
+  login     sign in to a Woodshed console: approve the code it shows in your browser; --no-wait returns before approval
   logout    sign out of the console, here and at the console
   status    the console, its org, who is signed in, and the hc found here (Herdr's, for session herdr)
   tunnel <id> -- <line>
@@ -61,7 +63,7 @@ Commands:
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};
                    WOODSHED_CONSOLE sets it too)
-  --no-browser     login prints the address to open instead of opening it
+  --no-browser     login and setup print addresses instead of opening them
   --json           machine-readable output: one JSON object per line
   --help           this text
 
@@ -96,7 +98,12 @@ export function parseArgs(argv) {
       if (!argv[i + 1]) throw new CliError('--console needs a URL');
       out.console = argv[++i];
     } else if (arg.startsWith('--console=')) out.console = arg.slice('--console='.length);
-    else if (OWN_ARGS.has(out.command)) out.args.push(arg);
+    else if (out.command === 'setup' && arg === '--prompt') {
+      const value = argv[++i];
+      if (!value?.trim() || value.startsWith('--') || value === '-h') throw new CliError('--prompt needs text. For a prompt that starts with an option, use --prompt=TEXT.');
+      out.args.push(arg, value);
+    } else if (OWN_ARGS.has(out.command)) out.args.push(arg);
+    else if (out.command === 'login' && arg === '--no-wait') out.args.push(arg);
     else if (arg.startsWith('-')) throw new CliError(`unknown option ${arg}\n\n${USAGE}`);
     else if (!out.command) out.command = arg;
     else if (out.command === 'tunnel') out.args.push(arg);
@@ -247,6 +254,7 @@ export async function main(argv, deps = {}) {
   const now = deps.now ?? Date.now;
   const dir = configDir(env, platform);
   const credentials = deps.credentials ?? createCredentials({ platform, dir });
+  const pendingSignIns = () => deps.pendingCredentials ?? createCredentials({ platform, dir, pending: true });
   const open = deps.openBrowser ?? ((url) => openBrowser(url, platform));
   // Herdr's hc, as the person's shell finds it, on the core their environment names (HC_SESSION and the XDG folders).
   const hc = deps.hc ?? hcRunner({ bin: env.WOODSHED_HC_BIN || 'hc', env });
@@ -314,44 +322,75 @@ export async function main(argv, deps = {}) {
     return { config, entry, store, token };
   }
 
-  async function login(origin, { browser }) {
+  async function login(origin, { browser, noWait }) {
     const before = signedIn(origin);
-    const started = await call(origin, '/api/cli/device', { method: 'POST', body: { name: deps.hostname ?? os.hostname() } });
-    if (started.status !== 200 || !started.body?.deviceCode) {
-      if (started.status === 429) throw busy(origin, started);
-      throw consoleNoCli(origin, started.status);
+    const pending = noWait ? pendingSignIns() : null;
+    let { store: pendingStore, token: saved } = pending?.find(origin) ?? {};
+    let [deviceCode, userCode, expiry] = saved?.slice(4).split('.') ?? [];
+    let expiresAt = Number(expiry);
+    let wait = 0;
+    function showCode(openPage) {
+      const verificationUrlComplete = approvalUrl(origin, userCode);
+      if (!verificationUrlComplete) throw consoleNoCli(origin, 200);
+      if (json) emit({ event: 'code', console: origin, userCode, verificationUrl: `${origin}/cli`, verificationUrlComplete, expiresAt: new Date(expiresAt).toISOString() });
+      say(`Your code: ${userCode}`);
+      say(openPage ? `Opening ${verificationUrlComplete}` : `Open ${verificationUrlComplete}`);
+      say(`Check the page shows the same code, then press Sign in the CLI. ${noWait ? 'Then run woodshed login --no-wait again.' : 'Waiting…'}`);
+      if (openPage) open(verificationUrlComplete);
     }
-    const { deviceCode, userCode, expiresIn, interval } = started.body;
-    const verificationUrlComplete = approvalUrl(origin, userCode);
-    if (!verificationUrlComplete) throw consoleNoCli(origin, started.status);
-    const verificationUrl = `${origin}/cli`;
-    // A console that is not one could send anything: never wait longer than the console's own 10 minutes.
-    const lasts = Number(expiresIn) > 0 ? Math.min(Number(expiresIn), 600) : 600;
-    const expiresAt = now() + lasts * 1000;
-    if (json) emit({ event: 'code', console: origin, userCode, verificationUrl, verificationUrlComplete, expiresAt: new Date(expiresAt).toISOString() });
-    say(`Your code: ${userCode}`);
-    say(browser ? `Opening ${verificationUrlComplete}` : `Open ${verificationUrlComplete}`);
-    say('Check the page shows the same code, then press Sign in the CLI. Waiting…');
-    if (browser) open(verificationUrlComplete);
-    let wait = Math.max(1, Number(interval) || 5) * 1000;
+    async function start() {
+      const started = await call(origin, '/api/cli/device', { method: 'POST', body: { name: deps.hostname ?? os.hostname() } });
+      if (started.status === 429) throw busy(origin, started);
+      if (started.status !== 200 || !/^[0-9a-f]{64}$/.test(started.body?.deviceCode ?? '') || !approvalUrl(origin, started.body?.userCode)) {
+        throw consoleNoCli(origin, started.status);
+      }
+      ({ deviceCode, userCode } = started.body);
+      const { expiresIn, interval } = started.body;
+      const lasts = Number(expiresIn) > 0 ? Math.min(Number(expiresIn), 600) : 600;
+      expiresAt = Math.floor(now() + lasts * 1000);
+      wait = Math.max(1, Number(interval) || 5) * 1000;
+      if (pending) {
+        try {
+          pending.save(origin, `wsd_${deviceCode}.${userCode}.${expiresAt}`);
+        } catch {
+          throw new CliError('This computer could not keep the pending sign-in. Run woodshed login and leave it open while you approve.');
+        }
+      }
+      showCode(browser);
+      return EXIT.waiting;
+    }
+    if (!saved || now() >= expiresAt) {
+      pendingStore?.remove(origin);
+      await start();
+      if (noWait) return EXIT.waiting;
+    }
     for (;;) {
-      await sleep(wait);
+      if (wait) await sleep(wait);
       if (now() >= expiresAt) break;
       let polled;
       try {
         polled = await call(origin, '/api/cli/token', { method: 'POST', body: { deviceCode }, timeoutMs: expiresAt - now() });
       } catch (err) {
+        if (noWait) throw err;
         // A network that drops while the person approves (a laptop's Wi-Fi) is asked again until the code expires.
         if (!json) stderr.write(`woodshed: ${err.message}; trying again\n`);
         continue;
+      }
+      if (noWait && (polled.status === 202 || polled.status === 429)) {
+        showCode(false);
+        return EXIT.waiting;
       }
       if (polled.status === 202) continue;
       if (polled.status === 429) {
         wait += 5000;
         continue;
       }
-      if (polled.status === 403) throw new CliError('The sign-in was denied in the browser.', { code: EXIT.refused, status: 'denied' });
-      if (polled.status === 410) break;
+      if (polled.status === 403 || polled.status === 410) {
+        pendingStore?.remove(origin);
+        if (polled.status === 403) throw new CliError('The sign-in was denied in the browser.', { code: EXIT.refused, status: 'denied' });
+        if (noWait) return start();
+        break;
+      }
       if (polled.status !== 200 || !polled.body?.token) throw consoleNoCli(origin, polled.status);
       const { token, id } = polled.body;
       const [who, org, name, tokenExpiresAt] = [polled.body.login, polled.body.org, polled.body.console, polled.body.expiresAt].map(plain);
@@ -369,6 +408,8 @@ export async function main(argv, deps = {}) {
       config.current = origin;
       config.consoles[origin] = { login: who ?? null, store: store.kind, tokenId: id, signedInAt: new Date(now()).toISOString() };
       writeConfig(dir, config);
+      // A successful ordinary login also supersedes an earlier setup awaiting approval.
+      pendingSignIns().remove(origin);
       // The token this computer held before is ended at the console, so My settings lists one sign-in for it.
       let earlierEnded = null;
       if (before.token && before.token !== token) {
@@ -394,6 +435,7 @@ export async function main(argv, deps = {}) {
 
   async function logout(origin) {
     const { config, entry, store, token } = signedIn(origin);
+    pendingSignIns().remove(origin);
     if (!token && store?.holds?.(origin)) {
       // Kept here but not readable now (sealed with DPAPI at a desktop sign-in, and this is an SSH one, which DPAPI
       // cannot open): left as it is, so a sign-out where it can be read still ends it at the console.
@@ -449,6 +491,7 @@ export async function main(argv, deps = {}) {
       emit({
         console: origin, name: name ?? null, org: org ?? null, signedIn: true, login: who ?? null, store: entry.store,
         ...(store.file ? { credentialsFile: store.file } : {}), expiresAt: about?.expiresAt ?? null, device: about?.name ?? null, hc: herdr,
+        ...(me.body.sessionSignIns ? { sessionSignIns: { claude: me.body.sessionSignIns.claude === true, codex: me.body.sessionSignIns.codex === true } } : {}),
       });
       return EXIT.done;
     }
@@ -485,6 +528,7 @@ export async function main(argv, deps = {}) {
     const args = parseArgs(argv);
     command = args.command;
     json = args.json;
+    if (args.command === 'setup' && args.help) { stdout.write(`${SETUP_USAGE}\n`); return EXIT.done; }
     if (args.command === 'session' && args.help) return await sessionCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.command === 'review' && args.help) return await reviewCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.command === 'config' && args.help) return await configCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
@@ -494,7 +538,8 @@ export async function main(argv, deps = {}) {
     }
     const chosen = args.console ?? env.WOODSHED_CONSOLE ?? readConfig(dir).current ?? DEFAULT_CONSOLE;
     const origin = consoleOrigin(chosen);
-    if (args.command === 'login') return await login(origin, { browser: args.browser });
+    if (args.command === 'login') return await login(origin, { browser: args.browser, noWait: args.args.includes('--no-wait') });
+    if (args.command === 'setup') return await setupCommand({ ...args, origin }, { env, stdout, stderr, open, EXIT, emit, say, fail: (message) => new CliError(message), self: deps.self ?? selfCommand({ env }), platform });
     if (args.command === 'logout') return await logout(origin);
     if (args.command === 'status') return await status(origin);
     if (args.command === 'tunnel') return await tunnel(origin, args);

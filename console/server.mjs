@@ -2475,7 +2475,12 @@ export function createHandler({
       if (!cli) return reply(res, 404, { error: 'this console has no command line sign-in' });
       if (url.pathname === CLI_CONFIG_PATH) return cliCall();
       if (await handleCliSettings({ req, res, url, cli, claudeSettings, repoSettingsApi })) return;
-      return handleCliApi({ req, res, url, cli, publicUrl: config.publicUrl, about: cliAbout });
+      return handleCliApi({ req, res, url, cli, publicUrl: config.publicUrl, about: cliAbout, sessionSignIns: async (login) => {
+        // As on My settings, a sign-in saved directly to the store also counts. refresh caches the check.
+        await userSettings?.refresh?.(login);
+        const view = userSettings?.view(login);
+        return { claude: view?.claudeToken?.set === true, codex: view?.codexAuth?.set === true };
+      } });
     }
     if (carriesCliToken(req.headers)) return cliCall();
     // Sign-in's cookies belong to one host name, and GitHub sends people back only to publicUrl's. Once sign-in

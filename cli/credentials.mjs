@@ -20,8 +20,9 @@ import { spawnSync } from 'node:child_process';
 
 const SERVICE = 'woodshed-cli';
 const TOKEN_RE = /^wsc_[0-9a-f]{64}$/;
+const DEVICE_RE = /^wsd_[0-9a-f]{64}\.[A-Z]{4}-[A-Z]{4}\.\d{1,15}$/;
 // What may follow `-a` in a `security -i` line: an origin has no spaces or quotes, and anything else is refused.
-const ORIGIN_RE = /^https?:\/\/[A-Za-z0-9.\-[\]:]+$/;
+export const ORIGIN_RE = /^https?:\/\/[A-Za-z0-9.\-[\]:]+$/;
 
 // DPAPI's seal and unseal, for this Windows account: the console's origin and then what is sealed or opened are read
 // from stdin, one a line, and what comes out is written to stdout, so none is ever in the command line. The scripts are
@@ -104,41 +105,41 @@ export function runCommand(command, args, { input, cwd, env } = {}) {
   return { status: out.status, stdout: out.stdout ?? '', stderr: out.stderr ?? '' };
 }
 
-function checkArgs(origin, token) {
+function checkArgs(origin, token, pattern = TOKEN_RE) {
   if (!ORIGIN_RE.test(origin)) throw new Error(`not a console address: ${origin}`);
-  if (token !== undefined && !TOKEN_RE.test(token)) throw new Error('not a woodshed command line token');
+  if (token !== undefined && !pattern.test(token)) throw new Error('not a woodshed command line token');
 }
 
-function keychain(run) {
+function keychain(run, service, pattern) {
   return {
     kind: 'keychain',
     label: 'the macOS Keychain',
     save(origin, token) {
-      checkArgs(origin, token);
+      checkArgs(origin, token, pattern);
       // -U replaces an item of the same account and service.
-      run('security', ['-i'], { input: `add-generic-password -U -a ${origin} -s ${SERVICE} -l ${SERVICE} -w ${token}\n` });
+      run('security', ['-i'], { input: `add-generic-password -U -a ${origin} -s ${service} -l ${service} -w ${token}\n` });
       return this.read(origin) === token;
     },
     read(origin) {
       checkArgs(origin);
-      const out = run('security', ['find-generic-password', '-a', origin, '-s', SERVICE, '-w']);
+      const out = run('security', ['find-generic-password', '-a', origin, '-s', service, '-w']);
       const token = out.status === 0 ? out.stdout.trim() : '';
-      return TOKEN_RE.test(token) ? token : null;
+      return pattern.test(token) ? token : null;
     },
     remove(origin) {
       checkArgs(origin);
-      run('security', ['delete-generic-password', '-a', origin, '-s', SERVICE]);
+      run('security', ['delete-generic-password', '-a', origin, '-s', service]);
     },
   };
 }
 
-function libsecret(run) {
-  const attrs = (origin) => ['service', SERVICE, 'console', origin];
+function libsecret(run, service, pattern) {
+  const attrs = (origin) => ['service', service, 'console', origin];
   return {
     kind: 'libsecret',
     label: 'the Secret Service keyring (libsecret)',
     save(origin, token) {
-      checkArgs(origin, token);
+      checkArgs(origin, token, pattern);
       const out = run('secret-tool', ['store', `--label=Woodshed command line (${origin})`, ...attrs(origin)], { input: token });
       return out.status === 0 && this.read(origin) === token;
     },
@@ -146,7 +147,7 @@ function libsecret(run) {
       checkArgs(origin);
       const out = run('secret-tool', ['lookup', ...attrs(origin)]);
       const token = out.status === 0 ? out.stdout.trim() : '';
-      return TOKEN_RE.test(token) ? token : null;
+      return pattern.test(token) ? token : null;
     },
     remove(origin) {
       checkArgs(origin);
@@ -254,8 +255,8 @@ function windowsOnlyDefault(dir, home) {
   throw new Error(`${why === 'led away' ? `${dir} leads elsewhere through a link or junction` : `${dir} is not ${only}`}, and ${only} is the only place a token is kept on Windows: unset LOCALAPPDATA's override`);
 }
 
-function file(dir, platform, ownFolder, home) {
-  const where = path.join(dir, 'credentials.json');
+function file(dir, platform, ownFolder, home, filename, pattern) {
+  const where = path.join(dir, filename);
   const write = (data) => {
     if (platform === 'win32') windowsOnlyDefault(dir, home);
     return writeOwnFile(dir, where, data, { platform, ownFolder });
@@ -265,14 +266,14 @@ function file(dir, platform, ownFolder, home) {
     label: where,
     file: where,
     save(origin, token) {
-      checkArgs(origin, token);
+      checkArgs(origin, token, pattern);
       write({ ...readJson(where), [origin]: token });
       return true;
     },
     read(origin) {
       if (platform === 'win32' && notDefaultLocalFolder(dir, home)) return null;
       const token = readJson(where)[origin];
-      return TOKEN_RE.test(String(token)) ? token : null;
+      return pattern.test(String(token)) ? token : null;
     },
     remove(origin) {
       const data = readJson(where);
@@ -286,8 +287,8 @@ function file(dir, platform, ownFolder, home) {
 // Each console's token sealed with DPAPI for this Windows account, and only for the console it was sealed for. The
 // file holds only what was sealed, kept and read in the default folder alone as the plain file is, made this account's
 // as the plain file's is, so what it says beside it (cli.json) is this account's own too.
-function dpapi(dir, run, tools, ownFolder, home) {
-  const where = path.join(dir, 'credentials-dpapi.json');
+function dpapi(dir, run, tools, ownFolder, home, filename, pattern) {
+  const where = path.join(dir, filename);
   const powershell = (script, input) => run(tools.powershell, powershellArgs(script), { input, env: powershellEnv() });
   const write = (data) => {
     windowsOnlyDefault(dir, home);
@@ -298,7 +299,7 @@ function dpapi(dir, run, tools, ownFolder, home) {
     label: `${where}, sealed for your Windows account (DPAPI)`,
     file: where,
     save(origin, token) {
-      checkArgs(origin, token);
+      checkArgs(origin, token, pattern);
       const out = powershell(DPAPI_SEAL, `${origin}\n${token}\n`);
       const sealed = out.status === 0 ? out.stdout.trim() : '';
       if (!SEALED_RE.test(sealed)) return false;
@@ -312,7 +313,7 @@ function dpapi(dir, run, tools, ownFolder, home) {
       if (typeof sealed !== 'string' || !SEALED_RE.test(sealed)) return null;
       const out = powershell(DPAPI_UNSEAL, `${origin}\n${sealed}\n`);
       const token = out.status === 0 ? out.stdout.trim() : '';
-      return TOKEN_RE.test(token) ? token : null;
+      return pattern.test(token) ? token : null;
     },
     /** @returns {boolean}  a sealed token for `origin` is kept here, whether or not it can be opened now */
     holds(origin) {
@@ -329,15 +330,24 @@ function dpapi(dir, run, tools, ownFolder, home) {
 
 /**
  * @param {{platform?: string, run?: typeof runCommand, dir: string, has?: (command: string) => boolean,
- *          tools?: ReturnType<typeof windowsTools>, home?: string}} opts  `home`: the person's profile, on Windows
+ *          pending?: boolean, tools?: ReturnType<typeof windowsTools>, home?: string}} opts  `home`: the person's profile, on Windows
  *   `dir` is the command line's config folder, for the files; `has` says whether a command is on the PATH, or for a
- *   Windows tool's full path, whether it is there
- * @returns {{storeFor: (kind: string) => object, save: (origin: string, token: string) => object}}
+ *   Windows tool's full path, whether it is there. A pending device approval uses its own item or file.
+ * @returns {{storeFor: (kind: string) => object, find: (origin: string) => {store: object, token: string}|null,
+ *            remove: (origin: string) => void, save: (origin: string, token: string) => object}}
  *   `save` keeps the token in the first store that takes it and gives back that store
  */
-export function createCredentials({ platform = process.platform, run = runCommand, dir, has = (command) => hasCommand(command), tools = windowsTools(), home = os.homedir() }) {
+export function createCredentials({ platform = process.platform, run = runCommand, dir, has = (command) => hasCommand(command), tools = windowsTools(), home = os.homedir(), pending = false }) {
   const ownFolder = (folder) => windowsOwnFolder(folder, run, tools);
-  const stores = { keychain: keychain(run), libsecret: libsecret(run), dpapi: dpapi(dir, run, tools, ownFolder, home), file: file(dir, platform, ownFolder, home) };
+  const service = pending ? `${SERVICE}-pending` : SERVICE;
+  const pattern = pending ? DEVICE_RE : TOKEN_RE;
+  const basename = pending ? 'pending-sign-ins' : 'credentials';
+  const stores = {
+    keychain: keychain(run, service, pattern),
+    libsecret: libsecret(run, service, pattern),
+    dpapi: dpapi(dir, run, tools, ownFolder, home, `${basename}-dpapi.json`, pattern),
+    file: file(dir, platform, ownFolder, home, `${basename}.json`, pattern),
+  };
   const ownKinds = { darwin: ['keychain', 'file'], linux: ['libsecret', 'file'], win32: ['dpapi', 'file'] }[platform] ?? ['file'];
   const order = [
     ...(platform === 'darwin' && has('security') ? ['keychain'] : []),
@@ -349,6 +359,21 @@ export function createCredentials({ platform = process.platform, run = runComman
     // This platform's own stores alone, whatever cli.json names: one it does not use is never run (on Windows a bare
     // `security` or `secret-tool` could be found in the current folder, and cli.json is no proof of who wrote it).
     storeFor: (kind) => (Object.hasOwn(stores, kind) && ownKinds.includes(kind) ? stores[kind] : null),
+    // Logout can discard a pending approval even where the Windows logon cannot unseal it.
+    remove(origin) {
+      for (const kind of order) {
+        const store = stores[kind];
+        if (store.holds?.(origin) || store.read(origin)) store.remove(origin);
+      }
+    },
+    find(origin) {
+      for (const kind of order) {
+        const store = stores[kind];
+        const token = store.read(origin);
+        if (token) return { store, token };
+      }
+      return null;
+    },
     save(origin, token) {
       let refused = null;
       for (const kind of order) {

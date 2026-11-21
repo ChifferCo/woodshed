@@ -458,10 +458,11 @@ async function readJsonBody(req) {
 /**
  * The CLI's own calls, which carry no cookie: a device code or a token is their sign-in.
  * @param {{req, res, url: URL, cli: ReturnType<typeof createCliSignIn>, publicUrl: string,
- *          about: (login: string|null) => {console: string, org: string|null}}} args
+ *          about: (login: string|null) => {console: string, org: string|null},
+ *          sessionSignIns?: (login: string|null) => Promise<{claude: boolean, codex: boolean}>}} args
  * @returns {Promise<boolean>}  whether it answered: true for any /api/cli/ path
  */
-export async function handleCliApi({ req, res, url, cli, publicUrl, about }) {
+export async function handleCliApi({ req, res, url, cli, publicUrl, about, sessionSignIns }) {
   const { pathname } = url;
   if (!pathname.startsWith('/api/cli/')) return false;
   if (pathname === '/api/cli/device' || pathname === '/api/cli/token') {
@@ -503,7 +504,8 @@ export async function handleCliApi({ req, res, url, cli, publicUrl, about }) {
   if (!signedIn) return json(res, 401, { error }), true;
   if (pathname === '/api/cli/me' && req.method === 'GET') {
     const { id, login, record } = signedIn;
-    return json(res, 200, { login, ...about(login), url: publicUrl, token: { id, name: record.name, createdAt: record.createdAt, expiresAt: record.expiresAt } }), true;
+    return json(res, 200, { login, ...about(login), url: publicUrl, token: { id, name: record.name, createdAt: record.createdAt, expiresAt: record.expiresAt },
+      ...(sessionSignIns ? { sessionSignIns: await sessionSignIns(login) } : {}) }), true;
   }
   if (pathname === '/api/cli/logout' && req.method === 'POST') {
     cli.revoke(signedIn.login, signedIn.id, 'woodshed logout');
