@@ -103,12 +103,13 @@ One token per console, never in a command's arguments:
   secret to seal with), `%LOCALAPPDATA%\woodshed\credentials.json`, and only when that folder is the default one,
   `%USERPROFILE%\AppData\Local\woodshed`, as spelled and as resolved: a new file on Windows takes its folder's ACL as
   it is made, so a folder on the way that someone else could replace is no place for an unsealed token, and Windows'
-  own profile folders are the ones no other account may. Either way its folder is made yours alone by
-  `icacls`, as `0700` is on macOS and Linux: nothing inherited from the folder above, full control for your account,
-  your account its owner, and `login` checks that `icacls` then lists nobody else, or refuses to keep the token there
-  and ends it at the console. `%LOCALAPPDATA%`, not `%APPDATA%`, which a roaming profile copies to a server.
-  PowerShell, `icacls`, `whoami` and the browser's `rundll32` are run from `System32` by their full path, never
-  through a shell.
+  own profile folders are the ones no other account may. Either way its folder is made yours by
+  Windows PowerShell, as `0700` is on macOS and Linux: your account its owner, nothing inherited from the folder
+  above, and full control for your account and Windows' own SYSTEM and Administrators alone (which may open anything on
+  the computer, as root may on macOS and Linux). `login` reads it back and checks each by SID, or refuses to keep the
+  token there and ends it at the console. `%LOCALAPPDATA%`, not `%APPDATA%`, which a roaming profile copies to a server.
+  PowerShell and the browser's `rundll32` are run from `System32` by their full path, never through a shell, and
+  PowerShell without `PSModulePath`, which a PowerShell 7 terminal sets to modules Windows PowerShell cannot load.
 
 `~/.config/woodshed/cli.json` (`%LOCALAPPDATA%\woodshed\cli.json` on Windows) says which console you used last and, for
 each, who is signed in and which of these holds the token. It never holds a token.

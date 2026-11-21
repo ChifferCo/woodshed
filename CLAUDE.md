@@ -345,7 +345,8 @@ URL on top of each env file's Repo settings values
   does not list (loopback is trusted by default), so its `X-Forwarded-For` is not read. The token is in the macOS
   Keychain or libsecret, else in the file `woodshed status --json` names (`credentialsFile`; on Windows, sealed with
   DPAPI, or a plain file when `store` is `file`); never print it. On Windows `login` refusing with `could not be made a
-  folder only you can open` names who `icacls` still lists on `%LOCALAPPDATA%\woodshed`.
+  folder only you can open` says why: the SIDs still allowed on `%LOCALAPPDATA%\woodshed` besides the person's own,
+  SYSTEM's and Administrators', or that it could not be made theirs.
 - **`woodshed tunnel` exits 255.** Its stderr says why (cli/README.md, "The tunnel into a session"): `refused (401)`
   is a sign-in revoked or expired (`woodshed login` again), `refused (404)` a session that is not that person's own,
   `refused (409)` one not running (resume it) or one that has seen production data, which never gets a pipe. The

@@ -4,9 +4,10 @@
 // Keychain gets it through `security -i` on stdin, and secret-tool reads it from stdin.
 //
 // On Windows, a file sealed with DPAPI for this Windows account (Windows PowerShell 5.1, which ships with Windows, does
-// the sealing, with the token on its stdin), else a plain file under the person's profile, in a folder icacls makes this
-// account's alone, checked after it is set. Each Windows tool is run from System32 by its full path, never found on the PATH or in the current
-// folder, and never through a shell.
+// the sealing, with the token on its stdin), else a plain file under the person's profile. Either way its folder is
+// made this account's own and closed to every other account but Windows' own (SYSTEM and Administrators, as root on
+// macOS and Linux), and that is checked by SID once it is set. PowerShell is run from System32 by its full path, never
+// found on the PATH or in the current folder, and never through a shell.
 //
 // Each store is keyed by the console's origin (https://console.example), so signing in to a second console keeps the
 // first's token. cli.json (config.mjs) says which store holds each console's, so a read never guesses.
@@ -27,8 +28,10 @@ const ORIGIN_RE = /^https?:\/\/[A-Za-z0-9.\-[\]:]+$/;
 // fixed text, sent base64'd as -EncodedCommand asks. The entropy is the service and the origin: another program's
 // casual Unprotect of the same account does not open it, and a token sealed for one console does not open for another,
 // whatever the file says it is for.
+// Only .NET's own types, no cmdlet of a module: a PowerShell 7 terminal hands its module path down, from which Windows
+// PowerShell cannot load its modules. Loaded by name, as Add-Type would, without Add-Type's module.
 const DPAPI_PRELUDE = `$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Security
+[void][Reflection.Assembly]::LoadWithPartialName('System.Security')
 $lines = [Console]::In.ReadToEnd().Split([char]10)
 $origin = $lines[0].Trim()
 $given = $lines[1].Trim()
@@ -42,14 +45,51 @@ $opened = [Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64
 [Console]::Out.Write([Text.Encoding]::UTF8.GetString($opened))`;
 const SEALED_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 
-/** @returns {{powershell: string, icacls: string, whoami: string}}  System32's own, by full path */
+/** @returns {{powershell: string}}  System32's own, by full path */
 export function windowsTools(env = process.env) {
   const system32 = path.win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32');
-  return {
-    powershell: path.win32.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-    icacls: path.win32.join(system32, 'icacls.exe'),
-    whoami: path.win32.join(system32, 'whoami.exe'),
-  };
+  return { powershell: path.win32.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe') };
+}
+
+// Run in the folder (its path is never decoded or quoted): makes this account its owner, takes nothing from the folder
+// above, and gives full control to this account and to Windows' own SYSTEM and Administrators alone, then reads it back
+// and checks each, by SID. Names and the console's code page never come into it: Jürgen's name prints as J?rgen there.
+// SYSTEM and Administrators are on every new folder of a profile as entries of its own, not inherited, and may open
+// anything on the computer whatever its ACL says, as root on macOS and Linux may. Prints `ok`, or `refused: <why>`.
+export const OWN_FOLDER = `$ErrorActionPreference = 'Stop'
+$dir = [Environment]::CurrentDirectory
+$sidType = [System.Security.Principal.SecurityIdentifier]
+$me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$windows = @('S-1-5-18', 'S-1-5-32-544')
+try {
+  $acl = [System.Security.AccessControl.DirectorySecurity]::new()
+  $acl.SetOwner([System.Security.Principal.SecurityIdentifier]::new($me))
+  $acl.SetAccessRuleProtection($true, $false)
+  $flags = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+  foreach ($sid in @($me) + $windows) {
+    $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new([System.Security.Principal.SecurityIdentifier]::new($sid), [System.Security.AccessControl.FileSystemRights]::FullControl, $flags, [System.Security.AccessControl.PropagationFlags]::None, [System.Security.AccessControl.AccessControlType]::Allow))
+  }
+  [System.IO.Directory]::SetAccessControl($dir, $acl)
+} catch {
+  'refused: it could not be made yours (' + $_.Exception.Message.Split([char]10)[0].Trim() + ')'
+  exit 3
+}
+$now = [System.IO.Directory]::GetAccessControl($dir)
+$owner = $now.GetOwner($sidType).Value
+if ($owner -ne $me) { 'refused: it belongs to ' + $owner + ', not to you'; exit 4 }
+if (-not $now.AreAccessRulesProtected) { 'refused: it still takes rights from the folder above'; exit 4 }
+$others = @()
+foreach ($rule in $now.GetAccessRules($true, $true, $sidType)) {
+  $sid = $rule.IdentityReference.Value
+  if ($rule.AccessControlType -eq 'Allow' -and $sid -ne $me -and $windows -notcontains $sid) { $others += $sid }
+}
+if ($others.Count) { 'refused: others may still open it (' + ($others -join ', ') + ')'; exit 4 }
+'ok'`;
+
+// Windows PowerShell's environment: this process's, without PSModulePath, which a PowerShell 7 terminal sets to its own
+// modules, which Windows PowerShell cannot load (it builds its own when the variable is not set).
+function powershellEnv(env = process.env) {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => name.toLowerCase() !== 'psmodulepath'));
 }
 
 /** @returns {string[]}  the arguments that run a fixed script in Windows PowerShell, no profile, nothing asked */
@@ -58,8 +98,8 @@ export function powershellArgs(script) {
 }
 
 /** @returns {{status: number|null, stdout: string, stderr: string}} */
-export function runCommand(command, args, { input, cwd } = {}) {
-  const out = spawnSync(command, args, { input, cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 15_000, windowsHide: true });
+export function runCommand(command, args, { input, cwd, env } = {}) {
+  const out = spawnSync(command, args, { input, cwd, env, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 15_000, windowsHide: true });
   if (out.error) return { status: null, stdout: '', stderr: out.error.message };
   return { status: out.status, stdout: out.stdout ?? '', stderr: out.stderr ?? '' };
 }
@@ -125,53 +165,17 @@ function readJson(where) {
 }
 
 /**
- * The names icacls lists as holding a right on `dir`, from its output, or [] when it cannot be read as such. icacls is
- * run in the folder, on `.`, so the line it starts with is never a path to decode.
- * @returns {string[]}
- */
-export function aclHolders(output, dir = '.') {
-  const lines = String(output).split(/\r?\n/);
-  const holders = [];
-  for (let i = 0; i < lines.length; i++) {
-    let line = lines[i];
-    if (i === 0) {
-      // The first line is the folder, then its first entry; each other entry is on a line of its own, indented under it.
-      if (!line.toLowerCase().startsWith(`${dir.toLowerCase()} `)) return [];
-      line = line.slice(dir.length);
-    } else if (!/^\s/.test(line)) break;
-    line = line.trim();
-    if (!line) break;
-    const at = line.indexOf(':(');
-    if (at <= 0) return [];
-    holders.push(line.slice(0, at));
-  }
-  return holders;
-}
-
-/**
- * Makes `dir` this Windows account's alone, as 0700 is on macOS and Linux: no rights inherited from the folder above,
- * full control for this account (its SID, as whoami says it), then this account as its owner, since an owner may always
- * change who may open it; and what icacls then lists is checked to be that account alone. Entries of anyone else's
- * already on the folder are not taken off, and a folder this account cannot take is not taken: either is refused, as
- * someone else's folder is on macOS and Linux.
+ * Makes `dir` this Windows account's own and closed to every other account but Windows' own (OWN_FOLDER), as 0700 is on
+ * macOS and Linux. A folder this account cannot take, or that someone else may still open, is refused.
  * @returns {string|null}  why it could not be, or null once it is
  */
 export function windowsOwnFolder(dir, run, tools) {
-  const who = run(tools.whoami, ['/user', '/fo', 'csv', '/nh']);
-  const me = /^"([^"]+)","(S-1-[0-9-]+)"/.exec(who.stdout.trim());
-  if (who.status !== 0 || !me) return 'whoami did not say which account this is';
-  const [, name, sid] = me;
-  const firstLine = (out) => (out.stderr || out.stdout).trim().split(/\r?\n/)[0];
-  const icacls = (args) => run(tools.icacls, ['.', ...args], { cwd: dir });
-  const set = icacls(['/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`]);
-  if (set.status !== 0) return `icacls could not set who may open it (${firstLine(set)})`;
-  const owned = icacls(['/setowner', `*${sid}`]);
-  if (owned.status !== 0) return `it is another account's, and icacls could not make it yours (${firstLine(owned)})`;
-  const shown = icacls([]);
-  const holders = shown.status === 0 ? aclHolders(shown.stdout) : [];
-  if (!holders.length) return 'icacls did not say who may open it';
-  const others = holders.filter((holder) => holder.toLowerCase() !== name.toLowerCase());
-  return others.length ? `others may still open it (${others.join(', ')})` : null;
+  const out = run(tools.powershell, powershellArgs(OWN_FOLDER), { cwd: dir, env: powershellEnv() });
+  const lines = `${out.stdout}`.trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (out.status === 0 && lines.at(-1) === 'ok') return null;
+  const said = lines.find((line) => line.startsWith('refused: '));
+  if (said) return said.slice('refused: '.length);
+  return `Windows PowerShell could not set who may open it (${(out.stderr || out.stdout).trim().split(/\r?\n/)[0] || `exit ${out.status}`})`;
 }
 
 /**
@@ -275,7 +279,7 @@ function file(dir, platform, ownFolder, home) {
 // what it says beside it (cli.json) is this account's own too.
 function dpapi(dir, run, tools, ownFolder) {
   const where = path.join(dir, 'credentials-dpapi.json');
-  const powershell = (script, input) => run(tools.powershell, powershellArgs(script), { input });
+  const powershell = (script, input) => run(tools.powershell, powershellArgs(script), { input, env: powershellEnv() });
   const write = (data) => writeOwnFile(dir, where, data, { platform: 'win32', ownFolder });
   return {
     kind: 'dpapi',
