@@ -7,7 +7,7 @@
 // whenever another session changed something in between. Servers sent by a computer are kept in a separate map in
 // the same object. The session API never returns that map, so importing a laptop's server cannot install it there.
 
-import { CODEX_CONFIG, configCredential } from '../shared/codexConfig.mjs';
+import { CODEX_CONFIG, configCredential, isCodexMcp, readToml, withEntries } from '../shared/codexConfig.mjs';
 import { isCarriedSource } from '../shared/pluginSource.mjs';
 import { redact, secretContent } from '../shared/secretLike.mjs';
 import logins from './public/logins.cjs';
@@ -76,11 +76,14 @@ const PLUGIN_ITEM = '.claude/plugins/installed_plugins.json#plugins/';
  * computer and every one of their sessions read, never holds codex config with a credential in it or a plugin's
  * marketplace with more than a session can add again.
  */
-export function itemProblem(id, value) {
+export function itemProblem(id, value, { fromLaptop = false } = {}) {
   if (id === '.codex/auth.json') return 'a Codex sign-in stays where it was set';
   if (id === CODEX_CONFIG) {
-    const credential = configCredential(Buffer.from(value, 'base64').toString('utf8'));
-    return credential ? `~/.codex/config.toml ${credential}: a credential stays where it was set` : null;
+    const text = Buffer.from(value, 'base64').toString('utf8');
+    const credential = configCredential(text);
+    if (credential) return `~/.codex/config.toml ${credential}: a credential stays where it was set`;
+    if (fromLaptop && readToml(text).some(isCodexMcp)) return 'Codex MCP servers from a computer stay on that computer';
+    return null;
   }
   if (id.startsWith(PLUGIN_ITEM)) {
     // Its name is said back and logged: one with a key's shape is refused without it.
@@ -158,12 +161,18 @@ export function createClaudeSettings({ store }) {
           throw Object.assign(new Error('a hook sends a literal HTTP header: use a variable reference'), { shown: true, status: 400 });
         }
         const fromComputer = laptopItem(id);
-        const problem = fromComputer ? laptopMcpProblem(value) : itemProblem(id, value);
+        const problem = fromComputer ? laptopMcpProblem(value) : itemProblem(id, value, { fromLaptop });
         if (problem) throw Object.assign(new Error(problem), { shown: true, status: 400 });
         if (fromComputer) {
           laptopMcp[id] = value;
         } else {
-          items[id] = value;
+          let nextValue = value;
+          if (fromLaptop && id === CODEX_CONFIG && items[id] !== undefined) {
+            const previous = readToml(Buffer.from(items[id], 'base64').toString('utf8'));
+            const servers = previous?.filter(isCodexMcp) ?? [];
+            if (servers.length) nextValue = Buffer.from(withEntries(Buffer.from(value, 'base64').toString('utf8'), servers)).toString('base64');
+          }
+          items[id] = nextValue;
           sessionChanges = true;
         }
       }

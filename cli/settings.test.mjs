@@ -925,7 +925,8 @@ test('Codex settings, plugins and dotfiles: plan lists each with why, push sends
   assert.match(rows['plugin/mine@my-folder'].reason, /a session cannot add its marketplace my-folder/);
   assert.deepEqual(rows['~/.codex/config.toml'].notes, [
     'left out: model_provider (where codex sends its calls stays each side\'s own), notify (names ~/bin/codex-notify.sh, not on the other side), '
-    + 'model_providers.ollama (where codex sends its calls stays each side\'s own), mcp_servers.linear (sets mcp_servers.linear.env.LINEAR_API_KEY, a credential)',
+    + 'model_providers.ollama (where codex sends its calls stays each side\'s own), '
+    + ['docs', 'linear', 'github'].map((server) => `mcp_servers.${server} (Codex MCP servers stay on this computer)`).join(', '),
   ]);
   assert.deepEqual(rows['dotfile/gitconfig'].notes, ['your own ~/.gitconfig lines, from ~/.gitconfig', 'left out: [user], [credential], [url "..."]']);
   assert.deepEqual(rows['dotfile/bash-aliases'].notes, ['your own ~/.bash_aliases lines, from ~/.zshrc', 'left out: alias proj (names a path on this computer), 1 line that is not alias lines']);
@@ -935,19 +936,7 @@ test('Codex settings, plugins and dotfiles: plan lists each with why, push sends
   assert.equal(pushed.code, EXIT.done, pushed.err);
   assert.equal(pushed.lines.at(-1).dotfilesSent, 3);
   const { items } = await c.copy();
-  assert.equal(unb64(items['.codex/config.toml']), `model = "gpt-5.5"
-
-[mcp_servers.docs]
-command = "npx"
-args = ["-y", "docs-mcp"]
-
-[mcp_servers.github]
-url = "https://api.githubcopilot.com/mcp/"
-bearer_token_env_var = "GITHUB_TOKEN"
-
-[tui]
-notifications = true
-`);
+  assert.equal(unb64(items['.codex/config.toml']), 'model = "gpt-5.5"\n\n[tui]\nnotifications = true\n');
   assert.equal(items['.claude/plugins/installed_plugins.json#plugins/review@acme-tools'], '{"marketplace":{"source":"github","repo":"acme/claude-tools"}}');
   assert.equal(items['.claude/plugins/installed_plugins.json#plugins/mine@my-folder'], undefined);
   assert.equal(Object.keys(items).some((id) => id.includes('auth.json') || id.includes('.system')), false);
@@ -958,14 +947,66 @@ notifications = true
     'bash-aliases': 'alias ll=\'ls -la\'\n',
   });
 
-  // A new private session's start writes them, with its own checkout trusted.
+  // The session's startup response carries the config without the laptop's MCP definitions.
+  const privateSession = { id: 'aaaa1111', status: 'starting', owner: 'mia-dev', token: 'fake-session-token' };
+  const sessionApi = createSessionApi({
+    fleet: { sessions: () => [privateSession] }, userSettings: { view: () => ({ setUp: true }) }, claudeSettings: c.claudeSettings,
+  });
+  const sessionServer = http.createServer(sessionApi);
+  const sessionPort = await listen(sessionServer);
+  t.after(() => sessionServer.close());
+  const pulled = await exchange({
+    consoleUrl: `http://127.0.0.1:${sessionPort}`, token: privateSession.token,
+    body: { version: null, changed: {}, removed: [] },
+  });
+  assert.doesNotMatch(unb64(pulled.items['.codex/config.toml']), /mcp_servers/);
   const session = scratch(t, 'woodshed-session-');
-  await applyItems(session, items);
+  await applyItems(session, pulled.items);
   assert.equal(fs.readFileSync(path.join(session, '.codex/AGENTS.md'), 'utf8'), 'Use pnpm.\n');
   assert.equal(fs.readFileSync(path.join(session, '.codex/config.toml'), 'utf8'), unb64(items['.codex/config.toml']));
 
   const again = await c.run(['settings', 'push']);
   assert.match(again.out, /Nothing to send\./, 'a second push finds everything the same');
+});
+
+test('the console refuses laptop Codex MCP definitions and keeps session servers when a laptop updates its model', async (t) => {
+  const c = await setUp(t, { home: laptopWithMore(t) });
+  const id = '.codex/config.toml';
+  const post = (text) => fetch(`${c.origin}/api/cli/settings`, {
+    method: 'POST', headers: { authorization: `Bearer ${c.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ version: 0, removed: [], changed: { [id]: b64(text) } }),
+  });
+  for (const config of [
+    '["mcp_servers".docs]\ncommand = "npx"\n',
+    'mcp_servers = { docs = { command = "npx" } }\n',
+    'mcp_servers.docs.command = "npx"\n',
+  ]) {
+    const refused = await post(config);
+    assert.equal(refused.status, 400);
+    assert.match((await refused.json()).error, /Codex MCP servers from a computer stay on that computer/);
+  }
+
+  const sessionServer = '[mcp_servers.docs]\ncommand = "session-docs"\n';
+  await c.claudeSettings.sync({
+    login: 'mia-dev', sessionId: 'aaaaaaaa', version: 0, removed: [], changed: { [id]: b64(sessionServer) },
+  });
+  const planned = await c.run(['settings', 'plan', '--only', 'codex', '--json']);
+  assert.equal(fateOf(planned.items, '~/.codex/config.toml'), 'upload');
+  const pushed = await c.run(['settings', 'push', '--only', 'codex', '--json']);
+  assert.equal(pushed.code, EXIT.done, pushed.err);
+  const saved = unb64((await c.copy()).items[id]);
+  assert.match(saved, /^model = "gpt-5\.5"/);
+  assert.ok(saved.includes(sessionServer));
+  assert.doesNotMatch(saved, /mcp_servers\.github|mcp_servers\.linear/);
+  const again = await c.run(['settings', 'plan', '--only', 'codex', '--json']);
+  assert.equal(fateOf(again.items, '~/.codex/config.toml'), 'skip');
+  const local = path.join(c.home, id);
+  write(c.home, id, fs.readFileSync(local, 'utf8').replace('gpt-5.5', 'new-model'));
+  const updated = await c.run(['settings', 'push', '--only', 'codex', '--json']);
+  assert.equal(updated.code, EXIT.done, updated.err);
+  const changed = unb64((await c.copy()).items[id]);
+  assert.match(changed, /^model = "new-model"/);
+  assert.ok(changed.includes(sessionServer));
 });
 
 test('an interactive push asks about each dotfile on its own, and saves only the ones said yes to', async (t) => {
@@ -1010,7 +1051,7 @@ test('pull lists a plugin a session installed with how to install it here, and k
   const c = await setUp(t, { home: laptopWithMore(t) });
   await c.claudeSettings.sync({
     login: 'mia-dev', sessionId: 'aaaaaaaa', version: 0, removed: [], changed: {
-      '.codex/config.toml': b64('model = "gpt-5.5-codex"\n\n[mcp_servers.docs]\ncommand = "npx"\nargs = ["-y", "docs-mcp", "/home/node/.codex/prompts"]\n'),
+      '.codex/config.toml': b64('model = "gpt-5.5-codex"\n\n[mcp_servers.docs]\ncommand = "npx"\nargs = ["-y", "session-docs"]\n\n[mcp_servers.session]\ncommand = "npx"\nargs = ["/home/node/.codex/prompts"]\n'),
       '.claude/plugins/installed_plugins.json#plugins/notes@acme-tools': '{"marketplace":{"source":"github","repo":"acme/claude-tools"}}',
       '.claude/plugins/installed_plugins.json#plugins/other@elsewhere': '{"marketplace":{"source":"github","repo":"else/where"}}',
     },
@@ -1024,12 +1065,20 @@ test('pull lists a plugin a session installed with how to install it here, and k
 model_provider = "ollama"
 notify = ["${c.home}/bin/codex-notify.sh"]
 
-[mcp_servers.docs]
+[mcp_servers.session]
 command = "npx"
-args = ["-y", "docs-mcp", "${c.home}/.codex/prompts"]
+args = ["${c.home}/.codex/prompts"]
 
 [model_providers.ollama]
 base_url = "http://localhost:11434/v1"
+
+[mcp_servers.docs]
+command = "/opt/homebrew/bin/npx"
+args = ["-y", "docs-mcp"]
+
+[mcp_servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+bearer_token_env_var = "GITHUB_TOKEN"
 
 [projects."${c.home}/code/app"]
 trust_level = "trusted"
@@ -1039,8 +1088,22 @@ command = "npx"
 
 [mcp_servers.linear.env]
 LINEAR_API_KEY = "lin_api_not_real"
-`, 'the shared settings, with this computer\'s provider, its server with a key, its notify and its trusted folder kept');
+`, 'the shared settings, with this computer\'s provider, servers, notify and trusted folder kept');
   assert.equal(fs.existsSync(path.join(c.home, '.claude/plugins/installed_plugins.json')) && JSON.parse(fs.readFileSync(path.join(c.home, '.claude/plugins/installed_plugins.json'), 'utf8')).plugins['notes@acme-tools'], undefined, 'nothing installed');
+});
+
+test('Codex pull keeps the local server map when inline syntax cannot be combined', async (t) => {
+  const c = await setUp(t);
+  const id = '.codex/config.toml';
+  const localServers = 'mcp_servers = { docs = { command = "local-docs" } }\n';
+  write(c.home, id, localServers);
+  await c.claudeSettings.sync({
+    login: 'mia-dev', sessionId: 'aaaaaaaa', version: 0, removed: [],
+    changed: { [id]: b64('model = "shared-model"\n\n[mcp_servers.session]\ncommand = "session-docs"\n') },
+  });
+  const pulled = await c.run(['settings', 'pull', '--replace', '--only', 'codex'], { answer: 'y' });
+  assert.equal(pulled.code, EXIT.done, pulled.err);
+  assert.equal(fs.readFileSync(path.join(c.home, id), 'utf8'), 'model = "shared-model"\n' + localServers);
 });
 
 test('a secret store that fails on a computer\'s dotfile answers with an error, and the console goes on', async (t) => {

@@ -60,6 +60,7 @@ Commands:
   settings  plan|push|pull [--only <what>,...] [--own-files <checkout>] [--replace]
             sync your Claude and Codex settings, plugins, dotfiles and ignored checkout files with private
             sessions. Claude MCP definitions pushed from a computer stay between computers.
+            Codex MCP definitions from a computer stay on that computer.
             plan lists each item and sends nothing (cli/README.md, "Settings")
 
 Options:

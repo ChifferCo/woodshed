@@ -32,7 +32,7 @@ import readline from 'node:readline';
 import { isLoginItem } from '../console/cliSettings.mjs';
 import { hasLiteralCredential, hasLiteralHttpHeader, MAX_SETTINGS_BYTES } from '../console/claudeSettings.mjs';
 import {
-  CODEX_CONFIG, commandsOf, credentialOf, keyText, pathOf, readToml, sharedPart, stringsOf, textOf, unitOf, withEntries,
+  CODEX_CONFIG, commandsOf, credentialOf, isCodexMcp, keyText, pathOf, readToml, sharedPart, stringsOf, textOf, unitOf, withEntries, withoutCodexMcp,
 } from '../shared/codexConfig.mjs';
 import {
   applyItems, isSyncedFile, linkOnPath, localChanges, MARKETPLACES_FILE, MAX_ITEM_BYTES, NO_STATUS_LINE, parseEntryId, parsePluginId, PLUGINS_FILE, readSnapshot,
@@ -118,6 +118,12 @@ export function matchesOnly(only, { category, name }, { byName = false } = {}) {
 export function itemHash(id, value) {
   return crypto.createHash('sha256').update(`${id}\0${value}`).digest('hex');
 }
+
+function pushView(id, value) {
+  return id === CODEX_CONFIG && value ? Buffer.from(withoutCodexMcp(Buffer.from(value, 'base64').toString('utf8'))).toString('base64') : value;
+}
+
+const syncHash = (id, value) => itemHash(id, pushView(id, value));
 
 /** What a session's text may print here: printable ASCII, so a name or command cannot move the cursor or retitle. */
 function printable(text, max = 200) {
@@ -250,7 +256,7 @@ const CODEX_OWN_KEYS = new Set(['projects', 'model_provider', 'model_providers',
  * @returns {{value: string, notes: string[], own: object[]}|{fate: 'skip'|'refuse', reason: string}}  own: the statements
  *   left out but trusted folders, which a pull keeps of this computer's own
  */
-export function translateCodexConfig(value, { from, to }) {
+export function translateCodexConfig(value, { from, to, fromLaptop }) {
   const statements = readToml(Buffer.from(value, 'base64').toString('utf8'));
   if (!statements) return { fate: 'skip', reason: 'not TOML this reads: edit it in a session, or fix it here', unreadable: true };
   const leave = new Map();
@@ -268,6 +274,10 @@ export function translateCodexConfig(value, { from, to }) {
     const credential = credentialOf(s, commands);
     if (credential) {
       leave.set(unit, `${unit} (${credential}, a credential)`);
+      continue;
+    }
+    if (fromLaptop && isCodexMcp(s)) {
+      leave.set(unit, `${unit} (Codex MCP servers stay on this computer)`);
       continue;
     }
     if (s.kind !== 'kv') continue;
@@ -295,7 +305,8 @@ export function translateCodexConfig(value, { from, to }) {
     }
     texts.set(s, text);
   }
-  const kept = statements.filter((s) => !leave.has(unitOf(s))).map((s) => ({ ...s, text: texts.get(s) ?? s.text }));
+  const kept = statements.filter((s) => !leave.has(unitOf(s)) && !(fromLaptop && s.kind === 'blank' && s.table[0] === 'mcp_servers'))
+    .map((s) => ({ ...s, text: texts.get(s) ?? s.text }));
   const out = sharedPart(textOf(kept));
   const own = statements.filter((s) => leave.has(unitOf(s)) && pathOf(s)[0] !== 'projects');
   // An entry is named as the list shows it: a key's shape in a table's name is redacted.
@@ -335,14 +346,14 @@ function translatePlugin(id, value) {
  * One item as it would be on the other side: moved to that home, with what it may not carry left out.
  * @param {string} id
  * @param {string} value  a file's content as base64, an entry's as JSON (readSnapshot's)
- * @param {{from: string, to: string, statusLineOf?: string}} opts  statusLineOf: the settings.json whose status line
- *   the result keeps (the other side's own)
+ * @param {{from: string, to: string, statusLineOf?: string, fromLaptop?: boolean}} opts  statusLineOf: the settings.json
+ *   whose status line the result keeps. A laptop's Codex servers stay local.
  * @returns {{value: string, notes: string[]}|{fate: 'skip'|'refuse', reason: string}}
  */
-export function translate(id, value, { from, to, statusLineOf }) {
+export function translate(id, value, { from, to, statusLineOf, fromLaptop = false }) {
   if (isLoginItem(id)) return { fate: 'refuse', reason: 'an MCP login: sign in to the server where you use it' };
   if (parsePluginId(id)) return translatePlugin(id, value);
-  if (id === CODEX_CONFIG) return translateCodexConfig(value, { from, to });
+  if (id === CODEX_CONFIG) return translateCodexConfig(value, { from, to, fromLaptop });
   const entry = parseEntryId(id);
   if (entry) {
     let server;
@@ -481,7 +492,7 @@ export async function claudePushPlan({ home, shared, only, synced = {} }) {
       rows.push({ ...row, fate: 'skip', reason: ONLY });
       continue;
     }
-    const out = translate(id, raw, { from: home, to: SESSION_HOME, statusLineOf: shared[SETTINGS] });
+    const out = translate(id, raw, { from: home, to: SESSION_HOME, statusLineOf: shared[SETTINGS], fromLaptop: true });
     if (out.fate) rows.push({ ...row, fate: out.fate, reason: out.reason });
     else {
       ready[id] = out.value;
@@ -490,12 +501,19 @@ export async function claudePushPlan({ home, shared, only, synced = {} }) {
     }
   }
   // The sync's own comparison: what this computer has that the shared copy does not, or has otherwise.
-  const { changed } = localChanges(shared, ready);
+  const comparable = { ...shared };
+  if (CODEX_CONFIG in comparable) {
+    const visible = pushView(CODEX_CONFIG, comparable[CODEX_CONFIG]);
+    if (visible) comparable[CODEX_CONFIG] = visible;
+    else delete comparable[CODEX_CONFIG];
+  }
+  const { changed } = localChanges(comparable, ready);
   if (changed[SETTINGS] && shared[SETTINGS] && sameSettings(changed[SETTINGS], shared[SETTINGS])) delete changed[SETTINGS];
   for (const row of rows) {
     if (row.fate) continue;
     // The shared copy moved on since this computer last had the item: a session's edit, which yours would undo.
-    const theirs = row.id in changed && row.id in shared && synced[row.id] !== itemHash(row.id, shared[row.id]);
+    const theirs = row.id in changed && row.id in comparable
+      && synced[row.id] !== itemHash(row.id, comparable[row.id]) && synced[row.id] !== itemHash(row.id, shared[row.id]);
     if (theirs && !matchesOnly(only, row, { byName: true })) {
       delete changed[row.id];
       const named = `--only ${row.name.replace(/^~\/\.claude\//, '')}`;
@@ -596,6 +614,22 @@ export function runsOf(id, value) {
   return whole([text.startsWith('#!') ? `a script: ${text.split('\n')[0]}` : 'a file claude or a hook may run']);
 }
 
+function withLocalCodexEntries(shared, own) {
+  const localMcp = own.filter(isCodexMcp);
+  if (!localMcp.length) return withEntries(shared, own);
+  const sharedMcp = readToml(shared)?.filter(isCodexMcp) ?? [];
+  const root = (statement) => pathOf(statement).length === 1;
+  // TOML cannot extend a root inline table. In that case the local server definitions take precedence as a group.
+  if ([...localMcp, ...sharedMcp].some((statement) => statement.kind === 'kv' && root(statement))) {
+    return withEntries(withoutCodexMcp(shared), own);
+  }
+  // A shared [mcp_servers] header is still needed by the definitions that remain under it.
+  const kept = sharedMcp.some((statement) => statement.kind === 'header' && root(statement))
+    ? own.filter((statement) => !(statement.kind === 'header' && isCodexMcp(statement) && root(statement)))
+    : own;
+  return withEntries(shared, kept);
+}
+
 /**
  * The shared copy against this computer's, as `pull` would write it.
  * @returns {Promise<{rows: object[], items: Record<string, string>, before: Record<string, string>, replaced: string[]}>}
@@ -646,7 +680,7 @@ export async function claudePullPlan({ home, shared, only, replace }) {
     }
     // Yours as a push would send it: the same as the shared copy means nothing here is behind it.
     const here = id === CODEX_CONFIG ? codexConfig : local[id];
-    const mine = here != null ? translate(id, here, { from: home, to: SESSION_HOME, statusLineOf: raw }) : null;
+    const mine = here != null ? translate(id, here, { from: home, to: SESSION_HOME, statusLineOf: raw, fromLaptop: true }) : null;
     const same = mine && !mine.fate && (mine.value === raw || (id === SETTINGS && sameSettings(mine.value, raw)));
     if (out.fate) rows.push({ ...row, fate: out.fate, reason: out.reason });
     else if (mine?.unreadable) rows.push({ ...row, fate: 'skip', reason: 'yours is not TOML this reads, so what it keeps to itself could not be told: fix it, then pull' });
@@ -655,9 +689,9 @@ export async function claudePullPlan({ home, shared, only, replace }) {
     else {
       let { value, notes } = out;
       if (id === CODEX_CONFIG && mine?.own?.length) {
-        // What this computer keeps to itself of its config.toml (its provider, an MCP server with a key) stays as it is,
+        // What this computer keeps to itself of its config.toml (its provider and MCP servers) stays as it is,
         // in place of the shared copy's entries of the same names. Its trusted folders stay too (applyItems).
-        value = Buffer.from(withEntries(Buffer.from(value, 'base64').toString('utf8'), mine.own)).toString('base64');
+        value = Buffer.from(withLocalCodexEntries(Buffer.from(value, 'base64').toString('utf8'), mine.own)).toString('base64');
         notes = [`yours kept: ${redact([...new Set(mine.own.map(unitOf).filter(Boolean))].join(', '))}`];
       }
       if (id === SETTINGS && id in local) {
@@ -1147,8 +1181,8 @@ export async function settingsCommand(ctx) {
     }
     // Items that changed or could not be written since planning are not recorded as synced.
     for (const row of claude.rows) {
-      if (moving.includes(row.fate) && !written.skipped.includes(row.id)) kept.synced[row.id] = itemHash(row.id, shared.items[row.id]);
-      else if (row.reason === SAME_AS_YOURS) kept.synced[row.id] = itemHash(row.id, shared.items[row.id]);
+      if (moving.includes(row.fate) && !written.skipped.includes(row.id)) kept.synced[row.id] = syncHash(row.id, shared.items[row.id]);
+      else if (row.reason === SAME_AS_YOURS) kept.synced[row.id] = syncHash(row.id, shared.items[row.id]);
     }
     state.save(kept);
     if (backup) say(`What was replaced is kept in ${backup}.`);
@@ -1167,7 +1201,7 @@ export async function settingsCommand(ctx) {
   }
 
   const recordSame = () => {
-    for (const row of claude.rows) if (row.reason === SAME_AS_SHARED) kept.synced[row.id] = itemHash(row.id, shared.items[row.id]);
+    for (const row of claude.rows) if (row.reason === SAME_AS_SHARED) kept.synced[row.id] = syncHash(row.id, shared.items[row.id]);
   };
   if (!outgoing.length) {
     recordSame();
@@ -1208,7 +1242,7 @@ export async function settingsCommand(ctx) {
     const answer = await call(origin, '/api/cli/settings', { method: 'POST', token, body: { version: shared.version, changed: claude.changed, removed: [] } });
     if (answer.status !== 200) throw fail(`${origin} did not take your Claude settings (${answer.status}): ${String(answer.body?.error ?? '').slice(0, 200)}`);
     version = answer.body.version;
-    for (const [id, value] of claudeChanges) kept.synced[id] = itemHash(id, value);
+    for (const [id, value] of claudeChanges) kept.synced[id] = syncHash(id, value);
   }
   recordSame();
   state.save(kept);

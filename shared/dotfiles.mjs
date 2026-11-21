@@ -84,38 +84,32 @@ function gitLines(text) {
     const kv = KEY_RE.exec(line);
     if (!kv) return { error: `line ${number} is not a section, a key or a comment` };
     // git would not read the file past a quote left open, the start's identity and credential helper with it.
-    const syntax = kv[2] === undefined ? null : valueSyntax(kv[2]);
-    if (syntax) return { error: `line ${number}: ${syntax}` };
+    const value = kv[2] ?? '';
+    const { decoded, error } = decodeGitValue(value);
+    if (error) return { error: `line ${number}: ${error}` };
     // A key with no `=` is a boolean that is true: written back the same way, never as `key = `, which is false.
-    out.push({ number, kind: 'key', section, key: kv[1].toLowerCase(), value: kv[2] ?? '', bare: kv[2] === undefined, text: line });
+    out.push({ number, kind: 'key', section, key: kv[1].toLowerCase(), value, decoded, bare: kv[2] === undefined, text: line });
   }
   return { lines: out };
 }
 
-// A section as a message names it: a subsection's name can be a URL with a token in it ([url "https://<token>@..."]), so
-// only the section's own name is ever shown.
-/** A git value as git reads it, without a comment after it (outside quotes). */
-function beforeComment(value) {
-  let open = false;
-  for (let i = 0; i < value.length; i++) {
-    if (value[i] === '\\') i++;
-    else if (value[i] === '"') open = !open;
-    else if (!open && (value[i] === '#' || value[i] === ';')) return value.slice(0, i);
-  }
-  return value;
-}
+const GIT_ESCAPES = { '\\': '\\', '"': '"', n: '\n', t: '\t', b: '\b' };
 
-/** What git would refuse in a value, before any comment: a double quote left open, or an escape it does not know. */
-function valueSyntax(value) {
+/** A value with Git's quoting and escapes decoded, or the syntax error Git would encounter. */
+function decodeGitValue(value) {
   let open = false;
+  let decoded = '';
   for (let i = 0; i < value.length; i++) {
-    if (value[i] === '\\') {
-      if (i + 1 >= value.length || !'\\"ntb'.includes(value[i + 1])) return 'an escape git does not read (\\\\, \\", \\n, \\t, \\b)';
-      i++;
-    } else if (value[i] === '"') open = !open;
-    else if (!open && (value[i] === '#' || value[i] === ';')) break;
+    const char = value[i];
+    if (char === '\\') {
+      const escape = value[++i];
+      if (!Object.hasOwn(GIT_ESCAPES, escape)) return { error: 'an escape git does not read (\\\\, \\", \\n, \\t, \\b)' };
+      decoded += GIT_ESCAPES[escape];
+    } else if (char === '"') open = !open;
+    else if (!open && (char === '#' || char === ';')) break;
+    else decoded += char;
   }
-  return open ? 'a quote is left open' : null;
+  return open ? { error: 'a quote is left open' } : { decoded };
 }
 
 /** An `$include` line of inputrc that names a file a session has: under /etc, once `..` is resolved. */
@@ -139,7 +133,7 @@ function gitKeyAllowed(section, key) {
 
 /** Why a value an allowed key holds is still not taken, or null: color always, which puts color codes in output tools read. */
 function gitValueProblem(section, value) {
-  return section.name === 'color' && /^\s*"?always"?\s*$/i.test(beforeComment(value)) ? 'always, which colors output that the session\'s tools read: auto does what you see' : null;
+  return section.name === 'color' && value.trim().toLowerCase() === 'always' ? 'always, which colors output that the session\'s tools read: auto does what you see' : null;
 }
 
 const ALIAS_START = /^\s*alias\s+(?!-)([A-Za-z0-9_.:+@%,-]+)=/;
@@ -201,9 +195,9 @@ export function dotfileProblem(key, text) {
       if (line.kind !== 'key') continue;
       if (!line.section) return `line ${line.number}: ${line.key} is in no section`;
       if (!gitKeyAllowed(line.section, line.key)) return `line ${line.number}: ${line.section.name}.${line.key} is not one a session takes`;
-      const credential = shellCredential(line.value);
+      const credential = shellCredential(line.decoded) ?? shellCredential(line.value);
       if (credential) return `line ${line.number}: ${line.section.name}.${line.key} holds ${credential}: credentials stay off sessions`;
-      const value = gitValueProblem(line.section, line.value);
+      const value = gitValueProblem(line.section, line.decoded);
       if (value) return `line ${line.number}: ${line.section.name}.${line.key} is ${value}`;
     }
     return null;
@@ -253,11 +247,11 @@ export function fromComputer(key, files, { home }) {
         else leave(sectionName(line.section));
       } else if (line.kind === 'key' && current) {
         const name = `${line.section.name}.${line.key}`;
-        const credential = shellCredential(line.value);
+        const credential = shellCredential(line.decoded) ?? shellCredential(line.value);
         if (!gitKeyAllowed(line.section, line.key)) leave(name);
         else if (credential) leave(`${name} (${credential})`);
-        else if (gitValueProblem(line.section, line.value)) leave(`${name} (always)`);
-        else if (namesHome(line.value)) leave(`${name} (names a path on this computer)`);
+        else if (gitValueProblem(line.section, line.decoded)) leave(`${name} (always)`);
+        else if (namesHome(line.decoded)) leave(`${name} (names a path on this computer)`);
         else current.lines.push(line.bare ? `\t${line.key}` : `\t${line.key} = ${line.value.trim()}`);
       }
     }

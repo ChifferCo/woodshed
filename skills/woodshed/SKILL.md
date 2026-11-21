@@ -191,7 +191,8 @@ the like refuse without sending anything. Never ask the person for a token to ge
 
 Their private sessions keep Claude settings in step (`settings.json`, `CLAUDE.md`, keybindings, agents, commands,
 skills, user-scope MCP servers), Codex's (`~/.codex`'s `config.toml`, `AGENTS.md`, prompts, skills) and the plugins they
-installed. `settings` joins this computer to that. Imported Claude MCP definitions sync between computers.
+installed. `settings` joins this computer to that. Imported Claude MCP definitions sync between computers. Codex MCP
+definitions from a computer stay on that computer.
 `settings` also saves their git, readline and alias lines on My settings (`dotfile/gitconfig`, `dotfile/inputrc`,
 `dotfile/bash-aliases`), which replace what My settings had.
 

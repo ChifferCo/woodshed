@@ -297,6 +297,9 @@ own, and replaces what My settings had for it. Pull leaves them out.
 Claude MCP definitions pushed from a computer are available to the person's computers only. Pull can also bring in a
 server configured in a private session. If a laptop and a session save the same name, each keeps its definition.
 Servers the console provides to sessions are configured by an admin and use its relay.
+Codex MCP definitions configured on a computer stay there. A push keeps any Codex servers already shared by private
+sessions. Pull keeps this computer's definitions and can add a session's servers. If either file uses a single inline
+server map, pull keeps the computer's whole map.
 
 **What runs here is shown first.** Sessions write the shared copy, unattended, and everything in it but
 `keybindings.json` can make this computer's claude run something. So `pull` writes nothing else until a list has shown

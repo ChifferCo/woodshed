@@ -628,10 +628,12 @@ session's own. Your computer joins the same copy with `woodshed settings`
   the shared copy with your homes.
 - **From your computer:** `woodshed settings push` sends your laptop's items into the same copy, and `pull` writes
   the copy's into your laptop (cli/README.md, "Settings"), through `GET/POST /api/cli/settings` with the command
-  line's token (`cliSettings.mjs`). A computer never sends or gets an MCP login, and never removes an item. MCP server
+  line's token (`cliSettings.mjs`). A computer never sends or gets an MCP login, and never removes an item. Claude MCP server
   definitions pushed from a computer are kept in the same stored settings object in a map only the CLI can read. They
   take precedence on computers if a session has saved the same server name. The session API returns only the session's
-  copy. Admin-configured MCPs reach sessions through the relay. The console logs `cliSettings: pushed` with the token's
+  copy. Codex MCP server definitions from a computer stay on that computer. A model or other Codex setting pushed from
+  a computer keeps the session copy's existing MCP definitions. Admin-configured MCPs reach sessions through the
+  relay. The console logs `cliSettings: pushed` with the token's
   id and the counts, `cliSettings: refused` when the copy exceeds 5 MB or an MCP definition or hook has a literal header, and
   `cliSettings: refused, a removal from a computer` or
   `MCP logins from a computer` for a client other than the command line's. `--own-files` saves into your own files on My settings

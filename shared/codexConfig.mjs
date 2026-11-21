@@ -181,6 +181,10 @@ export function pathOf(statement) {
   return statement.kind === 'kv' ? [...statement.table, ...statement.key] : statement.table;
 }
 
+export function isCodexMcp(statement) {
+  return statement.kind !== 'blank' && pathOf(statement)[0] === 'mcp_servers';
+}
+
 /**
  * What a statement belongs to, as a string: an entry of a named table (mcp_servers.github), or else the statement's own
  * path. A blank line belongs to nothing.
@@ -446,6 +450,13 @@ function withoutUnits(statements, own) {
   // A comment holding a key's shape is not sent either.
   const kept = textOf(tidy(statements.filter((s) => !own.has(s.kind === 'blank' ? tableUnit(s) : unitOf(s)) && !(s.kind === 'blank' && credentialOf(s)))));
   return kept.trim() ? `${kept.replace(/\s+$/, '')}\n` : '';
+}
+
+/** The settings a computer can compare or upload. The session supplies its own MCP definitions. */
+export function withoutCodexMcp(text) {
+  const statements = readToml(text);
+  const names = new Set(statements?.filter(isCodexMcp).map(unitOf));
+  return names.size ? withoutUnits(statements, names) : text;
 }
 
 /** How much of the shared config is visible beside this home's private entries, and what those entries hide. */

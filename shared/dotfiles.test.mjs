@@ -78,6 +78,19 @@ test('shell aliases keep a single value with quotes or a literal hash and accept
   assert.equal(aliasOf('alias x=echo more'), null);
 });
 
+test('git alias credentials are checked after Git decodes shell quotes and escapes', () => {
+  const gitconfig = '[alias]\n'
+    + String.raw`\tapi = "!curl --user \"demo:fixture\" https://example.com"`.replace('\\t', '\t') + '\n'
+    + String.raw`\tsafe = "!curl --user \"demo:$PASSWORD\" https://example.com"`.replace('\\t', '\t') + '\n';
+  const problem = dotfileProblem('gitconfig', gitconfig);
+  assert.match(problem, /alias\.api holds a --user sign-in/);
+  assert.doesNotMatch(problem, /fixture/);
+  const { text, left } = fromComputer('gitconfig', { '.gitconfig': gitconfig }, { home: '/Users/mia' });
+  assert.deepEqual(left, ['alias.api (a --user sign-in)']);
+  assert.equal(text, gitconfig.split('\n').filter((line) => !line.includes('api =')).join('\n'));
+  assert.equal(dotfileProblem('gitconfig', text), null);
+});
+
 test('shell credential checks keep header formatting and URL authority boundaries', () => {
   assert.equal(shellCredential('curl -H =" Proxy-Authorization  :  Basic fixture" https://example.com'), 'the Proxy-Authorization header');
   assert.equal(shellCredential('curl -H "Authorization :  bearer  $TOKEN" https://example.com'), null);
