@@ -455,8 +455,9 @@ export function runsOf(id, value) {
             hooks.forEach((hook, j) => lines.push(`hooks.${event}[${i}]${group?.matcher ? ` (${group.matcher})` : ''} [${j}]: ${hook?.command ? `runs ${hook.command}` : json1(hook)}`));
           });
         }
-      } else if (CREDENTIAL_KEYS.includes(key)) {
-        // Only ever this computer's own, put back by a replace: a session's never comes (translate leaves them out).
+      } else if (CREDENTIAL_KEYS.includes(key) || key === 'statusLine') {
+        // Only ever this computer's own, kept by a replace: a session's never comes (translate leaves them out). Its
+        // command may hold a key, and it is not the session's to show.
         lines.push(`${key}: (yours, not shown)`);
       } else if (key === 'env' && v && typeof v === 'object') {
         // A value can change what runs (NODE_OPTIONS), so it is shown, but never one named like a credential.

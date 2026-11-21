@@ -371,7 +371,8 @@ test('pull writes what a session added, keeps what differs unless --replace, and
   const settingsRuns = replaced.items.find((i) => i.name === '~/.claude/settings.json').runs;
   assert.ok(settingsRuns.includes('env.OPENAI_API_KEY: (not shown)'), 'a credential\'s value is never printed');
   assert.ok(settingsRuns.includes('apiKeyHelper: (yours, not shown)'), 'nor a credential helper, which may hold a key');
-  assert.ok(!replaced.out.includes('not-a-real-key') && !replaced.out.includes('anthropic-key.sh'));
+  assert.ok(settingsRuns.includes('statusLine: (yours, not shown)'), 'nor this computer\'s own status line, whose command may hold one');
+  assert.ok(!replaced.out.includes('not-a-real-key') && !replaced.out.includes('anthropic-key.sh') && !replaced.out.includes('statusline.sh'));
   assert.match(replaced.items.find((i) => i.name === '~/.claude/settings.json').notes.join('; '), /yours kept: apiKeyHelper, env\.OPENAI_API_KEY; yours lost, in the backup: permissions\.allow\[1\], hooks\.Stop\[0\]\.hooks\[0\]/);
   const backup = replaced.lines.at(-1).backup;
   assert.equal(JSON.parse(fs.readFileSync(path.join(backup, 'home/.claude/settings.json'), 'utf8')).model, 'opus');
