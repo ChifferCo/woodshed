@@ -605,6 +605,16 @@ session's own.
   session's own, and a file over 1 MB is not sent: your other sessions keep the
   last version that was. Forget it and Remove My Woodshed delete
   the shared copy with your homes.
+- **From your computer:** `woodshed settings push` sends your laptop's items into the same copy, and `pull` writes
+  the copy's into your laptop (cli/README.md, "Settings"), through `GET/POST /api/cli/settings` with the command
+  line's token (`cliSettings.mjs`). A computer never sends or gets an MCP login, and never removes an item. MCP server
+  definitions pushed from a computer are kept in the same stored settings object in a map only the CLI can read. They
+  take precedence on computers if a session has saved the same server name. The session API returns only the session's
+  copy. Admin-configured MCPs reach sessions through the relay. The console logs `cliSettings: pushed` with the token's
+  id and the counts, `cliSettings: refused` when the copy exceeds 5 MB or an MCP definition or hook has a literal header, and
+  `cliSettings: refused, a removal from a computer` or
+  `MCP logins from a computer` for a client other than the command line's. `--own-files` saves into your own files on My settings
+  through the Repo settings routes, with their checks and log lines.
 
 **Resume**, on a stopped private session's rail card or page, starts the same
 session again, with its page, branch and options, and runs
@@ -950,6 +960,22 @@ It asks for contents (write) as well as pull requests, because GitHub counts an 
 review only from an App that can write to the repo. Each review still goes out with a token narrowed to pull requests.
 A reviewer App made before it asked for contents needs it added in its settings on GitHub, then accepted on each
 installation.
+
+**Is it ready for a repo?** `GET /api/review-readiness?repo=<owner/name>` (`reviewReadiness.mjs`) says, for a repo the
+asker may start sessions on: the project, the console App's login, whether the reviewer App is made and installed on
+the repo (with its install link), what the default branch's project file says of `review`, `qa` and `runsOn`, and each
+missing step with who takes it (`missing: [{key, step, by}]`, keys `repo`, `reviewer-app`, `reviewer-installed`,
+`reviewer-installed-unknown` when its installation could not be read, and `runs-on` when the default branch's `runsOn`
+names another console, read as the fleet reads it, App and name). Of any other repo it says only that the console does
+not have it for them, and asks GitHub nothing more. Anyone signed in may read it, and so may the command line's token
+(`woodshed review enable` and `status`, cli/README.md, "Review"), as its person. Each call, a cookie's or a token's, is
+held to write access on the repo, asked of GitHub then (a command asks once), so a person who lost it reads nothing
+more of the repo, even with a cookie sign-in has not rechecked yet (`reviewReadiness: refused, no write access to the
+repo`). A token's call that carries an Origin is a page's, and is
+refused. A hosting program's proxy passes it through
+when it carries `Authorization: Bearer wsc_…`, as it does `/api/cli/*`. A host's reviewer App may give
+`installedOn(repo)`; without it, whether it is installed is `null`. It logs `reviewReadiness: reviewer App
+installation not read` when GitHub did not answer.
 
 At each verdict the console finds the reviewer App's installation on the repo, mints a token narrowed to pull requests,
 and submits the review at the reviewed commit. It logs `fleet: review verdict submitted` with `as: 'reviewer App'`, or
@@ -1505,10 +1531,13 @@ approves it; Deny refuses it. The CLI asks `POST /api/cli/token` every 5 seconds
 `GET /api/cli/me` reports `sessionSignIns`, one boolean per personal agent sign-in of the CLI token's owner.
 The device-flow POST routes (`/api/cli/device` and `/api/cli/token`) refuse a call with an Origin header, so no web page
 starts a sign-in to hand someone the link of. The code lasts 10 minutes. The token (`wsc_…`) is its own kind, not the
-database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. Besides `/api/cli/*` and
-`/api/tunnel/exec/*` it signs in to `woodshed session`'s routes alone (`console/cliSessions.mjs`): `GET /api/sessions`, `GET /api/my/projects`,
+database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. Besides `/api/cli/*` (including
+`/api/cli/settings` for shared Claude settings and own files) and
+`/api/tunnel/exec/*` the token signs in to the routes listed in `console/cliSessions.mjs`. For `woodshed session` these
+are `GET /api/sessions`, `GET /api/my/projects`,
 `POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume|remove` and `POST /api/sessions/<id>/stop|extend|limits`,
-and to `woodshed config`'s (`console/cliConfig.mjs`): `GET /api/cli/config`, the person's choices on My settings and
+while `woodshed review` uses `GET /api/review-readiness` ("The reviewer App"). For `woodshed config`
+(`console/cliConfig.mjs`), `GET /api/cli/config` returns the person's choices on My settings and
 never a secret, and `POST /api/my/terminal`, `/api/my/reviews`, `/api/my/codex-auth/reviews`,
 `/api/my/claude-token/shared`, `/api/my/projects/default` and `/api/my/github/identity`, which answer the token with
 that same view rather than the page's whole My settings answer. Each is answered by the page's own code as the token's

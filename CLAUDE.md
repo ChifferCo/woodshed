@@ -226,6 +226,16 @@ URL on top of each env file's Repo settings values
   they did. On the box, `sudo docker system df`, then `sudo docker image prune -af`
   (running containers keep theirs) and re-run the job. The console keeps running on
   its old image meanwhile.
+- **`woodshed review enable` says something is missing, or will not write the project file.** Exit 2 lists the
+  console's steps, from `GET /api/review-readiness` (console/README.md, "The reviewer App"): `reviewer-app` is no
+  reviewer App made (`/setup/github`), `reviewer-installed` one not installed on the repo, `reviewer-installed-unknown`
+  its installation not read (`reviewerApp: key not read, installation not known`), `runs-on` a default branch whose
+  `runsOn` names another console, and `repo` a repo the console does not have, or the person cannot start sessions on
+  or no longer writes to (`reviewReadiness: refused, no write access to the repo`). `Console: not asked` says why it was not: no sign-in, an origin
+  not on GitHub, or a console from before the route. Exit 1 with `does not read as a project file` or `project check
+  found problems` left the file as it was; `written inline` is a `pullRequests` or `review` written as `{…}`, which it
+  does not edit. Exit 1 with `the console did not say it can run the review` kept the edit, but the console was not
+  reached, has no GitHub App (404), or could not read the default branch's project file (`was not read`, with why). It writes no workflow, secret or key: a repo with no console uses `scripts/enable-review.sh`.
 - **A label or `/woodshed` comment does nothing.** A label on a pull request
   never starts a session (console/README.md, "How sessions start"): the console logs
   `fleet: trigger routed` with `action: ignore`. Otherwise `docker compose logs
@@ -348,6 +358,9 @@ URL on top of each env file's Repo settings values
   DPAPI, or a plain file when `store` is `file`); never print it. On Windows `login` refusing with `could not be made a
   folder only you can open` says why: the SIDs still allowed on `%LOCALAPPDATA%\woodshed` besides the person's own,
   SYSTEM's and Administrators', or that it could not be made theirs.
+- **`woodshed settings` skips or refuses an item.** The list says why (cli/README.md, "Settings"). The console logs
+  `cliSettings: pushed` or `cliSettings: refused`. A 404 from `/api/cli/settings` means the console has nowhere to keep
+  Claude homes or predates the command.
 - **`woodshed tunnel` exits 255.** Its stderr says why (cli/README.md, "The tunnel into a session"): `refused (401)`
   is a sign-in revoked or expired, or its person's write access gone (`woodshed login` again), `refused (404)` a session that is not that person's own,
   `refused (409)` one not running (resume it) or one that has seen production data, which never gets a pipe. The
@@ -1097,6 +1110,10 @@ with `admin: false` from the Playwright browser (`page.route`).
 `example-org/example-tools`, whose project files its stand-in `gh` answers, so My settings' Repo settings card saves:
 env file values, instructions and Your files, each per repo. The first's file names a Deploy workflow link, which the
 avatar menu shows over the installation's `WOODSHED_ACTIONS_WORKFLOWS` (Run infrastructure).
+`DEV_CONSOLE_REVIEWER=none|made|installed` gives it a made-up GitHub App and reviewer App, lent as a host lends its own
+(`scripts/devReviewerConsole.mjs`), for `woodshed review enable` and `status` from a checkout of
+`example-org/example-repo`: no reviewer App, one not installed there, or one installed. Its default branch's project
+file, from the stand-in `gh`, has no review.
 `DEV_CONSOLE_WEBHOOKS=1` names a webhook receiver (which never listens, since polling is off), so the Console
 settings page shows its GitHub webhooks switch (Slack's needs a console that answers Slack questions).
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on

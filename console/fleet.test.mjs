@@ -3110,6 +3110,20 @@ test('a review\'s APPROVE waits for QA when the pull request carries the QA labe
   assert.equal(t.fleet.sessions()[0].review.held, null, 'released once');
 });
 
+test('a held approval keeps its reviewers in the heading when QA releases it', async () => {
+  const review = { ...HELD_GATES.review, heading: '## Claude review' };
+  const t = heldSetup({
+    gates: { ...HELD_GATES, review },
+    reviewAgents: { forReview: async () => ({ agents: ['claude', 'codex'] }) },
+  });
+  await t.fleet.reviewOnTag({ number: 7 });
+  await t.fleet.reviewFinished(t.fleet.sessions()[0], { ...REVIEW_RESULT, agents: ['claude', 'codex'] });
+  assert.deepEqual(t.calls.reviews, []);
+  const qa = t.fleet.sessions().find((s) => s.trigger === 'qa');
+  await t.fleet.qaFinished(qa, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  assert.match(t.calls.reviews[0].body, /^## Claude Code and Codex review — APPROVE\n/);
+});
+
 test('QA that fails turns the held approval into REQUEST_CHANGES; QA with nothing to test still approves', async () => {
   const failed = heldSetup();
   await approveThenQa(failed, { conclusion: 'failure', title: 'Fail: 1 of 2 test cases failed', status: '❌', total: 2 });
@@ -3903,4 +3917,33 @@ test('a guarded send never lets statusd type past the end of the watch\'s wait',
   assert.equal(sent.length, 1);
   assert.ok(sent[0].body.withinMs <= 5_000, `withinMs ${sent[0].body.withinMs} is no more than what is left of the wait`);
   assert.equal(sent[0].body.notAfter, Date.parse('2026-10-21T10:00:00.000Z') + 10 * 60_000 - 5_000 + sent[0].body.withinMs, 'and the same deadline in absolute time');
+});
+
+test('the review report credits Codex when Claude Code wrote no verdict', async (t) => {
+  const { createServer } = await import('node:http');
+  const { createSessionApi } = await import('./sessionApi.mjs');
+  const { reviewVerdict } = await import('./pullGates.mjs');
+  const review = { ...REVIEW_GATES.review, heading: '## Claude review' };
+  const { fleet, calls } = reviewSetup({
+    gates: { ...REVIEW_GATES, review },
+    reviewAgents: { forReview: async () => ({ agents: ['claude', 'codex'] }) },
+  });
+  await fleet.reviewOnTag({ number: 7 });
+  const [session] = fleet.sessions();
+  const server = createServer(createSessionApi({ fleet }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/review-report`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${session.token}` },
+    body: JSON.stringify({
+      ...REVIEW_RESULT, conclusion: 'REQUEST_CHANGES', agents: ['codex'],
+      summary: "The link is wrong.\n\nClaude Code wrote no verdict, so this is Codex's alone.",
+    }),
+  });
+  assert.equal(response.status, 204);
+  const posted = { ...calls.reviews[0], user: { login: review.author } };
+  console.log('Proof: POST /review-report', response.status, posted.body.split('\n')[0]);
+  assert.match(posted.body, /^## Codex review — REQUEST_CHANGES\n/);
+  assert.equal(reviewVerdict([posted], review), posted);
 });

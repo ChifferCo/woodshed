@@ -175,18 +175,21 @@ function main([command, dir, other]) {
   if (command === 'verdict' && dir) {
     const verdict = verdictIn(dir);
     if (!verdict.conclusion) process.exit(3);
-    process.stdout.write(`${JSON.stringify(verdict)}\n`);
+    process.stdout.write(`${JSON.stringify({ ...verdict, agents: [other === 'codex' ? 'codex' : 'claude'] })}\n`);
     return;
   }
   if (command === 'merge' && dir && other) {
-    const names = ['Claude Code', 'Codex'];
-    const verdict = mergeVerdicts([{ name: names[0], verdict: verdictIn(dir) }, { name: names[1], verdict: verdictIn(other) }],
-      { authors: commentAuthorsIn(dir, names) });
+    const reviews = [
+      { agent: 'claude', name: 'Claude Code', verdict: verdictIn(dir) },
+      { agent: 'codex', name: 'Codex', verdict: verdictIn(other) },
+    ];
+    const verdict = mergeVerdicts(reviews, { authors: commentAuthorsIn(dir, reviews.map((r) => r.name)) });
     if (!verdict.conclusion) process.exit(3);
-    process.stdout.write(`${JSON.stringify(verdict)}\n`);
+    const agents = reviews.filter((r) => r.verdict.conclusion).map((r) => r.agent);
+    process.stdout.write(`${JSON.stringify({ ...verdict, agents })}\n`);
     return;
   }
-  throw new Error('usage: codeReview.mjs prompt <dir> --pr --head --server --repo [--reviewer] [--agent] | verdict <dir> | merge <dir> <codexDir>');
+  throw new Error('usage: codeReview.mjs prompt <dir> --pr --head --server --repo [--reviewer] [--agent] | verdict <dir> [codex] | merge <dir> <codexDir>');
 }
 
 if (isMain(import.meta.url)) {

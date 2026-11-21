@@ -259,6 +259,7 @@ test('the arguments: one command, --console, --json, and the default console', (
   const session = parseArgs(['session', 'new', '--repo', 'a/b', '--json', '--', 'use --json here']);
   assert.deepEqual([session.args, session.rest, session.json], [['new', '--repo', 'a/b'], ['use --json here'], true]);
   assert.equal(parseArgs(['session', 'list', '--json']).json, true);
+  assert.deepEqual(parseArgs(['review', 'enable', '--qa', '--dir', 'x', '--json', '--console', 'c.example']).args, ['enable', '--qa', '--dir', 'x'], 'review\'s own options are its own');
   assert.equal(DEFAULT_CONSOLE, 'https://console.woodshed.run');
 });
 

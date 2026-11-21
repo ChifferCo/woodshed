@@ -53,7 +53,7 @@ export function trimHistory(messages) {
   return kept.reverse();
 }
 
-export function buildChatPrompt({ meta, artifact, files, history, question }) {
+export function buildChatPrompt({ meta, artifact, files, history, question, diffOnly = false }) {
   const lines = [];
   // Same reasoning as the other two prompts: a fixed delimiter is guessable,
   // and everything fenced below — the description, file names, the
@@ -64,9 +64,13 @@ export function buildChatPrompt({ meta, artifact, files, history, question }) {
   const messageTag = `message-${nonce}`;
 
   lines.push(
-    'You are talking with a reviewer about a pull request. The pull request head is checked out',
-    'at your current working directory: read whatever you need — the changed files, their callers,',
-    'related code — and answer from the code rather than from the description.',
+    ...(diffOnly ? [
+      'You are talking with a reviewer about a pull request. Answer from the supplied review material.',
+    ] : [
+      'You are talking with a reviewer about a pull request. The pull request head is checked out',
+      'at your current working directory: read whatever you need — the changed files, their callers,',
+      'related code — and answer from the code rather than from the description.',
+    ]),
     '',
     "Answer the reviewer's latest message. Keep it short: a few sentences, or a short bullet list",
     'when you are listing things. Markdown is welcome — backticks around identifiers and paths,',

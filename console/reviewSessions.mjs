@@ -10,6 +10,22 @@ const MAX_INLINE_COMMENTS = 30;
 const MAX_INLINE_CHARS = 4000;
 const MAX_RESOLVED = 100;
 
+// The legacy Claude heading also identifies Woodshed verdicts to the gate. Accept it alongside the new headings.
+const CLAUDE_HEADING = '## Claude review';
+const CODEX_HEADING = '## Codex review';
+const BOTH_HEADING = '## Claude Code and Codex review';
+
+export function reviewHeading(heading, agents) {
+  if (heading !== CLAUDE_HEADING || !agents?.includes('codex')) return heading;
+  return agents.includes('claude') ? BOTH_HEADING : CODEX_HEADING;
+}
+
+export function matchesReviewHeading(body, review) {
+  if (body.startsWith(review.heading)) return true;
+  return review.runner === 'woodshed' && review.heading === CLAUDE_HEADING
+    && [CODEX_HEADING, BOTH_HEADING].some((heading) => body.startsWith(`${heading} — `));
+}
+
 // The inline comments the session wrote, each on a file and a line of the head; anything else is dropped.
 function inlineCommentsOf(raw) {
   if (!Array.isArray(raw)) return [];
@@ -25,12 +41,6 @@ function resolvedOf(raw) {
   return [...new Set(raw.filter((id) => Number.isSafeInteger(id) && id > 0))].slice(0, MAX_RESOLVED);
 }
 
-/**
- * A report with `conclusion: null` says the session wrote no verdict: the console submits nothing and stops it.
- * @returns {{conclusion: string|null, summary: string, comment: string,
- *   mergeRisk: {tier: string|null, reason: string, summary: string}, inlineComments: {path: string, line: number, body: string}[],
- *   resolved: number[], sha: string, costUsd: number|null}}
- */
 /**
  * @param {{sessionUrl: string|null, agents?: string[]}} args
  * @returns {string}  the review's comment while its session runs, replaced by the review's own comment when it ends
@@ -60,6 +70,12 @@ export function reviewDoneComment({ conclusion, tier }) {
   return `**Review finished**: ${verdict}${tier ? `, merge risk ${tier}` : ''}. Details in the review.\n`;
 }
 
+/**
+ * A report with `conclusion: null` says the session wrote no verdict: the console submits nothing and stops it.
+ * @returns {{conclusion: string|null, agents?: string[], summary: string, comment: string,
+ *   mergeRisk: {tier: string|null, reason: string, summary: string}, inlineComments: {path: string, line: number, body: string}[],
+ *   resolved: number[], sha: string, costUsd: number|null}}
+ */
 export function parseReviewReport(raw) {
   let body;
   try {
@@ -70,8 +86,10 @@ export function parseReviewReport(raw) {
   if (body?.conclusion !== null && !CONCLUSIONS.has(body?.conclusion)) throw new Error('conclusion must be APPROVE, REQUEST_CHANGES, COMMENT or null');
   if (typeof body.sha !== 'string' || !/^[0-9a-f]{40}$/.test(body.sha)) throw new Error('sha must be a commit');
   const mr = body.mergeRisk ?? {};
+  const agents = Array.isArray(body.agents) ? ['claude', 'codex'].filter((agent) => body.agents.includes(agent)) : [];
   return {
     conclusion: body.conclusion,
+    ...(agents.length ? { agents } : {}),
     summary: String(body.summary ?? '').slice(0, MAX_REPORT_CHARS),
     comment: String(body.comment ?? '').slice(0, MAX_REPORT_CHARS),
     mergeRisk: {

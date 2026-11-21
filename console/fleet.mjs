@@ -13,7 +13,7 @@ import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { finishedComment, runningComment } from './qaSessions.mjs';
 import { QA_RECORDING_DAYS, qaVideoPath } from './qaRecordings.mjs';
-import { reviewDoneComment, reviewEndedComment, reviewRunningComment } from './reviewSessions.mjs';
+import { reviewDoneComment, reviewEndedComment, reviewHeading, reviewRunningComment } from './reviewSessions.mjs';
 import { reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
@@ -2363,14 +2363,16 @@ export function createFleet({
    * A review session's result (POST /review-report): the console submits the formal review and the Merge risk check as
    * its App, then the session stops. A null conclusion (the session wrote no verdict) submits nothing and only stops it.
    * @param {object} session
-   * @param {{conclusion: 'APPROVE'|'REQUEST_CHANGES'|'COMMENT'|null, summary: string, comment: string,
+   * @param {{conclusion: 'APPROVE'|'REQUEST_CHANGES'|'COMMENT'|null, summary: string, comment: string, agents?: string[]|null,
    *   mergeRisk: {tier: string|null, reason: string, summary: string}, sha: string, costUsd: number|null}} result
    */
-  async function reviewFinished(session, { conclusion, summary, comment, mergeRisk, inlineComments = [], resolved = [], sha, costUsd }) {
+  async function reviewFinished(session, { conclusion, summary, comment, mergeRisk, inlineComments = [], resolved = [], sha, costUsd, agents }) {
     const project = projectFor(config, session);
     const gh = githubOf(project);
     const hold = conclusion === 'APPROVE' && await qaWillRun(project, session.number);
-    const ours = conclusion ? await submitReview(session, gh, { conclusion, summary, comment, mergeRisk, inlineComments, sha, hold }) : false;
+    const scheduled = session.review.agents;
+    const heading = reviewHeading(session.review.heading, agents ?? (scheduled?.length === 1 ? scheduled : null));
+    const ours = conclusion ? await submitReview(session, gh, { conclusion, heading, summary, comment, mergeRisk, inlineComments, sha, hold }) : false;
     if (ours && conclusion === 'APPROVE' && !hold) await resolveFixedThreads(session, gh, resolved);
     if (!conclusion) {
       console.warn('fleet: review session wrote no verdict, nothing submitted', { id: session.id, number: session.number });
@@ -2379,7 +2381,7 @@ export function createFleet({
       console.log('fleet: review wrote no comment, its running comment closed', { id: session.id, number: session.number, conclusion });
       await postReviewComment(session, gh, reviewDoneComment({ conclusion, tier: mergeRisk?.tier ?? null }));
     }
-    const held = hold && ours ? { sha, summary, inlineComments, resolved } : null;
+    const held = hold && ours ? { sha, heading, summary, inlineComments, resolved } : null;
     update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd, held } });
     console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours, held: Boolean(held) });
     stop(session, conclusion ? `Review finished: ${conclusion}` : 'Review finished without a verdict')
@@ -2451,7 +2453,7 @@ export function createFleet({
     const review = heldApproval(project, number, sha);
     if (!review) return;
     const gh = githubOf(project);
-    const { summary, inlineComments, resolved } = review.review.held;
+    const { heading = review.review.heading, summary, inlineComments, resolved } = review.review.held;
     update(review, { review: { ...review.review, held: null } });
     const head = (await safely('pull request for a held approval', () => gh.pull(number)))?.head?.sha;
     if (head !== sha) {
@@ -2459,14 +2461,14 @@ export function createFleet({
       return;
     }
     const verdict = failed ? 'REQUEST_CHANGES' : 'APPROVE';
-    const ok = await sendVerdict(review, gh, { conclusion: verdict, body: `${review.review.heading} — ${verdict}\n\n${summary}\n\n${qaLine}`.trim(), inlineComments, sha });
+    const ok = await sendVerdict(review, gh, { conclusion: verdict, body: `${heading} — ${verdict}\n\n${summary}\n\n${qaLine}`.trim(), inlineComments, sha });
     if (ok && !failed) await resolveFixedThreads(review, gh, resolved);
     console.log('fleet: held approval released', { id: review.id, number, verdict, ok });
   }
 
   // Only submits when the reviewed commit is still the head: a push since makes the review stale, so it is dropped
-  // rather than approving the wrong commit. The verdict starts with the project file's heading, which the gate looks for.
-  async function submitReview(session, gh, { conclusion, summary, comment, mergeRisk, inlineComments = [], sha, hold = false }) {
+  // rather than approving the wrong commit.
+  async function submitReview(session, gh, { conclusion, heading, summary, comment, mergeRisk, inlineComments = [], sha, hold = false }) {
     if (comment) await postReviewComment(session, gh, comment);
     const pull = await safely('review pull request', () => gh.pull(session.number));
     if (!pull?.head?.sha) {
@@ -2477,7 +2479,7 @@ export function createFleet({
       console.warn('fleet: review not submitted, the head moved since it was reviewed', { id: session.id, number: session.number, reported: sha, head: pull.head.sha });
       return false;
     }
-    const body = `${session.review.heading} — ${conclusion}\n\n${summary}`.trim();
+    const body = `${heading} — ${conclusion}\n\n${summary}`.trim();
     const submitted = hold ? true : await sendVerdict(session, gh, { conclusion, body, inlineComments, sha });
     if (hold) console.log('fleet: review approval held until QA finishes', { id: session.id, number: session.number, sha });
     if (mergeRisk?.tier) {
