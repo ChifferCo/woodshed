@@ -170,7 +170,8 @@ test('only the session\'s owner opens a pipe, into a running session that is not
     ['ffff6666', 404, 'no session of yours'],
     ['bbbb2222', 404, 'no session of yours'],
     ['cccc3333', 404, 'no session of yours'],
-    ['dddd4444', 409, 'resume it first'],
+    // The command line says what brings a Herdr machine back, which a resume alone does not (cli/tunnel.mjs).
+    ['dddd4444', 409, 'not running\\. To reconnect it in Herdr, run: woodshed session herdr dddd4444'],
     ['eeee5555', 409, 'production data'],
   ]) {
     const ran = await tunnel(c.origin, { token, session, line: 'echo ran' });

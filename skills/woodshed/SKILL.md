@@ -78,6 +78,9 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 - **Stopping and removing are the person's call.** `session stop` ends the work in progress (a running one's
   work is checkpointed on the way, but exit 0 does not promise it reached GitHub: check the branch before saying so);
   `session remove` deletes the saved conversation. Do either only when asked, and pass `--yes` to `remove` only then.
+- **Inside Herdr, sessions go to Herdr.** When you yourself run in a Herdr terminal (`HC_TERMINAL_ID` is set) and
+  `woodshed status --json` reports `hc.ok: true`, add each session you start or resume to Herdr unless the person
+  says not to: pass `--herdr` to `session new`, and run `session herdr <id>` after a `resume`. Recipes below.
 - **Moving is the person's call.** `woodshed move --from herdr` ends the local agents it moves and pushes the work to a branch.
   Run it only when asked, and `--dry-run` first to show them what would move. Programs restart in the session only with
   `--restart auto` or their yes; never pass `--restart auto` for them unasked. For an exit 3 listing secret-looking
@@ -97,14 +100,15 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed repo list` | Shows connected repos and, for admins, repos available to add and GitHub App access | 0 listed, 2 sign in, 1 failed | main |
 | `woodshed repo add <owner/name> [--name N]` | Adds a repo to the console | 0 added, 2 needs GitHub App access or sign-in, 3 refused, 1 failed | main |
 | `woodshed repo remove <owner/name>` | Removes a repo and its Woodshed settings | 0 removed, 2 sign in, 3 refused, 1 failed | main |
-| `woodshed session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--no-wait\|--connect\|--herdr] ["prompt"]` | Starts a private session and waits, step by step, until it runs; `--connect` then puts the terminal on its agent's, `--herdr` adds it to Herdr as below | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on, or no `hc` | main |
+| `woodshed session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--no-wait\|--connect\|--herdr] ["prompt"]` | Starts a private session and waits, step by step, until it runs; `--connect` then puts the terminal on its agent's, `--herdr` adds it to Herdr as below (by default when you run inside Herdr with `hc` ok) | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on, or no `hc` | main |
 | `woodshed session connect <id> [--shell]` | Puts the person's own terminal on the session's agent, or its shell; resumes a paused one first. Interactive: suggest it to them, and use `tunnel` yourself | 0 disconnected, 1 could not open, 2 sign-in ended, 3 shared or saw production | main |
-| `woodshed session herdr <id>` | Makes a session a machine in Herdr and shows its Herdr agent in a space. Resumes a paused session first | 0 connected, 2 needs the person, 1 failed, 3 no `hc` 0.1.21 or newer, shared, or saw production | main |
-| `woodshed session list [--all]` | Their sessions and the shared ones they see, with state and when each pauses; each session's pull request (state, verdict, checks), `review it: woodshed review <id>` under those they can review, and their own open pull requests with no session | 0 | main |
+| `woodshed session herdr <id>` | Makes a session a machine in Herdr and shows its Herdr agent in a space named after the session, in a tab named after its agent (never over names the person gave; run it again to pick up a later title). Resumes a paused session first, and re-adds the machine, which a plain `resume` leaves unreachable: run it after every `resume` inside Herdr | 0 connected, 2 needs the person, 1 failed, 3 no `hc` 0.1.21 or newer, shared, or saw production | main |
+| `woodshed session list [--all]` | Their sessions and the shared ones they see, with state and when each pauses; each session's pull request (state, verdict, checks), `review it: woodshed review <id>` under those they can review, and their own open pull requests with no session; names Herdr machines of sessions no longer on the console | 0 | main |
 | `woodshed session get <id>` | One session: state, branch, pull request, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
 | `woodshed session stop <id>` | Stops it, checkpointing a running one's work on the way (waits up to 3 minutes) | 0, 1 not answered in time | main |
-| `woodshed session resume <id> [--no-wait]` | Starts one of their stopped sessions again, conversation and all | as `new`; 3 a shared session | main |
+| `woodshed session resume <id> [--no-wait]` | Starts one of their stopped sessions again, conversation and all; inside Herdr, follow it with `session herdr <id>` | as `new`; 3 a shared session | main |
 | `woodshed session remove <id> [--yes]` | Takes it off the list with its saved conversation, and forgets its Herdr machine | 0, 2 not confirmed, 3 a shared session | main |
+| `woodshed session prune` | Forgets Herdr machines (`woodshed-<id>`, this CLI's tunnel) whose session is no longer on the console; never a paused or stopped one's | 0, 1 `hc` failed | main |
 | `woodshed session extend <id>` | Puts its pause or stop off by an hour (allowed in its last 15 minutes) | 0, 3 refused | main |
 | `woodshed session limits <id> [--idle-hours N\|default] [--lifetime-hours N\|default]` | Its own idle pause and lifetime | 0, 1 out of range, 3 not theirs | main |
 | `woodshed move --from herdr [--terminal T …\|--tab T\|--space S] --to <id>\|new [--restart ask\|auto\|never] [--dry-run]` | Moves terminals on this computer into a session: each agent with its conversation, each shell, each program started again; pushes the work to `woodshed/move-<id>` first, and ends a local agent only once its moved one runs | 0 moved, 2 a moved agent needs the person, 3 a secret in the work, an agent mid-turn, another repo, 1 failed (all undone) | main |
@@ -164,6 +168,22 @@ person that `url` and stop. With `--no-wait` the command returns as soon as the 
 `session get <id> --json`.
 
 A prompt that starts with `-` goes after `--`: `woodshed session new -- "-v is broken"`.
+
+### Inside Herdr: add sessions to it
+
+When `HC_TERMINAL_ID` is set (you run in a Herdr terminal) and `woodshed status --json` says `"hc":{…,"ok":true}`, the
+person sees their sessions in Herdr's sidebar, so put each one there unless they say not to:
+
+```sh
+woodshed session new --herdr --json "Fix the login redirect loop"   # starts it, then adds it to Herdr
+woodshed session resume <id> --json && woodshed session herdr <id> --json
+```
+
+A resumed session runs a new `hc` core, so its old machine stays unreachable until `session herdr` adds it again; a
+Herdr machine whose tunnel says the session is not running is fixed the same way. `session herdr` names the agent's
+space after the session's title, which the console sets a few seconds after the start: run it again later to pick the
+title up. When `session list` names Herdr machines of sessions no longer on the console, offer `woodshed session prune`.
+`hc.ok: false`, or no `HC_TERMINAL_ID`: leave Herdr out unless the person asks.
 
 ### Before a long task: will the session still be there?
 

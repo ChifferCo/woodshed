@@ -9,12 +9,11 @@
 
 import { runReviewTui } from './reviewTui.mjs';
 import { clean, fileOrder, markdownLines, plainText, reviewTitle, statusStrip } from './reviewView.mjs';
-import { printable } from './sessions.mjs';
+import { parsePullUrl, printable } from './sessions.mjs';
 
 // A review call may take a while: opening one makes it and fetches the branch, a Re-review pulls and diffs it.
 const REVIEW_CALL_MS = 125_000;
 const ID_RE = /^[0-9a-f]{8}$/;
-const PR_URL_RE = /^https:\/\/github\.com\/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)\/pull\/(\d+)\/?(?:[?#].*)?$/;
 
 /**
  * What `woodshed review` was given: a session id, or a pull request by number or URL.
@@ -23,8 +22,8 @@ const PR_URL_RE = /^https:\/\/github\.com\/([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)\/p
 export function parseReviewTarget(words) {
   const text = words.join(' ').trim();
   if (ID_RE.test(text)) return { id: text };
-  const url = PR_URL_RE.exec(text);
-  if (url) return { number: Number(url[2]), repo: url[1].toLowerCase() };
+  const url = parsePullUrl(text, { loose: true });
+  if (url) return { number: url.number, repo: url.repo.toLowerCase() };
   const number = /^(?:pr\s*)?#?(\d{1,9})$/i.exec(text);
   if (number) return { number: Number(number[1]), repo: null };
   return null;
@@ -34,8 +33,8 @@ export function parseReviewTarget(words) {
 export function sessionPulls(s) {
   const urls = [...new Set([s.prUrl, ...(Array.isArray(s.prs) ? s.prs.map((p) => p?.url) : [])].filter(Boolean))];
   return urls.map((url) => {
-    const m = PR_URL_RE.exec(String(url));
-    return m ? { url, number: Number(m[2]), repo: m[1].toLowerCase() } : null;
+    const pull = parsePullUrl(url, { loose: true });
+    return pull ? { url, number: pull.number, repo: pull.repo.toLowerCase() } : null;
   }).filter(Boolean);
 }
 

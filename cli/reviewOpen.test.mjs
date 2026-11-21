@@ -11,6 +11,7 @@ import { createHandler } from '../console/server.mjs';
 import { createCredentials } from './credentials.mjs';
 import { findTarget, parseReviewTarget } from './reviewOpen.mjs';
 import { width } from './reviewView.mjs';
+import { parsePullUrl } from './sessions.mjs';
 import { EXIT, main } from './woodshed.mjs';
 
 const listen = (server) => new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
@@ -149,6 +150,18 @@ test('a review target is a session id, or a pull request by number or URL', () =
   assert.deepEqual(parseReviewTarget(['https://github.com/Acme/App/pull/12']), { number: 12, repo: 'acme/app' });
   assert.equal(parseReviewTarget(['aaaa000']), null);
   assert.equal(parseReviewTarget(['https://example.com/acme/app/pull/12']), null);
+  // The console's addresses exactly, a pasted one with its slash or fragment, and nothing else; never slow on a long one.
+  assert.deepEqual(parsePullUrl('https://github.com/acme/app/pull/12'), { repo: 'acme/app', number: 12, url: 'https://github.com/acme/app/pull/12' });
+  assert.equal(parsePullUrl('https://github.com/acme/app/pull/12/'), null);
+  assert.equal(parsePullUrl('https://github.com/acme/app/pull/12#x', { loose: true }).number, 12);
+  for (const odd of ['http://github.com/acme/app/pull/12', 'https://github.com:444/acme/app/pull/12', 'https://u@github.com/acme/app/pull/12',
+    'https://github.com/acme/app/issues/12', 'https://github.com/acme/app/pull/12/files', 'https://github.com/a/b/c/pull/1', null]) {
+    assert.equal(parsePullUrl(odd, { loose: true }), null, String(odd));
+  }
+  const started = Date.now();
+  assert.equal(parsePullUrl(`https://github.com/${'a'.repeat(50_000)}/pull/1`), null);
+  assert.equal(parsePullUrl(`https://github.com/a/${'.'.repeat(300)}`), null);
+  assert.ok(Date.now() - started < 100);
   const sessions = [
     { id: 'aaaa0001', owner: 'mia-dev', status: 'stopped', prUrl: 'https://github.com/acme/app/pull/12' },
     { id: 'aaaa0002', owner: 'mia-dev', status: 'running', prs: [{ url: 'https://github.com/acme/app/pull/12' }] },
