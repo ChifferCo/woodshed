@@ -582,13 +582,34 @@ conversation.
 (`session/settingsSync.mjs`): `settings.json`, `CLAUDE.md`, `keybindings.json`,
 `agents/`, `commands/` and `skills/` under `~/.claude`, your MCP logins (the
 `mcpOAuth` entries of `~/.claude/.credentials.json`) and your user-scope MCP
-servers (the `mcpServers` entries of `~/.claude.json`). Every 20 seconds
+servers (the `mcpServers` entries of `~/.claude.json`); codex's `config.toml`,
+`AGENTS.md`, `prompts/` and `skills/` under `~/.codex` (never `auth.json`, nor
+codex's own `skills/.system`); and the plugins you installed for your whole
+home. Every 20 seconds
 statusd sends the session API (`POST /claude-settings`) what changed in that
 session and gets back what your other sessions changed, which the console
 merges item by item and keeps as `<login>/claude-settings.json` in the same
 bucket. A new or resumed session applies the latest before claude starts, over
 whatever its home held. Transcripts and the rest of claude's state stay each
-session's own.
+session's own. Your computer joins the same copy with `woodshed settings`
+(cli/README.md, "Settings").
+- **Codex:** each session keeps the folders it trusts (`[projects."…"]` in
+  `config.toml`) and any entry holding a credential (an MCP server's key) out of
+  what it sends, and its own in what it writes (`shared/codexConfig.mjs`), so its
+  checkout stays trusted and a key stays where it was typed. The console refuses
+  a `config.toml` holding a credential, and a plugin's marketplace beyond what a
+  session can add: it logs `sessionApi: shared Claude settings refused` (or
+  `cliSettings: refused`) with the reason. The session's rules win over
+  your `AGENTS.md`: codex reads `AGENTS.override.md` in its place, which the
+  start writes as the rules followed by your `AGENTS.md`, left as it is.
+  Synced changes to `AGENTS.md` reach Codex's instructions the next time the Woodshed session starts.
+- **Plugins** go as their name and marketplace (`installed_plugins.json#plugins/<name@marketplace>`),
+  never their files: a new session installs each its home lacks before claude
+  starts (`session/syncedPlugins.mjs`), adding the marketplace first, logged as
+  `Plugins from your other sessions installed`. Each is offered once, in the
+  default plugins' list, so one you uninstalled or turned off in a session is
+  not put back. A plugin installed for one repo alone, or from a marketplace
+  that is a folder, a pinned ref or a URL with a sign-in, stays where it is.
 - **When claude sees a change:** the files change on disk within 20 seconds.
   Claude Code reloads `settings.json`, keybindings, skills and agents while it
   runs; `CLAUDE.md` and the MCP servers it reads as it starts, so a running
@@ -607,10 +628,12 @@ session's own.
   the shared copy with your homes.
 - **From your computer:** `woodshed settings push` sends your laptop's items into the same copy, and `pull` writes
   the copy's into your laptop (cli/README.md, "Settings"), through `GET/POST /api/cli/settings` with the command
-  line's token (`cliSettings.mjs`). A computer never sends or gets an MCP login, and never removes an item. MCP server
+  line's token (`cliSettings.mjs`). A computer never sends or gets an MCP login, and never removes an item. Claude MCP server
   definitions pushed from a computer are kept in the same stored settings object in a map only the CLI can read. They
   take precedence on computers if a session has saved the same server name. The session API returns only the session's
-  copy. Admin-configured MCPs reach sessions through the relay. The console logs `cliSettings: pushed` with the token's
+  copy. Codex MCP server definitions from a computer stay on that computer. A model or other Codex setting pushed from
+  a computer keeps the session copy's existing MCP definitions. Admin-configured MCPs reach sessions through the
+  relay. The console logs `cliSettings: pushed` with the token's
   id and the counts, `cliSettings: refused` when the copy exceeds 5 MB or an MCP definition or hook has a literal header, and
   `cliSettings: refused, a removal from a computer` or
   `MCP logins from a computer` for a client other than the command line's. `--own-files` saves into your own files on My settings
@@ -643,9 +666,16 @@ handed out):
 - The entrypoint still writes the session's own lines last (the databases, Redis, ports and URLs, listed on the page),
   so those always win. A running session keeps the files it started with.
 
-**tmux**, on My settings, adds your own lines to `~/.tmux.conf`, after the session image's `tmux.conf`, so a setting in
-both uses yours. Saving keeps them at `<prefix>/users/<login>/tmux-conf`; **Clear mine**, or saving nothing, deletes
-them. `/api/my/files/tmux-conf` is its route; your own lines for the env files are Repo settings, above.
+**tmux and dotfiles.** **tmux**, on My settings, adds your own lines to `~/.tmux.conf`, after the session image's
+`tmux.conf`, so a setting in both uses yours. Saving keeps them at `<prefix>/users/<login>/tmux-conf`; **Clear mine**, or
+saving nothing, deletes them. `/api/my/files/tmux-conf` is its route; your own lines for the env files are Repo settings,
+above. **git**, **readline** and **Shell aliases** do the same for `~/.gitconfig`, `~/.inputrc` and `~/.bash_aliases`
+(`gitconfig`, `inputrc`, `bash-aliases`), written after what the session sets in your private sessions only, and hold
+less than those files can (`shared/dotfiles.mjs`): git's aliases, colors and how diff, merge, pull, push and rebase
+behave, never `[user]`, `[credential]`, `[url]` or `[include]`, since a session commits as you and signs in to GitHub
+by itself; readline's lines; and `alias` lines alone, never an export or a command. Anything holding a credential is
+refused, saying which line and why (`userSettings: file refused` in the log, with the key). `woodshed settings push`
+fills them from your computer's files (cli/README.md, "Settings").
 
 **Your files**, in each repo's tab on Repo settings, are whole files of your own for that repo, by their path in it (an
 `app/.env.production` that your MCP servers read, a tool's local config), which every private session of yours on that

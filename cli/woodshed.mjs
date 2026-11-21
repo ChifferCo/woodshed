@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The woodshed command line: signs in to a Woodshed console, says who is signed in, starts and manages sessions, opens
 // a pipe or terminal into a running session, moves work from Herdr into a session, reads and sets choices on My
-// settings, and syncs Claude settings.
+// settings, and syncs settings with private sessions.
 // Plain Node 22 with no dependencies (cli/README.md).
 //
 //   woodshed login  [--console <url>] [--no-browser]   a code to approve in the browser, then a token kept in the keychain
@@ -14,7 +14,8 @@
 //   woodshed move --from herdr [--terminal T|--tab T|--space S] --to <id>|new   terminals moved into a session (move.mjs)
 //   woodshed review enable|status                      review this checkout's pull requests in Woodshed sessions (review.mjs)
 //   woodshed config list|get|set                       your choices on My settings, never a secret (config.mjs)
-//   woodshed settings plan|push|pull [...]            Claude settings and a checkout's ignored files (settings.mjs)
+//   woodshed settings plan|push|pull [...]             Claude and Codex settings, plugins, dotfiles and ignored files
+//                                                     (settings.mjs)
 //
 // Every command takes --json. Exit codes: 0 done, 2 waiting on a person (a sign-in or an approval), 3 refused, 1 any
 // other failure.
@@ -65,8 +66,10 @@ Commands:
   review    review this checkout's pull requests in Woodshed sessions: woodshed review --help
   config    your choices on My settings (terminal, reviews, default repo, …), never a secret: woodshed config --help
   settings  plan|push|pull [--only <what>,...] [--own-files <checkout>] [--replace]
-            sync your Claude settings and ignored checkout files with private sessions. MCP definitions
-            pushed from a computer stay between computers. plan lists items and sends nothing
+            sync your Claude and Codex settings, plugins, dotfiles and ignored checkout files with private
+            sessions. Claude MCP definitions pushed from a computer stay between computers.
+            Codex MCP definitions from a computer stay on that computer.
+            plan lists each item and sends nothing (cli/README.md, "Settings")
 
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};

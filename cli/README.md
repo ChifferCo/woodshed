@@ -91,7 +91,7 @@ Keep a source explicit even when only one is supported. Keep session management 
 | `woodshed review enable\|status` | In a checkout: reviews the repo's pull requests in Woodshed sessions, by its project file, and says what the console still needs. Below. | 0 done, 2 an admin's step, a sign-in or a merge still to come, 1 a project file that does not read or check |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 | `woodshed config list\|get\|set` | Reads or sets [your choices on My settings](#your-choices-on-my-settings). | as below |
-| `woodshed settings plan\|push\|pull` | Sync [Claude settings and a checkout's ignored files](#settings) with private sessions, and MCP definitions between computers. | as below |
+| `woodshed settings plan\|push\|pull` | Sync [Claude and Codex settings, plugins, dotfiles and ignored checkout files](#settings) with private sessions. Claude MCP definitions pushed from computers stay between computers. | as below |
 
 Every command takes:
 
@@ -370,8 +370,9 @@ last is `moved` with the sessions, branches, each terminal's new address and the
 
 ## Settings
 
-`woodshed settings` joins this computer to the Claude settings your private sessions already keep in step (console/README.md,
-"Your Claude settings"), and saves a checkout's ignored files as your own files for its repo on My settings.
+`woodshed settings` joins this computer to the Claude and Codex settings your private sessions already keep in step
+(console/README.md, "Your Claude settings"), saves a few dotfiles as your own lines for them on My settings, and saves a
+checkout's ignored files as your own files for its repo there.
 
 | Command | What it does | Exits |
 | --- | --- | --- |
@@ -382,7 +383,8 @@ last is `moved` with the sessions, branches, each terminal's new address and the
 Each takes:
 
 - `--only <what>,...`: a kind of item (`settings`, `keybindings`, `memory` for `CLAUDE.md`, `agents`, `commands`, `skills`,
-  `mcp`, `own-files`), or a name as the list shows it (`skills/review`, `mcp/github`, `.env.local`). Repeatable.
+  `mcp`, `codex`, `plugins`, `dotfiles`, `own-files`), or a name as the list shows it (`skills/review`, `mcp/github`,
+  `.codex/skills/review`, `plugin/review@acme-tools`, `dotfile/gitconfig`, `.env.local`). Repeatable.
 - `--own-files <checkout>`: also the checkout's files that git ignores and does not track, saved as your own files for its
   repo (told from its `origin`), which your next session on it writes where git ignores them. Env files (`.env.local`,
   `*.local.json`, `.dev.vars`) are taken by default; any other ignored file only when `--only` names its path. A folder
@@ -390,18 +392,37 @@ Each takes:
   skipped: its values go on My settings' Repo settings.
 
 **What is carried.** The session sync's own items, from `~/.claude` and `~/.claude.json`: `settings.json`, `CLAUDE.md`,
-`keybindings.json`, `agents/`, `commands/`, `skills/`, and your user-scope MCP servers. Items merge as a session's do, and
-push never removes one from the copy (the console refuses a removal from a computer). Claude plugins, Codex's settings and
-shell dotfiles are not carried, nor a file's mode: a pulled script runs as `bash script.sh`, as it does in a session.
+`keybindings.json`, `agents/`, `commands/`, `skills/`, and your user-scope MCP servers; from `~/.codex`: `config.toml`,
+`AGENTS.md`, `prompts/` and `skills/` (never `auth.json`, your Codex sign-in, which is My settings'; nor codex's own
+`skills/.system`); and each plugin you installed for your whole home (user scope), as the marketplace it comes from. Items
+merge as a session's do, and push never removes one from the copy (the console refuses a removal from a computer). A
+file's mode is not carried: a pulled script runs as `bash script.sh`, as it does in a session.
 
-MCP definitions pushed from a computer are available to the person's computers only. Pull can also bring in a server
-configured in a private session. If a laptop and a session save the same name, each keeps its definition. Servers the
-console provides to sessions are configured by an admin and use its relay.
+**Plugins** go as a name and a marketplace, never their files: your next private session installs each one it lacks
+(adding its marketplace first), once, so one you uninstall or turn off there stays that way. One installed for a repo
+alone (project or local scope) stays here, and so does one whose marketplace a session cannot add: a folder on this
+computer, a source pinned to a ref, a URL with a sign-in. Pull never installs one here: it lists each your sessions have
+and this computer has not, with the `claude plugin install` that does it.
+
+**Dotfiles** go one way, from here, as your own lines on My settings (console/README.md, "tmux and dotfiles"), which your
+private sessions write after their own: `dotfile/gitconfig` from `~/.gitconfig`, `dotfile/inputrc` from `~/.inputrc`, and
+`dotfile/bash-aliases` from the `alias` lines of `~/.bash_aliases`, `~/.bashrc` and `~/.zshrc`. Each takes only what
+`shared/dotfiles.mjs` allows, and the list names what it left out: git's aliases, colors and how diff, merge, pull, push
+and rebase behave, never `[user]`, `[credential]`, `[url]`, `[include]`, a pager, an editor or a signing key; never an
+export, a command, an alias naming a path in your home or one holding a credential. A push asks about each dotfile on its
+own, and replaces what My settings had for it. Pull leaves them out.
+
+Claude MCP definitions pushed from a computer are available to the person's computers only. Pull can also bring in a
+server configured in a private session. If a laptop and a session save the same name, each keeps its definition.
+Servers the console provides to sessions are configured by an admin and use its relay.
+Codex MCP definitions configured on a computer stay there. A push keeps any Codex servers already shared by private
+sessions. Pull keeps this computer's definitions and can add a session's servers. If either file uses a single inline
+server map, pull keeps the computer's whole map.
 
 **What runs here is shown first.** Sessions write the shared copy, unattended, and everything in it but
 `keybindings.json` can make this computer's claude run something. So `pull` writes nothing else until a list has shown
 that exact content (by its hash), listed with what it does: an MCP server's command and args or URL; every key of
-`settings.json` (hooks, env, permissions, `defaultMode`, plugins); a skill's, command's or agent's frontmatter (its
+`settings.json` (hooks, env, permissions, `defaultMode`, plugins) and of codex's `config.toml`; a skill's, command's or agent's frontmatter (its
 `allowed-tools`) and each line that runs shell as it loads (`` !`cmd` ``); a script's first line. Values of env variables
 named like credentials are not shown. On a terminal pull asks; with none it holds them (`hold`, exit 2) and writes the
 rest, until `woodshed settings plan --pull` has listed them. A changed item is held again, and one with a line over 2000
@@ -422,8 +443,13 @@ naming it (`--only settings.json`, not `--only settings`) sends yours.
 - `~/x`, `$HOME/x` and `${HOME}/x` follow the same rules: kept when they are carried, left out when they are not.
 - `statusLine` stays each side's own. `apiKeyHelper` and the other credential helpers, and `env` variables named like
   credentials, stay here, and a `pull --replace` keeps yours.
-- An MCP server run as `/opt/homebrew/bin/npx` (or from `/usr/local/bin`, `/usr/bin`, `/bin`) runs as `npx`, from the
-  session's PATH. Any other absolute program path is skipped.
+- An MCP server run as `/opt/homebrew/bin/npx` (or from `/usr/local/bin`, `/usr/bin`, `/bin`) runs as `npx`, from
+  the receiving computer's or session's PATH. Any other absolute program path is skipped.
+- In `config.toml`, the folders each side trusts (`[projects."…"]`) and where codex sends its calls (`model_provider`,
+  `[model_providers.…]`, `profile`, `[profiles.…]`, `openai_base_url`, `chatgpt_base_url`) stay each side's own. An entry
+  that names a path in your home, holds a literal HTTP header, or holds a credential (an `env` value named like one,
+  a `bearer_token`, a URL with a sign-in) stays on that side, along with the rest of its server entry.
+  A `pull --replace` keeps those entries. An `env_key`, `bearer_token_env_var` or `env_http_headers` entry can still name a variable.
 
 **What is refused**, by name or kind, never by showing it: MCP logins (sign in to the server where you use it), an MCP server
 whose `env` holds a literal key, literal HTTP headers on an MCP definition or hook (`${VARIABLE}` is fine), a file named like a secret (`.env`, `*.pem`, `id_rsa`,
@@ -432,8 +458,9 @@ Anthropic, OpenAI, Slack, AWS, Stripe live or Google key. For own files, keys an
 (`.env.production`) and live keys.
 
 A symlink in `~/.claude` (a linked `skills/`, a linked `settings.json`) is neither read by push nor written through by
-pull, nor is an empty own file pushed (My settings would take it as removing yours). `CLAUDE_CONFIG_DIR` is not
-followed: settings reads `~/.claude` and `~/.claude.json` only, and says so when it is set.
+pull, nor is an empty own file pushed (My settings would take it as removing yours). `CLAUDE_CONFIG_DIR` and `CODEX_HOME`
+are not followed: settings reads `~/.claude`, `~/.claude.json` and `~/.codex` only, and says so when one is set. A dotfile
+is read through a symlink, since nothing is ever written to one.
 
 `~/.config/woodshed/settings-state.json` keeps, for each console, the names of the items a push list has shown, the
 hashes of what a pull list has shown that runs here, and each item's hash as it last went to or from this computer.

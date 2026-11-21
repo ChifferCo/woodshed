@@ -47,6 +47,12 @@
       words: 'repo repository env environment variables dotenv .env secrets keys instructions prompt rules files claude.md per repo override mine own' },
     { page: '/settings', id: 'my-tmux', title: 'My tmux', note: 'Your own lines for the terminal\'s tmux config.',
       words: 'terminal shell keys keybindings mouse scroll config tmux.conf' },
+    { page: '/settings', id: 'my-gitconfig', title: 'My git config', note: 'Your own git aliases and settings, in your private sessions.',
+      words: 'git gitconfig .gitconfig alias aliases pull rebase push color diff merge dotfiles' },
+    { page: '/settings', id: 'my-inputrc', title: 'My readline', note: 'Your own ~/.inputrc lines for the terminals\' bash.',
+      words: 'readline inputrc .inputrc vi emacs editing mode bash keys dotfiles' },
+    { page: '/settings', id: 'my-bash-aliases', title: 'My shell aliases', note: 'Your own alias lines for the terminals\' bash.',
+      words: 'shell bash zsh alias aliases bashrc zshrc bash_aliases dotfiles' },
     { page: '/settings', id: 'my-remove', title: 'Remove My Woodshed', note: 'Stop your private sessions and delete everything saved for you.',
       words: 'delete leave wipe reset account remove everything uninstall clean up' },
 

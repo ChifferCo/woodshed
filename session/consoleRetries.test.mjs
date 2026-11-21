@@ -87,6 +87,7 @@ function fetchOwnerSettings(consoleUrl) {
     `OWN_CLAUDE_TOKEN_FILE=${home}/claude-token OWN_FILES_JSON=${home}/own-files.json OWN_CODEX_AUTH_FILE=${home}/codex-auth`,
     fast(fn('consoleCall')),
     fn('useDatabaseFrom'),
+    fn('writeOwnDotfiles'),
     fn('fetchOwnerSettings'),
     'fetchOwnerSettings',
     'echo "token: $(cat "$OWN_CLAUDE_TOKEN_FILE")"',

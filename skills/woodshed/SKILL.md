@@ -106,7 +106,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed session limits <id> [--idle-hours N\|default] [--lifetime-hours N\|default]` | Its own idle pause and lifetime | 0, 1 out of range, 3 not theirs | main |
 | `woodshed move --from herdr [--terminal T …\|--tab T\|--space S] --to <id>\|new [--restart ask\|auto\|never] [--dry-run]` | Moves terminals on this computer into a session: each agent with its conversation, each shell, each program started again; pushes the work to `woodshed/move-<id>` first, and ends a local agent only once its moved one runs | 0 moved, 2 a moved agent needs the person, 3 a secret in the work, an agent mid-turn, another repo, 1 failed (all undone) | main |
 | `woodshed settings plan [--pull] [--only …] [--own-files <checkout>]` | Lists what push (or pull) would do with each item; sends and writes nothing | 0 | main |
-| `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude settings, skills, and a checkout's ignored env files. Imported MCP definitions sync between computers. | 0, 2 not listed before or not confirmed | main |
+| `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude and Codex settings, skills, plugins, a few dotfiles and ignored checkout files. Imported Claude MCP definitions sync between computers. | 0, 2 not listed before or not confirmed | main |
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | main |
 | `woodshed review enable [--qa] [--rerun <tag>\|--every-commit] [--dry-run]` | In a checkout: writes `pullRequests.review` with `runner: woodshed` (and with `--qa`, QA in a session) into `.woodshed/project.yaml`, checks it, and asks the console what is missing | 0 ready to commit, 2 an admin's step or a sign-in, 1 the file does not read or check, or the console could not confirm | main |
 | `woodshed review status` | In a checkout: whether review is on, in the checkout's file, on the default branch, and on the console | 0 on, 2 not yet, 1 the console could not tell | main |
@@ -224,12 +224,18 @@ the like refuse without sending anything. Never ask the person for a token to ge
 ### Carry Claude settings
 
 Their private sessions keep Claude settings in step (`settings.json`, `CLAUDE.md`, keybindings, agents, commands,
-skills, user-scope MCP servers). `settings` joins this computer to that.
+skills, user-scope MCP servers), Codex's (`~/.codex`'s `config.toml`, `AGENTS.md`, prompts, skills) and the plugins they
+installed. `settings` joins this computer to that. Imported Claude MCP definitions sync between computers. Codex MCP
+definitions from a computer stay on that computer.
+`settings` also saves their git, readline and alias lines on My settings (`dotfile/gitconfig`, `dotfile/inputrc`,
+`dotfile/bash-aliases`), which replace what My settings had.
 
 1. `woodshed settings plan` (add `--own-files <checkout>` for that checkout's ignored env files). Show the person the
    whole list: each item, its size, and `upload`, `skip` or `refuse` with why.
 2. Push only what they agree to: `woodshed settings push`, with `--only <name>` for a part of it. An item never listed
-   before exits 2 until a plan has shown it.
+   before exits 2 until a plan has shown it. Push with an `--only` that leaves out `dotfiles` unless the person named
+   one (`--only dotfile/gitconfig`): a dotfile replaces their lines on My settings. A pull
+   never installs a plugin: its list gives the `claude plugin install` for them to run if they want it.
 3. For pull, `woodshed settings plan --pull` lists what pull would write and what each item would run on this
    computer (an MCP server's command, hooks, a skill's shell lines). Those are held until a list has shown them, so that
    **the person** sees what will run here. Show them that list and wait for their yes before `woodshed settings pull`.

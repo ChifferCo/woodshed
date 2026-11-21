@@ -9,6 +9,8 @@
 //   GET  /api/cli/settings/repos             the repos the person can start sessions on (GET /api/my/repos)
 //   GET  /api/cli/settings/files/<project>   {files}: their own whole files for it (GET /api/my/repos/<project>/files)
 //   POST /api/cli/settings/files/<project>   {path, text}: one file added or replaced (the same route's POST)
+//   GET  /api/cli/settings/dotfiles          {files}: their own lines for each dotfile on My settings (shared/dotfiles.mjs)
+//   POST /api/cli/settings/dotfiles/<key>    {text}: their own lines for one, checked as My settings checks them
 //
 // The repo routes are My settings' own (repoSettings.mjs's API), opened to the token: the same checks, the same records
 // and log lines. The shared copy's route is the session API's /claude-settings for a computer: a session's turn there
@@ -17,10 +19,14 @@
 // MCP logins stay with sessions. Servers supplied by a computer go into the settings copy's laptop-only map, which
 // the session API never returns. Laptops can still pull servers that came from private sessions.
 
+import { DOTFILES } from '../shared/dotfiles.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
 
 export const CLI_SETTINGS_PATH = '/api/cli/settings';
 const FILES_RE = /^\/api\/cli\/settings\/files\/([^/]+)$/;
+const DOTFILE_RE = /^\/api\/cli\/settings\/dotfiles(?:\/([a-z-]+))?$/;
+// A dotfile's lines and their JSON: My settings' own limit on a file is 64 KB.
+const MAX_DOTFILE_BODY = 200_000;
 const LOGIN_PREFIX = '.claude/.credentials.json#';
 
 /** @returns {boolean}  an MCP login's item, which never goes to or from a computer */
@@ -40,12 +46,13 @@ function reply(res, status, body) {
 /**
  * @param {{req, res, url: URL, cli: ReturnType<typeof import('./cliSignIn.mjs').createCliSignIn>,
  *          claudeSettings: ReturnType<typeof import('./claudeSettings.mjs').createClaudeSettings>|null,
- *          repoSettingsApi: ((req, res, who: object) => Promise<void>)|null}} args
+ *          repoSettingsApi: ((req, res, who: object) => Promise<void>)|null,
+ *          userSettings?: ReturnType<typeof import('./userSettings.mjs').createUserSettings>|null}} args
  *   `cli.authenticate` is the token's one check, as on every route it reaches: its person still on People, with write
  *   access on GitHub. `repoSettingsApi` is createRepoSettingsApi's handler
  * @returns {Promise<boolean>}  whether it answered: true for any /api/cli/settings path
  */
-export async function handleCliSettings({ req, res, url, cli, claudeSettings, repoSettingsApi }) {
+export async function handleCliSettings({ req, res, url, cli, claudeSettings, repoSettingsApi, userSettings = null }) {
   const { pathname } = url;
   if (pathname !== CLI_SETTINGS_PATH && !pathname.startsWith(`${CLI_SETTINGS_PATH}/`)) return false;
   // A token is sent by the command line alone: a call carrying an Origin is a page's (cliSessions.mjs).
@@ -73,6 +80,12 @@ export async function handleCliSettings({ req, res, url, cli, claudeSettings, re
     const project = FILES_RE.exec(pathname)?.[1] ?? null;
     if (!project && req.method !== 'GET') return reply(res, 405, { error: 'method not allowed' }), true;
     await repoSettingsApi(req, res, { route: { scope: 'my', project, key: null, instructions: false, remove: false, files: Boolean(project) }, login });
+    return true;
+  }
+  const dotfile = DOTFILE_RE.exec(pathname);
+  if (dotfile) {
+    // Awaited, so a secret store that fails reaches the server's own error answer rather than going unhandled.
+    await dotfileReply(req, res, { login, token: signedIn.id, key: dotfile[1] ?? null, userSettings });
     return true;
   }
   if (pathname !== CLI_SETTINGS_PATH) return reply(res, 404, { error: 'not found' }), true;
@@ -118,4 +131,46 @@ export async function handleCliSettings({ req, res, url, cli, claudeSettings, re
   }
   console.log('cliSettings: pushed', { login, token: signedIn.id, changed: Object.keys(body.changed).length, version: answer.version });
   return reply(res, 200, answer.items ? { version: answer.version, items: withoutLogins(answer.items) } : { version: answer.version }), true;
+}
+
+// A computer's dotfiles, as the person's own lines for them on My settings: the same store, check and log line as the
+// page's (userSettings.saveFile), so a line the page would refuse is refused here too.
+async function dotfileReply(req, res, { login, token, key, userSettings }) {
+  if (!userSettings || userSettings.view(login).available === false) {
+    req.resume();
+    return reply(res, 404, { error: 'this console has no secret store, so it keeps no one\'s own lines' });
+  }
+  if (req.method === 'GET' && !key) {
+    const files = await userSettings.ownFiles(login);
+    return reply(res, 200, { files: Object.fromEntries(Object.keys(DOTFILES).map((k) => [k, files[k] ?? null])) });
+  }
+  if (req.method !== 'POST' || !key) {
+    req.resume();
+    return reply(res, 405, { error: 'method not allowed' });
+  }
+  if (!Object.hasOwn(DOTFILES, key)) {
+    req.resume();
+    return reply(res, 404, { error: `no dotfile called ${key}` });
+  }
+  let text = '';
+  for await (const chunk of req) {
+    text += chunk;
+    if (text.length > MAX_DOTFILE_BODY) return reply(res, 413, { error: 'too large' });
+  }
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    body = null;
+  }
+  if (typeof body?.text !== 'string' || !body.text.trim()) return reply(res, 400, { error: 'expected {"text"}: a computer never clears them, Clear mine on My settings does' });
+  try {
+    await userSettings.saveFile(login, key, body.text);
+  } catch (err) {
+    if (!err.shown) throw err;
+    console.warn('cliSettings: dotfile refused', { login, token, key, why: err.message.split(':')[0] });
+    return reply(res, 400, { error: err.message });
+  }
+  console.log('cliSettings: dotfile saved', { login, token, key, bytes: Buffer.byteLength(body.text) });
+  return reply(res, 200, { key });
 }

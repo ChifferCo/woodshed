@@ -7,16 +7,45 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
 
   let me = null;
   let loadError = null;
-  // Your own tmux config. Your own lines for the repo's env files are Repo settings (myRepoSettings.js).
-  const fileKeys = () => Object.keys(me?.files ?? {}).filter((key) => key === 'tmux-conf');
+  // Your own lines for tmux's config and a few dotfiles (shared/dotfiles.mjs). Your own lines for the repo's env files
+  // are Repo settings (myRepoSettings.js).
+  const FILE_ROWS = {
+    'tmux-conf': {
+      id: 'my-tmux', title: 'tmux', placeholder: 'set -g prefix C-a',
+      about: 'Your sessions use the image\'s tmux config, and add your own lines after it, so a setting in both uses yours. Your next My Woodshed session picks up what you save; running ones keep theirs. Your own values for a repo\'s env files are under Repo settings.',
+      after: 'Loaded by claude\'s tmux. Prefix then r reloads it in a running session.',
+    },
+    gitconfig: {
+      id: 'my-gitconfig', title: 'git', placeholder: '[alias]\n\tco = checkout\n[pull]\n\trebase = true',
+      about: 'Your own aliases and colors, and how diff, merge, pull, push and rebase behave, after what your session sets. Your session commits as you and signs in to GitHub by itself, so [user], [credential], [url], [include], a pager, an editor, a path or a credential is refused.',
+      after: 'woodshed settings push fills it from your computer\'s ~/.gitconfig, leaving out what a session does not take.',
+    },
+    inputrc: {
+      id: 'my-inputrc', title: 'readline', placeholder: 'set editing-mode vi',
+      about: 'Your own ~/.inputrc lines for the bash in your session\'s terminals, after the system\'s own. An $include only of a file under /etc.',
+      after: 'woodshed settings push fills it from your computer\'s ~/.inputrc.',
+    },
+    'bash-aliases': {
+      id: 'my-bash-aliases', title: 'Shell aliases', placeholder: "alias ll='ls -la'",
+      about: 'Alias lines alone, one to a line, which bash reads in your session\'s terminals. Nothing that sets a variable or runs a command as it is read, and no credential.',
+      after: 'woodshed settings push fills it from the aliases in your computer\'s ~/.bash_aliases, ~/.bashrc and ~/.zshrc.',
+    },
+  };
+  const fileKeys = () => Object.keys(me?.files ?? {}).filter((key) => FILE_ROWS[key]);
   const files = {};
-  let fileKey = null;
-  const editor = h('textarea', { id: 'file-text', class: 'field mono file-text', rows: '14', spellcheck: 'false' });
-  const fileStatus = h('p', { class: 'form-note', role: 'status' });
-  editor.addEventListener('input', () => {
-    if (files[fileKey]) files[fileKey].draft = editor.value;
-    renderFilePill();
-  });
+  // Each file's own editor, status line and pill, made the first time its row is drawn.
+  const fileUi = {};
+  function uiOf(key) {
+    if (fileUi[key]) return fileUi[key];
+    const editor = h('textarea', { id: `file-text-${key}`, class: 'field mono file-text', rows: key === 'tmux-conf' ? '14' : '8', spellcheck: 'false' });
+    const ui = { editor, status: h('p', { class: 'form-note', role: 'status' }), pill: h('span', { class: 'pill' }) };
+    editor.addEventListener('input', () => {
+      if (files[key]) files[key].draft = editor.value;
+      renderFilePill(key);
+    });
+    fileUi[key] = ui;
+    return ui;
+  }
   const repoSettings = window.WoodshedMyRepoSettings.create({ render, row: (...args) => row(...args), isOpen: (id) => open.has(id), setOpen: (id) => open.add(id) });
   const tokenInput = h('input', { id: 'claude-token', type: 'password', class: 'field mono', autocomplete: 'off', spellcheck: 'false', placeholder: 'sk-ant-oat01-…' });
   const status = h('p', { class: 'form-note', role: 'status' });
@@ -497,14 +526,14 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   }
 
   async function openFile(key) {
-    fileKey = key;
-    fileStatus.textContent = '';
+    const { status } = uiOf(key);
+    status.textContent = '';
     if (!files[key]) {
       try {
         files[key] = await W.getJson(`/api/my/files/${key}`);
       } catch (err) {
-        fileStatus.textContent = err.message;
-        fileStatus.classList.add('is-error');
+        status.textContent = err.message;
+        status.classList.add('is-error');
       }
     }
     render();
@@ -512,10 +541,10 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
 
   // `reloadEditor` puts the answer in the editor, as Clear mine needs. It is done once the answer is in: the render
   // that shows "Saving…" would otherwise fill the editor with the lines being cleared.
-  function fileChange(path, body, done, { reloadEditor = false } = {}) {
-    const key = fileKey;
+  function fileChange(key, path, body, done, { reloadEditor = false } = {}) {
+    const { editor, status } = uiOf(key);
     return act({
-      card: 'files', note: fileStatus, done, call: async () => {
+      card: `files-${key}`, note: status, done, call: async () => {
         files[key] = await W.postJson(path, body);
         if (reloadEditor) editor.dataset.key = '';
         me = await W.getJson('/api/my');
@@ -523,14 +552,16 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     });
   }
 
-  const filePill = h('span', { class: 'pill' });
-  function renderFilePill() {
-    const f = files[fileKey];
-    if (!f) return filePill.replaceChildren('…');
+  function renderFilePill(key) {
+    const f = files[key];
+    const { pill } = uiOf(key);
+    if (!f) return pill.replaceChildren('…');
     const changed = f.draft !== undefined && f.draft !== f.text;
-    const saved = me.files?.[fileKey]?.savedAt;
-    filePill.className = `pill${changed ? ' is-warn' : f.custom ? ' is-ok' : ''}`;
-    filePill.textContent = changed ? 'Unsaved changes' : f.custom ? `Shared + yours, saved ${W.when(saved)}` : 'Shared only';
+    const saved = me.files?.[key]?.savedAt;
+    pill.className = `pill${changed ? ' is-warn' : f.custom ? ' is-ok' : ''}`;
+    if (changed) pill.textContent = 'Unsaved changes';
+    else if (f.sharedText) pill.textContent = f.custom ? `Shared + yours, saved ${W.when(saved)}` : 'Shared only';
+    else pill.textContent = f.custom ? `Yours, saved ${W.when(saved)}` : 'None';
   }
 
   function sharedFileBlock(f, name) {
@@ -541,41 +572,52 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       h('p', { class: 'sub' }, 'It comes with the session image (session/tmux.conf in the repo).'));
   }
 
-  function filesCard() {
-    const f = files[fileKey];
-    if (f && editor.dataset.key !== fileKey) {
+  function fileRow(key) {
+    const f = files[key];
+    const { editor, status, pill } = uiOf(key);
+    const text = FILE_ROWS[key];
+    const busyHere = busy.has(`files-${key}`);
+    if (f && editor.dataset.key !== key) {
       editor.value = f.draft ?? f.text;
-      editor.dataset.key = fileKey;
+      editor.dataset.key = key;
     }
     editor.disabled = !f || !me.available;
     // Read-only, not disabled, while it saves: the text stays selectable, and what is typed then can't be lost to the
     // answer, which has no draft and would not show it as unsaved.
-    editor.readOnly = busy.has('files');
-    editor.placeholder = 'set -g prefix C-a';
-    renderFilePill();
-    const label = (key) => me.files?.[key]?.label ?? key;
-    if (!fileKey) return null;
-    return row({ id: 'my-tmux', title: 'tmux', pill: filePill, value: f?.custom ? `Your own lines, after the shared ${label(fileKey)}` : `The shared ${label(fileKey)}, and your own lines after it once you add some` },
-      h('p', { class: 'sub' }, 'Your sessions use the image\'s tmux config, and add your own lines after it, so a setting in both uses yours. Your next My Woodshed session picks up what you save; running ones keep theirs. Your own values for a repo\'s env files are under Repo settings.'),
-      f && sharedFileBlock(f, label(fileKey)),
-      h('label', { class: 'field-label', for: 'file-text' }, h('span', null, `Your own lines for ${label(fileKey)}`)),
-      editor,
-      h('p', { class: 'sub' }, 'Loaded by claude\'s tmux. Prefix then r reloads it in a running session.'),
-      h('div', { class: 'set-actions' },
-        h('button', {
-          type: 'button', class: 'btn btn-open', disabled: !f || !me.available || busy.has('files'),
-          onclick: () => fileChange(`/api/my/files/${fileKey}`, { text: editor.value }, editor.value.trim()
-            ? `Saved your lines for ${label(fileKey)}. Your next session uses them.`
-            : `Your sessions use the shared ${label(fileKey)} alone.`),
-        }, 'Save'),
-        f?.custom && h('button', {
-          type: 'button', class: 'btn btn-quiet', disabled: busy.has('files'),
-          onclick: () => {
-            if (!window.confirm(`Clear your own lines for ${label(fileKey)}? Your sessions then use the shared file alone.`)) return;
-            fileChange(`/api/my/files/${fileKey}/reset`, {}, `Your sessions use the shared ${label(fileKey)} alone.`, { reloadEditor: true });
-          },
-        }, 'Clear mine')),
-      fileStatus);
+    editor.readOnly = busyHere;
+    editor.placeholder = text.placeholder;
+    renderFilePill(key);
+    const label = me.files?.[key]?.label ?? key;
+    const shared = Boolean(f?.sharedText);
+    const cleared = shared ? `Your sessions use the shared ${label} alone.` : `Your sessions get none of your own lines for ${label}.`;
+    return row({
+      id: text.id, title: text.title, pill,
+      value: f?.custom ? `Your own lines, after the ${shared ? 'shared' : 'session\'s'} ${label}` : shared ? `The shared ${label}, and your own lines after it once you add some` : `Your own lines for ${label}, once you add some`,
+    },
+    h('p', { class: 'sub' }, text.about),
+    shared && sharedFileBlock(f, label),
+    h('label', { class: 'field-label', for: editor.id }, h('span', null, `Your own lines for ${label}`)),
+    editor,
+    text.after && h('p', { class: 'sub' }, text.after),
+    h('div', { class: 'set-actions' },
+      h('button', {
+        type: 'button', class: 'btn btn-open', disabled: !f || !me.available || busyHere,
+        onclick: () => fileChange(key, `/api/my/files/${key}`, { text: editor.value }, editor.value.trim()
+          ? `Saved your lines for ${label}. Your next session uses them.`
+          : cleared),
+      }, 'Save'),
+      f?.custom && h('button', {
+        type: 'button', class: 'btn btn-quiet', disabled: busyHere,
+        onclick: () => {
+          if (!window.confirm(`Clear your own lines for ${label}? ${cleared}`)) return;
+          fileChange(key, `/api/my/files/${key}/reset`, {}, cleared, { reloadEditor: true });
+        },
+      }, 'Clear mine')),
+    status);
+  }
+
+  function fileRows() {
+    return me ? fileKeys().map(fileRow) : [];
   }
 
   // Your own pause and stop times, for your My Woodshed sessions. Empty is the console's number.
@@ -804,10 +846,12 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
           run: async () => {
             const answer = await W.postJson('/api/my/remove', { confirm: me.login });
             me = answer;
-            for (const key of fileKeys()) delete files[key];
+            for (const key of fileKeys()) {
+              delete files[key];
+              uiOf(key).editor.dataset.key = '';
+              openFile(key);
+            }
             repoSettings.reload();
-            editor.dataset.key = '';
-            openFile(fileKey);
             removeStatus.textContent = `My Woodshed removed: ${answer.stopped} stopped, ${answer.removed} taken off the list.`;
             render();
           },
@@ -837,7 +881,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       group({
         id: 'repo-settings', label: 'Repos and files',
         note: 'Your own values for each repo\'s env files, your own instructions and your own files, for your private sessions on that repo. Shared sessions never get them. Only repos you can write to are listed.',
-      }, repoSettings.rows(), filesCard()),
+      }, repoSettings.rows(), fileRows()),
       displayCard(),
       group({ id: 'set-remove' }, removeCard())));
     // A box is the same node after the draw; a row's head is a new one, found by its id.
@@ -880,7 +924,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     document.getElementById(FOCUS[id])?.focus({ preventScroll: true });
   });
 
-  W.getJson('/api/my').then((answer) => { me = answer; }, (err) => { loadError = err.message; }).then(() => (me ? openFile(fileKey ?? fileKeys()[0]) : render()));
+  W.getJson('/api/my').then((answer) => { me = answer; }, (err) => { loadError = err.message; }).then(() => (me ? Promise.all(fileKeys().map(openFile)) : render()));
   let projectsLoaded = false;
   W.getJson('/api/my/projects').then((answer) => { projects = answer; }, () => {}).finally(() => { projectsLoaded = true; if (me) render(); });
   loadReviews();
