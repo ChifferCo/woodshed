@@ -710,8 +710,9 @@ test('a watched pull request is never posted, hears its pass once per commit, an
   clock += MINUTE;
   await watcher.check();
   assert.equal(told.length, 1, 'the second read of the same commit says nothing');
-  assert.match(told[0], /^PR #7 at abc passed its review and suites: the review verdict is APPROVE \(https:.*\), and e2e suite passed\. .*\[review\]\[e2e\].*say here what you decline and why.*`gh pr checks 7`: wait for any other check still pending .*name each check that still fails and why it is not your change.s, and stop\.$/);
+  assert.match(told[0], /^PR #7 at abc passed its review and suites: the review verdict is APPROVE \(https:.*\), and e2e suite passed\. The PR is done: do not change the code, commit or push .*say here, one line each, .*`gh pr checks 7`: wait for any other check still pending .*name each check that still fails and why it is not your change.s, and stop\.$/);
   assert.doesNotMatch(told[0], /PR comment/, 'its owner reads the terminal');
+  assert.doesNotMatch(told[0], /Fix what is real|with a commit|\[review\]/, 'an approved and green pull request is done: nothing invites another commit');
   assert.deepEqual(slack.posts, []);
   assert.deepEqual(github.comments, []);
   listening = 'ended';
@@ -887,7 +888,7 @@ test('a watch whose wait runs out while GitHub is read tells the session nothing
 
 test('the pass note of a pull request with no review says only its suites passed', () => {
   const text = passedNotesFor({ number: 7, sha: 'abcdef1', review: null, suites: [{ name: 'e2e suite' }], gates: { ...GATES, review: null } });
-  assert.match(text, /^PR #7 at abcdef1 passed its suites: e2e suite passed\. If there is nothing left to do, run `gh pr checks 7`/);
+  assert.match(text, /^PR #7 at abcdef1 passed its suites: e2e suite passed\. Run `gh pr checks 7`/);
   assert.doesNotMatch(text, /review/);
 });
 

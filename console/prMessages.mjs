@@ -52,12 +52,12 @@ export function passedNotesFor({ number, sha, review, suites = [], gates }) {
     notRun.length ? `${names(notRun)} does not run for the files this PR changes` : null,
   ].filter(Boolean).join(', and ');
   const notes = gates.review
-    ? `Read the review's notes with \`gh pr view ${number} --comments\` and \`gh api repos/{owner}/{repo}/pulls/${number}/comments\`. `
-      + `Fix what is real with a commit${rerunTags(gates) ? ` whose subject has ${rerunTags(gates)}` : ''}, which is watched again to its own verdict, `
-      + 'and say here what you decline and why: its owner reads this terminal. If there is nothing to act on, '
-    : 'If there is nothing left to do, ';
+    ? 'The PR is done: do not change the code, commit or push for the review\'s notes, even optional ones, since a new commit starts its review and suites again. '
+      + `Read them with \`gh pr view ${number} --comments\` and \`gh api repos/{owner}/{repo}/pulls/${number}/comments\`, `
+      + 'and say here, one line each, any you think worth a follow-up: its owner reads this terminal and decides. Then '
+    : '';
   const gatesSaid = gates.review ? 'its review and suites' : 'its suites';
-  return `PR #${number} at ${short} passed ${gatesSaid}: ${passed}. ${notes}run \`gh pr checks ${number}\`: wait for any other check still pending `
+  return `PR #${number} at ${short} passed ${gatesSaid}: ${passed}. ${notes}${notes ? 'run' : 'Run'} \`gh pr checks ${number}\`: wait for any other check still pending `
     + 'and handle a failed one as the rules say for CI. Once none is pending, say in one line what passed, name each check that still fails '
     + 'and why it is not your change\'s, and stop.';
 }
