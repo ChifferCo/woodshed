@@ -348,6 +348,16 @@ URL on top of each env file's Repo settings values
   session is being locked down`, `not running`). A pipe cut while the session ran on, with `why: 'ended'`, is the
   computer's side or the network going; one cut when the session paused is the idle pause, which a pipe does not hold
   off. In the session, statusd logs `statusd: exec opened` and `exec closed` with the exit code.
+- **`woodshed session` fails, or a start it waits on never ends.** Each command's message says what the console
+  answered (cli/README.md, "Sessions"): exit 3 with `does not reach this` is a route its token may not call
+  (`cliSessions: refused, not a route the command line may call`; the list is in `console/cliSessions.mjs`), and
+  `answered 404` a console from before it, or a hosting proxy that does not pass the session routes through with a
+  `wsc_` token. The console logs `cliSessions: call` with the login, the token's id and the path for each write, then
+  what the page's own call would: `fleet: starting session`, `fleet: session extended`, `fleet: session limits
+  changed`. A wait that stays at `Waiting in line` is the person's limit (`fleet: private session waits in line, at the
+  limit`); otherwise it reads the same start steps as the page's checklist, above. Ctrl-C stops the wait, not the
+  session. `extend` refused with `Extend is offered in the last 15 min` is the console's rule: `session get` says when
+  it pauses.
 - **A private session starts without its MCP logins, or Resume opens a blank
   claude.** The session's log says `Claude home restored`, `No Claude home
   saved yet` or `WARNING: Claude home not restored` with the status. Every 5
@@ -1028,7 +1038,8 @@ three made-up sessions and no AWS, GitHub, Docker or sign-in. Open `http://local
 Playwright browser. The rail folds its stopped zones, so run
 `localStorage['woodshed-rail-zones']='{"ended":false,"stopped":false,"merged":false}'` and reload to see the
 cards. Pull request chips show without their state or checks, since polling GitHub is off. New session's Work on lists made-up open
-pull requests, from a stand-in `gh` that answers that one read (`console/bin/devGh.mjs`). `/s/dddd4444` is running,
+pull requests, from a stand-in `gh` that answers that read and each repo's default branch (`console/bin/devGh.mjs`), so
+`woodshed session new` against it gets as far as the launcher. `/s/dddd4444` is running,
 for the pane bar's buttons, but has no container: it cannot show a live terminal, and the app and database links go
 nowhere. `/s/5a5a5a5a` is starting, for the start checklist in the local provider's words, until the start timeout
 fails it. `/s/c0ffee11` is running with a live TUI where ttyd and tmux are on the PATH (as in a Woodshed

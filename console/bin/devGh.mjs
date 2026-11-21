@@ -1,5 +1,6 @@
 // A `gh` for the dev console that answers the reads it can fake: the repo's open pull requests, for New session's
-// Work on list (github.mjs's OpenPulls query), with made-up ones; made-up project files when it is given them; and,
+// Work on list (github.mjs's OpenPulls query), with made-up ones; any repo's default branch, as `main`, which a start
+// reads (github.mjs's defaultBranch); made-up project files when it is given them; and,
 // with DEV_CONSOLE_MONGO_REPO=<owner/name>, that repo's project file as one that asks for a Mongo database, which the
 // dev console does not run (databaseGate.mjs's Needs setup card). Every other call goes to the real gh, if there is
 // one, which fails as before on the dev console's made-up token.
@@ -47,7 +48,8 @@ export function writeDevGh(dir, { projectFiles = {}, mongoRepo = process.env.DEV
 for arg in "$@"; do
   case "$arg" in
     "query=query OpenPulls"*) cat '${path.join(dir, 'open-pulls.json')}'; exit 0 ;;
-${projectCases}${mongoCase}  esac
+${projectCases}${mongoCase}    repos/*) if printf '%s' "$arg" | grep -Eq '^repos/[^/]+/[^/]+$'; then echo '{"default_branch":"main"}'; exit 0; fi ;;
+  esac
 done
 self=$(cd "$(dirname "$0")" && pwd)
 real=$(PATH=$(printf '%s' "$PATH" | tr ':' '\\n' | grep -vx "$self" | paste -sd: -) command -v gh) && exec "$real" "$@"
