@@ -177,7 +177,9 @@ would land there, so open that session by its id instead. A paused one is resume
   list of what connects to what, marked added, removed or changed. **2 Q&A**: the questions someone new to the code
   would ask, each answered from the code, started on opening the tab as the page does. They are folded, as on the
   page: `↑`/`↓` choose one, `Enter` opens it (one at a time, with its follow-ups folded under it) and `←` closes it;
-  `f` asks a follow-up on the one chosen, `i` a question of your own, `A` all of them again. **3 Discussion** (with a
+  `i` asks where the cursor is: a follow-up under the chosen question, or on the last row, `＋ Ask a question of
+  your own`, a new one at the end. A question waits for its answer where it was asked, with the cursor on it. `A` asks
+  them all again. **3 Discussion** (with a
   pull request): what was said about the change as a whole. **4 Files changed**: every file, grouped in the
   analysis's reading order with each group's reason, and under each file its role, `+`/`−`, conversations and what it
   does. `Enter` opens one's diff, with every conversation under its line (`↑`/`↓` move the line a comment goes on,

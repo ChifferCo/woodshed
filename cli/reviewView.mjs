@@ -364,28 +364,16 @@ export function tabsOf(state) {
   return TABS.filter((t) => t.key !== 'discussion' || state.status?.livePr);
 }
 
+/** The tabs, by name alone: the number keys that reach them are in the footer, and nothing on a tab is a count. */
 export function tabBar(state, columns) {
   const segs = [];
   for (const t of tabsOf(state)) {
-    let count = '';
-    if (t.key === 'files') count = String(state.diff?.files?.length ?? '');
-    if (t.key === 'qa') count = qaCount(state);
-    if (t.key === 'discussion') count = state.draftLoading ? '…' : String(state.draft?.said?.length || '');
-    if (t.key === 'chat' && state.chat?.busy) count = '…';
-    const label = `${t.n} ${t.label}${count ? ` ${count}` : ''}`;
     if (segs.length) segs.push(['dim', ' │ ']);
-    segs.push([state.tab === t.key ? 'rev bold' : null, ` ${label} `]);
+    // No-break spaces: a tab's name is never split over two lines, and the selected one's padding is kept.
+    segs.push([state.tab === t.key ? 'rev bold' : null, `\u00a0${t.label.replace(/ /g, '\u00a0')}\u00a0`]);
   }
   if (state.status?.livePr && state.draft?.comments?.length) segs.push([null, '  '], ['yellow', `${state.draft.comments.length}\u00a0draft${state.draft.comments.length === 1 ? '' : 's'}`]);
   return wrapSegments(segs, columns);
-}
-
-function qaCount(state) {
-  const d = state.qa?.data;
-  if (!d) return '';
-  if (d.status === 'running') return '…';
-  const n = (d.items ?? []).filter((i) => !i.parent).length;
-  return n ? String(n) : '';
 }
 
 // --- Overview -------------------------------------------------------------------------
@@ -527,7 +515,10 @@ export function qaLines(state, columns) {
   const kids = qaKids(all);
   const open = new Set(qa.open ?? []);
   const visible = qaVisible(state);
-  const cursor = visible.length ? Math.min(Math.max(0, qa.cursor ?? 0), visible.length - 1) : -1;
+  // The rows a cursor stands on: each question on screen, then, when nothing is being written, the row that asks one of
+  // your own. A question is asked where the cursor is: under the question, or at the end from that last row.
+  const rowsCount = visible.length + (running ? 0 : 1);
+  const cursor = rowsCount ? Math.min(Math.max(0, qa.cursor ?? 0), rowsCount - 1) : -1;
   const depthOf = (item) => {
     let n = 0;
     for (let p = item.parent; p && n < 20; n += 1) p = all.find((x) => x.id === p)?.parent;
@@ -555,8 +546,10 @@ export function qaLines(state, columns) {
     }
   });
   failedAt('');
-  if (!running && all.length) add([]);
-  if (!running) add([['dim', all.length ? 'Enter opens a question; f asks a follow-up on it, i a question of your own, A all of them again.' : 'i asks a question of your own; A asks them again.']]);
+  if (!running) {
+    if (all.length) add([]);
+    add([['cyan', '＋ Ask a question of your own']], visible.length);
+  }
   return { lines, items, cursor };
 }
 

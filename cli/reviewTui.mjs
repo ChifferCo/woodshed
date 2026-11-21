@@ -229,8 +229,8 @@ export function footerKeys(state) {
     if (state.status.livePr) keys.push(['c', 'comment']);
   } else keys.push([state.tab === 'qa' && state.qa.data?.items?.length ? 'PgUp PgDn' : '↑↓ PgUp PgDn', 'scroll']);
   if (state.tab === 'chat' && !state.chat.busy) keys.push(['Enter', 'ask']);
-  if (state.tab === 'qa' && state.qa.data?.items?.length) keys.push(['↑↓', 'question'], ['Enter', 'open'], ['f', 'follow up']);
-  if (state.tab === 'qa' && state.qa.data && state.qa.data.status !== 'running') keys.push(['i', 'ask'], ['A', 'ask again']);
+  if (state.tab === 'qa' && state.qa.data?.items?.length) keys.push(['↑↓', 'question'], ['Enter', 'open']);
+  if (state.tab === 'qa' && state.qa.data && state.qa.data.status !== 'running') keys.push(['i', state.qa.data.items?.length ? 'ask about it' : 'ask'], ['A', 'ask again']);
   if (state.tab === 'qa' && !state.qa.data && state.qa.started && !state.qa.loading) keys.push(['A', 'ask the questions']);
   if (state.status.livePr) keys.push(['s', 'submit review'], ['m', 'merge'], ['t', 'rename']);
   const st = state.status.status;
@@ -578,15 +578,23 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
     }
     // A question of the reader's: at the top (parent null), or a follow-up under an answered one, as sendQaQuestion.
     async function askQa(question, parent = null) {
+      let asked = null;
       try {
-        await call('POST', '/qa/ask', { parent, question, forDiff: state.diffAt ?? '' });
-        // The answer comes in under the question it follows, which stays open to show it.
+        asked = (await call('POST', '/qa/ask', { parent, question, forDiff: state.diffAt ?? '' })).item ?? null;
+        // The question waits where it was asked, under the one it follows, which stays open to show it.
         if (parent) state.qa.open = qaPath(parent);
-        flash(parent ? 'Asked. The answer appears under that question, as a follow-up.' : 'Asked. The answer appears under your question, at the end.');
+        flash(parent ? 'Asked. It waits for its answer under the question it follows.' : 'Asked. It waits for its answer at the end of the questions.');
       } catch (err) {
         if (!finished) flash(`Not asked: ${err.message}`, true);
       }
-      loadQa(false);
+      await loadQa(false);
+      // The cursor goes to it, so it is on screen where it was asked.
+      const at = asked ? qaVisible(state).findIndex((i) => i.id === asked.id) : -1;
+      if (at >= 0) {
+        state.qa.cursor = at;
+        state.follow = true;
+        draw();
+      }
     }
 
     // --- writes ---
@@ -844,7 +852,7 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
           'i on Files changed starts a chat about the file (in its diff, about the line), with its path in the box.',
           'c comments on the line, into your draft review or posted at once (Tab chooses), with a pull request.',
           'Enter on Chat asks the session\'s agent about the change.',
-          '2 Q&A: ↑ ↓ choose a question, Enter or → opens it (one at a time, with its follow-ups), ← closes it; f asks a follow-up on it, i a question of your own, A all of them again.',
+          '2 Q&A: ↑ ↓ choose a question, Enter or → opens it (one at a time, with its follow-ups), ← closes it; i asks a follow-up on it (on the last row, a question of your own), A all of them again.',
           's submits your review (comment, approve or request changes) with your draft comments. m merges, t renames.',
           'r re-reviews: pulls the branch, takes the diff again and reads it again. a runs the analysis. d discards it.',
           'Writes to GitHub go as you, from your own My Woodshed session, once you have connected GitHub on My settings.',
@@ -884,12 +892,12 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
       for (let at = items.find((i) => i.id === id); at && path.length < 20; at = items.find((i) => i.id === at.parent)) path.unshift(at.id);
       return path;
     }
+    // The question the cursor is on, or null on the last row, which asks one of your own.
     function qaSelected() {
-      const visible = qaVisible(state);
-      return visible[Math.min(Math.max(0, state.qa.cursor ?? 0), visible.length - 1)] ?? null;
+      return qaVisible(state)[Math.max(0, state.qa.cursor ?? 0)] ?? null;
     }
     function qaMove(n) {
-      const count = qaVisible(state).length;
+      const count = qaVisible(state).length + (state.qa.data?.status === 'running' ? 0 : 1);
       if (!count) return scrollBy(n);
       state.qa.cursor = Math.max(0, Math.min(count - 1, (state.qa.cursor ?? 0) + n));
       state.follow = true;
@@ -915,7 +923,8 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
       state.follow = true;
       return draw();
     }
-    function qaFollowUp() {
+    // `i`: a question asked where the cursor is. On a question, a follow-up under it; on the last row, one of your own.
+    function qaAsk() {
       const d = state.qa.data;
       const item = qaSelected();
       if (!d || d.status === 'running') return flash('The Q&A is still being written: ask once it is done.');
@@ -1062,6 +1071,7 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
       const diff = state.tab === 'files' && state.fileOpen;
       const qaTab = state.tab === 'qa' && Boolean(state.qa.data);
       const step = (n) => (list ? moveFile(n) : diff ? moveCursor(n) : qaTab && Math.abs(n) === 1 ? qaMove(n) : scrollBy(n));
+      // On Q&A, g and G go to the first question and to the last row (a question of your own).
       switch (key) {
         case 'q': return finish({ code: 'quit' });
         case 'escape': case 'backspace':
@@ -1078,11 +1088,13 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
         case 'pageup': case 'b': return step(-page);
         case 'pagedown': case ' ': return step(page);
         case 'home': case 'g':
+          if (qaTab) return qaMove(-Infinity);
           if (list) return moveFile(-Infinity);
           if (diff) state.cursor = 0;
           state.scroll[scrollKey(state)] = 0;
           return draw();
         case 'end': case 'G':
+          if (qaTab) return qaMove(Infinity);
           if (list) return moveFile(Infinity);
           if (diff) return moveCursor(Infinity);
           state.scroll[scrollKey(state)] = Number.MAX_SAFE_INTEGER;
@@ -1094,11 +1106,11 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
         case 'left': case 'p': case '[':
           if (qaTab && key === 'left') return qaToggle(true);
           return diff && key === 'left' ? openFile(false) : state.tab === 'files' ? moveFile(-1) : undefined;
-        case 'f': return state.tab === 'qa' ? qaFollowUp() : undefined;
+        case 'f': return state.tab === 'qa' && state.qa.data ? qaAsk() : undefined;
         case 'enter': case 'i':
           if (state.tab === 'chat') return startCompose('chat');
-          if (qaTab && key === 'enter') return qaToggle();
-          if (state.tab === 'qa' && state.qa.data && state.qa.data.status !== 'running') return startCompose('qa');
+          if (qaTab && key === 'enter' && qaSelected()) return qaToggle();
+          if (state.tab === 'qa' && state.qa.data) return qaAsk();
           if (state.tab === 'files' && key === 'i') return chatAbout();
           if (list) return openFile(true);
           if (diff && needsPr('comment on')) return startCompose('comment');

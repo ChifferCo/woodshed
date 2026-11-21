@@ -104,4 +104,7 @@ test('the Q&A is folded: only the open question shows its answer and its follow-
   state.qa.open = ['b'];
   assert.deepEqual(qaVisible(state).map((i) => i.id), ['a', 'b', 'c', 'd']);
   assert.deepEqual(qaLines(state, 80).lines.map(plainText).filter(Boolean).slice(0, 4), ['▸ A?', '▾ B?', '  So.', '  ▸ C?']);
+  const last = qaLines(state, 80);
+  assert.equal(last.lines.map(plainText).at(-1), '＋ Ask a question of your own', 'the last row asks one of your own');
+  assert.equal(last.items.at(-1), qaVisible(state).length);
 });

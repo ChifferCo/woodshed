@@ -48,17 +48,23 @@ const DIFF = {
 async function fakeStatusd(t) {
   const seen = [];
   const chat = [];
+  const qaItems = [
+    { id: 'q1', parent: null, depth: 1, question: 'What is `next`?', answer: 'The page to go back to.' },
+    { id: 'q2', parent: null, depth: 1, question: 'Why only same-site?', answer: 'An open redirect otherwise.' },
+    { id: 'q3', parent: 'q2', depth: 2, question: 'What is an open redirect?', answer: 'A link that sends you anywhere.' },
+  ];
   const answers = new Map(Object.entries({
     'GET ': () => STATUS,
     'GET /diff': () => DIFF,
     'GET /comments': () => ({ ok: true, prId: 'PR_1', headSha: 'abcdef0123456789', reviewId: null, description: { author: 'mia-dev', body: 'Fixes #3.' }, comments: [], threads: [], said: [] }),
     'GET /chat': () => ({ ok: true, messages: chat, running: null }),
-    'GET /qa': () => ({ ok: true, qa: { status: 'ready', forDiff: iso(T0), items: [
-      { id: 'q1', parent: null, depth: 1, question: 'What is `next`?', answer: 'The page to go back to.' },
-      { id: 'q2', parent: null, depth: 1, question: 'Why only same-site?', answer: 'An open redirect otherwise.' },
-      { id: 'q3', parent: 'q2', depth: 2, question: 'What is an open redirect?', answer: 'A link that sends you anywhere.' },
-    ] } }),
-    'POST /qa/ask': (body) => ({ ok: true, item: { id: 'q9', parent: body.parent, question: body.question, asking: true } }),
+    'GET /qa': () => ({ ok: true, qa: { status: 'ready', forDiff: iso(T0), items: qaItems } }),
+    // The shed writes the question at once, waiting for its answer, after the others under its parent.
+    'POST /qa/ask': (body) => {
+      const item = { id: `q${qaItems.length + 1}`, parent: body.parent, question: body.question, asking: true, mine: true };
+      qaItems.push(item);
+      return { ok: true, item };
+    },
     'POST /qa': () => ({ ok: true }),
     'POST /comments': () => ({ ok: true, reviewId: 'PRR_1' }),
     'POST /submit': () => ({ ok: true, event: 'approve', pr: 12 }),
@@ -269,8 +275,10 @@ test('the review on a terminal: every frame fits 80 columns, and a comment, a ve
   const c = await consoleFor(t);
   const term = terminal();
   const done = c.run(['review', 'aaaa0001'], { stdin: term.stdin, stdout: term.stdout });
-  const lastFrame = () => term.screen().split('\x1b[H').at(-1).replace(/\x1b\[[0-9;]*m/g, '');
-  await until(() => /1 Overview/.test(lastFrame()), 'the first frame');
+  const lastFrame = () => term.screen().split('\x1b[H').at(-1).replace(/\x1b\[[0-9;]*m/g, '').replace(/\u00a0/g, ' ');
+  // A failure part way leaves no review running, whose timers would keep the test from ending.
+  t.after(() => term.type('q'));
+  await until(() => /Overview +│ +Q&A +│ +Discussion +│ +Files changed +│ +Chat /.test(lastFrame()), 'the first frame: the tabs by name, with no counts');
   assert.equal(term.stdin.raw, true);
   assert.match(term.screen(), /\x1b\[\?1049h/, 'an alternate screen');
   const said = (method, section) => c.seen.filter((s) => s.method === method && s.section === section);
@@ -338,11 +346,20 @@ test('the review on a terminal: every frame fits 80 columns, and a comment, a ve
   term.type('j\r');
   await until(() => rows().includes('▾ Why only same-site?') && rows().includes('  ▸ What is an open redirect?'), 'the second one open, with its follow-up');
   assert.ok(!lastFrame().includes('The page to go back to.'), 'the first one closed: one at a time');
-  term.type('f');
+  // A question is asked where the cursor is: on a question, a follow-up under it.
+  term.type('i');
   await until(() => /Follow up on "Why only same-site\?": /.test(lastFrame()), 'the follow-up box');
   term.type('Which hosts count?\r');
   await until(() => said('POST', '/qa/ask').length === 1, 'the follow-up');
-  await until(() => /Asked\. The answer appears under that question/.test(lastFrame()), 'the follow-up, done');
+  await until(() => /Asked\. It waits for its answer under the question it follows/.test(lastFrame()), 'the follow-up, done');
+  await until(() => rows().includes('  ▸ Which hosts count? ⋯ being answered'), 'the follow-up, waiting where it was asked');
+  // The last row asks one of your own, at the end.
+  term.type('G');
+  term.type('\r');
+  await until(() => /Your question: /.test(lastFrame()), 'a question of your own');
+  term.type('Is there a test?\r');
+  await until(() => said('POST', '/qa/ask').length === 2, 'the question of your own');
+  assert.deepEqual(said('POST', '/qa/ask')[1].body, { parent: null, question: 'Is there a test?', forDiff: iso(T0) });
   assert.deepEqual(said('POST', '/qa/ask')[0].body, { parent: 'q2', question: 'Which hosts count?', forDiff: iso(T0) });
 
   term.type('5\r');
