@@ -21,9 +21,9 @@ function reviewerIn(which, calls = []) {
 
 const PROJECTS = [{ name: 'game', repo: 'acme/game' }];
 
-function readinessFor(which, { gates = null, own = true, calls = [], canWrite = null, runsOnName = null, now } = {}) {
+function readinessFor(which, { gates = null, own = true, calls = [], canWrite = null, runsOnName = null } = {}) {
   return createReviewReadiness({
-    canWrite, runsOnName, ...(now ? { now } : {}),
+    canWrite, runsOnName,
     publicUrl: 'https://console.example', reviewer: which === null ? null : reviewerIn(which, calls), ownReviewer: own,
     appLogin: async () => 'acme-woodshed[bot]',
     pullRequestsOf: async (name) => { if (gates instanceof Error) throw gates; assert.equal(name, 'game'); return gates; },
@@ -132,19 +132,16 @@ test('installation not known, and a runsOn naming another console, are each a mi
 
 test('a token\'s person who lost write access to the repo reads nothing more of it, though still on People', async (t) => {
   let writes = true;
-  let clock = 0;
   const asked = [];
   const canWrite = async (login, project) => { asked.push([login, project.repo]); return writes; };
-  const s = await serve(t, { readiness: readinessFor('installed', { canWrite, now: () => clock }) });
+  const s = await serve(t, { readiness: readinessFor('installed', { canWrite }) });
   const { token } = s.tokenFor('bob');
   const read = async (headers) => (await s.get('/api/review-readiness?repo=acme/game', headers)).json();
   assert.equal((await read({ authorization: `Bearer ${token}` })).project, 'game');
-  assert.equal((await read({ authorization: `Bearer ${token}` })).project, 'game');
-  assert.deepEqual(asked, [['bob', 'acme/game']], 'asked once, then kept a while');
+  assert.deepEqual(asked, [['bob', 'acme/game']]);
   writes = false;
-  clock += 11 * 60_000;
   const gone = await read({ authorization: `Bearer ${token}` });
-  assert.deepEqual([gone.project, gone.reviewerApp, gone.defaultBranch], [null, null, null]);
+  assert.deepEqual([gone.project, gone.reviewerApp, gone.defaultBranch], [null, null, null], 'the very next call, no earlier answer kept');
   assert.equal(asked.length, 2);
   assert.equal((await read({ cookie: 'woodshed_session=bob' })).project, 'game', 'a browser\'s sign-in is rechecked by auth.mjs, not here');
   assert.equal(asked.length, 2);

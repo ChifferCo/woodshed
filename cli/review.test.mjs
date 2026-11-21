@@ -20,7 +20,7 @@ const git = (dir, ...args) => execFileSync('git', ['-C', dir, ...args], { stdio:
 // A console with the command line's sign-in and a reviewer App in `state.reviewer` ('none', 'made' or 'installed'),
 // whose default branch's project file is `state.gates`; a checkout of acme/game; and bob signed in on this computer.
 async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin = 'https://github.com/acme/game.git' } = {}) {
-  const state = { reviewer: 'installed', gates: null, runsOn: null };
+  const state = { reviewer: 'installed', gates: null, runsOn: null, gatesError: null };
   const reviewer = {
     login: () => (state.reviewer === 'none' ? null : 'acme-reviewer[bot]'),
     configured: () => state.reviewer !== 'none',
@@ -41,7 +41,7 @@ async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin
     config, fleet: { sessions: () => [], find: () => null }, auth, cli,
     projectAccess: { startable: async (login) => (login === 'bob' ? [{ name: 'game', repo: 'acme/game' }] : []), view: async () => ({ projects: [] }) },
     reviewReadiness: createReviewReadiness({
-      publicUrl: origin, reviewer, ownReviewer: true, appLogin: async () => 'acme-woodshed[bot]', pullRequestsOf: async () => state.gates,
+      publicUrl: origin, reviewer, ownReviewer: true, appLogin: async () => 'acme-woodshed[bot]', pullRequestsOf: async () => { if (state.gatesError) throw new Error(state.gatesError); return state.gates; },
     }),
   });
 
@@ -225,4 +225,14 @@ test('status is on only with the installation known and runsOn naming this conso
   noApp.state.reviewer = 'installed';
   const run = await noApp.run(['review', 'enable', '--console', 'http://localhost:1']);
   assert.equal(run.code, EXIT.waiting, 'not signed in to that console');
+});
+
+test('a default branch\'s project file the console could not read leaves enable unconfirmed: 1', async (t) => {
+  const s = await setup(t);
+  s.state.gatesError = 'the project file could not be read: HTTP 502';
+  const run = await s.run(['review', 'enable']);
+  assert.equal(run.code, EXIT.failed);
+  assert.match(run.out, /the default branch's \.woodshed\/project\.yaml was not read: the project file could not be read: HTTP 502/);
+  assert.ok(s.file().includes('runner: woodshed'), 'the edit is kept');
+  assert.equal((await s.run(['review', 'status'])).code, EXIT.failed);
 });

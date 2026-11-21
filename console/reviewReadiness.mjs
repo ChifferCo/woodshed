@@ -10,9 +10,9 @@
 //
 // It answers about a repo the asker may start sessions on, and about no other: for any other repo it says only that
 // the console does not have it for them, and asks GitHub nothing more. The command line's token (wsc_, cliSignIn.mjs)
-// may call it, as its person; a call that carries an Origin with that token is a page's, and is refused. A token is
-// held to write access on the repo, asked of GitHub at its first call and every 10 minutes after, as a browser's
-// sign-in is held to it by auth.mjs: a person who lost it reads nothing more of the repo, though still on People.
+// may call it, as its person; a call that carries an Origin with that token is a page's, and is refused. A token's
+// call is held to write access on the repo, asked of GitHub each time (a command asks it once, never in a loop): a
+// person who lost it reads nothing more of the repo from that moment, though still on People.
 //
 // Ready means: the repo is the asker's to start on, the reviewer App is made and known to be installed on it, and the
 // default branch's runsOn, when it names one, names this console as the fleet reads it (fleet.mjs, runsElsewhere).
@@ -20,7 +20,6 @@
 export const REVIEW_READINESS_PATH = '/api/review-readiness';
 const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 const firstLine = (err) => String(err?.message ?? err).split('\n')[0].slice(0, 300);
-const WRITE_FRESH_MS = 10 * 60_000;
 
 /** @returns {boolean}  whether a `runsOn` names this console: its App's login, and after a slash its name, if any */
 export function runsOnHere(runsOn, { login, name = null }) {
@@ -34,24 +33,18 @@ export function runsOnHere(runsOn, { login, name = null }) {
  *            installedOn?: (repo: string) => Promise<boolean>, view?: () => Promise<{installUrl: string|null}>}|null,
  *          ownReviewer: boolean, appLogin: () => Promise<string|null>, runsOnName?: string|null,
  *          pullRequestsOf: (projectName: string) => Promise<object|null>,
- *          canWrite?: ((login: string|null, project: object) => Promise<boolean>)|null, now?: () => number}} deps
+ *          canWrite?: ((login: string|null, project: object) => Promise<boolean>)|null}} deps
  *   `reviewer` is the console's reviewer App, its own or a host's, null where it can have none; `ownReviewer` says
  *   whether it is the console's own, which an admin makes on /setup/github; `pullRequestsOf` the project file's gates on
  *   the default branch, with the Apps' logins filled in (reviewLogins.mjs); `runsOnName` this console's name among its
  *   App's (config.runsOnName); `canWrite` asks GitHub whether a person may write to a project's repo, null where
  *   sign-in asks nothing (no sign-in, or a hosting proxy that says who is in)
  */
-export function createReviewReadiness({ publicUrl, reviewer, ownReviewer, appLogin, pullRequestsOf, runsOnName = null, canWrite = null, now = Date.now }) {
-  const writers = new Map();
-
-  // A token's person still writes to the repo: GitHub's answer kept for a while, since status may be asked often.
+export function createReviewReadiness({ publicUrl, reviewer, ownReviewer, appLogin, pullRequestsOf, runsOnName = null, canWrite = null }) {
+  // A token's person still writes to the repo, asked of GitHub now: no earlier answer is kept to stand in for it.
   async function stillWrites(login, project) {
     if (!canWrite) return true;
-    const key = `${login}\n${String(project.repo).toLowerCase()}`;
-    const kept = writers.get(key);
-    if (kept && now() - kept.at < WRITE_FRESH_MS) return kept.ok;
     const ok = Boolean(await canWrite(login, project));
-    writers.set(key, { at: now(), ok });
     if (!ok) console.log('reviewReadiness: refused, no write access to the repo', { login, repo: project.repo });
     return ok;
   }

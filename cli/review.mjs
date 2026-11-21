@@ -226,8 +226,11 @@ export async function reviewCommand({ origin, rest }, deps) {
     }
     sayConsole(readiness, unasked, findings);
     if (signIn || findings.missing.length) return EXIT.waiting;
-    // The file is written, but the console could not say it can run the review: not done.
-    if (!readiness) {
+    // The file is written, but the console could not say it can run the review (nor read the default branch's file,
+    // whose runsOn decides which console does): not done.
+    const unread = readiness?.defaultBranch?.error ? printable(readiness.defaultBranch.error, 300) : null;
+    if (!readiness || unread) {
+      if (unread) say(`Console: the default branch's ${PROJECT_FILE} was not read: ${unread}.`);
       say(`${PROJECT_FILE} is ${dryRun ? 'unchanged' : 'written'}, but the console did not say it can run the review: fix that, then woodshed review status.`);
       return EXIT.failed;
     }
@@ -273,7 +276,7 @@ export async function reviewCommand({ origin, rest }, deps) {
     say(`This checkout:   ${fileError ? `${PROJECT_FILE} does not read: ${fileError}` : `review ${words(local)}${gates?.qa ? `; QA ${gates.qa.runner === 'woodshed' ? 'in a Woodshed session' : 'in GitHub Actions'}` : ''}`}`);
     if (remote) say(`Default branch:  ${remote.error ? `not read: ${printable(remote.error, 200)}` : `review ${words(remote.review)}`}`);
     sayConsole(readiness, unasked, findings);
-    if (fileError || unreachable) return EXIT.failed;
+    if (fileError || unreachable || remote?.error) return EXIT.failed;
     if (on) {
       say('Review is on.');
       return EXIT.done;

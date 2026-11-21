@@ -959,7 +959,7 @@ missing step with who takes it (`missing: [{key, step, by}]`, keys `repo`, `revi
 names another console, read as the fleet reads it, App and name). Of any other repo it says only that the console does
 not have it for them, and asks GitHub nothing more. Anyone signed in may read it, and so may the command line's token
 (`woodshed review enable` and `status`, cli/README.md, "Review"), as its person, held to write access on the repo: GitHub
-is asked at the token's first call and every 10 minutes after, and a person who lost it reads nothing more of the repo
+is asked at each of the token's calls (a command asks once), and a person who lost it reads nothing more of the repo
 (`reviewReadiness: refused, no write access to the repo`). A token's call that carries an Origin is a page's, and is
 refused. A hosting program's proxy passes it through
 when it carries `Authorization: Bearer wsc_…`, as it does `/api/cli/*`. A host's reviewer App may give

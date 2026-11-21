@@ -234,7 +234,8 @@ URL on top of each env file's Repo settings values
   or no longer writes to (`reviewReadiness: refused, no write access to the repo`). `Console: not asked` says why it was not: no sign-in, an origin
   not on GitHub, or a console from before the route. Exit 1 with `does not read as a project file` or `project check
   found problems` left the file as it was; `written inline` is a `pullRequests` or `review` written as `{…}`, which it
-  does not edit. It writes no workflow, secret or key: a repo with no console uses `scripts/enable-review.sh`.
+  does not edit. Exit 1 with `the console did not say it can run the review` kept the edit, but the console was not
+  reached, has no GitHub App (404), or could not read the default branch's project file (`was not read`, with why). It writes no workflow, secret or key: a repo with no console uses `scripts/enable-review.sh`.
 - **A label or `/woodshed` comment does nothing.** A label on a pull request
   never starts a session (console/README.md, "How sessions start"): the console logs
   `fleet: trigger routed` with `action: ignore`. Otherwise `docker compose logs
