@@ -1082,6 +1082,10 @@ image from the worktree and pass its tag. For another kind of session, copy it: 
 the stand-in session API serves.
 `providers/aws/bin/qaInImage.mjs <image> <pull request number>` is that copy for a QA session: it keeps the report
 instead of writing the pull request's comment and check.
+`providers/aws/bin/herdrParentInImage.mjs <image> [entrypoint.sh]` is the copy for a private session started with
+`woodshed session new --herdr --parent`: it runs the whole start under ECS's init (`--init`) and waits for the agent's
+terminal, which a terminal in this computer's Herdr makes once the machine is added with `--via 'docker exec -i
+woodshed-herdr-parent-in-image sh -c'` (cli/hc.mjs, `startAgentTerminal`).
 
 ## Checking a console page change in a browser
 
