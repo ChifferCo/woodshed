@@ -582,3 +582,11 @@ session's own checkout without the launcher. The session image ships every
 file this module imports from an allow-list, and a session test fails when a new
 import is missing from it: when you add one, add it to
 `woodshed/session/Dockerfile` and `Dockerfile.dockerignore`.
+
+Woodshed sessions pass their launch-time agent, model and reasoning effort to
+Review tab jobs. Codex runs through the session's existing Codex sign-in or
+console proxy, with an ephemeral run outside the checkout. Analysis,
+explanations, chat and Q&A answers use the saved diff as code context. Codex
+receives a bounded excerpt of that diff with shell, MCP, image and web tools
+disabled. Claude keeps its review tool restrictions. When the session has no
+explicit model, Codex uses its CLI default and Claude uses the review default.

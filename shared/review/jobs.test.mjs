@@ -44,3 +44,34 @@ test('the Q&A waits for the analysis and the chat for an explain, so two claude 
   cancelJobsForSession(session);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('a Codex review uses the selected model and reads the final answer from JSONL', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-codex-test-'));
+  const oldPath = process.env.PATH;
+  try {
+    fs.writeFileSync(path.join(dir, 'codex'), `#!/bin/sh
+model=
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--model" ]; then shift; model=$1; fi
+  shift
+done
+grep -q 'Explain the change' || exit 1
+printf '{"type":"item.completed","item":{"type":"agent_message","text":"Answer from %s"}}\\n' "$model"
+printf '{"type":"turn.completed"}\\n'
+`, { mode: 0o755 });
+    process.env.PATH = `${dir}:${oldPath}`;
+    const { startJob } = await import('./jobs.mjs');
+    const { extractAnswer } = await import('./explain.mjs');
+    const started = startJob({
+      kind: 'chat', session: 'claude-c0de5e55', cwd: dir, argv: ['-p', 'Explain the change'],
+      agent: 'codex', model: 'test-codex-model', log: () => {},
+    });
+    assert.equal(started.ok, true);
+    const job = await started.job.done;
+    assert.equal(extractAnswer(job).text, 'Answer from test-codex-model');
+    assert.equal(fs.existsSync(job.scratch), false);
+  } finally {
+    process.env.PATH = oldPath;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
