@@ -135,8 +135,8 @@ export function checkLimits(values) {
 export function checkIdentity({ name, email }) {
   const n = String(name ?? '').trim();
   const e = String(email ?? '').trim();
-  if (!n || n.length > MAX_IDENTITY_CHARS || /[<>\n]/.test(n)) throw Object.assign(new Error('the name must be one line, without < or >'), { shown: true });
-  if (!/^[^\s@<>]+@[^\s@<>]+$/.test(e) || e.length > MAX_IDENTITY_CHARS) throw Object.assign(new Error('that is not an email address'), { shown: true });
+  if (!n || n.length > MAX_IDENTITY_CHARS || /[<>\n]/.test(n)) throw Object.assign(new Error('the name must be one line, without < or >'), { shown: true, status: 400 });
+  if (!/^[^\s@<>]+@[^\s@<>]+$/.test(e) || e.length > MAX_IDENTITY_CHARS) throw Object.assign(new Error('that is not an email address'), { shown: true, status: 400 });
   return { name: n, email: e };
 }
 
