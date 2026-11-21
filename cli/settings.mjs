@@ -91,7 +91,7 @@ export function envLike(file) {
 }
 
 function categoryOf(id) {
-  if (parseEntryId(id)) return 'mcp';
+  if (parseEntryId(id) || id === '.claude.json' || id === '.claude/.credentials.json') return 'mcp';
   if (id === SETTINGS) return 'settings';
   if (id === '.claude/keybindings.json') return 'keybindings';
   if (id === '.claude/CLAUDE.md') return 'memory';
@@ -381,15 +381,11 @@ function bytesOf(id, value) {
   return parseEntryId(id) ? Buffer.byteLength(value) : Buffer.from(value, 'base64').length;
 }
 
-async function symlinksUnder(home, dir) {
-  const found = [];
-  const entries = await fs.promises.readdir(path.join(home, dir), { withFileTypes: true }).catch(() => []);
-  for (const e of entries) {
-    const rel = `${dir}/${e.name}`;
-    if (e.isSymbolicLink()) found.push(rel);
-    else if (e.isDirectory()) found.push(...await symlinksUnder(home, rel));
-  }
-  return found;
+function claudePathProblem(home, file, directory = false) {
+  const link = linkOnPath(home, file);
+  if (link) return { path: link, reason: `~/${link} is a symlink, which is not followed: copy what it points to here` };
+  const reason = directory ? null : notAFileHere(home, file);
+  return reason ? { path: file, reason } : null;
 }
 
 export const SAME_AS_SHARED = 'the same as the shared copy';
@@ -402,18 +398,20 @@ const SAME_AS_YOURS = 'the same as yours';
  * @returns {Promise<{rows: object[], changed: Record<string, string>}>}  changed: what push sends
  */
 export async function claudePushPlan({ home, shared, only, synced = {} }) {
-  const { items, unreadable, oversized } = await readSnapshot(home);
+  const blocked = new Map();
+  const { items, unreadable, oversized } = await readSnapshot(home, {
+    skipPath(file, directory) {
+      const problem = claudePathProblem(home, file, directory);
+      if (problem) blocked.set(problem.path, problem.reason);
+      return Boolean(problem);
+    },
+  });
   const rows = [];
   const ready = {};
   for (const [id, raw] of Object.entries(items)) {
     const row = { kind: 'claude', id, name: nameOf(id), category: categoryOf(id), bytes: bytesOf(id, raw) };
     if (!matchesOnly(only, row)) {
       rows.push({ ...row, fate: 'skip', reason: ONLY });
-      continue;
-    }
-    const link = linkOnPath(home, fileOf(id));
-    if (link) {
-      rows.push({ ...row, fate: 'skip', reason: `~/${link} is a symlink, which is not followed: copy what it points to here` });
       continue;
     }
     const out = translate(id, raw, { from: home, to: SESSION_HOME, statusLineOf: shared[SETTINGS] });
@@ -443,9 +441,9 @@ export async function claudePushPlan({ home, shared, only, synced = {} }) {
   }
   for (const file of oversized) rows.push({ kind: 'claude', id: file, name: nameOf(file), category: categoryOf(file), bytes: fs.statSync(path.join(home, file)).size, fate: 'skip', reason: `over ${MAX_ITEM_BYTES / 1024 / 1024} MB` });
   for (const file of unreadable) rows.push({ kind: 'claude', id: file, name: `~/${file}`, category: 'mcp', bytes: 0, fate: 'skip', reason: 'not read as JSON (claude may be writing it): try again' });
-  for (const dir of SYNCED_DIRS) {
-    if (linkOnPath(home, dir)) continue;
-    for (const link of await symlinksUnder(home, dir)) rows.push({ kind: 'claude', id: link, name: nameOf(link), category: categoryOf(link), bytes: 0, fate: 'skip', reason: 'a symlink, which is not followed: copy what it points to here' });
+  for (const [file, reason] of blocked) {
+    const row = { kind: 'claude', id: file, name: nameOf(file), category: categoryOf(file), bytes: 0, fate: 'skip' };
+    rows.push({ ...row, reason: matchesOnly(only, row) ? reason : ONLY });
   }
   return { rows: rows.map(({ value, ...row }) => row), changed };
 }
@@ -528,7 +526,9 @@ export function runsOf(id, value) {
  *   items and before: applyItems' arguments
  */
 export async function claudePullPlan({ home, shared, only, replace }) {
-  const { items: local, oversized } = await readSnapshot(home);
+  const { items: local, oversized } = await readSnapshot(home, {
+    skipPath: (file, directory) => Boolean(claudePathProblem(home, file, directory)),
+  });
   const rows = [];
   const items = {};
   for (const [id, raw] of Object.entries(shared)) {
@@ -541,9 +541,9 @@ export async function claudePullPlan({ home, shared, only, replace }) {
       rows.push({ ...row, fate: 'skip', reason: ONLY });
       continue;
     }
-    const link = linkOnPath(home, fileOf(id));
-    if (link) {
-      rows.push({ ...row, fate: 'skip', reason: `~/${link} is a symlink here, which is not written through` });
+    const problem = claudePathProblem(home, fileOf(id));
+    if (problem) {
+      rows.push({ ...row, fate: 'skip', reason: problem.reason });
       continue;
     }
     if (oversized.includes(id)) {
@@ -810,7 +810,9 @@ function stateStore(dir, origin) {
  * @returns {string|null}  the folder, null when nothing is replaced
  */
 function backupReplaced({ dir, home, ids, top, files }) {
-  const sources = [...new Set(ids.map((id) => parseEntryId(id)?.file ?? id))].map((rel) => [path.join(home, rel), path.join('home', rel)]);
+  const sources = [...new Set(ids.map(fileOf))]
+    .filter((rel) => !claudePathProblem(home, rel))
+    .map((rel) => [path.join(home, rel), path.join('home', rel)]);
   if (top) sources.push(...files.map((file) => [path.join(top, file), path.join('checkout', file)]));
   if (!sources.length) return null;
   const where = path.join(dir, 'backups', new Date().toISOString().replace(/[:.]/g, '-'));
@@ -968,17 +970,23 @@ export async function settingsCommand(ctx) {
     let ownWritten = { written: [], skipped: [] };
     if (writing.length) {
       backup = backupReplaced({ dir: ctx.dir, home, ids: claude.replaced ?? [], top: own?.top, files: ownPlan.rows.filter((r) => r.fate === 'replace').map((r) => r.name) });
-      if (claude.rows.some((r) => moving.includes(r.fate))) written = await applyItems(home, claude.items, { before: claude.before });
+      if (claude.rows.some((r) => moving.includes(r.fate))) {
+        written = await applyItems(home, claude.items, {
+          before: claude.before,
+          skipPath: (file, directory) => Boolean(claudePathProblem(home, file, directory)),
+        });
+        written.skipped = written.skipped.filter((id) => writing.some((row) => row.id === id));
+      }
       if (Object.keys(ownPlan.write).length) ownWritten = writeOwnFiles(own.top, ownPlan.write);
     }
-    // A JSON file claude was writing as this ran is left alone: its items are not written, and not recorded as had.
+    // Items that changed or could not be written since planning are not recorded as synced.
     for (const row of claude.rows) {
       if (moving.includes(row.fate) && !written.skipped.includes(row.id)) kept.synced[row.id] = itemHash(row.id, shared.items[row.id]);
       else if (row.reason === SAME_AS_YOURS) kept.synced[row.id] = itemHash(row.id, shared.items[row.id]);
     }
     state.save(kept);
     if (backup) say(`What was replaced is kept in ${backup}.`);
-    if (written.skipped.length) ctx.warn(`${written.skipped.length} not written: ~/.claude.json was being written as this ran. Run woodshed settings pull again.`);
+    if (written.skipped.length) ctx.warn(`${written.skipped.length} not written: their local paths or contents changed during pull. Run woodshed settings pull again.`);
     if (json) {
       emit({
         event: 'pulled', console: origin, version: shared.version, written: written.written, notWritten: written.skipped.length,
