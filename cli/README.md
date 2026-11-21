@@ -75,6 +75,9 @@ or config command, setup skips that step and says where to do it.
 | `woodshed login` | Asks the console for a code, prints it, and opens the console's `/cli` page in your browser. Check the page shows the same code and press **Sign in the CLI**. The token it gets is kept as below. Signing in again on the same computer ends its earlier sign-in. | 0 signed in, 2 the code expired with nobody approving it, 3 denied, 1 too many sign-ins waiting (below) |
 | `woodshed logout` | Ends the token at the console and forgets it here. | 0 |
 | `woodshed status` | The console's name and address, its org (the GitHub account its repos are on), who is signed in, and the Herdr `hc` found here with its version (`hc` in `--json`: `installed`, `version`, `minimum`, `ok`), for `session herdr`. | 0 signed in, 2 not signed in or the sign-in ended |
+| `woodshed repo list` | Lists connected repos and, for admins, which repos can be added and where the GitHub App has access. | 0 listed, 2 sign in, 1 failed |
+| `woodshed repo add <owner/name> [--name N]` | Adds a repo as in Console settings. Use `--name` on consoles that let you choose a project name. | 0 added, 2 GitHub App access or sign-in needed, 3 refused, 1 failed |
+| `woodshed repo remove <owner/name>` | Removes a repo and its Woodshed settings as in Console settings. | 0 removed, 2 sign in, 3 refused, 1 failed |
 | `woodshed review enable\|status` | In a checkout: reviews the repo's pull requests in Woodshed sessions, by its project file, and says what the console still needs. Below. | 0 done, 2 an admin's step, a sign-in or a merge still to come, 1 a project file that does not read or check |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 | `woodshed config list\|get\|set` | Reads or sets [your choices on My settings](#your-choices-on-my-settings). | as below |
@@ -96,6 +99,18 @@ includes `sessionSignIns` when the console supports it, with a boolean for each 
 Exit codes, for every command: `0` done, `2` waiting on a person (sign in, or approve), `3` refused (denied, or an
 address it will not send a token to), `1` anything else (the console not reached, a console from before the command
 line).
+
+## Choosing repos
+
+`woodshed repo list --json` returns a `repo-list` event with `projects`, `available` and `canChange`. Each row's
+`githubAppAccess` is `true` or `false` when known and `null` otherwise. `choicesIncomplete` flags a partial inventory.
+If the inventory is unavailable, `choicesError`
+explains why and the connected repos still appear. Members can list repos they can start sessions on. Only admins can
+see the console's GitHub App inventory or add and remove repos.
+
+When GitHub App access is needed, `repo add` exits 2 with `status: "needs-github-app"` and the install or access link
+in `url` when available. It opens that link from a terminal unless `--no-browser` is set. Grant access on GitHub, then
+run the same add again. If the console's response to a change is lost, run `repo list` to see whether it went through.
 
 ## Review
 
