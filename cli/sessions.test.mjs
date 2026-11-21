@@ -144,7 +144,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const credentials = createCredentials({ platform: 'test', dir: path.join(dir, 'woodshed') });
   let answer = null;
-  let listsLost = 0;
+  const listFailures = [];
   const run = async (args) => {
     let out = '';
     let err = '';
@@ -156,10 +156,10 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       // A stop the console takes longer to answer than the command line waits.
       fetch: (url, init) => {
         if (stopTimesOut && String(url).endsWith('/stop')) return Promise.reject(Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }));
-        // The console out of reach for the next `listsLost` reads of the list.
-        if (listsLost > 0 && String(url).endsWith('/api/sessions')) {
-          listsLost -= 1;
-          return Promise.reject(new TypeError('fetch failed'));
+        if (listFailures.length && String(url).endsWith('/api/sessions')) {
+          const status = listFailures.shift();
+          if (status === null) return Promise.reject(new TypeError('fetch failed'));
+          return Promise.resolve(new Response('The upstream is unavailable', { status }));
         }
         return fetch(url, init);
       },
@@ -170,7 +170,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
   };
   const signed = await run(['login', '--console', origin]);
   assert.equal(signed.code, EXIT.done, signed.err);
-  return { origin, run, calls, sessions, cli, hc, dir, answer: (a) => { answer = a; }, loseLists: (n) => { listsLost = n; } };
+  return { origin, run, calls, sessions, cli, hc, dir, answer: (a) => { answer = a; }, listFailures };
 }
 
 // A start as the fleet moves it: in line, starting, each step, then running.
@@ -576,7 +576,10 @@ test('a connection that drops is opened again while the session runs, and not on
   assert.equal(again.calls.length, 3, 'cut, a try that failed, then open until it closed');
 
   const stopping = fakeTerminal([{ status: 'attached-then-cut', message: 'the connection closed' }], {
-    during: () => { stopped.sessions.find((s) => s.id === 'aaaa0001').status = 'stopped'; },
+    during: () => {
+      stopped.listFailures.push(502);
+      stopped.sessions.find((s) => s.id === 'aaaa0001').status = 'stopped';
+    },
   });
   const stopped = await consoleFor(t, { terminal: stopping });
   const gone = await stopped.run(['session', 'connect', 'aaaa0001']);
@@ -630,7 +633,12 @@ test('a connection that drops at once, again and again, is given up on a minute 
 
 test('a console out of reach while a dropped connection is opened again is tried again, not given up on', async (t) => {
   let c = null;
-  const terminal = fakeTerminal([{ status: 'attached-then-cut', message: 'the connection closed', ms: 60_000 }], { during: (n) => { if (n === 1) c.loseLists(1); } });
+  const terminal = fakeTerminal([{ status: 'attached-then-cut', message: 'the connection closed', ms: 60_000 }], {
+    during: (n) => {
+      if (n === 1) c.listFailures.push(502, null, 503, 504);
+      else assert.equal(c.listFailures.length, 0, 'checked the session again before reopening the terminal');
+    },
+  });
   c = await consoleFor(t, { terminal });
   const out = await c.run(['session', 'connect', 'aaaa0001']);
   assert.equal(out.code, EXIT.done, out.err);

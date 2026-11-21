@@ -214,7 +214,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
     }
     if (out.status === 403) throw fail(printable(out.body?.error) ?? `${origin} refused that`, { code: EXIT.refused, status: 'refused' });
     if (out.status === 404 && !out.body?.error) throw fail(`${origin} answered 404: a console from before the command line could start sessions`);
-    if (out.status >= 400) throw fail(printable(out.body?.error) ?? `${origin} answered ${out.status}`);
+    if (out.status >= 400) throw Object.assign(fail(printable(out.body?.error) ?? `${origin} answered ${out.status}`), { http: out.status });
     if (!out.body || typeof out.body !== 'object') throw fail(`${origin} answered ${out.status} with no JSON: not a Woodshed console`);
     return out.body;
   }
@@ -368,8 +368,23 @@ export async function sessionCommand({ origin, rest }, ctx) {
     let droppedAt = null;
     let tries = 0;
     for (;;) {
-      const out = await ctx.terminal(s.id, kind);
-      // 1000 is its program ending; another code is ttyd closing it on an error (1008: it refused the first message).
+      let out;
+      if (droppedAt !== null) {
+        await sleep(RECONNECT_WAITS_MS[Math.min(tries, RECONNECT_WAITS_MS.length - 1)]);
+        tries += 1;
+        // The console may still be restarting behind its proxy. Check the session again before opening the terminal.
+        try {
+          const { s: latest } = await find(s.id);
+          if (latest.status !== 'running') {
+            throw fail(`Session ${s.id} is ${stateOf(latest).word} now. Run woodshed session connect ${s.id} to resume it and connect again.`);
+          }
+        } catch (err) {
+          if (!err.unreachable && ![502, 503, 504].includes(err.http)) throw err;
+          out = { status: 'unreachable', message: err.message };
+        }
+      }
+      out ??= await ctx.terminal(s.id, kind);
+      // ttyd sends 1000 on a normal close and a different code on an error.
       if (out.status === 'detached' || (out.status === 'closed' && out.code === 1000)) {
         stderr.write(`\r\nConnection to ${s.id} closed.\n`);
         return EXIT.done;
@@ -394,20 +409,6 @@ export async function sessionCommand({ origin, rest }, ctx) {
         throw fail(out.status === 'refused' ? `${origin} refused the terminal: ${out.message}` : out.message);
       } else if (now() - droppedAt >= RECONNECT_GIVE_UP_MS) {
         throw fail(`Could not connect to ${s.id} again in ${RECONNECT_GIVE_UP_MS / 1000} s: ${out.message}. Run woodshed session connect ${s.id} to try again.`);
-      }
-      await sleep(RECONNECT_WAITS_MS[Math.min(tries, RECONNECT_WAITS_MS.length - 1)]);
-      tries += 1;
-      // Asked before each try: a session that paused or stopped meanwhile is resumed by connect, not here. A console still
-      // out of reach is tried again within the minute, as the terminal is.
-      let latest;
-      try {
-        ({ s: latest } = await find(s.id));
-      } catch (err) {
-        if (!err.unreachable) throw err;
-        continue;
-      }
-      if (latest.status !== 'running') {
-        throw fail(`Session ${s.id} is ${stateOf(latest).word} now. Run woodshed session connect ${s.id} to resume it and connect again.`);
       }
     }
   }
