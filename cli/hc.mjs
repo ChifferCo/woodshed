@@ -279,17 +279,19 @@ export async function parentTerminal(run, { env, named = null }) {
  * session's core and in its environment, with a parent here.
  * @param {(args: string[], opts?: object) => Promise<object>} run
  * @param {{machine: string, parent: string, notify?: boolean, outlive?: boolean}} args
- * @returns {Promise<{made: true, address: string, parent: string|null}|{made: false, why: 'not-waiting'|'taken', parent: string|null}>}
+ * @returns {Promise<{made: true, address: string, parent: string|null}|{made: false, why: 'not-waiting'|'taken', there: boolean, parent: string|null}>}
  *   not-waiting: the session made its terminal itself (started without --parent, an image from before it, or its wait
  *   ran out), or a run of this made it already; taken: it was made while this was on its way. `parent`, then: the one
- *   the terminal there has (as the session's core names it, `<core>/t7`), null for none or not read
+ *   the terminal there has (as the session's core names it, `<core>/t7`), null for none or not read; `there`: false
+ *   when the session has no agent's terminal in Herdr at all (its agent runs in tmux)
  */
 export async function startAgentTerminal(run, { machine, parent, notify = true, outlive = true }) {
   // The terminal already there: its parent as it is, never assumed.
   const existing = async (why) => {
     const got = await run(['get', '--json', `${machine}/${AGENT_TERMINAL}`]);
     const terminal = got.code === 0 ? parsed(got.stdout) : null;
-    return { made: false, why, parent: typeof terminal?.parent === 'string' ? terminal.parent : null };
+    // Not there at all: a session that never waited runs its agent in tmux (Agent terminal on My settings).
+    return { made: false, why, there: Boolean(terminal), parent: typeof terminal?.parent === 'string' ? terminal.parent : null };
   };
   const read = await run(['file', 'read', '--json', '--on', machine, AGENT_WAIT_FILE]);
   if (read.code !== 0) {

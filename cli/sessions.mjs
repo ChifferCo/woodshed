@@ -386,14 +386,18 @@ export async function sessionCommand({ origin, rest }, ctx) {
     let code = shown.state === 'needs-you' ? EXIT.waiting : EXIT.done;
     // Asked for and not given: the machine stays added, and the exit says the parent was not.
     // What it has as its parent now is read from hc, never assumed: a run of this one may have made it already.
+    const why = (c) => {
+      if (!c.there) return 'the session did not wait for one, and its agent runs in tmux, not Herdr';
+      return `${c.why === 'taken' ? 'it was made while this was on its way' : 'it was already there'}, ${c.parent ? `a child of ${c.parent}` : 'with no parent'}, and hc gives a terminal its parent only as it starts`;
+    };
     const noParent = child && !child.made
-      ? `Could not make ${parent} the parent of its agent's terminal: ${child.why === 'taken' ? 'it was made while this was on its way' : 'it was already there'}, ${child.parent ? `a child of ${child.parent}` : 'with no parent'}, and hc gives a terminal its parent only as it starts. Run woodshed session new --herdr --parent for a session whose agent is a child of this terminal.`
+      ? `Could not make ${parent} the parent of its agent's terminal: ${why(child)}. Run woodshed session new --herdr --parent for a session whose agent is a child of this terminal.`
       : null;
     if (noParent) code = EXIT.failed;
     // Herdr hears of a turn ending or the agent blocking from the agent's own status records: claude sends them, the
     // pinned codex none (session/agentPane.mjs), so a codex child wakes its parent's hc wait only by exiting.
     const reportsStatus = shown.agent !== 'codex';
-    const parentField = child ? { parent: child.made ? { made: true, terminal: parent, address: child.address, outlives: !opts['end-with-parent'], notify: !opts['no-notify'], reportsStatus } : { made: false, why: child.why, has: child.parent } } : {};
+    const parentField = child ? { parent: child.made ? { made: true, terminal: parent, address: child.address, outlives: !opts['end-with-parent'], notify: !opts['no-notify'], reportsStatus } : { made: false, why: child.why, there: child.there, has: child.parent } } : {};
     if (json) {
       emit({ event: 'connected', session: shown, machine: { name, action: added.action, state: added.state }, agent, ...parentField });
       if (noParent) emit({ event: 'error', status: 'no-parent', error: noParent });

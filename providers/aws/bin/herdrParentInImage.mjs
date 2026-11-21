@@ -113,10 +113,16 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 2000));
     log = printNew();
   }
-  printNew();
+  log = printNew();
   const ps = docker('exec', CONTAINER, 'sh', '-c', 'ps -eo pid,ppid,stat,args | awk \'$1 == 1 || /statusd/ || $3 ~ /^Z/\' | grep -v awk || true');
   console.log(`--- processes (the init as pid 1, statusd, and any zombie)\n${ps}`);
-  console.log(`--- the agent's terminal\n${docker('exec', CONTAINER, 'sh', '-c', 'hc get --json claude | jq -c "{parent, die_with_parent, keep, cwd}"; hc read claude | grep -m1 "bin/claude" || true')}`);
+  const terminal = docker('exec', CONTAINER, 'sh', '-c', 'hc get --json claude 2>/dev/null | jq -c "{parent, die_with_parent, keep, cwd}"; hc read claude 2>/dev/null | grep -m1 "bin/claude" || true');
+  console.log(`--- the agent's terminal\n${terminal}`);
+  // Passed only when the parent made the terminal, which has that parent, and the agent was typed into it.
+  const madeByParent = /Agent's terminal made by its parent/.test(log) && /"parent":"[^"]+"/.test(terminal) && /bin\/claude /.test(terminal);
+  console.log(madeByParent ? '--- PASSED: the agent runs in the terminal its parent made'
+    : '--- FAILED: no terminal from its parent with the agent in it (the log above says why)');
+  process.exitCode = madeByParent ? 0 : 1;
   console.log(`docker rm -f ${CONTAINER} when done`);
 } finally {
   fs.rmSync(dir, { recursive: true, force: true });

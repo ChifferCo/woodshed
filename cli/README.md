@@ -299,7 +299,7 @@ hc wait --children any
 - **A running session cannot take a parent.** hc sets a terminal's parent once, as it starts, and has no way to change
   it, so `session herdr <id> --parent` on a running session adds the machine and exits 1, saying its terminal was
   already there and what parent it has (`parent.has` in `--json`: the parent as the session's core names it, `<core>/t7`,
-  or null for none). Only one still waiting for its terminal (started with `--parent`, its command line stopped before it
+  or null for none), or that its agent runs in tmux (`parent.there: false`). Only one still waiting for its terminal (started with `--parent`, its command line stopped before it
   made it) takes one.
 - **The session waits 5 minutes** for its terminal, then makes it itself, with no parent, so the agent starts all the
   same; the session's log says `WARNING: no parent made the agent's terminal`, and this command, if it comes later,

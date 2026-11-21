@@ -939,7 +939,7 @@ test('session herdr --parent resumes a paused session waiting for its terminal, 
   const late = await running.run(['session', 'herdr', 'aaaa0001', '--parent', '--json']);
   assert.equal(late.code, EXIT.failed);
   assert.equal(running.hc.added().length, 1);
-  assert.deepEqual(late.lines.find((l) => l.event === 'connected').parent, { made: false, why: 'not-waiting', has: null });
+  assert.deepEqual(late.lines.find((l) => l.event === 'connected').parent, { made: false, why: 'not-waiting', there: true, has: null });
   assert.match(late.lines.at(-1).error, /Could not make t4 the parent of its agent's terminal: it was already there, with no parent, and hc gives a terminal its parent only as it starts\. Run woodshed session new --herdr --parent/);
   assert.equal(running.hc.runs.length, 0, 'no second terminal, and the running agent is left as it is');
   assert.ok(!running.calls.length, 'not resumed or restarted');
@@ -954,8 +954,15 @@ test('session herdr --parent resumes a paused session waiting for its terminal, 
   const earlier = await consoleFor(t, { hc: fakeHc({ hasParent: 'core1/t2' }), env: IN_HERDR });
   const again = await earlier.run(['session', 'herdr', 'aaaa0001', '--parent', '--json']);
   assert.equal(again.code, EXIT.failed);
-  assert.deepEqual(again.lines.find((l) => l.event === 'connected').parent, { made: false, why: 'not-waiting', has: 'core1/t2' });
+  assert.deepEqual(again.lines.find((l) => l.event === 'connected').parent, { made: false, why: 'not-waiting', there: true, has: 'core1/t2' });
   assert.match(again.lines.at(-1).error, /it was already there, a child of core1\/t2, and hc gives/);
+
+  // Its agent in tmux (its owner's Agent terminal, a session that never waited): no Herdr terminal at all, said so.
+  const tmux = await consoleFor(t, { hc: fakeHc({ agent: false }), env: IN_HERDR });
+  const inTmux = await tmux.run(['session', 'herdr', 'aaaa0001', '--parent', '--json']);
+  assert.equal(inTmux.code, EXIT.failed);
+  assert.deepEqual(inTmux.lines.find((l) => l.event === 'connected').parent, { made: false, why: 'not-waiting', there: false, has: null });
+  assert.match(inTmux.lines.at(-1).error, /Could not make t4 the parent of its agent's terminal: the session did not wait for one, and its agent runs in tmux, not Herdr\./);
 });
 
 test('--parent takes the next word as its terminal only when it reads as an hc address', () => {
