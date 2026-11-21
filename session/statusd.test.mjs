@@ -591,6 +591,38 @@ function upgradeThrough({ token, headers }) {
   });
 }
 
+// One raw upgrade to statusd's handleUpgrade at `path`, and what came back before it closed.
+function rawUpgradeTo(path, headers, { port = null } = {}) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer();
+    server.on('upgrade', (req, socket, head) => handleUpgrade(req, socket, head, { token: 'tok', port }));
+    server.listen(0, '127.0.0.1', () => {
+      const client = net.connect(server.address().port, '127.0.0.1', () => {
+        const lines = [`GET ${path} HTTP/1.1`, 'Host: statusd', 'Connection: Upgrade', ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`)];
+        client.write(`${lines.join('\r\n')}\r\n\r\n`);
+      });
+      let got = Buffer.alloc(0);
+      client.on('data', (chunk) => { got = Buffer.concat([got, chunk]); });
+      client.on('close', () => {
+        server.close();
+        resolve(got);
+      });
+      client.on('error', reject);
+    });
+  });
+}
+
+test('handleUpgrade sends /exec, with the session token, to the exec pipe, and never an app\'s request', async () => {
+  const line = Buffer.from('echo routed').toString('base64');
+  const exec = { upgrade: 'woodshed-tunnel', 'x-woodshed-exec': line };
+  const ran = await rawUpgradeTo('/exec', { ...exec, authorization: 'Bearer tok' });
+  assert.match(ran.toString('latin1'), /^HTTP\/1\.1 101/);
+  assert.ok(ran.includes(Buffer.from('routed\n')), 'the line ran');
+  assert.match((await rawUpgradeTo('/exec', { ...exec, authorization: 'Bearer wrong' })).toString(), /^HTTP\/1\.1 401/);
+  // An app's request carries the token in x-woodshed-app: it goes to the app, here none (503), never to the pipe.
+  assert.match((await rawUpgradeTo('/exec', { ...exec, 'x-woodshed-app': 'Bearer tok' })).toString(), /^HTTP\/1\.1 503/);
+});
+
 test('handleUpgrade passes an app websocket through without the session token, and refuses one without it', async () => {
   const through = await upgradeThrough({ token: 'tok', headers: { 'x-woodshed-app': 'Bearer tok', authorization: 'Bearer app-token' } });
   assert.match(through, /^HTTP\/1\.1 101/);

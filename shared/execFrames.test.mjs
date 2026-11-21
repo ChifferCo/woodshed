@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { FRAME, MAX_LINE, createUnframer, decodeLine, encodeLine, exitFrame, frame } from './execFrames.mjs';
+import { FRAME, MAX_LINE, TO_SESSION, createUnframer, decodeLine, encodeLine, exitFrame, frame } from './execFrames.mjs';
 
 test('frames come back whole and in order, however the stream is cut', () => {
   const stream = Buffer.concat([frame(FRAME.stdout, Buffer.from('out')), frame(FRAME.stderr, Buffer.from('err')), frame(FRAME.stdout, Buffer.alloc(0)), exitFrame(-7)]);
@@ -32,4 +32,14 @@ test('the line goes in its header as base64, and nothing else is taken for one',
   assert.equal(decodeLine('not base64!'), null);
   assert.equal(decodeLine(encodeLine('x'.repeat(MAX_LINE))), 'x'.repeat(MAX_LINE));
   assert.equal(decodeLine(encodeLine('x'.repeat(MAX_LINE + 1))), null, 'too long');
+});
+
+test('each way reads only its own kinds: stdin and its end go to the session, output and the exit code come from it', () => {
+  const got = [];
+  const read = createUnframer((kind, data) => got.push([kind, data.toString()]), { kinds: TO_SESSION });
+  read(Buffer.concat([frame(FRAME.stdin, Buffer.from('in')), frame(FRAME.stdinEnd, Buffer.alloc(0))]));
+  assert.deepEqual(got, [[FRAME.stdin, 'in'], [FRAME.stdinEnd, '']]);
+  assert.throws(() => createUnframer(() => {}, { kinds: TO_SESSION })(frame(FRAME.stdout, Buffer.from('x'))), /not an exec pipe frame/);
+  assert.throws(() => createUnframer(() => {})(frame(FRAME.stdin, Buffer.from('x'))), /not an exec pipe frame/, 'no stdin comes back');
+  assert.throws(() => createUnframer(() => {}, { kinds: TO_SESSION })(frame(FRAME.stdinEnd, Buffer.from('x'))), /not an exec pipe frame/, 'an end carries nothing');
 });

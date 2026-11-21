@@ -1,19 +1,24 @@
-// The exec pipe's return stream (session/execPipe.mjs writes it, cli/tunnel.mjs reads it). What a program in a session
-// writes comes back framed, so the far end can tell its stdout from its stderr and learn its exit code, as `ssh` or
-// `docker exec` give them:
+// The exec pipe's frames (cli/tunnel.mjs and session/execPipe.mjs, with the console copying bytes between them). Both
+// ways are framed, so the far end can tell a program's stdout from its stderr and learn its exit code, as `ssh` or
+// `docker exec` give them, and so its stdin can end without the connection's own half ending: a proxy in the way
+// (Caddy) may close both halves of an upgraded connection when one ends, and a connection that ends is a disconnect.
 //
 //   [kind: 1 byte][length: 4 bytes, big-endian][that many bytes]
 //
-// kind 1 is stdout, 2 stderr, 3 the exit code (4 bytes, signed: 128+n for signal n), after which nothing more comes.
-// What goes the other way, into the program's stdin, is raw.
+// From the session: 1 stdout, 2 stderr, 3 the exit code (4 bytes, signed: 128+n for signal n), after which the session
+// closes the connection. To the session: 4 stdin, 5 stdin's end (no bytes).
 
 export const PROTOCOL = 'woodshed-tunnel';
 export const LINE_HEADER = 'x-woodshed-exec';
-export const FRAME = Object.freeze({ stdout: 1, stderr: 2, exit: 3 });
+export const FRAME = Object.freeze({ stdout: 1, stderr: 2, exit: 3, stdin: 4, stdinEnd: 5 });
+// The kinds each way.
+export const FROM_SESSION = Object.freeze([FRAME.stdout, FRAME.stderr, FRAME.exit]);
+export const TO_SESSION = Object.freeze([FRAME.stdin, FRAME.stdinEnd]);
 // A frame never carries more than this; a reader refuses a longer one, as a stream gone wrong.
 export const MAX_FRAME = 1 << 20;
-// The line to run, before it is base64'd into its header.
-export const MAX_LINE = 16_384;
+// The line to run, before it is base64'd into its header: with the base64 and the request's other headers it stays under
+// the 16 KiB of headers Node's HTTP server takes, at statusd and at the console.
+export const MAX_LINE = 8192;
 
 /** @returns {Buffer}  one frame of `kind`, for at most MAX_FRAME bytes of `data` */
 export function frame(kind, data) {
@@ -31,19 +36,20 @@ export function exitFrame(code) {
 }
 
 /**
- * A reader for the stream: hand it each chunk as it arrives, in any sizes, and it calls `onFrame(kind, data)` once per
- * whole frame, the exit code as a number.
+ * A reader for one way of the stream: hand it each chunk as it arrives, in any sizes, and it calls `onFrame(kind, data)`
+ * once per whole frame, the exit code as a number.
  * @param {(kind: number, data: Buffer|number) => void} onFrame
- * @returns {(chunk: Buffer) => void}  throws on a frame that is not one: an unknown kind, or too long
+ * @param {{kinds?: readonly number[]}} [opts]  the kinds this way carries: FROM_SESSION, or TO_SESSION
+ * @returns {(chunk: Buffer) => void}  throws on a frame that is not one: a kind not of this way, or too long
  */
-export function createUnframer(onFrame) {
+export function createUnframer(onFrame, { kinds = FROM_SESSION } = {}) {
   let buffered = Buffer.alloc(0);
   return (chunk) => {
     buffered = buffered.length ? Buffer.concat([buffered, chunk]) : chunk;
     while (buffered.length >= 5) {
       const kind = buffered[0];
       const length = buffered.readUInt32BE(1);
-      if (!Object.values(FRAME).includes(kind) || length > MAX_FRAME || (kind === FRAME.exit && length !== 4)) {
+      if (!kinds.includes(kind) || length > MAX_FRAME || (kind === FRAME.exit && length !== 4) || (kind === FRAME.stdinEnd && length !== 0)) {
         throw new Error(`not an exec pipe frame (kind ${kind}, ${length} bytes)`);
       }
       if (buffered.length < 5 + length) break;

@@ -1510,9 +1510,10 @@ person still on People, that the session is running and is theirs (a My Woodshed
 and that it is not tainted or being locked down; then it sends the request to the session's statusd `/exec` with the
 session's token in place of the person's, as it reaches statusd for the viewers, and copies bytes both ways once statusd
 answers 101. statusd runs `sh -c <line>` as the session's user in the checkout, without `SESSION_TOKEN` or
-`TERMINAL_TOKEN` in its environment, and frames stdout, stderr and the exit code back (`session/execPipe.mjs`,
-`shared/execFrames.mjs`); `pipe()` on both hops and pausing the program's output on a full socket hold a slow reader's
-side back end to end. Revoking the token (My settings, `woodshed logout`, Remove My Woodshed, People's Remove, leaving a
+`TERMINAL_TOKEN` in its environment, in a process group of its own. Both ways are framed (`session/execPipe.mjs`,
+`shared/execFrames.mjs`): stdin and its end in, stdout, stderr and the exit code out. stdin's end is a frame, so Caddy
+never carries a half-closed connection, and a connection that ends early is a disconnect, which hangs up the line's
+whole process group. `pipe()` on both hops, and each end pausing on a full buffer, hold a slow side back end to end. Revoking the token (My settings, `woodshed logout`, Remove My Woodshed, People's Remove, leaving a
 hosting program's list) closes its pipes at once, and so does a session's lockdown starting (`fleet.onLocking`). A
 pipe is not activity: the session pauses when idle as it does without one, which ends it: keeping a session up is
 done explicitly (its Extend), never by holding a pipe open. Nothing new is open: it is the console's port, through Caddy, and statusd's,

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { PassThrough, Writable } from 'node:stream';
+import { PassThrough, Readable, Writable } from 'node:stream';
 
 import { createCliSignIn } from './cliSignIn.mjs';
 import { createExecPipe, ownerOnly } from './execPipe.mjs';
@@ -102,6 +102,56 @@ test('the line runs in the owner\'s session: stdout, stderr and the exit code co
   assert.equal(counted.out.trim(), '12345', 'stdin reaches it, and its end is the line\'s stdin\'s end');
   const killed = await tunnel(c.origin, { token, line: 'kill -TERM $$' });
   assert.equal(killed.code, 128 + 15, 'a signal is 128 + its number, as a shell says it');
+  const usr1 = await tunnel(c.origin, { token, line: 'kill -USR1 $$' });
+  assert.equal(usr1.code, 128 + os.constants.signals.SIGUSR1, 'any signal, by the system\'s own number');
+});
+
+test('a line of 8 KiB goes through the console and statusd, and a longer one is refused before it is sent', async (t) => {
+  const statusd = await statusdFor(t);
+  const c = await consoleFor(t, { statusd });
+  const { token } = c.signIn('mia-dev');
+  const line = `echo ok #${'x'.repeat(8192 - 'echo ok #'.length)}`;
+  assert.deepEqual(await tunnel(c.origin, { token, line }), { code: 0, out: 'ok\n', err: '' });
+  const long = await tunnel(c.origin, { token, line: `${line}x` });
+  assert.equal(long.code, 255);
+  assert.match(long.err, /longer than 8 KiB/);
+});
+
+test('a disconnect hangs up everything the line started, and a quiet one too, not only its shell', async (t) => {
+  const statusd = await statusdFor(t);
+  const c = await consoleFor(t, { statusd });
+  const { token, id } = c.signIn('mia-dev');
+  const marker = path.join(statusd.cwd, 'survived');
+  const stdin = new PassThrough();
+  let out = '';
+  const running = tunnel(c.origin, { token, line: '(sleep 1; touch survived) & echo up; wait', stdin, stdout: { write: (s) => { out += s; return true; } } });
+  await until(() => out.includes('up'));
+  c.cli.revoke('mia-dev', id);
+  assert.equal((await running).code, 255);
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(fs.existsSync(marker), false, 'the background job was hung up with its shell');
+});
+
+test('stdin from a fast writer waits for a slow program, and arrives whole', async (t) => {
+  const statusd = await statusdFor(t);
+  const c = await consoleFor(t, { statusd });
+  const { token } = c.signIn('mia-dev');
+  const size = 40 * 1024 * 1024;
+  let given = 0;
+  const chunk = Buffer.alloc(64 * 1024, 0x62);
+  const stdin = new Readable({
+    read() {
+      if (given >= size) return this.push(null);
+      given += chunk.length;
+      this.push(chunk);
+    },
+  });
+  let out = '';
+  const running = tunnel(c.origin, { token, line: 'sleep 1.5; wc -c', stdin, stdout: { write: (s) => { out += s; return true; } } });
+  await new Promise((r) => setTimeout(r, 1000));
+  assert.ok(given < size / 2, `only what the buffers on the way hold was read while the program slept (${given} bytes)`);
+  assert.equal((await running).code, 0);
+  assert.equal(out.trim(), String(size));
 });
 
 test('the line gets statusd\'s environment without the session\'s own credentials', async (t) => {

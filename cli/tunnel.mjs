@@ -6,12 +6,14 @@
 // One HTTPS request, `UPGRADE /api/tunnel/exec/<id>` with the command line's token (console/execPipe.mjs). What comes
 // back is framed (shared/execFrames.mjs): stdout to stdout, stderr to stderr, and the line's exit code is this command's.
 // 255 is the pipe's own failure: not signed in, refused, the console or the session not reached, or the pipe cut before
-// the line ended.
+// the line ended. Each of those says why on stderr; a line that exits 255 itself does too, but says nothing of its own.
+// stdin goes framed, and its end as a frame of its own: the connection is never half closed, which a proxy in the way
+// may take for both halves closing.
 
 import http from 'node:http';
 import https from 'node:https';
 
-import { FRAME, LINE_HEADER, PROTOCOL, createUnframer, encodeLine } from '../shared/execFrames.mjs';
+import { FRAME, LINE_HEADER, MAX_FRAME, MAX_LINE, PROTOCOL, createUnframer, encodeLine, frame } from '../shared/execFrames.mjs';
 
 export const TUNNEL_FAILED = 255;
 // The console's answer to the upgrade; once it is open, the pipe waits as long as the line runs.
@@ -32,13 +34,13 @@ export function runTunnel({ origin, token, session, line, stdin, stdout, stderr,
     stderr.write(`woodshed: ${message}\n`);
     return TUNNEL_FAILED;
   };
+  if (Buffer.byteLength(line) > MAX_LINE) return Promise.resolve(fail(`the line is longer than ${MAX_LINE / 1024} KiB: put it in a script in the session`));
   return new Promise((resolve) => {
     let settled = false;
     const finish = (code) => {
       if (settled) return;
       settled = true;
       // Nothing more is read: a stdin left open (a terminal runtime's) does not keep this process alive.
-      stdin.unpipe?.();
       stdin.pause?.();
       stdin.destroy?.();
       resolve(code);
@@ -97,8 +99,18 @@ export function runTunnel({ origin, token, session, line, stdin, stdout, stderr,
       };
       remote.on('data', onData);
       if (head?.length) onData(head);
-      // stdin's end is the line's stdin's end; pipe() holds stdin back while the socket's buffer is full.
-      stdin.pipe(remote);
+      // stdin, framed, held back while the socket's buffer is full; its end is a frame too.
+      stdin.on('data', (data) => {
+        let full = false;
+        for (let at = 0; at < data.length; at += MAX_FRAME) full = !remote.write(frame(FRAME.stdin, data.subarray(at, at + MAX_FRAME))) || full;
+        if (full) {
+          stdin.pause();
+          remote.once('drain', () => stdin.resume());
+        }
+      });
+      stdin.on('end', () => { if (!remote.destroyed) remote.write(frame(FRAME.stdinEnd, Buffer.alloc(0))); });
+      stdin.on('error', () => {});
+      stdin.resume();
       remote.on('error', () => {});
       // A reader that went away (stdout closed) ends the pipe, as it would end the line.
       for (const out of [stdout, stderr]) out.on?.('error', () => remote.destroy());

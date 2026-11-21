@@ -51,8 +51,10 @@ the console passes to the session's statusd (`console/execPipe.mjs`, `session/ex
 running session of yours (a My Woodshed session), never one that has seen production data. What it runs gets the
 session's environment without the session's own token. Revoking this computer's sign-in, or the session stopping,
 closes it. An open tunnel does not keep the session awake: it pauses when idle as it would without one, which ends the
-tunnel. Exit 255 is always the tunnel's own failure (not signed in, refused, the console or session not reached, cut
-before the line ended), so a program that runs it tells those from the line's own exit codes.
+tunnel. Exit 255 is the tunnel's own failure (not signed in, refused, the console or session not reached, cut before the
+line ended), and it always says why on stderr. A line that itself exits 255 exits 255 too, with nothing of the tunnel's
+on stderr, as ssh does. The line is at most 8 KB: a longer one belongs in a script in the session. Closing the tunnel
+before the line ends (Ctrl-C, a cut network) hangs up everything the line started in the session.
 
 ## Where the token is kept
 
