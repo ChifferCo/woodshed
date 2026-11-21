@@ -1,6 +1,5 @@
-// The woodshed command line's token (wsc_, cliSignIn.mjs) on the console's own session routes: the few `woodshed
-// session` calls, as exactly the person the token was approved for. Every other route refuses it, so a token that leaks
-// from a laptop reaches no settings, secrets, people, terminals or apps.
+// The woodshed command line's token (wsc_, cliSignIn.mjs) on the allowed session, config, and review routes, as exactly
+// the person the token was approved for. Every other route refuses it, including secrets, people, terminals and apps.
 //
 //   GET  /api/sessions                      woodshed session list, and the wait on a start: what that person sees
 //   GET  /api/my/projects                   the repos that person may start on, for --repo
@@ -13,6 +12,7 @@
 //                                           session's owner's and a shared one's assignee's alone, as on the page
 //   GET  /api/review-readiness?repo=        woodshed review enable and status: whether a repo of theirs can be
 //                                           reviewed in a session, and what is missing (reviewReadiness.mjs)
+//   GET  /api/cli/config, and a few My settings writes   woodshed config: their choices, never a secret (cliConfig.mjs)
 //
 // A terminal connected to a session never keeps it awake: more time is asked for, by the person or their agent, with
 // extend or limits, and otherwise the session pauses and stops as its limits say.
@@ -24,6 +24,8 @@
 // riding the browser's cookie. A token is sent by the command line alone, never by a browser on its own, so neither is
 // asked of it; a call that carries an Origin is a page's, and is refused.
 
+import { CONFIG_ROUTES } from './cliConfig.mjs';
+
 const ROUTES = [
   ['GET', /^\/api\/sessions$/],
   ['GET', /^\/api\/my\/projects$/],
@@ -31,6 +33,7 @@ const ROUTES = [
   ['POST', /^\/api\/my\/sessions\/[0-9a-f]{8}\/(resume|remove)$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/(stop|extend|limits)$/],
   ['GET', /^\/api\/review-readiness$/],
+  ...CONFIG_ROUTES,
 ];
 
 /** @returns {boolean}  a route the command line's token may call */
@@ -47,7 +50,7 @@ export function carriesCliToken(headers) {
  * A call with a command line token, on any route but /api/cli/*.
  * @param {{req, res, url: URL, cli: ReturnType<typeof import('./cliSignIn.mjs').createCliSignIn>|null,
  *          reply: (res, status: number, body: object) => void,
- *          read: (res, pathname: string, login: string|null) => unknown,
+ *          read: (req, res, url: URL, login: string|null) => unknown,
  *          write: (req, res, pathname: string, login: string|null) => unknown}} args
  *   `read` and `write` answer the route as the console's page would, past its sign-in and its browser checks
  */
@@ -65,7 +68,7 @@ export async function handleCliCall({ req, res, url, cli, reply, read, write }) 
   const { signedIn, error } = await cli.authenticate(req.headers);
   if (!signedIn) return reply(res, 401, { error });
   const { id, login } = signedIn;
-  if (req.method === 'GET') return read(res, pathname, login);
+  if (req.method === 'GET') return read(req, res, url, login);
   // Writes only: the start's wait reads the list every few seconds.
   console.log('cliSessions: call', { login, token: id, path: pathname });
   return write(req, res, pathname, login);

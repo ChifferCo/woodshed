@@ -1520,9 +1520,15 @@ approves it; Deny refuses it. The CLI asks `POST /api/cli/token` every 5 seconds
 Both of those refuse a call with an Origin header, which a browser always sends and the CLI never does, so no web page
 starts a sign-in to hand someone the link of. The code lasts 10 minutes. The token (`wsc_…`) is its own kind, not the
 database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. Besides `/api/cli/*` and
-`/api/tunnel/exec/*` it signs in to `woodshed session`'s routes alone (`console/cliSessions.mjs`): `GET /api/sessions`, `GET /api/my/projects`,
+`/api/tunnel/exec/*` the token signs in to the routes listed in `console/cliSessions.mjs`. For `woodshed session` these
+are `GET /api/sessions`, `GET /api/my/projects`,
 `POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume|remove` and `POST /api/sessions/<id>/stop|extend|limits`,
-and `woodshed review`'s one read, `GET /api/review-readiness` ("The reviewer App"), each answered by the page's own code as the token's person, so it sees and changes exactly what they could on the page.
+while `woodshed review` uses `GET /api/review-readiness` ("The reviewer App"). For `woodshed config`
+(`console/cliConfig.mjs`), `GET /api/cli/config` returns the person's choices on My settings and
+never a secret, and `POST /api/my/terminal`, `/api/my/reviews`, `/api/my/codex-auth/reviews`,
+`/api/my/claude-token/shared`, `/api/my/projects/default` and `/api/my/github/identity`, which answer the token with
+that same view rather than the page's whole My settings answer. Each is answered by the page's own code as the token's
+person, so it sees and changes exactly what they could on the page.
 Every other route refuses it with 403, and so do those for a call with an Origin header (a page's). Those writes need no
 `x-woodshed` header or Origin, which only stand between another site and the browser's cookie; each logs
 `cliSessions: call` with the login, the token's id and the path, and a refusal `cliSessions: refused, not a route the
@@ -1873,8 +1879,9 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   `signInPaths` for the program's sign-in page.
 - The command line's routes are core's own (`cliSignIn.mjs`): `/cli` is behind the program's sign-in like any page, and
   `/api/cli/*` carries its own token in `Authorization`, so the program's proxy passes those through without its
-  sign-in, as it does `/api/tunnel/*`. So must it the session routes `cliSessions.mjs` lists, when they carry
-  `Authorization: Bearer wsc_…`: the console checks that token itself, and refuses it everywhere else.
+  sign-in, as it does `/api/tunnel/*`. When a request carries `Authorization: Bearer wsc_…`, also pass through the
+  session routes listed in `cliSessions.mjs` and the six settings writes listed in `cliConfig.mjs`. The console checks
+  the token itself and refuses it on other routes.
 - `cliDevices`, from `createCliDevices()` (`cliSignIn.mjs`): for a program serving several installations at one address,
   one waiting room for the command line's sign-ins that it gives them all. `POST /api/cli/device` and `/api/cli/token`
   carry no sign-in, so the program answers them itself, with `handleCliApi` and a `createCliSignIn` on that same room;
