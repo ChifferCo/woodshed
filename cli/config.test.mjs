@@ -120,6 +120,10 @@ test('config set changes a choice through the page\'s route, and says when it re
   assert.equal((await c.run(['config', 'set', 'github-name', 'Mia D.'])).out, 'github-name is Mia D.. Your next session commits with it.\n');
   assert.equal((await c.run(['config', 'set', 'github-email', '--', 'mia@example.org'])).code, EXIT.done);
   assert.deepEqual(c.userSettings.gitIdentity('mia-dev'), { name: 'Mia D.', email: 'mia@example.org' }, 'the other half is kept');
+  // A mark the terminal never sees is still kept as it was saved, when only the other half changes.
+  await c.userSettings.setGitIdentity('mia-dev', { name: 'מיה\u200f Dev', email: 'mia@example.org' });
+  assert.equal((await c.run(['config', 'set', 'github-email', 'mia@example.net'])).code, EXIT.done);
+  assert.deepEqual(c.userSettings.gitIdentity('mia-dev'), { name: 'מיה\u200f Dev', email: 'mia@example.net' });
 });
 
 test('an unknown key, a bad value or a secret exits 3 and says what is valid, and a secret is never sent', async (t) => {
@@ -144,12 +148,25 @@ test('an unknown key, a bad value or a secret exits 3 and says what is valid, an
   assert.equal(email.code, EXIT.refused);
   assert.match(email.err, /that is not an email address\. Valid: an email address/);
 
+  // Nothing typed that could be a key is repeated: not a value in the wrong place, nor the words after a secret's key.
+  const misplaced = await c.run(['config', 'set', 'terminal', 'sk-ant-oat01-abcdef']);
+  assert.equal(misplaced.code, EXIT.refused);
+  assert.ok(!misplaced.err.includes('sk-ant'), misplaced.err);
+  assert.match(misplaced.err, /terminal cannot be that: .*Valid: tmux, herdr/);
+  const tooMany = await c.run(['config', 'set', 'terminal', 'tmux', 'ghp_abcdef']);
+  assert.equal(tooMany.code, EXIT.failed);
+  assert.ok(!tooMany.err.includes('ghp_'), tooMany.err);
+  assert.equal((await c.run(['config', 'get', 'tunnel', '--json'])).code, EXIT.refused, 'a key named like a command is a key, not the tunnel');
+
   c.asked.length = 0;
   for (const args of [['set', 'claude-token', 'sk-ant-oat01-x'], ['get', 'claude-token'], ['set', 'codex-auth', 'sk-x'], ['get', 'tmux-conf'], ['set', 'env', 'A=1']]) {
     const out = await c.run(['config', ...args]);
     assert.equal(out.code, EXIT.refused, args.join(' '));
     assert.match(out.err, new RegExp(`${args[1]} is a secret, or holds one: woodshed config never reads or sets one\\. Save it on My settings: ${c.origin}/settings`));
   }
+  const envLine = await c.run(['config', 'set', 'env', 'FIRST=sk-one', 'SECOND=sk-two', '--json']);
+  assert.equal(envLine.code, EXIT.refused, 'a secret\'s key is refused before its words are counted');
+  assert.ok(!envLine.out.includes('sk-') && !envLine.err.includes('sk-'), envLine.out + envLine.err);
   assert.deepEqual(c.asked, [], 'nothing was sent to the console');
 });
 

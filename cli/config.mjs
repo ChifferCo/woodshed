@@ -87,6 +87,15 @@ ${Object.entries(CONFIG_KEYS).map(([key, k]) => `  ${key.padEnd(21)}${k.values ?
 Exit codes: 0 done, 2 not signed in, 3 refused (an unknown key, a value that is not one, a secret, or a change My
 settings needs first), 1 anything else.`;
 
+// What a message repeats of what was typed: a plain short word, else nothing of it, so a token or key typed in the
+// wrong place never lands in a terminal's scrollback or an agent's captured output.
+const PLAIN_RE = /^[A-Za-z0-9._@/-]{1,40}$/;
+const SECRET_LOOKING_RE = /^(sk-|wsc_|wt_|gh[pousr]_|github_pat_|xox)/i;
+function shown(text) {
+  const word = String(text ?? '');
+  return PLAIN_RE.test(word) && !SECRET_LOOKING_RE.test(word) ? word : 'that';
+}
+
 /**
  * @param {{origin: string|null, rest: string[]}} args
  * @param {{call: Function, token: string|null, stdout: {write: Function}, say: (text: string) => void,
@@ -103,21 +112,20 @@ export async function configCommand({ origin, rest }, ctx) {
   const refused = (message) => fail(message, { code: EXIT.refused, status: 'refused' });
   const settingsPage = () => `${origin}/settings`;
   const shape = { list: 0, get: 1, set: 2 }[sub];
-  if (shape === undefined) throw fail(`unknown command config ${sub}\n\n${CONFIG_USAGE}`);
-  if (words.length < shape) throw fail(`usage: woodshed config ${sub}${shape > 0 ? ' <key>' : ''}${shape > 1 ? ' <value>' : ''}`);
-  if (words.length > shape) throw fail(`unexpected ${words[shape]}: put a value with spaces in quotes`);
+  if (shape === undefined) throw fail(`unknown command config ${shown(sub)}\n\n${CONFIG_USAGE}`);
   const [key, value] = words;
-  if (key !== undefined) {
-    if (SECRET_KEYS.has(key.toLowerCase())) {
-      throw refused(`${key} is a secret, or holds one: woodshed config never reads or sets one. Save it on My settings: ${settingsPage()}`);
-    }
-    if (!Object.hasOwn(CONFIG_KEYS, key)) throw refused(`unknown key ${printable(key, 60)}. Keys: ${Object.keys(CONFIG_KEYS).join(', ')}`);
+  // A secret's key first, before anything that could print what follows it: `config set env A=<key> B=<key>`.
+  if (shape > 0 && key !== undefined && SECRET_KEYS.has(key.toLowerCase())) {
+    throw refused(`${key.toLowerCase()} is a secret, or holds one: woodshed config never reads or sets one. Save it on My settings: ${settingsPage()}`);
   }
+  if (words.length < shape) throw fail(`usage: woodshed config ${sub}${shape > 0 ? ' <key>' : ''}${shape > 1 ? ' <value>' : ''}`);
+  if (words.length > shape) throw fail(`too many words for config ${sub}: put a value with spaces in quotes`);
+  if (key !== undefined && !Object.hasOwn(CONFIG_KEYS, key)) throw refused(`unknown key ${shown(key)}. Keys: ${Object.keys(CONFIG_KEYS).join(', ')}`);
   const spec = key ? CONFIG_KEYS[key] : null;
   // A switch's on or off is turned into true or false here, so it is checked here; every other value the console checks,
   // as it does the page's.
   if (sub === 'set' && spec.values?.includes('on') && !spec.values.includes(value)) {
-    throw refused(`${key} cannot be ${printable(value, 60)}. Valid: ${spec.values.join(', ')}`);
+    throw refused(`${key} cannot be ${shown(value)}. Valid: ${spec.values.join(', ')}`);
   }
   if (!ctx.token) {
     if (json) emit({ event: 'error', status: 'signed-out', error: `not signed in to ${origin}` });
@@ -144,6 +152,9 @@ export async function configCommand({ origin, rest }, ctx) {
   const read = await ask('/api/cli/config');
   if (read.refusal) throw fail(read.refusal.error);
   const current = view(read.body);
+  // What is sent back (the other half of the git identity) is the console's own text, never the printable copy: that
+  // would save a mark printable() took out as a space.
+  const stored = Object.fromEntries(Object.keys(CONFIG_KEYS).map((k) => [k, typeof read.body[k] === 'string' ? read.body[k] : null]));
 
   if (sub === 'list') {
     if (json) {
@@ -161,7 +172,7 @@ export async function configCommand({ origin, rest }, ctx) {
 
   let sent = value;
   if (key === 'default-repo') sent = await projectName(value);
-  const out = await ask(spec.path, { method: 'POST', body: spec.body(sent, current) });
+  const out = await ask(spec.path, { method: 'POST', body: spec.body(sent, stored) });
   if (out.refusal) throw await refusalOf(out.refusal);
   const after = view(out.body);
   const note = spec.after && after[key] !== current[key] ? spec.after : null;
@@ -178,7 +189,7 @@ export async function configCommand({ origin, rest }, ctx) {
     const found = list.find((p) => String(p.repo ?? '').toLowerCase() === wanted) ?? list.find((p) => String(p.name ?? '').toLowerCase() === wanted);
     if (found?.name) return found.name;
     const yours = list.map((p) => printable(p.repo ?? p.name, 100)).join(', ') || 'none';
-    throw refused(`You cannot start sessions on ${printable(typed, 100)} on ${origin}: it is not one of its repos, or you have no write access to it. Valid: ${yours}`);
+    throw refused(`You cannot start sessions on ${shown(typed)} on ${origin}: it is not one of its repos, or you have no write access to it. Valid: ${yours}`);
   }
 
   // The console's refusal, with what is valid: a value it does not take (400), or a step My settings needs first (409:
@@ -186,7 +197,7 @@ export async function configCommand({ origin, rest }, ctx) {
   async function refusalOf({ status, error }) {
     if (status === 400) {
       const valid = spec.values ? spec.values.join(', ') : spec.hint;
-      return refused(`${key} cannot be ${printable(value, 60)}: ${error}. Valid: ${valid}`);
+      return refused(`${key} cannot be ${shown(value)}: ${error}. Valid: ${valid}`);
     }
     if (status === 409) return refused(`${error}. On My settings: ${settingsPage()}`);
     if (status === 403) return refused(error);

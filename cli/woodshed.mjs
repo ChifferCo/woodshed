@@ -89,6 +89,19 @@ export function parseArgs(argv) {
 }
 
 /**
+ * The command word of argv, for when parseArgs refuses it: the first word that is not an option or --console's value.
+ * @returns {string|null}
+ */
+function commandWord(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--') return null;
+    if (argv[i] === '--console') i++;
+    else if (!argv[i].startsWith('-')) return argv[i];
+  }
+  return null;
+}
+
+/**
  * The console's origin from what the person typed: a bare name gets https, a path is dropped. Plain http only to this
  * machine: the token would otherwise cross the network in the clear.
  * @returns {string}
@@ -399,8 +412,11 @@ export async function main(argv, deps = {}) {
     return runTunnel({ origin, token, session, line: args.rest.join(' '), stdin: deps.stdin ?? process.stdin, stdout, stderr, userAgent: `woodshed-cli/${VERSION}` });
   }
 
+  // The command as typed, for the catch below: only the tunnel's failures exit 255, whatever the other commands' words.
+  let command = commandWord(argv);
   try {
     const args = parseArgs(argv);
+    command = args.command;
     json = args.json;
     if (args.command === 'session' && args.help) return await sessionCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.command === 'config' && args.help) return await configCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
@@ -431,7 +447,7 @@ export async function main(argv, deps = {}) {
     throw new CliError(`unknown command ${args.command}\n\n${USAGE}`);
   } catch (err) {
     if (!(err instanceof CliError)) throw err;
-    if (argv.slice(0, argv.includes('--') ? argv.indexOf('--') : argv.length).includes('tunnel')) {
+    if (command === 'tunnel') {
       stderr.write(`woodshed: ${err.message}\n`);
       return TUNNEL_FAILED;
     }
