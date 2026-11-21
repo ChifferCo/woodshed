@@ -220,6 +220,19 @@ export async function appSpaces(app) {
   return parsed(out.stdout);
 }
 
+// A space on a machine just added to hc: the window learns of the machine a moment later, and says it has none until it
+// does (measured: a few seconds after `hc machine add`).
+async function newSpace(app, args, { sleep, tries = 40 }) {
+  for (let i = 0; ; i++) {
+    try {
+      return await appDo(app, 'space.new', args);
+    } catch (err) {
+      if (i >= tries || !/has no machine called/.test(err.message)) throw err;
+      await sleep(500);
+    }
+  }
+}
+
 // A terminal on a machine by its address there (`woodshed-x/t1`), from its address or name: the window lists addresses.
 async function addressOf(hc, machine, terminal) {
   const out = await hc(['get', '--json', `${machine}/${terminal}`]);
@@ -285,7 +298,7 @@ export async function buildWithApp({ app, hc, machine, spaces, start, sleep, onS
       const args = { ...(how.folder ? { folder: how.folder } : {}), ...(how.argv ? { argv: how.argv } : {}), focus: false };
       const answer = spaceId
         ? await appDo(app, 'tab.new', { ...args, space: spaceId, ...(tab.name ? { name: tab.name } : {}) })
-        : await appDo(app, 'space.new', { ...args, machine, ...(space.name ? { name: space.name } : {}), ...(tab.name ? { tab: tab.name } : {}) });
+        : await newSpace(app, { ...args, machine, ...(space.name ? { name: space.name } : {}), ...(tab.name ? { tab: tab.name } : {}) }, { sleep });
       if (!spaceId) {
         spaceId = answer.space;
         made.spaces.push({ id: spaceId, name: space.name });

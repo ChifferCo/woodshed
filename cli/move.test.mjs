@@ -11,6 +11,7 @@ import { fakeHerdr, repoFor } from './moveFixtures.mjs';
 const TOKEN = `wsc_${'ab'.repeat(32)}`;
 const ORIGIN = 'http://localhost:7799';
 const CONVERSATION = '11111111-2222-4333-8444-555555555555';
+const SESSION_SETTINGS = fs.readFileSync(new URL('../session/claudeHooks.json', import.meta.url), 'utf8');
 const FLAGS = ' --settings /opt/woodshed/session/claudeHooks.json --append-system-prompt-file /tmp/woodshed-rules.md --permission-mode auto';
 
 /**
@@ -51,6 +52,9 @@ function laptop(t, { window = true, sessions = [], conversation = true, agentSta
           return { code: 0, stdout: `/home/node\n/home/node/work/app\n/opt/woodshed/session\n/home/node/.claude\n/home/node/.codex\nyes\n${Buffer.from(FLAGS).toString('base64')}\n\n` };
         }
         if (script.includes('worktree add') && machine.worktreeFails) return { code: 128, stderr: 'fatal: could not fetch' };
+        // What is already in the session: the files written, and those it had before.
+        if (argv[0] === 'test' && argv[1] === '-e') return { code: h.files.has(`${name}:${argv[2]}`) || (machine.has ?? []).includes(argv[2]) ? 0 : 1 };
+        if (argv[0] === 'cat' && argv[1] === '/opt/woodshed/session/claudeHooks.json') return { code: 0, stdout: SESSION_SETTINGS };
         return { code: 0, stdout: '' };
       },
     };
@@ -98,15 +102,15 @@ function laptop(t, { window = true, sessions = [], conversation = true, agentSta
   fs.mkdirSync(path.join(config, 'woodshed'), { recursive: true });
   fs.writeFileSync(path.join(config, 'woodshed', 'cli.json'), JSON.stringify({ current: ORIGIN, consoles: { [ORIGIN]: { login: 'mia-dev', store: 'file' } } }));
   let clock = Date.parse('2026-11-20T10:00:00Z');
-  const run = async (args, { confirm = null } = {}) => {
+  const run = async (args, { confirm = null, onAsk = () => {}, env = {} } = {}) => {
     let out = '';
     let err = '';
     const code = await main(args, {
-      env: { ...process.env, XDG_CONFIG_HOME: config, HOME: home, CLAUDE_CONFIG_DIR: claudeDir },
+      env: { ...process.env, XDG_CONFIG_HOME: config, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: path.join(home, '.codex'), ...env },
       stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
       credentials: { storeFor: () => ({ kind: 'file', label: 'a file', read: () => TOKEN, remove() {} }), save() {} },
       fetch: fetchFn, sleep: async (ms) => { clock += ms; }, now: () => clock, platform: 'test', hostname: 'mia-laptop',
-      hc: h.hc, app: h.app, git: repo.git, moveId: 'c0ffee42', confirm: async () => confirm,
+      hc: h.hc, app: h.app, git: repo.git, moveId: 'c0ffee42', confirm: async (q) => { onAsk(q); return confirm; },
       self: { node: '/usr/local/bin/node', script: '/home/mia/woodshed/cli/woodshed.mjs' },
     });
     return { code, out, err, events: out.trim().split('\n').filter((l) => l.startsWith('{')).map((l) => JSON.parse(l)) };
@@ -198,7 +202,7 @@ test('--dry-run prints the move bundle and does nothing: no push, no session, no
     ['t2', 'process', { space: 'api', tab: 'main', split: 'right', ratio: null }, 'woodshed/move-c0ffee42', 'services/api'],
   ]);
   assert.deepEqual(bundle.terminals[0].agent, { kind: 'claude', sessionRef: CONVERSATION, transcript: `claude/${CONVERSATION}.jsonl`, from: 'newest' });
-  assert.deepEqual(bundle.terminals[1].process, { argv: ['npm', 'run', 'dev'], restart: 'ask' });
+  assert.deepEqual(bundle.terminals[1].process, { command: 'npm run dev', restart: 'ask' });
   assert.equal(bundle.terminals[0].repo.remote, 'github.com/acme/app');
   assert.equal(l.onGithub('woodshed/move-c0ffee42'), null);
   assert.ok(!l.calls.some(([m]) => m === 'POST'));
@@ -302,9 +306,68 @@ test('into a running session of yours, the agent gets a worktree and a branch of
   const started = l.h.calls.filter((c) => c.args?.[0] === 'run').map((c) => c.args);
   assert.equal(started.length, 2);
   assert.ok(started[0].includes('herdr.space=move-c0ffee42-s1'));
-  assert.equal(started[0].at(-1), `cd /home/node/woodshed-move-c0ffee42/services/api && exec /opt/woodshed/session/bin/claude --append-system-prompt-file /tmp/woodshed-rules.md --permission-mode auto --resume ${CONVERSATION}`);
+  assert.equal(started[0].at(-1), `cd /home/node/woodshed-move-c0ffee42/services/api && exec /opt/woodshed/session/bin/claude --settings /tmp/woodshed-move-c0ffee42-claude-settings.json --append-system-prompt-file /tmp/woodshed-rules.md --permission-mode auto --resume ${CONVERSATION}`);
+  // Its settings: the session's permissions and ready gate, without the hooks that speak for the session's own agent.
+  const second = JSON.parse(l.h.files.get('woodshed-aaaa0001:/tmp/woodshed-move-c0ffee42-claude-settings.json').toString());
+  assert.ok(second.permissions.ask.includes('Bash(gh pr merge:*)'));
+  assert.ok(JSON.stringify(second.hooks).includes('readyGate.mjs'));
+  assert.ok(!JSON.stringify(second).includes('hookState'));
   assert.equal(started[1].at(-1), 'cd /home/node/woodshed-move-c0ffee42/services/api && exec bash -l', 'the dev server not restarted: a shell where it ran');
   assert.match(out.out, /t2 -> woodshed-aaaa0001\/t3 {2}a shell there: npm run dev was not started again/);
   assert.match(out.out, /Agents in worktrees \(\/home\/node\/woodshed-move-c0ffee42\) push their own branches/);
   assert.ok(!l.calls.some(([m]) => m === 'POST'), 'nothing started or resumed: it was running');
+});
+
+test('a conversation that holds a secret, or one already moved into the session, is not carried', async (t) => {
+  const l = laptop(t);
+  const file = fs.readdirSync(path.join(l.repo.dir, 'home', '.claude', 'projects')).map((d) => path.join(l.repo.dir, 'home', '.claude', 'projects', d, `${CONVERSATION}.jsonl`))[0];
+  const clean = fs.readFileSync(file, 'utf8');
+  fs.appendFileSync(file, `${JSON.stringify({ type: 'user', message: { content: `my key is AKIA${'R'.repeat(16)}` } })}\n`);
+  const held = await l.run(['move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
+  assert.equal(held.code, EXIT.refused);
+  assert.match(held.err, /These conversations hold what looks like a secret.*\n {2}t1's conversation 11111111-2222-4333-8444-555555555555, line 3: an AWS access key\n/s);
+  assert.ok(!held.err.includes('AKIA'), 'never the value');
+  assert.equal(l.onGithub('woodshed/move-c0ffee42'), null);
+
+  fs.writeFileSync(file, clean);
+  const again = laptop(t, { machine: { has: [`/home/node/.claude/projects/${claudeProjectDir('/home/node/work/app/services/api')}/${CONVERSATION}.jsonl`] } });
+  const out = await again.run(['move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
+  assert.equal(out.code, EXIT.refused, out.out);
+  assert.match(out.err, /is already in woodshed-dddd0004: this conversation was moved there before/);
+  assert.equal(again.onGithub('woodshed/move-c0ffee42'), null, 'undone');
+  assert.equal(again.h.terminals.get(again.claude).state, 'live');
+});
+
+test('a program\'s credential is never printed, in the question, the bundle or the summary, though it restarts with it', async (t) => {
+  const l = laptop(t);
+  Object.assign(l.h.terminals.get(l.dev).foreground, { name: 'node', argv: ['node', 'server.js', '--api-key', 'abc123secret'] });
+  const dry = await l.run(['move', '--space', 'api', '--to', 'new', '--dry-run', '--json', '--console', ORIGIN]);
+  assert.ok(!dry.out.includes('abc123secret'));
+  assert.equal(dry.events.find((e) => e.event === 'bundle').bundle.terminals[1].process.command, 'node server.js --api-key …');
+  let asked = null;
+  const out = await l.run(['move', '--space', 'api', '--to', 'new', '--console', ORIGIN], { confirm: true, onAsk: (q) => { asked = q; } });
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.ok(!out.out.includes('abc123secret') && !out.err.includes('abc123secret'));
+  const split = JSON.parse(l.h.calls.find((c) => c.app?.[1] === 'pane.split').app[2]);
+  assert.match(split.argv[2], /exec node server\.js --api-key abc123secret$/, 'the restart itself has it');
+  assert.match(asked, /^Start "node server\.js --api-key …" again in the session \(t2\)\?/);
+});
+
+test('a Codex terminal moves with its rollout and is ended here with /quit though it never says it is idle', async (t) => {
+  const l = laptop(t, { conversation: false });
+  const codexDir = path.join(l.repo.dir, 'home', '.codex');
+  const day = path.join(codexDir, 'sessions', '2026', '11', '20');
+  fs.mkdirSync(day, { recursive: true });
+  const id = '22222222-3333-4444-8555-666666666666';
+  fs.writeFileSync(path.join(day, `rollout-2026-11-20T09-00-00-${id}.jsonl`), `${JSON.stringify({ type: 'session_meta', payload: { id, cwd: l.cwd } })}\n`);
+  Object.assign(l.h.terminals.get(l.claude), { foreground: { name: 'codex', argv: ['codex'], cwd: l.cwd, pid: 9 }, status: null, status_ms: null });
+  const out = await l.run(['move', '--space', 'api', '--to', 'aaaa0001', '--restart', 'never', '--json', '--console', ORIGIN], { env: { CODEX_HOME: codexDir } });
+  assert.equal(out.code, EXIT.done, out.err + out.out);
+  assert.ok(l.h.files.has(`woodshed-aaaa0001:/home/node/.codex/sessions/2026/11/20/rollout-2026-11-20T09-00-00-${id}.jsonl`));
+  const run = l.h.calls.find((c) => c.app?.[1] === 'space.new' || c.app?.[1] === 'pane.split');
+  assert.match(JSON.parse(run.app[2]).argv[2], new RegExp(`exec /opt/woodshed/session/bin/codex resume ${id}$`));
+  assert.deepEqual(sends(l.h, l.claude), ['/quit']);
+  assert.ok(!l.h.calls.some((c) => c.args?.[0] === 'send' && c.args.includes('--if') && c.args.includes(l.claude)), 'no idle check codex could never pass');
+  assert.equal(l.h.terminals.get(l.claude).labels['woodshed.moved'], 'woodshed-aaaa0001/t2');
+  assert.equal(out.events.at(-1).terminals[0].localEnded, true);
 });

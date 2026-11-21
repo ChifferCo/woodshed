@@ -94,3 +94,20 @@ test('with no window the terminals are started with the labels the app adopts th
   assert.deepEqual(h.terminals.get(own).labels, { 'herdr.space': 'move-1234abcd-s1', 'herdr.tab': 'move-1234abcd-s1-t1' });
   assert.deepEqual(made, [built.terminals.get('t2')], 'only what it started is the move\'s to undo');
 });
+
+test('a machine the window does not know yet is waited for, a few seconds after hc added it', async () => {
+  const machine = 'woodshed-dddd0004';
+  const h = fakeHerdr();
+  let refusals = 3;
+  const app = async (args, opts) => {
+    if (args[1] === 'space.new' && refusals-- > 0) return { code: 1, stdout: `{"error":"Herdr has no machine called ${machine}. See hc machine ls"}`, stderr: '' };
+    return h.app(args, opts);
+  };
+  const built = await buildWithApp({
+    app, hc: h.hc, machine, sleep,
+    spaces: [{ name: 'api', tabs: [{ name: 'main', tree: { terminal: 't1' } }] }],
+    start: () => ({ folder: '/work/app', argv: ['/bin/bash', '-lc', 'cd /work/app && exec bash -l'] }),
+  });
+  assert.equal(built.spaces.length, 1);
+  assert.equal(refusals, -1, 'asked again until the window knew it');
+});

@@ -108,3 +108,40 @@ test('a folder outside a checkout, or a checkout with no GitHub remote, is said 
   assert.match(error, /is not a GitHub repo/);
   assert.ok(!error.includes('hunter2'), 'a password in the URL is not printed');
 });
+
+test('what the push would send is looked through: a secret in a commit not pushed yet, though a later one took it out, and a log too large to read', async (t) => {
+  const { root, sh, git } = repoFor(t);
+  const token = `ghp_${'b2'.repeat(18)}`;
+  fs.writeFileSync(path.join(root, 'config.js'), `module.exports = "${token}";\n`);
+  sh(['add', 'config.js'], root);
+  sh(['commit', '-q', '-m', 'add config'], root);
+  fs.writeFileSync(path.join(root, 'config.js'), 'module.exports = process.env.TOKEN;\n');
+  sh(['commit', '-q', '-am', 'take the token out'], root);
+  const checkout = await checkoutOf(git, root);
+  const found = await survey(git, checkout, { tag: 'test' });
+  t.after(() => fs.rmSync(path.dirname(found.index), { recursive: true, force: true }));
+  assert.deepEqual(found.secrets, [{ path: 'config.js', line: 1, kind: 'a GitHub token' }], 'the earlier commit would be pushed with it');
+  assert.deepEqual(found.files, [], 'the working tree itself is clean');
+
+  sh(['push', '-q', 'origin', 'main'], root);
+  sh(['fetch', '-q', 'origin'], root);
+  const pushed = await survey(git, await checkoutOf(git, root), { tag: 'test' });
+  t.after(() => fs.rmSync(path.dirname(pushed.index), { recursive: true, force: true }));
+  assert.deepEqual(pushed.secrets, [], 'once GitHub has that commit, the move adds nothing to it');
+
+  fs.writeFileSync(path.join(root, 'debug.log'), `${'line\n'.repeat(400)}${token}\n`);
+  const big = await survey(git, await checkoutOf(git, root), { tag: 'test', scanBytes: 1000 });
+  t.after(() => fs.rmSync(path.dirname(big.index), { recursive: true, force: true }));
+  assert.deepEqual(big.secrets, [{ path: 'debug.log', line: null, kind: 'text too large to check for secrets (1 MB)' }]);
+  fs.writeFileSync(path.join(root, 'debug.log'), Buffer.concat([Buffer.from([0, 1, 2]), Buffer.alloc(5000, 7)]));
+  const binary = await survey(git, await checkoutOf(git, root), { tag: 'test', scanBytes: 1000 });
+  t.after(() => fs.rmSync(path.dirname(binary.index), { recursive: true, force: true }));
+  assert.deepEqual(binary.secrets, [], 'a binary file is not text to read through');
+});
+
+test('a remote that pushes to more than one place is refused: the move pushes to the one repo it checked', async (t) => {
+  const { root, sh, git } = repoFor(t);
+  sh(['config', '--add', 'remote.origin.pushurl', 'https://github.com/acme/app.git'], root);
+  sh(['config', '--add', 'remote.origin.pushurl', 'https://github.com/someone/mirror.git'], root);
+  assert.match((await checkoutOf(git, root)).error, /remote origin pushes to 2 places, and the move pushes to one/);
+});

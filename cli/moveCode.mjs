@@ -7,29 +7,47 @@
 // What is said of one is its path, line and kind, never the value. Ignored files such as `.env` never go; `woodshed
 // settings push --own-files` is how a person's own env files reach their sessions.
 
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 const GIT_MS = 60_000;
 const PUSH_MS = 180_000;
-// Larger files are not read for secrets: a key or a token is in a small file, and a big one is data.
-const SCAN_BYTES = 2 * 1024 * 1024;
+// A text file larger than this cannot be looked through for secrets, and refuses the move: a log can hold a token.
+const SCAN_BYTES = 20 * 1024 * 1024;
 
 /**
  * Runs git in a folder. Never through a shell; GIT_TERMINAL_PROMPT=0 so a push with no credential fails rather than
- * waits on a prompt nobody sees.
- * @returns {(args: string[], opts?: {cwd?: string, env?: object, timeoutMs?: number}) => Promise<{code: number|null, stdout: string, stderr: string}>}
+ * waits on a prompt nobody sees. `input` is piped to it; `raw` keeps its output as bytes; `limit` stops reading after
+ * that many bytes.
+ * @returns {(args: string[], opts?: {cwd?: string, env?: object, timeoutMs?: number, input?: string, raw?: boolean}) => Promise<{code: number|null, stdout: string|Buffer, stderr: string}>}
  */
 export function gitRunner({ bin = 'git', env = process.env } = {}) {
-  return (args, { cwd, env: extra = {}, timeoutMs = GIT_MS } = {}) => new Promise((resolve) => {
-    execFile(bin, args, {
-      cwd, env: { ...env, GIT_TERMINAL_PROMPT: '0', ...extra }, timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8',
-    }, (err, stdout, stderr) => {
-      const code = !err ? 0 : Number.isInteger(err.code) ? err.code : null;
-      resolve({ code, stdout: stdout ?? '', stderr: stderr ?? '' });
+  return (args, { cwd, env: extra = {}, timeoutMs = GIT_MS, input = null, raw = false, limit = null } = {}) => new Promise((resolve) => {
+    const child = spawn(bin, args, { cwd, env: { ...env, GIT_TERMINAL_PROMPT: '0', ...extra }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const out = [];
+    const err = [];
+    const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
+    let read = 0;
+    child.stdout.on('data', (d) => {
+      out.push(d);
+      read += d.length;
+      // Only the first bytes were asked for: the rest is not read.
+      if (limit !== null && read >= limit) child.kill('SIGTERM');
     });
+    child.stderr.on('data', (d) => err.push(d));
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      resolve({ code: null, stdout: raw ? Buffer.alloc(0) : '', stderr: String(e.message) });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const bytes = Buffer.concat(out);
+      resolve({ code, stdout: raw ? bytes : bytes.toString('utf8'), stderr: Buffer.concat(err).toString('utf8') });
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.end(input ?? undefined);
   });
 }
 
@@ -70,6 +88,9 @@ export async function checkoutOf(git, cwd) {
     || (await git(['config', '--get', `remote.${remote}.url`], { cwd: root })).stdout.trim();
   const repo = githubRepo(url);
   if (!repo) return { error: `${root}'s remote ${remote} is not a GitHub repo (${url.replace(/\/\/[^@/]*@/, '//')})` };
+  // A remote that pushes to several places (two pushurls) would send the work to each: only one is the repo checked.
+  const pushes = (await git(['remote', 'get-url', '--push', '--all', remote], { cwd: root })).stdout.split('\n').filter(Boolean);
+  if (pushes.length > 1) return { error: `${root}'s remote ${remote} pushes to ${pushes.length} places, and the move pushes to one: give it one pushurl` };
   return {
     root, subdir: subdir === '' ? '' : subdir, remote, repo,
     head: head.code === 0 ? head.stdout.trim() : null, branch: branch.code === 0 ? branch.stdout.trim() : null,
@@ -123,19 +144,21 @@ export function secretsIn(text, before = '') {
 }
 
 /**
- * What would be frozen in a checkout, and what refuses it: the files the commit adds or changes over HEAD (untracked
- * ones included, ignored ones never), each looked at for secrets, and the env files git ignores, which stay here.
- * The index used is a temporary one; the person's is left as it is.
+ * What would be frozen in a checkout, and what refuses it. The files the commit adds or changes over HEAD (untracked
+ * ones included, ignored ones never) are listed; what is looked through for secrets is every file the push would send
+ * that the remote does not hold: the snapshot's, and those of commits here not pushed yet, which a later commit may
+ * have taken a secret out of while it stays in history. Each is read as git stores it, after its filters. A text file
+ * too large to read through refuses the move. The index used is a temporary one; the person's is left as it is.
  * @returns {Promise<{files: {path: string, status: string}[], secrets: {path: string, line: number|null, kind: string}[],
  *          ignoredEnv: string[], tree: string, index: string}>}  `index`: the temporary index, which the caller removes
  */
-export async function survey(git, checkout, { tempDir = os.tmpdir(), tag = 'move' } = {}) {
-  const { root, head } = checkout;
+export async function survey(git, checkout, { tempDir = os.tmpdir(), tag = 'move', scanBytes = SCAN_BYTES } = {}) {
+  const { root, head, remote } = checkout;
   const index = path.join(fs.mkdtempSync(path.join(tempDir, `woodshed-${tag}-`)), 'index');
   const env = { GIT_INDEX_FILE: index };
-  const step = async (args) => {
-    const out = await git(args, { cwd: root, env });
-    if (out.code !== 0) throw new Error(`git ${args[0]} failed in ${root}: ${lastLine(out)}`);
+  const step = async (args, opts = {}) => {
+    const out = await git(args, { cwd: root, env, ...opts });
+    if (out.code !== 0) throw new Error(`git ${args[0]} failed in ${root}: ${lastLine({ ...out, stdout: String(out.stdout) })}`);
     return out.stdout;
   };
   await step(head ? ['read-tree', head] : ['read-tree', '--empty']);
@@ -146,31 +169,41 @@ export async function survey(git, checkout, { tempDir = os.tmpdir(), tag = 'move
   const files = [];
   if (head) for (let i = 0; i + 1 < words.length; i += 2) files.push({ status: words[i], path: words[i + 1] });
   else for (const word of words) files.push({ status: 'A', path: word });
+
+  // The objects the push sends: reachable from the snapshot and HEAD, and from no ref of the remote here.
+  const listed = await step(['rev-list', '--objects', ...(head ? [head] : []), tree, '--not', `--remotes=${remote}`], { timeoutMs: 180_000 });
+  const pathOf = new Map();
+  for (const line of listed.split('\n')) {
+    const [sha, ...rest] = line.split(' ');
+    if (sha && rest.length) pathOf.set(sha, rest.join(' '));
+  }
+  const kinds = await step(['cat-file', '--batch-check=%(objectname) %(objecttype) %(objectsize)'], { input: `${[...pathOf.keys()].join('\n')}\n` });
+  const blobs = kinds.split('\n').map((l) => l.split(' ')).filter(([, type]) => type === 'blob').map(([sha, , size]) => ({ sha, size: Number(size), path: pathOf.get(sha) }));
+  // A secret the remote's copy of a file already held is not the move's doing.
+  const upstream = (await git(['rev-parse', '--verify', '--quiet', '@{upstream}'], { cwd: root })).stdout.trim()
+    || (await git(['rev-parse', '--verify', '--quiet', `refs/remotes/${remote}/HEAD`], { cwd: root })).stdout.trim();
   const secrets = [];
-  for (const file of files) {
-    if (file.status === 'D') continue;
-    const byName = secretName(file.path);
+  for (const blob of blobs) {
+    const byName = secretName(blob.path);
     if (byName) {
-      secrets.push({ path: file.path, line: null, kind: byName });
+      secrets.push({ path: blob.path, line: null, kind: byName });
       continue;
     }
-    let text;
-    try {
-      const where = path.join(root, file.path);
-      const stat = fs.lstatSync(where);
-      if (!stat.isFile() || stat.size > SCAN_BYTES) continue;
-      text = fs.readFileSync(where, 'utf8');
-    } catch {
+    const start = (await git(['cat-file', 'blob', blob.sha], { cwd: root, raw: true, limit: 8000 })).stdout;
+    if (start.subarray(0, 8000).includes(0)) continue;
+    if (blob.size > scanBytes) {
+      secrets.push({ path: blob.path, line: null, kind: `text too large to check for secrets (${Math.max(1, Math.round(blob.size / 1048576))} MB)` });
       continue;
     }
-    if (text.includes('\0')) continue;
-    const before = head && file.status !== 'A' ? (await git(['show', `${head}:${file.path}`], { cwd: root })).stdout : '';
-    for (const hit of secretsIn(text, before)) secrets.push({ path: file.path, ...hit });
+    const text = blob.size <= start.length ? start.toString('utf8') : (await git(['cat-file', 'blob', blob.sha], { cwd: root })).stdout;
+    const before = upstream ? (await git(['show', `${upstream}:${blob.path}`], { cwd: root })).stdout : '';
+    for (const hit of secretsIn(text, before)) secrets.push({ path: blob.path, ...hit });
   }
   // Ignored env files are named so the person knows they stay, and how theirs reach a session.
   const ignored = await git(['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--', ':(glob)**/.env', ':(glob)**/.env.*'], { cwd: root });
   const ignoredEnv = ignored.code === 0 ? ignored.stdout.split('\0').filter(Boolean).slice(0, 50) : [];
-  return { files, secrets, ignoredEnv, tree, index };
+  const unique = [...new Map(secrets.map((x) => [`${x.path}:${x.line}:${x.kind}`, x])).values()];
+  return { files, secrets: unique, ignoredEnv, tree, index };
 }
 
 /**

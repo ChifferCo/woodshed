@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { classify, claudeProjectDir, commandLine, codexConversations, conversationInArgv, findConversations, rewriteConversation } from './moveAgents.mjs';
+import { classify, claudeProjectDir, commandLine, codexConversations, conversationInArgv, findConversations, rewriteConversation, shownCommand, withoutStateHooks } from './moveAgents.mjs';
 
 const UUID = (n) => `0000000${n}-aaaa-4bbb-8ccc-${String(n).padStart(12, '0')}`;
 
@@ -77,6 +77,8 @@ test('each agent gets its own conversation: by label, by command line, by its la
   assert.match(guessing.get('t1').error, /which of \/w\/app's 3 claude conversations is its own cannot be told: label it, hc label t1 claude.session=<id>/);
   const same = findConversations([agent('t1', { statusMs: now - 60_000 }), agent('t2', { statusMs: now - 59_000 })], { env, now });
   assert.match(same.get('t1').error, /t1 and t2 would both get conversation/);
+  const lone = findConversations([agent('t1')], { env, now, peers: [agent('t1'), agent('t2')] });
+  assert.match(lone.get('t1').error, /cannot be told/, 'moved alone, but another agent there stays: no guess');
   const missing = findConversations([agent('t9', { cwd: '/w/none' })], { env, now });
   assert.equal(missing.get('t9').error, `no claude conversation for /w/none in ${claudeDir}`);
   const gone = findConversations([agent('t9', { labels: { 'claude.session': UUID(8) } })], { env, now });
@@ -112,4 +114,37 @@ test('a conversation\'s folders are said as the session\'s, under the checkout o
   assert.equal(JSON.parse(out[3]).payload.cwd, '/home/node/work/app');
   assert.equal(out[4], 'not json {');
   assert.equal(out[5], '');
+});
+
+test('a labelled Codex conversation is found however long ago it began', (t) => {
+  const codexDir = path.join(home(t), '.codex');
+  const old = path.join(codexDir, 'sessions', '2025', '01', '02');
+  fs.mkdirSync(old, { recursive: true });
+  fs.writeFileSync(path.join(old, `rollout-2025-01-02T09-00-00-${UUID(7)}.jsonl`), `${JSON.stringify({ type: 'session_meta', payload: { id: UUID(7), cwd: '/w/app' } })}\n`);
+  const found = findConversations([{ address: 't1', agent: 'codex', cwd: '/w/app', labels: { 'codex.session': UUID(7) }, argv: ['codex'], statusMs: null }], { env: { CODEX_HOME: codexDir }, now: Date.parse('2026-11-20T10:00:00Z') });
+  assert.deepEqual([found.get('t1').id, found.get('t1').relative], [UUID(7), `2025/01/02/rollout-2025-01-02T09-00-00-${UUID(7)}.jsonl`]);
+});
+
+test('a second claude in a session keeps the session\'s permissions and ready gate, and only the state hooks go', () => {
+  const settings = JSON.parse(fs.readFileSync(new URL('../session/claudeHooks.json', import.meta.url), 'utf8'));
+  const kept = withoutStateHooks(settings);
+  assert.deepEqual(kept.permissions, settings.permissions);
+  assert.ok(kept.permissions.ask.includes('Bash(gh pr merge:*)'));
+  assert.deepEqual(kept.hooks, { PreToolUse: [settings.hooks.PreToolUse.find((m) => /readyGate/.test(m.hooks[0].command))] });
+  assert.ok(!JSON.stringify(kept).includes('hookState'));
+});
+
+test('a program\'s command line is shown with what may be a credential hidden', () => {
+  assert.equal(shownCommand(['npm', 'run', 'dev']), 'npm run dev');
+  assert.equal(shownCommand(['node', 'server.js', '--api-key', 'abc123', '--token=xyz', 'DB_PASSWORD=hunter2', '--port', '3000']),
+    'node server.js --api-key … --token=… DB_PASSWORD=… --port 3000');
+  assert.equal(shownCommand(['curl', 'ghp_x'], (w) => w.startsWith('ghp_')), 'curl …');
+  assert.equal(shownCommand(['echo', 'two words']), "echo 'two words'");
+});
+
+test('a Codex conversation is told the model provider the session\'s codex runs on', () => {
+  const text = `${JSON.stringify({ type: 'session_meta', payload: { id: UUID(1), cwd: '/w/app', model_provider: 'openai' } })}\n${JSON.stringify({ type: 'turn_context', payload: { cwd: '/w/app' } })}\n`;
+  const [meta, turn] = rewriteConversation(text, { from: ['/w/app'], to: '/work/app', codexProvider: 'woodshed' }).trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(meta.payload, { id: UUID(1), cwd: '/work/app', model_provider: 'woodshed' });
+  assert.deepEqual(turn.payload, { cwd: '/work/app' });
 });

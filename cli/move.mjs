@@ -27,8 +27,8 @@ import fs from 'node:fs';
 import zlib from 'node:zlib';
 
 import { HC_MINIMUM, hcVersion, machineName, shellQuote } from './hc.mjs';
-import { checkoutOf, deleteBranch, freeze, pushBranch, survey } from './moveCode.mjs';
-import { classify, claudeProjectDir, findConversations, rewriteConversation, rootsOf } from './moveAgents.mjs';
+import { checkoutOf, deleteBranch, freeze, pushBranch, secretsIn, survey } from './moveCode.mjs';
+import { classify, claudeProjectDir, findConversations, rewriteConversation, rootsOf, shownCommand, withoutStateHooks } from './moveAgents.mjs';
 import { appSpaces, buildWithApp, buildWithLabels, choose, failureOf, leavesOf, localLayout, placesOf, readDoc } from './moveLayout.mjs';
 
 const ID_RE = /^[0-9a-f]{8}$/;
@@ -122,6 +122,8 @@ export async function moveCommand({ origin, rest }, ctx) {
   };
 
   if (ctx.platform === 'win32') throw refused('woodshed move does not run on Windows yet');
+  // A program's command line as it is printed: what may be a credential in it hidden. The real one is for its restart.
+  const shown = (argv) => shownCommand(argv, (word) => secretsIn(word).length > 0);
   const version = await hcVersion(hc);
   if (!version.ok) throw fail(`Moving terminals needs Herdr's hc, ${HC_MINIMUM} or newer${version.installed ? `, and yours is ${version.version ?? 'a version it does not say'}: hc update` : ': install Herdr'}.`, { code: EXIT.refused, status: version.installed ? 'old-hc' : 'no-hc' });
 
@@ -165,9 +167,19 @@ export async function moveCommand({ origin, rest }, ctx) {
   const agents = addresses.filter((a) => kinds.get(a).kind === 'agent');
   const conversations = findConversations(agents.map((a) => ({
     address: a, agent: kinds.get(a).agent, cwd: kinds.get(a).cwd, labels: byAddress.get(a).labels ?? {}, argv: kinds.get(a).argv, statusMs: byAddress.get(a).status_ms ?? null,
-  })), { env, now: now() });
+  })), {
+    env, now: now(),
+    // Every agent here, the ones staying too: which conversation is whose is not guessed from the moved ones alone.
+    peers: here.filter((t) => classify(t).kind === 'agent').map((t) => ({ address: t.address, agent: classify(t).agent, cwd: classify(t).cwd })),
+  });
   const lost = agents.filter((a) => conversations.get(a)?.error);
   if (lost.length) throw fail(`The conversation of ${lost.map((a) => `${a}: ${conversations.get(a).error}`).join('; ')}. Nothing was moved.`, { status: 'no-conversation' });
+  // A conversation holds what its agent read and ran: a credential in it would reach the session. Said by line and kind.
+  const heldSecrets = agents.flatMap((a) => secretsIn(fs.readFileSync(conversations.get(a).file, 'utf8')).map((hit) => ({ address: a, ...hit })));
+  if (heldSecrets.length) {
+    if (json) emit({ event: 'secrets', conversations: heldSecrets });
+    throw refused(`These conversations hold what looks like a secret, and the move would carry it into the session:\n${heldSecrets.map((h) => `  ${h.address}'s conversation ${conversations.get(h.address).id}, line ${h.line}: ${h.kind}`).join('\n')}\nRevoke the credential, then move a new conversation, or work on here. Nothing was moved.`);
+  }
 
   // ---- The sessions, read before anything is made.
   const me = await ask('/api/sessions');
@@ -236,7 +248,7 @@ export async function moveCommand({ origin, rest }, ctx) {
   const processes = addresses.filter((a) => kinds.get(a).kind === 'process');
   const restart = new Map();
   for (const a of processes) {
-    const line = kinds.get(a).argv.map(shellQuote).join(' ');
+    const line = shown(kinds.get(a).argv);
     if (opts.restart === 'auto' || opts.restart === 'never') restart.set(a, opts.restart === 'auto');
     else if (opts.dryRun) restart.set(a, null);
     else {
@@ -267,7 +279,7 @@ export async function moveCommand({ origin, rest }, ctx) {
         kind: k.kind,
         cwd: k.cwd,
         ...(k.kind === 'agent' ? { agent: { kind: k.agent, sessionRef: conversation.id, transcript: `${k.agent}/${conversation.relative ?? `${conversation.id}.jsonl`}`, from: conversation.from } } : {}),
-        ...(k.kind === 'process' ? { process: { argv: k.argv, restart: restart.get(a) === true ? 'auto' : restart.get(a) === false ? 'never' : 'ask' } } : {}),
+        ...(k.kind === 'process' ? { process: { command: shown(k.argv), restart: restart.get(a) === true ? 'auto' : restart.get(a) === false ? 'never' : 'ask' } } : {}),
       };
     }),
   });
@@ -279,7 +291,7 @@ export async function moveCommand({ origin, rest }, ctx) {
     else {
       say(`Would move ${addresses.length} terminal${addresses.length === 1 ? '' : 's'} to ${opts.to === 'new' ? `${repos.length === 1 ? 'a new session' : `${repos.length} new sessions`}` : `session ${opts.to}`} (move ${id}):`);
       for (const r of b.repos) say(`  ${r.repo}: ${r.files} changed file${r.files === 1 ? '' : 's'} from ${r.root} to woodshed/move-${id}${r.ignoredEnv.length ? `; stays here: ${r.ignoredEnv.join(', ')}` : ''}`);
-      for (const t of b.terminals) say(`  ${t.address}  ${t.layout.space || '-'} / ${t.layout.tab || '-'}  ${t.kind}${t.agent ? ` ${t.agent.kind} ${t.agent.sessionRef} (${t.agent.from})` : t.process ? ` ${t.process.argv.join(' ')}` : ''}  in ${t.repo.subdir || '.'}`);
+      for (const t of b.terminals) say(`  ${t.address}  ${t.layout.space || '-'} / ${t.layout.tab || '-'}  ${t.kind}${t.agent ? ` ${t.agent.kind} ${t.agent.sessionRef} (${t.agent.from})` : t.process ? ` ${t.process.command}` : ''}  in ${t.repo.subdir || '.'}`);
       say(JSON.stringify(b, null, 2));
     }
     return EXIT.done;
@@ -289,22 +301,39 @@ export async function moveCommand({ origin, rest }, ctx) {
   const made = { branches: [], sessions: [], worktrees: [], files: [], spaces: [], terminals: [] };
   const machinesOf = new Map();
   const commits = new Map();
+  // Each step of the undo that did not work is named, so it can be done by hand.
   async function undo() {
-    for (const s of made.spaces) await app(['do', 'space.close', JSON.stringify({ id: s.id, confirmed: true })], { timeoutMs: 30_000 }).catch(() => null);
-    for (const t of made.terminals) await hc(['kill', '--json', t]).catch(() => null);
-    for (const w of made.worktrees) {
-      await hc(['exec', '--json', '--on', w.machine, '--', 'sh', '-c', 'git -C "$1" worktree remove --force "$2"; git -C "$1" branch -D "$3"', 'sh', w.repoDir, w.path, w.branch]).catch(() => null);
+    const left = [];
+    const execOk = async (machine, argv) => {
+      const out = parsed((await hc(['exec', '--json', '--on', machine, '--', ...argv]).catch(() => ({ stdout: '' }))).stdout);
+      return out?.code === 0;
+    };
+    for (const s of made.spaces) {
+      const out = await app(['do', 'space.close', JSON.stringify({ id: s.id, confirmed: true })], { timeoutMs: 30_000 }).catch(() => ({ code: 1 }));
+      if (out.code !== 0) left.push(`the space ${s.id} in Herdr`);
     }
-    for (const f of made.files) await hc(['exec', '--json', '--on', f.machine, '--', 'rm', '-f', f.path]).catch(() => null);
+    for (const t of made.terminals) if ((await hc(['kill', '--json', t]).catch(() => ({ code: 1 }))).code !== 0) left.push(`the terminal ${t}`);
+    for (const w of made.worktrees) {
+      if (!(await execOk(w.machine, ['sh', '-c', 'git -C "$1" worktree remove --force "$2" && git -C "$1" branch -D "$3"', 'sh', w.repoDir, w.path, w.branch]))) left.push(`the worktree ${w.path} on ${w.machine}`);
+    }
+    for (const f of made.files) if (!made.sessions.some((s) => machineName(s.id) === f.machine) && !(await execOk(f.machine, ['rm', '-f', f.path]))) left.push(`${f.path} on ${f.machine}`);
     for (const s of made.sessions) {
-      await call(origin, `/api/my/sessions/${s.id}/remove`, { method: 'POST', body: {}, token: ctx.token, deadlineMs: 180_000 }).catch(() => null);
+      const out = await call(origin, `/api/my/sessions/${s.id}/remove`, { method: 'POST', body: {}, token: ctx.token, deadlineMs: 180_000 }).catch(() => null);
+      if (out?.status !== 200) left.push(`session ${s.id} (woodshed session remove ${s.id})`);
       await hc(['machine', 'rm', '--json', machineName(s.id)]).catch(() => null);
     }
-    for (const b of made.branches) await deleteBranch(git, b.checkout, b.branch).catch(() => false);
+    for (const b of made.branches) if (!(await deleteBranch(git, b.checkout, b.branch).catch(() => false))) left.push(`the branch ${b.branch} on ${b.checkout.remote} (git push ${b.checkout.remote} --delete ${b.branch})`);
+    return left;
   }
-  async function failed(err) {
+  async function failed(error) {
+    // Said as the command's own failure, never as a stack.
+    const err = error?.code !== undefined && error?.status !== undefined ? error : fail(String(error?.message ?? error));
     if (!json) say('Undoing what was made in the session and on GitHub; nothing here was changed.');
-    await undo();
+    const left = await undo();
+    if (left.length) {
+      if (json) emit({ event: 'undo-incomplete', left });
+      err.message = `${err.message}\nNot undone, so remove them yourself: ${left.join('; ')}.`;
+    }
     throw err;
   }
 
@@ -358,10 +387,10 @@ export async function moveCommand({ origin, rest }, ctx) {
     // What the session is: its home, checkout, and the flags its agent runs with.
     const facts = new Map();
     for (const [sid, m] of machinesOf) {
-      const script = 'sd=${SESSION_DIR:-/opt/woodshed/session}; printf "%s\\n" "$HOME" "${REPO_DIR:-}" "$sd" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "${CODEX_HOME:-$HOME/.codex}" "$( [ -x "$sd/bin/claude" ] && echo yes)"; printf "%s" "$(cat /tmp/woodshed-claude-flags 2>/dev/null)" | base64 | tr -d "\\n"; echo; printf "%s" "$(cat /tmp/woodshed-codex-flags 2>/dev/null)" | base64 | tr -d "\\n"; echo';
+      const script = 'sd=${SESSION_DIR:-/opt/woodshed/session}; printf "%s\\n" "$HOME" "${REPO_DIR:-}" "$sd" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "${CODEX_HOME:-$HOME/.codex}" "$( [ -x "$sd/bin/claude" ] && echo yes)"; printf "%s" "$(cat /tmp/woodshed-claude-flags 2>/dev/null)" | base64 | tr -d "\\n"; echo; printf "%s" "$(cat /tmp/woodshed-codex-flags 2>/dev/null)" | base64 | tr -d "\\n"; echo; echo "${WOODSHED_CODEX_AUTH:-}"';
       const out = parsed((await hc(['exec', '--json', '--on', m.name, '--', 'sh', '-c', script])).stdout);
       if (!out || out.code !== 0) throw fail(`${m.name} did not answer hc exec: ${printable(out ? Buffer.from(out.stderr ?? '', 'base64').toString() : 'no answer', 300)}`);
-      const [home, repoDir, sessionDir, claudeDir, codexDir, wrapped, claudeFlags, codexFlags] = Buffer.from(out.stdout, 'base64').toString('utf8').split('\n');
+      const [home, repoDir, sessionDir, claudeDir, codexDir, wrapped, claudeFlags, codexFlags, codexAuth] = Buffer.from(out.stdout, 'base64').toString('utf8').split('\n');
       let checkout = repoDir;
       const agentAt = m.agent?.inHerdr ? parsed((await hc(['get', '--json', `${m.name}/claude`])).stdout) : null;
       if (agentAt?.cwd) checkout = agentAt.cwd;
@@ -369,6 +398,8 @@ export async function moveCommand({ origin, rest }, ctx) {
       const b64 = (x) => Buffer.from(x ?? '', 'base64').toString('utf8');
       facts.set(sid, {
         home, checkout, sessionDir, claudeDir, codexDir, wrapped: wrapped === 'yes', claudeFlags: b64(claudeFlags), codexFlags: b64(codexFlags), agent: agentAt,
+        // session/bin/codex: the console's proxy, as provider "woodshed", on the team key; OpenAI on the owner's sign-in.
+        codexProvider: codexAuth === 'key' ? 'woodshed' : 'openai',
       });
     }
 
@@ -412,6 +443,9 @@ export async function moveCommand({ origin, rest }, ctx) {
 
     // ---- 4. The conversations, written where the session's agent reads them. Folders said as the session's.
     async function writeThere(machine, dest, data) {
+      // A conversation already there (moved before, and gone on there) is never written over: its later turns would go.
+      const there = parsed((await hc(['exec', '--json', '--on', machine, '--', 'test', '-e', dest])).stdout);
+      if (there?.code === 0) throw refused(`${dest} is already in ${machine}: this conversation was moved there before. Open it there, or move a new one.`);
       const write = async (to, bytes) => {
         const out = await hc(['file', 'write', '--json', '--on', machine, to], { input: bytes, timeoutMs: 120_000 });
         if (out.code !== 0) throw fail(`hc file write ${to} on ${machine}: ${printable(failureOf(out), 300)}`);
@@ -441,7 +475,7 @@ export async function moveCommand({ origin, rest }, ctx) {
       const machine = machinesOf.get(sid).name;
       const cwd = remoteCwd(a);
       const local = checkoutFor.get(a);
-      const text = rewriteConversation(fs.readFileSync(conversation.file, 'utf8'), { from: rootsOf(local.root), to: folderOf.get(placeOf.get(a)) });
+      const text = rewriteConversation(fs.readFileSync(conversation.file, 'utf8'), { from: rootsOf(local.root), to: folderOf.get(placeOf.get(a)), codexProvider: k.agent === 'codex' ? f.codexProvider : null });
       const dest = k.agent === 'claude'
         ? path.posix.join(f.claudeDir, 'projects', claudeProjectDir(cwd), `${conversation.id}.jsonl`)
         : path.posix.join(f.codexDir, 'sessions', conversation.relative);
@@ -461,14 +495,35 @@ export async function moveCommand({ origin, rest }, ctx) {
       await hc(['exec', '--json', '--on', machine, '--', 'sh', '-c', script, 'sh', folderOf.get(place), f.codexDir]);
     }
 
+    // A second claude's settings: the session's own, without the hooks that report its agent's state.
+    for (const sid of new Set(agents.filter((a) => kinds.get(a).agent === 'claude' && !(placeOf.get(a).main && placeOf.get(a).agent === a)).map((a) => sessionFor(placeOf.get(a))))) {
+      const f = facts.get(sid);
+      const machine = machinesOf.get(sid).name;
+      const from = /--settings (\S+)/.exec(f.claudeFlags)?.[1];
+      if (!from) continue;
+      const read = parsed((await hc(['exec', '--json', '--on', machine, '--', 'cat', from])).stdout);
+      let settings;
+      try {
+        settings = JSON.parse(Buffer.from(read?.stdout ?? '', 'base64').toString('utf8'));
+      } catch {
+        throw fail(`${from} on ${machine} could not be read, so a second claude there would run without the session's permissions.`);
+      }
+      const to = `/tmp/woodshed-move-${id}-claude-settings.json`;
+      const out = await hc(['file', 'write', '--json', '--on', machine, to], { input: Buffer.from(`${JSON.stringify(withoutStateHooks(settings), null, 2)}\n`) });
+      if (out.code !== 0) throw fail(`hc file write ${to} on ${machine}: ${printable(failureOf(out), 300)}`);
+      made.files.push({ machine, path: to });
+      f.secondSettings = to;
+    }
+
     // ---- 5. The layout, made again on each session's machine, each terminal started as what it was.
     const resumeLine = (a, { own }) => {
       const k = kinds.get(a);
       const f = facts.get(sessionFor(placeOf.get(a)));
       const conversation = conversations.get(a).id;
       if (k.agent === 'codex') return `${f.wrapped ? `${f.sessionDir}/bin/codex` : 'codex'} resume${f.codexFlags} ${conversation}`;
-      // Only the session's own agent reports to its hooks: a second claude there would speak for it.
-      const flags = own ? f.claudeFlags : f.claudeFlags.replace(/ --settings \S*claudeHooks\.json/, '');
+      // Only the session's own agent reports its state to the session's hooks: a second claude there would speak for it.
+      // It gets the same settings without those hooks, its permissions and ready gate kept.
+      const flags = own || !f.secondSettings ? f.claudeFlags : f.claudeFlags.replace(/ --settings \S+/, ` --settings ${f.secondSettings}`);
       return `${f.wrapped ? `${f.sessionDir}/bin/claude` : 'claude'}${flags} --resume ${conversation}`;
     };
     const lineFor = (a) => {
@@ -553,13 +608,15 @@ export async function moveCommand({ origin, rest }, ctx) {
   const ended = new Map();
   for (const a of agents) {
     const k = kinds.get(a);
-    await hc(['send', '--json', '--if', 'idle', a, k.agent === 'codex' ? '/quit' : '/exit']);
-    const gone = await until(async () => {
+    // Claude says it is idle, and is sent its /exit only then; Codex says nothing to hc, and was checked between turns.
+    const sent = await hc(['send', '--json', ...(k.agent === 'claude' ? ['--if', 'idle'] : []), a, k.agent === 'codex' ? '/quit' : '/exit']);
+    const gone = sent.code === 0 && await until(async () => {
       const t = parsed((await hc(['get', '--json', a])).stdout);
       if (!t || t.state === 'finished') return true;
       return classify(t).kind !== 'agent' ? true : null;
     }, { sleep, now, ms: END_MS });
-    await hc(['label', '--json', a, `woodshed.moved=${remoteAt.get(a)}`]);
+    // Labelled as moved only once it ended: one still open here is the person's to end, and is said so.
+    if (gone) await hc(['label', '--json', a, `woodshed.moved=${remoteAt.get(a)}`]);
     ended.set(a, Boolean(gone));
   }
 
@@ -570,7 +627,7 @@ export async function moveCommand({ origin, rest }, ctx) {
     terminals: addresses.map((a) => ({
       address: a, kind: kinds.get(a).kind, to: remoteAt.get(a) ?? null,
       ...(kinds.get(a).kind === 'agent' ? { agent: kinds.get(a).agent, conversation: conversations.get(a).id, state: live.get(a), localEnded: ended.get(a) } : {}),
-      ...(kinds.get(a).kind === 'process' ? { restarted: restart.get(a) === true, argv: kinds.get(a).argv, ...(ended2.has(a) ? { endedAtOnce: true } : {}) } : {}),
+      ...(kinds.get(a).kind === 'process' ? { restarted: restart.get(a) === true, command: shown(kinds.get(a).argv), ...(ended2.has(a) ? { endedAtOnce: true } : {}) } : {}),
     })),
     ignoredEnv: [...surveys.values()].flatMap((s) => s.ignoredEnv),
     bundle: bundle(commits),
@@ -581,8 +638,8 @@ export async function moveCommand({ origin, rest }, ctx) {
     say(`Moved ${addresses.length} terminal${addresses.length === 1 ? '' : 's'} (move ${id}):`);
     for (const t of result.terminals) {
       const what = t.kind === 'agent' ? `${t.agent} conversation ${t.conversation}, ${t.state} there${t.localEnded ? '; ended here' : '; still open here: end it yourself'}`
-        : t.kind === 'process' ? (t.endedAtOnce ? `${t.argv.join(' ')} was started again there and ended at once: hc read ${t.to}`
-          : t.restarted ? `${t.argv.join(' ')} started again there` : `a shell there: ${t.argv.join(' ')} was not started again`) : 'a shell there';
+        : t.kind === 'process' ? (t.endedAtOnce ? `${t.command} was started again there and ended at once: hc read ${t.to}`
+          : t.restarted ? `${t.command} started again there` : `a shell there: ${t.command} was not started again`) : 'a shell there';
       say(`  ${t.address} -> ${t.to}  ${what}`);
     }
     for (const s of result.sessions) say(`Session ${s.id}: ${s.url}`);

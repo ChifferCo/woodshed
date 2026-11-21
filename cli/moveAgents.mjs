@@ -163,13 +163,40 @@ export function codexConversations(home, cwd, { now = Date.now() } = {}) {
 }
 
 /**
+ * A Codex conversation by its id, however long ago it started: its rollout file is under the day it began.
+ * @returns {{id: string, file: string, mtimeMs: number, relative: string}|null}
+ */
+export function codexConversationById(home, id) {
+  const root = path.join(home, 'sessions');
+  const walk = (dir, depth) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return null;
+    }
+    for (const e of entries) {
+      const at = path.join(dir, e.name);
+      if (e.isDirectory() && depth < 3) {
+        const found = walk(at, depth + 1);
+        if (found) return found;
+      } else if (e.isFile() && e.name.startsWith('rollout-') && e.name.endsWith(`-${id}.jsonl`)) {
+        return { id, file: at, mtimeMs: fs.statSync(at).mtimeMs, relative: path.relative(root, at).split(path.sep).join('/') };
+      }
+    }
+    return null;
+  };
+  return UUID_RE.test(id) ? walk(root, 0) : null;
+}
+
+/**
  * Each agent's conversation: its `claude.session` (or `codex.session`) label, else the id on its command line, else
  * the conversation of its folder last written when the agent last changed state, else, for a folder with one agent,
  * the folder's newest. Two agents that would get one conversation get neither: which is whose cannot be told.
  * @param {{address: string, agent: 'claude'|'codex', cwd: string, labels: object, argv: string[], statusMs: number|null}[]} agents
  * @returns {Map<string, {id: string, file: string, relative?: string, from: string}|{error: string}>}  by address
  */
-export function findConversations(agents, { env = process.env, now = Date.now() } = {}) {
+export function findConversations(agents, { env = process.env, now = Date.now(), peers = agents } = {}) {
   const out = new Map();
   const listed = new Map();
   const list = (a) => {
@@ -177,14 +204,15 @@ export function findConversations(agents, { env = process.env, now = Date.now() 
     if (!listed.has(key)) listed.set(key, a.agent === 'claude' ? claudeConversations(claudeHome(env), a.cwd) : codexConversations(codexHome(env), a.cwd, { now }));
     return listed.get(key);
   };
-  const sameFolder = (a) => agents.filter((b) => b.agent === a.agent && b.cwd === a.cwd).length;
+  // Every agent of that kind there, the ones not moving too: one moved alone from a busy folder is no guess's to make.
+  const sameFolder = (a) => new Set([...agents, ...peers].filter((b) => b.agent === a.agent && b.cwd === a.cwd).map((b) => b.address)).size;
   for (const a of agents) {
     const all = list(a);
     const named = a.labels?.[`${a.agent}.session`] ?? conversationInArgv(a.argv);
     let pick = null;
     let from = null;
     if (named) {
-      pick = all.find((c) => c.id === named) ?? null;
+      pick = all.find((c) => c.id === named) ?? (a.agent === 'codex' ? codexConversationById(codexHome(env), named) : null);
       from = a.labels?.[`${a.agent}.session`] ? 'label' : 'command line';
       if (!pick) {
         out.set(a.address, { error: `its conversation ${named} (from its ${from}) is not in ${a.agent === 'claude' ? claudeHome(env) : codexHome(env)} for ${a.cwd}` });
@@ -219,10 +247,11 @@ export function findConversations(agents, { env = process.env, now = Date.now() 
  * `payload.cwd`) in the local checkout, or under it, moved to the same place in the session's. Lines that are not
  * JSON are kept as they are.
  * @param {string} text  the .jsonl
- * @param {{from: string[], to: string}} roots  the local checkout's top, in each way it may be said, and the session's
+ * @param {{from: string[], to: string, codexProvider?: string|null}} roots  the local checkout's top, in each way it
+ *        may be said, and the session's; for a Codex conversation, the model provider the session's codex runs on
  * @returns {string}
  */
-export function rewriteConversation(text, { from, to }) {
+export function rewriteConversation(text, { from, to, codexProvider = null }) {
   const roots = [...new Set(from)].sort((a, b) => b.length - a.length);
   const move = (dir) => {
     if (typeof dir !== 'string') return dir;
@@ -250,6 +279,12 @@ export function rewriteConversation(text, { from, to }) {
       record.payload.cwd = move(record.payload.cwd);
       changed = true;
     }
+    // Codex continues a conversation only on the model provider it names, and a session's codex has its own: the
+    // console's proxy on the team key, OpenAI on the owner's sign-in.
+    if (codexProvider && record.type === 'session_meta' && record.payload && record.payload.model_provider !== codexProvider) {
+      record.payload.model_provider = codexProvider;
+      changed = true;
+    }
     return changed ? JSON.stringify(record) : line;
   }).join('\n');
 }
@@ -257,4 +292,47 @@ export function rewriteConversation(text, { from, to }) {
 /** @returns {string[]}  a checkout's top as it may be said: as given, resolved, and without macOS's /private */
 export function rootsOf(root) {
   return folders(root);
+}
+
+/**
+ * A session's Claude settings without the hooks that report its own agent's state (hookState.mjs): a second claude in
+ * the session would speak for the first. Its permissions (the ask before `gh pr merge`) and its other hooks (the ready
+ * gate before a pull request) are kept.
+ * @returns {object}
+ */
+export function withoutStateHooks(settings) {
+  const out = { ...settings };
+  if (!settings?.hooks || typeof settings.hooks !== 'object') return out;
+  out.hooks = {};
+  for (const [event, matchers] of Object.entries(settings.hooks)) {
+    const kept = (Array.isArray(matchers) ? matchers : []).map((m) => ({ ...m, hooks: (m.hooks ?? []).filter((h) => !/hookState\.mjs/.test(String(h.command ?? ''))) }))
+      .filter((m) => m.hooks.length);
+    if (kept.length) out.hooks[event] = kept;
+  }
+  return out;
+}
+
+// A word that holds a credential: a known token's shape, a value after a flag that names one, or NAME=value of one.
+const SECRET_FLAG_RE = /^--?[\w-]*(token|password|passwd|secret|key|auth|credential)[\w-]*$/i;
+const SECRET_ASSIGN_RE = /^([\w-]*(token|password|passwd|secret|key|auth|credential)[\w-]*)=(.+)$/i;
+
+/**
+ * A program's command line as it may be shown: every value that may be a credential hidden as `…`. The real one is kept
+ * for the restart alone.
+ * @returns {string}
+ */
+export function shownCommand(argv, looksSecret = () => false) {
+  const out = [];
+  for (let i = 0; i < argv.length; i++) {
+    const word = String(argv[i]);
+    const assign = SECRET_ASSIGN_RE.exec(word);
+    if (looksSecret(word)) out.push('…');
+    else if (assign) out.push(`${assign[1]}=…`);
+    else if (SECRET_FLAG_RE.test(word.split('=')[0]) && word.includes('=')) out.push(`${word.split('=')[0]}=…`);
+    else if (SECRET_FLAG_RE.test(word) && i + 1 < argv.length) {
+      out.push(word, '…');
+      i += 1;
+    } else out.push(/^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`);
+  }
+  return out.join(' ');
 }
