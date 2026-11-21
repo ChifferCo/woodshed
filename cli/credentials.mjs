@@ -22,7 +22,7 @@ const SERVICE = 'woodshed-cli';
 const TOKEN_RE = /^wsc_[0-9a-f]{64}$/;
 const DEVICE_RE = /^wsd_[0-9a-f]{64}\.[A-Z]{4}-[A-Z]{4}\.\d{1,15}$/;
 // What may follow `-a` in a `security -i` line: an origin has no spaces or quotes, and anything else is refused.
-const ORIGIN_RE = /^https?:\/\/[A-Za-z0-9.\-[\]:]+$/;
+export const ORIGIN_RE = /^https?:\/\/[A-Za-z0-9.\-[\]:]+$/;
 
 // DPAPI's seal and unseal, for this Windows account: the console's origin and then what is sealed or opened are read
 // from stdin, one a line, and what comes out is written to stdout, so none is ever in the command line. The scripts are

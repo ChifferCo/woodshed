@@ -126,7 +126,7 @@ test('setup prints the review command for a repo with no checkout', async () => 
   assert.equal(after.code, 0);
   const skipped = after.events.find((entry) => entry.step === 'repo-review');
   assert.equal(skipped.status, 'skipped');
-  assert.match(skipped.message, /woodshed review enable --console 'https:\/\/console.example'/);
+  assert.match(skipped.message, /woodshed review enable --console "https:\/\/console.example"/);
   assert.deepEqual(after.calls, [['status'], ['--help']]);
 });
 
@@ -217,7 +217,7 @@ test('a connection failure after launch gives the command to reconnect to that s
   const last = after.events.at(-1);
   assert.match(last.message, /Could not connect/);
   assert.equal(last.url, session.url);
-  assert.equal(last.retry, `woodshed session herdr 12345678 --console '${origin}'`);
+  assert.equal(last.retry, `woodshed session herdr 12345678 --console "${origin}"`);
 });
 
 test('setup in agent mode asks for the reviewer choice when config is available', async () => {

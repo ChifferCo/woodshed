@@ -59,8 +59,9 @@ My settings.
 Use `--prompt=--help` for a prompt that looks like an option. Repeat `--repo` to choose several repos. The first is for the session. For each repo, setup uses the current checkout
 when its GitHub origin matches, or a checkout supplied by `--repo-dir`. Repo review setup prepares the project file
 change for a pull request. `--reviews` sets your own reviewer choice. Use `--skip-reviews` to skip both, or
-`--no-session` to finish without starting an environment. With a compatible `hc` on the path, setup uses
-`session new --herdr`. If a private session already exists for the first repo, setup gives you its link.
+`--no-session` to finish without starting an environment. On macOS and Linux, setup uses `session new --herdr` when it finds a compatible `hc`.
+On Windows it starts a regular session and prints the link. If a private session already exists for the first repo,
+setup gives you its link.
 
 `--yes` and runs without a terminal never prompt. `--json` prints one checklist entry per line with
 `event: "setup"`, `step`, `status`, `message`, and a `url` when relevant. When this CLI lacks a repo, review,

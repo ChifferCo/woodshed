@@ -3,6 +3,7 @@
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
+import { ORIGIN_RE } from './credentials.mjs';
 import { repoOf } from '../shared/repoOf.mjs';
 
 export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--no-browser] [options]
@@ -130,7 +131,9 @@ export async function setupCommand(args, ctx) {
   function childError(step, result, message, fields) {
     return stop(step, result.code || EXIT.failed, printable(result.error?.error) || message, fields);
   }
-  const command = (...words) => `woodshed ${words.join(' ')} --console '${origin}'`;
+  // Credential-store origins have no shell metacharacters inside double quotes, including in cmd.exe.
+  const consoleArg = ORIGIN_RE.test(origin) ? `"${origin}"` : '"YOUR_CONSOLE_URL"';
+  const command = (...words) => `woodshed ${words.join(' ')} --console ${consoleArg}`;
 
   const status = await call('status', 'status');
   if (status.code === EXIT.waiting && status.last?.signedIn === false) {
