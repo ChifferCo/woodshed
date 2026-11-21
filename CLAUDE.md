@@ -524,6 +524,14 @@ URL on top of each env file's Repo settings values
   Herdr did not send the message` with `why` (`prompt-open`, a question, approval or menu on screen, with `kind`;
   `blocked`; `status_mismatch`, not idle; `not-at-prompt`). Shared sessions, questions, reviews and QA runs use tmux
   whatever the pick.
+- **`woodshed session new --herdr --parent` left the session's agent with no parent, or its agent sat unstarted for
+  minutes.** The console logs `fleet: session created` (or `resuming a private session`) with `herdrParent`, and the
+  session's log `Herdr started` with `made by: its parent`, then `Agent's terminal made by its parent` with the
+  `parent`, or after 5 minutes `WARNING: no parent made the agent's terminal` (the command line never made it: it was
+  stopped, or not in a Herdr terminal) and the session made its own. Meanwhile statusd logs `capture-pane failed`: the
+  terminal is not there yet. The command line exits 1 saying the terminal was already there when the session did not
+  wait (a running one, an image from before it, or a wait run out): hc cannot give a running terminal a parent.
+  `hc get woodshed-<id>/claude --json` on the laptop shows `parent` and `die_with_parent`.
 - **The app inside a session will not start or log in.** That is about the repo's own app, and its installation
   says what to check: `.woodshed/install/README.md` in the repo. The env files get the databases through the project
   file's env file overrides, from each engine's variables (`PGHOST`, `PGPASSWORD`, `MONGODB_URI`; docs/reference.md, "Databases"):

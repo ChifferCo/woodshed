@@ -83,7 +83,7 @@ test('a review-only session writes no prompt, and claude starts with none', () =
   assert.match(out, /after writePrompt/);
   assert.equal(prompt, null);
   assert.match(rules, /You are running in a Woodshed session/);
-  assert.match(fn('startClaude'), /REVIEW_ONLY:-\}" = 1 \]; then\n\s+agentRun "\$SESSION_DIR\/bin\/claude\$\(claudeFlags\)"\n/);
+  assert.match(fn('startAgent'), /REVIEW_ONLY:-\}" = 1 \]; then\n\s+agentRun "\$SESSION_DIR\/bin\/claude\$\(claudeFlags\)"\n/);
 });
 
 test('attached files are listed under the prompt', () => {
@@ -343,7 +343,7 @@ test('the forwarder of the machine\'s ports starts only with the machine\'s Dock
 
 test('a QA session writes no prompt, and runs qa.sh in claude\'s pane once statusd answers, working from the start', () => {
   assert.match(ENTRYPOINT, /if \[ "\$\{SESSION_MODE:-\}" = qa \]; then\n    log "Prompt skipped"/);
-  const start = fn('startClaude');
+  const start = fn('startAgent');
   const qa = start.slice(start.indexOf('SESSION_MODE:-}" = qa'), start.indexOf('elif [ "${AGENT:-claude}" = codex ]'));
   assert.ok(qa.indexOf('touch /tmp/qa-running') < qa.indexOf('agentRun'), 'the session reads as working before the run starts');
   assert.match(qa, /until curl -s -o \/dev\/null http:\/\/127\.0\.0\.1:.*; do sleep 1; done; SESSION_DIR=\$SESSION_DIR bash \$SESSION_DIR\/qa\.sh/);
@@ -1209,7 +1209,7 @@ test('writeOwnFiles writes the owner\'s files git ignores, logs what it skipped,
 // The entrypoint's choice of the agent's terminal and what it types there, with stand-in hc and tmux that record each
 // call: the owner's pick on My settings (OWNER_TERMINAL, from the /settings answer) in a private coding session, tmux
 // for anything else.
-function agentTerminalRun({ terminal = null, kind = 'private', mode = '', hc = 'ok', body }) {
+function agentTerminalRun({ terminal = null, kind = 'private', mode = '', hc = 'ok', hcScript = null, env = {}, body }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-terminal-'));
   const repo = path.join(tmp, 'repo');
   const bin = path.join(tmp, 'bin');
@@ -1217,20 +1217,23 @@ function agentTerminalRun({ terminal = null, kind = 'private', mode = '', hc = '
   fs.mkdirSync(bin);
   const calls = path.join(tmp, 'calls');
   const record = (name, fails) => `#!/bin/bash\necho "${name} $*" >> ${calls}\n${fails ? 'echo "hc: the core did not start" >&2; exit 1\n' : ''}[ "$1" != --version ] || echo "hc 0.1.21"\n`;
-  if (hc !== 'none') fs.writeFileSync(path.join(bin, 'hc'), record('hc', hc === 'fails'), { mode: 0o755 });
+  if (hc !== 'none') fs.writeFileSync(path.join(bin, 'hc'), hcScript ? `#!/bin/bash\necho "hc $*" >> ${calls}\nT=${tmp}\n${hcScript}` : record('hc', hc === 'fails'), { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'tmux'), record('tmux', false), { mode: 0o755 });
   const script = [
     'set -euo pipefail',
     'log() { echo "[woodshed] $*"; }',
     fn('agentTerminal'),
+    `AGENT_TERMINAL_WAIT=${tmp}/woodshed-agent-terminal.json`,
+    'HERDR_PARENT_WAIT_SECONDS=${WOODSHED_HERDR_PARENT_WAIT_SECONDS:-300}',
     fn('startHerdr').replaceAll('/tmp/', `${tmp}/`),
+    fn('awaitAgentTerminal').replaceAll('/tmp/', `${tmp}/`),
     fn('agentRun'),
     body,
   ].join('\n');
   try {
     const out = execFileSync('bash', ['-c', script], {
       encoding: 'utf8',
-      env: { PATH: `${bin}:/usr/bin:/bin:${path.dirname(process.execPath)}`, HOME: tmp, REPO_DIR: repo, SESSION_MODE: mode, SESSION_KIND: kind, ...(terminal ? { OWNER_TERMINAL: terminal } : {}) },
+      env: { PATH: `${bin}:/usr/bin:/bin:${path.dirname(process.execPath)}`, HOME: tmp, REPO_DIR: repo, SESSION_MODE: mode, SESSION_KIND: kind, ...(terminal ? { OWNER_TERMINAL: terminal } : {}), ...env },
     });
     return { out, calls: fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8') : '', config: fs.existsSync(path.join(tmp, '.config/herdr-core/config.toml')) ? fs.readFileSync(path.join(tmp, '.config/herdr-core/config.toml'), 'utf8') : null };
   } finally {
@@ -1272,4 +1275,61 @@ test('a core that does not start, or no hc at all, leaves the agent in tmux, say
   assert.match(none.out, /WARNING: no hc in this image, the agent runs in tmux/);
   const tmux = agentTerminalRun({ body: 'WOODSHED_TERMINAL=tmux agentRun "claude"' });
   assert.equal(tmux.calls, 'tmux send-keys -t claude claude Enter\n', 'tmux as it always was');
+});
+
+test('a session whose terminal its owner\'s Herdr makes runs in Herdr whatever My settings says, but only a private coding one', () => {
+  const parent = { WOODSHED_HERDR_PARENT: '1' };
+  assert.equal(agentTerminalRun({ env: parent, body: 'agentTerminal' }).out.trim(), 'herdr', 'an owner who picked nothing');
+  assert.equal(agentTerminalRun({ terminal: 'tmux', env: parent, body: 'agentTerminal' }).out.trim(), 'herdr', 'nor tmux: the start asked for Herdr');
+  assert.equal(agentTerminalRun({ kind: '', env: parent, body: 'agentTerminal' }).out.trim(), 'tmux', 'a shared session');
+  for (const mode of ['ask', 'qa', 'review']) assert.equal(agentTerminalRun({ env: parent, mode, body: 'agentTerminal' }).out.trim(), 'tmux', mode);
+});
+
+// hc as the session's core answers about the agent's terminal: there once `made` exists (the owner's Herdr made it, or
+// the session's own run), with the parent the owner's side gave it.
+const WAITING_HC = `case "$1" in
+  --version) echo "hc 0.1.21" ;;
+  get) [ -f "$T/made" ] || { echo '{"error":{"kind":"not_found"}}'; exit 3; }; cat "$T/made" ;;
+  run) [ -n "\${RUN_TAKEN:-}" ] && { echo '{"parent":"core1/t4","die_with_parent":false}' > "$T/made"; echo '{"error":{"kind":"name_taken"}}'; exit 1; }
+       echo '{"parent":null,"die_with_parent":false}' > "$T/made" ;;
+esac
+`;
+
+test('with a parent, the session starts Herdr but leaves the agent\'s terminal to it, saying where and for how long', () => {
+  const { out, calls } = agentTerminalRun({ hcScript: WAITING_HC, env: { WOODSHED_HERDR_PARENT: '1' }, body: 'startHerdr && cat "$AGENT_TERMINAL_WAIT"' });
+  assert.match(calls, /^hc server start$/m);
+  assert.doesNotMatch(calls, /^hc run/m, 'no terminal of its own: hc gives one its parent only as it starts');
+  assert.match(out, /Herdr started \(version: 0\.1\.21, terminal: claude, made by: its parent, waits up to: 300s\)/);
+  const wait = JSON.parse(out.slice(out.indexOf('{')));
+  assert.equal(wait.terminal, 'claude');
+  assert.match(wait.cwd, /\/repo$/, 'the checkout, where its own terminal would be');
+  assert.equal(wait.waitSeconds, 300);
+});
+
+test('the agent is typed into the terminal its parent made, once it is there, and the wait file goes', () => {
+  const body = 'startHerdr; (sleep 1; echo \'{"parent":"core1/t4","die_with_parent":false}\' > "$HOME/made") & awaitAgentTerminal && WOODSHED_TERMINAL=herdr agentRun "claude go"; [ -f "$AGENT_TERMINAL_WAIT" ] && echo "still waiting" || true';
+  const { out, calls } = agentTerminalRun({ hcScript: WAITING_HC, env: { WOODSHED_HERDR_PARENT: '1' }, body });
+  assert.match(out, /Agent's terminal made by its parent \(parent: core1\/t4, outlives it: yes, waited: \d+s\)/);
+  assert.doesNotMatch(out, /still waiting/);
+  assert.doesNotMatch(calls, /^hc run/m);
+  assert.match(calls, /^hc send claude claude go$/m, 'typed as into the session\'s own terminal');
+});
+
+test('with no parent in time, the session makes the terminal itself, with none, and the agent starts all the same', () => {
+  const env = { WOODSHED_HERDR_PARENT: '1', WOODSHED_HERDR_PARENT_WAIT_SECONDS: '1' };
+  const body = 'startHerdr; awaitAgentTerminal && WOODSHED_TERMINAL=herdr agentRun "claude go"; [ -f "$AGENT_TERMINAL_WAIT" ] && echo "still waiting" || true';
+  const alone = agentTerminalRun({ hcScript: WAITING_HC, env, body });
+  assert.match(alone.out, /WARNING: no parent made the agent's terminal \(waited: 1s, started: with no parent\)/);
+  assert.match(alone.calls, /^hc run --bg --no-parent --keep --name claude --cwd \S+\/repo$/m, 'the terminal startHerdr makes without a parent');
+  assert.match(alone.calls, /^hc send claude claude go$/m);
+  assert.doesNotMatch(alone.out, /still waiting/, 'a late `session herdr --parent` finds no wait');
+  // The owner's side made it while the session's own run was on its way: theirs is the agent's.
+  const raced = agentTerminalRun({ hcScript: WAITING_HC, env: { ...env, RUN_TAKEN: '1' }, body });
+  assert.match(raced.out, /Agent's terminal made by its parent \(parent: core1\/t4/);
+  assert.match(raced.calls, /^hc send claude claude go$/m);
+});
+
+test('startClaude types the agent at once, or once its parent made its terminal, in the background past statusd\'s start', () => {
+  const start = fn('startClaude');
+  assert.match(start, /if \[ -f "\$AGENT_TERMINAL_WAIT" \]; then\n\s+\{ awaitAgentTerminal && startAgent; \} &\n\s+else\n\s+startAgent\n\s+fi/);
 });
