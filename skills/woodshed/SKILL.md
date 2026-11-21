@@ -1,6 +1,6 @@
 ---
 name: woodshed
-description: "Use the `woodshed` command line to work with a Woodshed console for the person: sign in, start a cloud session and follow it, list, stop, resume or remove sessions, give one more time before a long task, run a command in a session, bring a session's port to localhost, print its app's address, carry Claude settings to and from private sessions, and ask the console to turn on a repo's review. Use when the person asks to start or check a Woodshed session, to run or preview something in one, to keep one from pausing, to sync their Claude settings with Woodshed, or to turn on Woodshed's review for a repo."
+description: "Use the `woodshed` command line to work with a Woodshed console for the person: sign in, start a cloud session and follow it, list, stop, resume or remove sessions, give one more time before a long task, run a command in a session, bring a session's port to localhost, print its app's address, carry Claude settings to and from private sessions, and turn on Woodshed's review for a repo. Use when the person asks to start or check a Woodshed session, to run or preview something in one, to keep one from pausing, to sync their Claude settings with Woodshed, or to turn on Woodshed's review for a repo."
 ---
 
 # Work with Woodshed from the command line
@@ -48,10 +48,9 @@ Pass `--json` when you will read the output: each command then writes one JSON o
   environment or env files.
 - **Never approve on the person's behalf.** Sign-ins and approvals are made by the person, in their browser. Do not
   press the button for them with a browser tool.
-- **Credentials go through approval, never through you.** Anything that needs an admin token or an API key (turning on
-  a repo's review, for one) is asked of the console, which shows the person a page to approve and does it with its own
-  credentials. Do not ask the person to paste a key or token into the chat, and do not run `scripts/enable-review.sh`
-  with theirs.
+- **Credentials never go through you.** Anything that needs an admin token or an API key is the console's, set by an
+  admin on its pages. Do not ask the person to paste a key or token into the chat, and do not run
+  `scripts/enable-review.sh` (it takes their own token and key) for them.
 - **Being connected does not keep a session awake.** A session pauses after its idle hours with nothing to do (its own
   agent not working) and stops at its lifetime, whatever tunnels, forwards or terminals are open. If you need it longer,
   ask for the time (section 5).
@@ -82,9 +81,6 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed forward <id> <port>[:<local>]...` | The session's port on this computer's `localhost`, until stopped | 0 at Ctrl-C, 2, 3, 1 | #281 |
 | `woodshed forward --auto <id>` | The same for every port the session listens on | as above | #281 |
 | `woodshed open <id>` | The session's app address, `https://<id>.<app domain>/` | 0, 2, 1 no app names on this console | #281 |
-| `woodshed review enable [--qa] [--no-wait] <owner/repo>` | Asks the console to turn on the repo's review; prints the approval page and waits until it is decided | 0 applied, 2 waiting (`--no-wait`) or expired, 3 refused or withdrawn, 1 a step failed | #285 |
-| `woodshed review status <id> [--wait]` | One request: its state and steps | as `enable`; 2 while it waits | #285 |
-| `woodshed review list` | The requests they asked for, newest first | 0 | #285 |
 
 "main" is in every copy. A pull request number means the command arrives when that pull request merges; until then,
 section 1 applies. Session ids are 8 hex characters, as `session list` prints them.
@@ -183,19 +179,13 @@ rename or edit a file to get it past the check.
 
 ### Turn on a repo's review
 
-```sh
-woodshed review enable --no-wait acme/app --json        # --qa to add QA in the repo's CI
-```
+Woodshed's review runs in a review session the console starts, and is turned on in the repo's own project file,
+`.woodshed/project.yaml`: its `pullRequests.review` with `runner: woodshed`. The verdict is posted by the console's
+reviewer App, so `author` is that App's `<slug>[bot]` login, and `commentAuthor` the console's own App's; `rerun` is
+what a commit subject carries to run the review again, and `workflow` may be left out. `project.reference.yaml` in a
+Woodshed checkout has every field. No GitHub workflow, Actions secret or Anthropic key is involved, so nothing here needs a credential.
 
-It asks the console and returns at once with exit 2: the first line, `{"event":"requested",…}`, has the request's `id`
-and its approval page, `url`. Give the person the link and stop. An admin of the repo approves it on the console, which
-then writes the workflows and sets the key with its own GitHub App and Anthropic key: you never see the key, and you
-never need an admin token. Without `--no-wait` the command waits until someone decides, up to 24 hours, so use it only
-when the person is approving it now.
-
-Later, `woodshed review status <id> --json` says where it got to: exit 0 applied, 2 still waiting (or expired after
-24 hours), 3 refused or withdrawn, 1 a step failed (which one, and GitHub's reason, if they can write to the repo).
-Report a failure as it is: the console's page says what the repo or its GitHub App lacks.
-
-Do not run `scripts/enable-review.sh` for the person, and do not ask for their key or an admin token, whether or not
-this command is there yet.
+A `woodshed review enable` command that writes this and checks the console is ready for it is being built; it is in no
+copy of the CLI yet. Until `woodshed --help` lists `review`, make the edit as you would any change to the repo: on a
+branch, in a pull request the person reviews. If you don't know the reviewer App's login, ask the person: an admin
+makes the App on the console's settings, and it is not something to guess.
