@@ -127,21 +127,26 @@ const TIER_ORDER = { Low: 0, Medium: 1, High: 2 };
 // As many inline comments as the console posts in one review (console/reviewSessions.mjs).
 const MAX_INLINE_COMMENTS = 30;
 
+function hasHighRiskEvidence({ reason, summary }) {
+  return Boolean(reason) && /^- Verify before merging:[ \t]+\S/m.test(summary);
+}
+
 function combinedMergeRisk(reviews) {
   const rated = reviews.filter(({ verdict }) => verdict.mergeRisk.tier);
-  const higher = rated.reduce((a, b) => (!a || TIER_ORDER[b.verdict.mergeRisk.tier] > TIER_ORDER[a.verdict.mergeRisk.tier] ? b : a), null);
-  if (!higher) return { tier: null, reason: '', summary: '' };
+  const highest = rated.reduce((a, b) => (!a || TIER_ORDER[b.verdict.mergeRisk.tier] > TIER_ORDER[a.verdict.mergeRisk.tier] ? b : a), null);
+  if (!highest) return { tier: null, reason: '', summary: '' };
 
-  const risk = higher.verdict.mergeRisk;
-  const othersAtTier = rated.filter((review) => review !== higher && review.verdict.mergeRisk.tier === risk.tier);
-  if (reviews.length > 1 && risk.tier === 'High' && !othersAtTier.length
-      && (!risk.reason || !/^- Verify before merging:[ \t]+\S/m.test(risk.summary))) {
+  const tier = highest.verdict.mergeRisk.tier;
+  const highestReports = rated.filter(({ verdict }) => verdict.mergeRisk.tier === tier);
+  const supportedHigh = tier === 'High' && highestReports.find(({ verdict }) => hasHighRiskEvidence(verdict.mergeRisk));
+  const { name, verdict: { mergeRisk } } = supportedHigh || highest;
+  if (reviews.length > 1 && tier === 'High' && highestReports.length === 1 && !supportedHigh) {
     const reason = 'Only one reviewer rated this High, and the High rating lacks a failure reason or a pre-merge check.';
-    const reported = risk.reason ? `\n\n${higher.name} reported: ${risk.reason}` : '';
+    const reported = mergeRisk.reason ? `\n\n${name} reported: ${mergeRisk.reason}` : '';
     return { tier: 'Medium', reason, summary: `MEDIUM\n${reason}${reported}` };
   }
-  if (rated.length < 2 || othersAtTier.length === rated.length - 1) return { ...risk };
-  return { ...risk, summary: `${risk.summary}\n\n(The higher of the reviewers' tiers: ${higher.name}'s.)` };
+  if (rated.length < 2 || highestReports.length === rated.length) return { ...mergeRisk };
+  return { ...mergeRisk, summary: `${mergeRisk.summary}\n\n(The higher of the reviewers' tiers: ${name}'s.)` };
 }
 
 /**

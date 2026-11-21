@@ -972,11 +972,11 @@ and submits the review at the reviewed commit. It logs `fleet: review verdict su
 `as: 'console App'` when no reviewer App was made, in which case GitHub refuses an approval of the App's own pull
 requests.
 
-### The review in a session, as in Actions
+### The review in a session
 
-A review session does what `review.yml` does, so a repo can move from one to the other without losing anything. Its
-prompt (`shared/codeReview/prompt.txt`) is the workflow's word for word, apart from paths, and a test fails when they
-part. The session cannot write to GitHub, so it writes files and the console posts them:
+The session and the reusable Actions workflow share the common review instructions. The session prompt
+(`shared/codeReview/prompt.txt`) has its own verdict and merge-risk criteria. The session writes files for the
+console to post to GitHub:
 
 - **Inline comments** (`inline-comments.json`) go on the diff's lines with the verdict. GitHub refuses a whole review
   when one comment is on a line the diff does not show, so the console then submits the verdict with the comments in
@@ -1015,7 +1015,10 @@ review that runs on it later clears the skip.
 
 The two verdicts become one (`codeReview.mjs merge`):
 
-- The stricter conclusion and the higher merge risk win, so a pull request is approved only when both approve.
+- The stricter conclusion wins, so a pull request is approved only when both approve.
+- The higher merge risk wins when both reviewers rate the change. If only one of two completed reviews rates the
+  change High, the report needs a failure reason and pre-merge check to set High. Otherwise the check reports Medium.
+  If both rate it High, the check prefers a report with both pieces of evidence.
 - The comment and summary have a section from each, and each inline comment says whose it is.
 - An earlier comment is resolved when the reviewer who wrote it (its `**Claude Code:**` or `**Codex:**`, read from the
   comment records `review.sh` keeps in `earlier-comments.jsonl`) found it fixed;

@@ -147,6 +147,14 @@ test('two reviews become one: the stricter verdict and the higher merge risk win
   assert.deepEqual(merged.resolved, [2], 'an earlier comment with no known writer is resolved only when both found it fixed');
 });
 
+test('when High ratings tie, the report with a pre-merge check wins', () => {
+  const claude = verdictOf('APPROVE', { tier: 'High' });
+  claude.mergeRisk.summary = 'HIGH\nHigh reason';
+  const codex = verdictOf('APPROVE', { tier: 'High' });
+  const merged = mergeVerdicts([{ name: 'Claude Code', verdict: claude }, { name: 'Codex', verdict: codex }]);
+  assert.deepEqual(merged.mergeRisk, codex.mergeRisk);
+});
+
 test('the failure reason and pre-merge check can appear in either order', (t) => {
   const d = dir(t);
   fs.writeFileSync(path.join(d, 'verdict.txt'), 'APPROVE');
