@@ -20,12 +20,18 @@ import { PROJECT_FILE, parseProject, readRepoFile, repoOf } from '../shared/proj
 import { checkSummary, checkoutEntry } from '../shared/projectCheck.mjs';
 import { parseYaml } from '../shared/yamlLite.mjs';
 import { enableReview } from './projectReview.mjs';
+import { reviewOpenCommand } from './reviewOpen.mjs';
 
-export const REVIEW_USAGE = `Usage: woodshed review <command> [--console <url>] [--json]
+export const REVIEW_USAGE = `Usage: woodshed review <session id | pull request> [--console <url>] [--json]
+       woodshed review <command> [--console <url>] [--json]
 
-Run in a checkout of the repo.
+  <session id>           review one of your My Woodshed sessions' change on this terminal, as the console's Review tab
+  <pull request>         shows it: the analysis, the Q&A, the conversation with the session's agent, the diff file by
+                         file with its comments, Re-review, and comment, verdict, rename and merge. A pull request (123,
+                         #123 or its URL) opens the session of yours that opened it; a paused one is resumed first.
+                         With --json, or with no terminal, it prints the analysis and the diff's summary instead.
 
-Commands:
+Commands, run in a checkout of the repo:
   enable [options]       review this repo's pull requests in Woodshed sessions: writes pullRequests.review with
                          runner: woodshed into .woodshed/project.yaml, checks it, and asks the console what is missing
       --qa               QA too, in a Woodshed session, when the woodshed-qa label goes on a pull request
@@ -38,7 +44,8 @@ Commands:
 
 Nothing here writes a GitHub workflow or an Actions secret: the review runs in the console's sessions, which need neither.
 
-Exit codes: 0 done, 2 waiting on a person (an admin's step, a sign-in, or the change to merge), 3 refused, 1 anything else.`;
+Exit codes: 0 done (or quit), 2 waiting on a person (an admin's step, a sign-in, or the change to merge), 3 refused (a
+session that is not your own, or one that has seen production data), 1 anything else.`;
 
 // eslint-disable-next-line no-control-regex
 const UNPRINTABLE_RE = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
@@ -111,6 +118,7 @@ export async function reviewCommand({ origin, rest }, deps) {
     return sub ? EXIT.done : EXIT.failed;
   }
   const { call, token, say, emit, json, fail } = deps;
+  if (sub !== 'enable' && sub !== 'status') return reviewOpenCommand({ origin, words: rest }, deps);
 
   function options(allowed) {
     const out = {};

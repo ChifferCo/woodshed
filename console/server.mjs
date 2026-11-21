@@ -1213,7 +1213,7 @@ export function createHandler({
     return !login || !access || access.hasGithubSessions(login);
   }
 
-  const proxyReview = createReviewProxy({ findFor });
+  const proxyReview = createReviewProxy({ findFor, fleet, cli });
 
   /** @returns {object[]}  every project, the default first, each with its colour key (null past the palette's six) */
   function projectsWithColors() {
@@ -2451,6 +2451,7 @@ export function createHandler({
     const { pathname } = url;
     if (pathname === REVIEW_READINESS_PATH) return reviewReadinessReply({ req, res, url, login, readiness: reviewReadiness, config, reply });
     if (pathname === CLI_CONFIG_PATH) return reply(res, 200, await configView({ userSettings, projectsView }, login));
+    if (pathname === '/api/my/pulls') return pullsReply(res, login);
     return reply(res, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
   }
   function cliWrite(req, res, pathname, login) {
@@ -2491,6 +2492,8 @@ export function createHandler({
         return { claude: view?.claudeToken?.set === true, codex: view?.codexAuth?.set === true };
       } });
     }
+    // `woodshed review <id>`: the review's calls with the token, checked and carried as the page's are (reviewProxy.mjs).
+    if (carriesCliToken(req.headers) && isReviewPath(url.pathname)) return proxyReview.forCli(req, res, url);
     if (carriesCliToken(req.headers)) return cliCall();
     // Sign-in's cookies belong to one host name, and GitHub sends people back only to publicUrl's. Once sign-in
     // can be used, a page opened on another public name (the bare IP) moves there.

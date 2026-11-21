@@ -1634,6 +1634,17 @@ compression is asked for. Then it copies bytes both ways. The log lines are the 
 `shell`; `exec` for a pipe). It is the same terminal as the tab's: the agent's tmux or Herdr terminal, or the shell's
 tmux, so what is typed in one shows in the other.
 
+**A review from the command line**: `woodshed review <id>` (cli/README.md) makes the Review tab's own calls,
+`/reviews/claude-<id>/...`, with the command line's token in place of the browser's sign-in, and no Origin. The review
+proxy's `forCli` (`reviewProxy.mjs`) checks the token with cliSignIn's `authenticate` (live, its person on People with
+write access), then lets through only a running session of that person's own: never a question from Slack, a shared
+session, one that has seen production data or is being locked down (409), nor the page itself (`/review`). It forwards
+as the page's calls are, with the session's token in place of the person's; what the review may write to GitHub stays
+the session's rule. The console logs `console: review call from the command line` for each write, with who, the
+token's id, the session and the path, and `console: review call from the command line refused` with `why` (`not
+theirs`, `tainted`, `no valid token`, `a browser's call`). `woodshed session list` reads `GET /api/my/pulls` with the
+same token (cliSessions.mjs), for the person's open pull requests with no session.
+
 **A console with no repo yet** (neither `WOODSHED_REPO` nor `WOODSHED_PROJECTS`, and nothing added on the
 Repos card) has no repository to ask about. It lets in the owner of the account its GitHub App is installed on: that
 user, or an active admin of that organization (`console/appOwner.mjs`, asked with a token of the installation narrowed

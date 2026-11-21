@@ -128,6 +128,67 @@ export function stateOf(s) {
   return { key: word, word };
 }
 
+/** @returns {boolean}  whether `woodshed review` can open this session: its person's own, private, and never tainted */
+export function reviewable(s, login) {
+  return Boolean(s?.owner && login && s.owner === login && s.kind !== 'ask' && !s.taintedAt && s.status !== 'failed' && !s.cleanedAt);
+}
+
+const NAME_RE = /^[A-Za-z0-9._-]{1,100}$/;
+const NUMBER_RE = /^[0-9]{1,9}$/;
+
+/**
+ * A GitHub pull request's address read without a regular expression over the whole of it, since it comes from the
+ * console or the person: `https://github.com/<owner>/<name>/pull/<number>`, exactly, or with `loose` a trailing slash,
+ * query or fragment too, as one pasted from a browser has.
+ * @returns {{repo: string, number: number, url: string}|null}  `url` is the address as GitHub writes it
+ */
+export function parsePullUrl(text, { loose = false } = {}) {
+  const raw = String(text ?? '');
+  if (raw.length > 400) return null;
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'https:' || u.hostname !== 'github.com' || u.port || u.username || u.password) return null;
+  const parts = u.pathname.split('/');
+  if (loose && parts.length === 6 && parts[5] === '') parts.pop();
+  const [, owner, name, pull, number] = parts;
+  if (parts.length !== 5 || pull !== 'pull' || !NAME_RE.test(owner) || !NAME_RE.test(name) || !NUMBER_RE.test(number)) return null;
+  const url = `https://github.com/${owner}/${name}/pull/${number}`;
+  if (!loose && raw !== url) return null;
+  return { repo: `${owner}/${name}`, number: Number(number), url };
+}
+
+/**
+ * A pull request as the console's chips read it (console/prChips.mjs describePr): its state, verdict and checks, or
+ * only its number and address while the console has not read it.
+ */
+export function pullOf(url, chip) {
+  const pull = parsePullUrl(url);
+  if (!pull) return null;
+  const count = (n) => (Number.isInteger(n) && n >= 0 ? n : 0);
+  const checks = chip?.checks && typeof chip.checks === 'object'
+    ? { pass: count(chip.checks.pass), fail: count(chip.checks.fail), pending: count(chip.checks.pending), total: count(chip.checks.total) } : null;
+  return {
+    number: pull.number, repo: pull.repo, url,
+    title: printable(chip?.title, 200),
+    state: ['open', 'draft', 'queued', 'merged', 'closed'].includes(chip?.state) ? chip.state : null,
+    review: ['approved', 'changes', 'pending'].includes(chip?.review) ? chip.review : null,
+    checks: checks?.total ? checks : null,
+  };
+}
+
+/** `#123 open · approved · checks 3 passing`, a pull request's line as the chips would say it. */
+export function pullText(p) {
+  const bits = [`#${p.number}`, p.state ?? 'not read yet'];
+  if (p.review) bits.push({ approved: 'approved', changes: 'changes requested', pending: 'review required' }[p.review]);
+  const c = p.checks;
+  if (c) bits.push(c.fail ? `checks ${c.fail} of ${c.total} failing` : c.pending ? `checks ${c.pending} of ${c.total} running` : `checks ${c.total} passing`);
+  return `${bits[0]} ${bits.slice(1).join(' · ')}`;
+}
+
 /** @returns {boolean}  a session that ended for good: nothing of it is kept to resume */
 function ended(s) {
   if (LIVE.has(s.status)) return false;
@@ -167,6 +228,10 @@ export function summary(s, { origin, login }) {
     runsOn: s.runsOn ? { idleHours: hours(s.runsOn.idleHours), lifetimeHours: hours(s.runsOn.lifetimeHours) } : null,
     ownLimits: s.limits ? { idleHours: hours(s.limits.idleHours), lifetimeHours: hours(s.limits.lifetimeHours) } : null,
     extendedUntil: printable(s.extendedUntil, 40),
+    // Its pull request as the console's chip reads it, every one it opened, and the command that reviews it here.
+    pullRequest: pullOf(s.prUrl, s.pr),
+    pullRequests: (Array.isArray(s.prs) ? s.prs : []).map((p) => pullOf(p?.url, p?.pr)).filter(Boolean),
+    reviewCommand: reviewable(s, login) ? `woodshed review ${s.id}` : null,
   };
 }
 
@@ -484,9 +549,25 @@ export async function sessionCommand({ origin, rest }, ctx) {
   if (sub === 'list') {
     const { login, sessions } = await list();
     const shown = sessions.filter((s) => opts.all || !ended(s)).map((s) => summary(s, { origin, login }));
+    // Your own open pull requests on the console's repos that no session listed here opened: My Woodshed's group.
+    let pulls = [];
+    let pullsError = null;
+    try {
+      const body = await ask('/api/my/pulls');
+      const has = new Set(shown.flatMap((x) => [x.pullRequest, ...x.pullRequests]).filter(Boolean).map((p) => `${p.repo.toLowerCase()}#${p.number}`));
+      pulls = (Array.isArray(body.pulls) ? body.pulls : [])
+        .filter((p) => p?.why === 'yours' && Number.isInteger(p.number) && typeof p.repo === 'string' && !has.has(`${p.repo.toLowerCase()}#${p.number}`))
+        .map((p) => ({ ...pullOf(`https://github.com/${p.repo}/pull/${p.number}`, { title: p.title, state: p.draft ? 'draft' : 'open', checks: p.checks }), project: printable(p.project, 60), branch: printable(p.branch, 200) }))
+        .filter((p) => p.number);
+    } catch (err) {
+      if (err.code === EXIT.waiting) throw err;
+      // A console from before the command line could read them says so, and the sessions are listed all the same.
+      pullsError = err.message;
+    }
     const gone = await leftovers(sessions);
     if (json) {
-      emit({ console: origin, login, sessions: shown, ...(gone ? { herdrLeftovers: gone.map((m) => m.name) } : {}) });
+      emit({ console: origin, login, sessions: shown, pullRequests: pulls, ...(pullsError ? { pullRequestsError: pullsError } : {}),
+        ...(gone ? { herdrLeftovers: gone.map((m) => m.name) } : {}) });
       return EXIT.done;
     }
     if (!shown.length) say(opts.all ? 'No sessions.' : 'No sessions. --all also lists those that ended.');
@@ -494,8 +575,24 @@ export async function sessionCommand({ origin, rest }, ctx) {
       const whose = (x) => (x.mine ? 'mine' : x.shared ? (x.assignee ? (x.assignee === login ? 'you' : `@${x.assignee}`) : 'shared') : `@${x.owner}`);
       const rows = [['ID', 'STATE', 'WHOSE', 'PAUSES', 'PROJECT', 'TITLE'], ...shown.map((x) => [x.id, x.stateWord, whose(x), pauseText(x.pause, now()) || '-', x.project ?? '', x.title ?? ''])];
       const widths = rows[0].map((_, i) => Math.max(...rows.map((r) => r[i].length)));
-      for (const row of rows) say(row.map((cell, i) => (i === row.length - 1 ? cell : cell.padEnd(widths[i]))).join('  ').trimEnd());
+      const indent = ' '.repeat(widths[0] + 2);
+      rows.forEach((row, i) => {
+        say(row.map((cell, c) => (c === row.length - 1 ? cell : cell.padEnd(widths[c]))).join('  ').trimEnd());
+        const x = shown[i - 1];
+        if (!x) return;
+        // Every pull request it opened, newest last, as its chips show them; the command that reviews it, when you can.
+        const prs = x.pullRequests.length ? x.pullRequests : [x.pullRequest].filter(Boolean);
+        for (const p of prs) say(`${indent}${pullText(p)}${p.title && p.title !== x.title ? `  ${p.title}` : ''}`);
+        if (prs.length && x.reviewCommand) say(`${indent}review it: ${x.reviewCommand}`);
+      });
     }
+    if (pulls.length) {
+      say('');
+      say('Your open pull requests with no session:');
+      for (const p of pulls) say(`  ${pullText(p)}  ${p.repo}${p.title ? `  ${p.title}` : ''}`);
+      say(`  To review one here, start a session on it, then review that: woodshed session new --repo <repo> --branch <number>`);
+    }
+    if (pullsError) say(`Your pull requests with no session were not read: ${pullsError}`);
     if (gone?.length) {
       const names = gone.map((m) => m.name).join(', ');
       say(`\nHerdr still has ${gone.length === 1 ? 'a machine' : `${gone.length} machines`} of ${gone.length === 1 ? 'a session' : 'sessions'} no longer on ${origin}: ${names}. Forget ${gone.length === 1 ? 'it' : 'them'} with: woodshed session prune`);
