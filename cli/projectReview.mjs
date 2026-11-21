@@ -43,16 +43,27 @@ function blockEnd(lines, at, indent, end) {
   return j;
 }
 
-/** @returns {{at: number, end: number, indent: number, value: string, comment: string}|null}  the key at `indent` in [start, end) */
+// In a block scalar, even an indented comment is part of the value. A dedented comment ends the value.
+function blockScalarEnd(lines, at, indent, end) {
+  let j = at + 1;
+  while (j < end && (!lines[j].trim() || indentOf(lines[j]) > indent)) j += 1;
+  while (j > at + 1 && !lines[j - 1].trim()) j -= 1;
+  return j;
+}
+
+/** @returns {{at: number, end: number, indent: number, value: string, comment: string, blockScalar: boolean}|null} */
 function findKey(lines, start, end, indent, key) {
   const re = KEY_RE(key);
   for (let i = start; i < end; i += 1) {
     if (isFiller(lines[i])) continue;
     const m = re.exec(lines[i]);
     if (m && m[1].length === indent) {
-      const value = stripComment(m[2]);
-      const comment = value.length < m[2].length ? m[2].slice(value.trimEnd().length) : '';
-      return { at: i, end: blockEnd(lines, i, indent, end), indent, value: value.trim(), comment };
+      const raw = stripComment(m[2]);
+      const value = raw.trim();
+      const comment = raw.length < m[2].length ? m[2].slice(raw.trimEnd().length) : '';
+      const blockScalar = /^[|>]/.test(value);
+      const endOfKey = blockScalar ? blockScalarEnd(lines, i, indent, end) : blockEnd(lines, i, indent, end);
+      return { at: i, end: endOfKey, indent, value, comment, blockScalar };
     }
   }
   return null;
@@ -108,13 +119,14 @@ export function enableReview(text, { qa = false, rerun = null, everyCommit = fal
     return { at, end: at + 1, indent, value: '' };
   }
 
-  // A scalar under `block`: its line's value replaced (a comment after it kept), or a line added at the block's end.
+  // Replace a scalar under `block`, preserving its header comment, or add a line at the end of the block.
   function setKey(block, key, value) {
     const indent = childIndent(lines, block, unit);
     const found = findKey(lines, block.at + 1, block.end, indent, key);
     const written = yamlScalar(value);
     if (found) {
-      lines[found.at] = `${' '.repeat(indent)}${key}: ${written}${found.comment}`;
+      const oldLines = found.blockScalar ? found.end - found.at : 1;
+      lines.splice(found.at, oldLines, `${' '.repeat(indent)}${key}: ${written}${found.comment}`);
       return;
     }
     lines.splice(block.end, 0, `${' '.repeat(indent)}${key}: ${written}`);

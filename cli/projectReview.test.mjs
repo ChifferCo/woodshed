@@ -122,6 +122,23 @@ test('--rerun and --every-commit', () => {
   assert.equal(enableReview(base).text, base, 'the file\'s own tag is kept');
 });
 
+test('--rerun replaces a block scalar and keeps the comments outside its value', () => {
+  for (const header of ['|-', '>-']) {
+    const before = `version: 1
+pullRequests:
+  review:
+    runner: woodshed
+    rerun: ${header} # keep this note
+      [old]
+    # The heading below stays.
+    heading: '## R'
+`;
+    const { text } = enableReview(before, { rerun: '[new]' });
+    assert.equal(text, before.replace(`${header} # keep this note\n      [old]`, "'[new]' # keep this note"));
+    assert.equal(read(text).pullRequests.review.rerun, '[new]');
+  }
+});
+
 test('none written as null, or {}, becomes a block; inline mappings and files that do not read are refused', () => {
   for (const none of ['null', '~', '{}']) assert.equal(read(enableReview(`version: 1\npullRequests: ${none}\n`).text).pullRequests.review.runner, 'woodshed');
   assert.match(enableReview('version: 1\npullRequests: null  # gates come later\n').text, /^pullRequests:  # gates come later$/m, 'its comment kept');
