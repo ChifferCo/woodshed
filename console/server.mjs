@@ -51,7 +51,9 @@
 //   POST /api/my/cli-tokens/<id>/revoke   ends one computer's command line sign-in, from My settings
 //   Its token also signs in to GET /api/sessions, GET /api/my/projects, POST /api/my/sessions,
 //   POST /api/my/sessions/<id>/resume|remove and POST /api/sessions/<id>/stop|extend|limits, as its person, and to nothing
-//   else (cliSessions.mjs)
+//   else (cliSessions.mjs); and to GET /api/cli/config, its person's choices on My settings and never a secret, and the
+//   writes of them: POST /api/my/terminal, /reviews, /codex-auth/reviews, /claude-token/shared, /projects/default and
+//   /github/identity, each answering with that config alone (cliConfig.mjs)
 //   POST /api/sessions           {"number": 123, "startedBy": "login", "prompt": "..."}
 //   POST /api/sessions/<id>/stop
 //   POST /api/sessions/<id>/pin     {"on": true}   pinned to the top of your rail; yours alone
@@ -205,6 +207,7 @@ import { handleDesktopSignIn } from './desktopSignIn.mjs';
 import { handleCliApi, handleCliPage } from './cliSignIn.mjs';
 import { CLI_REPOS_PATH, handleCliRepos } from './cliRepos.mjs';
 import { carriesCliToken, handleCliCall } from './cliSessions.mjs';
+import { answerWithView, CLI_CONFIG_PATH, configView, isConfigWrite } from './cliConfig.mjs';
 import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
 import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
 import { QA_POSTER_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
@@ -2437,6 +2440,17 @@ export function createHandler({
     return reply(res, 404, { error: 'not found' });
   }
 
+  // The command line token's reads and writes, past handleCliCall's checks (cliSessions.mjs). A config write answers
+  // with the config alone (cliConfig.mjs).
+  async function cliRead(res, pathname, login) {
+    if (pathname === CLI_CONFIG_PATH) return reply(res, 200, await configView({ userSettings, projectsView }, login));
+    return reply(res, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
+  }
+  function cliWrite(req, res, pathname, login) {
+    if (!isConfigWrite(pathname)) return writeRoute(req, res, pathname, login);
+    return answerWithView(res, (held) => writeRoute(req, held, pathname, login), () => configView({ userSettings, projectsView }, login), reply);
+  }
+
   return async function handle(req, res) {
     // An app port answers its session's app and nothing else: the console's own pages there would share the app's origin.
     if (appPorts?.owns(req.socket?.localPort)) return appPortRequest(req, res, req.socket.localPort);
@@ -2454,18 +2468,17 @@ export function createHandler({
       return tunnel ? tunnel.connection(req, res) : reply(res, 404, { error: 'this console has no tunnel to your databases' });
     }
     // The woodshed command line has no cookie either: a device code, then its token, is its sign-in.
+    // Its token on the few other routes it may call, as its person: `woodshed session` and `woodshed config`.
+    const cliCall = () => handleCliCall({ req, res, url, cli, reply, read: cliRead, write: cliWrite });
     if (url.pathname.startsWith('/api/cli/')) {
       if (!cli) return reply(res, 404, { error: 'this console has no command line sign-in' });
+      if (url.pathname === CLI_CONFIG_PATH) return cliCall();
       if (url.pathname === CLI_REPOS_PATH || url.pathname === `${CLI_REPOS_PATH}/remove`) {
         return handleCliRepos({ req, res, url, cli, reply, readJson, addedProjects, roleFor: cliRepoRole, projectsView, removeRepo });
       }
       return handleCliApi({ req, res, url, cli, publicUrl: config.publicUrl, about: cliAbout });
     }
-    // Its token on the few other routes it may call, as its person: `woodshed session`.
-    if (carriesCliToken(req.headers)) {
-      const read = async (r, pathname, login) => reply(r, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
-      return handleCliCall({ req, res, url, cli, reply, read, write: writeRoute });
-    }
+    if (carriesCliToken(req.headers)) return cliCall();
     // Sign-in's cookies belong to one host name, and GitHub sends people back only to publicUrl's. Once sign-in
     // can be used, a page opened on another public name (the bare IP) moves there.
     const stays = url.pathname === '/healthz';
