@@ -605,6 +605,16 @@ session's own.
   session's own, and a file over 1 MB is not sent: your other sessions keep the
   last version that was. Forget it and Remove My Woodshed delete
   the shared copy with your homes.
+- **From your computer:** `woodshed settings push` sends your laptop's items into the same copy, and `pull` writes
+  the copy's into your laptop (cli/README.md, "Settings"), through `GET/POST /api/cli/settings` with the command
+  line's token (`cliSettings.mjs`). A computer never sends or gets an MCP login, and never removes an item. MCP server
+  definitions pushed from a computer are kept in the same stored settings object in a map only the CLI can read. They
+  take precedence on computers if a session has saved the same server name. The session API returns only the session's
+  copy. Admin-configured MCPs reach sessions through the relay. The console logs `cliSettings: pushed` with the token's
+  id and the counts, `cliSettings: refused` when the copy exceeds 5 MB or an MCP definition or hook has a literal header, and
+  `cliSettings: refused, a removal from a computer` or
+  `MCP logins from a computer` for a client other than the command line's. `--own-files` saves into your own files on My settings
+  through the Repo settings routes, with their checks and log lines.
 
 **Resume**, on a stopped private session's rail card or page, starts the same
 session again, with its page, branch and options, and runs
@@ -1519,7 +1529,8 @@ asked. Only that page's button, a form POST from the console's own page (Origin 
 approves it; Deny refuses it. The CLI asks `POST /api/cli/token` every 5 seconds meanwhile, and gets its token once.
 Both of those refuse a call with an Origin header, which a browser always sends and the CLI never does, so no web page
 starts a sign-in to hand someone the link of. The code lasts 10 minutes. The token (`wsc_…`) is its own kind, not the
-database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. Besides `/api/cli/*` and
+database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. Besides `/api/cli/*` (including
+`/api/cli/settings` for shared Claude settings and own files) and
 `/api/tunnel/exec/*` the token signs in to the routes listed in `console/cliSessions.mjs`. For `woodshed session` these
 are `GET /api/sessions`, `GET /api/my/projects`,
 `POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume|remove` and `POST /api/sessions/<id>/stop|extend|limits`,

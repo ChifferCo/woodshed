@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-test('the packed CLI installs offline and runs status, config, repo and review outside the source checkout', (t) => {
+test('the packed CLI installs offline and runs settings, config, repo and review outside the source checkout', (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-cli-pack-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const root = path.resolve(import.meta.dirname, '..');
@@ -24,10 +24,14 @@ test('the packed CLI installs offline and runs status, config, repo and review o
   run('tar', ['-xzf', path.join(home, packed.filename), '-C', prefix]);
   const cli = path.join(home, 'woodshed');
   fs.symlinkSync(path.join(prefix, 'package/cli/woodshed.mjs'), cli);
-  assert.match(run(cli, ['--help']), /Usage: woodshed/);
-  assert.match(run(cli, ['config', '--help']), /Usage: woodshed config/);
+  const help = run(cli, ['--help']);
+  assert.match(help, /Usage: woodshed/);
+  assert.match(help, /^  settings\s+plan\|push\|pull/m);
+  assert.match(help, /^  repo\s/m);
   assert.match(run(cli, ['repo', '--help']), /Usage: woodshed repo/);
   assert.equal(JSON.parse(run(cli, ['status', '--json'], 2)).signedIn, false);
+  assert.match(run(cli, ['config', '--help']), /Usage: woodshed config/);
+  assert.equal(JSON.parse(run(cli, ['settings', 'plan', '--only', 'skills', '--json'], 2)).status, 'signed-out');
   assert.equal(JSON.parse(run(cli, ['config', 'list', '--json'], 2)).status, 'signed-out');
   assert.match(run(cli, ['review', '--help']), /Usage: woodshed review/);
   const repo = path.join(home, 'repo');

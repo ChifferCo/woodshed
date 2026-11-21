@@ -48,6 +48,8 @@
 //   POST /api/cli/device, /api/cli/token, GET /api/cli/me, POST /api/cli/logout   the woodshed command line's sign-in by a
 //                                device code, and its token's calls (cliSignIn.mjs); GET/POST /cli is the page the code is
 //                                approved on, signed in
+//   GET/POST /api/cli/settings[/repos|/files/<project>]   that token's turn at your shared Claude settings, and your own
+//                                files for a repo (cliSettings.mjs)
 //   POST /api/my/cli-tokens/<id>/revoke   ends one computer's command line sign-in, from My settings
 //   Its token also signs in to GET /api/sessions, GET /api/my/projects, POST /api/my/sessions,
 //   POST /api/my/sessions/<id>/resume|remove, POST /api/sessions/<id>/stop|extend|limits and GET /api/review-readiness,
@@ -209,6 +211,7 @@ import { CLI_REPOS_PATH, handleCliRepos } from './cliRepos.mjs';
 import { carriesCliToken, handleCliCall } from './cliSessions.mjs';
 import { REVIEW_READINESS_PATH, reviewReadinessReply } from './reviewReadiness.mjs';
 import { answerWithView, CLI_CONFIG_PATH, configView, isConfigWrite } from './cliConfig.mjs';
+import { handleCliSettings } from './cliSettings.mjs';
 import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
 import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
 import { QA_POSTER_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
@@ -2479,6 +2482,7 @@ export function createHandler({
       if (url.pathname === CLI_REPOS_PATH || url.pathname === `${CLI_REPOS_PATH}/remove`) {
         return handleCliRepos({ req, res, url, cli, reply, readJson, addedProjects, roleFor: cliRepoRole, projectsView, removeRepo });
       }
+      if (await handleCliSettings({ req, res, url, cli, claudeSettings, repoSettingsApi })) return;
       return handleCliApi({ req, res, url, cli, publicUrl: config.publicUrl, about: cliAbout });
     }
     if (carriesCliToken(req.headers)) return cliCall();

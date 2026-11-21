@@ -1,5 +1,6 @@
-// The woodshed command line's token (wsc_, cliSignIn.mjs) on the allowed session, config, and review routes, as exactly
-// the person the token was approved for. Every other route refuses it, including secrets, people, terminals and apps.
+// The woodshed command line's token (wsc_, cliSignIn.mjs) on the allowed session, config, and review routes acts as
+// the person who approved the token. The separate /api/cli/settings routes
+// (cliSettings.mjs) allow `woodshed settings` to reach that person's shared Claude settings and own files for their repos.
 //
 //   GET  /api/sessions                      woodshed session list, and the wait on a start: what that person sees
 //   GET  /api/my/projects                   the repos that person may start on, for --repo
@@ -47,7 +48,7 @@ export function carriesCliToken(headers) {
 }
 
 /**
- * A call with a command line token, on any route but /api/cli/*.
+ * A call on a session, config, or review route with a command line token.
  * @param {{req, res, url: URL, cli: ReturnType<typeof import('./cliSignIn.mjs').createCliSignIn>|null,
  *          reply: (res, status: number, body: object) => void,
  *          read: (req, res, url: URL, login: string|null) => unknown,

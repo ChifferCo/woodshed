@@ -139,6 +139,25 @@ test('MCP servers in ~/.claude.json reach a session as it starts, and a running 
   assert.deepEqual([json.mcpServers.aws.command, json.numStartups], ['v2', 9], 'the next start has it, and the rest of the file is its own');
 });
 
+test('a laptop MCP never reaches a session or overwrites a same-named session server', async () => {
+  const c = fakeConsole();
+  const id = '.claude.json#mcpServers/docs';
+  const laptop = JSON.stringify({ command: 'laptop-docs' });
+  const native = { command: 'session-docs' };
+  await c.settings.sync({ login: 'octocat', sessionId: 'cli:computer', version: 0, changed: { [id]: laptop }, removed: [] }, { fromLaptop: true });
+
+  const a = session(await makeHome({ '.claude.json': { mcpServers: { docs: native } } }), c.send('aaaaaaaa'));
+  assert.equal((await a.round({ live: false })).sent, 1, 'the first session still seeds its own copy');
+  const b = session(await makeHome({}), c.send('bbbbbbbb'));
+  await b.round({ live: false });
+  assert.deepEqual((await readJson(b.home, '.claude.json')).mcpServers, { docs: native });
+
+  const restarted = createClaudeSettings({ store: c.store });
+  const read = { login: 'octocat', sessionId: 'bbbbbbbb', version: null, changed: {}, removed: [] };
+  assert.deepEqual(await restarted.sync(read), { version: 1, items: { [id]: JSON.stringify(native) } });
+  assert.deepEqual(await restarted.sync({ ...read, sessionId: 'cli:another' }, { fromLaptop: true }), { version: 2, items: { [id]: laptop } });
+});
+
 test('a JSON file read mid-write is left out of the round, and a big file is neither sent nor deleted', async () => {
   const c = fakeConsole();
   const a = session(await makeHome({ '.claude/.credentials.json': { mcpOAuth: { 'x|1': { t: 1 } } }, '.claude/skills/big/data.bin': 'x'.repeat(MAX_ITEM_BYTES + 1) }), c.send('aaaaaaaa'));
