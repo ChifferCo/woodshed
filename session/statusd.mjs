@@ -1568,7 +1568,10 @@ function imageReply(req, res) {
   stream.pipe(res);
 }
 
-const reviewHost = createReviewHost({ repoDir: REPO_DIR, sessionId: process.env.SESSION_ID || '' });
+const reviewHost = createReviewHost({
+  repoDir: REPO_DIR, sessionId: process.env.SESSION_ID || '',
+  agent: process.env.AGENT, model: process.env.MODEL, effort: process.env.EFFORT,
+});
 
 async function handle(req, res) {
   if (APP_HEADER in req.headers) {

@@ -87,6 +87,14 @@ const MAX_INFLIGHT_CHECKOUTS = 2;
 let inflightRequests = 0;
 let inflightCheckouts = 0;
 
+function startReviewJob(ctx, spec) {
+  const options = ctx.reviewAgent;
+  return startJob({
+    ...spec, ...options, log: ctx.log, readMeminfo: ctx.readMeminfo,
+    files: options?.agent === 'codex' ? readDiff(spec.session)?.files : undefined,
+  });
+}
+
 function delay(ms) {
   return new Promise(function wait(resolve) {
     setTimeout(resolve, ms);
@@ -1892,14 +1900,12 @@ async function startWithBackoff({ ctx, session, review, prompt, gen }) {
   const { log } = ctx;
   for (let tries = 0; tries < START_RETRIES; tries += 1) {
     if (!claimIsLive(session, gen)) return null;
-    const started = startJob({
+    const started = startReviewJob(ctx, {
       kind: 'analysis',
       session,
       argv: analysisArgv({ prompt }),
       cwd: review.worktree,
-      log,
       onLine: onAnalysisLine,
-      readMeminfo: ctx.readMeminfo,
     });
     if (started.ok) return started;
     if (started.status !== 503 && started.status !== 429) return started;
@@ -1958,13 +1964,11 @@ async function handleExplain(payload, res, ctx, session) {
     meta: review.meta, file: valid.file, filePath: valid.filePath,
     line: valid.line, endLine: valid.endLine, side: valid.side, question: valid.question, history: valid.history,
   });
-  const started = startJob({
+  const started = startReviewJob(ctx, {
     kind: 'explain',
     session,
     argv: explainArgv({ prompt }),
     cwd: review.worktree,
-    log,
-    readMeminfo: ctx.readMeminfo,
   });
   if (!started.ok) return json(res, started.status, { ok: false, error: started.error });
 
@@ -2079,13 +2083,11 @@ async function handleChat(payload, res, ctx, session) {
     history: readChat(session),
     question: valid.question,
   });
-  const started = startJob({
+  const started = startReviewJob(ctx, {
     kind: 'chat',
     session,
     argv: explainArgv({ prompt }),
     cwd: review.worktree,
-    log,
-    readMeminfo: ctx.readMeminfo,
   });
   if (!started.ok) return json(res, started.status, { ok: false, error: started.error });
 
@@ -2416,7 +2418,7 @@ const QA_START_RETRY_MS = 15_000;
 async function qaRun({ ctx, session, review, gen, argv, cwd = review.worktree, live = () => qaIsLive(session, gen), kind = 'qa' }) {
   for (let tries = 0; tries < QA_START_RETRIES; tries += 1) {
     if (!live()) return null;
-    const started = startJob({ kind, session, argv, cwd, log: ctx.log, readMeminfo: ctx.readMeminfo });
+    const started = startReviewJob(ctx, { kind, session, argv, cwd });
     if (started.ok) {
       const job = await started.job.done;
       if (!live()) return null;
