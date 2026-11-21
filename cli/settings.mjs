@@ -5,11 +5,16 @@
 //
 //   woodshed settings plan  [--only <what>,...] [--own-files <checkout>]   each item, its size, and upload, skip or
 //                                                                        refuse with why. Nothing is sent
+//   woodshed settings plan --pull [--replace] [same]                     what pull would write, and what each item that
+//                                                                        runs here runs. Nothing is written
 //   woodshed settings push  [same]                                       the same list, then the uploads. Items never
 //                                                                        listed before are asked about, or (with no
-//                                                                        terminal to ask on) sent only after a plan
+//                                                                        terminal to ask on) sent only after a plan. An
+//                                                                        item a session changed since is left alone
 //   woodshed settings pull  [same] [--replace]                           the shared copy written here: what is missing,
-//                                                                        and with --replace what differs
+//                                                                        and with --replace what differs. What runs here
+//                                                                        (an MCP server, settings.json, a script) is
+//                                                                        asked about, or held until a plan showed it
 //
 // A laptop is not a session: its home is the person's (~), a session's is /home/node, and settings name paths in it.
 // A path into what is synced (~/.claude/skills/...) is moved to the other home; a setting naming any other path in the
@@ -18,6 +23,7 @@
 // helper or a file that looks like a secret is refused by name, never shown.
 
 import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -98,14 +104,47 @@ function nameOf(id) {
  * Whether an item is among what --only names: a category, or a name or a folder of names, with or without ~/.claude/.
  * @param {string[]} only  empty for everything
  */
-export function matchesOnly(only, { category, name }) {
-  if (!only.length) return true;
+export function matchesOnly(only, { category, name }, { byName = false } = {}) {
+  if (!only.length) return !byName;
   const short = name.replace(/^~\/\.claude\//, '');
   return only.some((raw) => {
     const want = raw.replace(/^~\//, '').replace(/^\.claude\//, '').replace(/\/$/, '');
-    return want === category || want === short || short.startsWith(`${want}/`) || want === name;
+    return (!byName && want === category) || want === short || short.startsWith(`${want}/`) || want === name;
   });
 }
+
+/** @returns {string}  an item's content as the shared copy held it, by name: what this computer last pushed or pulled */
+export function itemHash(id, value) {
+  return crypto.createHash('sha256').update(`${id}\0${value}`).digest('hex');
+}
+
+/** What a session's text may print here: printable ASCII, so a name or command cannot move the cursor or retitle. */
+function printable(text, max = 200) {
+  const out = String(text).replace(/[^\x20-\x7e]/g, '?');
+  return out.length > max ? `${out.slice(0, max)}…` : out;
+}
+
+/**
+ * The first folder or file on a path under `root` that is a symlink, which the sync never reads or writes through: a
+ * linked skills folder would send another checkout's files, and a pull would write into it.
+ * @returns {string|null}  the symlink's path under root
+ */
+export function linkOnPath(root, rel) {
+  let at = root;
+  for (const part of rel.split('/')) {
+    at = path.join(at, part);
+    let stat;
+    try {
+      stat = fs.lstatSync(at);
+    } catch {
+      return null;
+    }
+    if (stat.isSymbolicLink()) return path.relative(root, at);
+  }
+  return null;
+}
+
+const fileOf = (id) => parseEntryId(id)?.file ?? id;
 
 const DROP = Symbol('drop');
 const ONLY = 'left out by --only';
@@ -125,6 +164,8 @@ export function movePaths(value, { from, to }) {
   const dropped = [];
   let moved = 0;
   const pathRe = new RegExp(`${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=/|$|[\\s'"\`])([^\\s'"\`;,)\\]}]*)`, 'g');
+  // The home by name: ~/x in a hook's shell or a permission rule, $HOME/x. Each side's own, so a carried path stays as it is.
+  const namedRe = /(?<=^|[\s'"`=(:,])(?:~|\$HOME|\$\{HOME\})(?=\/|$|[\s'"`;,)\]}])([^\s'"`;,)\]}]*)/g;
   function str(s) {
     let left = null;
     const out = s.replace(pathRe, (whole, rest) => {
@@ -136,6 +177,10 @@ export function movePaths(value, { from, to }) {
       left ??= whole;
       return whole;
     });
+    for (const [whole, rest] of out.matchAll(namedRe)) {
+      const rel = rest.replace(/^\//, '');
+      if (!rel || !carried(rel)) left ??= whole;
+    }
     return left ? { drop: left } : { value: out };
   }
   function walk(node, at, inArray) {
@@ -182,7 +227,12 @@ const encodeJson = (json) => Buffer.from(`${JSON.stringify(json, null, 2)}\n`).t
 
 /** An MCP server entry's literal credentials: an env variable or header named like one, not one made of a ${VARIABLE}. */
 function serverCredential(server) {
-  const literal = (v) => typeof v === 'string' && v.trim() && !/\$\{[A-Za-z_][A-Za-z0-9_]*(:-[^}]*)?\}/.test(v);
+  // A value is safe only when it is made of variables with no fallback, after an optional scheme (Bearer ${TOKEN}).
+  const literal = (v) => {
+    if (typeof v !== 'string' || !v.trim()) return false;
+    if (/\$\{[^}]*:-[^}]+\}/.test(v)) return true;
+    return v.replace(/\$\{[A-Za-z_][A-Za-z0-9_]*(:-)?\}/g, '').replace(/^\s*(Bearer|Basic|Token)\s+/i, '').trim() !== '';
+  };
   const env = Object.entries(server?.env ?? {}).find(([k, v]) => SECRET_VARIABLE.test(k) && literal(v));
   if (env) return `its env sets ${env[0]}`;
   const header = Object.entries(server?.headers ?? {}).find(([k, v]) => SECRET_HEADER.test(k) && literal(v));
@@ -294,12 +344,16 @@ async function symlinksUnder(home, dir) {
   return found;
 }
 
+export const SAME_AS_SHARED = 'the same as the shared copy';
+const SAME_AS_YOURS = 'the same as yours';
+
 /**
  * Each of this computer's Claude items against the shared copy, as `push` would send it.
- * @param {{home: string, shared: Record<string, string>, only: string[]}} args
+ * @param {{home: string, shared: Record<string, string>, only: string[], synced?: Record<string, string>}} args
+ *   synced: each item's hash as the shared copy held it when this computer last pushed or pulled it (itemHash)
  * @returns {Promise<{rows: object[], changed: Record<string, string>}>}  changed: what push sends
  */
-export async function claudePushPlan({ home, shared, only }) {
+export async function claudePushPlan({ home, shared, only, synced = {} }) {
   const { items, unreadable, oversized } = await readSnapshot(home);
   const rows = [];
   const ready = {};
@@ -307,6 +361,11 @@ export async function claudePushPlan({ home, shared, only }) {
     const row = { kind: 'claude', id, name: nameOf(id), category: categoryOf(id), bytes: bytesOf(id, raw) };
     if (!matchesOnly(only, row)) {
       rows.push({ ...row, fate: 'skip', reason: ONLY });
+      continue;
+    }
+    const link = linkOnPath(home, fileOf(id));
+    if (link) {
+      rows.push({ ...row, fate: 'skip', reason: `~/${link} is a symlink, which is not followed: copy what it points to here` });
       continue;
     }
     const out = translate(id, raw, { from: home, to: SESSION_HOME, statusLineOf: shared[SETTINGS] });
@@ -321,15 +380,66 @@ export async function claudePushPlan({ home, shared, only }) {
   if (changed[SETTINGS] && shared[SETTINGS] && sameSettings(changed[SETTINGS], shared[SETTINGS])) delete changed[SETTINGS];
   for (const row of rows) {
     if (row.fate) continue;
-    if (row.id in changed) Object.assign(row, { fate: 'upload', reason: row.id in shared ? 'changed' : 'new' });
-    else Object.assign(row, { fate: 'skip', reason: 'the same as the shared copy' });
+    // The shared copy moved on since this computer last had the item: a session's edit, which yours would undo.
+    const theirs = row.id in changed && row.id in shared && synced[row.id] !== itemHash(row.id, shared[row.id]);
+    if (theirs && !matchesOnly(only, row, { byName: true })) {
+      delete changed[row.id];
+      const named = `--only ${row.name.replace(/^~\/\.claude\//, '')}`;
+      Object.assign(row, {
+        fate: 'skip',
+        reason: synced[row.id] ? `changed in a session since this computer last had it: pull it first, or ${named} sends yours over it`
+          : `the shared copy has its own, which this computer never pulled: pull it first, or ${named} sends yours over it`,
+      });
+    } else if (row.id in changed) Object.assign(row, { fate: 'upload', reason: row.id in shared ? 'changed' : 'new' });
+    else Object.assign(row, { fate: 'skip', reason: SAME_AS_SHARED });
   }
   for (const file of oversized) rows.push({ kind: 'claude', id: file, name: nameOf(file), category: categoryOf(file), bytes: fs.statSync(path.join(home, file)).size, fate: 'skip', reason: `over ${MAX_ITEM_BYTES / 1024 / 1024} MB` });
   for (const file of unreadable) rows.push({ kind: 'claude', id: file, name: `~/${file}`, category: 'mcp', bytes: 0, fate: 'skip', reason: 'not read as JSON (claude may be writing it): try again' });
   for (const dir of SYNCED_DIRS) {
+    if (linkOnPath(home, dir)) continue;
     for (const link of await symlinksUnder(home, dir)) rows.push({ kind: 'claude', id: link, name: nameOf(link), category: categoryOf(link), bytes: 0, fate: 'skip', reason: 'a symlink, which is not followed: copy what it points to here' });
   }
   return { rows: rows.map(({ value, ...row }) => row), changed };
+}
+
+// A command is shown whole, or its end could hide what it does: past this, the item is held to be read in the file.
+const RUNS_MAX = 2000;
+
+/** Whether an item runs here once written: an MCP server, settings.json (hooks, env, permissions), or a script. */
+export function runsHere(id) {
+  if (id === SETTINGS) return true;
+  const entry = parseEntryId(id);
+  if (entry) return entry.key === 'mcpServers';
+  return !/\.(md|markdown|txt)$/i.test(id);
+}
+
+/** What a pulled item would run or let claude do here, a line each, for the person to read before it is written. */
+export function runsOf(id, value) {
+  const entry = parseEntryId(id);
+  if (entry) {
+    let server = {};
+    try {
+      server = JSON.parse(value) ?? {};
+    } catch {}
+    const lines = [server.command ? `runs: ${[server.command, ...(Array.isArray(server.args) ? server.args : [])].join(' ')}` : `connects to: ${server.url ?? 'nothing named'}`];
+    if (server.env && Object.keys(server.env).length) lines.push(`with env: ${Object.keys(server.env).join(', ')}`);
+    return lines.map((l) => printable(l, RUNS_MAX));
+  }
+  if (id === SETTINGS) {
+    const json = decodeJson(value) ?? {};
+    const lines = [];
+    for (const [event, groups] of Object.entries(json.hooks ?? {})) {
+      (Array.isArray(groups) ? groups : []).forEach((group, i) => (Array.isArray(group?.hooks) ? group.hooks : []).forEach((hook, j) => {
+        if (hook?.command) lines.push(`hook ${event}[${i}][${j}] runs: ${hook.command}`);
+      }));
+    }
+    // A value can change what runs (NODE_OPTIONS), so it is shown, but never one named like a credential.
+    if (json.env && Object.keys(json.env).length) lines.push(`env: ${Object.entries(json.env).map(([k, v]) => (SECRET_VARIABLE.test(k) ? `${k}=(not shown)` : `${k}=${v}`)).join(' ')}`);
+    for (const rule of json.permissions?.allow ?? []) lines.push(`allows: ${rule}`);
+    return (lines.length ? lines : ['no hooks, env or allowed tools']).map((l) => printable(l, RUNS_MAX));
+  }
+  const text = Buffer.from(value, 'base64').toString('utf8');
+  return [printable(text.startsWith('#!') ? `a script: ${text.split('\n')[0]}` : 'a file claude or a hook may run')];
 }
 
 /**
@@ -351,12 +461,17 @@ export async function claudePullPlan({ home, shared, only, replace }) {
       rows.push({ ...row, fate: 'skip', reason: ONLY });
       continue;
     }
+    const link = linkOnPath(home, fileOf(id));
+    if (link) {
+      rows.push({ ...row, fate: 'skip', reason: `~/${link} is a symlink here, which is not written through` });
+      continue;
+    }
     const out = translate(id, raw, { from: SESSION_HOME, to: home, statusLineOf: local[SETTINGS] });
     // Yours as a push would send it: the same as the shared copy means nothing here is behind it.
     const mine = id in local ? translate(id, local[id], { from: home, to: SESSION_HOME, statusLineOf: raw }) : null;
     const same = mine && !mine.fate && (mine.value === raw || (id === SETTINGS && sameSettings(mine.value, raw)));
     if (out.fate) rows.push({ ...row, fate: out.fate, reason: out.reason });
-    else if (same || local[id] === out.value) rows.push({ ...row, fate: 'skip', reason: 'the same as yours' });
+    else if (same || local[id] === out.value) rows.push({ ...row, fate: 'skip', reason: SAME_AS_YOURS });
     else if (id in local && !replace) rows.push({ ...row, fate: 'skip', reason: 'yours differs: --replace takes the shared one' });
     else {
       let { value, notes } = out;
@@ -369,7 +484,10 @@ export async function claudePullPlan({ home, shared, only, replace }) {
         ];
       }
       items[id] = value;
-      rows.push({ ...row, fate: id in local ? 'replace' : 'write', reason: id in local ? 'differs from yours' : 'new here', notes });
+      rows.push({
+        ...row, fate: id in local ? 'replace' : 'write', reason: id in local ? 'differs from yours' : 'new here', notes,
+        ...(runsHere(id) ? { runs: runsOf(id, value), gate: itemHash(id, value) } : {}),
+      });
     }
   }
   // applyItems deletes the synced files its items leave out, as a session takes a removal: here a pull only adds and
@@ -463,6 +581,10 @@ export function ownFilesPushPlan({ top, envFiles, project, stored, only }) {
       continue;
     }
     const text = normal(buffer.toString('utf8'));
+    if (!text.trim()) {
+      rows.push({ ...row, fate: 'skip', reason: 'empty: My settings takes an empty file as removing yours' });
+      continue;
+    }
     const kind = secretContent(text, PRODUCTION_CONTENT);
     if (kind) {
       rows.push({ ...row, fate: 'refuse', reason: `holds what looks like ${kind}` });
@@ -517,7 +639,7 @@ export function ownFilesPullPlan({ top, project, stored, only, replace }) {
  * @returns {{sub: 'plan'|'push'|'pull', only: string[], ownFiles: string|null, replace: boolean}}
  */
 export function parseSettingsArgs(rest) {
-  const out = { sub: null, only: [], ownFiles: null, replace: false };
+  const out = { sub: null, only: [], ownFiles: null, replace: false, pull: false };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     const value = (name) => {
@@ -528,20 +650,26 @@ export function parseSettingsArgs(rest) {
     if (arg === '--only' || arg.startsWith('--only=')) out.only.push(...value('--only').split(',').map((s) => s.trim()).filter(Boolean));
     else if (arg === '--own-files' || arg.startsWith('--own-files=')) out.ownFiles = value('--own-files');
     else if (arg === '--replace') out.replace = true;
+    else if (arg === '--pull') out.pull = true;
     else if (arg.startsWith('-')) throw new Error(`unknown option ${arg}`);
     else if (!out.sub && ['plan', 'push', 'pull'].includes(arg)) out.sub = arg;
-    else throw new Error(`unexpected ${arg}: woodshed settings plan|push|pull [--only <what>,...] [--own-files <checkout>]`);
+    else throw new Error(`unexpected ${arg}: woodshed settings plan [--pull]|push|pull [--only <what>,...] [--own-files <checkout>]`);
   }
   if (!out.sub) throw new Error('woodshed settings needs plan, push or pull');
-  if (out.replace && out.sub !== 'pull') throw new Error('--replace is for pull');
+  if (out.pull && out.sub !== 'plan') throw new Error('--pull is for plan: it lists what pull would write');
+  if (out.replace && out.sub !== 'pull' && !out.pull) throw new Error('--replace is for pull, and plan --pull');
   return out;
 }
 
-// The items each console's list was shown with, so push asks about only what was never listed (settings-shown.json in
-// the command line's folder; names only, never content).
-function shownStore(dir, origin) {
-  const file = path.join(dir, 'settings-shown.json');
-  const read = () => {
+// What this command line keeps of each console's settings, in settings-state.json in its folder, never an item's content:
+//   shown      the names of the items a list has shown, so push asks only about the ones never listed
+//   pullShown  the hashes of the items that run here (MCP servers, settings.json, scripts) a pull's list has shown, so a
+//              pull writes none whose content nobody has seen
+//   synced     each item's hash as the shared copy held it when this computer last pushed or pulled it, so a push can
+//              tell a session's newer edit from this computer's own
+function stateStore(dir, origin) {
+  const file = path.join(dir, 'settings-state.json');
+  const readAll = () => {
     try {
       return JSON.parse(fs.readFileSync(file, 'utf8'));
     } catch {
@@ -549,10 +677,14 @@ function shownStore(dir, origin) {
     }
   };
   return {
-    has: () => new Set(read()[origin]?.ids ?? []),
-    add(ids) {
-      const all = read();
-      all[origin] = { ids: [...new Set([...(all[origin]?.ids ?? []), ...ids])].sort(), at: new Date().toISOString() };
+    read() {
+      const mine = readAll()[origin] ?? {};
+      return { shown: new Set(mine.shown ?? []), pullShown: new Set(mine.pullShown ?? []), synced: { ...(mine.synced ?? {}) } };
+    },
+    save({ shown, pullShown, synced }) {
+      const all = readAll();
+      // The newest pull hashes are the ones still worth keeping: an older content of an item is not written again.
+      all[origin] = { shown: [...shown].sort(), pullShown: [...pullShown].slice(-2000), synced, at: new Date().toISOString() };
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       const temp = `${file}.${process.pid}.tmp`;
       fs.writeFileSync(temp, `${JSON.stringify(all, null, 2)}\n`, { mode: 0o600 });
@@ -639,70 +771,128 @@ export async function settingsCommand(ctx) {
     own = { ...checkout, project: project.project, stored: files };
   }
 
-  const pulling = args.sub === 'pull';
+  const pulling = args.sub === 'pull' || args.pull;
+  const state = stateStore(ctx.dir, origin);
+  const kept = state.read();
   const claude = !claudeWanted ? { rows: [], changed: {}, items: {} }
     : pulling ? await claudePullPlan({ home, shared: shared.items, only: args.only, replace: args.replace })
-      : await claudePushPlan({ home, shared: shared.items, only: args.only });
+      : await claudePushPlan({ home, shared: shared.items, only: args.only, synced: kept.synced });
   const ownPlan = !own ? { rows: [], upload: {}, write: {} }
     : pulling ? ownFilesPullPlan({ top: own.top, project: own.project, stored: own.stored, only: args.only, replace: args.replace })
       : ownFilesPushPlan({ top: own.top, envFiles: own.envFiles, project: own.project, stored: own.stored, only: args.only });
 
   const moving = pulling ? ['write', 'replace'] : ['upload'];
-  function show(title, rows) {
-    if (!rows.length) return;
+  const rows = [...claude.rows, ...ownPlan.rows];
+  const gated = claude.rows.filter((r) => moving.includes(r.fate) && r.gate);
+  // A pull writes nothing that runs here (an MCP server, settings.json, a script) whose content no list has shown: a
+  // session writes the shared copy unattended, and this computer holds what sessions must never reach.
+  const unseenGated = gated.filter((r) => !kept.pullShown.has(r.gate));
+  function hold(list, reason) {
+    for (const row of list) {
+      Object.assign(row, { fate: 'hold', reason });
+      if (row.id in (claude.before ?? {}) && isSyncedFile(row.id)) claude.items[row.id] = claude.before[row.id];
+      else delete claude.items[row.id];
+    }
+    claude.replaced = (claude.replaced ?? []).filter((id) => !list.some((r) => r.id === id));
+  }
+  if (args.sub === 'pull' && unseenGated.length && !interactive) {
+    hold(unseenGated, 'runs here, and no list has shown this content: run woodshed settings plan --pull, or pull on a terminal');
+  }
+
+  function show(title, list) {
+    if (!list.length) return;
     say(title);
-    const listed = rows.filter((r) => r.reason !== ONLY);
-    const width = Math.min(48, Math.max(0, ...listed.map((r) => r.name.length)));
+    const listed = list.filter((r) => r.reason !== ONLY);
+    const width = Math.min(48, Math.max(0, ...listed.map((r) => printable(r.name).length)));
     for (const row of listed) {
       const why = [row.reason, ...(moving.includes(row.fate) ? row.notes ?? [] : [])].filter(Boolean).join('; ');
-      say(`  ${row.fate.padEnd(8)}${size(row.bytes).padStart(9)}  ${row.name.padEnd(width)}  ${why}`);
+      say(`  ${row.fate.padEnd(8)}${size(row.bytes).padStart(9)}  ${printable(row.name, 120).padEnd(width)}  ${printable(why, 600)}`);
+      if (row.runs && ['write', 'replace', 'hold'].includes(row.fate)) for (const line of row.runs) say(`${' '.repeat(21)}${line}`);
     }
-    if (listed.length < rows.length) say(`  (${rows.length - listed.length} more left out by --only)`);
+    if (listed.length < list.length) say(`  (${list.length - listed.length} more left out by --only)`);
   }
-  const rows = [...claude.rows, ...ownPlan.rows];
-  if (json) for (const { kind, id, name, category, bytes, fate, reason, notes } of rows) emit({ event: 'item', kind, id, name, category, bytes, fate, reason, ...(notes?.length ? { notes } : {}) });
+  if (json) {
+    for (const { kind, id, name, category, bytes, fate, reason, notes, runs } of rows) {
+      emit({ event: 'item', kind, id, name, category, bytes, fate, reason, ...(notes?.length ? { notes } : {}), ...(runs ? { runs } : {}) });
+    }
+  }
   if (claudeWanted) show(pulling
     ? `Your shared Claude settings on ${origin} (version ${shared.version}), into ${home}:`
     : `Claude settings in ${home}/.claude and ${home}/.claude.json, against your shared copy on ${origin} (version ${shared.version}):`, claude.rows);
   if (own) show(pulling
     ? `Your own files for ${own.repo} on My settings, into ${own.top}:`
     : `Files git ignores in ${own.top}, as your own files for ${own.repo} on My settings:`, ownPlan.rows);
-  const counts = Object.fromEntries(['upload', 'write', 'replace', 'skip', 'refuse'].map((f) => [f, rows.filter((r) => r.fate === f).length]));
-  const words = Object.entries(counts).filter(([, n]) => n).map(([f, n]) => `${n} ${f === 'skip' ? 'skipped' : f === 'refuse' ? 'refused' : `to ${f}`}`).join(', ') || 'nothing found';
+  const tally = () => Object.fromEntries(['upload', 'write', 'replace', 'hold', 'skip', 'refuse'].map((f) => [f, rows.filter((r) => r.fate === f).length]));
+  let counts = tally();
+  const words = Object.entries(counts).filter(([, n]) => n).map(([f, n]) => `${n} ${f === 'skip' ? 'skipped' : f === 'refuse' ? 'refused' : f === 'hold' ? 'held' : `to ${f}`}`).join(', ') || 'nothing found';
   const merged = { ...shared.items, ...claude.changed };
   const overBudget = !pulling && Buffer.byteLength(JSON.stringify({ version: shared.version, items: merged })) > MAX_SETTINGS_BYTES;
   if (overBudget) ctx.warn(`Your shared copy would be over the ${MAX_SETTINGS_BYTES / 1024 / 1024} MB the console keeps: leave something out with --only`);
   if (rows.some((r) => r.fate === 'refuse')) say('Refused items stay here. Sign in to an MCP server in a session, and keep an API key in your own env file values on My settings, Repo settings.');
-  const shown = shownStore(ctx.dir, origin);
   const outgoing = rows.filter((r) => moving.includes(r.fate));
 
   if (args.sub === 'plan') {
-    shown.add(outgoing.map((r) => r.id));
-    if (json) emit({ event: 'plan', console: origin, version: shared.version, ...counts, sent: false });
-    say(`${words}. Nothing was sent.`);
-    return EXIT.done;
-  }
-  if (!outgoing.length) {
-    if (json) emit({ event: pulling ? 'pulled' : 'pushed', console: origin, ...counts, sent: 0 });
-    say(`${words}. Nothing to ${pulling ? 'write' : 'send'}.`);
+    if (pulling) gated.forEach((r) => kept.pullShown.add(r.gate));
+    else outgoing.forEach((r) => kept.shown.add(r.id));
+    state.save(kept);
+    if (json) emit({ event: 'plan', console: origin, version: shared.version, pull: pulling, ...counts, sent: false });
+    say(`${words}. Nothing was ${pulling ? 'written' : 'sent'}.`);
     return EXIT.done;
   }
 
   if (pulling) {
-    const backup = backupReplaced({ dir: ctx.dir, home, ids: claude.replaced ?? [], top: own?.top, files: ownPlan.rows.filter((r) => r.fate === 'replace').map((r) => r.name) });
-    const written = claude.rows.some((r) => moving.includes(r.fate)) ? await applyItems(home, claude.items, { before: claude.before }) : { written: 0 };
-    const own_ = Object.keys(ownPlan.write).length ? writeOwnFiles(own.top, ownPlan.write) : { written: [], skipped: [] };
+    const held = rows.filter((r) => r.fate === 'hold');
+    if (unseenGated.length && interactive) {
+      const answer = await ask(`Write ${unseenGated.length} item${unseenGated.length === 1 ? '' : 's'} that run${unseenGated.length === 1 ? 's' : ''} here, as listed above? [y/N] `);
+      if (/^y(es)?$/i.test(String(answer).trim())) unseenGated.forEach((r) => kept.pullShown.add(r.gate));
+      else {
+        hold(unseenGated, 'not confirmed');
+        held.push(...unseenGated);
+      }
+    }
+    counts = tally();
+    const writing = rows.filter((r) => moving.includes(r.fate));
+    let written = { written: 0, skipped: [] };
+    let backup = null;
+    let ownWritten = { written: [], skipped: [] };
+    if (writing.length) {
+      backup = backupReplaced({ dir: ctx.dir, home, ids: claude.replaced ?? [], top: own?.top, files: ownPlan.rows.filter((r) => r.fate === 'replace').map((r) => r.name) });
+      if (claude.rows.some((r) => moving.includes(r.fate))) written = await applyItems(home, claude.items, { before: claude.before });
+      if (Object.keys(ownPlan.write).length) ownWritten = writeOwnFiles(own.top, ownPlan.write);
+    }
+    // A JSON file claude was writing as this ran is left alone: its items are not written, and not recorded as had.
+    for (const row of claude.rows) {
+      if (moving.includes(row.fate) && !written.skipped.includes(row.id)) kept.synced[row.id] = itemHash(row.id, shared.items[row.id]);
+      else if (row.reason === SAME_AS_YOURS) kept.synced[row.id] = itemHash(row.id, shared.items[row.id]);
+    }
+    state.save(kept);
     if (backup) say(`What was replaced is kept in ${backup}.`);
-    if (json) emit({ event: 'pulled', console: origin, version: shared.version, written: written.written, ownFilesWritten: own_.written.length, ...(backup ? { backup } : {}), ...counts });
-    const left = ['skip', 'refuse'].filter((f) => counts[f]).map((f) => `${counts[f]} ${f === 'skip' ? 'skipped' : 'refused'}`);
-    say(`${written.written + own_.written.length} written here${counts.replace ? ` (${counts.replace} replaced)` : ''}${left.length ? `, ${left.join(', ')}` : ''}.`);
+    if (written.skipped.length) ctx.warn(`${written.skipped.length} not written: ~/.claude.json was being written as this ran. Run woodshed settings pull again.`);
+    if (json) {
+      emit({
+        event: 'pulled', console: origin, version: shared.version, written: written.written, notWritten: written.skipped.length,
+        ownFilesWritten: ownWritten.written.length, ...(backup ? { backup } : {}), ...counts,
+      });
+    }
+    const left = ['hold', 'skip', 'refuse'].filter((f) => counts[f]).map((f) => `${counts[f]} ${f === 'skip' ? 'skipped' : f === 'refuse' ? 'refused' : 'held'}`);
+    say(`${written.written + ownWritten.written.length} written here${counts.replace ? ` (${counts.replace} replaced)` : ''}${left.length ? `, ${left.join(', ')}` : ''}.`);
+    if (held.length) say('Held items run here and were written nowhere: read what they run above, then run woodshed settings plan --pull and pull again, or pull on a terminal.');
     if (claude.rows.some((r) => moving.includes(r.fate) && r.category === 'mcp')) say('MCP servers reach claude as it starts: a claude open now may write over ~/.claude.json, so start it again.');
-    return EXIT.done;
+    return held.length ? EXIT.waiting : EXIT.done;
   }
 
+  const recordSame = () => {
+    for (const row of claude.rows) if (row.reason === SAME_AS_SHARED) kept.synced[row.id] = itemHash(row.id, shared.items[row.id]);
+  };
+  if (!outgoing.length) {
+    recordSame();
+    state.save(kept);
+    if (json) emit({ event: 'pushed', console: origin, ...counts, sent: 0 });
+    say(`${words}. Nothing to send.`);
+    return EXIT.done;
+  }
   if (overBudget) throw fail('Nothing sent.', { code: EXIT.refused, status: 'too-large' });
-  const seen = shown.has();
-  const unseen = outgoing.filter((r) => !seen.has(r.id));
+  const unseen = outgoing.filter((r) => !kept.shown.has(r.id));
   if (unseen.length) {
     if (!interactive) {
       throw fail(`${unseen.length} of these ${unseen.length === 1 ? 'was' : 'were'} never shown before. Nothing sent: run woodshed settings plan, which sends nothing, then push again.`, { code: EXIT.waiting, status: 'not-shown' });
@@ -713,13 +903,18 @@ export async function settingsCommand(ctx) {
       return EXIT.waiting;
     }
   }
-  shown.add(outgoing.map((r) => r.id));
+  outgoing.forEach((r) => kept.shown.add(r.id));
+  state.save(kept);
   let version = shared.version;
   if (Object.keys(claude.changed).length) {
+    // removed is always empty: a computer never takes an item out of the copy, as a session's removal does not spread.
     const answer = await call(origin, '/api/cli/settings', { method: 'POST', token, body: { version: shared.version, changed: claude.changed, removed: [] } });
     if (answer.status !== 200) throw fail(`${origin} did not take your Claude settings (${answer.status}): ${String(answer.body?.error ?? '').slice(0, 200)}`);
     version = answer.body.version;
+    for (const [id, value] of Object.entries(claude.changed)) kept.synced[id] = itemHash(id, value);
   }
+  recordSame();
+  state.save(kept);
   const failed = [];
   for (const [file, text] of Object.entries(ownPlan.upload)) {
     const answer = await call(origin, `/api/cli/settings/files/${encodeURIComponent(own.project)}`, { method: 'POST', token, body: { path: file, text } });

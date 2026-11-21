@@ -608,8 +608,9 @@ session's own.
 - **From your computer:** `woodshed settings push` sends your laptop's items into the same copy, and `pull` writes
   the copy's into your laptop (cli/README.md, "Settings"), through `GET/POST /api/cli/settings` with the command
   line's token (`cliSettings.mjs`). It merges as a session's round does, but a computer never sends or gets an MCP
-  login, and never removes an item. The console logs `cliSettings: pushed` with the token's id and the counts, and
-  `cliSettings: refused` when the copy would go over 5 MB. `--own-files` saves into your own files on My settings
+  login, and never removes an item. The console logs `cliSettings: pushed` with the token's id and the counts,
+  `cliSettings: refused` when the copy would go over 5 MB, and `cliSettings: refused, a removal from a computer` or
+  `MCP logins from a computer` for a client other than the command line's. `--own-files` saves into your own files on My settings
   through the Repo settings routes, with their checks and log lines.
 
 **Resume**, on a stopped private session's rail card or page, starts the same

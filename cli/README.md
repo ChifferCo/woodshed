@@ -130,9 +130,9 @@ no others (`console/cliSessions.mjs`), each as its person:
 
 | Command | What it does | Exits |
 | --- | --- | --- |
-| `woodshed settings plan` | Lists each item with its size and what push would do with it: `upload` (new or changed), `skip` or `refuse`, and why. Sends nothing. | 0 |
+| `woodshed settings plan` | Lists each item with its size and what push would do with it: `upload` (new or changed), `skip` or `refuse`, and why. Sends nothing. With `--pull` (and `--replace`), what pull would write instead, and what each item that runs here runs. Writes nothing. | 0 |
 | `woodshed settings push` | The same list, then the uploads. An item never listed before is asked about on a terminal; with no terminal (or `--json`) nothing is sent until `plan` has listed it. | 0 sent or nothing to send, 2 not shown before or not confirmed |
-| `woodshed settings pull` | Writes the shared copy here: what is missing, and with `--replace` what differs, keeping a copy of each replaced file under `~/.config/woodshed/backups/`. Never deletes. | 0 |
+| `woodshed settings pull` | Writes the shared copy here: what is missing, and with `--replace` what differs, keeping a copy of each replaced file under `~/.config/woodshed/backups/`. Never deletes. What runs here is held until its content was listed, below. | 0, 2 something held |
 
 Each takes:
 
@@ -146,13 +146,25 @@ Each takes:
 
 **What is carried.** The session sync's own items, from `~/.claude` and `~/.claude.json`: `settings.json`, `CLAUDE.md`,
 `keybindings.json`, `agents/`, `commands/`, `skills/`, and your user-scope MCP servers. Items merge as a session's do, and
-push never removes one from the copy. Claude plugins, Codex's settings and shell dotfiles are not carried.
+push never removes one from the copy (the console refuses a removal from a computer). Claude plugins, Codex's settings and
+shell dotfiles are not carried, nor a file's mode: a pulled script runs as `bash script.sh`, as it does in a session.
+
+**What runs here is shown first.** Sessions write the shared copy, unattended. So `pull` writes no MCP server, no
+`settings.json` and no file other than `.md` or `.txt` until a list has shown that exact content (by its hash): each is
+listed with what it runs (`runs: npx -y docs-mcp`, a hook's command, its env, the tools it allows, a script's first
+line). On a terminal pull asks; with none it holds them (`hold`, exit 2) and writes the rest, until
+`woodshed settings plan --pull` has listed them. A changed item is held again.
+
+**A session's edit is not undone.** Push sends an item only when the shared copy still holds what this computer last
+pushed or pulled. One a session changed since is skipped with `pull it first, or --only <its name> sends yours over it`;
+naming it (`--only settings.json`, not `--only settings`) sends yours.
 
 **What changes on the way.** A session's home is `/home/node`, not yours:
 
 - A path into what is carried (`~/.claude/skills/review/format.sh` in a hook) is moved to the other home.
 - A setting naming any other path in your home (a hook running `~/bin/notify.sh`, a permission on `~/notes`) is left out,
   and the list says which. An MCP server naming one is skipped.
+- `~/x`, `$HOME/x` and `${HOME}/x` follow the same rules: kept when they are carried, left out when they are not.
 - `statusLine` stays each side's own. `apiKeyHelper` and the other credential helpers, and `env` variables named like
   credentials, stay here, and a `pull --replace` keeps yours.
 - An MCP server run as `/opt/homebrew/bin/npx` (or from `/usr/local/bin`, `/usr/bin`, `/bin`) runs as `npx`, from the
@@ -164,8 +176,13 @@ whose `env` or headers hold a literal key (`${VARIABLE}` is fine), a file named 
 Anthropic, OpenAI, Slack, AWS, Stripe live or Google key. For own files, keys and certificates, files named for production
 (`.env.production`) and live keys.
 
-`~/.config/woodshed/settings-shown.json` keeps the names of the items each console's list has shown, never their content.
-`CLAUDE_CONFIG_DIR` is not followed: settings reads `~/.claude` and `~/.claude.json` only, and says so when it is set.
+A symlink in `~/.claude` (a linked `skills/`, a linked `settings.json`) is neither read by push nor written through by
+pull, nor is an empty own file pushed (My settings would take it as removing yours). `CLAUDE_CONFIG_DIR` is not
+followed: settings reads `~/.claude` and `~/.claude.json` only, and says so when it is set.
+
+`~/.config/woodshed/settings-state.json` keeps, for each console, the names of the items a push list has shown, the
+hashes of what a pull list has shown that runs here, and each item's hash as it last went to or from this computer.
+Never an item's content.
 
 ## Where the token is kept
 
