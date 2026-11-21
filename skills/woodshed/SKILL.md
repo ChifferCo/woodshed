@@ -1,6 +1,6 @@
 ---
 name: woodshed
-description: "Use the `woodshed` command line to work with a Woodshed console for the person: sign in, start a cloud session and follow it, list, stop, resume or remove sessions, give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, change their choices on My settings (terminal, reviews, default repo), and turn on Woodshed's review for a repo. Use when the person asks to start or check a Woodshed session, to run something in one, to keep one from pausing, to sync their Claude settings with Woodshed, to change a My settings choice, or to turn on Woodshed's review for a repo."
+description: "Use the `woodshed` command line to set up Woodshed for the person, sign in, start a cloud session and follow it, list, stop, resume or remove sessions, give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, change their My settings choices (terminal, reviews, default repo), and turn on Woodshed's review for a repo. Use when the person asks to set up Woodshed, start or check a session, run something in one, keep one from pausing, sync their Claude settings, change a My settings choice, or turn on Woodshed's review for a repo."
 ---
 
 # Work with Woodshed from the command line
@@ -8,6 +8,21 @@ description: "Use the `woodshed` command line to work with a Woodshed console fo
 Woodshed runs coding agents in cloud dev environments: a console, and a session (a container with its own branch,
 databases and running app) per task. `woodshed` is its command line. It acts as the person who signed it in, with a
 token the CLI keeps to itself. You run it for them; you never hold their credentials.
+
+## Start here with `woodshed setup`
+
+If they ask to get started, check `woodshed --help` for `setup`. Use the choices they gave you:
+
+```sh
+woodshed setup --yes --json --repo acme/app --repo-dir /path/to/app --reviews default --prompt "Fix the login redirect"
+```
+
+Pass the person's console with `--console <url>` when they use their own. Repeat `--repo` for multiple repos, in order
+with the first for their session. Each checklist entry has a `step`, `status`, and `message`. On exit 2, show them the
+message and any `url` or `userCode` and stop. Run setup again after they complete that step. They approve the CLI sign-in,
+install any GitHub Apps, and connect Claude or Codex on My settings in their browser. If the repo's project file needs
+a review configuration change, setup tells you to open an ordinary pull request. Use `--skip-reviews` or
+`--no-session` when the person chooses to skip those steps.
 
 ## 1. Check what this CLI has
 
@@ -60,6 +75,10 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 - **Stopping and removing are the person's call.** `session stop` ends the work in progress (a running one's
   work is checkpointed on the way, but exit 0 does not promise it reached GitHub: check the branch before saying so);
   `session remove` deletes the saved conversation. Do either only when asked, and pass `--yes` to `remove` only then.
+- **Moving is the person's call.** `woodshed move --from herdr` ends the local agents it moves and pushes the work to a branch.
+  Run it only when asked, and `--dry-run` first to show them what would move. Programs restart in the session only with
+  `--restart auto` or their yes; never pass `--restart auto` for them unasked. For an exit 3 listing secret-looking
+  files, tell the person which paths and kinds were flagged. Let them decide how to remove credentials from the work.
 - **Use the console the person gave you.** `--console <url>`, else `WOODSHED_CONSOLE`, else the last one signed in to,
   else the hosted `https://console.woodshed.run`. On a fresh computer that is the hosted one, so for a self-hosted
   console pass its `--console <url>` to `login` and `status` alike. Plain `http://` is refused except on `localhost`.
@@ -68,6 +87,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 
 | Command | Does | Exits | Arrives in |
 | --- | --- | --- | --- |
+| `woodshed setup [--yes] [--repo R] [--repo-dir D] [--reviews CHOICE] [--prompt TEXT]` | Guides sign-in, repo and review setup, and the first session | 0 done, 2 needs the person, 3 refused, 1 failed | main |
 | `woodshed login [--no-browser]` | Prints a code and opens the console's `/cli` page; waits up to 10 minutes for the person to approve | 0 signed in, 2 code expired, 3 denied | main |
 | `woodshed logout` | Ends this computer's sign-in | 0 | main |
 | `woodshed status` | The console, its org, who is signed in, and the Herdr `hc` here with its version | 0, 2 not signed in | main |
@@ -84,8 +104,9 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed session remove <id> [--yes]` | Takes it off the list with its saved conversation, and forgets its Herdr machine | 0, 2 not confirmed, 3 a shared session | main |
 | `woodshed session extend <id>` | Puts its pause or stop off by an hour (allowed in its last 15 minutes) | 0, 3 refused | main |
 | `woodshed session limits <id> [--idle-hours N\|default] [--lifetime-hours N\|default]` | Its own idle pause and lifetime | 0, 1 out of range, 3 not theirs | main |
+| `woodshed move --from herdr [--terminal T …\|--tab T\|--space S] --to <id>\|new [--restart ask\|auto\|never] [--dry-run]` | Moves terminals on this computer into a session: each agent with its conversation, each shell, each program started again; pushes the work to `woodshed/move-<id>` first, and ends a local agent only once its moved one runs | 0 moved, 2 a moved agent needs the person, 3 a secret in the work, an agent mid-turn, another repo, 1 failed (all undone) | main |
 | `woodshed settings plan [--pull] [--only …] [--own-files <checkout>]` | Lists what push (or pull) would do with each item; sends and writes nothing | 0 | main |
-| `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude settings, skills, and a checkout's ignored env files. Imported MCP definitions sync between computers. | 0, 2 not listed before or not confirmed | main |
+| `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude and Codex settings, skills, plugins, a few dotfiles and ignored checkout files. Imported Claude MCP definitions sync between computers. | 0, 2 not listed before or not confirmed | main |
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | main |
 | `woodshed review enable [--qa] [--rerun <tag>\|--every-commit] [--dry-run]` | In a checkout: writes `pullRequests.review` with `runner: woodshed` (and with `--qa`, QA in a session) into `.woodshed/project.yaml`, checks it, and asks the console what is missing | 0 ready to commit, 2 an admin's step or a sign-in, 1 the file does not read or check, or the console could not confirm | main |
 | `woodshed review status` | In a checkout: whether review is on, in the checkout's file, on the default branch, and on the console | 0 on, 2 not yet, 1 the console could not tell | main |
@@ -167,6 +188,19 @@ production data. Exit 255 with a reason on stderr is the pipe's own failure: not
 The line is at most 8 KB: write anything longer to a script in the session first. Closing the tunnel hangs up what the
 line started, so start a server that must outlive it with `setsid … &`.
 
+### Move work from this computer into a session
+
+```sh
+woodshed move --from herdr --space api --to new --dry-run --json   # what would move: the move bundle, nothing done
+woodshed move --from herdr --space api --to new                    # or --to <id>: one of theirs on the same repo
+```
+
+`--terminal <t>` (repeatable, `hc ls` addresses), `--tab` or `--space` (by id or name, `herdr-app ls`) choose what moves.
+Each agent between turns moves with its conversation. If one is mid-turn, wait for it to finish. When the CLI cannot
+tell which conversation belongs to a terminal, use `hc label <t> claude.session=<id>` for Claude Code or
+`hc label <t> codex.session=<id>` for Codex. The session uses its own databases. Ignored files (`.env`) stay local.
+`settings push --own-files` gives their sessions their own.
+
 ### See a session's app
 
 The command line has no command for this. Give the person the session's console page (`url` in `session get --json`),
@@ -190,12 +224,18 @@ the like refuse without sending anything. Never ask the person for a token to ge
 ### Carry Claude settings
 
 Their private sessions keep Claude settings in step (`settings.json`, `CLAUDE.md`, keybindings, agents, commands,
-skills, user-scope MCP servers). `settings` joins this computer to that.
+skills, user-scope MCP servers), Codex's (`~/.codex`'s `config.toml`, `AGENTS.md`, prompts, skills) and the plugins they
+installed. `settings` joins this computer to that. Imported Claude MCP definitions sync between computers. Codex MCP
+definitions from a computer stay on that computer.
+`settings` also saves their git, readline and alias lines on My settings (`dotfile/gitconfig`, `dotfile/inputrc`,
+`dotfile/bash-aliases`), which replace what My settings had.
 
 1. `woodshed settings plan` (add `--own-files <checkout>` for that checkout's ignored env files). Show the person the
    whole list: each item, its size, and `upload`, `skip` or `refuse` with why.
 2. Push only what they agree to: `woodshed settings push`, with `--only <name>` for a part of it. An item never listed
-   before exits 2 until a plan has shown it.
+   before exits 2 until a plan has shown it. Push with an `--only` that leaves out `dotfiles` unless the person named
+   one (`--only dotfile/gitconfig`): a dotfile replaces their lines on My settings. A pull
+   never installs a plugin: its list gives the `claude plugin install` for them to run if they want it.
 3. For pull, `woodshed settings plan --pull` lists what pull would write and what each item would run on this
    computer (an MCP server's command, hooks, a skill's shell lines). Those are held until a list has shown them, so that
    **the person** sees what will run here. Show them that list and wait for their yes before `woodshed settings pull`.

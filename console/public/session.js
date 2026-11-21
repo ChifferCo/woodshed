@@ -2175,6 +2175,15 @@
     // The rail's list is drawn again on every refresh: a project chip that had the focus gets it back, so the keyboard
     // stays where it was.
     const focusedChip = document.activeElement?.closest?.('.rail-projects') ? document.activeElement.dataset.project ?? null : null;
+    // The list is its own scroller, and a new one starts at the top: it keeps the old one's place, or each refresh
+    // would throw someone reading the reviews at the bottom back up. Another list (Mine or Everyone, a project, people
+    // or a status picked) starts at the top: the old place means nothing in it. A hidden rail (⌘.) reads 0, so its
+    // place is the last one read while it showed, put back once it shows again, below.
+    const listKey = JSON.stringify([railMine(), railProject(), picked, !railMine() && narrow.matches ? railStatus() : 'all']);
+    const oldList = slots.railBody.querySelector('.rail-list');
+    if (slots.railListKey !== listKey) slots.railListTop = 0;
+    else if (oldList?.getClientRects().length) slots.railListTop = oldList.scrollTop;
+    slots.railListKey = listKey;
     slots.railBody.replaceChildren(...railBody());
     if (focusedChip !== null) slots.railBody.querySelector(`.rail-projects [data-project="${CSS.escape(focusedChip)}"]`)?.focus();
     syncCardMenu();
@@ -2183,6 +2192,8 @@
     slots.shell.classList.toggle('is-launcher', tabPage);
     slots.shell.classList.toggle('is-new', onNew);
     slots.shell.classList.toggle('is-railless', railHidden);
+    const railList = slots.railBody.querySelector('.rail-list');
+    if (railList && slots.railListTop) railList.scrollTop = slots.railListTop;
     slots.launch.hidden = !onMy;
     if (onMy) launcher.update(me);
     else launcher.stopDictating();

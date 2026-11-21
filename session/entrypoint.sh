@@ -703,6 +703,7 @@ fetchOwnerSettings() {
   [ "$code" = 200 ] || die "could not get the owner's settings from the console (status $code): $(jq -r '.error // empty' <<< "$answer" 2>/dev/null)"
   own=$(jq -r '.files["tmux-conf"] // empty' <<< "$answer")
   if [ -n "$own" ]; then printf '\n# Your own lines, from My settings\n%s\n' "$own" >> "$HOME/.tmux.conf"; owned=tmux-conf; fi
+  writeOwnDotfiles "$answer"
   # null where the console makes no databases (the docker launcher): the environment's stay.
   if jq -e '.database' <<< "$answer" >/dev/null; then useDatabaseFrom "$answer"; fi
   # For claude alone (session/bin/claude), outside ~/.claude, which is saved to the console. A console from before
@@ -728,6 +729,32 @@ fetchOwnerSettings() {
   # What the owner picked on My settings for the agent's terminal (agentTerminal); a console from before it sends none.
   OWNER_TERMINAL=$(jq -r '.terminal // empty' <<< "$answer")
   log "Owner's settings fetched" "(started_by: ${STARTED_BY:-unknown}, database: ${WOODSHED_DB_NAME:-none}, own lines in: ${owned:-none}, commits as owner: $([ -n "$OWNER_GIT_EMAIL" ] && echo yes || echo no), terminal: ${OWNER_TERMINAL:-tmux})"
+}
+
+# The owner's own lines for a few dotfiles from My settings (shared/dotfiles.mjs, which the console checks them with):
+# git's aliases and behaviour, never an identity, a credential helper or a path, so what the start sets stays; readline's
+# after the system's own; and alias lines alone, which the image's ~/.bashrc reads from ~/.bash_aliases. Appended to
+# `owned` for the start's log line.
+writeOwnDotfiles() {
+  local own
+  own=$(jq -r '.files.gitconfig // empty' <<< "$1")
+  if [ -n "$own" ]; then
+    printf '\n# Your own lines, from My settings\n%s\n' "$own" >> "$HOME/.gitconfig"
+    owned="${owned:+$owned, }gitconfig"
+  fi
+  own=$(jq -r '.files.inputrc // empty' <<< "$1")
+  if [ -n "$own" ]; then
+    # readline reads no /etc/inputrc once ~/.inputrc exists, unless it is included: once, theirs or this.
+    [ -f "$HOME/.inputrc" ] || grep -q '^[[:space:]]*\$include[[:space:]]*/etc/inputrc' <<< "$own" || printf '$include /etc/inputrc\n' > "$HOME/.inputrc"
+    printf '\n# Your own lines, from My settings\n%s\n' "$own" >> "$HOME/.inputrc"
+    owned="${owned:+$owned, }inputrc"
+  fi
+  own=$(jq -r '.files["bash-aliases"] // empty' <<< "$1")
+  if [ -n "$own" ]; then
+    printf '# Your own aliases, from My settings\n%s\n' "$own" >> "$HOME/.bash_aliases"
+    grep -qs bash_aliases "$HOME/.bashrc" || printf '\n[ -f ~/.bash_aliases ] && . ~/.bash_aliases\n' >> "$HOME/.bashrc"
+    owned="${owned:+$owned, }bash-aliases"
+  fi
 }
 
 # The console's repo settings for the session's own project (POST /repo-settings, console/repoSettings.mjs): the
@@ -925,12 +952,52 @@ installDefaultPlugins() {
   log "Default plugins installed" "(installed: $installed, failed: $failed)"
 }
 
+# The plugins the owner installed for their whole home on their computer or in another session, which this home lacks:
+# the shared settings name each with its marketplace (settingsSync.mjs's plugin items, syncedPlugins.mjs), and each is
+# installed from there, adding the marketplace first when claude does not know it. Offered once, in the default plugins'
+# list, so one its owner uninstalled or turned off stays that way. Private and untainted only, as the default plugins
+# are: a shared session syncs nothing, and a tainted one reaches no marketplace. Best effort, like restorePlugins.
+installSyncedPlugins() {
+  [ "${SESSION_KIND:-}" = private ] && ! tainted || return 0
+  local wanted kind plugin market err installed=0 failed=0 skipped=0 offered="$HOME/.claude/woodshed-default-plugins.json"
+  if ! wanted=$(node "$SESSION_DIR/syncedPlugins.mjs" "$HOME" "$offered"); then
+    log "WARNING: the plugins from your other sessions could not be read, none installed"
+    return 0
+  fi
+  [ -n "$wanted" ] || return 0
+  while read -r kind plugin market; do
+    if [ "$kind" = skip ]; then
+      skipped=$((skipped + 1))
+      log "WARNING: a plugin from your other sessions was not installed" "(plugin: $plugin, why: its marketplace is a folder, a pinned ref or a URL a session does not add)"
+      continue
+    fi
+    if [ "$market" != - ] && ! err=$(cd "$REPO_DIR" && timeout 60 "$SESSION_DIR/bin/claude" plugin marketplace add "$market" 2>&1 >/dev/null </dev/null); then
+      failed=$((failed + 1))
+      log "WARNING: a plugin's marketplace could not be added" "(plugin: $plugin, error: ${err%%$'\n'*})"
+      continue
+    fi
+    if err=$(cd "$REPO_DIR" && timeout 60 "$SESSION_DIR/bin/claude" plugin install --scope user "$plugin" 2>&1 >/dev/null </dev/null); then
+      installed=$((installed + 1))
+      node "$SESSION_DIR/defaultPlugins.mjs" --offered "$offered" "$plugin" || log "WARNING: a plugin was not recorded as offered" "(plugin: $plugin)"
+    else
+      failed=$((failed + 1))
+      log "WARNING: a plugin from your other sessions could not be installed" "(plugin: $plugin, error: ${err%%$'\n'*})"
+    fi
+  done <<< "$wanted"
+  log "Plugins from your other sessions installed" "(installed: $installed, failed: $failed, skipped: $skipped)"
+}
+
 # How codex reaches OpenAI. The owner's own sign-in goes into codex's home as auth.json: an API key as the key file codex
 # reads, a ChatGPT login as it was saved. With none, session/bin/codex uses the console's proxy and the team key. The
-# rules go in codex's own AGENTS.md, which it reads at every start, so the terminal shows only the request.
+# rules go in codex's own AGENTS.override.md, which it reads at every start, so the terminal shows only the request.
 configureCodex() {
+  [ ! -L "$CODEX_HOME_DIR" ] || die "codex's home is a symlink"
   mkdir -p "$CODEX_HOME_DIR"
   chmod 700 "$CODEX_HOME_DIR"
+  local file
+  for file in auth.json config.toml AGENTS.override.md; do
+    [ ! -L "$CODEX_HOME_DIR/$file" ] || die "codex's $file is a symlink"
+  done
   if [ "${SESSION_KIND:-}" = private ] && [ -s "$OWN_CODEX_AUTH_FILE" ]; then
     if [[ "$(head -c 3 "$OWN_CODEX_AUTH_FILE")" == sk- ]]; then
       (umask 077 && jq -n --rawfile key "$OWN_CODEX_AUTH_FILE" '{OPENAI_API_KEY: $key}' > "$CODEX_HOME_DIR/auth.json")
@@ -942,16 +1009,27 @@ configureCodex() {
     export WOODSHED_CODEX_AUTH=key
     log "codex runs on the team key, through the console"
   fi
-  # The checkout is trusted so codex loads the repo's .codex/config.toml and AGENTS.md without asking.
-  printf '[projects."%s"]\ntrust_level = "trusted"\n' "$REPO_DIR" > "$CODEX_HOME_DIR/config.toml"
-  cp /tmp/woodshed-rules.md "$CODEX_HOME_DIR/AGENTS.md"
+  # The checkout is trusted so codex loads the repo's .codex/config.toml and AGENTS.md without asking. The rest of
+  # config.toml is a private session's owner's own, which pullSettings wrote and statusd keeps in step
+  # (settingsSync.mjs): each side keeps its own trusted folders, so this one stays this session's.
+  node "$SHARED_DIR/codexConfig.mjs" trust "$CODEX_HOME_DIR/config.toml" "$REPO_DIR" || die "codex's config.toml could not be written"
+  # The rules win. codex reads AGENTS.override.md in place of AGENTS.md: it holds the rules, then the owner's own
+  # AGENTS.md, which stays theirs as it is synced.
+  {
+    cat /tmp/woodshed-rules.md
+    if [ -f "$CODEX_HOME_DIR/AGENTS.md" ] && [ ! -L "$CODEX_HOME_DIR/AGENTS.md" ] && [ -s "$CODEX_HOME_DIR/AGENTS.md" ]; then
+      printf '\n\n# Your own instructions, from ~/.codex/AGENTS.md\n\n'
+      cat "$CODEX_HOME_DIR/AGENTS.md"
+    fi
+  } > "$CODEX_HOME_DIR/AGENTS.override.md"
 }
 
 # codex's flags for what New session picked: the container is the sandbox, so auto lets the model decide when to ask
 # with no inner sandbox, plan is read-only, and default leaves codex's own policy.
 codexFlags() {
   local mode=${PERMISSION_MODE:-auto}
-  printf ' --add-dir %s' "${UPLOADS_DIR:-/tmp/uploads}"
+  # Codex rejects additional writable roots when its sandbox is read-only.
+  [ "$mode" = plan ] || printf ' --add-dir %s' "${UPLOADS_DIR:-/tmp/uploads}"
   case "$mode" in
     auto) printf ' --sandbox danger-full-access --ask-for-approval on-request' ;;
     plan) printf ' --sandbox read-only --ask-for-approval on-request' ;;
@@ -1009,8 +1087,9 @@ startClaude() {
     tmux new-session -d -s claude -x 200 -y 50 -c "$REPO_DIR"
     tmux set-option -t claude remain-on-exit on
   fi
-  # woodshed-login reopens claude with the same flags once it signed in.
-  [ "${AGENT:-claude}" = codex ] || claudeFlags > /tmp/woodshed-claude-flags
+  # woodshed-login reopens claude with the same flags once it signed in, and `woodshed move --from herdr` opens a conversation moved
+  # from a laptop with the agent's own (cli/move.mjs).
+  if [ "${AGENT:-claude}" = codex ]; then codexFlags > /tmp/woodshed-codex-flags; else claudeFlags > /tmp/woodshed-claude-flags; fi
   if [ "${SESSION_MODE:-}" = qa ]; then
     # After statusd's port is open: the run asks it for the app's port and to start the app. Working from the start.
     touch /tmp/qa-running
@@ -1173,8 +1252,9 @@ runSession() {
   else
     restorePlugins
     installDefaultPlugins
+    installSyncedPlugins
   fi
-  # Both have read it: the env files are written, and the instructions are in the rules (and codex's AGENTS.md).
+  # Both have read it: the env files are written, and the instructions are in the rules (and codex's AGENTS.override.md).
   rm -f "$REPO_SETTINGS_JSON"
   progress env
   startClaude

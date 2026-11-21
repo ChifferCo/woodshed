@@ -26,9 +26,10 @@
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
 //   POST /api/my/remove          {"confirm": "<your login>"}  Remove My Woodshed: stops your sessions, deletes your settings
 //   GET  /api/my/pulls           your open pull requests on every repo you may start on, and those waiting on your review, for the rail
-//   GET  /api/my/files/tmux-conf the image's tmux.conf, and your own lines added after it
-//   POST /api/my/files/tmux-conf {"text": "..."}   your own lines, for your next sessions; empty clears them
-//   POST /api/my/files/tmux-conf/reset             clears them: the image's file alone again
+//   GET  /api/my/files/<key>     tmux-conf: the image's tmux.conf, and your own lines added after it; gitconfig, inputrc,
+//                                bash-aliases: your own lines for those (shared/dotfiles.mjs)
+//   POST /api/my/files/<key> {"text": "..."}   your own lines, for your next sessions; empty clears them
+//   POST /api/my/files/<key>/reset             clears them: the image's file alone again
 //   GET  /api/my/repos[/<project>[/env/<key>|/instructions|/files]]   your own repo settings, for a repo you can write to (repoSettings.mjs)
 //   POST /api/my/repos/<project>/env/<key>|/instructions   {"text": "..."}   yours; empty clears them
 //   POST /api/my/repos/<project>/files   {"path": "app/.env.production", "text": "..."}   one of your own whole files, which your
@@ -48,8 +49,8 @@
 //   POST /api/cli/device, /api/cli/token, GET /api/cli/me, POST /api/cli/logout   the woodshed command line's sign-in by a
 //                                device code, and its token's calls (cliSignIn.mjs); GET/POST /cli is the page the code is
 //                                approved on, signed in
-//   GET/POST /api/cli/settings[/repos|/files/<project>]   that token's turn at your shared Claude settings, and your own
-//                                files for a repo (cliSettings.mjs)
+//   GET/POST /api/cli/settings[/repos|/files/<project>|/dotfiles[/<key>]]   that token's turn at your shared Claude and
+//                                Codex settings, your own files for a repo, and your own dotfile lines (cliSettings.mjs)
 //   POST /api/my/cli-tokens/<id>/revoke   ends one computer's command line sign-in, from My settings
 //   Its token also signs in to GET /api/sessions, GET /api/my/projects, POST /api/my/sessions,
 //   POST /api/my/sessions/<id>/resume|remove, POST /api/sessions/<id>/stop|extend|limits and GET /api/review-readiness,
@@ -2482,8 +2483,13 @@ export function createHandler({
       if (url.pathname === CLI_REPOS_PATH || url.pathname === `${CLI_REPOS_PATH}/remove`) {
         return handleCliRepos({ req, res, url, cli, reply, readJson, addedProjects, roleFor: cliRepoRole, projectsView, removeRepo });
       }
-      if (await handleCliSettings({ req, res, url, cli, claudeSettings, repoSettingsApi })) return;
-      return handleCliApi({ req, res, url, cli, publicUrl: config.publicUrl, about: cliAbout });
+      if (await handleCliSettings({ req, res, url, cli, claudeSettings, repoSettingsApi, userSettings })) return;
+      return handleCliApi({ req, res, url, cli, publicUrl: config.publicUrl, about: cliAbout, sessionSignIns: async (login) => {
+        // As on My settings, a sign-in saved directly to the store also counts. refresh caches the check.
+        await userSettings?.refresh?.(login);
+        const view = userSettings?.view(login);
+        return { claude: view?.claudeToken?.set === true, codex: view?.codexAuth?.set === true };
+      } });
     }
     if (carriesCliToken(req.headers)) return cliCall();
     // Sign-in's cookies belong to one host name, and GitHub sends people back only to publicUrl's. Once sign-in
