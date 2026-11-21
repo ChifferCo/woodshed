@@ -1560,6 +1560,17 @@ computer, `execPipe: closed` with its seconds, bytes and `why`, `execPipe: refus
 unreachable`; statusd logs `statusd: exec opened` with the line's length (never the line) and `exec closed` with its
 exit code.
 
+**A terminal from the command line**: `woodshed session connect <id> [--shell]` (cli/README.md) is a websocket,
+`/api/tunnel/term/<id>` (the TUI tab's terminal, the agent's) or `/api/tunnel/shell/<id>` (the Terminal tab's shell),
+with the same token and the size it opens at in `x-woodshed-terminal-size` (`<columns>x<rows>`). The console checks it
+as it does a pipe, as it opens and every 15 seconds after, and closes it on the same revokes and lockdown. It sends it
+on to the session's ttyd for that tab with ttyd's credential in place of the person's token, as `terminalProxy.mjs`
+does the page's. ttyd 1.7.7 also wants its credential in the terminal's first message, which a page reads from ttyd's
+`/token`: the console sends that message itself, with the size asked for, so `TERMINAL_TOKEN` never leaves it. No
+compression is asked for. Then it copies bytes both ways. The log lines are the pipe's, with `kind` (`term` or
+`shell`; `exec` for a pipe). It is the same terminal as the tab's: the agent's tmux or Herdr terminal, or the shell's
+tmux, so what is typed in one shows in the other.
+
 **A console with no repo yet** (neither `WOODSHED_REPO` nor `WOODSHED_PROJECTS`, and nothing added on the
 Repos card) has no repository to ask about. It lets in the owner of the account its GitHub App is installed on: that
 user, or an active admin of that organization (`console/appOwner.mjs`, asked with a token of the installation narrowed
