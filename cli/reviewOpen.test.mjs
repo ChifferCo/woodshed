@@ -47,7 +47,7 @@ const DIFF = {
 async function fakeStatusd(t) {
   const seen = [];
   const chat = [];
-  const answers = {
+  const answers = new Map(Object.entries({
     'GET ': () => STATUS,
     'GET /diff': () => DIFF,
     'GET /comments': () => ({ ok: true, prId: 'PR_1', headSha: 'abcdef0123456789', reviewId: null, description: { author: 'mia-dev', body: 'Fixes #3.' }, comments: [], threads: [], said: [] }),
@@ -65,7 +65,7 @@ async function fakeStatusd(t) {
       return { ok: true, askId: 'ask-1', status: 'running' };
     },
     'GET /explain/ask-1': () => ({ ok: true, status: 'ready', answer: { text: 'It reads next.' } }),
-  };
+  }));
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (c) => { raw += c; });
@@ -73,7 +73,7 @@ async function fakeStatusd(t) {
       const section = req.url.replace(/^\/shed-review\/reviews\/claude-[0-9a-f]{8}/, '').split('?')[0];
       const body = raw ? JSON.parse(raw) : null;
       seen.push({ method: req.method, section, auth: req.headers.authorization, body });
-      const answer = answers[`${req.method} ${section}`];
+      const answer = answers.get(`${req.method} ${section}`);
       res.writeHead(answer ? 200 : 404, { 'content-type': 'application/json' });
       res.end(JSON.stringify(answer ? answer(body) : { ok: false, error: 'not found' }));
     });
