@@ -54,10 +54,12 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 - **Being connected does not keep a session awake.** A session pauses after its idle hours with nothing to do (its own
   agent not working) and stops at its lifetime, whatever tunnels or terminals are open. If you need it longer,
   ask for the time (section 5).
-- **Stopping and removing are the person's call.** `session stop` ends the work in progress (it is pushed first);
+- **Stopping and removing are the person's call.** `session stop` ends the work in progress (a running one's
+  work is checkpointed on the way, but exit 0 does not promise it reached GitHub: check the branch before saying so);
   `session remove` deletes the saved conversation. Do either only when asked, and pass `--yes` to `remove` only then.
-- **Use the console the person gave you.** `--console <url>`, else `WOODSHED_CONSOLE`, else the last one signed in to.
-  Plain `http://` is refused except on `localhost`.
+- **Use the console the person gave you.** `--console <url>`, else `WOODSHED_CONSOLE`, else the last one signed in to,
+  else the hosted `https://console.woodshed.run`. On a fresh computer that is the hosted one, so for a self-hosted
+  console pass its `--console <url>` to `login` and `status` alike. Plain `http://` is refused except on `localhost`.
 
 ## 4. The commands
 
@@ -69,7 +71,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--no-wait] ["prompt"]` | Starts a private session and waits, step by step, until it runs | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on | main |
 | `woodshed session list [--all]` | Their sessions and the shared ones they see, with state and when each pauses | 0 | main |
 | `woodshed session get <id>` | One session: state, branch, pull request, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
-| `woodshed session stop <id>` | Stops it once its work is pushed (waits up to 3 minutes) | 0, 1 not answered in time | main |
+| `woodshed session stop <id>` | Stops it, checkpointing a running one's work on the way (waits up to 3 minutes) | 0, 1 not answered in time | main |
 | `woodshed session resume <id> [--no-wait]` | Starts one of their stopped sessions again, conversation and all | as `new`; 3 a shared session | main |
 | `woodshed session remove <id> [--yes]` | Takes it off the list with its saved conversation | 0, 2 not confirmed, 3 a shared session | main |
 | `woodshed session extend <id>` | Puts its pause or stop off by an hour (allowed in its last 15 minutes) | 0, 3 refused | main |
