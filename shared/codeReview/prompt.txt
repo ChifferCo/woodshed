@@ -81,15 +81,31 @@ careful, and fair.
      diff could defeat or bypass it. For an outage, explain why it would affect a shared service rather than
      a single operation that can be retried.
    - MEDIUM: meaningful behavior changes whose likely failures are contained or readily reversible, or changes
-     with enough scope or uncertainty to warrant more than a quick check. Examples include a broken installer
-     package, onboarding failures, adjusting which verdicts an approval gate recognizes from an already
-     trusted reviewer, or loosening a test without evidence of serious downstream harm.
-   - LOW: narrow changes with limited consequences and an easy way to verify them, such as display-only
-     changes, documentation clarifications, test additions, or small fixes that preserve the surrounding
-     behavior. Examples include correcting attribution in a message without changing its audience, identity
-     or decision, updating an agent skill to document an existing command, and a branch-scoped test job
-     that uses disposable data and changes no production behavior. A sensitive file, API route,
-     prompt, CI workflow, or line count alone does not decide the tier.
+     with enough scope or uncertainty to warrant more than a quick check.
+   - LOW: narrow changes with limited consequences and an easy way to verify them.
+   A sensitive file, API route, prompt, CI workflow, or line count alone does not decide the tier.
+
+   Calibration examples. Use the stated safeguards, affected users, and recovery options to judge similar diffs.
+   - HIGH examples:
+     - A permissions refactor omits the ownership check on private records. One account could read another's data.
+       Check that a cross-account read is denied using two test accounts.
+     - A migration drops a column before copying its values. Upgrading could erase saved user preferences.
+       Upgrade a disposable database with existing preferences and compare the saved values before and after.
+     - A billing worker retries a charge after a timeout without reusing the request's idempotency key.
+       Customers could be charged twice. Simulate a timeout after the payment succeeds in the provider sandbox
+       and confirm the retry records only one charge.
+   - MEDIUM examples:
+     - A sign-in change uses a callback path that the Windows installer never registers. New Windows users
+       could be unable to sign in, while existing sessions and other platforms continue working.
+     - A migration builds an index concurrently. If the build fails, queries keep using the old plan and
+       the index can be rebuilt. Check migration retries against representative data.
+     - A billing dashboard groups invoice totals by the wrong date near midnight. The displayed totals can
+       be wrong for a day while stored invoices and charges stay correct.
+   - LOW examples:
+     - A sign-in screen fixes a link label while preserving the destination and sign-in behavior.
+     - A migration test adds an empty-database case in a branch-scoped job that uses disposable data.
+     - An invoice screen corrects a static heading while preserving the amounts, recipients, and actions.
+
    Give one reason tied to the actual change. For High, describe the failure and affected people or systems
    in that reason and include the specific check in the risk report.
 8. Write the full review to `{{DIR}}/review-comment.md` with the Write tool, before you finish, in this
@@ -102,7 +118,7 @@ careful, and fair.
    no code walkthrough.
 
    > [!WARNING]
-   > **Merge risk: Medium**: the sentence from step 7 saying which rule decided it.
+   > **Merge risk: Medium**: the reason from step 7 tied to the change.
    >
    > **What you accept by merging**
    >
