@@ -1,6 +1,7 @@
 // The woodshed command line's token (wsc_, cliSignIn.mjs) on the console's own session routes: the few `woodshed
-// session` calls, as exactly the person the token was approved for. Every other route refuses it, so a token that leaks
-// from a laptop reaches no settings, secrets, people, terminals or apps.
+// session` calls and `woodshed config`'s, as exactly the person the token was approved for. Every other route refuses it,
+// so a token that leaks from a laptop reaches no secrets, people, terminals or apps, and no settings but that person's own
+// choices on My settings.
 //
 //   GET  /api/sessions                      woodshed session list, and the wait on a start: what that person sees
 //   GET  /api/my/projects                   the repos that person may start on, for --repo
@@ -11,6 +12,7 @@
 //   POST /api/sessions/<id>/extend          woodshed session extend: its pause or stop an hour later, in its last minutes
 //   POST /api/sessions/<id>/limits          woodshed session limits: its own pause and stop. These two are a private
 //                                           session's owner's and a shared one's assignee's alone, as on the page
+//   GET  /api/cli/config, and a few My settings writes   woodshed config: their choices, never a secret (cliConfig.mjs)
 //
 // A terminal connected to a session never keeps it awake: more time is asked for, by the person or their agent, with
 // extend or limits, and otherwise the session pauses and stops as its limits say.
@@ -22,12 +24,15 @@
 // riding the browser's cookie. A token is sent by the command line alone, never by a browser on its own, so neither is
 // asked of it; a call that carries an Origin is a page's, and is refused.
 
+import { CONFIG_ROUTES } from './cliConfig.mjs';
+
 const ROUTES = [
   ['GET', /^\/api\/sessions$/],
   ['GET', /^\/api\/my\/projects$/],
   ['POST', /^\/api\/my\/sessions$/],
   ['POST', /^\/api\/my\/sessions\/[0-9a-f]{8}\/(resume|remove)$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/(stop|extend|limits)$/],
+  ...CONFIG_ROUTES,
 ];
 
 /** @returns {boolean}  a route the command line's token may call */

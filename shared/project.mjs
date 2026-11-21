@@ -34,12 +34,15 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { ENGINE_NAMES } from './databases/engines.mjs';
+import { repoOf } from './repoOf.mjs';
 import { defaultBranchOf } from './defaultBranch.mjs';
 import { envValue } from './envNames.mjs';
 import { isSessionVariable } from './reservedNames.mjs';
 import { parseYaml } from './yamlLite.mjs';
 import { isMain } from './isMain.mjs';
 import { envKeyTable, instructionsText, layeredEnvText, sessionWiring } from './repoSettings.mjs';
+
+export { repoOf };
 
 export const PROJECT_FILE = '.woodshed/project.yaml';
 // While Woodshed is in beta the format changes in place, with every project file in the same change (README.md,
@@ -665,22 +668,6 @@ export function readRepoFile(repoDir, file) {
   if (fs.existsSync(local)) return { text: fs.readFileSync(local, 'utf8'), from: 'checkout' };
   const text = gitShow(repoDir, file);
   return text === null ? null : { text, from: 'default branch' };
-}
-
-/**
- * The repo a checkout is of, as GitHub names it, from its `origin`: every clone Woodshed makes (install.sh, the
- * session image, a session on another project) fetches from `https://github.com/<owner>/<name>.git`.
- * @returns {string|null}  owner/name, null when the origin is not on GitHub or the folder is no checkout
- */
-export function repoOf(repoDir) {
-  let url;
-  try {
-    url = execFileSync('git', ['-C', repoDir, 'remote', 'get-url', 'origin'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  } catch {
-    return null;
-  }
-  const match = /^(?:https:\/\/(?:[^/@]*@)?github\.com\/|(?:ssh:\/\/)?git@github\.com[:/])([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(url);
-  return match ? `${match[1]}/${match[2]}` : null;
 }
 
 // The one entry in `dir` whose name is `name` in any case: GitHub's names are case-insensitive, and the folder's

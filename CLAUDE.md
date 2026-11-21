@@ -364,6 +364,12 @@ URL on top of each env file's Repo settings values
   limit`); otherwise it reads the same start steps as the page's checklist, above. Ctrl-C stops the wait, not the
   session. `extend` refused with `Extend is offered in the last 15 min` is the console's rule: `session get` says when
   it pauses.
+- **`woodshed config set` is refused.** Exit 3 with `Valid:` is a value the console's own check refused (the same as
+  My settings'); with `On My settings:` a step only the page does first (save a Claude token or Codex sign-in, connect
+  GitHub); `is a secret` is a key it never sends. The console logs `cliSessions: call` with the path, then the page's
+  own line (`userSettings: terminal changed`, `reviews of my pull requests`, `own token for shared sessions`, `own
+  Codex sign-in for reviews`, `git identity changed`). `answered 404` or `does not let the command line change` is a
+  console from before `GET /api/cli/config` (cli/README.md, "Your choices on My settings").
 - **A private session starts without its MCP logins, or Resume opens a blank
   claude.** The session's log says `Claude home restored`, `No Claude home
   saved yet` or `WARNING: Claude home not restored` with the status. Every 5

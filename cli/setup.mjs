@@ -3,7 +3,7 @@
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { repoOf } from '../shared/project.mjs';
+import { repoOf } from '../shared/repoOf.mjs';
 
 export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--no-browser] [options]
 
