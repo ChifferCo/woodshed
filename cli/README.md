@@ -175,10 +175,14 @@ would land there, so open that session by its id instead. A paused one is resume
   and the analysis's state while it runs or when it failed.
 - **1 Overview**: the pull request's description, the overview, the decisions and the architecture, its diagram as a
   list of what connects to what, marked added, removed or changed. **2 Q&A**: the questions someone new to the code
-  would ask, each answered from the code, started on opening the tab as the page does (`i` asks one of your own, `A`
-  asks them all again). **3 Discussion** (with a pull request): what was said about the change as a whole.
-  **4 Files changed**: one file at a time in the analysis's reading order (`n`/`p`), with its group, role and note,
-  its lines, and every conversation under its line; `↑`/`↓` move the line a comment goes on. **5 Chat**: the page's
+  would ask, each answered from the code, started on opening the tab as the page does. They are folded, as on the
+  page: `↑`/`↓` choose one, `Enter` opens it (one at a time, with its follow-ups folded under it) and `←` closes it;
+  `f` asks a follow-up on the one chosen, `i` a question of your own, `A` all of them again. **3 Discussion** (with a
+  pull request): what was said about the change as a whole. **4 Files changed**: every file, grouped in the
+  analysis's reading order with each group's reason, and under each file its role, `+`/`−`, conversations and what it
+  does. `Enter` opens one's diff, with every conversation under its line (`↑`/`↓` move the line a comment goes on,
+  `n`/`p` the next file, `Esc` back to the list); `i`, on the list or in a diff, starts a chat about that file (and
+  line), as the page's Send to the conversation does. **5 Chat**: the page's
   conversation panel, with the session's agent reading the branch (`Enter` asks, `↑`/`↓` in the box offer the page's
   suggestions). The shed does not stream an answer: the chat says how long it has been reading, then draws it.
 - **The actions**, offered where the page offers them, the GitHub ones only with a pull request: `c` a line comment

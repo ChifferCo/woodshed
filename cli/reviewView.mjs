@@ -434,7 +434,7 @@ export function analysisLines(state, columns) {
     if (lines.length) lines.push([]);
     lines.push([['dim', 'There is no analysis to show yet.']]);
   }
-  lines.push([], [['dim', 'Read the changes: 4 Files changed, n and p go file by file.']]);
+  lines.push([], [['dim', 'Read the changes: 4 Files changed lists every file; Enter opens one, i chats about it.']]);
   return lines;
 }
 
@@ -461,47 +461,103 @@ export function diagramLines(diagram, columns) {
 
 // --- Q&A --------------------------------------------------------------------------------
 
-export function qaLines(state, columns) {
-  const qa = state.qa ?? {};
-  const d = qa.data;
-  const lines = [];
-  if (qa.error) lines.push(...wrapText(`Could not read the Q&A: ${qa.error}`, columns, 'red'));
-  if (!d) {
-    // As renderQa says it: after a Re-review or a Discard nothing asks again by itself, since it is a paid run.
-    if (qa.error) lines.push([], [['dim', 'A tries again.']]);
-    else if (qa.started && !qa.loading) lines.push(...wrapText('There is no Q&A for this diff yet. A asks the questions.', columns, 'dim'));
-    else lines.push(...wrapText('Starting the Q&A: the questions someone new to this code would ask, each answered from the code…', columns, 'dim'));
-    return lines;
-  }
-  const items = d.items ?? [];
-  if (d.status === 'running') {
-    const open = items.filter((i) => !i.answer).length;
-    lines.push(...wrapText(d.phase === 'answering' ? `⋯ Reading the code to answer ${open} question${open === 1 ? '' : 's'}${d.depth > 1 ? ` (follow-ups, level ${d.depth})` : ''}…`
-      : d.depth > 1 ? '⋯ Writing follow-up questions about the answers…' : '⋯ Writing the questions someone new to this code would ask…', columns, 'yellow'));
-  } else if (d.status === 'failed') lines.push(...wrapText(`The Q&A failed: ${d.error ?? 'no reason given'}`, columns, 'red'));
-  else if (d.status === 'interrupted') lines.push(...wrapText('The Q&A was cut off before it finished.', columns, 'red'));
-  else if (d.status === 'ready' && !items.length) lines.push(...wrapText('No questions came up.', columns, 'dim'));
+/** The Q&A's items by parent id ('' for the top), in the order they were written. */
+function qaKids(items) {
   const kids = new Map();
-  for (const item of items) {
+  for (const item of items ?? []) {
     const parent = item.parent || '';
     if (!kids.has(parent)) kids.set(parent, []);
     kids.get(parent).push(item);
   }
-  const walk = (parent, depth) => {
+  return kids;
+}
+
+/**
+ * The questions on screen, in order: the top ones, and under each open one its follow-ups, as the page folds them.
+ * `state.qa.open` is the open path, the top question first: one open at a time, with the ones above it.
+ * @returns {object[]}
+ */
+export function qaVisible(state) {
+  const items = state.qa?.data?.items ?? [];
+  const kids = qaKids(items);
+  const open = new Set(state.qa?.open ?? []);
+  const out = [];
+  const walk = (parent) => {
     for (const item of kids.get(parent) ?? []) {
-      const pad = '  '.repeat(depth);
-      lines.push([]);
-      lines.push(...wrapSegments([...inlineSegments(item.question ?? '', 'bold'), ...(item.mine ? [['dim', '  you asked']] : [])], columns, { first: `${pad}Q `, rest: `${pad}  `, firstStyle: 'cyan' }));
-      if (item.answer) lines.push(...markdownLines(item.answer, columns, { indent: `${pad}  ` }));
-      else lines.push([[null, pad], ['yellow', `  ${item.asking || d.status === 'running' ? '⋯ waiting for the answer' : 'not answered'}`]]);
-      walk(item.id, depth + 1);
+      out.push(item);
+      if (open.has(item.id) && item.answer) walk(item.id);
     }
   };
-  walk('', 0);
-  const failed = d.askErrors?.[''];
-  if (failed) lines.push([], ...wrapText(`Not answered: ${failed.error}. Your question: ${failed.question}`, columns, 'red'));
-  if (d.status !== 'running') lines.push([], [['dim', 'i asks a question of your own; A asks the questions again.']]);
-  return lines;
+  walk('');
+  return out;
+}
+
+/**
+ * The Q&A tab, as renderQa draws it: every question folded, the one open showing its answer and its follow-ups (folded
+ * too), and what a follow-up asked from a box failed with. `item` on a question's line is its place in qaVisible, for
+ * the cursor; an answer's lines have none.
+ * @returns {{lines: Array<Array<[string|null, string]>>, items: number[]|null, cursor: number}}
+ */
+export function qaLines(state, columns) {
+  const qa = state.qa ?? {};
+  const d = qa.data;
+  const lines = [];
+  const items = [];
+  const add = (line, item = -1) => {
+    lines.push(line);
+    items.push(item);
+  };
+  if (qa.error) for (const l of wrapText(`Could not read the Q&A: ${qa.error}`, columns, 'red')) add(l);
+  if (!d) {
+    // As renderQa says it: after a Re-review or a Discard nothing asks again by itself, since it is a paid run.
+    if (qa.error) add([['dim', 'A tries again.']]);
+    else if (qa.started && !qa.loading) for (const l of wrapText('There is no Q&A for this diff yet. A asks the questions.', columns, 'dim')) add(l);
+    else for (const l of wrapText('Starting the Q&A: the questions someone new to this code would ask, each answered from the code…', columns, 'dim')) add(l);
+    return { lines, items: null, cursor: -1 };
+  }
+  const all = d.items ?? [];
+  const running = d.status === 'running';
+  if (running) {
+    const open = all.filter((i) => !i.answer).length;
+    for (const l of wrapText(d.phase === 'answering' ? `⋯ Reading the code to answer ${open} question${open === 1 ? '' : 's'}${d.depth > 1 ? ` (follow-ups, level ${d.depth})` : ''}…`
+      : d.depth > 1 ? '⋯ Writing follow-up questions about the answers…' : '⋯ Writing the questions someone new to this code would ask…', columns, 'yellow')) add(l);
+  } else if (d.status === 'failed') for (const l of wrapText(`The Q&A failed: ${d.error ?? 'no reason given'}`, columns, 'red')) add(l);
+  else if (d.status === 'interrupted') for (const l of wrapText('The Q&A was cut off before it finished. A asks again.', columns, 'red')) add(l);
+  else if (d.status === 'ready' && !all.length) for (const l of wrapText('There was nothing to ask about.', columns, 'dim')) add(l);
+  const kids = qaKids(all);
+  const open = new Set(qa.open ?? []);
+  const visible = qaVisible(state);
+  const cursor = visible.length ? Math.min(Math.max(0, qa.cursor ?? 0), visible.length - 1) : -1;
+  const depthOf = (item) => {
+    let n = 0;
+    for (let p = item.parent; p && n < 20; n += 1) p = all.find((x) => x.id === p)?.parent;
+    return n;
+  };
+  const failedAt = (parent) => {
+    const failed = d.askErrors?.[parent];
+    if (!failed) return;
+    for (const l of wrapText(`Not answered: ${failed.error}. Your question was: ${failed.question}`, columns, 'red', '  '.repeat(parent ? depthOf(all.find((x) => x.id === parent) ?? {}) + 1 : 0))) add(l);
+  };
+  if (all.length) add([]);
+  visible.forEach((item, at) => {
+    const pad = '  '.repeat(depthOf(item));
+    const isOpen = open.has(item.id) && item.answer;
+    const children = kids.get(item.id) ?? [];
+    const tail = [];
+    if (!item.answer) tail.push(['yellow', running || item.asking ? '  ⋯ being answered' : '  not answered']);
+    else if (!isOpen && children.length) tail.push(['dim', `  ${children.length} follow-up${children.length === 1 ? '' : 's'}`]);
+    if (item.mine && item.answer) tail.push(['cyan', '  you asked']);
+    for (const l of wrapSegments([...inlineSegments(item.question ?? '', isOpen ? 'bold' : null), ...tail], columns, { first: `${pad}${isOpen ? '▾' : '▸'} `, rest: `${pad}  ` })) add(l, at);
+    if (isOpen) {
+      for (const l of markdownLines(item.answer, columns, { indent: `${pad}  ` })) add(l);
+      add([]);
+      failedAt(item.id);
+    }
+  });
+  failedAt('');
+  if (!running && all.length) add([]);
+  if (!running) add([['dim', all.length ? 'Enter opens a question; f asks a follow-up on it, i a question of your own, A all of them again.' : 'i asks a question of your own; A asks them again.']]);
+  return { lines, items, cursor };
 }
 
 // --- Discussion -------------------------------------------------------------------------
@@ -556,6 +612,46 @@ function threadsAt(state, file, line) {
 }
 
 /**
+ * Files changed as a list: every file, grouped in the analysis's reading order with each group's reason, and under
+ * each file what it does in the change (its role and the analysis's note on it), as the page's cards show them folded.
+ * `item` on a line is the file it belongs to, for the cursor; Enter opens that file's diff (fileLines).
+ * @returns {{lines: Array<Array<[string|null, string]>>, items: number[], cursor: number}}
+ */
+export function fileListLines(state, columns) {
+  const order = fileOrder(state);
+  const lines = [];
+  const items = [];
+  const add = (line, item = -1) => {
+    lines.push(line);
+    items.push(item);
+  };
+  if (!order.length) {
+    add([['dim', 'This change has no files.']]);
+    return { lines, items, cursor: -1 };
+  }
+  const cursor = Math.min(Math.max(0, state.fileIndex ?? 0), order.length - 1);
+  let group;
+  order.forEach(({ file, entry, group: g }, i) => {
+    if (i === 0 || g !== group) {
+      if (i) add([]);
+      add([['bold under', clean(g?.title ?? (order.some((x) => x.group) ? 'Everything else' : 'Files'))]]);
+      if (g?.why) for (const l of wrapSegments(inlineSegments(g.why, 'dim'), columns)) add(l);
+      group = g;
+    }
+    const threads = (state.draft?.threads ?? []).filter((t) => t.path === file.path).length;
+    const head = [['bold', clean(file.path)]];
+    if (entry.role) head.push(['magenta', ` ${clean(entry.role)}`]);
+    if (file.status && file.status !== 'modified') head.push([file.status === 'deleted' ? 'red' : 'green', ` ${clean(file.status)}`]);
+    if (file.isBinary) head.push(['dim', ' binary']);
+    head.push([null, '  '], ['green', `+${file.additions ?? 0}`], [null, ' '], ['red', `−${file.deletions ?? 0}`]);
+    if (threads) head.push(['yellow', `  ${threads} conversation${threads === 1 ? '' : 's'}`]);
+    for (const l of wrapSegments(head, columns, { first: '▸ ', rest: '  ' })) add(l, i);
+    if (entry.preamble) for (const l of wrapSegments(inlineSegments(entry.preamble), columns, { first: '  ', rest: '  ' })) add(l, i);
+  });
+  return { lines, items, cursor };
+}
+
+/**
  * One file of Files changed: where it sits in the reading order, the analysis's note on it, then its lines with the
  * conversations under them. `item` on a line is the diff row it draws, for the cursor.
  * @returns {{lines: Array<Array<[string|null, string]>>, items: number[]}}
@@ -570,11 +666,11 @@ export function fileLines(state, columns) {
   };
   if (!order.length) {
     add([['dim', 'This change has no files.']]);
-    return { lines, items };
+    return { lines, items, cursor: -1 };
   }
   const index = Math.min(Math.max(0, state.fileIndex ?? 0), order.length - 1);
   const { file, entry, group } = order[index];
-  add([['dim', `File ${index + 1} of ${order.length}`], ...(group?.title ? [['dim', ' · '], ['bold', clean(group.title)]] : [])]);
+  add([['dim', `File ${index + 1} of ${order.length} (Esc: all files)`], ...(group?.title ? [['dim', ' · '], ['bold', clean(group.title)]] : [])]);
   if (group?.why && (index === 0 || order[index - 1].group !== group)) for (const l of wrapSegments(inlineSegments(group.why, 'dim'), columns)) add(l);
   add([]);
   const chips = [];
@@ -620,7 +716,7 @@ export function fileLines(state, columns) {
     }
   });
   if (state.draft?.outdated) add([['dim', `${state.draft.outdated} outdated conversation${state.draft.outdated === 1 ? ' is' : 's are'} on GitHub only.`]]);
-  return { lines, items };
+  return { lines, items, cursor: state.cursor };
 }
 
 // --- Chat -------------------------------------------------------------------------------

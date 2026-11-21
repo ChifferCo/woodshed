@@ -8,8 +8,8 @@
 // lines), the size followed on resize, the keys for what is on screen in the footer.
 
 import {
-  analysisLines, chatLines, chatStarters, clean, cut, diffRows, discussionLines, fileLines, fileOrder, headerLines,
-  plainText, qaLines, reviewTitle, tabBar, tabsOf, toAnsi, width, wrapSegments, wrapText,
+  analysisLines, chatLines, chatStarters, clean, cut, diffRows, discussionLines, fileLines, fileListLines, fileOrder, headerLines,
+  plainText, qaLines, qaVisible, reviewTitle, tabBar, tabsOf, toAnsi, width, wrapSegments, wrapText,
 } from './reviewView.mjs';
 
 const STATUS_POLL_MS = 2000;
@@ -182,6 +182,8 @@ export function initialState({ status, diff, session }) {
     tab: 'analysis',
     scroll: {},
     fileIndex: 0,
+    // Files changed opens on the list of every file; Enter opens one's diff, Esc goes back.
+    fileOpen: false,
     cursor: 0,
     draft: { prId: null, headSha: null, reviewId: null, description: null, comments: [], threads: [], outdated: 0, said: [] },
     draftLoading: Boolean(status.livePr),
@@ -220,10 +222,14 @@ export function footerKeys(state) {
     keys.push(['Ctrl-U', 'clear']);
     return keys;
   }
-  const keys = [['1-5 Tab', 'views'], [state.tab === 'files' ? '↑↓' : '↑↓ PgUp PgDn', state.tab === 'files' ? 'line' : 'scroll']];
-  if (state.tab === 'files') keys.push(['n p', 'file']);
-  if (state.tab === 'files' && state.status.livePr) keys.push(['c', 'comment']);
+  const keys = [['1-5 Tab', 'views']];
+  if (state.tab === 'files' && !state.fileOpen) keys.push(['↑↓', 'file'], ['Enter', 'open'], ['i', 'chat about it']);
+  else if (state.tab === 'files') {
+    keys.push(['↑↓', 'line'], ['n p', 'file'], ['Esc', 'all files'], ['i', 'chat about it']);
+    if (state.status.livePr) keys.push(['c', 'comment']);
+  } else keys.push([state.tab === 'qa' && state.qa.data?.items?.length ? 'PgUp PgDn' : '↑↓ PgUp PgDn', 'scroll']);
   if (state.tab === 'chat' && !state.chat.busy) keys.push(['Enter', 'ask']);
+  if (state.tab === 'qa' && state.qa.data?.items?.length) keys.push(['↑↓', 'question'], ['Enter', 'open'], ['f', 'follow up']);
   if (state.tab === 'qa' && state.qa.data && state.qa.data.status !== 'running') keys.push(['i', 'ask'], ['A', 'ask again']);
   if (state.tab === 'qa' && !state.qa.data && state.qa.started && !state.qa.loading) keys.push(['A', 'ask the questions']);
   if (state.status.livePr) keys.push(['s', 'submit review'], ['m', 'merge'], ['t', 'rename']);
@@ -261,8 +267,9 @@ function footerLines(keys, columns) {
 export function bodyOf(state, columns, nowMs = Date.now()) {
   if (state.sheet) return { lines: sheetLines(state, columns), items: null };
   if (!state.diff?.files?.length) return { lines: [[['dim', 'This change has no file changes.']]], items: null };
-  if (state.tab === 'files') return fileLines(state, columns);
-  const make = { analysis: analysisLines, qa: qaLines, discussion: discussionLines, chat: (s, c) => chatLines(s, c, nowMs) }[state.tab] ?? analysisLines;
+  if (state.tab === 'files') return state.fileOpen ? fileLines(state, columns) : fileListLines(state, columns);
+  if (state.tab === 'qa') return qaLines(state, columns);
+  const make = { analysis: analysisLines, discussion: discussionLines, chat: (s, c) => chatLines(s, c, nowMs) }[state.tab] ?? analysisLines;
   return { lines: make(state, columns), items: null };
 }
 
@@ -293,13 +300,15 @@ export function frame(state, { columns, rows, color = true, nowMs = Date.now() }
   if (state.sheet?.editor) bottom.push(...editorLines(state.sheet.editor, state.sheet.prompt ?? '> ', columns));
   bottom.push(...footerLines(footerKeys(state), columns));
   const room = Math.max(1, rows - top.length - bottom.length);
-  const { lines, items } = bodyOf(state, columns, nowMs);
+  const body = bodyOf(state, columns, nowMs);
+  const { lines, items } = body;
+  const cursor = body.cursor ?? state.cursor;
   const key = scrollKey(state);
   let scroll = state.scroll[key] ?? 0;
-  if (items && !state.sheet) {
+  if (items && !state.sheet && state.follow !== false) {
     // Files changed follows its cursor: the line is kept on screen, a few lines in from the edge where it can be.
-    const first = items.indexOf(state.cursor);
-    const last = items.lastIndexOf(state.cursor);
+    const first = items.indexOf(cursor);
+    const last = items.lastIndexOf(cursor);
     if (first >= 0) {
       if (first < scroll + 1) scroll = Math.max(0, first - 2);
       if (last >= scroll + room - 1) scroll = Math.max(0, last - room + 3);
@@ -312,11 +321,11 @@ export function frame(state, { columns, rows, color = true, nowMs = Date.now() }
     const at = scroll + i;
     const line = lines[at];
     if (!line) out.push('');
-    else out.push(toAnsi(line, { columns, color, fill: items && !state.sheet && !state.compose && items[at] === state.cursor && state.cursor >= 0 ? true : null }));
+    else out.push(toAnsi(line, { columns, color, fill: items && !state.sheet && !state.compose && items[at] === cursor && cursor >= 0 ? true : null }));
   }
   // A cursor line while a comment is written on it stays marked.
   if (items && state.compose?.kind === 'comment') {
-    for (let i = 0; i < room; i += 1) if (items[scroll + i] === state.cursor) out[top.length + i] = toAnsi(lines[scroll + i], { columns, color, fill: true });
+    for (let i = 0; i < room; i += 1) if (items[scroll + i] === cursor) out[top.length + i] = toAnsi(lines[scroll + i], { columns, color, fill: true });
   }
   const more = lines.length - scroll - room;
   if (more > 0 && out.length) out[out.length - 1] = toAnsi([['dim', `↓ ${more} more line${more === 1 ? '' : 's'}`]], { columns, color });
@@ -326,7 +335,8 @@ export function frame(state, { columns, rows, color = true, nowMs = Date.now() }
 
 function scrollKey(state) {
   if (state.sheet) return `sheet:${state.sheet.kind}`;
-  return state.tab === 'files' ? `files:${state.fileIndex}` : state.tab;
+  if (state.tab === 'files') return state.fileOpen ? `files:${state.fileIndex}` : 'files:list';
+  return state.tab;
 }
 
 // --- the run --------------------------------------------------------------------------
@@ -566,10 +576,13 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
         if (!finished) flash(`Not asked again: ${err.message}`, true);
       }
     }
-    async function askQa(question) {
+    // A question of the reader's: at the top (parent null), or a follow-up under an answered one, as sendQaQuestion.
+    async function askQa(question, parent = null) {
       try {
-        await call('POST', '/qa/ask', { parent: null, question, forDiff: state.diffAt ?? '' });
-        flash('Asked. The answer appears under your question.');
+        await call('POST', '/qa/ask', { parent, question, forDiff: state.diffAt ?? '' });
+        // The answer comes in under the question it follows, which stays open to show it.
+        if (parent) state.qa.open = qaPath(parent);
+        flash(parent ? 'Asked. The answer appears under that question, as a follow-up.' : 'Asked. The answer appears under your question, at the end.');
       } catch (err) {
         if (!finished) flash(`Not asked: ${err.message}`, true);
       }
@@ -827,9 +840,11 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
         lines: [
           '1 Overview  2 Q&A  3 Discussion  4 Files changed  5 Chat; Tab and Shift-Tab move between them.',
           '↑ ↓ j k scroll (on Files changed, move the line), PgUp PgDn Space b by a page, g G the top and the end.',
-          'n p (or → ←) the next and previous file, in the analysis\'s reading order.',
+          '4 Files changed lists every file in the analysis\'s reading order: ↑ ↓ choose one, Enter opens its diff, Esc goes back to the list; in a diff, n p move to the next and previous file.',
+          'i on Files changed starts a chat about the file (in its diff, about the line), with its path in the box.',
           'c comments on the line, into your draft review or posted at once (Tab chooses), with a pull request.',
-          'Enter on Chat asks the session\'s agent about the change; i on Q&A asks a question of your own, A asks them all again.',
+          'Enter on Chat asks the session\'s agent about the change.',
+          '2 Q&A: ↑ ↓ choose a question, Enter or → opens it (one at a time, with its follow-ups), ← closes it; f asks a follow-up on it, i a question of your own, A all of them again.',
           's submits your review (comment, approve or request changes) with your draft comments. m merges, t renames.',
           'r re-reviews: pulls the branch, takes the diff again and reads it again. a runs the analysis. d discards it.',
           'Writes to GitHub go as you, from your own My Woodshed session, once you have connected GitHub on My settings.',
@@ -849,18 +864,85 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
       draw();
     }
     function scrollBy(n) {
+      state.follow = false;
       const key = scrollKey(state);
       state.scroll[key] = Math.max(0, (state.scroll[key] ?? 0) + n);
       draw();
     }
     function moveCursor(n) {
+      state.follow = true;
       const file = fileOrder(state)[state.fileIndex]?.file;
       const count = diffRows(file).length;
       if (!count) return scrollBy(n);
       state.cursor = Math.max(0, Math.min(count - 1, state.cursor + n));
       draw();
     }
+    // --- the Q&A's tree: one question open at a time, with the ones it follows up ---
+    function qaPath(id) {
+      const items = state.qa.data?.items ?? [];
+      const path = [];
+      for (let at = items.find((i) => i.id === id); at && path.length < 20; at = items.find((i) => i.id === at.parent)) path.unshift(at.id);
+      return path;
+    }
+    function qaSelected() {
+      const visible = qaVisible(state);
+      return visible[Math.min(Math.max(0, state.qa.cursor ?? 0), visible.length - 1)] ?? null;
+    }
+    function qaMove(n) {
+      const count = qaVisible(state).length;
+      if (!count) return scrollBy(n);
+      state.qa.cursor = Math.max(0, Math.min(count - 1, (state.qa.cursor ?? 0) + n));
+      state.follow = true;
+      return draw();
+    }
+    // Enter or → opens the question (closing any other), and again closes it; ← closes it, or on a closed follow-up the
+    // question it follows, and goes there.
+    function qaToggle(close = false) {
+      const item = qaSelected();
+      if (!item) return undefined;
+      const isOpen = (state.qa.open ?? []).includes(item.id);
+      let at = item.id;
+      if (isOpen) state.qa.open = qaPath(item.parent);
+      else if (close) {
+        if (!item.parent) return undefined;
+        at = item.parent;
+        state.qa.open = qaPath(state.qa.data.items.find((i) => i.id === item.parent)?.parent);
+      } else {
+        if (!item.answer) return flash(item.asking || state.qa.data?.status === 'running' ? 'That question is still being answered.' : 'That question was not answered.');
+        state.qa.open = qaPath(item.id);
+      }
+      state.qa.cursor = Math.max(0, qaVisible(state).findIndex((i) => i.id === at));
+      state.follow = true;
+      return draw();
+    }
+    function qaFollowUp() {
+      const d = state.qa.data;
+      const item = qaSelected();
+      if (!d || d.status === 'running') return flash('The Q&A is still being written: ask once it is done.');
+      if (!item) return startCompose('qa');
+      if (!item.answer) return flash('Follow up on a question once it is answered.');
+      if ((item.depth ?? qaPath(item.id).length) >= 8) return flash('That is as deep as follow-ups go: ask it as a question of your own (i).');
+      if ((d.items ?? []).some((i) => i.parent === item.id && i.asking)) return flash('A follow-up on that one is still being answered.');
+      state.qa.open = qaPath(item.id);
+      return startCompose('qa', item.id);
+    }
+    function openFile(open) {
+      if (!fileOrder(state).length) return;
+      state.fileOpen = open;
+      state.cursor = 0;
+      draw();
+    }
+    // The page's Send to the conversation: Chat, with the file's path (and the line's, in its diff) in the box.
+    function chatAbout() {
+      const file = fileOrder(state)[state.fileIndex]?.file;
+      if (!file) return undefined;
+      const line = state.fileOpen ? diffRows(file)[state.cursor] : null;
+      const at = line ? `${clean(file.path)}:${line.newNo ?? line.oldNo}` : clean(file.path);
+      state.tab = 'chat';
+      return startCompose('chat', at);
+    }
     function moveFile(n) {
+      state.follow = true;
       const count = fileOrder(state).length;
       if (!count) return;
       state.fileIndex = Math.max(0, Math.min(count - 1, state.fileIndex + n));
@@ -872,13 +954,19 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
       flash(`This branch has no pull request to ${what}. It shows here once the session opens one; a session that cannot write to GitHub as you shows none.`);
       return false;
     }
-    function startCompose(kind) {
+    function startCompose(kind, reference = null) {
       if (kind === 'chat') {
-        if (state.chat.busy) return flash('Still answering the last question.');
-        state.compose = { kind, editor: editor(state.chat.unsent ?? ''), prompt: 'Ask: ' };
+        if (state.chat.busy) return flash('Still answering the last question: ask about it once the answer is in.');
+        let text = state.chat.unsent ?? '';
+        if (reference) text = `${text}${text && !text.endsWith(' ') ? ' ' : ''}${reference} `;
+        state.compose = { kind, editor: editor(text), prompt: 'Ask: ' };
         state.chat.unsent = null;
         state.chat.starter = -1;
-      } else if (kind === 'qa') state.compose = { kind, editor: editor(''), prompt: 'Your question: ' };
+      } else if (kind === 'qa') {
+        const parent = reference;
+        const prompt = parent ? `Follow up on "${cut(clean(state.qa.data.items.find((i) => i.id === parent)?.question ?? ''), 30)}": ` : 'Your question: ';
+        state.compose = { kind, parent, editor: editor(state.qa.drafts?.[parent ?? ''] ?? ''), prompt };
+      }
       else {
         const file = fileOrder(state)[state.fileIndex]?.file;
         const line = diffRows(file)[state.cursor];
@@ -892,6 +980,7 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
       const c = state.compose;
       if (key === 'escape') {
         if (c.kind === 'comment') state.commentDraft = c.editor.text;
+        if (c.kind === 'qa') state.qa.drafts = { ...state.qa.drafts, [c.parent ?? '']: c.editor.text };
         state.compose = null;
         return draw();
       }
@@ -903,7 +992,8 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
           sendChat(text);
         } else if (c.kind === 'qa') {
           state.compose = null;
-          askQa(text);
+          if (state.qa.drafts) delete state.qa.drafts[c.parent ?? ''];
+          askQa(text, c.parent ?? null);
         } else {
           state.commentDraft = '';
           sendComment(text, c.mode);
@@ -967,34 +1057,53 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
       if (key !== 'A' && state.qa.sure) state.qa.sure = false;
       const tabs = tabsOf(state);
       const page = Math.max(1, rows() - 12);
+      // Files changed: the list moves between files and opens one; an open file moves between its lines.
+      const list = state.tab === 'files' && !state.fileOpen;
+      const diff = state.tab === 'files' && state.fileOpen;
+      const qaTab = state.tab === 'qa' && Boolean(state.qa.data);
+      const step = (n) => (list ? moveFile(n) : diff ? moveCursor(n) : qaTab && Math.abs(n) === 1 ? qaMove(n) : scrollBy(n));
       switch (key) {
         case 'q': return finish({ code: 'quit' });
-        case 'escape': state.flash = null; return draw();
+        case 'escape': case 'backspace':
+          if (diff) return openFile(false);
+          state.flash = null;
+          return draw();
         case 'tab':
         case 'shift-tab': {
           const i = tabs.findIndex((t) => t.key === state.tab);
           return setTab(tabs[(i + (key === 'tab' ? 1 : tabs.length - 1)) % tabs.length].key);
         }
-        case 'up': case 'k': return state.tab === 'files' ? moveCursor(-1) : scrollBy(-1);
-        case 'down': case 'j': return state.tab === 'files' ? moveCursor(1) : scrollBy(1);
-        case 'pageup': case 'b': return state.tab === 'files' ? moveCursor(-page) : scrollBy(-page);
-        case 'pagedown': case ' ': return state.tab === 'files' ? moveCursor(page) : scrollBy(page);
+        case 'up': case 'k': return step(-1);
+        case 'down': case 'j': return step(1);
+        case 'pageup': case 'b': return step(-page);
+        case 'pagedown': case ' ': return step(page);
         case 'home': case 'g':
-          if (state.tab === 'files') state.cursor = 0;
+          if (list) return moveFile(-Infinity);
+          if (diff) state.cursor = 0;
           state.scroll[scrollKey(state)] = 0;
           return draw();
         case 'end': case 'G':
-          if (state.tab === 'files') return moveCursor(Infinity);
+          if (list) return moveFile(Infinity);
+          if (diff) return moveCursor(Infinity);
           state.scroll[scrollKey(state)] = Number.MAX_SAFE_INTEGER;
           return draw();
-        case 'right': case 'n': case ']': return state.tab === 'files' ? moveFile(1) : undefined;
-        case 'left': case 'p': case '[': return state.tab === 'files' ? moveFile(-1) : undefined;
+        case 'right': case 'o':
+          if (qaTab) return qaToggle();
+          return list ? openFile(true) : diff && key === 'right' ? moveFile(1) : undefined;
+        case 'n': case ']': return diff ? moveFile(1) : list ? moveFile(1) : undefined;
+        case 'left': case 'p': case '[':
+          if (qaTab && key === 'left') return qaToggle(true);
+          return diff && key === 'left' ? openFile(false) : state.tab === 'files' ? moveFile(-1) : undefined;
+        case 'f': return state.tab === 'qa' ? qaFollowUp() : undefined;
         case 'enter': case 'i':
           if (state.tab === 'chat') return startCompose('chat');
+          if (qaTab && key === 'enter') return qaToggle();
           if (state.tab === 'qa' && state.qa.data && state.qa.data.status !== 'running') return startCompose('qa');
-          if (state.tab === 'files' && key === 'enter' && needsPr('comment on')) return startCompose('comment');
+          if (state.tab === 'files' && key === 'i') return chatAbout();
+          if (list) return openFile(true);
+          if (diff && needsPr('comment on')) return startCompose('comment');
           return undefined;
-        case 'c': return state.tab === 'files' && needsPr('comment on') ? startCompose('comment') : undefined;
+        case 'c': return diff && needsPr('comment on') ? startCompose('comment') : undefined;
         case 's': return needsPr('submit a review to') ? openSubmit() : undefined;
         case 'm': return needsPr('merge') ? openMerge() : undefined;
         case 't': return needsPr('rename') ? openRename() : undefined;

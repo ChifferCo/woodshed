@@ -1,6 +1,6 @@
 ---
 name: woodshed
-description: "Use the `woodshed` command line to set up Woodshed for the person, sign in, start a cloud session and follow it, list, stop, resume or remove sessions, give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, change their My settings choices (terminal, reviews, default repo), and turn on Woodshed's review for a repo. Use when the person asks to set up Woodshed, start or check a session, run something in one, keep one from pausing, sync their Claude settings, change a My settings choice, or turn on Woodshed's review for a repo."
+description: "Use the `woodshed` command line to set up Woodshed for the person, sign in, start a cloud session and follow it, list, stop, resume or remove sessions, give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, change their My settings choices (terminal, reviews, default repo), turn on Woodshed's review for a repo, and point them at reviewing a session's change on their own terminal. Use when the person asks to set up Woodshed, start or check a session, run something in one, keep one from pausing, sync their Claude settings, change a My settings choice, turn on Woodshed's review for a repo, or review, approve or merge what a session did or its pull request."
 ---
 
 # Work with Woodshed from the command line
@@ -81,6 +81,12 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 - **Inside Herdr, sessions go to Herdr.** When you yourself run in a Herdr terminal (`HC_TERMINAL_ID` is set) and
   `woodshed status --json` reports `hc.ok: true`, add each session you start or resume to Herdr unless the person
   says not to: pass `--herdr` to `session new`, and run `session herdr <id>` after a `resume`. Recipes below.
+- **Reviewing is the person's, on their terminal.** When a session of theirs has work to look at, suggest they run
+  `woodshed review <id>` themselves (section 5, "Review a session's change"): when a session you started or followed
+  ends its turn with a pull request open, when `session list` prints `review it: woodshed review <id>`, and whenever
+  they ask to review, approve or merge what a session did. It is interactive and every write in it (a comment, a
+  verdict, a rename, a merge) goes to GitHub as them: never drive it, and never comment, approve or merge for them
+  with `gh` instead. Read `woodshed review <id> --json` yourself when you need to say what changed.
 - **Moving is the person's call.** `woodshed move --from herdr` ends the local agents it moves and pushes the work to a branch.
   Run it only when asked, and `--dry-run` first to show them what would move. Programs restart in the session only with
   `--restart auto` or their yes; never pass `--restart auto` for them unasked. For an exit 3 listing secret-looking
@@ -164,7 +170,8 @@ woodshed session new --repo acme/app --branch 123 --json "Fix the login redirect
 branch or pull request, where a session with none starts as a review of it. Without `--repo`, the repo New session
 opens on for them. Each start step is a `{"event":"step",…}` line, and the last line is `running`, `needs-you`,
 `failed` or `stopped` with the session, whose `url` is its page on the console. On `needs-you` (exit 2), give the
-person that `url` and stop. With `--no-wait` the command returns as soon as the console has the session: follow it with
+person that `url` and stop. Once it has done its work and opened a pull request (`session get <id> --json` has
+`pullRequest`), tell them they can review it on their terminal with `woodshed review <id>`. With `--no-wait` the command returns as soon as the console has the session: follow it with
 `session get <id> --json`.
 
 A prompt that starts with `-` goes after `--`: `woodshed session new -- "-v is broken"`.
@@ -215,7 +222,8 @@ line started, so start a server that must outlive it with `setsid … &`.
 ### Review a session's change
 
 When a session of theirs has work ready (its pull request is open, or `session list` prints `review it: woodshed review
-<id>` under it), suggest to the person that they run `woodshed review <id>` themselves: it is a full-screen review on
+<id>` under it), or they ask to review, approve or merge a session's work or pull request, suggest to the person that
+they run `woodshed review <id>` themselves, giving the exact command: it is a full-screen review on
 their own terminal (in Herdr, say), and every write in it (a comment, a verdict, a rename, a merge) goes to GitHub as
 them. Never drive it yourself. To say what the change is, read it with:
 
@@ -229,6 +237,12 @@ analysis's reading order, each with its `role` and `preamble`). Opening a review
 as the Review tab does; `analysis.status` is then `running`, so read it again a minute or two later. Only their own My
 Woodshed sessions open (exit 3 for a shared one or one that saw production data), and a paused one is resumed first. A
 pull request with no session of theirs exits 1 and says how to start one on it.
+
+What to tell them it does, briefly: Overview first (the analysis); `2` Q&A, where questions open one at a time and
+`f` asks a follow-up; `4` Files changed, every file with what it does, `Enter` to open one, `i` to chat about it,
+`c` to comment on a line; `5` Chat with the session's agent; `s` submit a verdict, `m` merge, `t` rename; `?` the keys.
+For a pull request with no session of theirs, offer to start one on it first
+(`woodshed session new --repo <owner/name> --branch <number>`, which starts as a review of it), then `woodshed review`.
 
 ### Move work from this computer into a session
 

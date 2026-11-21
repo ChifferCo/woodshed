@@ -53,7 +53,12 @@ async function fakeStatusd(t) {
     'GET /diff': () => DIFF,
     'GET /comments': () => ({ ok: true, prId: 'PR_1', headSha: 'abcdef0123456789', reviewId: null, description: { author: 'mia-dev', body: 'Fixes #3.' }, comments: [], threads: [], said: [] }),
     'GET /chat': () => ({ ok: true, messages: chat, running: null }),
-    'GET /qa': () => ({ ok: true, qa: null }),
+    'GET /qa': () => ({ ok: true, qa: { status: 'ready', forDiff: iso(T0), items: [
+      { id: 'q1', parent: null, depth: 1, question: 'What is `next`?', answer: 'The page to go back to.' },
+      { id: 'q2', parent: null, depth: 1, question: 'Why only same-site?', answer: 'An open redirect otherwise.' },
+      { id: 'q3', parent: 'q2', depth: 2, question: 'What is an open redirect?', answer: 'A link that sends you anywhere.' },
+    ] } }),
+    'POST /qa/ask': (body) => ({ ok: true, item: { id: 'q9', parent: body.parent, question: body.question, asking: true } }),
     'POST /qa': () => ({ ok: true }),
     'POST /comments': () => ({ ok: true, reviewId: 'PRR_1' }),
     'POST /submit': () => ({ ok: true, event: 'approve', pr: 12 }),
@@ -253,7 +258,7 @@ function terminal() {
 }
 
 async function until(test, what) {
-  for (let i = 0; i < 400; i += 1) {
+  for (let i = 0; i < 1000; i += 1) {
     if (test()) return;
     await wait(10);
   }
@@ -271,7 +276,18 @@ test('the review on a terminal: every frame fits 80 columns, and a comment, a ve
   const said = (method, section) => c.seen.filter((s) => s.method === method && s.section === section);
 
   term.type('4');
-  await until(() => /File 1 of 2 · The redirect/.test(lastFrame()), 'Files changed, in the analysis\'s order');
+  const rows = () => lastFrame().split('\r\n').map((l) => l.replace(/\x1b\[K/g, '').trimEnd());
+  await until(() => rows().join('\n').includes('The redirect\nStart here.\n▸ src/login.mjs core +2 −1\n  Reads next.\n\nEverything else\n▸ README.md +1 −0'),
+    'Files changed lists every file in the analysis\'s order, each with what it does');
+  assert.match(lastFrame(), /Enter open {2}i chat about it/);
+  // Chat about the file: Chat, with its path in the box, as the page's Send to the conversation does.
+  term.type('j');
+  term.type('i');
+  await until(() => /Ask: README\.md/.test(lastFrame()), 'a chat about the file');
+  term.type('\x1b');
+  term.type('4');
+  term.type('k\r');
+  await until(() => /File 1 of 2 \(Esc: all files\) · The redirect/.test(lastFrame()), 'its diff, opened');
   assert.doesNotMatch(lastFrame(), /\x1b\]0;pwned/, 'no escape code from the diff reaches the terminal');
   term.type('jj');
   term.type('c');
@@ -279,6 +295,7 @@ test('the review on a terminal: every frame fits 80 columns, and a comment, a ve
   await until(() => /Comment on src\/login\.mjs:2: Why not URL\(\)\?/.test(lastFrame()), 'the comment box');
   term.type('\r');
   await until(() => said('POST', '/comments').length === 1, 'the comment');
+  await until(() => /Added to your draft review/.test(lastFrame()), 'the comment, done');
   assert.deepEqual(said('POST', '/comments')[0].body, {
     mode: 'draft', prId: 'PR_1', headSha: 'abcdef0123456789', reviewId: null, path: 'src/login.mjs', line: 2, startLine: null, side: 'new', body: 'Why not URL()?',
   });
@@ -295,12 +312,14 @@ test('the review on a terminal: every frame fits 80 columns, and a comment, a ve
   assert.match(lastFrame(), /Comment: Looks right,⏎and tested/);
   term.type('\x15LGTM\r');
   await until(() => said('POST', '/submit').length === 1, 'the verdict');
+  await until(() => /Approved on #12\. m merges it\./.test(lastFrame()), 'the verdict, done');
   assert.deepEqual(said('POST', '/submit')[0].body, { event: 'approve', body: 'LGTM' });
 
   term.type('t');
-  await until(() => /Title: Fix the login bug/.test(lastFrame()), 'the rename');
+  await until(() => /Title: Fix the login bug/.test(lastFrame()), 'the rename sheet');
   term.type('\x15fix: keep next on login\r');
   await until(() => said('PATCH', '/title').length === 1, 'the rename');
+  await until(() => /Renamed on GitHub\./.test(lastFrame()), 'the rename, done');
   assert.deepEqual(said('PATCH', '/title')[0].body, { title: 'fix: keep next on login' });
 
   term.type('m');
@@ -309,6 +328,22 @@ test('the review on a terminal: every frame fits 80 columns, and a comment, a ve
   await until(() => said('POST', '/merge').length === 1, 'the merge');
   assert.deepEqual(said('POST', '/merge')[0].body, { subject: 'fix: keep next on login (#12)' });
   await until(() => /Merged #12 into main as 12345678/.test(lastFrame()), 'what the merge did');
+
+  // Q&A: every question folded; one opens at a time, with its follow-ups, and a follow-up goes under the one chosen.
+  term.type('2');
+  await until(() => rows().includes('▸ Why only same-site? 1 follow-up'), 'the folded questions');
+  assert.ok(!lastFrame().includes('The page to go back to.'), 'no answer shows until its question opens');
+  term.type('\r');
+  await until(() => rows().includes('▾ What is next?') && lastFrame().includes('The page to go back to.'), 'the first one open');
+  term.type('j\r');
+  await until(() => rows().includes('▾ Why only same-site?') && rows().includes('  ▸ What is an open redirect?'), 'the second one open, with its follow-up');
+  assert.ok(!lastFrame().includes('The page to go back to.'), 'the first one closed: one at a time');
+  term.type('f');
+  await until(() => /Follow up on "Why only same-site\?": /.test(lastFrame()), 'the follow-up box');
+  term.type('Which hosts count?\r');
+  await until(() => said('POST', '/qa/ask').length === 1, 'the follow-up');
+  await until(() => /Asked\. The answer appears under that question/.test(lastFrame()), 'the follow-up, done');
+  assert.deepEqual(said('POST', '/qa/ask')[0].body, { parent: 'q2', question: 'Which hosts count?', forDiff: iso(T0) });
 
   term.type('5\r');
   term.type('What does it read?\r');

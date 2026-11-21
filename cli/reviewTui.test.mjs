@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createKeyReader, editKey, frame, initialState, mergeHint, parseKeys } from './reviewTui.mjs';
-import { clean, diagramLines, fileOrder, markdownLines, plainText, toAnsi, width, wrapSegments } from './reviewView.mjs';
+import { clean, diagramLines, qaLines, qaVisible, fileOrder, markdownLines, plainText, toAnsi, width, wrapSegments } from './reviewView.mjs';
 
 test('raw stdin reads as keys: arrows, a paste with its newlines, and an escape sequence it does not know is skipped whole', () => {
   assert.deepEqual(parseKeys('\x1b[A\x1b[B\x1bOC\x1b[5~\x1b[Z\t\r\x7f\x03q'), ['up', 'down', 'right', 'pageup', 'shift-tab', 'tab', 'enter', 'backspace', 'ctrl-c', 'q']);
@@ -77,8 +77,9 @@ test('merge is offered as the page offers it, and every view fits 80 columns', (
   assert.match(mergeHint(state), /uncommitted changes/);
   status.meta.dirtyFiles = 0;
   assert.equal(mergeHint(state), null);
-  for (const tab of ['analysis', 'qa', 'discussion', 'files', 'chat']) {
+  for (const [tab, open] of [['analysis'], ['qa'], ['discussion'], ['files', false], ['files', true], ['chat']]) {
     state.tab = tab;
+    state.fileOpen = Boolean(open);
     const lines = frame(state, { columns: 80, rows: 24, color: false });
     assert.equal(lines.length, 24, tab);
     for (const line of lines) assert.ok(width(line.replace(/\x1b\[[0-9;]*m/g, '')) <= 80, `${tab}: ${line}`);
@@ -86,4 +87,21 @@ test('merge is offered as the page offers it, and every view fits 80 columns', (
   state.tab = 'analysis';
   assert.match(frame(state, { columns: 80, rows: 24, color: false }).join('\n'), /reading the code · src\/x\.mjs · 3 files read · 4s/);
   assert.match(frame(state, { columns: 30, rows: 24 })[0], /^Make this window at least 40/);
+});
+
+test('the Q&A is folded: only the open question shows its answer and its follow-ups, and the cursor is on a question', () => {
+  const items = [
+    { id: 'a', parent: null, question: 'A?', answer: 'Because.' },
+    { id: 'b', parent: null, question: 'B?', answer: 'So.' },
+    { id: 'c', parent: 'b', question: 'C?', answer: 'Then.' },
+    { id: 'd', parent: null, question: 'D?', asking: true },
+  ];
+  const state = { qa: { data: { status: 'ready', items }, open: [], cursor: 1 } };
+  assert.deepEqual(qaVisible(state).map((i) => i.id), ['a', 'b', 'd']);
+  const shut = qaLines(state, 80);
+  assert.deepEqual(shut.lines.map(plainText).filter(Boolean).slice(0, 3), ['▸ A?', '▸ B? 1 follow-up', '▸ D? ⋯ being answered']);
+  assert.equal(shut.items[shut.lines.map(plainText).indexOf('▸ B? 1 follow-up')], shut.cursor);
+  state.qa.open = ['b'];
+  assert.deepEqual(qaVisible(state).map((i) => i.id), ['a', 'b', 'c', 'd']);
+  assert.deepEqual(qaLines(state, 80).lines.map(plainText).filter(Boolean).slice(0, 4), ['▸ A?', '▾ B?', '  So.', '  ▸ C?']);
 });
