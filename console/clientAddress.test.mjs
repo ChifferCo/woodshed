@@ -41,6 +41,11 @@ test('WOODSHED_TRUSTED_PROXIES takes addresses and ranges, and refuses anything 
   assert.equal(clientAddress(req('172.18.0.3', '198.51.100.9'), docker), '198.51.100.9');
   assert.equal(clientAddress(req('127.0.0.1', '198.51.100.9'), docker), '127.0.0.1', 'a list replaces loopback, never adds to it');
   assert.throws(() => parseTrustedProxies(' , ,'), /lists no address/, 'commas alone are not none');
+  const mapped = parseTrustedProxies('::ffff:192.0.2.0/120');
+  assert.equal(clientAddress(req('192.0.2.77', '198.51.100.9'), mapped), '198.51.100.9', 'a mapped range is its IPv4 one');
+  assert.equal(clientAddress(req('192.0.3.1', '198.51.100.9'), mapped), '192.0.3.1');
+  assert.equal(clientAddress(req('::ffff:192.0.2.1', '198.51.100.9'), parseTrustedProxies('::ffff:c000:201')), '198.51.100.9');
+  assert.throws(() => parseTrustedProxies('::ffff:192.0.2.0/95'), /WOODSHED_TRUSTED_PROXIES has/, 'shorter than the mapping');
   for (const bad of ['caddy', '10.0.0.0/', '10.0.0.0/33', '::1/129', '10.0.0.0/8/1', '10.0.0.0/x']) {
     assert.throws(() => parseTrustedProxies(bad), /WOODSHED_TRUSTED_PROXIES has/, bad);
   }

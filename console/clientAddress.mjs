@@ -64,7 +64,10 @@ export function parseTrustedProxies(value) {
     const ip = normalAddress(address);
     const family = ip && net.isIPv4(ip) ? 'ipv4' : 'ipv6';
     const most = family === 'ipv4' ? 32 : 128;
-    const prefix = bits === undefined ? most : /^\d{1,3}$/.test(bits) ? Number(bits) : NaN;
+    // A range written as IPv4 in IPv6 (::ffff:192.0.2.0/120) is checked as the IPv4 one it is: its first 96 bits are
+    // the mapping, so /120 is /24. Shorter than /96 would take in more than mapped addresses, and is refused.
+    const mapped = family === 'ipv4' && !net.isIPv4(String(address).trim()) ? 96 : 0;
+    const prefix = bits === undefined ? most : /^\d{1,3}$/.test(bits) ? Number(bits) - mapped : NaN;
     if (!ip || extra !== undefined || !(prefix >= 0 && prefix <= most)) {
       throw new Error(`WOODSHED_TRUSTED_PROXIES has ${name}, which is not an address or a range such as 10.0.0.0/8: list them comma-separated, or say none`);
     }
