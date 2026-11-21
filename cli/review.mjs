@@ -12,7 +12,7 @@
 // 2 waiting on a person (something only an admin can do, a sign-in, or the change not yet on the default branch),
 // 3 refused, 1 anything else (a project file that does not read, or a check that fails).
 
-import { execFileSync } from 'node:child_process';
+import { runGit } from '../shared/git.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -50,7 +50,7 @@ function printable(text, most = 400) {
 /** @returns {string|null}  the top of the git checkout `dir` is in */
 function checkoutOf(dir) {
   try {
-    return execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+    return runGit(dir, ['rev-parse', '--show-toplevel']).trim() || null;
   } catch {
     return null;
   }

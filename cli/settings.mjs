@@ -22,7 +22,7 @@
 // line stays each side's own. MCP logins never go either way, and an API key in an MCP server's env, a credential
 // helper or a file that looks like a secret is refused by name, never shown.
 
-import { execFileSync } from 'node:child_process';
+import { runGit } from '../shared/git.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -586,13 +586,13 @@ export async function claudePullPlan({ home, shared, only, replace }) {
 }
 
 function git(dir, args) {
-  return execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 });
+  return runGit(dir, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 });
 }
 
 // check-ignore exits 1 when none is ignored: its output is the answer either way.
 function gitIn(dir, args, input) {
   try {
-    return execFileSync('git', ['-C', dir, ...args], { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+    return runGit(dir, args, { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
   } catch (err) {
     if (err.status === 1) return err.stdout ?? '';
     throw err;

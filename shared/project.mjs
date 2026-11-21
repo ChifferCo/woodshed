@@ -28,7 +28,7 @@
 // dependencies, env files, databases or app.
 // Only `version` must be written; a field that can be none and is left out is none. A misspelt field is refused.
 
-import { execFileSync } from 'node:child_process';
+import { runGit } from './git.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -651,7 +651,7 @@ function gitShow(repoDir, file) {
   const branch = defaultBranchOf(repoDir);
   if (!branch) return fail("not in the checkout, and the repo's default branch could not be told, so its copy could not be read");
   try {
-    return execFileSync('git', ['-C', repoDir, 'show', `origin/${branch}:${file}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return runGit(repoDir, ['show', `origin/${branch}:${file}`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (err) {
     const stderr = String(err.stderr ?? '').trim();
     if (/path '.*' (does not exist in|exists on disk, but not in) 'origin\/.+'/.test(stderr)) return null;

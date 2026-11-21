@@ -96,6 +96,24 @@ test('enable writes the review into the project file, checks it, and with nothin
   assert.deepEqual(s.sent.map((c) => new URL(c.url).pathname), ['/api/review-readiness'], 'one read of the console, and nothing else');
 });
 
+test('review status and enable use installed Git when run from a checkout containing git.exe', async (t) => {
+  const s = await setup(t);
+  // An inert file, never a program. On Windows a bare Git invocation from this checkout would fail.
+  fs.writeFileSync(path.join(s.repo, 'git.exe'), '');
+  const before = process.cwd();
+  try {
+    process.chdir(s.repo);
+    const status = await s.run(['review', 'status', '--json']);
+    assert.equal(status.code, EXIT.waiting);
+    assert.equal(status.lines[0].repo, 'acme/game');
+    const enabled = await s.run(['review', 'enable', '--json']);
+    assert.equal(enabled.code, EXIT.done);
+    assert.equal(enabled.lines[0].written, true);
+  } finally {
+    process.chdir(before);
+  }
+});
+
 test('what only an admin can do is printed as its step, with exit 2; the file is written anyway', async (t) => {
   const s = await setup(t);
   s.state.reviewer = 'none';

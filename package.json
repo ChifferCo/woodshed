@@ -37,6 +37,7 @@
     "shared/defaultBranch.mjs",
     "shared/envNames.mjs",
     "shared/execFrames.mjs",
+    "shared/git.mjs",
     "shared/isMain.mjs",
     "shared/ownFiles.mjs",
     "shared/project.mjs",
