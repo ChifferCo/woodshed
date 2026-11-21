@@ -195,7 +195,7 @@ async function runMove({ origin, rest }, ctx) {
   const heldSecrets = agents.flatMap((a) => secretsIn(transcripts.get(a), '', { credentialHeaders: true }).map((hit) => ({ address: a, ...hit })));
   if (heldSecrets.length) {
     if (json) emit({ event: 'secrets', conversations: heldSecrets });
-    throw refused(`These conversations hold what looks like a secret, and the move would carry it into the session:\n${heldSecrets.map((h) => `  ${h.address}'s conversation ${conversations.get(h.address).id}, line ${h.line}: ${h.kind}`).join('\n')}\nRevoke the credential, then move a new conversation, or work on here. Nothing was moved.`);
+    throw refused(`These conversations hold what looks like a secret, and the move would carry it into the session:\n${heldSecrets.map((h) => `  ${h.address}'s conversation ${conversations.get(h.address).id}${h.line ? `, line ${h.line}` : ''}: ${h.kind}`).join('\n')}\nRevoke the credential, then move a new conversation, or work on here. Nothing was moved.`);
   }
 
   // ---- The sessions, read before anything is made.

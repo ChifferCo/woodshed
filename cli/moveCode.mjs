@@ -147,11 +147,10 @@ const CREDENTIAL_HEADER_TEXT = new RegExp(`(?:^|[^\\w-])(?:${headerNames})[\\t ]
 const isCredentialHeader = (name) => typeof name === 'string' && CREDENTIAL_HEADERS.includes(name.trim().toLowerCase());
 const hasHeaderValue = (value) => (Array.isArray(value) ? value : [value]).some((part) => typeof part === 'string' && part.trim());
 
-function hasCredentialHeader(line) {
-  if (CREDENTIAL_HEADER_TEXT.test(line)) return true;
-  if (!/^[\t\r ]*(?:\{|\[|")/.test(line)) return false;
+function hasStructuredCredentialHeader(text) {
+  if (!/^\ufeff?[\t\r\n ]*(?:\{|\[|")/.test(text)) return false;
   let record;
-  try { record = JSON.parse(line); } catch { return false; }
+  try { record = JSON.parse(text.replace(/^\ufeff/, '')); } catch { return false; }
   const pending = [record];
   while (pending.length) {
     const item = pending.pop();
@@ -208,14 +207,18 @@ export function secretName(file) {
 
 /**
  * The secrets in a file's text that its earlier text (the commit it changes) did not already hold.
- * @returns {{line: number, kind: string}[]}
+ * Explicit credential headers are reported by line or, for a complete JSON document, by file.
+ * @returns {{line: number|null, kind: string}[]}
  */
 export function secretsIn(text, before = '', { credentialHeaders = false } = {}) {
   const found = [];
-  const lines = String(text).split('\n');
+  const source = String(text);
+  const lines = source.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (credentialHeaders && hasCredentialHeader(line)) found.push({ line: i + 1, kind: 'a credential header' });
+    if (credentialHeaders && (CREDENTIAL_HEADER_TEXT.test(line) || hasStructuredCredentialHeader(line))) {
+      found.push({ line: i + 1, kind: 'a credential header' });
+    }
     for (const { user, end } of urlPasswords(line)) {
       if (before.includes(line.slice(user, end + 1))) continue;
       found.push({ line: i + 1, kind: 'a password in a URL' });
@@ -226,6 +229,11 @@ export function secretsIn(text, before = '', { credentialHeaders = false } = {})
       const fresh = [...line.matchAll(new RegExp(re.source, `${re.flags}g`))].some((m) => !before.includes(m[0]));
       if (fresh) found.push({ line: i + 1, kind });
     }
+  }
+  // JSONL is checked by line above. Also check a complete document within the blob scan budget.
+  if (credentialHeaders && lines.length > 1 && source.length <= SCAN_BYTES
+      && !found.some(({ kind }) => kind === 'a credential header') && hasStructuredCredentialHeader(source)) {
+    found.push({ line: null, kind: 'a credential header' });
   }
   return found;
 }

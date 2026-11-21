@@ -407,20 +407,27 @@ test('decoded transcript credential headers refuse a move before push or upload'
 test('credential headers in an untracked request log refuse the move before push', async (t) => {
   const l = laptop(t);
   const value = 'inert-fixture-bearer-value';
-  const file = 'request.log';
-  const record = JSON.stringify({ headers: { Authorization: `Bearer ${value}` } });
-  fs.writeFileSync(path.join(l.repo.root, file), `GET /fixture\nAuthorization: Bearer ${value}\n${record}\n`);
+  const record = { headers: { Authorization: `Bearer ${value}` } };
   fs.writeFileSync(path.join(l.repo.bare, 'hooks', 'pre-receive'), '#!/bin/sh\ntouch push-started\n', { mode: 0o755 });
 
-  const out = await l.run(['herdr', 'move', '--terminal', 't2', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json']);
-  assert.equal(out.code, EXIT.refused);
-  assert.deepEqual(out.events.find((event) => event.event === 'secrets')?.files, [2, 3].map((line) => ({
-    root: fs.realpathSync(l.repo.root), path: file, line, kind: 'a credential header',
-  })));
-  assert.ok(!(out.out + out.err).includes(value));
-  assert.ok(!fs.existsSync(path.join(l.repo.bare, 'push-started')));
-  assert.equal(l.onGithub('woodshed/move-c0ffee42'), null);
-  assert.ok(!l.calls.some(([method]) => method === 'POST'));
+  const logs = [
+    ['request.log', `GET /fixture\nAuthorization: Bearer ${value}\n${JSON.stringify(record)}\n`, [2, 3]],
+    ['request.json', `${JSON.stringify(record, null, 2)}\n`, [null]],
+  ];
+  for (const [file, content, lines] of logs) {
+    const trace = path.join(l.repo.root, file);
+    fs.writeFileSync(trace, content);
+    const out = await l.run(['herdr', 'move', '--terminal', 't2', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json']);
+    assert.equal(out.code, EXIT.refused, file);
+    assert.deepEqual(out.events.find((event) => event.event === 'secrets')?.files, lines.map((line) => ({
+      root: fs.realpathSync(l.repo.root), path: file, line, kind: 'a credential header',
+    })));
+    assert.ok(!(out.out + out.err).includes(value));
+    assert.ok(!fs.existsSync(path.join(l.repo.bare, 'push-started')));
+    assert.equal(l.onGithub('woodshed/move-c0ffee42'), null);
+    assert.ok(!l.calls.some(([method]) => method === 'POST'));
+    fs.unlinkSync(trace);
+  }
 });
 
 test('filename-only and binary credentials stop the move without printing their values', async (t) => {

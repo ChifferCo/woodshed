@@ -279,8 +279,8 @@ Then, in order (`move.mjs` says each step):
    What is read is everything the push would send that the remote does not have (its branches asked of it with
    `ls-remote`), commits not pushed yet included. The move checks outgoing file and directory names and scans blobs,
    including binary files, for recognized credentials. It also refuses explicit credential headers in outgoing content,
-   such as an `Authorization` header in a request log. Files over 20 MB refuse the move. A remote that pushes to more
-   than one place, or that git rewrites to another repo (`pushInsteadOf`), is refused.
+   such as an `Authorization` header in a plain-text or JSON request log. Files over 20 MB refuse the move. A remote
+   that pushes to more than one place, or that git rewrites to another repo (`pushInsteadOf`), is refused.
    A new Git LFS pointer also refuses the move because its payload is outside the Git tree. The move's push skips LFS uploads.
    Changed submodule commits must exist on a remote-tracking branch in their initialized checkout. The move pushes only
    the parent repository.
