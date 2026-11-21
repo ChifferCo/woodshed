@@ -35,6 +35,7 @@ test('secrets are found by name and by content, said by kind and line, and an ex
   assert.deepEqual(secretsIn('//registry.npmjs.org/:_authToken=${NPM_TOKEN}'), [], 'a variable is no token');
   const aws = `AKIA${'Q'.repeat(16)}`;
   assert.deepEqual(secretsIn(`x ${aws}\ny`, `old ${aws}`), [], 'one the commit already held is not the move\'s doing');
+  assert.deepEqual(secretsIn(`x ${aws} AKIA${'N'.repeat(16)}`, `old ${aws}`), [{ line: 1, kind: 'an AWS access key' }], 'a new one beside it is new');
 });
 
 test('the work is frozen from a temporary index: untracked files in, ignored ones out, and the person\'s index, branch and files untouched', async (t) => {
@@ -204,4 +205,11 @@ test('a UTF-16 text file is read for secrets, not skipped as binary', async (t) 
   const found = await survey(git, await checkoutOf(git, root), { tag: 'test' });
   t.after(() => fs.rmSync(path.dirname(found.index), { recursive: true, force: true }));
   assert.deepEqual(found.secrets.map((s) => `${s.path}:${s.line} ${s.kind}`).sort(), ['no-bom.log:2 an AWS access key', 'windows.log:2 an AWS access key']);
+});
+
+test('a push reached through a chain of url rewrites is refused', async (t) => {
+  const { root, sh, git } = repoFor(t);
+  sh(['config', 'url.https://github.com/acme/app-staging.git.pushInsteadOf', 'https://github.com/acme/app.git'], root);
+  sh(['config', 'url.https://github.com/someone/mirror.git.insteadOf', 'https://github.com/acme/app-staging.git'], root);
+  assert.match((await checkoutOf(git, root)).error, /through more than one url rewrite|git pushes it to/);
 });

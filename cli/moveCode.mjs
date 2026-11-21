@@ -94,6 +94,12 @@ export async function checkoutOf(git, cwd) {
   // Where git really pushes, after its url.*.pushInsteadOf rewriting, is that repo on GitHub, or a folder on this
   // computer (a local mirror, which publishes nothing). Anywhere else, the work would go somewhere not checked.
   const pushTo = pushes[0] ?? url;
+  // Pushing to that URL must not be rewritten again (a chain of url.* rules): then it is where the push really goes.
+  const again = (await git(['ls-remote', '--get-url', pushTo], { cwd: root })).stdout.trim();
+  const pushRules = (await git(['config', '--get-regexp', '^url\\..*\\.pushinsteadof$'], { cwd: root })).stdout.split('\n').filter(Boolean).map((l) => l.split(' ').slice(1).join(' '));
+  if ((again && again !== pushTo) || pushRules.some((prefix) => prefix && pushTo.startsWith(prefix))) {
+    return { error: `${root}'s remote ${remote} reaches its push URL through more than one url rewrite: give it a pushurl git does not rewrite` };
+  }
   const local = /^(file:\/\/|\/|\.\.?\/)/.test(pushTo);
   if (!local && githubRepo(pushTo)?.toLowerCase() !== repo.toLowerCase()) {
     return { error: `${root}'s remote ${remote} is ${repo}, but git pushes it to ${pushTo.replace(/\/\/[^@/]*@/, '//')} (a url rewrite): the move pushes only to the repo it checked` };
@@ -143,8 +149,9 @@ export function secretsIn(text, before = '') {
   const lines = String(text).split('\n');
   for (let i = 0; i < lines.length; i++) {
     for (const [re, kind] of SECRET_CONTENT) {
-      const match = re.exec(lines[i]);
-      if (match && !String(before).includes(match[0])) found.push({ line: i + 1, kind });
+      // Every one on the line: a new token beside one the remote already had is still new.
+      const fresh = [...lines[i].matchAll(new RegExp(re.source, `${re.flags.replace('g', '')}g`))].some((m) => !String(before).includes(m[0]));
+      if (fresh) found.push({ line: i + 1, kind });
     }
   }
   return found;

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -419,8 +420,8 @@ test('a conversation over hc\'s 8 MB goes in gzipped parts, and is put together 
   const file = fs.readdirSync(path.join(l.repo.dir, 'home', '.claude', 'projects')).map((d) => path.join(l.repo.dir, 'home', '.claude', 'projects', d, `${CONVERSATION}.jsonl`))[0];
   // Ten megabytes of turns that do not compress to nothing.
   const lines = [];
-  for (let i = 0, size = 0; size < 9 * 1024 * 1024; i++) {
-    lines.push(JSON.stringify({ type: 'assistant', cwd: l.cwd, message: { content: `${i} ${Buffer.from(String(Math.sin(i))).toString('base64').repeat(30)}` } }));
+  for (let i = 0, size = 0; size < 12 * 1024 * 1024; i++) {
+    lines.push(JSON.stringify({ type: 'assistant', cwd: l.cwd, message: { content: `${i} ${crypto.randomBytes(600).toString('base64')}` } }));
     size += lines.at(-1).length + 1;
   }
   fs.appendFileSync(file, `${lines.join('\n')}\n`);
@@ -428,7 +429,7 @@ test('a conversation over hc\'s 8 MB goes in gzipped parts, and is put together 
   const out = await l.run(['move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.done, out.err + out.out);
   const parts = l.h.calls.filter((c) => c.args?.[0] === 'file' && c.args.at(-1).includes('.woodshed-part-'));
-  assert.ok(parts.length >= 1 && parts.every((c) => c.input.length <= 6 * 1024 * 1024), 'each part within what hc takes');
+  assert.ok(parts.length >= 2 && parts.every((c) => c.input.length <= 6 * 1024 * 1024), `several parts, each within what hc takes (${parts.length})`);
   const dest = `woodshed-dddd0004:/home/node/.claude/projects/${claudeProjectDir('/home/node/work/app/services/api')}/${CONVERSATION}.jsonl`;
   const expected = fs.readFileSync(file, 'utf8').split(l.cwd).join('/home/node/work/app/services/api');
   assert.equal(l.h.files.get(dest).toString('utf8'), expected);
