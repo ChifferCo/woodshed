@@ -93,6 +93,7 @@ Keep a source explicit even when only one is supported. Keep session management 
 | `woodshed repo list` | Lists connected repos and, for admins, which repos can be added and where the GitHub App has access. | 0 listed, 2 sign in, 1 failed |
 | `woodshed repo add <owner/name> [--name N]` | Adds a repo as in Console settings. Use `--name` on consoles that let you choose a project name. | 0 added, 2 GitHub App access or sign-in needed, 3 refused, 1 failed |
 | `woodshed repo remove <owner/name>` | Removes a repo and its Woodshed settings as in Console settings. | 0 removed, 2 sign in, 3 refused, 1 failed |
+| `woodshed review <id>\|<pull request>` | Reviews one of your sessions' change on this terminal, as the console's Review tab: [below](#reviewing-a-session-on-this-terminal). | 0 quit, 2 the sign-in ended, 3 a shared session or one that has seen production data, 1 anything else |
 | `woodshed review enable\|status` | In a checkout: reviews the repo's pull requests in Woodshed sessions, by its project file, and says what the console still needs. Below. | 0 done, 2 an admin's step, a sign-in or a merge still to come, 1 a project file that does not read or check |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 | `woodshed config list\|get\|set` | Reads or sets [your choices on My settings](#your-choices-on-my-settings). | as below |
@@ -161,6 +162,61 @@ GitHub App or from before the route): the file is written, but nothing says the 
 once the default branch says it, the console runs its reviews (the default branch's `runsOn`, if any, names it, App and
 name, as its fleet reads it) and its reviewer App is known to be installed; else `2` with what comes next.
 
+## Reviewing a session on this terminal
+
+`woodshed review <id>` opens one of your My Woodshed sessions' review full-screen, the review the console's Review tab
+shows (`shared/review`, in the session). `123`, `#123` or a pull request's URL open the session of yours that opened
+it, your running one first. A bare number on more than one of your sessions' repos is refused (give the URL), and so is
+a pull request whose session's review now posts to another one, such as one that replaced it: a verdict or a merge
+would land there, so open that session by its id instead. A paused one is resumed first, as `session connect` does. It draws, in the page's order:
+
+- **The header**: the title (the pull request's own once there is one), its branch, the pull request's state, verdict
+  and checks, the commit, `+`/`−`, what was read (the working tree as of when, or the pull request at which commit),
+  and the analysis's state while it runs or when it failed.
+- **1 Overview**: the pull request's description, the overview, the decisions and the architecture, its diagram as a
+  list of what connects to what, marked added, removed or changed. **2 Q&A**: the questions someone new to the code
+  would ask, each answered from the code, started on opening the tab as the page does. They are folded, as on the
+  page: `↑`/`↓` choose one, `Enter` opens it (one at a time, with its follow-ups folded under it) and `←` closes it;
+  `i` asks where the cursor is: a follow-up under the chosen question, or on the last row, `＋ Ask a question of
+  your own`, a new one at the end. A question waits for its answer where it was asked, with the cursor on it. `A` asks
+  them all again. **3 Discussion** (with a
+  pull request): what was said about the change as a whole. **4 Files changed**: every file, grouped in the
+  analysis's reading order with each group's reason, and under each file its role, `+`/`−`, conversations and what it
+  does. `Enter` opens one's diff, with every conversation under its line (`↑`/`↓` move the line a comment goes on,
+  `n`/`p` the next file, `Esc` back to the list); `i`, on the list or in a diff, starts a chat about that file (and
+  line), as the page's Send to the conversation does. **5 Chat**: the page's
+  conversation panel, with the session's agent reading the branch (`Enter` asks, `↑`/`↓` in the box offer the page's
+  suggestions). The shed does not stream an answer: the chat says how long it has been reading, then draws it.
+- **The actions**, offered where the page offers them, the GitHub ones only with a pull request: `c` a line comment
+  (into your draft review, or `Tab` to post it at once while there is no draft), `s` submit your review (comment,
+  approve or request changes, with your draft comments; `Ctrl-D` twice discards the draft), `m` merge (after GitHub's
+  read of whether it may: approved, checks passing, the head this review read; into the merge queue where the base
+  has one), `t` rename the pull request. `r` Re-review (pulls the branch, takes the diff again and reads it again; with
+  nothing new, `a` reads the same commit again), `a` runs or retries the analysis, `d` discards the analysis and the
+  conversation. `?` lists the keys; `q` quits, and the session and the review go on.
+
+The footer names the keys for what is on screen. It draws in the terminal's own colours (bold, dim, reverse and the
+eight basic colours, foreground only), so it reads on a light terminal as on a dark one; `NO_COLOR` keeps bold, dim and
+reverse. It follows the window's size from 40 columns up. Text from the session never reaches the terminal with a
+control character in it.
+
+The page's rules hold: a write to GitHub goes as you, from your own session, once you connected GitHub on My settings
+before it started; otherwise the session hides the pull request and refuses the write (`session/reviewShed/policy.mjs`).
+With `--json`, or with no terminal, it prints the analysis and the diff's summary once and exits: one
+`{"event":"review","review":{…}}` with `title`, `pullRequest`, `analysis` (`status`, `overview`, `decisions`,
+`architecture`) and `diff` (`files`, `additions`, `deletions`, and `groups` in reading order). Opening a review with no
+analysis yet starts it, as opening the tab does.
+
+**How:** the page's own calls, `/reviews/claude-<id>/...`, with this computer's token (console/README.md, "A review
+from the command line"). Only your own sessions, never one that has seen production data, never the page itself.
+
+### Trying it on the dev console
+
+`DEV_CONSOLE_REVIEW_PR=1 node console/bin/devConsole.mjs 7712` makes `/s/beadfeed` @local's own session, whose branch
+has a made-up open pull request, #26701, answered by a stand-in `gh` (`console/bin/devReviewGh.mjs`), so the writes run
+against it and nothing reaches GitHub. Sign in with `node cli/woodshed.mjs login --console http://localhost:7712`, then
+`node cli/woodshed.mjs review beadfeed`. Its Chat, Q&A and Re-review run `claude` when one is on the PATH.
+
 ## The tunnel into a session
 
 `woodshed tunnel` is a byte pipe, so it prints nothing of its own except on stderr, and only when something fails; it
@@ -186,7 +242,7 @@ before the line ends (Ctrl-C, a cut network) hangs up everything the line starte
 | `session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--connect\|--herdr [--parent[=T]]] ["prompt"]` | Starts a private session, as My Woodshed's New session does: on `R` (`owner/name`, default the repo New session opens on for you), working on branch `B` or a pull request or issue (`123`, `pr 123`, its URL), with that agent and model. Then it waits, printing each start step as it is done, until the session runs. `--no-wait` returns once the console has it. Ctrl-C stops the wait, not the session. `--connect` then puts this terminal on its agent's, as `connect` does; `--herdr` adds it to Herdr, as `herdr` does (below), and checks for `hc` before starting anything; `--parent` with it makes the agent's terminal a child of a terminal here (below). | 0 running (with `--connect`, until you disconnect; with `--herdr`, added), 2 running and needs you, 1 failed or stopped (or `hc` could not add it), 3 a repo you cannot start on, or no `hc` |
 | `session connect <id> [--shell]` | Puts this terminal on one of your sessions' agent, as its TUI tab shows it (claude or codex, in tmux or Herdr), or with `--shell` on its shell, the Terminal tab's. A paused or stopped one is resumed first. Below. | 0 disconnected (Ctrl-\\) or the session's terminal closed normally, 2 the sign-in ended, 1 could not open or reconnect, or the session's terminal closed it on an error, 3 a shared session, or one that has seen production data |
 | `session herdr <id> [--parent[=T]]` | Makes one of your sessions a machine in Herdr, `woodshed-<id>`, so it shows in the app's sidebar beside this computer: below. A paused or stopped one is resumed first, and waited for as `resume` does; with `--parent`, resumed waiting for its agent's terminal from here. | 0 connected, 2 connected and the session needs you, 1 its start failed, `hc` could not add it, or `--parent` and its agent's terminal was already there, 3 no `hc`, one older than 0.1.21, a shared session, one that has seen production data, or `--parent` outside a Herdr terminal |
-| `session list [--all]` | Your sessions and the shared ones you can see: id, state (the page's words), whose, when it pauses or stops by itself, project and title. Ended shared sessions only with `--all`. With `hc` here, it also names the `woodshed-<id>` machines in Herdr whose session is no longer on the console (`herdrLeftovers` in `--json`), and says to run `prune`. | 0 |
+| `session list [--all]` | Your sessions and the shared ones you can see: id, state (the page's words), whose, when it pauses or stops by itself, project and title. Under each, every pull request it opened, as the console's chips read it (`#123 open · approved · checks 3 passing`; `not read yet` before the console has read it), and `review it: woodshed review <id>` under your own sessions'. Then your own open pull requests on the console's repos that no listed session opened (My Woodshed's Pull requests group). Ended shared sessions only with `--all`. With `hc` here, it also names the `woodshed-<id>` machines in Herdr whose session is no longer on the console (`herdrLeftovers` in `--json`), and says to run `prune`. | 0 |
 | `session get <id>` | One session: state, branch, agent, pull request, when it pauses or stops, and the hours it runs on. | 0, 1 none you can see |
 | `session stop <id>` | Stops it, and waits until the console has stopped it, a running one's work checkpointed on the way (up to 3 minutes: past that it says to check with `get`). One that paused or failed by itself is marked stopped by you, as the page's Stop does, so it no longer waits on you. | 0, 1 not answered in time |
 | `session resume <id> [--no-wait]` | Starts one of your stopped sessions again, its conversation and all, and waits as `new` does. | as `new`; 3 a shared session (resume it on the console) |
@@ -201,7 +257,11 @@ and `why`, `idle` or `lifetime`) say when, so an agent can decide whether to.
 
 With `--json` each prints one object per line: `new` and `resume` an `{"event":"started"|"resumed","session":{…}}`,
 then a `status` event as it goes in line or starts, a `step` event per start step, and last `running`, `needs-you`,
-`failed` or `stopped` with the session; `list` one `{"console","login","sessions":[…]}`, `get` one `{"session":{…}}`.
+`failed` or `stopped` with the session; `list` one `{"console","login","sessions":[…],"pullRequests":[…]}`, `get` one `{"session":{…}}`.
+Each session has `pullRequest` (`number`, `repo`, `url`, `title`, `state`, `review`, `checks`: the chip's fields, null
+while unread), `pullRequests` (every one it opened) and `reviewCommand` (`woodshed review <id>` for your own sessions,
+else null); `pullRequests` at the top are your open ones with no session, with their `project` and `branch`. A console
+from before it gave them adds `pullRequestsError` and lists the sessions all the same.
 `herdr` (and `new --herdr` after its `running`) ends with `{"event":"connected","session":{…},"machine":{"name","action","state"},"agent":{"inHerdr","address"}}`,
 and `remove`'s `removed` event has `machine`: `{"name","removed"}`, or null with no `hc` here.
 
@@ -308,10 +368,10 @@ hc wait --children any
 `hc` runs with your environment, so `HC_SESSION` and the XDG folders pick the core it talks to, as they do for `hc`
 itself. `WOODSHED_HC_BIN` names another `hc` than the PATH's.
 
-Besides its own `/api/cli/*`, the tunnel's `/api/tunnel/exec/<id>` and the terminals' `/api/tunnel/term|shell/<id>`, the console lets the token reach these routes and
+Besides its own `/api/cli/*`, the tunnel's `/api/tunnel/exec/<id>`, the terminals' `/api/tunnel/term|shell/<id>` and a review's `/reviews/claude-<id>/...`, the console lets the token reach these routes and
 no others (`console/cliSessions.mjs`), each as its person:
 
-- `GET /api/sessions`, `GET /api/my/projects`
+- `GET /api/sessions`, `GET /api/my/projects`, `GET /api/my/pulls`
 - `POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume`, `POST /api/my/sessions/<id>/remove`
 - `POST /api/sessions/<id>/stop`, `POST /api/sessions/<id>/extend`, `POST /api/sessions/<id>/limits`
 - `GET /api/cli/config`, and `woodshed config`'s writes: `POST /api/my/terminal`, `/api/my/reviews`,
