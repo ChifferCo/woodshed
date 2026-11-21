@@ -12,6 +12,7 @@
     "node": ">=22"
   },
   "files": [
+    "cli/config.mjs",
     "cli/credentials.mjs",
     "cli/hc.mjs",
     "cli/sessions.mjs",

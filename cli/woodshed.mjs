@@ -123,8 +123,13 @@ export function consoleOrigin(typed) {
   return url.origin;
 }
 
-function configDir(env) {
-  return path.join(env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'woodshed');
+// On Windows, %LOCALAPPDATA%\woodshed: the local folder, not %APPDATA%, which a roaming profile copies to a server at
+// each sign-out, token and all. XDG_CONFIG_HOME is a Unix convention, and not read there: a token is kept only in that
+// folder on Windows (credentials.mjs), and cli.json beside it.
+function configDir(env, platform) {
+  if (platform === 'win32') return path.join(env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'woodshed');
+  if (env.XDG_CONFIG_HOME) return path.join(env.XDG_CONFIG_HOME, 'woodshed');
+  return path.join(os.homedir(), '.config', 'woodshed');
 }
 
 // cli.json: the console used last, and for each console who is signed in and which store holds the token. Never a token.
@@ -166,11 +171,15 @@ export function selfCommand({ execPath = process.execPath, argv1 = process.argv[
 }
 
 // Only an address this command line built (approvalUrl), and never through a shell: cmd's `start` would read & and | in
-// it as commands of their own.
+// it as commands of their own. On Windows, rundll32 from System32 by its full path, never one in the current folder.
+export function browserCommand(url, platform, env = process.env) {
+  if (platform === 'darwin') return ['open', [url]];
+  if (platform === 'win32') return [path.win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'rundll32.exe'), ['url.dll,FileProtocolHandler', url]];
+  return ['xdg-open', [url]];
+}
+
 function openBrowser(url, platform) {
-  const [command, args] = platform === 'darwin' ? ['open', [url]]
-    : platform === 'win32' ? ['rundll32', ['url.dll,FileProtocolHandler', url]]
-      : ['xdg-open', [url]];
+  const [command, args] = browserCommand(url, platform);
   try {
     const child = spawn(command, args, { stdio: 'ignore', detached: true });
     child.on('error', () => {});
@@ -221,7 +230,7 @@ export async function main(argv, deps = {}) {
   const sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const platform = deps.platform ?? process.platform;
   const now = deps.now ?? Date.now;
-  const dir = configDir(env);
+  const dir = configDir(env, platform);
   const credentials = deps.credentials ?? createCredentials({ platform, dir });
   const open = deps.openBrowser ?? ((url) => openBrowser(url, platform));
   // Herdr's hc, as the person's shell finds it, on the core their environment names (HC_SESSION and the XDG folders).
@@ -291,8 +300,6 @@ export async function main(argv, deps = {}) {
   }
 
   async function login(origin, { browser }) {
-    // Before any code is asked for, so no sign-in is left at the console that nothing here could keep.
-    if (platform === 'win32') throw new CliError('woodshed login does not run on Windows yet: it has nowhere to keep the token safely', { code: EXIT.refused, status: 'refused' });
     const before = signedIn(origin);
     const started = await call(origin, '/api/cli/device', { method: 'POST', body: { name: deps.hostname ?? os.hostname() } });
     if (started.status !== 200 || !started.body?.deviceCode) {
@@ -338,7 +345,10 @@ export async function main(argv, deps = {}) {
       try {
         store = credentials.save(origin, token);
       } catch (err) {
-        throw new CliError(`Signed in, but the token could not be kept: ${err.message}. Revoke this sign-in on My settings.`);
+        // Nothing here can use it: it is ended at the console, so no sign-in is left there for nobody.
+        const out = await call(origin, '/api/cli/logout', { method: 'POST', token }).catch(() => null);
+        const ended = out?.status === 200 || out?.status === 401;
+        throw new CliError(`Signed in, but the token could not be kept: ${err.message}. ${ended ? 'It was ended at the console.' : 'Revoke this sign-in on My settings, under Command line.'}`);
       }
       const config = readConfig(dir);
       config.current = origin;
@@ -349,6 +359,9 @@ export async function main(argv, deps = {}) {
       if (before.token && before.token !== token) {
         const out = await call(origin, '/api/cli/logout', { method: 'POST', token: before.token }).catch(() => null);
         earlierEnded = out?.status === 200 || out?.status === 401;
+      } else if (!before.token && before.store?.holds?.(origin)) {
+        // One kept here that could not be read (sealed for a desktop sign-in, read over SSH): nothing can end it here.
+        earlierEnded = false;
       }
       if (before.store && before.store.kind !== store.kind) before.store.remove(origin);
       const result = {
@@ -366,6 +379,13 @@ export async function main(argv, deps = {}) {
 
   async function logout(origin) {
     const { config, entry, store, token } = signedIn(origin);
+    if (!token && store?.holds?.(origin)) {
+      // Kept here but not readable now (sealed with DPAPI at a desktop sign-in, and this is an SSH one, which DPAPI
+      // cannot open): left as it is, so a sign-out where it can be read still ends it at the console.
+      if (json) emit({ event: 'signed-out', console: origin, wasSignedIn: true, endedAtConsole: false, unreadable: true });
+      say(`This computer's sign-in to ${origin} could not be read here (${store.label}), so it was left as it is. Sign out where you signed in, or revoke it on My settings, under Command line.`);
+      return EXIT.refused;
+    }
     let atConsole = null;
     if (token) {
       try {
