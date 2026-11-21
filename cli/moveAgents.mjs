@@ -10,6 +10,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { hideUrlPasswords } from './moveCode.mjs';
+
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'mksh', 'nu', 'tcsh', 'csh', 'elvish', 'xonsh', 'pwsh']);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // How far apart an agent's last state change and its conversation's last write may be to be called the same turn.
@@ -320,28 +322,6 @@ const USER_FLAG_RE = /^(-u|-U|--user|--proxy-user)$/;
 // A header carrying a credential, as one word (-H 'Authorization: Bearer x', --header=Cookie:…).
 const SECRET_HEADER_RE = /^(--header=|-H)?\s*(authorization|proxy-authorization|cookie|x-api-key|api-key|x-auth-token)\s*:/i;
 
-function hideUrlPasswords(word) {
-  const out = [];
-  let keepFrom = 0;
-  // Find the delimiter first. Trying all possible scheme prefixes on an arbitrary word can take quadratic time.
-  for (let marker = word.indexOf('://'); marker !== -1; marker = word.indexOf('://', marker + 3)) {
-    let before = marker - 1;
-    while (before >= 0 && /[\w+.-]/.test(word[before]) && !/[a-z]/i.test(word[before])) before -= 1;
-    if (before < 0 || !/[a-z]/i.test(word[before])) continue;
-    const user = marker + 3;
-    let colon = user;
-    while (colon < word.length && !/[/\s:@]/.test(word[colon])) colon += 1;
-    if (colon === user || word[colon] !== ':') continue;
-    const password = colon + 1;
-    let at = password;
-    while (at < word.length && !/[@\s/]/.test(word[at])) at += 1;
-    if (at === password || word[at] !== '@') continue;
-    out.push(word.slice(keepFrom, password), '…');
-    keepFrom = at;
-  }
-  return out.length ? [...out, word.slice(keepFrom)].join('') : word;
-}
-
 /**
  * A program's command line as it may be shown: every value that may be a credential hidden as `…`. The real one is kept
  * for the restart alone.
@@ -356,7 +336,7 @@ export function shownCommand(argv, looksSecret = () => false) {
     const credentialName = /^[\w-]+$/.test(name) && SECRET_WORD_RE.test(name);
     const flag = name.startsWith('-');
     const safeUrl = hideUrlPasswords(word);
-    if (looksSecret(word)) out.push('…');
+    if (looksSecret(safeUrl)) out.push('…');
     else if (SECRET_HEADER_RE.test(word)) out.push(`${word.split(':')[0]}: …`);
     else if (safeUrl !== word) out.push(safeUrl);
     // curl's user:password joined to its flag: -uuser:pass, --user=user:pass.

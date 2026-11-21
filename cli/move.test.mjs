@@ -358,6 +358,24 @@ test('a conversation that holds a secret is refused before the push', async (t) 
   assert.equal(l.onGithub('woodshed/move-c0ffee42'), null);
 });
 
+test('a password-bearing URL in a transcript refuses the move before push or upload', async (t) => {
+  const l = laptop(t);
+  const password = 'inert-fixture-password';
+  const url = `postgresql://fixture:${password}@db.example.invalid/app`;
+  fs.writeFileSync(path.join(l.repo.root, '.env'), `DATABASE_URL=${url}\n`);
+  const file = path.join(l.repo.dir, 'home', '.claude', 'projects', claudeProjectDir(l.cwd), `${CONVERSATION}.jsonl`);
+  fs.appendFileSync(file, `${JSON.stringify({ type: 'assistant', message: { content: `DATABASE_URL=${url}` } })}\n`);
+  fs.writeFileSync(path.join(l.repo.bare, 'hooks', 'pre-receive'), '#!/bin/sh\ntouch push-started\n', { mode: 0o755 });
+
+  const out = await l.run(['move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json']);
+  assert.equal(out.code, EXIT.refused);
+  assert.deepEqual(out.events.find((event) => event.event === 'secrets')?.conversations, [{ address: 't1', line: 3, kind: 'a password in a URL' }]);
+  assert.ok(!(out.out + out.err).includes(password));
+  assert.ok(!l.calls.some(([method]) => method === 'POST'));
+  assert.ok(!l.h.calls.some((call) => call.args?.[0] === 'file'));
+  assert.ok(!fs.existsSync(path.join(l.repo.bare, 'push-started')));
+});
+
 test('filename-only and binary credentials stop the move without printing their values', async (t) => {
   const l = laptop(t);
   const synthetic = `ghp_${'f4'.repeat(18)}`;

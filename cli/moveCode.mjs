@@ -141,7 +141,35 @@ const SECRET_CONTENT = [
   [/:_authToken=(?!\$\{)[^\s'"\0]{8,}/, 'an npm token'],
 ];
 
+// Find the URL delimiter first so scanning an arbitrary string never retries every possible scheme prefix.
+function* urlPasswords(text) {
+  for (let marker = text.indexOf('://'); marker !== -1; marker = text.indexOf('://', marker + 3)) {
+    let before = marker - 1;
+    while (before >= 0 && /[\w+.-]/.test(text[before]) && !/[a-z]/i.test(text[before])) before -= 1;
+    if (before < 0 || !/[a-z]/i.test(text[before])) continue;
+    const user = marker + 3;
+    let colon = user;
+    while (colon < text.length && !/[/\s:@\0]/.test(text[colon])) colon += 1;
+    if (colon === user || text[colon] !== ':') continue;
+    const start = colon + 1;
+    let end = start;
+    while (end < text.length && !/[@\s/\0]/.test(text[end])) end += 1;
+    if (end > start && text[end] === '@') yield { user, start, end };
+  }
+}
+
+export function hideUrlPasswords(text) {
+  const out = [];
+  let keepFrom = 0;
+  for (const { start, end } of urlPasswords(text)) {
+    out.push(text.slice(keepFrom, start), '…');
+    keepFrom = end;
+  }
+  return out.length ? [...out, text.slice(keepFrom)].join('') : text;
+}
+
 export function redactCredentials(text) {
+  text = hideUrlPasswords(text);
   for (const [re] of SECRET_CONTENT) text = text.replace(new RegExp(re.source, `${re.flags}g`), '…');
   return text;
 }
@@ -159,9 +187,15 @@ export function secretsIn(text, before = '') {
   const found = [];
   const lines = String(text).split('\n');
   for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    for (const { user, end } of urlPasswords(line)) {
+      if (before.includes(line.slice(user, end + 1))) continue;
+      found.push({ line: i + 1, kind: 'a password in a URL' });
+      break;
+    }
     for (const [re, kind] of SECRET_CONTENT) {
       // Every one on the line: a new token beside one the remote already had is still new.
-      const fresh = [...lines[i].matchAll(new RegExp(re.source, `${re.flags}g`))].some((m) => !before.includes(m[0]));
+      const fresh = [...line.matchAll(new RegExp(re.source, `${re.flags}g`))].some((m) => !before.includes(m[0]));
       if (fresh) found.push({ line: i + 1, kind });
     }
   }
