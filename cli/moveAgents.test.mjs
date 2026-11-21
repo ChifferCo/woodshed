@@ -148,6 +148,13 @@ test('a program\'s command line is shown with what may be a credential hidden', 
   assert.equal(shownCommand(['curl', '-Uproxy:pw', '--db-url=postgres://u:pw@h/db', 'mysql', '--pass', 'pw']), 'curl -U… --db-url=postgres://u:…@h/db mysql --pass …');
 });
 
+test('credential preview handles long nonmatching arguments and several password-bearing URLs in one argument', () => {
+  const long = 'key'.repeat(40_000);
+  assert.ok(shownCommand(['echo', `${long}!`, `--pwd${long}!`]) === `echo '${long}!' '--pwd${long}!'`);
+  assert.equal(shownCommand(['echo', '--urls=https://u:first@one.example,a1://v:second@two.example']),
+    'echo --urls=https://u:…@one.example,a1://v:…@two.example');
+});
+
 test('a Codex conversation is told the model provider the session\'s codex runs on', () => {
   const text = `${JSON.stringify({ type: 'session_meta', payload: { id: UUID(1), cwd: '/w/app', model_provider: 'openai' } })}\n${JSON.stringify({ type: 'turn_context', payload: { cwd: '/w/app' } })}\n`;
   const [meta, turn] = rewriteConversation(text, { from: ['/w/app'], to: '/work/app', codexProvider: 'woodshed' }).trim().split('\n').map((l) => JSON.parse(l));

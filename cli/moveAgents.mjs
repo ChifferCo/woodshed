@@ -313,15 +313,34 @@ export function withoutStateHooks(settings) {
   return out;
 }
 
-// A word that holds a credential: a known token's shape, a value after a flag that names one, or NAME=value of one.
-const SECRET_FLAG_RE = /^--?[\w-]*(token|password|passwd|pass|pwd|secret|key|auth|credential)[\w-]*$/i;
+// Validate the name and look for a credential word in separate passes, even for long arguments.
+const SECRET_WORD_RE = /token|password|passwd|pass|pwd|secret|key|auth|credential/i;
 // A flag whose value is a credential only when it looks like one: curl's -u user:password, but not python's -u alone.
 const USER_FLAG_RE = /^(-u|-U|--user|--proxy-user)$/;
-// A URL with a password in it: https://user:password@host.
-const URL_PASSWORD_RE = /([a-z][\w+.-]*:\/\/[^/\s:@]+:)[^@\s/]+@/i;
 // A header carrying a credential, as one word (-H 'Authorization: Bearer x', --header=Cookie:…).
 const SECRET_HEADER_RE = /^(--header=|-H)?\s*(authorization|proxy-authorization|cookie|x-api-key|api-key|x-auth-token)\s*:/i;
-const SECRET_ASSIGN_RE = /^([\w-]*(token|password|passwd|secret|key|auth|credential)[\w-]*)=(.+)$/i;
+
+function hideUrlPasswords(word) {
+  const out = [];
+  let keepFrom = 0;
+  // Find the delimiter first. Trying all possible scheme prefixes on an arbitrary word can take quadratic time.
+  for (let marker = word.indexOf('://'); marker !== -1; marker = word.indexOf('://', marker + 3)) {
+    let before = marker - 1;
+    while (before >= 0 && /[\w+.-]/.test(word[before]) && !/[a-z]/i.test(word[before])) before -= 1;
+    if (before < 0 || !/[a-z]/i.test(word[before])) continue;
+    const user = marker + 3;
+    let colon = user;
+    while (colon < word.length && !/[/\s:@]/.test(word[colon])) colon += 1;
+    if (colon === user || word[colon] !== ':') continue;
+    const password = colon + 1;
+    let at = password;
+    while (at < word.length && !/[@\s/]/.test(word[at])) at += 1;
+    if (at === password || word[at] !== '@') continue;
+    out.push(word.slice(keepFrom, password), '…');
+    keepFrom = at;
+  }
+  return out.length ? [...out, word.slice(keepFrom)].join('') : word;
+}
 
 /**
  * A program's command line as it may be shown: every value that may be a credential hidden as `…`. The real one is kept
@@ -332,19 +351,22 @@ export function shownCommand(argv, looksSecret = () => false) {
   const out = [];
   for (let i = 0; i < argv.length; i++) {
     const word = String(argv[i]);
-    const assign = SECRET_ASSIGN_RE.exec(word);
+    const equals = word.indexOf('=');
+    const name = equals < 0 ? word : word.slice(0, equals);
+    const credentialName = /^[\w-]+$/.test(name) && SECRET_WORD_RE.test(name);
+    const flag = name.startsWith('-');
+    const safeUrl = hideUrlPasswords(word);
     if (looksSecret(word)) out.push('…');
     else if (SECRET_HEADER_RE.test(word)) out.push(`${word.split(':')[0]}: …`);
-    else if (URL_PASSWORD_RE.test(word)) out.push(word.replace(URL_PASSWORD_RE, '$1…@'));
+    else if (safeUrl !== word) out.push(safeUrl);
     // curl's user:password joined to its flag: -uuser:pass, --user=user:pass.
     else if (/^(-[uU][^-\s]|--(proxy-)?user=)[^:]*:/.test(word)) out.push(`${word.startsWith('--') ? word.split('=')[0] : word.slice(0, 2)}…`);
     else if (USER_FLAG_RE.test(word) && /:/.test(String(argv[i + 1] ?? ''))) {
       out.push(word, '…');
       i += 1;
     }
-    else if (assign) out.push(`${assign[1]}=…`);
-    else if (SECRET_FLAG_RE.test(word.split('=')[0]) && word.includes('=')) out.push(`${word.split('=')[0]}=…`);
-    else if (SECRET_FLAG_RE.test(word) && i + 1 < argv.length) {
+    else if (credentialName && equals >= 0 && (flag || equals + 1 < word.length)) out.push(`${name}=…`);
+    else if (credentialName && flag && equals < 0 && i + 1 < argv.length) {
       out.push(word, '…');
       i += 1;
     } else out.push(/^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`);
