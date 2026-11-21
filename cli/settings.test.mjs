@@ -183,7 +183,9 @@ test('an MCP server: a program on the PATH by its bare name, a key in its env re
   assert.equal(entry({ command: 'npx', env: { API_KEY: '${API_KEY:-}' } }).fate, undefined);
   assert.match(entry({ command: 'node', args: ['/Users/mia/code/mcp/index.js'] }).reason, /names ~\/code\/mcp\/\.\.\./);
   assert.match(entry({ command: '/Users/mia/.local/bin/thing' }).reason, /names ~\/\.local\/bin\/\.\.\./);
-  assert.match(entry({ command: '/nix/store/abc/bin/thing' }).reason, /runs \/nix\/store\/abc\/bin\/thing/);
+  assert.match(entry({ command: '/nix/store/abc/bin/thing' }).reason, /runs a program at \/nix\/store\/\.\.\./);
+  const secret = entry({ command: `/opt/tools/${FAKE_GITHUB_TOKEN}/mcp` });
+  assert.equal(secret.reason, 'runs a program at /opt/tools/..., a path the other side may not have', 'a token in the path is never printed');
   assert.equal(translate('.claude/.credentials.json#mcpOAuth/x', '{}', opts).fate, 'refuse');
 });
 

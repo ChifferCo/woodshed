@@ -151,7 +151,7 @@ const fileOf = (id) => parseEntryId(id)?.file ?? id;
  * A dropped path as the list shows it: the home by name and at most its first two plain folder or file names, so a token
  * inside the rest of an argument (a query string, a key in a file name) is never printed.
  */
-export function shownPath(dropped, from) {
+export function shownPath(dropped, from, { prefix = '~/' } = {}) {
   const rest = dropped.startsWith(from) ? dropped.slice(from.length) : dropped.replace(/^(~|\$HOME|\$\{HOME\})/, '');
   const parts = rest.split('/').filter(Boolean);
   const plain = [];
@@ -159,7 +159,7 @@ export function shownPath(dropped, from) {
     if (!/^[A-Za-z0-9._-]{1,32}$/.test(part) || secretContent(part)) break;
     plain.push(part);
   }
-  return `~/${plain.join('/')}${plain.length < parts.length ? `${plain.length ? '/' : ''}...` : ''}`;
+  return `${prefix}${plain.join('/')}${plain.length < parts.length ? `${plain.length ? '/' : ''}...` : ''}`;
 }
 
 const DROP = Symbol('drop');
@@ -287,7 +287,7 @@ export function translate(id, value, { from, to, statusLineOf }) {
     if (credential) return { fate: 'refuse', reason: `${credential}, a credential: API keys stay where they are` };
     const notes = [];
     if (typeof server?.command === 'string' && path.posix.isAbsolute(server.command) && !server.command.startsWith(`${from}/`)) {
-      if (!PATH_DIRS.includes(path.posix.dirname(server.command))) return { fate: 'skip', reason: `runs ${server.command}, a program at a path the other side may not have` };
+      if (!PATH_DIRS.includes(path.posix.dirname(server.command))) return { fate: 'skip', reason: `runs a program at ${shownPath(server.command, '', { prefix: '/' })}, a path the other side may not have` };
       notes.push(`runs ${path.posix.basename(server.command)} from the PATH, not ${server.command}`);
       server = { ...server, command: path.posix.basename(server.command) };
     }
