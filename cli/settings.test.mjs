@@ -512,19 +512,72 @@ test('a symlinked folder or file is neither read for push nor written through by
   const home = laptopHome(t);
   const elsewhere = scratch(t, 'woodshed-elsewhere-');
   write(elsewhere, 'other/SKILL.md', 'Another checkout\'s skill.\n');
+  write(elsewhere, 'config.toml', 'model = "outside-home"\n');
+  write(elsewhere, 'installed_plugins.json', { plugins: { 'linked@claude-plugins-official': [{ scope: 'user' }] } });
   fs.rmSync(path.join(home, '.claude/skills'), { recursive: true });
   fs.symlinkSync(elsewhere, path.join(home, '.claude/skills'));
+  fs.rmSync(path.join(home, '.claude.json'));
+  fs.symlinkSync(elsewhere, path.join(home, '.claude.json'));
+  fs.symlinkSync(path.join(elsewhere, 'other/SKILL.md'), path.join(home, '.claude/agents/linked.md'));
+  fs.symlinkSync(elsewhere, path.join(home, '.codex'));
+  fs.symlinkSync(elsewhere, path.join(home, '.claude/plugins'));
   const c = await setUp(t, { home });
   const plan = await c.run(['settings', 'plan', '--json']);
-  assert.equal(fateOf(plan.items, '~/.claude/skills/other/SKILL.md'), 'skip');
-  assert.match(plan.items.find((i) => i.name === '~/.claude/skills/other/SKILL.md').reason, /~\/\.claude\/skills is a symlink/);
+  assert.equal(plan.code, EXIT.done, plan.err);
+  assert.ok(!plan.items.some((i) => i.name.includes('/other/')), 'the linked folder is not walked');
+  for (const name of ['~/.claude/skills', '~/.claude.json', '~/.claude/agents/linked.md', '~/.codex', '~/.claude/plugins']) {
+    const item = plan.items.find((i) => i.name === name);
+    assert.equal(item.fate, 'skip');
+    assert.match(item.reason, /is a symlink/);
+  }
+  assert.ok(!plan.items.some((i) => i.name.startsWith('plugin/') || i.name === '~/.codex/config.toml'));
   await c.run(['settings', 'push']);
   assert.ok(!Object.keys((await c.copy()).items).some((id) => id.startsWith('.claude/skills/')));
   const { version } = await c.copy();
-  await c.claudeSettings.sync({ login: 'mia-dev', sessionId: 'aaaa1111', version, removed: [], changed: { '.claude/skills/new/SKILL.md': b64('New.\n') } });
+  await c.claudeSettings.sync({ login: 'mia-dev', sessionId: 'aaaa1111', version, removed: [], changed: {
+    '.claude/skills/new/SKILL.md': b64('New.\n'),
+    '.claude.json#mcpServers/docs': JSON.stringify({ url: 'https://example.com/mcp' }),
+    '.claude/keybindings.json': b64({ bindings: [] }),
+    '.codex/config.toml': b64('model = "shared"\n'),
+    '.claude/plugins/installed_plugins.json#plugins/notes@claude-plugins-official': '{"marketplace":null}',
+  } });
   const pulled = await c.run(['settings', 'pull', '--json']);
+  assert.equal(pulled.code, EXIT.done, pulled.err);
   assert.equal(fateOf(pulled.items, '~/.claude/skills/new/SKILL.md'), 'skip');
+  assert.equal(fateOf(pulled.items, 'mcp/docs'), 'skip');
+  assert.equal(fateOf(pulled.items, '~/.codex/config.toml'), 'skip');
+  assert.match(pulled.items.find((i) => i.name === 'plugin/notes@claude-plugins-official').reason, /is a symlink/);
+  assert.equal(fateOf(pulled.items, '~/.claude/keybindings.json'), 'write');
   assert.ok(!fs.existsSync(path.join(elsewhere, 'new')), 'the link\'s target is untouched');
+  assert.equal(fs.readFileSync(path.join(elsewhere, 'config.toml'), 'utf8'), 'model = "outside-home"\n');
+});
+
+test('pull skips a folder at the path of a Claude file and a file in its way', async (t) => {
+  const c = await setUp(t);
+  write(c.home, '.claude/skills/demo/helper/local.txt', 'Keep this.\n');
+  write(c.home, '.claude/skills/blocker', 'Keep this too.\n');
+  fs.rmSync(path.join(c.home, '.claude.json'));
+  fs.mkdirSync(path.join(c.home, '.claude.json'));
+  await c.claudeSettings.sync({ login: 'mia-dev', sessionId: 'aaaa1111', version: 0, removed: [], changed: {
+    '.claude/skills/demo/helper': b64('A shared file.\n'),
+    '.claude/skills/blocker/SKILL.md': b64('A shared skill.\n'),
+    '.claude/skills/ready/SKILL.md': b64('Another shared skill.\n'),
+    '.claude.json#mcpServers/docs': JSON.stringify({ url: 'https://example.com/mcp' }),
+  } });
+
+  const plan = await c.run(['settings', 'plan', '--pull', '--replace', '--json']);
+  assert.equal(plan.code, EXIT.done, plan.err);
+  assert.match(plan.items.find((i) => i.name === '~/.claude/skills/demo/helper').reason, /a folder is at that path/);
+  assert.match(plan.items.find((i) => i.name === '~/.claude/skills/blocker/SKILL.md').reason, /where the path needs a folder/);
+  assert.equal(fateOf(plan.items, 'mcp/docs'), 'skip');
+
+  const pulled = await c.run(['settings', 'pull', '--replace', '--json']);
+  assert.equal(pulled.code, EXIT.done, pulled.err);
+  assert.equal(pulled.lines.at(-1).written, 1);
+  assert.equal(fs.readFileSync(path.join(c.home, '.claude/skills/ready/SKILL.md'), 'utf8'), 'Another shared skill.\n');
+  assert.equal(fs.readFileSync(path.join(c.home, '.claude/skills/demo/helper/local.txt'), 'utf8'), 'Keep this.\n');
+  assert.equal(fs.readFileSync(path.join(c.home, '.claude/skills/blocker'), 'utf8'), 'Keep this too.\n');
+  assert.ok(fs.statSync(path.join(c.home, '.claude.json')).isDirectory());
 });
 
 test('an empty ignored file is never pushed over the saved one', async (t) => {
