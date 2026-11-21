@@ -429,10 +429,22 @@ Still specific to one repo, and not yet settings:
 - The db-admin task's drivers, borrowed from each database's `dir`'s `node_modules` (`pg`, and `mongoose` for Mongo),
   until the image ships its own.
 
+## Merge risk in a review session
+
+This rubric applies to every repository reviewed in a Woodshed session. For High, the reviewer should identify a
+plausible serious failure introduced by the change, who or what it affects, and a verification step. Medium covers
+meaningful changes with contained or reversible consequences, or changes that need more than a quick check. Low
+covers narrow changes with limited consequences that are easy to verify. The base branch's `.woodshed/riskAreas.md`
+serves as guidance for finding repository-specific failures. The reviewer still evaluates each change against the
+rubric.
+
+The highest reported tier wins even if the reviewer omits the failure reason or verification step. When both reviewers
+rate the change High, the check prefers a report with both details.
+
 ## The review in another repo
 
-`.github/workflows/review.yml` reviews Woodshed's own pull requests, and any repo can run the same review on its own by
-calling it. A workflow of the repo's, with a `pull_request` trigger, calls it pinned to a commit:
+A repo can run the reusable `.github/workflows/review.yml` review instead of a Woodshed session. A workflow of the
+repo's, with a `pull_request` trigger, calls it pinned to a commit:
 
 ```yaml
 on:
@@ -455,7 +467,7 @@ jobs:
 - `rules`: the repo's rule files, separated by spaces (default `CLAUDE.md .woodshed/rules.md CONTRIBUTING.md`).
 - `instructions`: a file saying what this repo wants a review to look for, added to the prompt (default
   `.woodshed/review.md`; none is fine).
-- `risk-areas`: a file listing the changes this repo always counts as High merge risk (default
+- `risk-areas`: a file listing changes the reusable workflow always counts as High merge risk (default
   `.woodshed/riskAreas.md`; none is fine).
 - `allowed-bots`: bots whose pull requests are reviewed, such as the App an installation opens them as (default none,
   or the calling repo's `REVIEW_ALLOWED_BOTS` variable).
