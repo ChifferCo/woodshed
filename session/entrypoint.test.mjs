@@ -891,13 +891,142 @@ test('a seed with no --project writes the env files from the repo alone, in the 
   assert.deepEqual([empty.api, empty.web], [bare.api, bare.web], 'repo settings with no value give the same bytes');
 });
 
-test('a Codex session starts codex with the picked flags, and the rules go in codex\'s own AGENTS.md', () => {
+test('a Codex session starts codex with the picked flags, and the rules go in codex\'s own AGENTS.override.md', () => {
   const flags = execFileSync('bash', ['-c', `${fn('codexFlags')}\ncodexFlags`], {
     encoding: 'utf8', env: { PATH: process.env.PATH, PERMISSION_MODE: 'plan', MODEL: 'gpt-5.5', EFFORT: 'high' },
   });
   assert.equal(flags, ' --add-dir /tmp/uploads --sandbox read-only --ask-for-approval on-request --model gpt-5.5 -c model_reasoning_effort=\\"high\\"');
-  assert.match(fn('configureCodex'), /cp \/tmp\/woodshed-rules\.md "\$CODEX_HOME_DIR\/AGENTS\.md"/);
   assert.ok(ENTRYPOINT.indexOf('  writeRules\n  if [ "${AGENT:-claude}" = codex ]') > 0, 'the rules are written before codex is configured');
+  assert.ok(ENTRYPOINT.indexOf('  pullSettings\n') < ENTRYPOINT.indexOf('    configureCodex\n'), 'the owner\'s synced config is there before codex is configured');
+});
+
+// configureCodex as the entrypoint has it, in a codex home of the test's own, after a pull wrote `pulled` into it.
+function configureCodex({ pulled = {} } = {}) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-codex-'));
+  const codexHome = path.join(tmp, 'codex');
+  fs.mkdirSync(codexHome);
+  for (const [name, text] of Object.entries(pulled)) fs.writeFileSync(path.join(codexHome, name), text);
+  fs.writeFileSync(path.join(tmp, 'woodshed-rules.md'), '# Woodshed rules\n\nOpen a pull request.\n');
+  const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { echo "ERROR: $*"; exit 1; }',
+    fn('configureCodex').replaceAll('/tmp/', `${tmp}/`), 'configureCodex'].join('\n');
+  try {
+    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: tmp, SESSION_DIR, REPO_DIR: '/work/app', CODEX_HOME_DIR: codexHome } });
+    const read = (name) => (fs.existsSync(path.join(codexHome, name)) ? fs.readFileSync(path.join(codexHome, name), 'utf8') : null);
+    return { out, config: read('config.toml'), agents: read('AGENTS.md'), override: read('AGENTS.override.md') };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+test('a Codex session trusts its checkout in the owner\'s own config.toml, and the rules come before the owner\'s AGENTS.md', () => {
+  const fresh = configureCodex();
+  assert.equal(fresh.config, '[projects."/work/app"]\ntrust_level = "trusted"\n', 'a first session: its checkout alone');
+  assert.equal(fresh.override, '# Woodshed rules\n\nOpen a pull request.\n');
+  assert.equal(fresh.agents, null, 'AGENTS.md is the owner\'s alone, and they have none');
+
+  const owner = configureCodex({ pulled: { 'config.toml': 'model = "gpt-5.5"\n\n[tui]\nnotifications = true\n', 'AGENTS.md': 'Use pnpm.\n' } });
+  assert.equal(owner.config, 'model = "gpt-5.5"\n\n[tui]\nnotifications = true\n\n[projects."/work/app"]\ntrust_level = "trusted"\n', 'the owner\'s settings stay, with the checkout trusted');
+  assert.equal(owner.agents, 'Use pnpm.\n', 'the synced file is left as it is');
+  assert.equal(owner.override, '# Woodshed rules\n\nOpen a pull request.\n\n\n# Your own instructions, from ~/.codex/AGENTS.md\n\nUse pnpm.\n', 'codex reads this in place of AGENTS.md: the rules, then theirs');
+});
+
+// installSyncedPlugins with a stand-in claude that records each call, in a home of the test's own whose start pulled
+// `synced` (the state file settingsSync.mjs writes).
+function installSyncedPlugins({ kind = 'private', synced = {}, installed = null, known = null, offered = null, settings = null, failMarketplace = false }) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-synced-plugins-'));
+  const sessionDir = path.join(tmp, 'session');
+  const home = path.join(tmp, 'home');
+  fs.mkdirSync(path.join(sessionDir, 'bin'), { recursive: true });
+  fs.mkdirSync(path.join(home, '.claude', 'plugins'), { recursive: true });
+  for (const name of ['syncedPlugins.mjs', 'defaultPlugins.mjs', 'settingsSync.mjs', 'codexConfig.mjs', 'missingPlugins.mjs']) {
+    fs.copyFileSync(path.join(SESSION_DIR, name), path.join(sessionDir, name));
+  }
+  fs.mkdirSync(path.join(tmp, 'shared'));
+  fs.copyFileSync(path.join(SHARED_DIR, 'isMain.mjs'), path.join(tmp, 'shared', 'isMain.mjs'));
+  fs.writeFileSync(path.join(sessionDir, 'bin', 'claude'),
+    `#!/bin/bash\necho "$*" >> ${tmp}/calls\n${failMarketplace ? '[ "$2" = marketplace ] && { echo "repo not found" >&2; exit 1; }\n' : ''}exit 0\n`, { mode: 0o755 });
+  // The tests' macOS has no `timeout`: the image's coreutils one runs the command.
+  fs.writeFileSync(path.join(sessionDir, 'bin', 'timeout'), '#!/bin/bash\nshift\nexec "$@"\n', { mode: 0o755 });
+  const state = path.join(tmp, 'woodshed-settings-sync.json');
+  fs.writeFileSync(state, JSON.stringify({ version: 3, synced }));
+  if (installed) fs.writeFileSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'), JSON.stringify(installed));
+  if (known) fs.writeFileSync(path.join(home, '.claude', 'plugins', 'known_marketplaces.json'), JSON.stringify(known));
+  if (offered) fs.writeFileSync(path.join(home, '.claude', 'woodshed-default-plugins.json'), JSON.stringify(offered));
+  if (settings) fs.writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify(settings));
+  const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'tainted() { return 1; }',
+    fn('installSyncedPlugins').replace('"$SESSION_DIR/syncedPlugins.mjs" "$HOME" "$offered"', `"$SESSION_DIR/syncedPlugins.mjs" "$HOME" "$offered" ${state}`),
+    'installSyncedPlugins', 'echo "start goes on"'].join('\n');
+  try {
+    const out = execFileSync('bash', ['-c', script], {
+      encoding: 'utf8',
+      env: { PATH: `${sessionDir}/bin:${process.env.PATH}`, HOME: home, SESSION_DIR: sessionDir, REPO_DIR: tmp, ...(kind ? { SESSION_KIND: kind } : {}) },
+    });
+    const calls = fs.existsSync(path.join(tmp, 'calls')) ? fs.readFileSync(path.join(tmp, 'calls'), 'utf8') : '';
+    const offeredFile = path.join(home, '.claude', 'woodshed-default-plugins.json');
+    assert.match(out, /start goes on\n$/, 'the start goes on under set -e');
+    return { out: out.replace(/start goes on\n$/, ''), calls, offered: fs.existsSync(offeredFile) ? JSON.parse(fs.readFileSync(offeredFile, 'utf8')) : null };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+const PLUGIN = (name) => `.claude/plugins/installed_plugins.json#plugins/${name}`;
+
+test('a private session installs the plugins its owner has elsewhere, adding a marketplace claude does not know first, once each', () => {
+  const synced = {
+    [PLUGIN('review@acme-tools')]: JSON.stringify({ marketplace: { source: 'github', repo: 'acme/claude-tools' } }),
+    [PLUGIN('pr-review-toolkit@claude-plugins-official')]: JSON.stringify({ marketplace: { source: 'github', repo: 'anthropics/claude-plugins-official' } }),
+    [PLUGIN('notes@laptop-only')]: JSON.stringify({ marketplace: { source: 'directory', path: '/Users/mia/plugins' } }),
+    [PLUGIN('off@acme-tools')]: JSON.stringify({ marketplace: { source: 'github', repo: 'acme/claude-tools' } }),
+    '.claude/settings.json': Buffer.from('{}').toString('base64'),
+  };
+  const run = installSyncedPlugins({ synced, settings: { enabledPlugins: { 'off@acme-tools': false } } });
+  assert.equal(run.calls, [
+    'plugin marketplace add acme/claude-tools',
+    'plugin install --scope user review@acme-tools',
+    'plugin install --scope user pr-review-toolkit@claude-plugins-official',
+  ].map((l) => `${l}\n`).join(''), 'a marketplace claude knows is not added; one turned off is not installed');
+  assert.match(run.out, /WARNING: a plugin from your other sessions was not installed \(plugin: notes@laptop-only, why: its marketplace is a folder/);
+  assert.match(run.out, /Plugins from your other sessions installed \(installed: 2, failed: 0, skipped: 1\)/);
+  assert.deepEqual(run.offered, ['review@acme-tools', 'pr-review-toolkit@claude-plugins-official']);
+
+  const again = installSyncedPlugins({ synced, offered: run.offered, settings: { enabledPlugins: { 'off@acme-tools': false } } });
+  assert.equal(again.calls.includes('install --scope user review@acme-tools'), false, 'one offered before, kept or uninstalled since, is not installed again');
+
+  const failed = installSyncedPlugins({ synced: { [PLUGIN('review@acme-tools')]: synced[PLUGIN('review@acme-tools')] }, failMarketplace: true });
+  assert.match(failed.out, /WARNING: a plugin's marketplace could not be added \(plugin: review@acme-tools, error: repo not found\)/);
+  assert.equal(failed.offered, null, 'tried again at the next start');
+  assert.deepEqual(installSyncedPlugins({ kind: '', synced }), { out: '', calls: '', offered: null }, 'a shared session gets none');
+});
+
+// writeOwnDotfiles as fetchOwnerSettings calls it, in a home holding the image's own files.
+function writeOwnDotfiles(files) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dotfiles-'));
+  fs.writeFileSync(path.join(home, '.gitconfig'), '[credential]\n\thelper = "!f() { echo; }; f"\n');
+  fs.writeFileSync(path.join(home, '.bashrc'), '# the image\'s\nif [ -f ~/.bash_aliases ]; then\n    . ~/.bash_aliases\nfi\n');
+  const script = ['set -euo pipefail', fn('writeOwnDotfiles'), 'owned=tmux-conf', 'writeOwnDotfiles "$1"', 'echo "owned: $owned"'].join('\n');
+  try {
+    const out = execFileSync('bash', ['-c', script, 'bash', JSON.stringify({ files })], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home } });
+    const read = (name) => (fs.existsSync(path.join(home, name)) ? fs.readFileSync(path.join(home, name), 'utf8') : null);
+    return { out, gitconfig: read('.gitconfig'), inputrc: read('.inputrc'), aliases: read('.bash_aliases'), bashrc: read('.bashrc') };
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test('a private session writes its owner\'s own dotfile lines after the image\'s, and none it was not given', () => {
+  const run = writeOwnDotfiles({ 'tmux-conf': null, gitconfig: '[alias]\n\tco = checkout\n', inputrc: 'set editing-mode vi\n', 'bash-aliases': "alias ll='ls -la'\n" });
+  assert.equal(run.out, 'owned: tmux-conf, gitconfig, inputrc, bash-aliases\n');
+  assert.equal(run.gitconfig, '[credential]\n\thelper = "!f() { echo; }; f"\n\n# Your own lines, from My settings\n[alias]\n\tco = checkout\n', 'after the start\'s credential helper, which they cannot touch');
+  assert.equal(run.inputrc, '$include /etc/inputrc\n\n# Your own lines, from My settings\nset editing-mode vi\n', 'readline\'s own defaults first');
+  assert.equal(run.aliases, "# Your own aliases, from My settings\nalias ll='ls -la'\n");
+  assert.equal(run.bashrc.match(/bash_aliases/g).length, 2, 'the image\'s .bashrc reads them already: nothing added');
+
+  assert.equal(writeOwnDotfiles({ inputrc: '$include /etc/inputrc\nset bell-style none\n' }).inputrc, '\n# Your own lines, from My settings\n$include /etc/inputrc\nset bell-style none\n',
+    'the system\'s once, where theirs already reads it');
+  const none = writeOwnDotfiles({ 'tmux-conf': null, gitconfig: null, inputrc: null, 'bash-aliases': null });
+  assert.deepEqual([none.out, none.inputrc, none.aliases], ['owned: tmux-conf\n', null, null], 'a console from before them, or nothing saved');
+  assert.ok(fn('fetchOwnerSettings').includes('writeOwnDotfiles "$answer"'));
 });
 
 

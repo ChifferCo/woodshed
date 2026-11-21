@@ -16,15 +16,29 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { isMain } from '../shared/isMain.mjs';
+import { CODEX_CONFIG, sharedPart, withOwnProjects } from './codexConfig.mjs';
+import { PLUGIN_ID_RE } from './missingPlugins.mjs';
 
-export const SYNCED_FILES = ['.claude/settings.json', '.claude/CLAUDE.md', '.claude/keybindings.json'];
-export const SYNCED_DIRS = ['.claude/agents', '.claude/commands', '.claude/skills'];
+// codex's settings beside claude's. Never ~/.codex/auth.json: a Codex sign-in is My settings' (userSettings.mjs).
+export const SYNCED_FILES = ['.claude/settings.json', '.claude/CLAUDE.md', '.claude/keybindings.json', CODEX_CONFIG, '.codex/AGENTS.md'];
+export const SYNCED_DIRS = ['.claude/agents', '.claude/commands', '.claude/skills', '.codex/prompts', '.codex/skills'];
+// codex writes its own skills here at every start, for the version it is: each side has its own.
+const NOT_SYNCED = ['.codex/skills/.system'];
+// The homes' folders an item may be in.
+const ROOTS = ['.claude', '.codex'];
 // `live: false`: claude reads ~/.claude.json's servers only as it starts, and rewrites that file all the time, so a
 // write into it under a running claude would only be lost. A new server reaches a session as it starts.
 export const SYNCED_ENTRIES = [
   { file: '.claude/.credentials.json', key: 'mcpOAuth', live: true },
   { file: '.claude.json', key: 'mcpServers', live: false },
 ];
+// The plugins installed for the whole home (user scope), one item each, as the marketplace each comes from: claude's
+// own records name paths in this home and the plugin's version, so a session installs each from its marketplace as it
+// starts instead (syncedPlugins.mjs), and its files are never carried. Its being on or off is settings.json's
+// enabledPlugins, which syncs with the rest of that file.
+export const PLUGINS_FILE = '.claude/plugins/installed_plugins.json';
+export const MARKETPLACES_FILE = '.claude/plugins/known_marketplaces.json';
+const PLUGIN_PREFIX = `${PLUGINS_FILE}#plugins/`;
 export const SYNC_EVERY_MS = 20_000;
 // A settings file is a few KB; this keeps a stray log or binary dropped in skills/ out.
 export const MAX_ITEM_BYTES = 1024 * 1024;
@@ -80,6 +94,15 @@ function entryId(file, key, name) {
   return `${file}#${key}/${name}`;
 }
 
+/** @returns {string|null}  the `name@marketplace` a plugin's item is for, null for any other item */
+export function parsePluginId(id) {
+  if (typeof id !== 'string' || !id.startsWith(PLUGIN_PREFIX)) return null;
+  const name = id.slice(PLUGIN_PREFIX.length);
+  return PLUGIN_ID_RE.test(name) ? name : null;
+}
+
+export const pluginId = (name) => `${PLUGIN_PREFIX}${name}`;
+
 /** @returns {{file: string, key: string, name: string, live: boolean}|null}  what an entry id names, null for a file */
 export function parseEntryId(id) {
   for (const e of SYNCED_ENTRIES) {
@@ -93,11 +116,14 @@ export function parseEntryId(id) {
 // synced ones, such as `.claude/skills/../../.bashrc`.
 export function isSyncedFile(id) {
   if (typeof id !== 'string' || /[\\\0]/.test(id) || path.posix.normalize(id) !== id || id.split('/').includes('..')) return false;
+  if (NOT_SYNCED.some((d) => id === d || id.startsWith(`${d}/`))) return false;
   return SYNCED_FILES.includes(id) || SYNCED_DIRS.some((d) => id.startsWith(`${d}/`));
 }
 
 function inside(home, id) {
-  const rel = path.relative(path.join(home, '.claude'), path.resolve(home, id));
+  const root = id.split('/')[0];
+  if (!ROOTS.includes(root)) return false;
+  const rel = path.relative(path.join(home, root), path.resolve(home, id));
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
@@ -106,6 +132,7 @@ async function filesUnder(home, dir) {
   const entries = await fs.readdir(path.join(home, dir), { withFileTypes: true }).catch(() => []);
   for (const e of entries) {
     const rel = `${dir}/${e.name}`;
+    if (NOT_SYNCED.includes(rel)) continue;
     if (e.isDirectory()) found.push(...await filesUnder(home, rel));
     else if (e.isFile()) found.push(rel);
   }
@@ -124,6 +151,25 @@ async function readJson(file) {
 }
 
 /**
+ * The plugins installed for the whole home, each as `{"marketplace": <its source as claude recorded it>|null}`. None
+ * while claude is writing the list: they are never taken as removed, so a round without them loses nothing.
+ * @returns {Promise<Record<string, string>>}
+ */
+export async function pluginItems(home) {
+  const installed = await readJson(path.join(home, PLUGINS_FILE)).catch(() => null);
+  const known = await readJson(path.join(home, MARKETPLACES_FILE)).catch(() => null);
+  const items = {};
+  const plugins = installed?.plugins;
+  if (!plugins || typeof plugins !== 'object') return items;
+  for (const [name, installs] of Object.entries(plugins)) {
+    if (!PLUGIN_ID_RE.test(name) || !Array.isArray(installs) || !installs.some((i) => i?.scope === 'user')) continue;
+    const source = known?.[name.split('@')[1]]?.source;
+    items[pluginId(name)] = JSON.stringify({ marketplace: source && typeof source === 'object' ? source : null });
+  }
+  return items;
+}
+
+/**
  * @param {string} home
  * @returns {Promise<{items: Record<string, string>, unreadable: string[], oversized: string[]}>}  each item's content: a
  *   file's as base64, an entry's as JSON. `unreadable` names the JSON files left out this round, whose entries must not
@@ -138,8 +184,13 @@ export async function readSnapshot(home) {
     const content = await fs.readFile(path.join(home, rel)).catch((err) => (err.code === 'ENOENT' || err.code === 'EISDIR' ? null : Promise.reject(err)));
     if (!content) continue;
     if (content.length > MAX_ITEM_BYTES) oversized.push(rel);
-    else items[rel] = content.toString('base64');
+    else if (rel === CODEX_CONFIG) {
+      // Without this side's trusted folders (codexConfig.mjs); a file of nothing else is no item.
+      const shared = sharedPart(content.toString('utf8'));
+      if (shared) items[rel] = Buffer.from(shared).toString('base64');
+    } else items[rel] = content.toString('base64');
   }
+  Object.assign(items, await pluginItems(home));
   const unreadable = [];
   for (const { file, key } of SYNCED_ENTRIES) {
     const json = await readJson(path.join(home, file));
@@ -191,12 +242,14 @@ export async function applyItems(home, items, { live = false, before = null } = 
     if (!isSyncedFile(id) || !inside(home, id) || same || oversized.includes(id) || !untouched(id)) continue;
     const target = path.join(home, id);
     await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.writeFile(target, Buffer.from(value, 'base64'));
+    await fs.writeFile(target, id === CODEX_CONFIG ? await withOwnProjectsOf(target, Buffer.from(value, 'base64').toString('utf8')) : Buffer.from(value, 'base64'));
     written += 1;
   }
   for (const id of Object.keys(local)) {
     if (!isSyncedFile(id) || !inside(home, id) || id in items || !untouched(id)) continue;
-    await fs.rm(path.join(home, id), { force: true });
+    // config.toml gone from the shared copy leaves this side's trusted folders.
+    if (id === CODEX_CONFIG) await fs.writeFile(path.join(home, id), await withOwnProjectsOf(path.join(home, id), ''));
+    else await fs.rm(path.join(home, id), { force: true });
     deleted += 1;
   }
   for (const { file, key, live: readLive } of SYNCED_ENTRIES) {
@@ -233,6 +286,12 @@ export async function applyItems(home, items, { live = false, before = null } = 
     }
   }
   return { written, deleted, skipped };
+}
+
+// The shared config.toml's text with the folders this side trusts kept from the file there now.
+async function withOwnProjectsOf(target, shared) {
+  const local = await fs.readFile(target, 'utf8').catch((err) => (err.code === 'ENOENT' ? null : Promise.reject(err)));
+  return withOwnProjects(shared, local);
 }
 
 /** The applied state, for statusd to carry on from what the entrypoint pulled. */

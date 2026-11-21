@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import { isMain } from '../shared/isMain.mjs';
 
 // What `claude plugin install` takes, and nothing that could be anything else on a command line.
-const PLUGIN_ID_RE = /^[A-Za-z0-9][\w.-]*@[A-Za-z0-9][\w.-]*$/;
+export const PLUGIN_ID_RE = /^[A-Za-z0-9][\w.-]*@[A-Za-z0-9][\w.-]*$/;
 
 // The scopes `claude plugin install --scope` takes.
 const SCOPES = new Set(['user', 'project', 'local']);

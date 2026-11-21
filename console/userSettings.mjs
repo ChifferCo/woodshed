@@ -8,6 +8,8 @@
 //                                Handed to their private Codex sessions, which write a refreshed login back (sessionApi.mjs)
 //   users/<login>/tmux-conf      ~/.tmux.conf, which their sessions write after the console's shared file, so a change to
 //                                that still reaches them. Readable by them, since their sessions hold the same text anyway
+//   users/<login>/gitconfig, inputrc, bash-aliases   their own lines for those files, the same way: only what
+//                                shared/dotfiles.mjs takes, which never holds a credential, an identity or a path
 //   users/<login>/own-files      legacy: their own whole files from before they were per repo, which repoSettings.mjs moves
 //                                into the default project's (moveOwnFiles); deleted here with the rest by Remove My Woodshed
 //   users/<login>/github         their GitHub user token, from Connect GitHub (githubUser.mjs), as JSON
@@ -17,6 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import logins from './public/logins.cjs';
+import { DOTFILES, dotfileProblem } from '../shared/dotfiles.mjs';
 import { SETTINGS, settingProblem } from './consoleSettings.mjs';
 const { loginKey } = logins;
 
@@ -44,11 +47,12 @@ const OWN_LIMIT_KEYS = ['idleHours', 'lifetimeHours'];
 const OWN_LIMITS = SETTINGS.filter((setting) => OWN_LIMIT_KEYS.includes(setting.key));
 const TMUX_DEFAULT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'session', 'tmux.conf');
 
-const TMUX_FILE = { label: '~/.tmux.conf' };
+const TMUX_FILE = { label: '~/.tmux.conf', shared: TMUX_DEFAULT };
 
 // The files a person may add their own lines to: tmux's, which is the session image's own tmux.conf (the console image
-// carries it too). Their own lines for the repo's env files are Repo settings (repoSettings.mjs).
-const FILES = { 'tmux-conf': TMUX_FILE };
+// carries it too), and a few dotfiles the image has none of its own for (shared/dotfiles.mjs). Their own lines for the
+// repo's env files are Repo settings (repoSettings.mjs).
+const FILES = { 'tmux-conf': TMUX_FILE, ...Object.fromEntries(Object.entries(DOTFILES).map(([key, { label }]) => [key, { label, shared: null }])) };
 
 /**
  * @param {unknown} text
@@ -231,10 +235,10 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     if (!FILES[key]) throw Object.assign(new Error(`no file called ${key}`), { shown: true });
   }
 
-  /** @returns {string}  the image's file: what every session starts from */
+  /** @returns {string}  the image's file: what every session starts from; empty for one the image has none of */
   function sharedFile(key) {
     requireFile(key);
-    return fs.readFileSync(TMUX_DEFAULT, 'utf8');
+    return FILES[key].shared ? fs.readFileSync(FILES[key].shared, 'utf8') : '';
   }
 
   /** @returns {Promise<string|null>}  the person's own lines, or null while they have none */
@@ -258,6 +262,11 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     requireFile(key);
     const value = checkFile(text);
     if (!value) return resetFile(login, key);
+    const problem = DOTFILES[key] ? dotfileProblem(key, value) : null;
+    if (problem) {
+      console.log('userSettings: file refused', { login, key, why: problem.split(':')[0] });
+      throw Object.assign(new Error(problem), { shown: true });
+    }
     await secrets.save(userSecretName(login, key), value, `Woodshed: @${login}'s ${FILES[key].label}, for their My Woodshed sessions only`);
     const record = recordFor(login);
     touch(login, { files: { ...record?.files, [key]: new Date(now()).toISOString() } });

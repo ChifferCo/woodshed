@@ -257,3 +257,70 @@ test('each session keeps its own status line; everything else in settings.json s
   await newer.round();
   assert.deepEqual(await readJson(newer.home, '.claude/settings.json'), { model: 'haiku', statusLine: newLine });
 });
+
+test('codex\'s config, instructions, prompts and skills sync too, each session keeping the folders it trusts; never its sign-in or its own skills', async () => {
+  const c = fakeConsole();
+  const a = session(await makeHome({
+    '.codex/config.toml': 'model = "gpt-5.5"\n\n[projects."/work/app"]\ntrust_level = "trusted"\n',
+    '.codex/AGENTS.md': 'Use pnpm.\n',
+    '.codex/AGENTS.override.md': 'the rules, which are each session\'s own',
+    '.codex/prompts/ship.md': 'Ship it.',
+    '.codex/skills/review/SKILL.md': '# Review',
+    '.codex/skills/.system/imagegen/SKILL.md': 'codex\'s own',
+    '.codex/auth.json': '{"OPENAI_API_KEY":"not-real"}',
+    '.codex/sessions/2026/11/20/rollout-1.jsonl': 'a conversation',
+  }), c.send('aaaaaaaa'));
+  await a.round({ live: false });
+  const shared = JSON.parse([...c.objects.values()][0]).items;
+  assert.deepEqual(Object.keys(shared).sort(), ['.codex/AGENTS.md', '.codex/config.toml', '.codex/prompts/ship.md', '.codex/skills/review/SKILL.md']);
+  assert.equal(Buffer.from(shared['.codex/config.toml'], 'base64').toString(), 'model = "gpt-5.5"\n', 'without the folders this session trusts');
+
+  const b = session(await makeHome({ '.codex/config.toml': '[projects."/work/tools"]\ntrust_level = "trusted"\n' }), c.send('bbbbbbbb'));
+  await b.round({ live: false });
+  assert.equal(await read(b.home, '.codex/config.toml'), 'model = "gpt-5.5"\n\n[projects."/work/tools"]\ntrust_level = "trusted"\n', 'its own trusted folder stays');
+  assert.equal(await read(b.home, '.codex/skills/review/SKILL.md'), '# Review');
+  await assert.rejects(read(b.home, '.codex/auth.json'), { code: 'ENOENT' });
+
+  // A change in one reaches the other, and a round with nothing new sends nothing: the trusted folders are no change.
+  await fs.writeFile(path.join(a.home, '.codex/config.toml'), 'model = "gpt-5.5"\napproval_policy = "on-request"\n\n[projects."/work/app"]\ntrust_level = "trusted"\n');
+  assert.equal((await a.round()).sent, 1);
+  await b.round();
+  assert.equal(await read(b.home, '.codex/config.toml'), 'model = "gpt-5.5"\napproval_policy = "on-request"\n\n[projects."/work/tools"]\ntrust_level = "trusted"\n');
+  assert.equal((await b.round()).sent, 0);
+  assert.equal((await a.round()).sent, 0);
+
+  // config.toml gone from the shared copy leaves a session its own trusted folder, which codex needs to start unasked.
+  await fs.rm(path.join(a.home, '.codex/config.toml'));
+  await fs.writeFile(path.join(a.home, '.codex/config.toml'), '[projects."/work/app"]\ntrust_level = "trusted"\n');
+  assert.equal((await a.round()).removed, 1);
+  await b.round();
+  assert.equal(await read(b.home, '.codex/config.toml'), '[projects."/work/tools"]\ntrust_level = "trusted"\n');
+});
+
+test('a plugin installed for the whole home goes as its marketplace, and nothing of claude\'s plugin records is written', async () => {
+  const c = fakeConsole();
+  const a = session(await makeHome({
+    '.claude/plugins/installed_plugins.json': {
+      version: 2,
+      plugins: {
+        'review@acme-tools': [{ scope: 'user', installPath: '/home/node/.claude/plugins/cache/acme-tools/review/1.0.0', version: '1.0.0' }],
+        'repo-only@acme-tools': [{ scope: 'project', projectPath: '/work/app', installPath: '/x' }],
+        'bad id;rm -rf': [{ scope: 'user' }],
+      },
+    },
+    '.claude/plugins/known_marketplaces.json': { 'acme-tools': { source: { source: 'github', repo: 'acme/claude-tools' }, installLocation: '/home/node/.claude/plugins/marketplaces/acme-tools', lastUpdated: 'x' } },
+  }), c.send('aaaaaaaa'));
+  await a.round({ live: false });
+  const shared = JSON.parse([...c.objects.values()][0]).items;
+  assert.deepEqual(shared, { '.claude/plugins/installed_plugins.json#plugins/review@acme-tools': '{"marketplace":{"source":"github","repo":"acme/claude-tools"}}' },
+    'a user install alone, without its path or version');
+
+  const b = session(await makeHome({}), c.send('bbbbbbbb'));
+  await b.round({ live: false });
+  await assert.rejects(read(b.home, '.claude/plugins/installed_plugins.json'), { code: 'ENOENT' }, 'the start installs it (syncedPlugins.mjs); the sync writes nothing');
+  assert.ok(b.state.synced['.claude/plugins/installed_plugins.json#plugins/review@acme-tools'], 'it is in what the start pulled');
+  assert.equal((await b.round()).sent, 0, 'not having it is no removal');
+  assert.ok(parseSyncBody({ version: 0, removed: [], changed: { '.codex/skills/x/SKILL.md': 'eA==', '.claude/plugins/installed_plugins.json#plugins/a@b': '{}' } }));
+  assert.equal(parseSyncBody({ version: 0, removed: [], changed: { '.codex/../.bashrc': 'eA==' } }), null);
+  assert.equal(parseSyncBody({ version: 0, removed: [], changed: { '.codexx/x': 'eA==' } }), null);
+});

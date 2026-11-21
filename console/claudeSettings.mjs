@@ -1,4 +1,4 @@
-// Each person's shared Claude settings (session/settingsSync.mjs has which items): the copy their running My Woodshed
+// Each person's shared Claude and Codex settings (session/settingsSync.mjs has which items): the copy their running My Woodshed
 // sessions keep in step with, a few seconds apart. Held here and saved to the homes bucket after each change, as
 // `<login>/claude-settings.json`, so a console restart loses nothing; a person's is read back the first time one of
 // their sessions asks.
@@ -17,8 +17,8 @@ function settingsKey(login) {
 }
 
 // The session checks each id against what it syncs; this keeps a path out of the shared copy that could reach outside
-// ~/.claude in the owner's other sessions.
-const ITEM_ID_RE = /^\.claude(?:\/[^/\\\0]+)+$|^\.claude\.json#mcpServers\/[^\0]+$/;
+// ~/.claude and ~/.codex in the owner's other sessions. A plugin's item is under ~/.claude too (its list's file).
+const ITEM_ID_RE = /^\.(?:claude|codex)(?:\/[^/\\\0]+)+$|^\.claude\.json#mcpServers\/[^\0]+$/;
 
 function isItemId(id) {
   const filePart = id.split('#')[0];

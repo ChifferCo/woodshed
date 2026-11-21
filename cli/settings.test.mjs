@@ -9,6 +9,7 @@ import path from 'node:path';
 import { createClaudeSettings } from '../console/claudeSettings.mjs';
 import { createCliSignIn } from '../console/cliSignIn.mjs';
 import { createRepoSettings } from '../console/repoSettings.mjs';
+import { createUserSettings } from '../console/userSettings.mjs';
 import { createHandler } from '../console/server.mjs';
 import { applyItems } from '../session/settingsSync.mjs';
 import { createCredentials } from './credentials.mjs';
@@ -99,7 +100,7 @@ function listen(server) {
 
 // A console with the command line's sign-in, the shared Claude settings and repo settings, and mia-dev signed in on a
 // laptop whose home is `home`.
-async function setUp(t, { home = laptopHome(t), claudeSettings: withSettings = true, canWrite = null } = {}) {
+async function setUp(t, { home = laptopHome(t), claudeSettings: withSettings = true, canWrite = null, userSettings: withUserSettings = false } = {}) {
   const store = { state: {}, save() {} };
   const cli = createCliSignIn({ store, canWrite });
   const homes = memoryHomes();
@@ -116,7 +117,8 @@ async function setUp(t, { home = laptopHome(t), claudeSettings: withSettings = t
     forStart: async (_login, name) => (name === 'app' ? projects[0] : null),
   };
   const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
-  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, cli, claudeSettings, repoSettings, projectAccess });
+  const userSettings = withUserSettings ? createUserSettings({ store, secrets }) : null;
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, cli, claudeSettings, repoSettings, projectAccess, userSettings });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
@@ -138,13 +140,13 @@ async function setUp(t, { home = laptopHome(t), claudeSettings: withSettings = t
     const code = await main(args, {
       env: { XDG_CONFIG_HOME: dir, HOME: home }, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
       platform: 'test', credentials: createCredentials({ platform: 'test', dir: path.join(dir, 'woodshed') }),
-      interactive: answer !== null, ask: async (q) => { asked.push(q); return answer; },
+      interactive: answer !== null, ask: async (q) => { asked.push(q); return typeof answer === 'function' ? answer(q) : answer; },
     });
     const lines = out.trim().split('\n').filter(Boolean).map((l) => (l.startsWith('{') ? JSON.parse(l) : l));
     return { code, out, err, asked, lines, items: lines.filter((l) => l.event === 'item') };
   };
   const copy = async () => (homes.texts.size ? JSON.parse([...homes.texts.values()][0]) : { version: 0, items: {} });
-  return { origin, run, home, dir, token, cli, claudeSettings, repoSettings, secrets, copy };
+  return { origin, run, home, dir, token, cli, claudeSettings, repoSettings, userSettings, secrets, copy };
 }
 
 const fateOf = (items, name) => items.find((i) => i.name === name)?.fate;
@@ -714,4 +716,189 @@ test('pull --own-files writes one of two saved paths where one is the other\'s f
   assert.deepEqual(pulled.items.map((i) => [i.name, i.fate]), [['.env.x', 'write'], ['.env.x/inner', 'skip']]);
   assert.match(pulled.items[1].reason, /^\.env\.x is saved too/);
   assert.equal(fs.readFileSync(path.join(repo, '.env.x'), 'utf8'), 'A=1\n');
+});
+
+// A laptop's Codex home, its Claude plugins and its dotfiles, beside its Claude settings.
+function laptopWithMore(t) {
+  const home = laptopHome(t);
+  write(home, '.codex/config.toml', `model = "gpt-5.5"
+model_provider = "ollama"
+notify = ["${home}/bin/codex-notify.sh"]
+
+[projects."${home}/code/app"]
+trust_level = "trusted"
+
+[model_providers.ollama]
+base_url = "http://localhost:11434/v1"
+
+[mcp_servers.docs]
+command = "/opt/homebrew/bin/npx"
+args = ["-y", "docs-mcp"]
+
+[mcp_servers.linear]
+command = "npx"
+
+[mcp_servers.linear.env]
+LINEAR_API_KEY = "lin_api_not_real"
+
+[mcp_servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+bearer_token_env_var = "GITHUB_TOKEN"
+
+[tui]
+notifications = true
+`);
+  write(home, '.codex/AGENTS.md', 'Use pnpm.\n');
+  write(home, '.codex/prompts/ship.md', 'Ship it.\n');
+  write(home, '.codex/skills/review/SKILL.md', '---\nname: review\n---\nReview.\n');
+  write(home, '.codex/skills/.system/imagegen/SKILL.md', 'codex\'s own\n');
+  write(home, '.codex/auth.json', { OPENAI_API_KEY: 'not-a-real-key' });
+  write(home, '.claude/plugins/installed_plugins.json', {
+    version: 2,
+    plugins: {
+      'review@acme-tools': [{ scope: 'user', installPath: `${home}/.claude/plugins/cache/acme-tools/review/1.0.0`, version: '1.0.0' }],
+      'repo-only@acme-tools': [{ scope: 'project', projectPath: `${home}/code/app`, installPath: '/x' }],
+      'mine@my-folder': [{ scope: 'user', installPath: '/y' }],
+      'pr-review-toolkit@claude-plugins-official': [{ scope: 'user', installPath: '/z' }],
+    },
+  });
+  write(home, '.claude/plugins/known_marketplaces.json', {
+    'acme-tools': { source: { source: 'github', repo: 'acme/claude-tools' }, installLocation: `${home}/.claude/plugins/marketplaces/acme-tools` },
+    'my-folder': { source: { source: 'directory', path: `${home}/plugins` }, installLocation: `${home}/plugins` },
+    'claude-plugins-official': { source: { source: 'github', repo: 'anthropics/claude-plugins-official' } },
+  });
+  write(home, '.gitconfig', `[user]\n\tname = Mia\n\temail = mia@example.com\n[alias]\n\tco = checkout\n[credential]\n\thelper = osxkeychain\n[url "https://${FAKE_GITHUB_TOKEN}@github.com/"]\n\tinsteadOf = https://github.com/\n[pull]\n\trebase = true\n`);
+  write(home, '.zshrc', `export GITHUB_TOKEN=${FAKE_GITHUB_TOKEN}\nalias ll='ls -la'\nalias proj='cd ~/code/app'\n`);
+  write(home, '.inputrc', 'set editing-mode vi\n');
+  return home;
+}
+
+test('Codex settings, plugins and dotfiles: plan lists each with why, push sends what a session takes, and nothing else', async (t) => {
+  const c = await setUp(t, { home: laptopWithMore(t), userSettings: true });
+  const plan = await c.run(['settings', 'plan', '--json']);
+  assert.equal(plan.code, EXIT.done, plan.err);
+  const rows = Object.fromEntries(plan.items.filter((i) => ['codex', 'plugins', 'dotfiles'].includes(i.category)).map((i) => [i.name, i]));
+  assert.deepEqual(Object.fromEntries(Object.entries(rows).map(([name, i]) => [name, i.fate])), {
+    '~/.codex/config.toml': 'upload',
+    '~/.codex/AGENTS.md': 'upload',
+    '~/.codex/prompts/ship.md': 'upload',
+    '~/.codex/skills/review/SKILL.md': 'upload',
+    'plugin/review@acme-tools': 'upload',
+    'plugin/mine@my-folder': 'skip',
+    'plugin/pr-review-toolkit@claude-plugins-official': 'upload',
+    'dotfile/gitconfig': 'upload',
+    'dotfile/inputrc': 'upload',
+    'dotfile/bash-aliases': 'upload',
+  }, 'never auth.json, codex\'s own skills, or a plugin installed for one repo');
+  assert.match(rows['plugin/mine@my-folder'].reason, /a session cannot add its marketplace my-folder/);
+  assert.deepEqual(rows['~/.codex/config.toml'].notes, [
+    'left out: model_provider (where codex sends its calls stays each side\'s own), notify (names ~/bin/codex-notify.sh, not on the other side), '
+    + 'model_providers.ollama (where codex sends its calls stays each side\'s own), mcp_servers.linear (sets mcp_servers.linear.env.LINEAR_API_KEY, a credential)',
+  ]);
+  assert.deepEqual(rows['dotfile/gitconfig'].notes, ['your own ~/.gitconfig lines, from ~/.gitconfig', 'left out: [user], [credential], [url "..."]']);
+  assert.deepEqual(rows['dotfile/bash-aliases'].notes, ['your own ~/.bash_aliases lines, from ~/.zshrc', 'left out: alias proj (names a path on this computer), 1 line that is not alias lines']);
+  assert.ok(!plan.out.includes(FAKE_GITHUB_TOKEN) && !plan.out.includes('lin_api_not_real') && !plan.out.includes('not-a-real-key'), 'no value is ever printed');
+
+  const pushed = await c.run(['settings', 'push', '--json']);
+  assert.equal(pushed.code, EXIT.done, pushed.err);
+  assert.equal(pushed.lines.at(-1).dotfilesSent, 3);
+  const { items } = await c.copy();
+  assert.equal(unb64(items['.codex/config.toml']), `model = "gpt-5.5"
+
+[mcp_servers.docs]
+command = "npx"
+args = ["-y", "docs-mcp"]
+
+[mcp_servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+bearer_token_env_var = "GITHUB_TOKEN"
+
+[tui]
+notifications = true
+`);
+  assert.equal(items['.claude/plugins/installed_plugins.json#plugins/review@acme-tools'], '{"marketplace":{"source":"github","repo":"acme/claude-tools"}}');
+  assert.equal(items['.claude/plugins/installed_plugins.json#plugins/mine@my-folder'], undefined);
+  assert.equal(Object.keys(items).some((id) => id.includes('auth.json') || id.includes('.system')), false);
+  assert.deepEqual(await c.userSettings.ownFiles('mia-dev'), {
+    'tmux-conf': null,
+    gitconfig: '[alias]\n\tco = checkout\n[pull]\n\trebase = true\n',
+    inputrc: 'set editing-mode vi\n',
+    'bash-aliases': 'alias ll=\'ls -la\'\n',
+  });
+
+  // A new private session's start writes them, with its own checkout trusted.
+  const session = scratch(t, 'woodshed-session-');
+  await applyItems(session, items);
+  assert.equal(fs.readFileSync(path.join(session, '.codex/AGENTS.md'), 'utf8'), 'Use pnpm.\n');
+  assert.equal(fs.readFileSync(path.join(session, '.codex/config.toml'), 'utf8'), unb64(items['.codex/config.toml']));
+
+  const again = await c.run(['settings', 'push']);
+  assert.match(again.out, /Nothing to send\./, 'a second push finds everything the same');
+});
+
+test('an interactive push asks about each dotfile on its own, and saves only the ones said yes to', async (t) => {
+  const c = await setUp(t, { home: laptopWithMore(t), userSettings: true });
+  const run = await c.run(['settings', 'push', '--only', 'dotfiles'], { answer: (q) => (/gitconfig/.test(q) ? 'y' : 'n') });
+  assert.equal(run.code, EXIT.done, run.err);
+  assert.equal(run.asked.length, 3, run.asked.join('\n'));
+  assert.match(run.asked[0], /^Save dotfile\/gitconfig's lines \(your own ~\/\.gitconfig lines, from ~\/\.gitconfig\) on My settings, for your private sessions\? \[y\/N\] $/);
+  const saved = await c.userSettings.ownFiles('mia-dev');
+  assert.deepEqual([Boolean(saved.gitconfig), saved.inputrc, saved['bash-aliases']], [true, null, null]);
+  assert.match(run.out, /Saved 1 dotfile on My settings/);
+});
+
+test('the console checks a computer\'s dotfile as My settings does, and a pull leaves dotfiles out', async (t) => {
+  const c = await setUp(t, { home: laptopWithMore(t), userSettings: true });
+  const post = (key, text) => fetch(`${c.origin}/api/cli/settings/dotfiles/${key}`, {
+    method: 'POST', headers: { authorization: `Bearer ${c.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ text }),
+  });
+  const refused = await post('bash-aliases', `export GITHUB_TOKEN=${FAKE_GITHUB_TOKEN}\n`);
+  assert.equal(refused.status, 400);
+  const body = await refused.json();
+  assert.match(body.error, /line 1 holds a GitHub token/);
+  assert.ok(!JSON.stringify(body).includes(FAKE_GITHUB_TOKEN));
+  assert.equal((await post('gitconfig', '[user]\n\temail = x@example.com\n')).status, 400);
+  assert.equal((await post('secrets', 'x')).status, 404);
+  assert.equal((await post('inputrc', '  ')).status, 400, 'a computer never clears them');
+  assert.equal(c.secrets.values.size, 0);
+
+  const pull = await c.run(['settings', 'plan', '--pull', '--json']);
+  assert.equal(pull.items.some((i) => i.category === 'dotfiles'), false);
+});
+
+test('pull lists a plugin a session installed with how to install it here, and keeps this computer\'s own Codex entries', async (t) => {
+  const c = await setUp(t, { home: laptopWithMore(t) });
+  await c.claudeSettings.sync({
+    login: 'mia-dev', sessionId: 'aaaaaaaa', version: 0, removed: [], changed: {
+      '.codex/config.toml': b64('model = "gpt-5.5-codex"\n\n[mcp_servers.docs]\ncommand = "npx"\nargs = ["-y", "docs-mcp", "/home/node/.codex/prompts"]\n'),
+      '.claude/plugins/installed_plugins.json#plugins/notes@acme-tools': '{"marketplace":{"source":"github","repo":"acme/claude-tools"}}',
+      '.claude/plugins/installed_plugins.json#plugins/other@elsewhere': '{"marketplace":{"source":"github","repo":"else/where"}}',
+    },
+  });
+  const pulled = await c.run(['settings', 'pull', '--replace', '--only', 'codex,plugins'], { answer: 'y' });
+  assert.equal(pulled.code, EXIT.done, pulled.err);
+  assert.match(pulled.out, /plugin\/notes@acme-tools\s+not installed here: claude plugin install notes@acme-tools\n/, 'a marketplace this computer knows is not added again');
+  assert.match(pulled.out, /plugin\/other@elsewhere\s+not installed here: claude plugin marketplace add else\/where, then claude plugin install other@elsewhere/);
+  assert.match(pulled.out, /model = "gpt-5\.5-codex"/, 'what it would run here is listed before it is written');
+  assert.equal(fs.readFileSync(path.join(c.home, '.codex/config.toml'), 'utf8'), `model = "gpt-5.5-codex"
+model_provider = "ollama"
+notify = ["${c.home}/bin/codex-notify.sh"]
+
+[mcp_servers.docs]
+command = "npx"
+args = ["-y", "docs-mcp", "${c.home}/.codex/prompts"]
+
+[model_providers.ollama]
+base_url = "http://localhost:11434/v1"
+
+[mcp_servers.linear]
+command = "npx"
+
+[mcp_servers.linear.env]
+LINEAR_API_KEY = "lin_api_not_real"
+
+[projects."${c.home}/code/app"]
+trust_level = "trusted"
+`, 'the shared settings, with this computer\'s provider, its server with a key, its notify and its trusted folder kept');
+  assert.equal(fs.existsSync(path.join(c.home, '.claude/plugins/installed_plugins.json')) && JSON.parse(fs.readFileSync(path.join(c.home, '.claude/plugins/installed_plugins.json'), 'utf8')).plugins['notes@acme-tools'], undefined, 'nothing installed');
 });
