@@ -13,7 +13,7 @@
 
 import fs from 'node:fs';
 import { isMain } from './isMain.mjs';
-import { redact, SECRET_HEADER, SECRET_VARIABLE, secretContent, shellCredential } from './secretLike.mjs';
+import { redact, SECRET_VARIABLE, secretContent, shellCredential } from './secretLike.mjs';
 
 export const CODEX_CONFIG = '.codex/config.toml';
 // Tables keyed by a name the person picks: a statement in one belongs to its entry (mcp_servers.github), and an entry
@@ -296,9 +296,8 @@ export function withEntries(base, own) {
   return compose(statements ? textOf(statements.filter((s) => !names.has(unitOf(s)))) : base, own);
 }
 
-// Tables whose values codex takes as they are (mcp_servers.x.env, shell_environment_policy.set, http_headers): a value
-// for a key named like a credential is one, whatever it looks like.
-const LITERAL_TABLES = new Set(['env', 'set', 'http_headers']);
+// Codex takes these environment values as written. HTTP headers can carry credentials under any name.
+const LITERAL_TABLES = new Set(['env', 'set']);
 // Keys and tables whose values name an environment variable rather than hold a value (env_key, bearer_token_env_var,
 // env_http_headers): `OPENAI_API_KEY` there is a name.
 const namesVariable = (key, table) => /(^env_key|_env_var)$/.test(key) || table === 'env_http_headers';
@@ -354,13 +353,13 @@ function findCredential(statement, commands) {
     const key = pair.parts.at(-1);
     const parent = pair.parts.at(-2) ?? last;
     if (!pair.value.trim() || REFERENCE.test(pair.value) || (namesVariable(key, parent) && ENV_NAME.test(pair.value))) continue;
-    if (SECRET_VARIABLE.test(key) || CREDENTIAL_HEADER.test(key) || (parent === 'http_headers' && SECRET_HEADER.test(key))) {
+    if (parent === 'http_headers' || SECRET_VARIABLE.test(key) || CREDENTIAL_HEADER.test(key)) {
       return `sets ${keyText([...at, ...pair.parts])}`;
     }
   }
   const single = strings.length === 1 && statement.value.trim() === strings[0].raw ? strings[0].said : null;
   if (single !== null && single.trim() && !REFERENCE.test(single)) {
-    if (LITERAL_TABLES.has(table) && (SECRET_VARIABLE.test(last) || (table === 'http_headers' && SECRET_HEADER.test(last)))) return `sets ${name}`;
+    if (table === 'http_headers' || (LITERAL_TABLES.has(table) && SECRET_VARIABLE.test(last))) return `sets ${name}`;
     if (SECRET_VARIABLE.test(last) && !WORD.test(single) && !(namesVariable(last, table) && ENV_NAME.test(single))) return `sets ${name}`;
   }
   // A program's arguments, read as its command line: `--api-key abc`, `-H "Authorization: …"`, `TOKEN=abc`.

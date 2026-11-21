@@ -370,6 +370,7 @@ test('dotted and quoted keys in inline Codex tables keep credentials out of sync
     ['env.SERVICE_TOKEN', 'env.SERVICE_TOKEN'],
     [String.raw`'http_headers' . "Authoriz\u0061tion"`, 'http_headers.Authorization'],
     [String.raw`http_headers."X-Internal-\U00000041uth-Code"`, 'http_headers.X-Internal-Auth-Code'],
+    ['http_headers.X-Company-Access', 'http_headers.X-Company-Access'],
   ]) {
     const config = `${model}mcp_servers.demo = { command = "npx", ${entry} = "dummy-value" }\n`;
     await fs.writeFile(path.join(a.home, '.codex/config.toml'), config);

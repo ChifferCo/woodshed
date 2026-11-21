@@ -602,6 +602,7 @@ session's own. Your computer joins the same copy with `woodshed settings`
   `cliSettings: refused`) with the reason. The session's rules win over
   your `AGENTS.md`: codex reads `AGENTS.override.md` in its place, which the
   start writes as the rules followed by your `AGENTS.md`, left as it is.
+  Synced changes to `AGENTS.md` reach Codex's instructions the next time the Woodshed session starts.
 - **Plugins** go as their name and marketplace (`installed_plugins.json#plugins/<name@marketplace>`),
   never their files: a new session installs each its home lacks before claude
   starts (`session/syncedPlugins.mjs`), adding the marketplace first, logged as

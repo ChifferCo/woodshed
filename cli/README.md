@@ -276,9 +276,9 @@ naming it (`--only settings.json`, not `--only settings`) sends yours.
   the receiving computer's or session's PATH. Any other absolute program path is skipped.
 - In `config.toml`, the folders each side trusts (`[projects."…"]`) and where codex sends its calls (`model_provider`,
   `[model_providers.…]`, `profile`, `[profiles.…]`, `openai_base_url`, `chatgpt_base_url`) stay each side's own. An entry
-  that names a path in your home, or holds a credential (an `env` or `http_headers` value named like one, a
-  `bearer_token`, a URL with a sign-in; an `env_key` or `bearer_token_env_var` naming a variable is fine), is left out
-  whole: an `[mcp_servers.x]` with its `env`. A `pull --replace` keeps all of those of yours.
+  that names a path in your home, holds a literal HTTP header, or holds a credential (an `env` value named like one,
+  a `bearer_token`, a URL with a sign-in) stays on that side, along with the rest of its server entry.
+  A `pull --replace` keeps those entries. An `env_key`, `bearer_token_env_var` or `env_http_headers` entry can still name a variable.
 
 **What is refused**, by name or kind, never by showing it: MCP logins (sign in to the server where you use it), an MCP server
 whose `env` holds a literal key or whose HTTP headers contain literal values (`${VARIABLE}` is fine), a file named like a secret (`.env`, `*.pem`, `id_rsa`,
