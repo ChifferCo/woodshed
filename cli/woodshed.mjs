@@ -7,7 +7,8 @@
 //   woodshed logout [--console <url>]                  ends that token at the console and forgets it here
 //   woodshed status [--console <url>]                  the console, its org, and who is signed in
 //   woodshed tunnel <id> -- <line>                     runs <line> in your session, piped to this terminal (tunnel.mjs)
-//   woodshed session new|list|get|stop|resume|remove|extend|limits   sessions (sessions.mjs)
+//   woodshed session new|list|get|connect|stop|resume|remove|extend|limits   sessions (sessions.mjs); connect makes one
+//                                                     a machine in Herdr's hc (hc.mjs)
 //
 // Every command takes --json. Exit codes: 0 done, 2 waiting on a person (a sign-in or an approval), 3 refused, 1 any
 // other failure.
@@ -21,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { createCredentials } from './credentials.mjs';
 import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
+import { hcRunner, hcVersion, viaCommand } from './hc.mjs';
 
 export const VERSION = '0.1.0';
 export const DEFAULT_CONSOLE = 'https://console.woodshed.run';
@@ -33,11 +35,12 @@ const USAGE = `Usage: woodshed <command> [--console <url>] [--json]
 Commands:
   login     sign in to a Woodshed console: approve the code it shows in your browser
   logout    sign out of the console, here and at the console
-  status    the console, its org, and who is signed in
+  status    the console, its org, who is signed in, and the hc found here (Herdr's, for session connect)
   tunnel <id> -- <line>
             run <line> in your running session, with this command's stdin, stdout and stderr; exits with its
             exit code, or 255 when the pipe could not open or broke
-  session   start, list, stop, resume and remove sessions, and give them more time: woodshed session --help
+  session   start, list, connect to, stop, resume and remove sessions, and give them more time:
+            woodshed session --help
 
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};
@@ -125,6 +128,26 @@ function writeConfig(dir, config) {
   fs.renameSync(temp, where);
 }
 
+// This command line as hc's core will run it for a session's machine (hc.mjs, viaCommand): node and this script by
+// absolute paths, since the core has its own PATH. A path on the PATH that leads to the same node is kept over its real
+// one (Homebrew's /opt/homebrew/bin/node over its Cellar's), so the line outlives an upgrade; so is the script's own
+// link, when it was run by one (~/.local/bin/woodshed).
+export function selfCommand({ execPath = process.execPath, argv1 = process.argv[1], env = process.env } = {}) {
+  const real = (file) => {
+    try {
+      return fs.realpathSync(file);
+    } catch {
+      return null;
+    }
+  };
+  const script = fileURLToPath(import.meta.url);
+  const nodeReal = real(execPath);
+  const onPath = String(env.PATH ?? '').split(path.delimiter).filter((dir) => path.isAbsolute(dir))
+    .map((dir) => path.join(dir, 'node')).find((file) => nodeReal && real(file) === nodeReal);
+  const linked = argv1 && path.isAbsolute(argv1) && real(argv1) === real(script) ? argv1 : null;
+  return { node: onPath ?? execPath, script: linked ?? script };
+}
+
 // Only an address this command line built (approvalUrl), and never through a shell: cmd's `start` would read & and | in
 // it as commands of their own.
 function openBrowser(url, platform) {
@@ -184,6 +207,8 @@ export async function main(argv, deps = {}) {
   const dir = configDir(env);
   const credentials = deps.credentials ?? createCredentials({ platform, dir });
   const open = deps.openBrowser ?? ((url) => openBrowser(url, platform));
+  // Herdr's hc, as the person's shell finds it, on the core their environment names (HC_SESSION and the XDG folders).
+  const hc = deps.hc ?? hcRunner({ bin: env.WOODSHED_HC_BIN || 'hc', env });
   let json = argv.includes('--json');
 
   const emit = (object) => stdout.write(`${JSON.stringify(object)}\n`);
@@ -348,15 +373,21 @@ export async function main(argv, deps = {}) {
 
   async function status(origin) {
     const { entry, store, token } = signedIn(origin);
+    // Said whether or not anyone is signed in: whether session connect can run here.
+    const herdr = await hcVersion(hc);
+    const herdrText = !herdr.installed ? `not found: session connect needs hc ${herdr.minimum} or newer`
+      : herdr.ok ? `hc ${herdr.version}` : `hc ${herdr.version ?? '(no version)'}, older than the ${herdr.minimum} session connect needs: hc update`;
     if (!token) {
-      if (json) emit({ console: origin, signedIn: false });
+      if (json) emit({ console: origin, signedIn: false, hc: herdr });
       say(`Not signed in to ${origin}. Run: woodshed login${origin === DEFAULT_CONSOLE ? '' : ` --console ${origin}`}`);
+      say(`${'Herdr:'.padEnd(11)}${herdrText}`);
       return EXIT.waiting;
     }
     const me = await call(origin, '/api/cli/me', { token });
     if (me.status === 401) {
-      if (json) emit({ console: origin, signedIn: false, ended: true });
+      if (json) emit({ console: origin, signedIn: false, ended: true, hc: herdr });
       say(`The sign-in to ${origin} ended: it was revoked, or it expired. Run: woodshed login --console ${origin}`);
+      say(`${'Herdr:'.padEnd(11)}${herdrText}`);
       return EXIT.waiting;
     }
     if (me.status !== 200 || !me.body) throw consoleNoCli(origin, me.status);
@@ -365,7 +396,7 @@ export async function main(argv, deps = {}) {
     if (json) {
       emit({
         console: origin, name: name ?? null, org: org ?? null, signedIn: true, login: who ?? null, store: entry.store,
-        ...(store.file ? { credentialsFile: store.file } : {}), expiresAt: about?.expiresAt ?? null, device: about?.name ?? null,
+        ...(store.file ? { credentialsFile: store.file } : {}), expiresAt: about?.expiresAt ?? null, device: about?.name ?? null, hc: herdr,
       });
       return EXIT.done;
     }
@@ -374,6 +405,7 @@ export async function main(argv, deps = {}) {
       ['Org', org ?? 'none yet: the console has no repo'],
       ['Signed in', who ? `@${who}` : 'yes (this console has no GitHub sign-in)'],
       ['Token', `in ${store.label}, until ${about?.expiresAt ? about.expiresAt.slice(0, 10) : 'unknown'}`],
+      ['Herdr', herdrText],
     ];
     for (const [label, value] of rows) say(`${`${label}:`.padEnd(11)}${value}`);
     return EXIT.done;
@@ -412,7 +444,9 @@ export async function main(argv, deps = {}) {
     if (args.command === 'session') {
       // Its prompt may follow `--`, so a word of it is never read as an option.
       return await sessionCommand({ origin, rest: [...args.args, ...(args.rest ? ['--', ...args.rest] : [])] }, {
-        call, token: signedIn(origin).token, stdout, stderr, say, emit, json, sleep, now, EXIT,
+        call, token: signedIn(origin).token, stdout, stderr, say, emit, json, sleep, now, EXIT, platform, hc,
+        // The line hc keeps for a session's machine: this command line's tunnel into it, on this console.
+        via: (session) => viaCommand({ ...(deps.self ?? selfCommand({ env })), origin, session, configHome: env.XDG_CONFIG_HOME || null }),
         fail: (message, opts) => new CliError(message, opts),
         confirm: deps.confirm ?? ((question) => confirmOnTerminal(question, stderr)),
       });

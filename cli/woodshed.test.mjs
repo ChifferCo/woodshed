@@ -15,7 +15,7 @@ function listen(server) {
 }
 
 // A console with the command line's sign-in, a clock the CLI's sleeps move, and a person signed in by cookie.
-async function consoleFor(t, { decision = 'approve', approves = true, people = null } = {}) {
+async function consoleFor(t, { decision = 'approve', approves = true, people = null, hcVersion = '0.1.21' } = {}) {
   let clock = Date.parse('2026-11-20T10:00:00Z');
   const now = () => clock;
   const store = { state: {}, save() {} };
@@ -61,6 +61,8 @@ async function consoleFor(t, { decision = 'approve', approves = true, people = n
       sleep: async (ms) => { clock += ms; }, now, hostname: 'mia-laptop', platform: 'test',
       credentials: createCredentials({ platform: 'test', dir: path.join(dir, 'woodshed') }),
       openBrowser: (url) => { approve(url).catch((e) => { err += e.stack; }); },
+      // hc as found here: none (null), or one saying this version.
+      hc: async () => (hcVersion === null ? { code: null, stdout: '', stderr: '', missing: true } : { code: 0, stdout: `hc ${hcVersion}\n`, stderr: '' }),
     });
     // The browser's approval runs beside the polls: let it finish before the next command.
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -91,8 +93,10 @@ test('login prints a code, the person approves it in the console, and status say
     [status.lines[0].signedIn, status.lines[0].login, status.lines[0].org, status.lines[0].name, status.lines[0].device],
     [true, 'mia-dev', 'acme', 'Acme Woodshed', 'mia-laptop'],
   );
+  assert.deepEqual(status.lines[0].hc, { installed: true, version: '0.1.21', minimum: '0.1.21', ok: true }, 'the hc session connect would use');
   const text = await c.run(['status']);
   assert.match(text.out, /Console: +Acme Woodshed \(http:\/\/localhost:\d+\)\nOrg: +acme\nSigned in: +@mia-dev\n/);
+  assert.match(text.out, /\nHerdr: +hc 0\.1\.21\n$/);
 
   const mine = await (await fetch(`${c.origin}/api/my`, { headers: { cookie: c.cookie } })).json();
   assert.deepEqual(mine.cli.tokens.map((x) => x.name), ['mia-laptop'], 'My settings lists the computer');
@@ -120,7 +124,20 @@ test('Revoke on My settings ends a computer\'s sign-in, and status says so', asy
   assert.deepEqual((await revoked.json()).cli.tokens, []);
   const status = await c.run(['status', '--json']);
   assert.equal(status.code, EXIT.waiting);
-  assert.deepEqual(status.lines[0], { console: c.origin, signedIn: false, ended: true });
+  assert.deepEqual(status.lines[0], { console: c.origin, signedIn: false, ended: true, hc: { installed: true, version: '0.1.21', minimum: '0.1.21', ok: true } });
+});
+
+test('status says when there is no hc, or one too old for session connect, signed in or not', async (t) => {
+  const none = await consoleFor(t, { hcVersion: null });
+  const out = await none.run(['status', '--console', none.origin]);
+  assert.equal(out.code, EXIT.waiting);
+  assert.match(out.out, /Herdr: +not found: session connect needs hc 0\.1\.21 or newer\n/);
+  const old = await consoleFor(t, { hcVersion: '0.1.9' });
+  assert.equal((await old.run(['login', '--console', old.origin])).code, EXIT.done);
+  const json = await old.run(['status', '--json']);
+  assert.equal(json.code, EXIT.done, 'an old hc is said, not a failure of status');
+  assert.deepEqual(json.lines[0].hc, { installed: true, version: '0.1.9', minimum: '0.1.21', ok: false });
+  assert.match((await old.run(['status'])).out, /Herdr: +hc 0\.1\.9, older than the 0\.1\.21 session connect needs: hc update\n/);
 });
 
 test('a denied sign-in is refused, and one nobody approves expires waiting on a person', async (t) => {
