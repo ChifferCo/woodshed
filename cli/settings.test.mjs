@@ -665,3 +665,21 @@ test('the console holds the settings routes to a browser sign-in: write access g
   assert.match((await gone.json()).error, /no longer have write access/);
   assert.equal((await fetch(`${later.origin}/api/cli/settings`, { headers: { authorization: `Bearer ${later.token}` } })).status, 401, 'every sign-in of theirs ended');
 });
+
+test('pull --own-files skips a saved file whose path holds a folder here, or runs through a file, and writes the rest', async (t) => {
+  const c = await setUp(t);
+  const repo = checkout(t);
+  for (const [file, text] of [['.env.development', 'A=1\n'], ['.env.test', 'B=2\n'], ['.env.d/one', 'C=3\n']]) {
+    await c.repoSettings.saveOwnFile({ login: 'mia-dev', project: 'app', path: file, text });
+  }
+  fs.mkdirSync(path.join(repo, '.env.development'));
+  write(repo, '.env.d', 'a file\n');
+  const pulled = await c.run(['settings', 'pull', '--only', 'own-files', '--own-files', repo, '--json']);
+  assert.equal(pulled.code, EXIT.done, pulled.err);
+  assert.deepEqual(pulled.items.map((i) => [i.name, i.fate, i.reason]), [
+    ['.env.d/one', 'skip', '.env.d is a file here, where the path needs a folder: move it aside'],
+    ['.env.development', 'skip', 'a folder is at that path here: move it aside'],
+    ['.env.test', 'write', 'new here'],
+  ]);
+  assert.equal(fs.readFileSync(path.join(repo, '.env.test'), 'utf8'), 'B=2\n');
+});

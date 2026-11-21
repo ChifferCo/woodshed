@@ -701,13 +701,27 @@ export function ownFilesPushPlan({ top, envFiles, project, stored, only }) {
   return { rows, upload };
 }
 
+/**
+ * Why a saved file cannot be written at its path in the checkout: something other than a file is there (an ignored
+ * folder of the same name), or a file sits where one of its folders would be. Null when it can.
+ */
+function notAFileHere(top, file) {
+  const parts = file.split('/');
+  for (let i = 1; i < parts.length; i++) {
+    const stat = fs.statSync(path.join(top, ...parts.slice(0, i)), { throwIfNoEntry: false });
+    if (stat && !stat.isDirectory()) return `${parts.slice(0, i).join('/')} is a file here, where the path needs a folder: move it aside`;
+  }
+  const stat = fs.statSync(path.join(top, file), { throwIfNoEntry: false });
+  return stat && !stat.isFile() ? 'a folder is at that path here: move it aside' : null;
+}
+
 /** My settings' own files for the repo, written into the checkout where git ignores them, as a session does. */
 export function ownFilesPullPlan({ top, project, stored, only, replace }) {
   const rows = [];
   const write = {};
   for (const [file, text] of Object.entries(stored).sort(([a], [b]) => a.localeCompare(b))) {
     const row = { kind: 'own', id: `own:${project}/${file}`, name: file, category: 'own-files', bytes: Buffer.byteLength(text) };
-    const why = skipReason(top, file);
+    const why = skipReason(top, file) ?? notAFileHere(top, file);
     const here = !why && fs.statSync(path.join(top, file), { throwIfNoEntry: false });
     if (why) rows.push({ ...row, fate: 'skip', reason: why });
     else if (!matchesOnly(only, row)) rows.push({ ...row, fate: 'skip', reason: ONLY });
