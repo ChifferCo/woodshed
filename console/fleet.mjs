@@ -72,10 +72,11 @@ function withFoldedComments(body, comments) {
   return `${body}\n\n**Inline comments**\n\n${lines.join('\n')}`.slice(0, 60_000);
 }
 
-// What Set up app types into claude, on one line as a person would. The fields are docs/reference.md's, which is not in
-// the session image, so they are named here.
+// A shared session's branch starts with this, so a bot's pull request from one is a Woodshed session's.
 const SESSION_BRANCH_PREFIX = 'woodshed/';
 
+// What Set up app types into claude, on one line as a person would. The fields are docs/reference.md's, which is not in
+// the session image, so they are named here.
 export const SETUP_APP_PROMPT = 'Woodshed\'s Start app has nothing to run: .woodshed/project.yaml has no `app` section. '
   + 'Work out from this repo how its app runs in development, then add one: `start` (a command that starts the backend '
   + 'and the frontend in the background and returns once both answer), `stop`, `frontendPort` and `backendPort` (the '
@@ -2350,7 +2351,6 @@ export function createFleet({
     console.log('fleet: pull request opened by the App, no session starter to stand for', { number, found: Boolean(opener), ...projectField(project) });
     return { login: author };
   }
-
 
   async function teamKeyReason(login) {
     if (login.endsWith('[bot]')) return null;
