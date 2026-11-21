@@ -69,25 +69,45 @@ careful, and fair.
    - APPROVE: nothing blocks. Optional suggestions are still APPROVE.
    - REQUEST_CHANGES: at least one finding blocks.
    - COMMENT: only when you could not review it (for example the diff or the context did not load).
-7. Rate the merge risk: how likely the change is to hurt someone if it merges with nobody else reading it.
-   When two tiers both seem to fit, pick the higher. The tier never changes the verdict: a High change
-   that is correct is still APPROVE.
-   - HIGH, any one of: something `{{DIR}}/risk-areas.md` lists, when it exists; a change to who can see or do
-     what (sign-in, permissions, sharing, which user's or organization's data a query reads); a database
-     migration, or stored data rewritten or deleted; billing, secrets or environment variables; messages
-     sent or writes to a system outside this repository; instructions coding agents or CI follow
-     (anything under `.github/` or `.claude/`, any `CLAUDE.md`, the rule files from step 2).
-   - LOW, all of: nothing on the HIGH list; fewer than 5 files and under 200 changed lines, not counting
-     tests and docs for people; only text, styles or layout, only tests that add or strengthen checks, only
-     docs for people, or a small fix with a test inside code that one feature uses; no API route, stored
-     field, prompt or CI workflow touched.
-   - MEDIUM: everything else. A change that deletes, skips or loosens a test, or raises a timeout or retry
-     count, is at least MEDIUM.
-   Then say which rule decided it, in words someone who has not read the diff understands: for HIGH, the
-   item on the HIGH list it hits; for MEDIUM, the LOW condition it misses, naming what in the change misses
-   it ("it changes an API reply", "it removes a confirm step from admin settings"); for LOW, why it is small
-   and contained. When a change misses LOW for more than one reason, lead with what it does over how big
-   it is: size is the reason only when nothing else is.
+7. Rate the incremental risk of merging this diff. Keep the tier independent of the review verdict.
+   Inspect `{{DIR}}/risk-areas.md` when it exists. Use it to look for failure modes in this repository.
+   - HIGH: a plausible failure introduced by the diff could cross an access boundary, expose private data or
+     credentials, lose work, incur material cost, break a shared service for many users, or trigger a materially
+     harmful or hard-to-reverse action. Name the changed behavior that makes the failure plausible, who or what
+     would be affected, and a specific check a human can run before merging. Use Medium if the only case for
+     High is the code's location, the system it talks to, or a hypothetical failure unrelated to the change.
+     Weigh safeguards and proof already in the diff. An existing capability is relevant when the change alters
+     its reach, authority, destination, or failure behavior. Trace the relevant guard and describe how the
+     diff could defeat or bypass it. For an outage, explain why it would affect a shared service rather than
+     a single operation that can be retried.
+   - MEDIUM: meaningful behavior changes whose likely failures are contained or readily reversible, or changes
+     with enough scope or uncertainty to warrant more than a quick check.
+   - LOW: narrow changes with limited consequences and an easy way to verify them.
+   A sensitive file, API route, prompt, CI workflow, or line count alone does not decide the tier.
+
+   Calibration examples. Use the stated safeguards, affected users, and recovery options to judge similar diffs.
+   - HIGH examples:
+     - A permissions refactor omits the ownership check on private records. One account could read another's data.
+       Check that a cross-account read is denied using two test accounts.
+     - A migration drops a column before copying its values. Upgrading could erase saved user preferences.
+       Upgrade a disposable database with existing preferences and compare the saved values before and after.
+     - A billing worker retries a charge after a timeout without reusing the request's idempotency key.
+       Customers could be charged twice. Simulate a timeout after the payment succeeds in the provider sandbox
+       and confirm the retry records only one charge.
+   - MEDIUM examples:
+     - A sign-in change uses a callback path that the Windows installer never registers. New Windows users
+       could be unable to sign in, while existing sessions and other platforms continue working.
+     - A migration builds an index concurrently. If the build fails, queries keep using the old plan and
+       the index can be rebuilt. Check migration retries against representative data.
+     - A billing dashboard groups invoice totals by the wrong date near midnight. The displayed totals can
+       be wrong for a day while stored invoices and charges stay correct.
+   - LOW examples:
+     - A sign-in screen fixes a link label while preserving the destination and sign-in behavior.
+     - A migration test adds an empty-database case in a branch-scoped job that uses disposable data.
+     - An invoice screen corrects a static heading while preserving the amounts, recipients, and actions.
+
+   Give one reason tied to the actual change. For High, describe the failure and affected people or systems
+   in that reason and include the specific check in the risk report.
 8. Write the full review to `{{DIR}}/review-comment.md` with the Write tool, before you finish, in this
    form. The console puts it on the pull request, in place of the last review; your final message is
    not posted, so a review you only write as a reply is lost.
@@ -157,8 +177,8 @@ careful, and fair.
      `REQUEST_CHANGES`, list each blocking issue as `path/to/file.mjs:123 — what triggers it, how often, what
      it costs`.
    - `{{DIR}}/merge-risk.md`: the tier from step 7 alone on the first line (`LOW`, `MEDIUM` or `HIGH`), then
-     one plain sentence of at most 120 characters saying which rule decided it, as step 7 says, then at
-     most three short `- ` bullets with anything else that kept it from a lower tier.
+     one plain sentence of at most 120 characters giving the reason from step 7. For High, follow it with
+     a `- Verify before merging: <specific check>` bullet. Include at most three bullets total.
    - `{{DIR}}/resolved.txt`: the id of each of your earlier inline comments from step 5 that the
      current head fixes, one a line, digits only. Leave out one you are not sure of, and any comment by
      someone else. After an APPROVE their threads are resolved; with none fixed, write the file empty.

@@ -1,8 +1,9 @@
 #!/bin/bash
 # A review session's run (SESSION_MODE=review): gathers the pull request's context and the repo's rules from the base
 # branch, reviews the diff with Claude, and sends the verdict to the console, which submits the formal review and the
-# Merge risk check (POST /review-report, console/sessionApi.mjs). The prompt and verdict are shared/codeReview's, so
-# the verdict matches the Actions review (review.yml). Runs in claude's pane; the review changes nothing on the branch.
+# Merge risk check (POST /review-report, console/sessionApi.mjs). The session prompt in shared/codeReview shares
+# verdict rules with the Actions review (review.yml) and defines its own merge-risk rubric. Runs in claude's pane;
+# the review changes nothing on the branch.
 # With REVIEW_AGENTS naming codex (Console settings' Reviews card), Codex reviews the same diff with the same prompt
 # beside Claude, in .review/codex/, and the two verdicts become one (codeReview.mjs merge): the strictest conclusion and
 # the higher merge risk. Codex reaches OpenAI through the console either way (console/openaiProxy.mjs), so the session
