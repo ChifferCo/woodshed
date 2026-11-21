@@ -203,7 +203,7 @@ import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
 import { safeNext, signInFailure } from './auth.mjs';
 import { handleDesktopSignIn } from './desktopSignIn.mjs';
 import { handleCliApi, handleCliPage } from './cliSignIn.mjs';
-import { carriesCliToken, handleCliCall } from './cliSessions.mjs';
+import { carriesCliToken, createCliAccess, handleCliCall } from './cliSessions.mjs';
 import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
 import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
 import { QA_POSTER_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
@@ -723,6 +723,9 @@ export function createHandler({
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
   cli = null,
 }) {
+  // A command line token's person keeps write access on GitHub, asked as a browser's sign-in is (cliSessions.mjs). Only
+  // where GitHub sign-in is on: with none, or behind a hosting proxy, nobody's access is asked there either.
+  const cliAccess = cli ? createCliAccess({ canWrite: auth?.canWrite ? (login) => (auth.enabled() ? auth.canWrite(login) : true) : null, revokeAll: (login, by) => cli.revokeAll(login, by) }) : null;
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
   const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
@@ -2454,7 +2457,7 @@ export function createHandler({
     // Its token on the few other routes it may call, as its person: `woodshed session`.
     if (carriesCliToken(req.headers)) {
       const read = async (r, pathname, login) => reply(r, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
-      return handleCliCall({ req, res, url, cli, reply, read, write: writeRoute });
+      return handleCliCall({ req, res, url, cli, reply, read, write: writeRoute, access: cliAccess });
     }
     // Sign-in's cookies belong to one host name, and GitHub sends people back only to publicUrl's. Once sign-in
     // can be used, a page opened on another public name (the bare IP) moves there.

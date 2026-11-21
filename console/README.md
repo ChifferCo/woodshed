@@ -1510,7 +1510,10 @@ each answered by the page's own code as the token's person, so it sees and chang
 Every other route refuses it with 403, and so do those for a call with an Origin header (a page's). Those writes need no
 `x-woodshed` header or Origin, which only stand between another site and the browser's cookie; each logs
 `cliSessions: call` with the login, the token's id and the path, and a refusal `cliSessions: refused, not a route the
-command line may call`. A session a terminal is connected to is not kept awake by it: `woodshed session extend` and
+command line may call`. Like a browser's sign-in, its person must still have write access on GitHub, asked at the
+token's first use and then hourly: when GitHub says no, every command line sign-in of theirs ends (`cliSessions:
+refused, write access gone`), and GitHub not answering lets the call through and is asked again 5 minutes later
+(`cliSessions: write access not rechecked`). A session a terminal is connected to is not kept awake by it: `woodshed session extend` and
 `limits` ask for more time, as Extend and the session's own Pause and stop do on its page. The console
 keeps only its SHA-256, in `state.json` under `cliTokens`, and My settings' Command line row lists each computer with
 Revoke. Remove My Woodshed, People's Remove and leaving a hosting program's list end them all. The console logs
