@@ -94,7 +94,8 @@ no others (`console/cliSessions.mjs`), each as its person:
 `woodshed config` reads and sets the choices on your My settings page, through the page's own routes and the same checks
 (`config.mjs`, `console/cliConfig.mjs`). It never reads or sets a secret: your Claude token, Codex sign-in, env file
 values, own files and tmux lines are saved on My settings only, and `config set claude-token` (or `get`, or any such key)
-refuses with a pointer there, without asking the console.
+refuses with a pointer there, without asking the console. No message repeats a key or value it refused, so a token pasted in the
+wrong place never lands in a terminal's scrollback or an agent's captured output.
 
 | Command | What it does | Exits |
 | --- | --- | --- |

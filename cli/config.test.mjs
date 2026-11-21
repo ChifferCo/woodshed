@@ -22,7 +22,7 @@ function listen(server) {
 async function consoleFor(t, { claudeToken = true, github = true } = {}) {
   const record = {
     ...(claudeToken ? { claudeTokenAt: '2026-11-01T00:00:00.000Z' } : {}),
-    ...(github ? { github: { connectedAt: '2026-11-01T00:00:00.000Z', name: 'Mia Dev', email: 'mia@example.com' } } : {}),
+    ...(github ? { github: { connectedAt: '2026-11-01T00:00:00.000Z', name: 'Mia Dev', email: 'mia@example.com', ...(typeof github === 'object' ? github : {}) } } : {}),
   };
   const store = { state: { people: { 'mia-dev': record } }, save() {} };
   const secrets = { read: async () => null, save: async () => {}, remove: async () => {}, configured: () => true };
@@ -130,17 +130,17 @@ test('an unknown key, a bad value or a secret exits 3 and says what is valid, an
   const c = await consoleFor(t);
   const unknown = await c.run(['config', 'set', 'colour', 'blue']);
   assert.equal(unknown.code, EXIT.refused);
-  assert.match(unknown.err, /unknown key colour\. Keys: terminal, reviews, codex-reviews, claude-token-shared, default-repo, github-name, github-email/);
+  assert.match(unknown.err, /not a config key\. Keys: terminal, reviews, codex-reviews, claude-token-shared, default-repo, github-name, github-email/);
 
   const terminal = await c.run(['config', 'set', 'terminal', 'screen', '--json']);
   assert.equal(terminal.code, EXIT.refused);
-  assert.deepEqual(terminal.lines, [{ event: 'error', status: 'refused', error: 'terminal cannot be screen: the terminal must be one of tmux, herdr. Valid: tmux, herdr' }], 'the console\'s own check');
+  assert.deepEqual(terminal.lines, [{ event: 'error', status: 'refused', error: 'not a value terminal takes: the terminal must be one of tmux, herdr. Valid: tmux, herdr' }], 'the console\'s own check');
   const reviews = await c.run(['config', 'set', 'reviews', 'everyone']);
   assert.equal(reviews.code, EXIT.refused);
   assert.match(reviews.err, /Valid: none, claude, codex, both, default/);
   const onOff = await c.run(['config', 'set', 'codex-reviews', 'yes']);
   assert.equal(onOff.code, EXIT.refused);
-  assert.match(onOff.err, /codex-reviews cannot be yes\. Valid: on, off/);
+  assert.match(onOff.err, /not a value codex-reviews takes\. Valid: on, off/);
   const repo = await c.run(['config', 'set', 'default-repo', 'acme/secret']);
   assert.equal(repo.code, EXIT.refused);
   assert.match(repo.err, /Valid: acme\/app, acme\/tools/);
@@ -149,10 +149,17 @@ test('an unknown key, a bad value or a secret exits 3 and says what is valid, an
   assert.match(email.err, /that is not an email address\. Valid: an email address/);
 
   // Nothing typed that could be a key is repeated: not a value in the wrong place, nor the words after a secret's key.
+  // A credential with no prefix to tell it by, as an AWS secret key has none, pasted where a value or a key goes.
+  const bare = 'wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY01';
+  for (const args of [['set', 'terminal', bare], ['set', 'default-repo', bare], ['set', 'github-email', bare], ['get', bare], [bare]]) {
+    const out = await c.run(['config', ...args, '--json']);
+    assert.notEqual(out.code, EXIT.done, args.join(' '));
+    assert.ok(!(out.out + out.err).includes(bare), `${args.join(' ')}: ${out.out}${out.err}`);
+  }
   const misplaced = await c.run(['config', 'set', 'terminal', 'sk-ant-oat01-abcdef']);
   assert.equal(misplaced.code, EXIT.refused);
   assert.ok(!misplaced.err.includes('sk-ant'), misplaced.err);
-  assert.match(misplaced.err, /terminal cannot be that: .*Valid: tmux, herdr/);
+  assert.match(misplaced.err, /not a value terminal takes: .*Valid: tmux, herdr/);
   const tooMany = await c.run(['config', 'set', 'terminal', 'tmux', 'ghp_abcdef']);
   assert.equal(tooMany.code, EXIT.failed);
   assert.ok(!tooMany.err.includes('ghp_'), tooMany.err);
@@ -189,4 +196,11 @@ test('a change My settings needs first exits 3 and points there; signed out exit
   assert.match(out.out, /Not signed in/);
   assert.equal((await c.run(['config', 'set', 'terminal'])).code, EXIT.failed, 'a set with no value is a usage error');
   assert.match((await c.run(['config', '--help'])).out, /^Usage: woodshed config/);
+});
+
+test('a half of the git identity with no value yet is said as what is missing, not as the typed value\'s fault', async (t) => {
+  const c = await consoleFor(t, { github: { email: null } });
+  const out = await c.run(['config', 'set', 'github-name', 'Mia']);
+  assert.equal(out.code, EXIT.refused);
+  assert.equal(out.err, `woodshed: github-email has no value yet, and the name and email are saved together: set both on My settings: ${c.origin}/settings\n`);
 });
