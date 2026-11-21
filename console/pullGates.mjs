@@ -2,17 +2,19 @@
 // project file's `pullRequests` (docs/reference.md, "The project file"): its review's verdict, its suites' jobs, and whether a
 // suite's workflow runs at all for the files it touched. Pure functions over what GitHub answered.
 
+import { matchesReviewHeading } from './reviewSessions.mjs';
+
 const PASSING = new Set(['success', 'neutral', 'skipped']);
 
 /**
- * The review posts its verdict as a review by its `author`, whose body starts with its `heading`.
+ * The review posts its verdict as a review by its `author`, whose body starts with its configured heading or a Woodshed reviewer heading.
  * @param {object[]} reviews  a pull request's, oldest first
- * @param {{author: string, heading: string}|null} review  the project file's `pullRequests.review`
+ * @param {{author: string, heading: string, runner?: string}|null} review  the project file's `pullRequests.review`
  * @returns {object|null}  the latest such review: its `state` is the verdict, such as `APPROVED` or `CHANGES_REQUESTED`
  */
 export function reviewVerdict(reviews, review) {
   if (!review) return null;
-  return (reviews ?? []).filter((r) => r.user?.login === review.author && String(r.body ?? '').startsWith(review.heading)).at(-1) ?? null;
+  return (reviews ?? []).filter((r) => r.user?.login === review.author && matchesReviewHeading(String(r.body ?? ''), review)).at(-1) ?? null;
 }
 
 /**

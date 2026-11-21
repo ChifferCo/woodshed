@@ -64,7 +64,7 @@ function listen(handler) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', agents = null, codex = FAKE_CODEX, via = null, account = null, codexMinutes = null, relay = null } = {}) {
+async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', agents = null, claude = FAKE_CLAUDE, codex = FAKE_CODEX, via = null, account = null, codexMinutes = null, relay = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-sh-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const sessionDir = path.join(dir, 'session');
@@ -74,7 +74,7 @@ async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', ag
   const repo = path.join(dir, 'repo');
   fs.mkdirSync(path.join(sessionDir, 'bin'), { recursive: true });
   fs.mkdirSync(bin);
-  fs.writeFileSync(path.join(sessionDir, 'bin', 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+  fs.writeFileSync(path.join(sessionDir, 'bin', 'claude'), claude, { mode: 0o755 });
   fs.writeFileSync(path.join(sessionDir, 'bin', 'codex'), codex, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/bash\necho "# Pull request: Add GTM"\n', { mode: 0o755 });
   execFileSync('bash', ['-c', `git init -q -b main "${repo}" && cd "${repo}" && echo hi > README.md && git add -A &&
@@ -137,6 +137,7 @@ test('with Codex beside Claude Code, both review the same diff and the stricter 
   assert.equal(reports.length, 1);
   const { body } = reports[0];
   assert.equal(body.conclusion, 'REQUEST_CHANGES');
+  assert.deepEqual(body.agents, ['claude', 'codex']);
   assert.equal(body.mergeRisk.tier, 'Medium');
   assert.equal(body.costUsd, 0.25, 'Claude\'s cost, which codex does not report');
   assert.deepEqual(body.inlineComments.map((c) => c.body), ['**Claude Code:** Say what it is for.', '**Codex:** This link 404s.']);
@@ -147,6 +148,16 @@ test('a Codex that fails leaves Claude Code\'s review, which says Codex wrote no
   assert.match(output, /Codex ended \(exit=1\)/);
   assert.equal(reports[0].body.conclusion, 'APPROVE');
   assert.match(reports[0].body.summary, /Codex wrote no verdict/);
+  assert.deepEqual(reports[0].body.agents, ['claude']);
+});
+
+test('a Claude Code failure reports Codex as the sole contributor to a dual review', async (t) => {
+  const { reports, output } = await runReview(t, { agents: 'claude codex', claude: '#!/bin/bash\nexit 1\n' });
+  assert.match(output, /Verdict sent to the console \(status: 204\)/);
+  const { body } = reports[0];
+  assert.equal(body.conclusion, 'REQUEST_CHANGES');
+  assert.deepEqual(body.agents, ['codex']);
+  assert.match(body.summary, /Claude Code wrote no verdict/);
 });
 
 test('with Codex alone, claude is never run and Codex\'s verdict is the one sent, as its own', async (t) => {
@@ -155,6 +166,7 @@ test('with Codex alone, claude is never run and Codex\'s verdict is the one sent
   assert.doesNotMatch(output, /Claude ended/);
   const { body } = reports.find((r) => r.path === '/review-report');
   assert.equal(body.conclusion, 'REQUEST_CHANGES');
+  assert.deepEqual(body.agents, ['codex']);
   assert.equal(body.summary, 'The link is wrong.', 'no sections: one reviewer');
   assert.deepEqual(body.inlineComments, [{ path: 'README.md', line: 1, body: 'This link 404s.' }]);
 });
