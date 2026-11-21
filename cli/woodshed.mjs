@@ -9,6 +9,7 @@
 //   woodshed tunnel <id> -- <line>                     runs <line> in your session, piped to this terminal (tunnel.mjs)
 //   woodshed session new|list|get|herdr|stop|resume|remove|extend|limits   sessions (sessions.mjs); herdr makes one
 //                                                     a machine in Herdr's hc (hc.mjs)
+//   woodshed review enable|status                      review this checkout's pull requests in Woodshed sessions (review.mjs)
 //
 // Every command takes --json. Exit codes: 0 done, 2 waiting on a person (a sign-in or an approval), 3 refused, 1 any
 // other failure.
@@ -20,6 +21,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { createCredentials } from './credentials.mjs';
+import { reviewCommand } from './review.mjs';
 import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
 import { hcRunner, hcVersion, viaCommand } from './hc.mjs';
@@ -41,6 +43,7 @@ Commands:
             exit code, or 255 when the pipe could not open or broke
   session   start, list, add to Herdr, stop, resume and remove sessions, and give them more time:
             woodshed session --help
+  review    review this checkout's pull requests in Woodshed sessions: woodshed review --help
 
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};
@@ -78,7 +81,8 @@ export function parseArgs(argv) {
       if (!argv[i + 1]) throw new CliError('--console needs a URL');
       out.console = argv[++i];
     } else if (arg.startsWith('--console=')) out.console = arg.slice('--console='.length);
-    else if (out.command === 'session') out.args.push(arg);
+    // Their subcommands and options are sessions.mjs's and review.mjs's to read.
+    else if (out.command === 'session' || out.command === 'review') out.args.push(arg);
     else if (arg.startsWith('-')) throw new CliError(`unknown option ${arg}\n\n${USAGE}`);
     else if (!out.command) out.command = arg;
     else if (out.command === 'tunnel') out.args.push(arg);
@@ -431,6 +435,7 @@ export async function main(argv, deps = {}) {
     const args = parseArgs(argv);
     json = args.json;
     if (args.command === 'session' && args.help) return await sessionCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
+    if (args.command === 'review' && args.help) return await reviewCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.help || !args.command || args.command === 'help') {
       stdout.write(`${USAGE}\n`);
       return args.command || args.help ? EXIT.done : EXIT.failed;
@@ -450,6 +455,11 @@ export async function main(argv, deps = {}) {
         via: (session) => viaCommand({ ...(deps.self ?? selfCommand({ env })), origin, session, configHome: env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : null }),
         fail: (message, opts) => new CliError(message, opts),
         confirm: deps.confirm ?? ((question) => confirmOnTerminal(question, stderr)),
+      });
+    }
+    if (args.command === 'review') {
+      return await reviewCommand({ origin, rest: args.args }, {
+        call, token: signedIn(origin).token, stdout, say, emit, json, EXIT, cwd: deps.cwd, fail: (message, opts) => new CliError(message, opts),
       });
     }
     throw new CliError(`unknown command ${args.command}\n\n${USAGE}`);

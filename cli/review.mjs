@@ -1,0 +1,276 @@
+// `woodshed review`: turn on Woodshed's review for the repo checked out here, in a Woodshed session
+// (pullRequests.review.runner: woodshed): the console starts a review session on each pull request and posts the verdict
+// as its reviewer App. It edits the checkout's .woodshed/project.yaml (projectReview.mjs), checks it as `project.mjs
+// check` does, and asks the console what is still missing on its side (console/reviewReadiness.mjs). It never writes a
+// GitHub workflow, sets an Actions secret or handles an Anthropic key: a repo with no Woodshed console uses
+// scripts/enable-review.sh instead.
+//
+//   woodshed review enable [--qa] [--rerun <tag>|--every-commit] [--dry-run] [--dir <path>]
+//   woodshed review status [--dir <path>]
+//
+// Exit codes, as every command's: 0 done (enable: the file says it and the console is ready, so commit it; status: on),
+// 2 waiting on a person (something only an admin can do, a sign-in, or the change not yet on the default branch),
+// 3 refused, 1 anything else (a project file that does not read, or a check that fails).
+
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+
+import { PROJECT_FILE, parseProject, readRepoFile, repoOf } from '../shared/project.mjs';
+import { checkSummary } from '../shared/projectCheck.mjs';
+import { parseYaml } from '../shared/yamlLite.mjs';
+import { enableReview } from './projectReview.mjs';
+
+export const REVIEW_USAGE = `Usage: woodshed review <command> [--console <url>] [--json]
+
+Run in a checkout of the repo.
+
+Commands:
+  enable [options]       review this repo's pull requests in Woodshed sessions: writes pullRequests.review with
+                         runner: woodshed into .woodshed/project.yaml, checks it, and asks the console what is missing
+      --qa               QA too, in a Woodshed session, when the woodshed-qa label goes on a pull request
+      --rerun <tag>      review a commit whose message has this tag (default: the file's own, else [woodshed-review])
+      --every-commit     review each new commit, with no tag
+      --dry-run          say what would change, and write nothing
+      --dir <path>       the checkout (default: the one this is run in)
+  status [--dir <path>]  whether review is on: in the checkout's project file, on the default branch, and the console's
+                         reviewer App
+
+Nothing here writes a GitHub workflow or an Actions secret: the review runs in the console's sessions, which need neither.
+
+Exit codes: 0 done, 2 waiting on a person (an admin's step, a sign-in, or the change to merge), 3 refused, 1 anything else.`;
+
+// eslint-disable-next-line no-control-regex
+const UNPRINTABLE_RE = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
+function printable(text, most = 400) {
+  if (text === null || text === undefined) return null;
+  return String(text).replace(UNPRINTABLE_RE, ' ').slice(0, most);
+}
+
+/** @returns {string|null}  the top of the git checkout `dir` is in */
+function checkoutOf(dir) {
+  try {
+    return execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+// The checkout's project file, else its default branch's when git can tell which that is, else none.
+function projectFileOf(dir) {
+  if (fs.existsSync(path.join(dir, PROJECT_FILE))) return { text: fs.readFileSync(path.join(dir, PROJECT_FILE), 'utf8'), from: 'checkout' };
+  try {
+    return readRepoFile(dir, PROJECT_FILE);
+  } catch {
+    return null;
+  }
+}
+
+// The login a `runsOn` names, without a console's name after a slash.
+const runsOnLogin = (runsOn) => String(runsOn ?? '').split('/')[0] || null;
+
+/**
+ * What the console said, made printable, with the warnings the checkout's file gives against it.
+ * @returns {{missing: {key: string, step: string, by: string}[], warnings: string[], readiness: object}}
+ */
+export function readinessFindings(readiness, gates) {
+  const missing = (Array.isArray(readiness?.missing) ? readiness.missing : []).map((m) => ({ key: printable(m?.key, 40), step: printable(m?.step), by: printable(m?.by, 20) }));
+  const warnings = [];
+  const consoleLogin = printable(readiness?.consoleApp?.login, 100);
+  const reviewerLogin = printable(readiness?.reviewerApp?.login, 100);
+  const runsOn = gates?.runsOn ?? null;
+  if (runsOn && consoleLogin && runsOnLogin(runsOn) !== consoleLogin) {
+    warnings.push(`pullRequests.runsOn names ${runsOn}, and this console is ${consoleLogin}: the console runsOn names reviews, not this one.`);
+  }
+  const review = gates?.review;
+  if (review?.author && reviewerLogin && review.author !== reviewerLogin) {
+    warnings.push(`pullRequests.review.author is ${review.author}, and the console's reviewer App is ${reviewerLogin}: its verdicts would not count. Take the line out, and the console fills in its own.`);
+  }
+  if (review?.commentAuthor && consoleLogin && review.commentAuthor !== consoleLogin) {
+    warnings.push(`pullRequests.review.commentAuthor is ${review.commentAuthor}, and the console's App is ${consoleLogin}: take the line out, and the console fills in its own.`);
+  }
+  return { missing, warnings };
+}
+
+/**
+ * @param {{origin: string, rest: string[]}} args  `rest`: what follows `review` on the command line
+ * @param {object} deps  from woodshed.mjs: `call`, `token`, `say`, `emit`, `json`, `EXIT`, `fail`, `stdout`, `cwd`
+ * @returns {Promise<number>}  the exit code
+ */
+export async function reviewCommand({ origin, rest }, deps) {
+  const { EXIT, stdout } = deps;
+  const [sub, ...words] = rest;
+  if (!sub || sub === 'help' || sub === '--help' || sub === '-h') {
+    stdout.write(`${REVIEW_USAGE}\n`);
+    return sub ? EXIT.done : EXIT.failed;
+  }
+  const { call, token, say, emit, json, fail } = deps;
+
+  function options(allowed) {
+    const out = {};
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
+      const eq = word.startsWith('--') ? word.indexOf('=') : -1;
+      const [name, inline] = eq > 0 ? [word.slice(0, eq), word.slice(eq + 1)] : [word, null];
+      if (!allowed[name]) throw fail(`${word.startsWith('-') ? 'unknown option' : 'unexpected'} ${word} for review ${sub}\n\n${REVIEW_USAGE}`);
+      if (allowed[name] === 'flag') out[name] = true;
+      else {
+        const value = inline ?? words[++i];
+        if (value === undefined || value === '') throw fail(`${name} needs a value`);
+        out[name] = value;
+      }
+    }
+    return out;
+  }
+
+  function checkout(dirOption) {
+    const dir = checkoutOf(path.resolve(deps.cwd ?? process.cwd(), dirOption ?? '.'));
+    if (!dir) throw fail(`${dirOption ?? 'this folder'} is not in a git checkout: run woodshed review in a checkout of the repo, or give --dir`);
+    return { dir, repo: repoOf(dir) };
+  }
+
+  // The console's side, or why it was not asked: null readiness then, with `unasked` saying why.
+  async function askConsole(repo) {
+    if (!repo) return { readiness: null, unasked: 'this checkout\'s origin is not on GitHub, so the console was not asked about it' };
+    if (!token) return { readiness: null, unasked: `not signed in to ${origin}: run woodshed login${origin ? ` --console ${origin}` : ''}, then woodshed review status`, signIn: true };
+    let got;
+    try {
+      got = await call(origin, `/api/review-readiness?repo=${encodeURIComponent(repo)}`, { token });
+    } catch (err) {
+      return { readiness: null, unasked: printable(err.message, 300), unreachable: true };
+    }
+    if (got.status === 200 && got.body && typeof got.body === 'object') return { readiness: got.body, unasked: null };
+    if (got.status === 401) {
+      const me = await call(origin, '/api/cli/me', { token }).catch(() => null);
+      if (me?.status === 200) return { readiness: null, unasked: `${origin} is from before woodshed review, so it was not asked what is missing` };
+      return { readiness: null, unasked: `the sign-in to ${origin} ended: run woodshed login --console ${origin}`, signIn: true };
+    }
+    const said = printable(got.body?.error, 200);
+    return { readiness: null, unasked: `${origin} answered ${got.status}${said ? `: ${said}` : ''}` };
+  }
+
+  function sayConsole(readiness, unasked, { missing, warnings }) {
+    if (unasked) {
+      say(`Console: not asked: ${unasked}.`);
+      return;
+    }
+    const reviewer = readiness.reviewerApp;
+    if (readiness.project) {
+      say(`Console: ${origin} has ${printable(readiness.repo, 140)} as project ${printable(readiness.project, 60)}.`);
+      if (reviewer?.made) say(`  Reviewer App: ${printable(reviewer.login, 100) ?? 'made'}, ${reviewer.installed === true ? 'installed on the repo' : reviewer.installed === false ? 'not installed on the repo' : 'whether it is installed on the repo was not read'}.`);
+    }
+    if (missing.length) {
+      say('Still to do, by an admin:');
+      for (const m of missing) say(`  - ${m.step}`);
+    }
+    for (const w of warnings) say(`Warning: ${w}`);
+  }
+
+  if (sub === 'enable') {
+    const opts = options({ '--qa': 'flag', '--rerun': 'value', '--every-commit': 'flag', '--dry-run': 'flag', '--dir': 'value' });
+    if (opts['--rerun'] && opts['--every-commit']) throw fail('--rerun and --every-commit are each other\'s opposite: give one');
+    const { dir, repo } = checkout(opts['--dir']);
+    const file = path.join(dir, PROJECT_FILE);
+    const found = projectFileOf(dir);
+    if (found?.from === 'default branch') {
+      throw fail(`this checkout has no ${PROJECT_FILE}, but its default branch does: check out a branch from the default branch first, so the change is to that file`);
+    }
+    let edit;
+    try {
+      edit = enableReview(found?.text ?? null, { qa: Boolean(opts['--qa']), rerun: opts['--rerun'] ?? null, everyCommit: Boolean(opts['--every-commit']) });
+    } catch (err) {
+      throw fail(err.message);
+    }
+    const project = { ...parseProject(parseYaml(edit.text)), from: 'checkout' };
+    // As `node shared/project.mjs check` reads it, against this checkout, before anything is written.
+    let problems = null;
+    try {
+      checkSummary(project, dir);
+    } catch (err) {
+      problems = String(err.message).split('\n').map((l) => printable(l));
+    }
+    const dryRun = Boolean(opts['--dry-run']);
+    const written = !dryRun && edit.changes.length > 0 && !problems;
+    if (written) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, edit.text);
+    }
+    const gates = project.pullRequests;
+    const { readiness, unasked, signIn, unreachable } = problems ? { readiness: null, unasked: 'the project file has problems to fix first' } : await askConsole(repo);
+    const findings = readiness ? readinessFindings(readiness, gates) : { missing: [], warnings: [] };
+    const qaWithoutApp = Boolean(opts['--qa']) && !project.app && !(project.apps?.length);
+    if (qaWithoutApp) findings.warnings.push('QA in a session starts the app the project file names, and this one names none: add `app` (the write-project-file skill, or project.reference.yaml).');
+    const defaultOn = readiness?.defaultBranch?.review?.runner === 'woodshed';
+    const result = {
+      event: 'enable', repo, file: PROJECT_FILE, changes: edit.changes, written, dryRun, problems,
+      review: { runner: gates.review.runner, rerun: gates.review.rerun ?? null, heading: gates.review.heading },
+      qa: gates.qa ? { runner: gates.qa.runner, label: gates.qa.label } : null,
+      console: readiness ? { project: readiness.project ?? null, reviewerApp: readiness.reviewerApp ?? null, defaultBranch: readiness.defaultBranch ?? null } : null,
+      unasked, missing: findings.missing, warnings: findings.warnings,
+    };
+    if (json) emit(result);
+    if (edit.changes.length) {
+      say(`${dryRun ? 'Would change' : problems ? 'Not written' : 'Changed'} ${PROJECT_FILE}:`);
+      for (const c of edit.changes) say(`  - ${printable(c)}`);
+    } else say(`${PROJECT_FILE} already has the review in a Woodshed session${opts['--qa'] ? ', and QA' : ''}.`);
+    if (problems) {
+      say(`project check found problems${edit.changes.length ? ', so nothing was written' : ''}:`);
+      for (const p of problems) say(`  ${p}`);
+      return EXIT.failed;
+    }
+    sayConsole(readiness, unasked, findings);
+    if (signIn || findings.missing.length) return EXIT.waiting;
+    if (unreachable) return EXIT.failed;
+    const tag = gates.review.rerun;
+    if (dryRun) {
+      say('Nothing written (--dry-run).');
+    } else if (edit.changes.length || !defaultOn) {
+      say(`Next: commit ${PROJECT_FILE} and open a pull request. Once it is merged, the console reviews each pull request ${tag ? `whose head commit's message has ${tag}` : 'on each new commit'}${gates.qa?.runner === 'woodshed' ? `, and QA runs when a pull request gets the ${gates.qa.label} label` : ''}.`);
+    } else {
+      say(`Review is on: the default branch says so too. The console reviews each pull request ${tag ? `whose head commit's message has ${tag}` : 'on each new commit'}.`);
+    }
+    return EXIT.done;
+  }
+
+  if (sub === 'status') {
+    const opts = options({ '--dir': 'value' });
+    const { dir, repo } = checkout(opts['--dir']);
+    const found = projectFileOf(dir);
+    let gates = null;
+    let fileError = null;
+    try {
+      gates = found ? parseProject(parseYaml(found.text)).pullRequests : null;
+    } catch (err) {
+      fileError = printable(err.message);
+    }
+    const local = gates?.review ?? null;
+    const { readiness, unasked, signIn, unreachable } = await askConsole(repo);
+    const findings = readiness ? readinessFindings(readiness, gates) : { missing: [], warnings: [] };
+    const remote = readiness?.defaultBranch ?? null;
+    const on = remote?.review?.runner === 'woodshed' && !findings.missing.length;
+    if (json) {
+      emit({
+        repo, on,
+        checkout: { from: found?.from ?? null, error: fileError, review: local ? { runner: local.runner, rerun: local.rerun ?? null } : null, qa: gates?.qa ? { runner: gates.qa.runner, label: gates.qa.label } : null },
+        console: readiness ? { project: readiness.project ?? null, reviewerApp: readiness.reviewerApp ?? null, defaultBranch: remote } : null,
+        unasked, missing: findings.missing, warnings: findings.warnings,
+      });
+    }
+    const words = (r) => (!r ? 'off' : r.runner === 'woodshed' ? `in a Woodshed session${r.rerun ? `, on commits tagged ${r.rerun}` : ', on each commit'}` : `in ${r.runner === 'actions' ? 'GitHub Actions' : printable(r.runner, 20)}`);
+    say(`Repo:            ${repo ?? 'not on GitHub'}`);
+    say(`This checkout:   ${fileError ? `${PROJECT_FILE} does not read: ${fileError}` : `review ${words(local)}${gates?.qa ? `; QA ${gates.qa.runner === 'woodshed' ? 'in a Woodshed session' : 'in GitHub Actions'}` : ''}`}`);
+    if (remote) say(`Default branch:  ${remote.error ? `not read: ${printable(remote.error, 200)}` : `review ${words(remote.review)}`}`);
+    sayConsole(readiness, unasked, findings);
+    if (fileError || unreachable) return EXIT.failed;
+    if (on) {
+      say('Review is on.');
+      return EXIT.done;
+    }
+    if (!signIn && readiness && !findings.missing.length) {
+      say(local?.runner === 'woodshed' ? 'Next: merge the change to the project file.' : 'Next: woodshed review enable, then commit it and open a pull request.');
+    }
+    return EXIT.waiting;
+  }
+
+  throw fail(`unknown command review ${sub}\n\n${REVIEW_USAGE}`);
+}

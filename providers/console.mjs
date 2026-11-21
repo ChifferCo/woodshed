@@ -61,9 +61,10 @@ function cannotStart(err) {
 
 /**
  * Starts the console from the environment, as the image does. `repos` and `projectReadiness` are for the dev
- * console's stand-in for an embedding program (scripts/devHostConsole.mjs); the image passes neither.
+ * console's stand-in for an embedding program (scripts/devHostConsole.mjs), and `hostApp` for its made-up reviewer App
+ * (scripts/devReviewerConsole.mjs); the image passes none.
  */
-export function run({ repos = null, projectReadiness = null } = {}) {
+export function run({ repos = null, projectReadiness = null, hostApp = null } = {}) {
   let config;
   let provider;
   // A setting that is wrong, such as a secrets folder without its key, is said in one line, not a stack trace.
@@ -83,7 +84,7 @@ export function run({ repos = null, projectReadiness = null } = {}) {
     process.exit(0);
   }
   console.log('console: provider', { name: provider.name });
-  startConsole({ provider, config, repos, projectReadiness }).catch(cannotStart);
+  startConsole({ provider, config, repos, projectReadiness, hostApp }).catch(cannotStart);
 }
 
 if (isMain(import.meta.url)) run();

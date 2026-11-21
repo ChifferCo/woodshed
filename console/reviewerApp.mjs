@@ -151,5 +151,16 @@ export function createReviewerApp({ store, secrets, config, fetchImpl = fetch, n
     return answer.id ?? null;
   }
 
-  return { configured, login, view, startManifest, completeManifest, submitReview };
+  /**
+   * Whether it is installed on `repo`, for `woodshed review` to say what is missing (reviewReadiness.mjs).
+   * @returns {Promise<boolean>}  false too when it was not made
+   */
+  async function installedOn(repo) {
+    const found = stored();
+    const privateKey = found?.appId ? await secrets?.read(REVIEWER_KEY_SECRET) : null;
+    if (!privateKey) return false;
+    return Boolean(await createAppApi({ appId: found.appId, privateKey, fetchImpl, now }).installationOf(repo));
+  }
+
+  return { configured, login, view, startManifest, completeManifest, submitReview, installedOn };
 }

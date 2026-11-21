@@ -951,6 +951,17 @@ review only from an App that can write to the repo. Each review still goes out w
 A reviewer App made before it asked for contents needs it added in its settings on GitHub, then accepted on each
 installation.
 
+**Is it ready for a repo?** `GET /api/review-readiness?repo=<owner/name>` (`reviewReadiness.mjs`) says, for a repo the
+asker may start sessions on: the project, the console App's login, whether the reviewer App is made and installed on
+the repo (with its install link), what the default branch's project file says of `review`, `qa` and `runsOn`, and each
+missing step with who takes it (`missing: [{key, step, by}]`, keys `repo`, `reviewer-app`, `reviewer-installed`). Of
+any other repo it says only that the console does not have it for them, and asks GitHub nothing. Anyone signed in may
+read it, and so may the command line's token (`woodshed review enable` and `status`, cli/README.md, "Review"), as its
+person; a token's call that carries an Origin is a page's, and is refused. A hosting program's proxy passes it through
+when it carries `Authorization: Bearer wsc_…`, as it does `/api/cli/*`. A host's reviewer App may give
+`installedOn(repo)`; without it, whether it is installed is `null`. It logs `reviewReadiness: reviewer App
+installation not read` when GitHub did not answer.
+
 At each verdict the console finds the reviewer App's installation on the repo, mints a token narrowed to pull requests,
 and submits the review at the reviewed commit. It logs `fleet: review verdict submitted` with `as: 'reviewer App'`, or
 `as: 'console App'` when no reviewer App was made, in which case GitHub refuses an approval of the App's own pull
@@ -1506,7 +1517,7 @@ starts a sign-in to hand someone the link of. The code lasts 10 minutes. The tok
 database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. Besides `/api/cli/*` and
 `/api/tunnel/exec/*` it signs in to `woodshed session`'s routes alone (`console/cliSessions.mjs`): `GET /api/sessions`, `GET /api/my/projects`,
 `POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume|remove` and `POST /api/sessions/<id>/stop|extend|limits`,
-each answered by the page's own code as the token's person, so it sees and changes exactly what they could on the page.
+and `woodshed review`'s one read, `GET /api/review-readiness` ("The reviewer App"), each answered by the page's own code as the token's person, so it sees and changes exactly what they could on the page.
 Every other route refuses it with 403, and so do those for a call with an Origin header (a page's). Those writes need no
 `x-woodshed` header or Origin, which only stand between another site and the browser's cookie; each logs
 `cliSessions: call` with the login, the token's id and the path, and a refusal `cliSessions: refused, not a route the

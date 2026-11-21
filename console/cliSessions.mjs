@@ -11,6 +11,8 @@
 //   POST /api/sessions/<id>/extend          woodshed session extend: its pause or stop an hour later, in its last minutes
 //   POST /api/sessions/<id>/limits          woodshed session limits: its own pause and stop. These two are a private
 //                                           session's owner's and a shared one's assignee's alone, as on the page
+//   GET  /api/review-readiness?repo=        woodshed review enable and status: whether a repo of theirs can be
+//                                           reviewed in a session, and what is missing (reviewReadiness.mjs)
 //
 // A terminal connected to a session never keeps it awake: more time is asked for, by the person or their agent, with
 // extend or limits, and otherwise the session pauses and stops as its limits say.
@@ -28,6 +30,7 @@ const ROUTES = [
   ['POST', /^\/api\/my\/sessions$/],
   ['POST', /^\/api\/my\/sessions\/[0-9a-f]{8}\/(resume|remove)$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/(stop|extend|limits)$/],
+  ['GET', /^\/api\/review-readiness$/],
 ];
 
 /** @returns {boolean}  a route the command line's token may call */

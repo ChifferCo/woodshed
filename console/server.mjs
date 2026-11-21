@@ -204,6 +204,7 @@ import { safeNext, signInFailure } from './auth.mjs';
 import { handleDesktopSignIn } from './desktopSignIn.mjs';
 import { handleCliApi, handleCliPage } from './cliSignIn.mjs';
 import { carriesCliToken, handleCliCall } from './cliSessions.mjs';
+import { REVIEW_READINESS_PATH, reviewReadinessReply } from './reviewReadiness.mjs';
 import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
 import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
 import { QA_POSTER_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
@@ -721,8 +722,10 @@ export function createHandler({
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
-  cli = null,
+  cli = null, reviewReadiness = null,
 }) {
+  // The repos a person may ask review readiness about (reviewReadiness.mjs): those they may start sessions on.
+  const readinessProjects = async (login) => (projectAccess ? projectAccess.startable(login) : allProjects(config));
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
   const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
@@ -2455,7 +2458,11 @@ export function createHandler({
     }
     // Its token on the few other routes it may call, as its person: `woodshed session`.
     if (carriesCliToken(req.headers)) {
-      const read = async (r, pathname, login) => reply(r, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
+      const read = async (r, pathname, login) => {
+        // `woodshed review`'s one read (reviewReadiness.mjs), which asks GitHub for the person's write access itself.
+        if (pathname === REVIEW_READINESS_PATH) return reviewReadinessReply({ req, res: r, url, login, readiness: reviewReadiness, projects: readinessProjects, reply });
+        return reply(r, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
+      };
       return handleCliCall({ req, res, url, cli, reply, read, write: writeRoute });
     }
     // Sign-in's cookies belong to one host name, and GitHub sends people back only to publicUrl's. Once sign-in
@@ -2501,6 +2508,7 @@ export function createHandler({
     if (pathname === '/setup/github') return html(res, pageShell({ title: consoleName, script: 'githubSetup.js' }));
     if (pathname === '/setup/github/created') return githubSetupCreated(res, url);
     if (pathname === '/setup/github/reviewer-created') return reviewerSetupCreated(res, url);
+    if (pathname === REVIEW_READINESS_PATH) return reviewReadinessReply({ req, res, url, login: user.login, readiness: reviewReadiness, projects: readinessProjects, reply });
     if (pathname === REVIEWER_SETUP_PATH) return reviewerApp ? reply(res, 200, await reviewerApp.view()) : reply(res, 404, { error: 'this console cannot make a reviewer App' });
     if (pathname === '/api/setup/github') return githubSetup ? reply(res, 200, await githubSetup.view()) : reply(res, 404, { error: 'this console has no secret store, so it cannot keep a GitHub App' });
     if (pathname === '/api/console-settings') return consoleSettingsReply(res);
@@ -2761,7 +2769,7 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
  *   `repos` and `projectReadiness` are an embedding program's hooks, passed on to createInstallation (installation.mjs):
  *   only the dev console's stand-in (scripts/devHostConsole.mjs) passes them here
  */
-export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null }) {
+export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null, hostApp = null }) {
   const first = given ?? loadConfig();
   const store = openStore(first.stateDir);
   // An App saved on the setup page is the console's own from the next start.
@@ -2771,7 +2779,7 @@ export async function startConsole({ provider, config: given = null, repos = nul
   const trusted = loaded.trustedIdentitySecret ? createTrustedIdentity({ secret: loaded.trustedIdentitySecret }) : null;
   console.log('console: hosted mode', { githubBroker: Boolean(loaded.githubBroker), trustedIdentity: Boolean(trusted) });
   await checkGh();
-  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness });
+  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness, hostApp });
   const { config, handle } = installation;
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
