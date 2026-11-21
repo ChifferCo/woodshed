@@ -1,5 +1,6 @@
 {
-  "name": "@chifferco/woodshed-cli",
+  "name": "woodshed-cli",
+  "private": true,
   "version": "0.1.0",
   "description": "Start and manage Woodshed sessions from your computer",
   "license": "AGPL-3.0-only",

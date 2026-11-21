@@ -19,11 +19,13 @@ test('the packed CLI installs offline and runs help and signed-out status outsid
     assert.equal(out.status, expected, out.error?.message ?? out.stderr);
     return out.stdout;
   }
-  const [packed] = JSON.parse(run('npm', ['pack', root, '--json']));
-  run('npm', ['install', '--global', '--prefix', prefix, '--ignore-scripts', '--no-audit', '--no-fund', path.join(home, packed.filename)]);
-  const cli = path.join(prefix, 'bin/woodshed');
+  const [packed] = JSON.parse(run('npm', ['pack', root, '--json', '--ignore-scripts']));
+  fs.mkdirSync(prefix);
+  run('tar', ['-xzf', path.join(home, packed.filename), '-C', prefix]);
+  const cli = path.join(home, 'woodshed');
+  fs.symlinkSync(path.join(prefix, 'package/cli/woodshed.mjs'), cli);
   assert.match(run(cli, ['--help']), /Usage: woodshed/);
   assert.equal(JSON.parse(run(cli, ['status', '--json'], 2)).signedIn, false);
-  const skill = path.join(prefix, 'lib/node_modules', packed.name, 'skills/woodshed/SKILL.md');
+  const skill = path.join(prefix, 'package/skills/woodshed/SKILL.md');
   assert.equal(fs.readFileSync(skill, 'utf8'), fs.readFileSync(path.join(root, 'skills/woodshed/SKILL.md'), 'utf8'));
 });
