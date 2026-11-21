@@ -917,3 +917,14 @@ test('a secret store that fails on a computer\'s dotfile answers with an error, 
   assert.equal(res.status, 500);
   assert.equal((await fetch(`${c.origin}/api/cli/settings`, { headers: { authorization: `Bearer ${c.token}` } })).status, 200, 'still answering');
 });
+
+test('a table named with a key\'s shape is left out and never printed, in the push list or a pull\'s', async (t) => {
+  const home = laptopHome(t);
+  write(home, '.codex/config.toml', `model = "o3"\n\n[mcp_servers."${FAKE_GITHUB_TOKEN}"]\ncommand = "npx"\n`);
+  const c = await setUp(t, { home });
+  const plan = await c.run(['settings', 'plan', '--only', 'codex']);
+  assert.match(plan.out, /left out: mcp_servers\.\[redacted\] \(holds what looks like a GitHub token, a credential\)/);
+  assert.ok(!plan.out.includes(FAKE_GITHUB_TOKEN) && !plan.err.includes(FAKE_GITHUB_TOKEN));
+  const pull = await c.run(['settings', 'plan', '--pull', '--replace', '--only', 'codex']);
+  assert.ok(!pull.out.includes(FAKE_GITHUB_TOKEN) && !pull.err.includes(FAKE_GITHUB_TOKEN));
+});

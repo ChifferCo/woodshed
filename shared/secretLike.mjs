@@ -25,6 +25,11 @@ export function secretContent(text, kinds = SECRET_CONTENT) {
   return kinds.find(([, re]) => re.test(text))?.[0] ?? null;
 }
 
+/** The text with each key of a known kind in it put as `[redacted]`, for a name or a line that is printed. */
+export function redact(text) {
+  return SECRET_CONTENT.reduce((out, [, re]) => out.replace(new RegExp(re.source, 'g'), '[redacted]'), String(text));
+}
+
 /**
  * A credential in a line of shell (an alias, a git alias's `!` command): a key of a known kind, a variable named like a
  * credential given a literal value, a header or option that carries one, a URL with a sign-in, or a credential helper.

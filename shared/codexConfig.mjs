@@ -13,7 +13,7 @@
 
 import fs from 'node:fs';
 import { isMain } from './isMain.mjs';
-import { SECRET_HEADER, SECRET_VARIABLE, secretContent, shellCredential } from './secretLike.mjs';
+import { redact, SECRET_HEADER, SECRET_VARIABLE, secretContent, shellCredential } from './secretLike.mjs';
 
 export const CODEX_CONFIG = '.codex/config.toml';
 // Tables keyed by a name the person picks: a statement in one belongs to its entry (mcp_servers.github), and an entry
@@ -292,12 +292,30 @@ const WORD = /^[a-z][a-z0-9_-]{0,24}$/;
 // A header that carries a credential, wherever in an inline table it is ({ http_headers = { Authorization = … } }).
 const CREDENTIAL_HEADER = /^(authorization|proxy-authorization|cookie|x-api-key|api-key)$/i;
 
+/** Each entry's program (`command`), by its unitOf: what its `args` are given to. */
+export function commandsOf(statements) {
+  const commands = new Map();
+  for (const s of statements) {
+    if (s.kind !== 'kv' || pathOf(s).at(-1) !== 'command') continue;
+    const [program] = stringsOf(s.value);
+    if (program) commands.set(unitOf(s), program.said);
+  }
+  return commands;
+}
+
 /**
- * What in one of config.toml's statements is a credential, named, never shown: null for none.
+ * What in one of config.toml's statements is a credential, named (a key's shape in the name redacted), never shown:
+ * null for none.
  * @param {ReturnType<typeof readToml>[number]} statement
+ * @param {Map<string, string>} [commands]  commandsOf the file: an entry's `args` are read after its program
  * @returns {string|null}
  */
-export function credentialOf(statement) {
+export function credentialOf(statement, commands = null) {
+  const found = findCredential(statement, commands);
+  return found === null ? null : redact(found);
+}
+
+function findCredential(statement, commands) {
   // A comment or a table's name can hold a key's shape too.
   if (statement.kind !== 'kv') return secretContent(statement.text) ? `holds what looks like ${secretContent(statement.text)}` : null;
   const at = pathOf(statement);
@@ -321,7 +339,9 @@ export function credentialOf(statement) {
   }
   // A program's arguments, read as its command line: `--api-key abc`, `-H "Authorization: …"`, `TOKEN=abc`.
   if (strings.length > 1 || last === 'args') {
-    const argv = shellCredential(strings.map((s) => (/\s/.test(s.said) ? `"${s.said}"` : s.said)).join(' '));
+    const program = last === 'args' ? commands?.get(unitOf(statement)) : null;
+    const words = [...(program ? [program] : []), ...strings.map((s) => s.said)];
+    const argv = shellCredential(words.map((w) => (/\s/.test(w) ? `"${w}"` : w)).join(' '));
     if (argv) return `${name} passes ${argv}`;
   }
   for (const { said: text } of strings) {
@@ -339,8 +359,9 @@ export function credentialOf(statement) {
 /** The entries (unitOf) a side keeps its own: its trusted folders, and each that holds a credential. */
 export function ownUnits(statements) {
   const own = new Set();
+  const commands = commandsOf(statements);
   for (const s of statements) {
-    if (s.kind !== 'blank' && (pathOf(s)[0] === 'projects' || credentialOf(s))) own.add(unitOf(s));
+    if (s.kind !== 'blank' && (pathOf(s)[0] === 'projects' || credentialOf(s, commands))) own.add(unitOf(s));
   }
   return own;
 }
@@ -372,8 +393,9 @@ export function configCredential(text) {
   const statements = readToml(text);
   // What the console cannot read it cannot vouch for: a session holds such a file back, and a computer skips it.
   if (!statements) return 'is not TOML the console reads';
+  const commands = commandsOf(statements);
   for (const s of statements) {
-    const credential = credentialOf(s);
+    const credential = credentialOf(s, commands);
     if (credential) return credential;
   }
   return null;

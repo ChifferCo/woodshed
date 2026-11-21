@@ -93,6 +93,17 @@ function gitLines(text) {
 
 // A section as a message names it: a subsection's name can be a URL with a token in it ([url "https://<token>@..."]), so
 // only the section's own name is ever shown.
+/** A git value as git reads it, without a comment after it (outside quotes). */
+function beforeComment(value) {
+  let open = false;
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] === '\\') i++;
+    else if (value[i] === '"') open = !open;
+    else if (!open && (value[i] === '#' || value[i] === ';')) return value.slice(0, i);
+  }
+  return value;
+}
+
 /** What git would refuse in a value, before any comment: a double quote left open, or an escape it does not know. */
 function valueSyntax(value) {
   let open = false;
@@ -127,7 +138,7 @@ function gitKeyAllowed(section, key) {
 
 /** Why a value an allowed key holds is still not taken, or null: color always, which puts color codes in output tools read. */
 function gitValueProblem(section, value) {
-  return section.name === 'color' && /^\s*"?always"?\s*$/i.test(value) ? 'always, which colors output that the session\'s tools read: auto does what you see' : null;
+  return section.name === 'color' && /^\s*"?always"?\s*$/i.test(beforeComment(value)) ? 'always, which colors output that the session\'s tools read: auto does what you see' : null;
 }
 
 // An alias's value: one shell word, quoted or not, with no command substitution, which runs as the file is read, and

@@ -101,3 +101,8 @@ test('curl\'s --user with a password is a credential, one read from a variable i
   assert.equal(dotfileProblem('bash-aliases', "alias dr='docker run --rm -u 1000:1000 node:22'\n"), null, 'docker\'s -u is a user and a group');
   assert.match(dotfileProblem('gitconfig', '[alias]\n\tx = echo \\'), /an escape git does not read/);
 });
+
+test('color always is caught with a comment after it', () => {
+  assert.match(dotfileProblem('gitconfig', '[color]\n\tui = always # everywhere\n'), /color\.ui is always/);
+  assert.equal(dotfileProblem('gitconfig', '[color]\n\tui = auto # always on a terminal\n'), null);
+});

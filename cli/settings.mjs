@@ -32,7 +32,7 @@ import readline from 'node:readline';
 import { isLoginItem } from '../console/cliSettings.mjs';
 import { MAX_SETTINGS_BYTES } from '../console/claudeSettings.mjs';
 import {
-  CODEX_CONFIG, credentialOf, keyText, pathOf, readToml, sharedPart, stringsOf, textOf, unitOf, withEntries,
+  CODEX_CONFIG, commandsOf, credentialOf, keyText, pathOf, readToml, sharedPart, stringsOf, textOf, unitOf, withEntries,
 } from '../shared/codexConfig.mjs';
 import {
   applyItems, isSyncedFile, localChanges, MARKETPLACES_FILE, MAX_ITEM_BYTES, NO_STATUS_LINE, parseEntryId, parsePluginId, PLUGINS_FILE, readSnapshot,
@@ -43,7 +43,7 @@ import { BUILT_IN_MARKETPLACES } from '../session/defaultPlugins.mjs';
 import { skipReason, writeOwnFiles } from '../session/ownFiles.mjs';
 import { DOTFILES, dotfileProblem, fromComputer } from '../shared/dotfiles.mjs';
 import { DEFAULT_MAX_VALUE_BYTES, MAX_OWN_FILES } from '../shared/ownFiles.mjs';
-import { SECRET_CONTENT, SECRET_HEADER, SECRET_VARIABLE, secretContent } from '../shared/secretLike.mjs';
+import { redact, SECRET_CONTENT, SECRET_HEADER, SECRET_VARIABLE, secretContent } from '../shared/secretLike.mjs';
 import { loadProject, repoOf } from '../shared/project.mjs';
 
 export { secretContent };
@@ -294,6 +294,7 @@ export function translateCodexConfig(value, { from, to }) {
   if (!statements) return { fate: 'skip', reason: 'not TOML this reads: edit it in a session, or fix it here', unreadable: true };
   const leave = new Map();
   const texts = new Map();
+  const commands = commandsOf(statements);
   let moved = 0;
   for (const s of statements) {
     const unit = unitOf(s);
@@ -303,7 +304,7 @@ export function translateCodexConfig(value, { from, to }) {
       leave.set(unit, at[0] === 'projects' ? 'projects' : `${unit} (where codex sends its calls stays each side's own)`);
       continue;
     }
-    const credential = credentialOf(s);
+    const credential = credentialOf(s, commands);
     if (credential) {
       leave.set(unit, `${unit} (${credential}, a credential)`);
       continue;
@@ -336,7 +337,8 @@ export function translateCodexConfig(value, { from, to }) {
   const kept = statements.filter((s) => !leave.has(unitOf(s))).map((s) => ({ ...s, text: texts.get(s) ?? s.text }));
   const out = sharedPart(textOf(kept));
   const own = statements.filter((s) => leave.has(unitOf(s)) && pathOf(s)[0] !== 'projects');
-  const notes = [...new Set(leave.values())].filter((n) => n !== 'projects');
+  // An entry is named as the list shows it: a key's shape in a table's name is redacted.
+  const notes = [...new Set(leave.values())].filter((n) => n !== 'projects').map(redact);
   if (!out.trim()) return { fate: 'skip', reason: notes.length ? `nothing left once these are left out: ${notes.join(', ')}` : 'nothing in it but trusted folders, which each side keeps its own', own };
   return {
     value: Buffer.from(out).toString('base64'), own,
@@ -618,8 +620,10 @@ export function runsOf(id, value) {
   const text = Buffer.from(value, 'base64').toString('utf8').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
   if (id === CODEX_CONFIG) {
     // Every key, as settings.json's, since any can change what codex may do here; a credential's value is never shown.
-    const lines = (readToml(text) ?? []).filter((s) => s.kind === 'kv')
-      .map((s) => `${keyText(pathOf(s))} = ${credentialOf(s) ? '(not shown)' : s.value.replace(/\s*\n\s*/g, ' ')}`);
+    const statements = readToml(text) ?? [];
+    const commands = commandsOf(statements);
+    const lines = statements.filter((s) => s.kind === 'kv')
+      .map((s) => redact(`${keyText(pathOf(s))} = ${credentialOf(s, commands) ? '(not shown)' : s.value.replace(/\s*\n\s*/g, ' ')}`));
     return whole(lines.length ? lines : ['nothing set']);
   }
   if (/\.(md|markdown)$/i.test(id)) {
@@ -692,7 +696,7 @@ export async function claudePullPlan({ home, shared, only, replace }) {
         // What this computer keeps to itself of its config.toml (its provider, an MCP server with a key) stays as it is,
         // in place of the shared copy's entries of the same names. Its trusted folders stay too (applyItems).
         value = Buffer.from(withEntries(Buffer.from(value, 'base64').toString('utf8'), mine.own)).toString('base64');
-        notes = [`yours kept: ${[...new Set(mine.own.map(unitOf).filter(Boolean))].join(', ')}`];
+        notes = [`yours kept: ${redact([...new Set(mine.own.map(unitOf).filter(Boolean))].join(', '))}`];
       }
       if (id === SETTINGS && id in local) {
         const own = withOwnCredentials(value, local[id]);

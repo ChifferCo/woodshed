@@ -113,3 +113,11 @@ test('an MCP server\'s key given as an argument keeps the server local, and a ma
   assert.equal(credentialOf(kv('[mcp_servers.x]\nargs = ["-y", "docs-mcp"]\n')), null);
   assert.deepEqual(carriedSource({ source: 'url', url: `https://example.com/${token}/marketplace.json` }), { source: 'url' });
 });
+
+test('curl given a password in its arguments keeps its server local, read with its command', async () => {
+  const { configCredential } = await import('./codexConfig.mjs');
+  const config = '[mcp_servers.api]\ncommand = "curl"\nargs = ["-u", "mia:hunter2", "https://api.example.com/mcp"]\n\n[tui]\nnotifications = true\n';
+  assert.equal(sharedPart(config), '[tui]\nnotifications = true\n', 'the whole entry stays');
+  assert.match(configCredential(config), /mcp_servers\.api\.args passes a --user sign-in/);
+  assert.equal(sharedPart('[mcp_servers.d]\ncommand = "docker"\nargs = ["run", "-u", "1000:1000", "img"]\n'), '[mcp_servers.d]\ncommand = "docker"\nargs = ["run", "-u", "1000:1000", "img"]\n');
+});
