@@ -20,7 +20,7 @@ async function consoleFor(t, { writers = null } = {}) {
     state: {
       people: {
         'mia-dev': { claudeTokenAt: '2026-11-01T00:00:00.000Z', github: { connectedAt: '2026-11-01T00:00:00.000Z', name: 'Mia Dev', email: 'mia@example.com' } },
-        octocat: { terminal: 'herdr' },
+        octocat: { terminal: 'herdr', codexAuthAt: '2026-11-01T00:00:00.000Z' },
       },
     },
     save() {},
@@ -101,6 +101,11 @@ test('a config write runs the page\'s own route and checks, and answers with the
   assert.equal((await c.call('/api/my/claude-token/shared', { method: 'POST', body: { on: false } })).body['claude-token-shared'], 'off');
   const noSignIn = await c.call('/api/my/codex-auth/reviews', { method: 'POST', body: { on: true } });
   assert.deepEqual(noSignIn, { status: 409, body: { error: 'save your Codex sign-in first' } });
+  // With a Codex sign-in saved, the switch turns off and on again, and the console's own record follows.
+  const off = await c.call('/api/my/codex-auth/reviews', { method: 'POST', body: { on: false }, token: c.tokens.octocat });
+  assert.deepEqual([off.status, off.body['codex-reviews'], c.userSettings.usesOwnCodexForReviews('octocat')], [200, 'off', false]);
+  const on = await c.call('/api/my/codex-auth/reviews', { method: 'POST', body: { on: true }, token: c.tokens.octocat });
+  assert.deepEqual([on.status, on.body['codex-reviews'], c.userSettings.usesOwnCodexForReviews('octocat')], [200, 'on', true]);
   assert.equal((await c.call('/api/my/projects/default', { method: 'POST', body: { project: 'tools' } })).body['default-repo'], 'tools');
   assert.equal((await c.call('/api/my/projects/default', { method: 'POST', body: { project: 'secret-repo' } })).status, 403);
   const named = await c.call('/api/my/github/identity', { method: 'POST', body: { name: 'Mia D.', email: 'mia@example.org' } });

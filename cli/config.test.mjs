@@ -19,9 +19,10 @@ function listen(server) {
 // A console's real handler, command line sign-in and My settings (userSettings.mjs) over a secret store that keeps
 // nothing. mia-dev has a Claude token saved and GitHub connected unless the test says otherwise; the command line is
 // signed in as her. `asked` is every path the command line called after it signed in.
-async function consoleFor(t, { claudeToken = true, github = true } = {}) {
+async function consoleFor(t, { claudeToken = true, codexAuth = false, github = true } = {}) {
   const record = {
     ...(claudeToken ? { claudeTokenAt: '2026-11-01T00:00:00.000Z' } : {}),
+    ...(codexAuth ? { codexAuthAt: '2026-11-01T00:00:00.000Z' } : {}),
     ...(github ? { github: { connectedAt: '2026-11-01T00:00:00.000Z', name: 'Mia Dev', email: 'mia@example.com', ...(typeof github === 'object' ? github : {}) } } : {}),
   };
   const store = { state: { people: { 'mia-dev': record } }, save() {} };
@@ -111,6 +112,8 @@ test('config set changes a choice through the page\'s route, and says when it re
 
   assert.equal((await c.run(['config', 'set', 'claude-token-shared', 'off'])).out, 'claude-token-shared is off. It applies to each shared session you start or resume from now on; running ones keep theirs.\n');
   assert.equal(c.userSettings.usesOwnTokenForShared('mia-dev'), false);
+  assert.equal((await c.run(['config', 'set', 'claude-token-shared', 'on'])).code, EXIT.done, 'and on again, with her token saved');
+  assert.equal(c.userSettings.usesOwnTokenForShared('mia-dev'), true);
 
   const repo = await c.run(['config', 'set', 'default-repo', 'acme/tools', '--json']);
   assert.equal(repo.code, EXIT.done, repo.err);
@@ -203,4 +206,16 @@ test('a half of the git identity with no value yet is said as what is missing, n
   const out = await c.run(['config', 'set', 'github-name', 'Mia']);
   assert.equal(out.code, EXIT.refused);
   assert.equal(out.err, `woodshed: github-email has no value yet, and the name and email are saved together: set both on My settings: ${c.origin}/settings\n`);
+});
+
+test('with a Codex sign-in saved, codex-reviews turns off and on again', async (t) => {
+  const c = await consoleFor(t, { codexAuth: true });
+  assert.equal((await c.run(['config', 'get', 'codex-reviews'])).out, 'on\n', 'on once a sign-in is saved, as the page shows it');
+  const off = await c.run(['config', 'set', 'codex-reviews', 'off']);
+  assert.equal(off.code, EXIT.done, off.err);
+  assert.equal(c.userSettings.usesOwnCodexForReviews('mia-dev'), false);
+  const on = await c.run(['config', 'set', 'codex-reviews', 'on', '--json']);
+  assert.equal(on.code, EXIT.done, on.err);
+  assert.deepEqual([on.lines[0].value, on.lines[0].changed, on.lines[0].note], ['on', true, 'It applies to the next review.']);
+  assert.equal(c.userSettings.usesOwnCodexForReviews('mia-dev'), true);
 });
