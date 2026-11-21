@@ -1506,14 +1506,20 @@ starts a sign-in to hand someone the link of. The code lasts 10 minutes. The tok
 database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. Besides `/api/cli/*` and
 `/api/tunnel/exec/*` it signs in to `woodshed session`'s routes alone (`console/cliSessions.mjs`): `GET /api/sessions`, `GET /api/my/projects`,
 `POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume|remove` and `POST /api/sessions/<id>/stop|extend|limits`,
-each answered by the page's own code as the token's person, so it sees and changes exactly what they could on the page.
+and to `woodshed config`'s (`console/cliConfig.mjs`): `GET /api/cli/config`, the person's choices on My settings and
+never a secret, and `POST /api/my/terminal`, `/api/my/reviews`, `/api/my/codex-auth/reviews`,
+`/api/my/claude-token/shared`, `/api/my/projects/default` and `/api/my/github/identity`, which answer the token with
+that same view rather than the page's whole My settings answer. Each is answered by the page's own code as the token's
+person, so it sees and changes exactly what they could on the page.
 Every other route refuses it with 403, and so do those for a call with an Origin header (a page's). Those writes need no
 `x-woodshed` header or Origin, which only stand between another site and the browser's cookie; each logs
 `cliSessions: call` with the login, the token's id and the path, and a refusal `cliSessions: refused, not a route the
 command line may call`. Like a browser's sign-in, its person must still have write access on GitHub, asked at the
-token's first use and then hourly: when GitHub says no, every command line sign-in of theirs ends (`cliSessions:
-refused, write access gone`), and GitHub not answering lets the call through and is asked again 5 minutes later
-(`cliSessions: write access not rechecked`). A session a terminal is connected to is not kept awake by it: `woodshed session extend` and
+token's first use and then hourly by the one check every call with a token goes through (`authenticate` in
+`cliSignIn.mjs`: `/api/cli/me`, `/api/cli/logout`, these routes and the pipe into a session alike): when GitHub says no,
+every command line sign-in of theirs ends (`cliSignIn: refused, write access gone`), and a `woodshed logout` that finds
+it so answers that the token ended, as it asked. GitHub not answering lets the call through and is asked again 5
+minutes later (`cliSignIn: write access not rechecked`). A session a terminal is connected to is not kept awake by it: `woodshed session extend` and
 `limits` ask for more time, as Extend and the session's own Pause and stop do on its page. The console
 keeps only its SHA-256, in `state.json` under `cliTokens`, and My settings' Command line row lists each computer with
 Revoke. Remove My Woodshed, People's Remove and leaving a hosting program's list end them all. The console logs
@@ -1537,7 +1543,7 @@ so nobody makes up an address to get more places.
 **Into a session from the command line**: `woodshed tunnel <id> -- <line>` (cli/README.md) is one request,
 `/api/tunnel/exec/<id>` with `Upgrade: woodshed-tunnel`, that token, and the line base64'd in `x-woodshed-exec`
 (`console/execPipe.mjs`). The console checks, as it opens and every 15 seconds after, that the token is live and its
-person still on People, that the session is running and is theirs (a My Woodshed session's owner: shares come later),
+person still on People with write access (`authenticate`, above), that the session is running and is theirs (a My Woodshed session's owner: shares come later),
 and that it is not tainted or being locked down; then it sends the request to the session's statusd `/exec` with the
 session's token in place of the person's, as it reaches statusd for the viewers, and copies bytes both ways once statusd
 answers 101. statusd runs `sh -c <line>` as the session's user in the checkout, without `SESSION_TOKEN` or
@@ -1855,8 +1861,9 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   `signInPaths` for the program's sign-in page.
 - The command line's routes are core's own (`cliSignIn.mjs`): `/cli` is behind the program's sign-in like any page, and
   `/api/cli/*` carries its own token in `Authorization`, so the program's proxy passes those through without its
-  sign-in, as it does `/api/tunnel/*`. So must it the session routes `cliSessions.mjs` lists, when they carry
-  `Authorization: Bearer wsc_…`: the console checks that token itself, and refuses it everywhere else.
+  sign-in, as it does `/api/tunnel/*`. When a request carries `Authorization: Bearer wsc_…`, also pass through the
+  session routes listed in `cliSessions.mjs` and the six settings writes listed in `cliConfig.mjs`. The console checks
+  the token itself and refuses it on other routes.
 - `cliDevices`, from `createCliDevices()` (`cliSignIn.mjs`): for a program serving several installations at one address,
   one waiting room for the command line's sign-ins that it gives them all. `POST /api/cli/device` and `/api/cli/token`
   carry no sign-in, so the program answers them itself, with `handleCliApi` and a `createCliSignIn` on that same room;

@@ -1,13 +1,15 @@
 #!/usr/bin/env node
-// The woodshed command line: signs in to a Woodshed console, says who is signed in, starts and manages sessions, and
-// opens a pipe into one's own running session. Later commands (settings) are added here. Plain Node 22, no
-// dependencies, as the rest of Woodshed (cli/README.md).
+// The woodshed command line: signs in to a Woodshed console, says who is signed in, starts and manages sessions, opens
+// a pipe into one's own running session, and reads and sets one's choices on My settings. Later commands are added
+// here. Plain Node 22, no dependencies, as the rest of Woodshed (cli/README.md).
 //
 //   woodshed login  [--console <url>] [--no-browser]   a code to approve in the browser, then a token kept in the keychain
 //   woodshed logout [--console <url>]                  ends that token at the console and forgets it here
 //   woodshed status [--console <url>]                  the console, its org, and who is signed in
 //   woodshed tunnel <id> -- <line>                     runs <line> in your session, piped to this terminal (tunnel.mjs)
-//   woodshed session new|list|get|stop|resume|remove|extend|limits   sessions (sessions.mjs)
+//   woodshed session new|list|get|herdr|stop|resume|remove|extend|limits   sessions (sessions.mjs); herdr makes one
+//                                                     a machine in Herdr's hc (hc.mjs)
+//   woodshed config list|get|set                       your choices on My settings, never a secret (config.mjs)
 //
 // Every command takes --json. Exit codes: 0 done, 2 waiting on a person (a sign-in or an approval), 3 refused, 1 any
 // other failure.
@@ -21,8 +23,10 @@ import { fileURLToPath } from 'node:url';
 import { createCredentials } from './credentials.mjs';
 import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
+import { configCommand } from './config.mjs';
+import { hcRunner, hcVersion, viaCommand } from './hc.mjs';
 
-export const VERSION = '0.1.0';
+export const { version: VERSION } = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 export const DEFAULT_CONSOLE = 'https://console.woodshed.run';
 // Each call to the console, its answer read included.
 const REQUEST_MS = 20_000;
@@ -33,11 +37,13 @@ const USAGE = `Usage: woodshed <command> [--console <url>] [--json]
 Commands:
   login     sign in to a Woodshed console: approve the code it shows in your browser
   logout    sign out of the console, here and at the console
-  status    the console, its org, and who is signed in
+  status    the console, its org, who is signed in, and the hc found here (Herdr's, for session herdr)
   tunnel <id> -- <line>
             run <line> in your running session, with this command's stdin, stdout and stderr; exits with its
             exit code, or 255 when the pipe could not open or broke
-  session   start, list, stop, resume and remove sessions, and give them more time: woodshed session --help
+  session   start, list, add to Herdr, stop, resume and remove sessions, and give them more time:
+            woodshed session --help
+  config    your choices on My settings (terminal, reviews, default repo, …), never a secret: woodshed config --help
 
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};
@@ -59,7 +65,8 @@ class CliError extends Error {
 /**
  * @returns {{command: string|null, args: string[], rest: string[]|null, console: string|null, json: boolean,
  *            browser: boolean, help: boolean}}  `args` follow the command; `rest` is everything after `--`. For
- *            `session`, `args` also takes its own options (sessions.mjs reads them), and `rest` its prompt
+ *            `session` and `config`, `args` also takes their own words and options (sessions.mjs and config.mjs read them),
+ *            and `rest` a session's prompt or a config value
  */
 export function parseArgs(argv) {
   const out = { command: null, args: [], rest: null, console: null, json: false, browser: true, help: false };
@@ -75,13 +82,26 @@ export function parseArgs(argv) {
       if (!argv[i + 1]) throw new CliError('--console needs a URL');
       out.console = argv[++i];
     } else if (arg.startsWith('--console=')) out.console = arg.slice('--console='.length);
-    else if (out.command === 'session') out.args.push(arg);
+    else if (out.command === 'session' || out.command === 'config') out.args.push(arg);
     else if (arg.startsWith('-')) throw new CliError(`unknown option ${arg}\n\n${USAGE}`);
     else if (!out.command) out.command = arg;
     else if (out.command === 'tunnel') out.args.push(arg);
     else throw new CliError(`unexpected ${arg}\n\n${USAGE}`);
   }
   return out;
+}
+
+/**
+ * The command word of argv, for when parseArgs refuses it: the first word that is not an option or --console's value.
+ * @returns {string|null}
+ */
+function commandWord(argv) {
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--') return null;
+    if (argv[i] === '--console') i++;
+    else if (!argv[i].startsWith('-')) return argv[i];
+  }
+  return null;
 }
 
 /**
@@ -128,6 +148,26 @@ function writeConfig(dir, config) {
   const temp = `${where}.${process.pid}.tmp`;
   fs.writeFileSync(temp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   fs.renameSync(temp, where);
+}
+
+// This command line as hc's core will run it for a session's machine (hc.mjs, viaCommand): node and this script by
+// absolute paths, since the core has its own PATH. A path on the PATH that leads to the same node is kept over its real
+// one (Homebrew's /opt/homebrew/bin/node over its Cellar's), so the line outlives an upgrade; so is the script's own
+// link, when it was run by one (~/.local/bin/woodshed).
+export function selfCommand({ execPath = process.execPath, argv1 = process.argv[1], env = process.env } = {}) {
+  const real = (file) => {
+    try {
+      return fs.realpathSync(file);
+    } catch {
+      return null;
+    }
+  };
+  const script = fileURLToPath(import.meta.url);
+  const nodeReal = real(execPath);
+  const onPath = String(env.PATH ?? '').split(path.delimiter).filter((dir) => path.isAbsolute(dir))
+    .map((dir) => path.join(dir, 'node')).find((file) => nodeReal && real(file) === nodeReal);
+  const linked = argv1 && path.isAbsolute(argv1) && real(argv1) === real(script) ? argv1 : null;
+  return { node: onPath ?? execPath, script: linked ?? script };
 }
 
 // Only an address this command line built (approvalUrl), and never through a shell: cmd's `start` would read & and | in
@@ -193,6 +233,8 @@ export async function main(argv, deps = {}) {
   const dir = configDir(env, platform);
   const credentials = deps.credentials ?? createCredentials({ platform, dir });
   const open = deps.openBrowser ?? ((url) => openBrowser(url, platform));
+  // Herdr's hc, as the person's shell finds it, on the core their environment names (HC_SESSION and the XDG folders).
+  const hc = deps.hc ?? hcRunner({ bin: env.WOODSHED_HC_BIN || 'hc', env });
   let json = argv.includes('--json');
 
   const emit = (object) => stdout.write(`${JSON.stringify(object)}\n`);
@@ -368,15 +410,21 @@ export async function main(argv, deps = {}) {
 
   async function status(origin) {
     const { entry, store, token } = signedIn(origin);
+    // Said whether or not anyone is signed in: whether session herdr can run here.
+    const herdr = await hcVersion(hc);
+    const herdrText = !herdr.installed ? `not found: session herdr needs hc ${herdr.minimum} or newer`
+      : herdr.ok ? `hc ${herdr.version}` : `hc ${herdr.version ?? '(no version)'}, older than the ${herdr.minimum} session herdr needs: hc update`;
     if (!token) {
-      if (json) emit({ console: origin, signedIn: false });
+      if (json) emit({ console: origin, signedIn: false, hc: herdr });
       say(`Not signed in to ${origin}. Run: woodshed login${origin === DEFAULT_CONSOLE ? '' : ` --console ${origin}`}`);
+      say(`${'Herdr:'.padEnd(11)}${herdrText}`);
       return EXIT.waiting;
     }
     const me = await call(origin, '/api/cli/me', { token });
     if (me.status === 401) {
-      if (json) emit({ console: origin, signedIn: false, ended: true });
+      if (json) emit({ console: origin, signedIn: false, ended: true, hc: herdr });
       say(`The sign-in to ${origin} ended: it was revoked, or it expired. Run: woodshed login --console ${origin}`);
+      say(`${'Herdr:'.padEnd(11)}${herdrText}`);
       return EXIT.waiting;
     }
     if (me.status !== 200 || !me.body) throw consoleNoCli(origin, me.status);
@@ -385,7 +433,7 @@ export async function main(argv, deps = {}) {
     if (json) {
       emit({
         console: origin, name: name ?? null, org: org ?? null, signedIn: true, login: who ?? null, store: entry.store,
-        ...(store.file ? { credentialsFile: store.file } : {}), expiresAt: about?.expiresAt ?? null, device: about?.name ?? null,
+        ...(store.file ? { credentialsFile: store.file } : {}), expiresAt: about?.expiresAt ?? null, device: about?.name ?? null, hc: herdr,
       });
       return EXIT.done;
     }
@@ -394,6 +442,7 @@ export async function main(argv, deps = {}) {
       ['Org', org ?? 'none yet: the console has no repo'],
       ['Signed in', who ? `@${who}` : 'yes (this console has no GitHub sign-in)'],
       ['Token', `in ${store.label}, until ${about?.expiresAt ? about.expiresAt.slice(0, 10) : 'unknown'}`],
+      ['Herdr', herdrText],
     ];
     for (const [label, value] of rows) say(`${`${label}:`.padEnd(11)}${value}`);
     return EXIT.done;
@@ -415,10 +464,14 @@ export async function main(argv, deps = {}) {
     return runTunnel({ origin, token, session, line: args.rest.join(' '), stdin: deps.stdin ?? process.stdin, stdout, stderr, userAgent: `woodshed-cli/${VERSION}` });
   }
 
+  // The command as typed, for the catch below: only the tunnel's failures exit 255, whatever the other commands' words.
+  let command = commandWord(argv);
   try {
     const args = parseArgs(argv);
+    command = args.command;
     json = args.json;
     if (args.command === 'session' && args.help) return await sessionCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
+    if (args.command === 'config' && args.help) return await configCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.help || !args.command || args.command === 'help') {
       stdout.write(`${USAGE}\n`);
       return args.command || args.help ? EXIT.done : EXIT.failed;
@@ -432,15 +485,24 @@ export async function main(argv, deps = {}) {
     if (args.command === 'session') {
       // Its prompt may follow `--`, so a word of it is never read as an option.
       return await sessionCommand({ origin, rest: [...args.args, ...(args.rest ? ['--', ...args.rest] : [])] }, {
-        call, token: signedIn(origin).token, stdout, stderr, say, emit, json, sleep, now, EXIT,
+        call, token: signedIn(origin).token, stdout, stderr, say, emit, json, sleep, now, EXIT, platform, hc,
+        // The line hc keeps for a session's machine: this command line's tunnel into it, on this console.
+        // A relative config folder is made absolute: hc's core runs the line from a folder of its own.
+        via: (session) => viaCommand({ ...(deps.self ?? selfCommand({ env })), origin, session, configHome: env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : null }),
         fail: (message, opts) => new CliError(message, opts),
         confirm: deps.confirm ?? ((question) => confirmOnTerminal(question, stderr)),
+      });
+    }
+    if (args.command === 'config') {
+      // A value may follow `--`, so one that starts with - is never read as an option.
+      return await configCommand({ origin, rest: [...args.args, ...(args.rest ?? [])] }, {
+        call, token: signedIn(origin).token, stdout, say, emit, json, EXIT, fail: (message, opts) => new CliError(message, opts),
       });
     }
     throw new CliError(`unknown command ${args.command}\n\n${USAGE}`);
   } catch (err) {
     if (!(err instanceof CliError)) throw err;
-    if (argv.slice(0, argv.includes('--') ? argv.indexOf('--') : argv.length).includes('tunnel')) {
+    if (command === 'tunnel') {
       stderr.write(`woodshed: ${err.message}\n`);
       return TUNNEL_FAILED;
     }

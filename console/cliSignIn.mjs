@@ -9,6 +9,13 @@
 //   GET  /api/cli/me       (Authorization: Bearer wsc_...)  ->  who the token is, and the console's name, org and address
 //   POST /api/cli/logout   (Authorization: Bearer wsc_...)  ->  ends that token
 //
+// Every call that signs in with a token, here, on `woodshed session`'s routes (cliSessions.mjs) and on the pipe into a
+// session (execPipe.mjs), is checked by `authenticate` alone, so no route can skip a check: the token is live, its
+// person is still on the console (`allowed`), and they still have write access on GitHub (`canWrite`), asked at the
+// token's first use and then every hour, as a browser's sign-in is (auth.mjs). When GitHub says no, every command line
+// sign-in of theirs ends, as the browser's session does; GitHub not answering lets the call through, and is asked again
+// 5 minutes later.
+//
 // The token is a CLI token of its own, not the database tunnel's (dbTunnel.mjs): that one lasts 12 hours, a person has one
 // at a time, and it is made only once their databases are ready. A CLI sign-in is one per computer, lasts 90 days, and
 // each shows on My settings with Revoke. The console keeps only each token's SHA-256, in state.json under `cliTokens`.
@@ -54,6 +61,11 @@ const MAX_TOKENS_PER_PERSON = 20;
 // How often a token's last use is written down: each write saves state.json.
 const LAST_USED_EVERY_MS = 60 * 60_000;
 const MAX_BODY_BYTES = 4096;
+// Write access on GitHub is asked again after this, and after this when GitHub did not answer.
+const WRITE_RECHECK_MS = 3_600_000;
+const WRITE_RETRY_MS = 5 * 60_000;
+const NOT_SIGNED_IN = 'not signed in, or the sign-in ended: run woodshed login';
+const WRITE_ACCESS_GONE = 'you no longer have write access to the repository: your command line sign-in ended';
 const BEARER_RE = /^Bearer (wsc_[0-9a-f]{64})$/;
 // No vowels, so no code spells a word, and none of 0/O or 1/I to misread (RFC 8628, 6.1).
 const USER_CODE_LETTERS = 'BCDFGHJKLMNPQRSTVWXZ';
@@ -95,15 +107,62 @@ export function createCliDevices() {
 }
 
 /**
+ * Whether a token's person still has write access, asked of GitHub at first and then hourly.
+ * @param {{canWrite: ((login: string) => Promise<boolean>)|null, revokeAll: (login: string, by: string) => void,
+ *          now?: () => number}} deps  `canWrite` null where sign-in does not ask GitHub (no sign-in, or a hosting proxy)
+ * @returns {{allowed: (login: string|null) => Promise<boolean>}}
+ */
+export function createWriteAccess({ canWrite, revokeAll, now = Date.now }) {
+  const checkedAt = new Map();
+  const retryAfter = new Map();
+  const checking = new Map();
+
+  async function check(login) {
+    let still;
+    try {
+      still = await canWrite(login);
+    } catch (err) {
+      retryAfter.set(login, now() + WRITE_RETRY_MS);
+      console.warn('cliSignIn: write access not rechecked', { login, retryInMs: WRITE_RETRY_MS, message: String(err?.message ?? err).split('\n')[0] });
+      return true;
+    }
+    retryAfter.delete(login);
+    if (!still) {
+      checkedAt.delete(login);
+      console.log('cliSignIn: refused, write access gone', { login });
+      revokeAll(login, 'write access gone');
+      return false;
+    }
+    checkedAt.set(login, now());
+    return true;
+  }
+
+  async function allowed(login) {
+    if (!canWrite || !login) return true;
+    if (now() - (checkedAt.get(login) ?? -Infinity) < WRITE_RECHECK_MS) return true;
+    if (now() < (retryAfter.get(login) ?? 0)) return true;
+    // A start's wait asks every few seconds, and an open pipe every 15: those share one check rather than one call to
+    // GitHub each.
+    if (!checking.has(login)) checking.set(login, check(login).finally(() => checking.delete(login)));
+    return checking.get(login);
+  }
+
+  return { allowed };
+}
+
+/**
  * @param {{store: {state: object, save: () => void}, now?: () => number,
- *          allowed?: (login: string|null) => boolean, devices?: ReturnType<typeof createCliDevices>,
- *          trustedProxies?: ReturnType<typeof parseTrustedProxies>}} deps
+ *          allowed?: (login: string|null) => boolean, canWrite?: ((login: string) => Promise<boolean>)|null,
+ *          devices?: ReturnType<typeof createCliDevices>, trustedProxies?: ReturnType<typeof parseTrustedProxies>}} deps
  *   `allowed` says whether a login may still use the console (on the People list): a token whose person was taken off it
- *   stops working at once, not when it expires. `devices` is the waiting room, the console's own unless it shares one.
+ *   stops working at once, not when it expires. `canWrite` asks GitHub whether they still have write access (auth.mjs's),
+ *   null where sign-in does not ask it. `devices` is the waiting room, the console's own unless it shares one.
  *   `trustedProxies` are those whose X-Forwarded-For names the client (WOODSHED_TRUSTED_PROXIES, loopback by default)
  */
-export function createCliSignIn({ store, now = Date.now, allowed = () => true, devices = createCliDevices(), trustedProxies = parseTrustedProxies() }) {
+export function createCliSignIn({ store, now = Date.now, allowed = () => true, canWrite = null, devices = createCliDevices(), trustedProxies = parseTrustedProxies() }) {
   const pending = devices;
+  // Losing write access ends every sign-in of theirs, as it does a browser's.
+  const writeAccess = createWriteAccess({ canWrite, revokeAll: (login, by) => revokeAll(login, by), now });
   // This console, as an approval names it: a shared room holds other consoles' approvals too.
   const self = Symbol('cliSignIn');
   // This console, as its consent page names it: consoles at one address can share every label the page shows (a name,
@@ -285,8 +344,9 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
     return Object.values(store.state.cliTokens ?? {}).some((r) => r.hash === hash && Date.parse(r.expiresAt) > now());
   }
 
-  /** @returns {{id: string, login: string|null, record: object}|null}  the live token a request carries */
-  function tokenFor(headers) {
+  // The live token a request carries, its person still on the console. Not handed out: `authenticate` is the only way
+  // in, so no route skips the check of write access.
+  function liveToken(headers) {
     const token = BEARER_RE.exec(String(headers?.authorization || ''))?.[1];
     if (!token) return null;
     const hash = sha256(token);
@@ -302,6 +362,21 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
       store.save();
     }
     return { id, login: record.login, record };
+  }
+
+  /**
+   * The one check of a request's token, for every route it signs in to.
+   * @returns {Promise<{signedIn: {id: string, login: string|null, record: object}|null, error: string|null,
+   *   ended: boolean}>}  `signedIn` null when refused, with `error` to answer; `ended` when the check itself ended the
+   *   token (its person's write access gone), so a logout has nothing left to do
+   */
+  async function authenticate(headers) {
+    const found = liveToken(headers);
+    if (!found) return { signedIn: null, error: NOT_SIGNED_IN, ended: false };
+    if (!(await writeAccess.allowed(found.login))) return { signedIn: null, error: WRITE_ACCESS_GONE, ended: true };
+    // Revoked while GitHub was asked (My settings, or the person taken off People).
+    if (!tokens()[found.id]) return { signedIn: null, error: NOT_SIGNED_IN, ended: false };
+    return { signedIn: found, error: null, ended: false };
   }
 
   /** @returns {{id, name, createdAt, expiresAt, lastUsedAt}[]}  a person's CLI sign-ins, newest first; never a hash */
@@ -348,7 +423,7 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
   }
 
   return {
-    id: consoleId, start, waiting, decide, poll, owns, tokenFor, list, revoke, revokeAll, whenEnded,
+    id: consoleId, start, waiting, decide, poll, owns, authenticate, list, revoke, revokeAll, whenEnded,
     logins: () => [...new Set(Object.values(tokens()).map((r) => r.login))],
     /** The address a request came from, through a trusted proxy's X-Forwarded-For (clientAddress.mjs). */
     clientOf: (req) => clientAddress(req, trustedProxies),
@@ -422,8 +497,10 @@ export async function handleCliApi({ req, res, url, cli, publicUrl, about }) {
     const [status, reply] = statuses[answer.status];
     return json(res, status, reply), true;
   }
-  const signedIn = cli.tokenFor(req.headers);
-  if (!signedIn) return json(res, 401, { error: 'not signed in, or the sign-in ended: run woodshed login' }), true;
+  const { signedIn, error, ended } = await cli.authenticate(req.headers);
+  // A logout whose check ended the token (write access gone) got what it asked for.
+  if (!signedIn && ended && pathname === '/api/cli/logout' && req.method === 'POST') return json(res, 200, { ok: true }), true;
+  if (!signedIn) return json(res, 401, { error }), true;
   if (pathname === '/api/cli/me' && req.method === 'GET') {
     const { id, login, record } = signedIn;
     return json(res, 200, { login, ...about(login), url: publicUrl, token: { id, name: record.name, createdAt: record.createdAt, expiresAt: record.expiresAt } }), true;

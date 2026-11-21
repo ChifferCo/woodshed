@@ -43,11 +43,11 @@ async function statusdFor(t, { tainted = () => false } = {}) {
 }
 
 // The console: the command line's real sign-in, a fleet of made-up sessions on that statusd, and the exec pipe.
-async function consoleFor(t, { statusd, people = null } = {}) {
+async function consoleFor(t, { statusd, people = null, writers = null } = {}) {
   let clock = Date.parse('2026-11-20T10:00:00Z');
   const now = () => clock;
   const store = { state: {}, save() {} };
-  const cli = createCliSignIn({ store, now, allowed: (login) => !people || people.has(login) });
+  const cli = createCliSignIn({ store, now, allowed: (login) => !people || people.has(login), canWrite: async (login) => !writers || writers.has(login) });
   const endpoint = { host: '127.0.0.1', statusPort: statusd.port };
   const sessions = new Map([
     ['aaaa1111', { id: 'aaaa1111', owner: 'Mia-Dev', status: 'running', kind: 'task', endpoint, token: SESSION_TOKEN }],
@@ -201,6 +201,22 @@ test('a wrong, revoked or expired token, or one whose person left, opens nothing
   const ran = await tunnel(c.origin, { token: left.token, session: 'bbbb2222', line: 'echo ran' });
   assert.equal(ran.code, 255);
   assert.equal(ran.out, '');
+});
+
+test('a token whose person lost write access opens nothing, and an open pipe closes at the next check', async (t) => {
+  const statusd = await statusdFor(t);
+  const writers = new Set(['mia-dev', 'octocat']);
+  const c = await consoleFor(t, { statusd, writers });
+  const { running } = await livePipe(c, c.signIn('mia-dev').token);
+  writers.delete('mia-dev');
+  c.tick(61 * 60_000);
+  await c.execPipe.recheck();
+  assert.equal((await running).code, 255, 'asked again an hour on, and GitHub said no');
+  assert.deepEqual(c.cli.list('mia-dev'), [], 'every command line sign-in of hers ended');
+  const ran = await tunnel(c.origin, { token: c.signIn('mia-dev').token, line: 'echo ran' });
+  assert.equal(ran.code, 255);
+  assert.equal(ran.out, '');
+  assert.match(ran.err, /refused \(401\): .*no longer have write access/);
 });
 
 test('statusd runs nothing for a caller without the session token, or in a tainted session', async (t) => {

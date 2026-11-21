@@ -2,7 +2,8 @@
 // console's own session routes, signed in with the command line's token (console/cliSessions.mjs lists the routes it
 // reaches). A session started here is a private one, as My Woodshed's New session starts.
 //
-//   woodshed session new [--repo R] [--branch B] [--agent claude|codex] [--model M] [--no-wait] ["prompt"]
+//   woodshed session new [--repo R] [--branch B] [--agent claude|codex] [--model M] [--no-wait|--herdr] ["prompt"]
+//   woodshed session herdr <id>
 //   woodshed session list [--all]
 //   woodshed session get <id>
 //   woodshed session stop <id>
@@ -13,6 +14,11 @@
 //
 // Nothing here keeps a session awake: it pauses when idle and stops at its lifetime, as its limits say, unless its
 // person (or their agent) asks for more time with extend or limits. list and get say when each will.
+//
+// herdr makes one of your sessions a machine in Herdr's hc, `woodshed-<id>`, reached through `woodshed tunnel` (hc.mjs),
+// resuming it first when it paused; remove forgets that machine too.
+
+import { HC_MINIMUM, addMachine, agentOn, hcVersion, machineName, removeMachine } from './hc.mjs';
 
 // How often a start's wait reads the list, and how long it keeps trying through a console it cannot reach.
 const POLL_MS = 2000;
@@ -29,12 +35,16 @@ Commands:
       --agent claude|codex   the agent it runs (default claude)
       --model <model>        the agent's model (default the agent's own)
       --no-wait              print the session and return once the console has it
+      --herdr                once it runs, add it to Herdr as herdr does
+  herdr <id>                 make one of your sessions a machine in Herdr (hc ${HC_MINIMUM} or newer), woodshed-<id>,
+                             reached through woodshed tunnel; a paused one is resumed first, and waited for
   list [--all]               your sessions and the shared ones you can see, with their state and when each
                              pauses or stops by itself; --all also lists those that ended
   get <id>                   one session: its state, branch, pull request, and when it pauses or stops
   stop <id>                  stop a session; a running one's work is pushed as it stops
   resume <id> [--no-wait]    start one of your stopped sessions again, its conversation and all, and wait for it
-  remove <id> [--yes]        take one of your sessions off the list, with its saved conversation (stopped first)
+  remove <id> [--yes]        take one of your sessions off the list, with its saved conversation (stopped first),
+                             and forget its machine in Herdr
   extend <id>                put its pause or stop off by an hour; the console allows it in the last 15 minutes
   limits <id> [options]      its own idle pause and lifetime, in place of yours or the console's
       --idle-hours <n>       pause after this many hours with nothing to do; default goes back to yours
@@ -65,7 +75,7 @@ const ID_RE = /^[0-9a-f]{8}$/;
 // cursor, retitle the window or make one id read as another. Other text, accents and all, is kept.
 // eslint-disable-next-line no-control-regex
 const UNPRINTABLE_RE = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
-function printable(text, most = 200) {
+export function printable(text, most = 200) {
   if (text === null || text === undefined) return null;
   return String(text).replace(UNPRINTABLE_RE, ' ').slice(0, most);
 }
@@ -292,7 +302,49 @@ export async function sessionCommand({ origin, rest }, ctx) {
     return typeof body.defaultProject === 'string' && body.defaultProject ? body.defaultProject : undefined;
   }
 
+  // Herdr's hc, checked before anything is started or resumed to add to it. Never installed or updated from here.
+  async function hcReady() {
+    if (ctx.platform === 'win32') throw fail('woodshed session herdr does not run on Windows yet', { code: EXIT.refused, status: 'refused' });
+    const hc = await hcVersion(ctx.hc);
+    if (!hc.installed) throw fail(`Adding a session to Herdr needs its hc, ${HC_MINIMUM} or newer, and there is no hc on your PATH. Install Herdr, then run this again.`, { code: EXIT.refused, status: 'no-hc' });
+    if (!hc.ok) throw fail(`Adding a session to Herdr needs hc ${HC_MINIMUM} or newer, and yours is ${hc.version ?? 'a version it does not say'}. Update it (hc update), then run this again.`, { code: EXIT.refused, status: 'old-hc' });
+    return hc;
+  }
+
+  // A running session of yours made a machine in hc. Its agent is there only when you picked Herdr on My settings: in
+  // tmux otherwise, which hc cannot reach, though new terminals and agents on the machine work. Exits as a start's wait
+  // does: waiting on you when the session asks for you.
+  async function connect(s, login) {
+    const name = machineName(s.id);
+    if (!json) say(`Adding ${s.id} to Herdr as ${name}…`);
+    let added;
+    try {
+      added = await addMachine(ctx.hc, { name, via: ctx.via(s.id) });
+    } catch (err) {
+      if (!err.hc) throw err;
+      throw fail(printable(err.message, 500));
+    }
+    const agent = await agentOn(ctx.hc, name).catch(() => ({ inHerdr: null, address: null }));
+    const shown = summary(s, { origin, login });
+    const code = shown.state === 'needs-you' ? EXIT.waiting : EXIT.done;
+    if (json) {
+      emit({ event: 'connected', session: shown, machine: { name, action: added.action, state: added.state }, agent });
+      return code;
+    }
+    say(added.action === 'kept' ? `${name} was already in Herdr, connected.` : `${name} is in Herdr: it shows in the app's sidebar.`);
+    if (agent.inHerdr) say(`Its agent is ${agent.address}: hc attach ${agent.address}`);
+    else if (agent.inHerdr === false) {
+      say(`Its agent runs in tmux, not Herdr: Agent terminal on My settings was tmux when the session started. New terminals and agents on ${name} work; the agent itself is at ${shown.url}. Pick Herdr on My settings for your next sessions.`);
+    } else say(`hc could not say yet whether its agent is there: hc get ${name}/claude`);
+    if (code === EXIT.waiting) say(`It needs you: ${shown.url}`);
+    return code;
+  }
+
   if (sub === 'new') {
+    if (opts.herdr) {
+      if (opts.wait === false) throw fail('--herdr waits for the session to run: leave out --no-wait');
+      await hcReady();
+    }
     // With no --repo, the one New session opens on for this person (a default they saved), never the console's own.
     const project = opts.repo ? await projectFor(opts.repo) : await defaultProjectName();
     const body = {
@@ -305,7 +357,10 @@ export async function sessionCommand({ origin, rest }, ctx) {
     say(`Started session ${shown.id}${shown.title ? `: ${shown.title}` : ''}`);
     say(`  ${shown.url}`);
     if (opts.wait === false) return EXIT.done;
-    return follow(shown.id);
+    const started = await follow(shown.id);
+    if (!opts.herdr || (started !== EXIT.done && started !== EXIT.waiting)) return started;
+    const found = await find(shown.id);
+    return connect(found.s, found.login);
   }
 
   if (sub === 'list') {
@@ -346,8 +401,8 @@ export async function sessionCommand({ origin, rest }, ctx) {
     return EXIT.done;
   }
 
-  if (sub === 'resume') {
-    ownPrivate(s, login, 'resume');
+  // Resumes one of your own that is not running, or follows one starting, as resume does.
+  async function resumeAndWait() {
     if (LIVE.has(s.status)) {
       if (s.status === 'stopping') throw fail(`Session ${id} is stopping: resume it once it has stopped.`);
       if (json) emit({ event: 'resumed', session: summary(s, { origin, login }), already: true });
@@ -360,6 +415,23 @@ export async function sessionCommand({ origin, rest }, ctx) {
     say(`Resuming session ${id}${s.title ? `: ${printable(s.title)}` : ''}`);
     if (opts.wait === false) return EXIT.done;
     return follow(id);
+  }
+
+  if (sub === 'resume') {
+    ownPrivate(s, login, 'resume');
+    return resumeAndWait();
+  }
+
+  if (sub === 'herdr') {
+    // The tunnel opens only into your own private sessions, never one that has seen production data.
+    ownPrivate(s, login, 'add to Herdr');
+    if (s.taintedAt) throw fail(`Session ${id} has seen production data: nothing opens a pipe into it from this computer.`, { code: EXIT.refused, status: 'refused' });
+    await hcReady();
+    if (s.status === 'running') return connect(s, login);
+    const resumed = await resumeAndWait();
+    if (resumed !== EXIT.done && resumed !== EXIT.waiting) return resumed;
+    const found = await find(id);
+    return connect(found.s, found.login);
   }
 
   if (sub === 'get') {
@@ -426,8 +498,22 @@ export async function sessionCommand({ origin, rest }, ctx) {
     }
   }
   await ask(`/api/my/sessions/${id}/remove`, { method: 'POST', body: {}, deadlineMs: STOP_DEADLINE_MS });
-  if (json) emit({ event: 'removed', id });
+  // Its machine in Herdr goes too, so ended sessions do not pile up in the sidebar. With no hc here there is none.
+  const name = machineName(id);
+  let machine = null;
+  if ((await hcVersion(ctx.hc)).ok) {
+    try {
+      machine = { name, removed: await removeMachine(ctx.hc, name, { origin, session: id }) };
+    } catch (err) {
+      if (!err.hc) throw err;
+      machine = { name, removed: false, error: printable(err.message, 500) };
+    }
+  }
+  if (json) emit({ event: 'removed', id, machine });
   say(`Removed session ${id}.`);
+  if (machine?.removed) say(`Forgot ${name} in Herdr.`);
+  // Not looked at, so not named as this session's: the person checks its line before forgetting it.
+  if (machine?.error) stderr.write(`woodshed: ${machine.error}. If hc machine ls shows ${name} reached by woodshed tunnel ${id}, forget it with: hc machine rm ${name}\n`);
   return EXIT.done;
 }
 
@@ -437,7 +523,8 @@ export async function sessionCommand({ origin, rest }, ctx) {
  */
 export function parseSessionArgs(sub, words, fail) {
   const commands = {
-    new: { values: ['repo', 'branch', 'agent', 'model'], flags: ['no-wait'], words: 'prompt' },
+    new: { values: ['repo', 'branch', 'agent', 'model'], flags: ['no-wait', 'herdr'], words: 'prompt' },
+    herdr: { values: [], flags: [], words: 'id' },
     list: { values: [], flags: ['all'], words: null },
     get: { values: [], flags: [], words: 'id' },
     extend: { values: [], flags: [], words: 'id' },
