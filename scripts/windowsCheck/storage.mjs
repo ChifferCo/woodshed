@@ -112,7 +112,7 @@ const ORIGIN = 'https://check.example';
     createCredentials({ dir: shared, run, has: () => false }).save(ORIGIN, t);
     check('outside: plain file refused', false, 'it was kept');
   } catch (err) {
-    check('outside: plain file refused', /the only place a token is kept unsealed on Windows/.test(err.message), err.message);
+    check('outside: plain file refused', /the only place a token is kept on Windows/.test(err.message), err.message);
   }
   check('outside: nothing made there', !fs.existsSync(shared));
   try {
@@ -147,7 +147,7 @@ const ORIGIN = 'https://check.example';
     createCredentials({ dir: path.join(base, 'AppData', 'Local', 'woodshed'), run, has: () => false, home: base }).save(ORIGIN, token());
     check('junction: plain file refused', false, 'it was kept');
   } catch (err) {
-    check('junction: plain file refused', /the only place a token is kept unsealed on Windows/.test(err.message), err.message);
+    check('junction: plain file refused', /the only place a token is kept on Windows/.test(err.message), err.message);
   }
   check('junction: nothing made where it leads', fs.readdirSync(target).length === 0);
   fs.rmSync(base, { recursive: true, force: true });
