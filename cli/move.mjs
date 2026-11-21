@@ -187,6 +187,17 @@ export async function moveCommand({ origin, rest }, ctx) {
   const repos = [...new Set([...checkouts.values()].map((c) => c.repo.toLowerCase()))];
   const projects = new Map();
   let target = null;
+  const target0 = () => (Array.isArray(me.sessions) ? me.sessions : []).find((s) => s?.id === opts.to) ?? null;
+  // A session runs one kind of agent, and only that kind has its flags and guards there (the ask before a merge, the
+  // ready gate): an agent of the other kind is not moved into it.
+  const kindOf = new Map();
+  for (const a of agents) {
+    const repo = checkoutFor.get(a).repo.toLowerCase();
+    const k = kinds.get(a).agent;
+    const want = opts.to === 'new' ? (kindOf.get(repo) ?? k) : (target0()?.options?.agent === 'codex' ? 'codex' : 'claude');
+    if (k !== want) throw refused(`${a} runs ${k}, and ${opts.to === 'new' ? `the session for ${repo} would run ${want}` : `session ${opts.to} runs ${want}`}: a session runs one kind of agent, with that kind's guards. Move ${k} and ${want} terminals apart.`);
+    kindOf.set(repo, want);
+  }
   if (opts.to === 'new') {
     const body = await ask('/api/my/projects');
     const list = Array.isArray(body.projects) ? body.projects : [];
@@ -247,9 +258,13 @@ export async function moveCommand({ origin, rest }, ctx) {
   // Programs restart there only when the person says so.
   const processes = addresses.filter((a) => kinds.get(a).kind === 'process');
   const restart = new Map();
+  // A program whose command line holds a credential (or what may be one) is never started again there: the session
+  // would hold it, in its processes and its terminals' records. Said, never with the value.
+  const holdsCredential = new Set(processes.filter((a) => shown(kinds.get(a).argv) !== kinds.get(a).argv.map(shellQuote).join(' ')));
   for (const a of processes) {
     const line = shown(kinds.get(a).argv);
-    if (opts.restart === 'auto' || opts.restart === 'never') restart.set(a, opts.restart === 'auto');
+    if (holdsCredential.has(a)) restart.set(a, false);
+    else if (opts.restart === 'auto' || opts.restart === 'never') restart.set(a, opts.restart === 'auto');
     else if (opts.dryRun) restart.set(a, null);
     else {
       const answer = await ctx.confirm(`Start "${printable(line, 120)}" again in the session (${a})? Its local copy keeps running here. [y/N] `);
@@ -627,7 +642,7 @@ export async function moveCommand({ origin, rest }, ctx) {
     terminals: addresses.map((a) => ({
       address: a, kind: kinds.get(a).kind, to: remoteAt.get(a) ?? null,
       ...(kinds.get(a).kind === 'agent' ? { agent: kinds.get(a).agent, conversation: conversations.get(a).id, state: live.get(a), localEnded: ended.get(a) } : {}),
-      ...(kinds.get(a).kind === 'process' ? { restarted: restart.get(a) === true, command: shown(kinds.get(a).argv), ...(ended2.has(a) ? { endedAtOnce: true } : {}) } : {}),
+      ...(kinds.get(a).kind === 'process' ? { restarted: restart.get(a) === true, command: shown(kinds.get(a).argv), ...(ended2.has(a) ? { endedAtOnce: true } : {}), ...(holdsCredential.has(a) ? { holdsCredential: true } : {}) } : {}),
     })),
     ignoredEnv: [...surveys.values()].flatMap((s) => s.ignoredEnv),
     bundle: bundle(commits),
@@ -639,7 +654,9 @@ export async function moveCommand({ origin, rest }, ctx) {
     for (const t of result.terminals) {
       const what = t.kind === 'agent' ? `${t.agent} conversation ${t.conversation}, ${t.state} there${t.localEnded ? '; ended here' : '; still open here: end it yourself'}`
         : t.kind === 'process' ? (t.endedAtOnce ? `${t.command} was started again there and ended at once: hc read ${t.to}`
-          : t.restarted ? `${t.command} started again there` : `a shell there: ${t.command} was not started again`) : 'a shell there';
+          : t.restarted ? `${t.command} started again there`
+            : t.holdsCredential ? `a shell there: ${t.command} was not started again, as its command line holds what may be a credential, which no session is given`
+              : `a shell there: ${t.command} was not started again`) : 'a shell there';
       say(`  ${t.address} -> ${t.to}  ${what}`);
     }
     for (const s of result.sessions) say(`Session ${s.id}: ${s.url}`);

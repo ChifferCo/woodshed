@@ -313,7 +313,7 @@ export function withoutStateHooks(settings) {
 }
 
 // A word that holds a credential: a known token's shape, a value after a flag that names one, or NAME=value of one.
-const SECRET_FLAG_RE = /^--?[\w-]*(token|password|passwd|secret|key|auth|credential)[\w-]*$/i;
+const SECRET_FLAG_RE = /^(--?[\w-]*(token|password|passwd|secret|key|auth|credential)[\w-]*|-u|--user|--proxy-user)$/i;
 const SECRET_ASSIGN_RE = /^([\w-]*(token|password|passwd|secret|key|auth|credential)[\w-]*)=(.+)$/i;
 
 /**

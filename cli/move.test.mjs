@@ -59,7 +59,7 @@ function laptop(t, { window = true, sessions = [], conversation = true, agentSta
       },
     };
   };
-  for (const id of ['dddd0004', 'bbbb0002', 'aaaa0001']) sessionMachine(`woodshed-${id}`);
+  for (const id of ['dddd0004', 'bbbb0002', 'aaaa0001', 'c0dec0de']) sessionMachine(`woodshed-${id}`);
   const claude = h.add({ argv: ['/bin/zsh', '-l'], cwd, foreground: { name: 'claude', argv: ['claude'], cwd, pid: 7 }, status: { state: agentState, app: 'claude-code' }, statusMs: 5 });
   const dev = h.add({ argv: ['/bin/zsh', '-l'], cwd, foreground: { name: 'npm', argv: ['npm', 'run', 'dev'], cwd, pid: 8 } });
   h.space('api', [['main', { row: [claude, dev] }]]);
@@ -338,36 +338,50 @@ test('a conversation that holds a secret, or one already moved into the session,
   assert.equal(again.h.terminals.get(again.claude).state, 'live');
 });
 
-test('a program\'s credential is never printed, in the question, the bundle or the summary, though it restarts with it', async (t) => {
+test('a program with a credential on its command line is never started again in the session, nor printed', async (t) => {
   const l = laptop(t);
   Object.assign(l.h.terminals.get(l.dev).foreground, { name: 'node', argv: ['node', 'server.js', '--api-key', 'abc123secret'] });
   const dry = await l.run(['move', '--space', 'api', '--to', 'new', '--dry-run', '--json', '--console', ORIGIN]);
   assert.ok(!dry.out.includes('abc123secret'));
   assert.equal(dry.events.find((e) => e.event === 'bundle').bundle.terminals[1].process.command, 'node server.js --api-key …');
   let asked = null;
-  const out = await l.run(['move', '--space', 'api', '--to', 'new', '--console', ORIGIN], { confirm: true, onAsk: (q) => { asked = q; } });
+  const out = await l.run(['move', '--space', 'api', '--to', 'new', '--restart', 'auto', '--console', ORIGIN], { confirm: true, onAsk: (q) => { asked = q; } });
   assert.equal(out.code, EXIT.done, out.err);
   assert.ok(!out.out.includes('abc123secret') && !out.err.includes('abc123secret'));
+  assert.equal(asked, null, 'not even asked');
   const split = JSON.parse(l.h.calls.find((c) => c.app?.[1] === 'pane.split').app[2]);
-  assert.match(split.argv[2], /exec node server\.js --api-key abc123secret$/, 'the restart itself has it');
-  assert.match(asked, /^Start "node server\.js --api-key …" again in the session \(t2\)\?/);
+  assert.equal(split.argv[2], 'cd /home/node/work/app/services/api && exec bash -l', 'a shell where it ran, even with --restart auto');
+  assert.ok(!JSON.stringify(l.h.calls).includes('abc123secret'), 'nothing sent to the session holds it');
+  assert.match(out.out, /a shell there: node server\.js --api-key … was not started again, as its command line holds what may be a credential/);
+  // A known token's shape is a credential whatever flag it follows.
+  Object.assign(l.h.terminals.get(l.dev).foreground, { argv: ['curl', '-u', 'me:hunter2', `--header=x-k: sk_live_${'z'.repeat(24)}`] });
+  const curl = await l.run(['move', '--space', 'api', '--to', 'new', '--dry-run', '--json', '--console', ORIGIN]);
+  assert.equal(curl.events.find((e) => e.event === 'bundle').bundle.terminals.find((x) => x.process).process.command, 'curl -u … …');
 });
 
 test('a Codex terminal moves with its rollout and is ended here with /quit though it never says it is idle', async (t) => {
-  const l = laptop(t, { conversation: false });
+  const l = laptop(t, { conversation: false, sessions: [{ id: 'c0dec0de', owner: 'mia-dev', repo: 'acme/app', project: 'app', status: 'running', state: 'done', title: 'Codex one', options: { agent: 'codex' } }] });
   const codexDir = path.join(l.repo.dir, 'home', '.codex');
   const day = path.join(codexDir, 'sessions', '2026', '11', '20');
   fs.mkdirSync(day, { recursive: true });
   const id = '22222222-3333-4444-8555-666666666666';
   fs.writeFileSync(path.join(day, `rollout-2026-11-20T09-00-00-${id}.jsonl`), `${JSON.stringify({ type: 'session_meta', payload: { id, cwd: l.cwd } })}\n`);
   Object.assign(l.h.terminals.get(l.claude), { foreground: { name: 'codex', argv: ['codex'], cwd: l.cwd, pid: 9 }, status: null, status_ms: null });
-  const out = await l.run(['move', '--space', 'api', '--to', 'aaaa0001', '--restart', 'never', '--json', '--console', ORIGIN], { env: { CODEX_HOME: codexDir } });
+  const out = await l.run(['move', '--space', 'api', '--to', 'c0dec0de', '--restart', 'never', '--json', '--console', ORIGIN], { env: { CODEX_HOME: codexDir } });
   assert.equal(out.code, EXIT.done, out.err + out.out);
-  assert.ok(l.h.files.has(`woodshed-aaaa0001:/home/node/.codex/sessions/2026/11/20/rollout-2026-11-20T09-00-00-${id}.jsonl`));
+  assert.ok(l.h.files.has(`woodshed-c0dec0de:/home/node/.codex/sessions/2026/11/20/rollout-2026-11-20T09-00-00-${id}.jsonl`));
   const run = l.h.calls.find((c) => c.app?.[1] === 'space.new' || c.app?.[1] === 'pane.split');
   assert.match(JSON.parse(run.app[2]).argv[2], new RegExp(`exec /opt/woodshed/session/bin/codex resume ${id}$`));
   assert.deepEqual(sends(l.h, l.claude), ['/quit']);
   assert.ok(!l.h.calls.some((c) => c.args?.[0] === 'send' && c.args.includes('--if') && c.args.includes(l.claude)), 'no idle check codex could never pass');
-  assert.equal(l.h.terminals.get(l.claude).labels['woodshed.moved'], 'woodshed-aaaa0001/t2');
+  assert.equal(l.h.terminals.get(l.claude).labels['woodshed.moved'], 'woodshed-c0dec0de/t2');
   assert.equal(out.events.at(-1).terminals[0].localEnded, true);
+});
+
+test('an agent of the other kind than the session\'s is not moved into it: it would run without that kind\'s guards', async (t) => {
+  const l = laptop(t, { sessions: [{ id: 'c0dec0de', owner: 'mia-dev', repo: 'acme/app', project: 'app', status: 'running', state: 'done', title: 'Codex one', options: { agent: 'codex' } }] });
+  const out = await l.run(['move', '--terminal', 't1', '--to', 'c0dec0de', '--console', ORIGIN]);
+  assert.equal(out.code, EXIT.refused);
+  assert.match(out.err, /t1 runs claude, and session c0dec0de runs codex: a session runs one kind of agent/);
+  assert.equal(l.onGithub('woodshed/move-c0ffee42'), null, 'refused before anything was pushed');
 });

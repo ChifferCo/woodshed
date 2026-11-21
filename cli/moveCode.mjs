@@ -91,6 +91,13 @@ export async function checkoutOf(git, cwd) {
   // A remote that pushes to several places (two pushurls) would send the work to each: only one is the repo checked.
   const pushes = (await git(['remote', 'get-url', '--push', '--all', remote], { cwd: root })).stdout.split('\n').filter(Boolean);
   if (pushes.length > 1) return { error: `${root}'s remote ${remote} pushes to ${pushes.length} places, and the move pushes to one: give it one pushurl` };
+  // Where git really pushes, after its url.*.pushInsteadOf rewriting, is that repo on GitHub, or a folder on this
+  // computer (a local mirror, which publishes nothing). Anywhere else, the work would go somewhere not checked.
+  const pushTo = pushes[0] ?? url;
+  const local = /^(file:\/\/|\/|\.\.?\/)/.test(pushTo);
+  if (!local && githubRepo(pushTo)?.toLowerCase() !== repo.toLowerCase()) {
+    return { error: `${root}'s remote ${remote} is ${repo}, but git pushes it to ${pushTo.replace(/\/\/[^@/]*@/, '//')} (a url rewrite): the move pushes only to the repo it checked` };
+  }
   return {
     root, subdir: subdir === '' ? '' : subdir, remote, repo,
     head: head.code === 0 ? head.stdout.trim() : null, branch: branch.code === 0 ? branch.stdout.trim() : null,
@@ -170,8 +177,14 @@ export async function survey(git, checkout, { tempDir = os.tmpdir(), tag = 'move
   if (head) for (let i = 0; i + 1 < words.length; i += 2) files.push({ status: words[i], path: words[i + 1] });
   else for (const word of words) files.push({ status: 'A', path: word });
 
-  // The objects the push sends: reachable from the snapshot and HEAD, and from no ref of the remote here.
-  const listed = await step(['rev-list', '--objects', ...(head ? [head] : []), tree, '--not', `--remotes=${remote}`], { timeoutMs: 180_000 });
+  // The objects the push sends: reachable from the snapshot and HEAD, and from no ref the remote has now. Its refs are
+  // asked of it (ls-remote), not taken from this checkout's tracking refs, which can outlive a branch deleted there.
+  const there = await git(['ls-remote', '--heads', remote], { cwd: root, timeoutMs: 120_000 });
+  if (there.code !== 0) throw new Error(`git could not read ${remote}'s branches, so what the push would add cannot be checked: ${lastLine(there)}`);
+  const remoteHeads = new Map(there.stdout.split('\n').filter(Boolean).map((l) => l.split('\t')).map(([sha, ref]) => [ref, sha]));
+  const known = [];
+  for (const sha of new Set(remoteHeads.values())) if ((await git(['cat-file', '-e', `${sha}^{commit}`], { cwd: root })).code === 0) known.push(sha);
+  const listed = await step(['rev-list', '--objects', ...(head ? [head] : []), tree, ...(known.length ? ['--not', ...known] : [])], { timeoutMs: 180_000 });
   const pathOf = new Map();
   for (const line of listed.split('\n')) {
     const [sha, ...rest] = line.split(' ');
@@ -179,9 +192,10 @@ export async function survey(git, checkout, { tempDir = os.tmpdir(), tag = 'move
   }
   const kinds = await step(['cat-file', '--batch-check=%(objectname) %(objecttype) %(objectsize)'], { input: `${[...pathOf.keys()].join('\n')}\n` });
   const blobs = kinds.split('\n').map((l) => l.split(' ')).filter(([, type]) => type === 'blob').map(([sha, , size]) => ({ sha, size: Number(size), path: pathOf.get(sha) }));
-  // A secret the remote's copy of a file already held is not the move's doing.
-  const upstream = (await git(['rev-parse', '--verify', '--quiet', '@{upstream}'], { cwd: root })).stdout.trim()
-    || (await git(['rev-parse', '--verify', '--quiet', `refs/remotes/${remote}/HEAD`], { cwd: root })).stdout.trim();
+  // A secret the remote's copy of a file already held is not the move's doing: its branch's, as the remote has it now.
+  const upstreamRef = (await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], { cwd: root })).stdout.trim();
+  const upstreamSha = remoteHeads.get(`refs/heads/${upstreamRef.slice(remote.length + 1)}`) ?? remoteHeads.get(`refs/heads/${checkout.branch}`) ?? null;
+  const upstream = upstreamSha && known.includes(upstreamSha) ? upstreamSha : '';
   const secrets = [];
   for (const blob of blobs) {
     const byName = secretName(blob.path);

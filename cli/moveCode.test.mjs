@@ -145,3 +145,25 @@ test('a remote that pushes to more than one place is refused: the move pushes to
   sh(['config', '--add', 'remote.origin.pushurl', 'https://github.com/someone/mirror.git'], root);
   assert.match((await checkoutOf(git, root)).error, /remote origin pushes to 2 places, and the move pushes to one/);
 });
+
+test('a push rewritten to another repo is refused, and a branch deleted on GitHub does not hide what it held', async (t) => {
+  const { root, sh, git, bare } = repoFor(t);
+  sh(['config', 'url.https://github.com/someone/mirror.git.pushInsteadOf', 'https://github.com/acme/app.git'], root);
+  assert.match((await checkoutOf(git, root)).error, /is acme\/app, but git pushes it to https:\/\/github\.com\/someone\/mirror\.git/);
+  sh(['config', '--unset', 'url.https://github.com/someone/mirror.git.pushInsteadOf'], root);
+
+  // A branch with a credential, pushed, then deleted on GitHub: this checkout's tracking ref for it lives on.
+  const token = `ghp_${'c3'.repeat(18)}`;
+  sh(['checkout', '-q', '-b', 'old'], root);
+  fs.writeFileSync(path.join(root, 'creds.js'), `module.exports = "${token}";\n`);
+  sh(['add', 'creds.js'], root);
+  sh(['commit', '-q', '-m', 'creds'], root);
+  sh(['push', '-q', 'origin', 'old'], root);
+  sh(['--git-dir', bare, 'branch', '-D', 'old'], root);
+  assert.ok(sh(['rev-parse', 'refs/remotes/origin/old'], root), 'the stale tracking ref');
+  fs.rmSync(path.join(root, 'creds.js'));
+  sh(['commit', '-q', '-am', 'no creds'], root);
+  const found = await survey(git, await checkoutOf(git, root), { tag: 'test' });
+  t.after(() => fs.rmSync(path.dirname(found.index), { recursive: true, force: true }));
+  assert.deepEqual(found.secrets, [{ path: 'creds.js', line: 1, kind: 'a GitHub token' }]);
+});

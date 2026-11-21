@@ -143,7 +143,14 @@ shows them) choose what moves. Each terminal is read from `hc` and is one of:
   moves between turns. Two whose conversation cannot be told apart refuse it too, and say to label them.
 - **a shell,** in its folder;
 - **a program** (`Terminal.foreground`'s argv): started again there only when you say so, with `--restart auto`, or yes
-  to the question (`--restart ask`, the default; with no terminal to ask on, it is not).
+  to the question (`--restart ask`, the default; with no terminal to ask on, it is not). One whose command line holds
+  what may be a credential (a known token's shape, the value after `--token`, `--api-key`, `-u`, or `PASSWORD=…`) is
+  never started again there, whatever `--restart` says: the session gets a shell in its place. Its command line is
+  printed with those values as `…`, everywhere.
+
+A session runs one kind of agent, with that kind's flags and guards (the ask before `gh pr merge`, the ready gate), so a
+Claude terminal is not moved into a Codex session, nor the other way round, and `--to new` refuses a repo whose terminals
+mix them.
 
 Then, in order (`move.mjs` says each step):
 
@@ -152,6 +159,10 @@ Then, in order (`move.mjs` says each step):
    and are named: `woodshed settings push --own-files` gives your sessions your own. A file that looks like a secret, by
    its name (`.env`, `*.pem`, `id_ed25519`, `credentials.json`) or its content (a private key, an AWS, GitHub,
    Anthropic, OpenAI, Slack or Stripe key, an npm token), refuses the move with its path, line and kind, never the value.
+   What is read is everything the push would send that the remote does not have (its branches asked of it with
+   `ls-remote`), commits not pushed yet included, as git stores each file; a text file over 20 MB refuses it too. A
+   remote that pushes to more than one place, or that git rewrites to another repo (`pushInsteadOf`), is refused.
+   A conversation holding what looks like a credential refuses the move too.
 2. **The session.** `--to <id>` is one of your own sessions on the same repo, resumed when paused; `--to new` starts one
    per repo on its branch, with no prompt (`Moved from <computer>: <space>`). Each is added to Herdr as `session herdr` does (a resumed one is added again, since its core is new).
 3. **The conversations,** with every folder in them said as the session's, written with `hc file write --on` where the
