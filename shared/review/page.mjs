@@ -1021,7 +1021,7 @@ ${DARK_PALETTE}
       border-bottom: 1px solid var(--rule); margin: 1.9rem 0 1.4rem;
     }
     .tab {
-      display: inline-flex; align-items: center; gap: 0.4rem;
+      display: inline-flex; align-items: center; gap: 0.4rem; white-space: nowrap;
       padding: 0.5rem 0.15rem 0.6rem; margin-bottom: -1px;
       border: 0; border-bottom: 2px solid transparent; background: none;
       font: 600 13.5px/1.4 "Red Hat Display", -apple-system, system-ui, sans-serif;
@@ -1044,7 +1044,7 @@ ${DARK_PALETTE}
     .tabnote { color: var(--muted); font-size: 13.5px; padding: 1rem 0 2rem; }
     .loadingnote { display: flex; align-items: center; gap: 0.55rem; }
     .submit-review {
-      display: inline-flex; align-items: center; gap: 0.4rem;
+      display: inline-flex; align-items: center; gap: 0.4rem; white-space: nowrap; flex: none;
       padding: 0.35rem 0.85rem; font-size: 13px; border-radius: 5px;
     }
     .submit-review .n {
@@ -1057,13 +1057,20 @@ ${DARK_PALETTE}
     /* GitHub's merge green, for the same reason the state pill is in GitHub's
        colours: it quotes a button people press on GitHub every day. */
     button.merge-pr {
-      display: inline-flex; align-items: center; gap: 0.4rem;
+      display: inline-flex; align-items: center; gap: 0.4rem; white-space: nowrap; flex: none;
       padding: 0.35rem 0.85rem; font-size: 13px; border-radius: 5px;
       background: #1f883d; color: #fff;
     }
     button.merge-pr:disabled { cursor: not-allowed; }
-    /* Why an approved pull request has no merge button. */
-    .mergehint { font-size: 12px; color: var(--muted); white-space: nowrap; }
+    /* Why an approved pull request has no merge button: an icon whose tip
+       says it, since a sentence beside Submit review squeezed the tabs and
+       the button into two lines each. */
+    .mergehint {
+      flex: none; display: inline-flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px; border-radius: 999px; color: var(--muted); cursor: help;
+    }
+    .mergehint:hover { color: var(--ink); background: var(--sunk); }
+    .mergehint svg { width: 15px; height: 15px; fill: currentColor; }
     .flash .flash-act { margin-left: 0.8rem; padding: 0.25rem 0.7rem; font-size: 12.5px; }
     .mergelist {
       list-style: none; margin: 0.9rem 0 0; padding: 0;
@@ -2348,22 +2355,34 @@ ${DARK_PALETTE}
     function mergeControl() {
       var pr = state.livePr;
       if (!pr || pr.state !== 'open' || pr.review !== 'approved') return null;
-      if (pr.queued) return el('span', 'mergehint', 'In the merge queue.');
+      if (pr.queued) return mergeHint('In the merge queue.');
       if (draft.headSha && state.headSha && draft.headSha !== state.headSha) {
-        return el('span', 'mergehint', 'New commits since this review. Re-review to merge.');
+        return mergeHint('New commits since this review. Re-review to merge.');
       }
       // The same rule the server applies: a worktree review read files that
       // are not in any commit, and unknown counts as some.
       if (state.kind === 'worktree' && (state.meta && state.meta.dirtyFiles) !== 0) {
-        return el('span', 'mergehint', 'This review read uncommitted changes. Commit, push and re-review to merge.');
+        return mergeHint('This review read uncommitted changes. Commit, push and re-review to merge.');
       }
       var c = pr.checks;
-      if (c && c.fail) return el('span', 'mergehint', 'Merge when checks pass: ' + c.fail + ' failing');
-      if (c && c.pending) return el('span', 'mergehint', 'Merge when checks pass: ' + c.pending + ' running');
+      if (c && c.fail) return mergeHint('Merge when checks pass: ' + c.fail + ' failing');
+      if (c && c.pending) return mergeHint('Merge when checks pass: ' + c.pending + ' running');
       var button = el('button', 'merge-pr', 'Squash and merge');
       button.type = 'button';
       button.addEventListener('click', openMergeSheet);
       return button;
+    }
+
+    // Focusable, so the tip also opens from the keyboard, and labelled, so a
+    // screen reader reads the sentence the icon stands for.
+    function mergeHint(text) {
+      var hint = el('span', 'mergehint');
+      hint.tabIndex = 0;
+      hint.setAttribute('role', 'img');
+      hint.setAttribute('aria-label', text);
+      hint.dataset.tip = text;
+      hint.appendChild(svgIcon(INFO_D));
+      return hint;
     }
 
     function openMergeSheet() {
@@ -4066,6 +4085,7 @@ ${DARK_PALETTE}
     // this is the mark for a person saying something to another person.
     var CMT_D = 'M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 13.25 12H9.06l-2.573 2.573A1.458 1.458 0 0 1 4 13.543V12H2.75A1.75 1.75 0 0 1 1 10.25Z';
     var TOCHAT_D = 'M.989 8 .064 2.68a1.342 1.342 0 0 1 1.85-1.462l13.402 5.744a1.13 1.13 0 0 1 0 2.076L1.913 14.782a1.343 1.343 0 0 1-1.85-1.463L.99 8Zm.603-5.288L2.38 7.25h4.87a.75.75 0 0 1 0 1.5H2.38l-.788 4.538L13.929 8Z';
+    var INFO_D = 'M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z';
     var TICK_D = 'M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L1.72 8.78a.75.75 0 1 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z';
 
     // navigator.clipboard needs a secure context, and the shed is reached over
