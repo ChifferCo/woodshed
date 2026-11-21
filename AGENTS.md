@@ -11,6 +11,8 @@ databases and running app. What you were asked decides what to read:
 - **Claude Code** in this checkout has project skills for the first two, in `.claude/skills/`: `setup-woodshed`,
   `write-project-file` (the repository's `.woodshed/project.yaml`) and `debug-woodshed`. They drive the documents
   above, which stay the source: another agent reads those directly.
+- **Using Woodshed from a person's computer** (the `woodshed` command line: sessions, tunnels, ports, settings):
+  `skills/woodshed/`, a skill for Claude Code and Codex that the person installs (`skills/README.md`).
 - **Changing Woodshed**: `CLAUDE.md` first, for its rules on secrets and the design system, then the README of the
   folder you change. It is plain Node 22 with no dependencies and no build step; the checks are
   `node --test $(git ls-files '*.test.mjs' '**/*.test.mjs')`, and `node console/bin/devConsole.mjs` for a console page.
