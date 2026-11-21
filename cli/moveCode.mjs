@@ -207,12 +207,15 @@ export async function survey(git, checkout, { tempDir = os.tmpdir(), tag = 'move
       continue;
     }
     const start = (await git(['cat-file', 'blob', blob.sha], { cwd: root, raw: true, limit: 8000 })).stdout;
-    if (start.subarray(0, 8000).includes(0)) continue;
+    // UTF-16 text has NULs in it too: read as such, not skipped as binary.
+    const utf16 = utf16Of(start);
+    if (!utf16 && start.subarray(0, 8000).includes(0)) continue;
     if (blob.size > scanBytes) {
       secrets.push({ path: blob.path, line: null, kind: `text too large to check for secrets (${Math.max(1, Math.round(blob.size / 1048576))} MB)` });
       continue;
     }
-    const text = blob.size <= start.length ? start.toString('utf8') : (await git(['cat-file', 'blob', blob.sha], { cwd: root })).stdout;
+    const bytes = blob.size <= start.length ? start : (await git(['cat-file', 'blob', blob.sha], { cwd: root, raw: true })).stdout;
+    const text = utf16 ? decodeUtf16(bytes, utf16) : bytes.toString('utf8');
     const before = upstream ? (await git(['show', `${upstream}:${blob.path}`], { cwd: root })).stdout : '';
     for (const hit of secretsIn(text, before)) secrets.push({ path: blob.path, ...hit });
   }
@@ -230,6 +233,29 @@ export async function survey(git, checkout, { tempDir = os.tmpdir(), tag = 'move
   const ignoredEnv = ignored.code === 0 ? ignored.stdout.split('\0').filter(Boolean).slice(0, 50) : [];
   const unique = [...new Map(secrets.map((x) => [`${x.path}:${x.line}:${x.kind}`, x])).values()];
   return { files, secrets: unique, ignoredEnv, tree, index };
+}
+
+// 'le' or 'be' for text in UTF-16 (a byte-order mark, or every other byte NUL as in ASCII text), else null.
+function utf16Of(bytes) {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return 'le';
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return 'be';
+  const n = Math.min(bytes.length, 8000) & ~1;
+  if (n < 4) return null;
+  let odd = 0;
+  let even = 0;
+  for (let i = 0; i < n; i += 2) {
+    if (bytes[i] === 0) even += 1;
+    if (bytes[i + 1] === 0) odd += 1;
+  }
+  if (odd > n * 0.4 && even === 0) return 'le';
+  if (even > n * 0.4 && odd === 0) return 'be';
+  return null;
+}
+
+function decodeUtf16(bytes, order) {
+  const copy = Buffer.from(bytes.subarray(0, bytes.length & ~1));
+  if (order === 'be') copy.swap16();
+  return copy.toString('utf16le').replace(/^\ufeff/, '');
 }
 
 /**

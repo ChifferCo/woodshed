@@ -479,7 +479,7 @@ export async function moveCommand({ origin, rest }, ctx) {
         made.files.push({ machine, path: part });
         parts.push(part);
       }
-      const out = parsed((await hc(['exec', '--json', '--on', machine, '--', 'sh', '-c', 'out=$1; shift; cat "$@" | gunzip > "$out" && rm -f "$@"', 'sh', dest, ...parts])).stdout);
+      const out = parsed((await hc(['exec', '--json', '--on', machine, '--', 'sh', '-c', 'out=$1; shift; if cat "$@" | gunzip > "$out"; then rm -f "$@"; else rm -f "$out" "$@"; exit 1; fi', 'sh', dest, ...parts])).stdout);
       if (!out || out.code !== 0) throw fail(`${dest} could not be put together on ${machine}`);
       made.files.push({ machine, path: dest });
     }

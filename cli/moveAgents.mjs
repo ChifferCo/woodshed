@@ -316,7 +316,9 @@ export function withoutStateHooks(settings) {
 // A word that holds a credential: a known token's shape, a value after a flag that names one, or NAME=value of one.
 const SECRET_FLAG_RE = /^--?[\w-]*(token|password|passwd|secret|key|auth|credential)[\w-]*$/i;
 // A flag whose value is a credential only when it looks like one: curl's -u user:password, but not python's -u alone.
-const USER_FLAG_RE = /^(-u|--user|--proxy-user)$/;
+const USER_FLAG_RE = /^(-u|-U|--user|--proxy-user)$/;
+// A URL with a password in it: https://user:password@host.
+const URL_PASSWORD_RE = /^([a-z][\w+.-]*:\/\/[^/\s:@]+:)[^@\s/]+@/i;
 // A header carrying a credential, as one word (-H 'Authorization: Bearer x', --header=Cookie:…).
 const SECRET_HEADER_RE = /^(--header=|-H)?\s*(authorization|proxy-authorization|cookie|x-api-key|api-key|x-auth-token)\s*:/i;
 const SECRET_ASSIGN_RE = /^([\w-]*(token|password|passwd|secret|key|auth|credential)[\w-]*)=(.+)$/i;
@@ -333,8 +335,9 @@ export function shownCommand(argv, looksSecret = () => false) {
     const assign = SECRET_ASSIGN_RE.exec(word);
     if (looksSecret(word)) out.push('…');
     else if (SECRET_HEADER_RE.test(word)) out.push(`${word.split(':')[0]}: …`);
+    else if (URL_PASSWORD_RE.test(word)) out.push(word.replace(URL_PASSWORD_RE, '$1…@'));
     // curl's user:password joined to its flag: -uuser:pass, --user=user:pass.
-    else if (/^(-u[^-\s]|--(proxy-)?user=)[^:]*:/.test(word)) out.push(`${word.startsWith('-u') && !word.startsWith('--') ? '-u' : word.split('=')[0]}…`);
+    else if (/^(-[uU][^-\s]|--(proxy-)?user=)[^:]*:/.test(word)) out.push(`${word.startsWith('-u') && !word.startsWith('--') ? '-u' : word.split('=')[0]}…`);
     else if (USER_FLAG_RE.test(word) && /:/.test(String(argv[i + 1] ?? ''))) {
       out.push(word, '…');
       i += 1;

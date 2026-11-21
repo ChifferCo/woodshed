@@ -195,3 +195,13 @@ test('a token pasted into the message of a commit not pushed yet is found, said 
   const sha = sh(['rev-parse', 'HEAD'], root).slice(0, 12);
   assert.deepEqual(found.secrets, [{ path: `the message of commit ${sha}`, line: 3, kind: 'a Slack token' }]);
 });
+
+test('a UTF-16 text file is read for secrets, not skipped as binary', async (t) => {
+  const { root, git } = repoFor(t);
+  const text = `log line\nkey AKIA${'U'.repeat(16)}\n`;
+  fs.writeFileSync(path.join(root, 'windows.log'), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')]));
+  fs.writeFileSync(path.join(root, 'no-bom.log'), Buffer.from(text, 'utf16le'));
+  const found = await survey(git, await checkoutOf(git, root), { tag: 'test' });
+  t.after(() => fs.rmSync(path.dirname(found.index), { recursive: true, force: true }));
+  assert.deepEqual(found.secrets.map((s) => `${s.path}:${s.line} ${s.kind}`).sort(), ['no-bom.log:2 an AWS access key', 'windows.log:2 an AWS access key']);
+});

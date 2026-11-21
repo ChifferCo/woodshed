@@ -57,7 +57,7 @@ function laptop(t, { window = true, sessions = [], conversation = true, agentSta
         if (argv[0] === 'test' && argv[1] === '-e') return { code: h.files.has(`${name}:${argv[2]}`) || (machine.has ?? []).includes(argv[2]) ? 0 : 1 };
         if (argv[0] === 'cat' && argv[1] === '/opt/woodshed/session/claudeHooks.json') return { code: 0, stdout: SESSION_SETTINGS };
         // A large conversation put together from its gzipped parts, as the session's sh does.
-        if (script.startsWith('out=$1; shift; cat "$@" | gunzip')) {
+        if (script.startsWith('out=$1; shift; if cat "$@" | gunzip')) {
           const [, , , , out, ...parts] = argv;
           h.files.set(`${name}:${out}`, zlib.gunzipSync(Buffer.concat(parts.map((p) => h.files.get(`${name}:${p}`)))));
           for (const p of parts) h.files.delete(`${name}:${p}`);
@@ -418,8 +418,12 @@ test('a conversation over hc\'s 8 MB goes in gzipped parts, and is put together 
   const l = laptop(t);
   const file = fs.readdirSync(path.join(l.repo.dir, 'home', '.claude', 'projects')).map((d) => path.join(l.repo.dir, 'home', '.claude', 'projects', d, `${CONVERSATION}.jsonl`))[0];
   // Ten megabytes of turns that do not compress to nothing.
-  const filler = Array.from({ length: 9000 }, (_, i) => JSON.stringify({ type: 'assistant', cwd: l.cwd, message: { content: `${i} ${Buffer.from(String(Math.sin(i))).toString('base64').repeat(30)}` } })).join('\n');
-  fs.appendFileSync(file, `${filler}\n`);
+  const lines = [];
+  for (let i = 0, size = 0; size < 9 * 1024 * 1024; i++) {
+    lines.push(JSON.stringify({ type: 'assistant', cwd: l.cwd, message: { content: `${i} ${Buffer.from(String(Math.sin(i))).toString('base64').repeat(30)}` } }));
+    size += lines.at(-1).length + 1;
+  }
+  fs.appendFileSync(file, `${lines.join('\n')}\n`);
   assert.ok(fs.statSync(file).size > 8 * 1024 * 1024);
   const out = await l.run(['move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.done, out.err + out.out);
