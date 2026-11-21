@@ -34,9 +34,9 @@ export const MAX_ITEM_BYTES = 1024 * 1024;
 // a path in that session's image. Carried between sessions, a newer image's path would reach a session still on an
 // older one, which may not have it, and stop its status line. So a session keeps its own on apply, and sends the
 // shared copy's back unchanged.
-const SETTINGS = '.claude/settings.json';
+export const SETTINGS = '.claude/settings.json';
 // A settings.json with no status line, for what a session sends when no shared copy has one to keep.
-const NO_STATUS_LINE = Buffer.from('{}').toString('base64');
+export const NO_STATUS_LINE = Buffer.from('{}').toString('base64');
 
 function settingsJson(b64) {
   try {
@@ -54,7 +54,7 @@ function canonical(value) {
 }
 
 /** Whether two settings.json contents say the same, whatever their formatting. */
-function sameSettings(a, b) {
+export function sameSettings(a, b) {
   const x = settingsJson(a);
   const y = settingsJson(b);
   return x && y ? canonical(x) === canonical(y) : a === b;
@@ -101,13 +101,15 @@ function inside(home, id) {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
-async function filesUnder(home, dir) {
+async function filesUnder(home, dir, skipPath) {
   const found = [];
+  if (skipPath?.(dir, true)) return found;
   const entries = await fs.readdir(path.join(home, dir), { withFileTypes: true }).catch(() => []);
   for (const e of entries) {
     const rel = `${dir}/${e.name}`;
-    if (e.isDirectory()) found.push(...await filesUnder(home, rel));
+    if (e.isDirectory()) found.push(...await filesUnder(home, rel, skipPath));
     else if (e.isFile()) found.push(rel);
+    else if (e.isSymbolicLink()) skipPath?.(rel);
   }
   return found;
 }
@@ -125,16 +127,18 @@ async function readJson(file) {
 
 /**
  * @param {string} home
+ * @param {{skipPath?: (path: string, directory?: boolean) => boolean}} [opts]  which local paths to leave alone
  * @returns {Promise<{items: Record<string, string>, unreadable: string[], oversized: string[]}>}  each item's content: a
  *   file's as base64, an entry's as JSON. `unreadable` names the JSON files left out this round, whose entries must not
  *   read as removed; `oversized` the files over MAX_ITEM_BYTES, which are neither removed nor overwritten
  */
-export async function readSnapshot(home) {
+export async function readSnapshot(home, { skipPath } = {}) {
   const items = {};
   const oversized = [];
   const files = [...SYNCED_FILES];
-  for (const dir of SYNCED_DIRS) files.push(...await filesUnder(home, dir));
+  for (const dir of SYNCED_DIRS) files.push(...await filesUnder(home, dir, skipPath));
   for (const rel of files) {
+    if (skipPath?.(rel)) continue;
     const content = await fs.readFile(path.join(home, rel)).catch((err) => (err.code === 'ENOENT' || err.code === 'EISDIR' ? null : Promise.reject(err)));
     if (!content) continue;
     if (content.length > MAX_ITEM_BYTES) oversized.push(rel);
@@ -142,6 +146,7 @@ export async function readSnapshot(home) {
   }
   const unreadable = [];
   for (const { file, key } of SYNCED_ENTRIES) {
+    if (skipPath?.(file)) continue;
     const json = await readJson(path.join(home, file));
     if (json === null) {
       unreadable.push(file);
@@ -173,29 +178,35 @@ export function localChanges(synced, local, oversized = []) {
  * files the shared copy no longer has.
  * @param {string} home
  * @param {Record<string, string>} items
- * @param {{live?: boolean, before?: Record<string, string>}} [opts]  live: claude is running, so entries it reads only at
+ * @param {{live?: boolean, before?: Record<string, string>, skipPath?: (path: string, directory?: boolean) => boolean}} [opts]
+ *   live: claude is running, so entries it reads only at
  *   start are left alone. before: the snapshot the round sent; an item changed on disk since is someone's edit made
- *   while the request was out, so it is left for the next round to send rather than overwritten or deleted
+ *   while the request was out, so it is left for the next round to send rather than overwritten or deleted.
+ *   skipPath: paths to leave alone both when reading and when applying the shared copy.
  * @returns {Promise<{written: number, deleted: number, skipped: string[]}>}  skipped: the entries left alone for `live`
  */
-export async function applyItems(home, items, { live = false, before = null } = {}) {
+export async function applyItems(home, items, { live = false, before = null, skipPath } = {}) {
   let written = 0;
   let deleted = 0;
   const skipped = [];
-  const { items: local, oversized } = await readSnapshot(home);
+  const { items: local, oversized } = await readSnapshot(home, { skipPath });
   const untouched = (id) => !before || before[id] === local[id];
   for (const [id, shared] of Object.entries(items)) {
     // This session's own status line stays (see SETTINGS).
     const value = id === SETTINGS && local[id] ? withStatusLineOf(shared, local[id]) : shared;
     const same = local[id] === value || (id === SETTINGS && local[id] && sameSettings(local[id], value));
-    if (!isSyncedFile(id) || !inside(home, id) || same || oversized.includes(id) || !untouched(id)) continue;
+    if (!isSyncedFile(id) || !inside(home, id) || same) continue;
+    if (skipPath?.(id) || oversized.includes(id) || !untouched(id)) {
+      if (skipPath) skipped.push(id);
+      continue;
+    }
     const target = path.join(home, id);
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.writeFile(target, Buffer.from(value, 'base64'));
     written += 1;
   }
   for (const id of Object.keys(local)) {
-    if (!isSyncedFile(id) || !inside(home, id) || id in items || !untouched(id)) continue;
+    if (!isSyncedFile(id) || !inside(home, id) || id in items || !untouched(id) || skipPath?.(id)) continue;
     await fs.rm(path.join(home, id), { force: true });
     deleted += 1;
   }
@@ -203,7 +214,7 @@ export async function applyItems(home, items, { live = false, before = null } = 
     const wanted = Object.entries(items).filter(([id]) => parseEntryId(id)?.file === file && parseEntryId(id)?.key === key);
     if (!wanted.length) continue;
     const target = path.join(home, file);
-    const json = live && !readLive ? null : await readJson(target);
+    const json = (live && !readLive) || skipPath?.(file) ? null : await readJson(target);
     if (json === null) {
       skipped.push(...wanted.map(([id]) => id));
       continue;
@@ -212,7 +223,11 @@ export async function applyItems(home, items, { live = false, before = null } = 
     let changed = false;
     for (const [id, value] of wanted) {
       const { name } = parseEntryId(id);
-      if (JSON.stringify(map[name]) === value || !untouched(id)) continue;
+      if (JSON.stringify(map[name]) === value) continue;
+      if (!untouched(id)) {
+        if (skipPath) skipped.push(id);
+        continue;
+      }
       map[name] = JSON.parse(value);
       changed = true;
       written += 1;
