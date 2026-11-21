@@ -19,6 +19,8 @@ const TICK_MS = 1000;
 const SUBMIT_WORDS = { comment: 'Comment', approve: 'Approve', 'request-changes': 'Request changes' };
 const SUBMIT_DONE = { comment: 'Comment posted', approve: 'Approved', 'request-changes': 'Changes requested' };
 const EVENTS = ['comment', 'approve', 'request-changes'];
+// Draft comments listed on the submit sheet; the rest are counted.
+const SHOWN_PENDING = 5;
 
 // --- keys ---------------------------------------------------------------------------
 
@@ -525,7 +527,12 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
     // --- Q&A ---
     let qaTimer = null;
     async function loadQa(start) {
-      if (state.qa.loading) return;
+      // A read already on its way: the start it was asked for here is made once that read is in (opening the tab while
+      // the first read, at launch, has not come back), as the page asks again from its render.
+      if (state.qa.loading) {
+        if (start) state.qa.startWanted = true;
+        return;
+      }
       state.qa.loading = true;
       try {
         const got = await call('GET', '/qa');
@@ -544,6 +551,10 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
         state.qa.error = err.message;
       } finally {
         state.qa.loading = false;
+      }
+      if (state.qa.startWanted && !finished) {
+        state.qa.startWanted = false;
+        if (!state.qa.data && !state.qa.started && !state.qa.error && state.tab === 'qa') return loadQa(true);
       }
       draw();
       const d = state.qa.data;
@@ -626,20 +637,25 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
       if (state.status.kind !== 'pr') where += ' What you have been reading is the working tree of this session, which may not match what the pull request shows.';
       state.sheet = {
         kind: 'submit', title: `Submit review on #${pr.number}`, event: 'comment', editor: editor(state.submitDraft ?? ''), prompt: 'Comment: ', sure: false,
-        keys: [['Tab', 'verdict'], ['Enter', 'post'], ...(state.draft.reviewId ? [['Ctrl-D', 'discard the draft']] : []), ['Esc', 'cancel']],
       };
+      // The verdict is the first thing on the sheet, and Enter says it in the footer, which is always on screen: however
+      // many draft comments there are, what Enter posts is never off the screen.
+      const keysFor = () => [['Tab', 'verdict'], ['Enter', `post: ${SUBMIT_WORDS[state.sheet.event]}`], ...(state.draft.reviewId ? [['Ctrl-D', 'discard the draft']] : []),
+        ...(n > SHOWN_PENDING ? [['PgUp PgDn', 'scroll']] : []), ['Esc', 'cancel']];
       const lines = () => {
-        const out = [where];
-        if (n) {
-          out.push('', [['bold', `${n} pending comment${n === 1 ? '' : 's'}`]]);
-          for (const c of state.draft.comments) out.push([['cyan', `${clean(c.path)}:${c.startLine && c.startLine !== c.line ? `${c.startLine}-` : ''}${c.line}`], [null, `  ${clean(c.body)}`]]);
-        }
         const choice = [];
         for (const e of EVENTS) choice.push([state.sheet.event === e ? 'rev bold' : 'dim', ` ${SUBMIT_WORDS[e]} `], [null, ' ']);
-        out.push('', [['bold', 'Verdict: '], ...choice]);
+        const out = [[['bold', 'Verdict: '], ...choice], '', where];
         if (state.sheet.sure) out.push('', [['red bold', `Ctrl-D again discards ${n} comment${n === 1 ? '' : 's'}. Nothing is posted.`]]);
+        if (n) {
+          out.push('', [['bold', `${n} pending comment${n === 1 ? '' : 's'}`]]);
+          for (const c of state.draft.comments.slice(0, SHOWN_PENDING)) out.push([['cyan', `${clean(c.path)}:${c.startLine && c.startLine !== c.line ? `${c.startLine}-` : ''}${c.line}`], [null, `  ${cut(clean(c.body).replace(/\n/g, ' '), 200)}`]]);
+          if (n > SHOWN_PENDING) out.push([['dim', `and ${n - SHOWN_PENDING} more, which go out with it too (Discussion and Files changed show them all)`]]);
+        }
         return out;
       };
+      state.sheet.keys = keysFor();
+      state.sheet.keysFor = keysFor;
       state.sheet.render = lines;
       state.sheet.lines = lines();
       draw();
@@ -1037,6 +1053,8 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
         state.sheet = null;
         return draw();
       }
+      // A sheet longer than the screen scrolls, whatever is being typed in its box.
+      if (key === 'pageup' || key === 'pagedown') return scrollBy((key === 'pageup' ? -1 : 1) * Math.max(1, rows() - 12));
       if (sheet.busy) return undefined;
       if (sheet.kind === 'submit') {
         if (key === 'tab' || key === 'shift-tab') {
@@ -1044,6 +1062,7 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
           sheet.event = EVENTS[(i + (key === 'tab' ? 1 : EVENTS.length - 1)) % EVENTS.length];
           sheet.sure = false;
           sheet.lines = sheet.render();
+          sheet.keys = sheet.keysFor();
           return draw();
         }
         if (key === 'ctrl-d' && state.draft.reviewId) return discardDraft();

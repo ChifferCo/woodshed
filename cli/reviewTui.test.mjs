@@ -108,3 +108,120 @@ test('the Q&A is folded: only the open question shows its answer and its follow-
   assert.equal(last.lines.map(plainText).at(-1), '＋ Ask a question of your own', 'the last row asks one of your own');
   assert.equal(last.items.at(-1), qaVisible(state).length);
 });
+
+// The TUI on a made-up terminal over a scripted shed: `routes` answers each call by `METHOD path`, and every call is kept.
+// Its timers run at once, so polls that wait seconds in a terminal take milliseconds here.
+async function tuiOver(t, routes) {
+  const { EventEmitter } = await import('node:events');
+  const { runReviewTui } = await import('./reviewTui.mjs');
+  const calls = [];
+  const api = async (method, path, body) => {
+    const key = `${method} ${path.split('?')[0]}`;
+    calls.push({ method, path, body });
+    const answer = routes.get(key);
+    if (typeof answer !== 'function') throw Object.assign(new Error(`not scripted: ${key}`), { status: 404 });
+    return answer(body, path);
+  };
+  const stdin = Object.assign(new EventEmitter(), { isTTY: true, setRawMode() {}, resume() {}, pause() {} });
+  let screen = '';
+  const stdout = Object.assign(new EventEmitter(), { columns: 80, rows: 24, write: (s) => { screen += s; return true; } });
+  const status = routes.get('GET ')();
+  const diff = routes.get('GET /diff')();
+  const done = runReviewTui({ api, initial: { status, diff, session: 'aaaa0001' }, stdin, stdout, color: false,
+    timers: { set: (fn) => setTimeout(fn, 2), clear: clearTimeout } });
+  t.after(() => stdin.emit('data', 'q'));
+  const frame = () => screen.split('\x1b[H').at(-1).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/ /g, ' ').split('\r\n').map((l) => l.trimEnd());
+  const until = async (test, what) => {
+    for (let i = 0; i < 500; i += 1) {
+      if (test()) return;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    assert.fail(`never: ${what}\n${frame().join('\n')}`);
+  };
+  return { calls, done, frame, until, type: (s) => stdin.emit('data', Buffer.from(s)), said: (key) => calls.filter((c) => `${c.method} ${c.path.split('?')[0]}` === key) };
+}
+
+const T = '2026-11-20T10:00:00.000Z';
+const baseRoutes = (over = {}) => new Map(Object.entries({
+  'GET ': () => ({ ok: true, kind: 'worktree', status: 'ready', createdAt: T, headSha: 'aaaa', meta: { title: 'T', headRefName: 'b', baseRefName: 'main', dirtyFiles: 0 },
+    livePr: { number: 7, title: 'T', state: 'open', review: 'pending', checks: null }, review: { overview: 'It changes things.' } }),
+  'GET /diff': () => ({ ok: true, createdAt: T, files: [{ path: 'one.mjs', additions: 1, deletions: 0, hunks: [{ lines: [{ type: 'add', oldNo: null, newNo: 1, text: 'x' }] }] }] }),
+  'GET /comments': () => ({ ok: true, prId: 'P', headSha: 'aaaa', reviewId: null, comments: [], threads: [], said: [] }),
+  'GET /chat': () => ({ ok: true, messages: [] }),
+  'GET /qa': () => ({ ok: true, qa: null }),
+  ...over,
+}));
+
+test('the submit sheet keeps the verdict Enter posts on screen, however many draft comments go with it', async (t) => {
+  const comments = Array.from({ length: 18 }, (_, i) => ({ path: 'one.mjs', line: 1, body: `note ${i + 1}` }));
+  const tui = await tuiOver(t, baseRoutes({
+    'GET /comments': () => ({ ok: true, prId: 'P', headSha: 'aaaa', reviewId: 'R', comments, threads: [], said: [] }),
+    'POST /submit': () => ({ ok: true, pr: 7 }),
+  }));
+  await tui.until(() => tui.frame().some((l) => l.includes('18 drafts')), 'the drafts read');
+  tui.type('s');
+  tui.type('\t');
+  await tui.until(() => tui.frame().some((l) => /^Verdict: +Comment +Approve +Request changes/.test(l)), 'the verdict, first');
+  assert.ok(tui.frame().some((l) => l.includes('Enter post: Approve')), 'the footer says what Enter posts');
+  tui.type('\x1b[6~');
+  await tui.until(() => tui.frame().some((l) => l.includes('and 13 more, which go out with it too')), 'the rest, a page down');
+  assert.ok(tui.frame().some((l) => l.includes('Enter post: Approve')), 'still said after a page down');
+  tui.type('\r');
+  await tui.until(() => tui.said('POST /submit').length === 1, 'the post');
+  assert.deepEqual(tui.said('POST /submit')[0].body, { event: 'approve', body: '' });
+});
+
+test('opening Q&A starts it on the diff on screen, as the page does, and shows its answers as they come', async (t) => {
+  let qa = null;
+  const tui = await tuiOver(t, baseRoutes({
+    'GET /qa': () => ({ ok: true, qa }),
+    'POST /qa': () => {
+      qa = { status: 'ready', forDiff: T, items: [{ id: 'q1', parent: null, question: 'What changes?', answer: 'Things.' }] };
+      return { ok: true };
+    },
+  }));
+  tui.type('2');
+  await tui.until(() => tui.said('POST /qa').length === 1, 'the start');
+  assert.equal(tui.said('POST /qa')[0].path, `/qa?forDiff=${encodeURIComponent(T)}&first=1`, 'about the diff on screen, kept if another made one');
+  await tui.until(() => tui.frame().includes('▸ What changes?'), 'the question, read again');
+  tui.type('\r');
+  await tui.until(() => tui.frame().includes('  Things.'), 'its answer, open');
+});
+
+test('Re-review takes the diff again and draws the new one, and says so when nothing moved', async (t) => {
+  let files = [{ path: 'one.mjs', additions: 1, deletions: 0, hunks: [] }];
+  let unchanged = false;
+  const tui = await tuiOver(t, baseRoutes({
+    'GET /diff': () => ({ ok: true, createdAt: T, files }),
+    'POST ': () => {
+      if (unchanged) return { ok: true, unchanged: true };
+      files = [...files, { path: 'two.mjs', additions: 3, deletions: 0, hunks: [] }];
+      return { ok: true };
+    },
+  }));
+  tui.type('4');
+  await tui.until(() => tui.frame().includes('▸ one.mjs +1 −0'), 'the files');
+  tui.type('r');
+  await tui.until(() => tui.frame().some((l) => l.includes('Re-reviewed: the diff is as the branch is now.')), 'the re-review');
+  assert.ok(tui.frame().includes('▸ two.mjs +3 −0'), 'the new diff drawn');
+  assert.equal(tui.said('POST ').length, 1, 'a worktree review re-reviews with the bare POST');
+  unchanged = true;
+  tui.type('r');
+  await tui.until(() => tui.frame().some((l) => l.includes('No new commits. a reads the same commit again anyway.')), 'nothing moved');
+});
+
+test('Discard asks first, and only y throws the analysis and the conversation away', async (t) => {
+  const tui = await tuiOver(t, baseRoutes({ 'POST /discard': () => ({ ok: true }) }));
+  tui.type('d');
+  await tui.until(() => tui.frame().includes('Discard the analysis and the conversation?'), 'the question');
+  tui.type('n');
+  await tui.until(() => !tui.frame().includes('Discard the analysis and the conversation?'), 'kept');
+  tui.type('d');
+  tui.type('\r');
+  await tui.until(() => !tui.frame().includes('Discard the analysis and the conversation?'), 'kept, with Enter too');
+  assert.equal(tui.said('POST /discard').length, 0, 'nothing discarded but by y');
+  tui.type('d');
+  tui.type('y');
+  await tui.until(() => tui.said('POST /discard').length === 1, 'the discard');
+  await tui.until(() => tui.frame().some((l) => l.includes('Discarded. a reads it again.')), 'said');
+});

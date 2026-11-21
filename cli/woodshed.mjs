@@ -601,7 +601,9 @@ export async function main(argv, deps = {}) {
         call, token, stdout, stdin, stderr, say, emit, json, EXIT, cwd: deps.cwd, fail,
         // `review <id>`: the terminal it draws on, and `session resume` for a paused session.
         tty: Boolean(stdin.isTTY && stdout.isTTY), color: !env.NO_COLOR, tui: deps.reviewTui,
-        session: sessionCommand, sessionCtx: { call, token, stdout, stderr, say, emit, json, sleep, now, EXIT, platform, hc, fail },
+        session: sessionCommand,
+        // With --json the review is the one line printed: a resume first says nothing on stdout, only its failure.
+        sessionCtx: { call, token, stdout, stderr, say: json ? () => {} : say, emit: json ? () => {} : emit, json, sleep, now, EXIT, platform, hc, fail },
       });
     }
     if (args.command === 'config') {
