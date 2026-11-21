@@ -153,12 +153,17 @@ export function createReviewerApp({ store, secrets, config, fetchImpl = fetch, n
 
   /**
    * Whether it is installed on `repo`, for `woodshed review` to say what is missing (reviewReadiness.mjs).
-   * @returns {Promise<boolean>}  false too when it was not made
+   * @returns {Promise<boolean|null>}  false when it was not made; null when it was and its key could not be read, so
+   *   nobody can tell
    */
   async function installedOn(repo) {
     const found = stored();
-    const privateKey = found?.appId ? await secrets?.read(REVIEWER_KEY_SECRET) : null;
-    if (!privateKey) return false;
+    if (!found?.appId) return false;
+    const privateKey = await secrets?.read(REVIEWER_KEY_SECRET);
+    if (!privateKey) {
+      console.warn('reviewerApp: key not read, installation not known', { repo });
+      return null;
+    }
     return Boolean(await createAppApi({ appId: found.appId, privateKey, fetchImpl, now }).installationOf(repo));
   }
 

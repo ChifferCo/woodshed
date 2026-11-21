@@ -24,7 +24,7 @@ async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin
   const reviewer = {
     login: () => (state.reviewer === 'none' ? null : 'acme-reviewer[bot]'),
     configured: () => state.reviewer !== 'none',
-    installedOn: async (repo) => state.reviewer === 'installed' && repo === 'acme/game',
+    installedOn: async (repo) => (state.reviewer === 'unknown' ? null : state.reviewer === 'installed' && repo === 'acme/game'),
     view: async () => ({ installUrl: 'https://github.com/apps/acme-reviewer/installations/new' }),
     submitReview: async () => null,
   };
@@ -111,7 +111,7 @@ test('what only an admin can do is printed as its step, with exit 2; the file is
   const made = await s.run(['review', 'enable']);
   assert.equal(made.code, EXIT.waiting);
   assert.match(made.out, /\.woodshed\/project\.yaml already has the review in a Woodshed session\./);
-  assert.match(made.out, /Still to do, by an admin:\n {2}- An owner of acme\/game's account installs the reviewer App \(acme-reviewer\[bot\]\) on acme\/game: https:\/\/github\.com\/apps\/acme-reviewer\/installations\/new\./);
+  assert.match(made.out, /Still to do:\n {2}- An owner of acme\/game's account installs the reviewer App \(acme-reviewer\[bot\]\) on acme\/game: https:\/\/github\.com\/apps\/acme-reviewer\/installations\/new\. \(an admin\)/);
 });
 
 test('--qa adds QA in a session, and warns when there is no app for it to start', async (t) => {
@@ -183,18 +183,46 @@ test('a runsOn or logins in the file that are not this console\'s are warned of'
   assert.equal(warnings.length, 2);
   assert.match(warnings[0], /runsOn names other\[bot\]\/prod/);
   assert.match(warnings[1], /author is old-bot\[bot\].*verdicts would not count/);
-  assert.deepEqual(readinessFindings({ consoleApp: { login: 'a[bot]' }, missing: [] }, { runsOn: 'a[bot]/staging' }).warnings, []);
+  assert.deepEqual(readinessFindings({ consoleApp: { login: 'a[bot]', name: 'staging' }, missing: [] }, { runsOn: 'a[bot]/staging' }).warnings, []);
+  assert.equal(readinessFindings({ consoleApp: { login: 'a[bot]', name: null }, missing: [] }, { runsOn: 'a[bot]/staging' }).warnings.length, 1, 'another console of the same App, as the fleet reads it');
 });
 
 test('outside a checkout, or a checkout not on GitHub', async (t) => {
   const s = await setup(t, { origin: 'https://gitlab.com/acme/game.git' });
   const run = await s.run(['review', 'enable']);
-  assert.equal(run.code, EXIT.done);
+  assert.equal(run.code, EXIT.failed, 'written, but no console said it can run it');
   assert.match(run.out, /Console: not asked: this checkout's origin is not on GitHub/);
+  assert.match(run.out, /is written, but the console did not say it can run the review/);
   const outside = await s.run(['review', 'status', '--dir', os.tmpdir()]);
   assert.equal(outside.code, EXIT.failed);
   assert.match(outside.err, /is not in a git checkout/);
   const unknown = await s.run(['review', 'enable', '--wat']);
   assert.equal(unknown.code, EXIT.failed);
   assert.match(unknown.err, /unknown option --wat/);
+});
+
+test('status is on only with the installation known and runsOn naming this console; a console that cannot answer is 1', async (t) => {
+  const s = await setup(t);
+  await s.run(['review', 'enable']);
+  s.state.gates = { review: { runner: 'woodshed', heading: '## R', rerun: '[woodshed-review]' }, qa: null, runsOn: null };
+  assert.equal((await s.run(['review', 'status'])).code, EXIT.done);
+
+  s.state.reviewer = 'unknown';
+  const unknown = await s.run(['review', 'status', '--json']);
+  assert.equal(unknown.code, EXIT.waiting);
+  assert.equal(unknown.lines[0].on, false);
+  assert.deepEqual(unknown.lines[0].missing.map((m) => m.key), ['reviewer-installed-unknown']);
+
+  s.state.reviewer = 'installed';
+  s.state.gates = { ...s.state.gates, runsOn: 'acme-woodshed[bot]/prod' };
+  const elsewhere = await s.run(['review', 'status']);
+  assert.equal(elsewhere.code, EXIT.waiting, 'the same App, another of its consoles');
+  assert.match(elsewhere.out, /runsOn names acme-woodshed\[bot\]\/prod, so this console \(acme-woodshed\[bot\]\) runs none of its reviews/);
+  s.state.gates = { ...s.state.gates, runsOn: 'acme-woodshed[bot]' };
+  assert.equal((await s.run(['review', 'status'])).code, EXIT.done);
+
+  const noApp = await setup(t);
+  noApp.state.reviewer = 'installed';
+  const run = await noApp.run(['review', 'enable', '--console', 'http://localhost:1']);
+  assert.equal(run.code, EXIT.waiting, 'not signed in to that console');
 });

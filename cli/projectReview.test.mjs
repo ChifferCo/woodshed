@@ -122,6 +122,7 @@ test('--rerun and --every-commit', () => {
 
 test('none written as null, or {}, becomes a block; inline mappings and files that do not read are refused', () => {
   for (const none of ['null', '~', '{}']) assert.equal(read(enableReview(`version: 1\npullRequests: ${none}\n`).text).pullRequests.review.runner, 'woodshed');
+  assert.match(enableReview('version: 1\npullRequests: null  # gates come later\n').text, /^pullRequests:  # gates come later$/m, 'its comment kept');
   assert.throws(() => enableReview('version: 1\npullRequests: {review: {runner: woodshed, heading: x}}\n'), /written inline/);
   assert.throws(() => enableReview('version: 1\npullRequest: {}\n'), /does not read as a project file, so it was not changed/);
 });

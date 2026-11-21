@@ -954,10 +954,14 @@ installation.
 **Is it ready for a repo?** `GET /api/review-readiness?repo=<owner/name>` (`reviewReadiness.mjs`) says, for a repo the
 asker may start sessions on: the project, the console App's login, whether the reviewer App is made and installed on
 the repo (with its install link), what the default branch's project file says of `review`, `qa` and `runsOn`, and each
-missing step with who takes it (`missing: [{key, step, by}]`, keys `repo`, `reviewer-app`, `reviewer-installed`). Of
-any other repo it says only that the console does not have it for them, and asks GitHub nothing. Anyone signed in may
-read it, and so may the command line's token (`woodshed review enable` and `status`, cli/README.md, "Review"), as its
-person; a token's call that carries an Origin is a page's, and is refused. A hosting program's proxy passes it through
+missing step with who takes it (`missing: [{key, step, by}]`, keys `repo`, `reviewer-app`, `reviewer-installed`,
+`reviewer-installed-unknown` when its installation could not be read, and `runs-on` when the default branch's `runsOn`
+names another console, read as the fleet reads it, App and name). Of any other repo it says only that the console does
+not have it for them, and asks GitHub nothing more. Anyone signed in may read it, and so may the command line's token
+(`woodshed review enable` and `status`, cli/README.md, "Review"), as its person, held to write access on the repo: GitHub
+is asked at the token's first call and every 10 minutes after, and a person who lost it reads nothing more of the repo
+(`reviewReadiness: refused, no write access to the repo`). A token's call that carries an Origin is a page's, and is
+refused. A hosting program's proxy passes it through
 when it carries `Authorization: Bearer wsc_…`, as it does `/api/cli/*`. A host's reviewer App may give
 `installedOn(repo)`; without it, whether it is installed is `null`. It logs `reviewReadiness: reviewer App
 installation not read` when GitHub did not answer.

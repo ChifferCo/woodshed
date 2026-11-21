@@ -66,8 +66,13 @@ function projectFileOf(dir) {
   }
 }
 
-// The login a `runsOn` names, without a console's name after a slash.
-const runsOnLogin = (runsOn) => String(runsOn ?? '').split('/')[0] || null;
+// Whether a `runsOn` names the console the readiness came from, as its fleet reads it: its App's login, and after a
+// slash its name among that App's consoles (console/reviewReadiness.mjs, runsOnHere).
+function runsOnHere(runsOn, consoleApp) {
+  if (!runsOn) return true;
+  const [app, name = null] = String(runsOn).split('/');
+  return app === consoleApp?.login && (name === null || name === (consoleApp?.name ?? null));
+}
 
 /**
  * What the console said, made printable, with the warnings the checkout's file gives against it.
@@ -79,8 +84,9 @@ export function readinessFindings(readiness, gates) {
   const consoleLogin = printable(readiness?.consoleApp?.login, 100);
   const reviewerLogin = printable(readiness?.reviewerApp?.login, 100);
   const runsOn = gates?.runsOn ?? null;
-  if (runsOn && consoleLogin && runsOnLogin(runsOn) !== consoleLogin) {
-    warnings.push(`pullRequests.runsOn names ${runsOn}, and this console is ${consoleLogin}: the console runsOn names reviews, not this one.`);
+  if (runsOn && consoleLogin && !runsOnHere(runsOn, readiness.consoleApp)) {
+    const here = `${consoleLogin}${readiness.consoleApp?.name ? `/${readiness.consoleApp.name}` : ''}`;
+    warnings.push(`pullRequests.runsOn names ${runsOn}, and this console is ${here}: the console runsOn names reviews, not this one.`);
   }
   const review = gates?.review;
   if (review?.author && reviewerLogin && review.author !== reviewerLogin) {
@@ -160,8 +166,8 @@ export async function reviewCommand({ origin, rest }, deps) {
       if (reviewer?.made) say(`  Reviewer App: ${printable(reviewer.login, 100) ?? 'made'}, ${reviewer.installed === true ? 'installed on the repo' : reviewer.installed === false ? 'not installed on the repo' : 'whether it is installed on the repo was not read'}.`);
     }
     if (missing.length) {
-      say('Still to do, by an admin:');
-      for (const m of missing) say(`  - ${m.step}`);
+      say('Still to do:');
+      for (const m of missing) say(`  - ${m.step}${m.by === 'admin' ? ' (an admin)' : ''}`);
     }
     for (const w of warnings) say(`Warning: ${w}`);
   }
@@ -196,7 +202,7 @@ export async function reviewCommand({ origin, rest }, deps) {
       fs.writeFileSync(file, edit.text);
     }
     const gates = project.pullRequests;
-    const { readiness, unasked, signIn, unreachable } = problems ? { readiness: null, unasked: 'the project file has problems to fix first' } : await askConsole(repo);
+    const { readiness, unasked, signIn } = problems ? { readiness: null, unasked: 'the project file has problems to fix first' } : await askConsole(repo);
     const findings = readiness ? readinessFindings(readiness, gates) : { missing: [], warnings: [] };
     const qaWithoutApp = Boolean(opts['--qa']) && !project.app && !(project.apps?.length);
     if (qaWithoutApp) findings.warnings.push('QA in a session starts the app the project file names, and this one names none: add `app` (the write-project-file skill, or project.reference.yaml).');
@@ -220,7 +226,11 @@ export async function reviewCommand({ origin, rest }, deps) {
     }
     sayConsole(readiness, unasked, findings);
     if (signIn || findings.missing.length) return EXIT.waiting;
-    if (unreachable) return EXIT.failed;
+    // The file is written, but the console could not say it can run the review: not done.
+    if (!readiness) {
+      say(`${PROJECT_FILE} is ${dryRun ? 'unchanged' : 'written'}, but the console did not say it can run the review: fix that, then woodshed review status.`);
+      return EXIT.failed;
+    }
     const tag = gates.review.rerun;
     if (dryRun) {
       say('Nothing written (--dry-run).');
@@ -247,7 +257,9 @@ export async function reviewCommand({ origin, rest }, deps) {
     const { readiness, unasked, signIn, unreachable } = await askConsole(repo);
     const findings = readiness ? readinessFindings(readiness, gates) : { missing: [], warnings: [] };
     const remote = readiness?.defaultBranch ?? null;
-    const on = remote?.review?.runner === 'woodshed' && !findings.missing.length;
+    // On: the default branch says it, the console runs its reviews (runsOn), and its reviewer App is known installed.
+    const on = remote?.review?.runner === 'woodshed' && !findings.missing.length && readiness?.reviewerApp?.installed === true
+      && runsOnHere(remote.runsOn ?? null, readiness.consoleApp);
     if (json) {
       emit({
         repo, on,

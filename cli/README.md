@@ -74,7 +74,10 @@ reviewer App is made, and whether it is installed on the repo. Each missing step
 command exits `2`, the file written all the same. With nothing missing it exits `0` and says to commit the file and
 open a pull request: the review starts once that is merged, since the console reads the default branch's file. It warns
 when the file's `runsOn` names another console, or names an `author` or `commentAuthor` that is not this console's.
-`status` exits `0` once the default branch says it and nothing is missing, else `2` with what comes next.
+`enable` exits `1` when the console could not be asked or did not answer (an origin not on GitHub, a console with no
+GitHub App or from before the route): the file is written, but nothing says the review can run. `status` exits `0`
+once the default branch says it, the console runs its reviews (the default branch's `runsOn`, if any, names it, App and
+name, as its fleet reads it) and its reviewer App is known to be installed; else `2` with what comes next.
 
 ## The tunnel into a session
 

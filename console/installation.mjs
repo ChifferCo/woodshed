@@ -554,6 +554,13 @@ export async function createInstallation({ config: loaded, store, provider, trus
     // Whether a repo's review can run in a session, for `woodshed review`: none with no GitHub App to run it.
     reviewReadiness: config.githubApp || hostApp ? createReviewReadiness({
       publicUrl: config.publicUrl, reviewer: reviewerApp, ownReviewer: !hostApp, appLogin: () => appIdentity.login(), pullRequestsOf: gatesOf,
+      runsOnName: config.runsOnName ?? null,
+      // A token's person must still write to the repo, as sign-in asks of a browser's (auth.mjs). With no sign-in, or
+      // behind a hosting proxy, nobody's access is asked there either.
+      canWrite: auth && !trusted ? async (login, project) => {
+        const gh = auth.enabled() && login ? githubFor(project) : null;
+        return gh ? gh.canWrite(login) : true;
+      } : null,
     }) : null,
   });
   // `woodshed tunnel <id> -- <line>`: a pipe into a running session of the token's person, through its statusd.

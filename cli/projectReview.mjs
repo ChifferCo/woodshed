@@ -101,7 +101,8 @@ export function enableReview(text, { qa = false, rerun = null, everyCommit = fal
     if (found) {
       if (found.value === '') return found;
       if (!/^(null|~|\{\s*\})$/.test(found.value)) throw new Error(`${key} is written inline (${found.value.slice(0, 40)}): write it as a block, one key a line, and run this again`);
-      lines[found.at] = `${' '.repeat(indent)}${key}:`;
+      const comment = /(\s+#.*)$/.exec(lines[found.at])?.[1] ?? '';
+      lines[found.at] = `${' '.repeat(indent)}${key}:${comment}`;
       return findKey(lines, start, parent ? parent.end : lines.length, indent, key);
     }
     let at = parent ? blockEnd(lines, parent.at, parent.indent, lines.length) : lines.length;

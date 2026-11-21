@@ -9,6 +9,7 @@ import { createHandler } from './server.mjs';
 // A reviewer App in the state `which` names: none made, made, or made and installed on acme/game.
 function reviewerIn(which, calls = []) {
   const made = which !== 'none';
+  if (which === 'unknown') return { ...reviewerIn('made', calls), installedOn: async () => null };
   return {
     login: () => (made ? 'acme-reviewer[bot]' : null),
     configured: () => made,
@@ -20,8 +21,9 @@ function reviewerIn(which, calls = []) {
 
 const PROJECTS = [{ name: 'game', repo: 'acme/game' }];
 
-function readinessFor(which, { gates = null, own = true, calls = [] } = {}) {
+function readinessFor(which, { gates = null, own = true, calls = [], canWrite = null, runsOnName = null, now } = {}) {
   return createReviewReadiness({
+    canWrite, runsOnName, ...(now ? { now } : {}),
     publicUrl: 'https://console.example', reviewer: which === null ? null : reviewerIn(which, calls), ownReviewer: own,
     appLogin: async () => 'acme-woodshed[bot]',
     pullRequestsOf: async (name) => { if (gates instanceof Error) throw gates; assert.equal(name, 'game'); return gates; },
@@ -32,9 +34,9 @@ test('ready: a project of the asker\'s, the reviewer App made and installed, the
   const gates = { review: { runner: 'woodshed', heading: '## R', rerun: '[woodshed-review]', author: 'acme-reviewer[bot]', commentAuthor: 'acme-woodshed[bot]' }, qa: null, runsOn: null };
   const answer = await readinessFor('installed', { gates }).check('Acme/Game', { projects: PROJECTS });
   assert.deepEqual(answer, {
-    repo: 'acme/game', project: 'game', consoleApp: { login: 'acme-woodshed[bot]' },
+    repo: 'acme/game', project: 'game', consoleApp: { login: 'acme-woodshed[bot]', name: null },
     reviewerApp: { made: true, login: 'acme-reviewer[bot]', installed: true, installUrl: 'https://github.com/apps/acme-reviewer/installations/new' },
-    defaultBranch: { review: { runner: 'woodshed', rerun: '[woodshed-review]', heading: '## R', author: 'acme-reviewer[bot]', commentAuthor: 'acme-woodshed[bot]' }, qa: null, runsOn: null, error: null },
+    defaultBranch: { review: { runner: 'woodshed', rerun: '[woodshed-review]', heading: '## R', author: 'acme-reviewer[bot]', commentAuthor: 'acme-woodshed[bot]' }, qa: null, runsOn: null, runsHere: true, error: null },
     missing: [],
   });
 });
@@ -114,4 +116,36 @@ test('a console with no GitHub App answers 404', async (t) => {
   const answer = await s.get('/api/review-readiness?repo=acme/game', { cookie: 'woodshed_session=bob' });
   assert.equal(answer.status, 404);
   assert.match((await answer.json()).error, /no GitHub App/);
+});
+
+test('installation not known, and a runsOn naming another console, are each a missing step', async () => {
+  const unknown = await readinessFor('unknown').check('acme/game', { projects: PROJECTS });
+  assert.equal(unknown.reviewerApp.installed, null);
+  assert.deepEqual(unknown.missing.map((m) => m.key), ['reviewer-installed-unknown']);
+  const gates = (runsOn) => ({ review: { runner: 'woodshed', heading: '## R' }, qa: null, runsOn });
+  const named = (runsOn, runsOnName = null) => readinessFor('installed', { gates: gates(runsOn), runsOnName }).check('acme/game', { projects: PROJECTS });
+  assert.deepEqual((await named('acme-woodshed[bot]')).missing, []);
+  assert.deepEqual((await named('acme-woodshed[bot]/prod', 'prod')).missing, []);
+  assert.deepEqual((await named('acme-woodshed[bot]/prod')).missing.map((m) => [m.key, m.by]), [['runs-on', 'repo']], 'another console of the same App');
+  assert.equal((await named('other[bot]')).defaultBranch.runsHere, false);
+});
+
+test('a token\'s person who lost write access to the repo reads nothing more of it, though still on People', async (t) => {
+  let writes = true;
+  let clock = 0;
+  const asked = [];
+  const canWrite = async (login, project) => { asked.push([login, project.repo]); return writes; };
+  const s = await serve(t, { readiness: readinessFor('installed', { canWrite, now: () => clock }) });
+  const { token } = s.tokenFor('bob');
+  const read = async (headers) => (await s.get('/api/review-readiness?repo=acme/game', headers)).json();
+  assert.equal((await read({ authorization: `Bearer ${token}` })).project, 'game');
+  assert.equal((await read({ authorization: `Bearer ${token}` })).project, 'game');
+  assert.deepEqual(asked, [['bob', 'acme/game']], 'asked once, then kept a while');
+  writes = false;
+  clock += 11 * 60_000;
+  const gone = await read({ authorization: `Bearer ${token}` });
+  assert.deepEqual([gone.project, gone.reviewerApp, gone.defaultBranch], [null, null, null]);
+  assert.equal(asked.length, 2);
+  assert.equal((await read({ cookie: 'woodshed_session=bob' })).project, 'game', 'a browser\'s sign-in is rechecked by auth.mjs, not here');
+  assert.equal(asked.length, 2);
 });
