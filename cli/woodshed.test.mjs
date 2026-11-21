@@ -187,7 +187,46 @@ test('the arguments: one command, --console, --json, and the default console', (
   assert.deepEqual([session.args, session.rest, session.json], [['new', '--repo', 'a/b'], ['use --json here'], true]);
   assert.equal(parseArgs(['session', 'list', '--json']).json, true);
   assert.deepEqual(parseArgs(['review', 'enable', '--qa', '--dir', 'x', '--json', '--console', 'c.example']).args, ['enable', '--qa', '--dir', 'x'], 'review\'s own options are its own');
+  const herdr = parseArgs(['--console=c.example', 'herdr', 'move', '--terminal', 't1', '--json', '--to', 'new', '--dry-run']);
+  assert.deepEqual(herdr, { command: 'herdr', args: ['move', '--terminal', 't1', '--to', 'new', '--dry-run'], rest: null, console: 'c.example', json: true, browser: true, help: false });
   assert.equal(DEFAULT_CONSOLE, 'https://console.woodshed.run');
+});
+
+test('Herdr help and subcommand errors are available before sign-in', async (t) => {
+  const config = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-herdr-help-'));
+  t.after(() => fs.rmSync(config, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(config, 'woodshed'));
+  fs.writeFileSync(path.join(config, 'woodshed', 'cli.json'), JSON.stringify({
+    current: 'https://c.example', consoles: { 'https://c.example': { store: 'file' } },
+  }));
+  const cannotAuthenticate = () => assert.fail('help and usage errors should precede sign-in');
+  async function run(args) {
+    let out = '';
+    let err = '';
+    const code = await main(args, {
+      platform: 'test', env: { XDG_CONFIG_HOME: config }, credentials: { storeFor: cannotAuthenticate },
+      fetch: cannotAuthenticate, stdout: { write: (value) => { out += value; } }, stderr: { write: (value) => { err += value; } },
+    });
+    return { code, out, err };
+  }
+
+  const group = await run(['--help', 'herdr']);
+  assert.equal(group.code, EXIT.done);
+  assert.match(group.out, /^Usage: woodshed herdr <command>/);
+  assert.match(group.out, /^  move\s/m);
+  const command = await run(['herdr', 'move', '--help', '--console', 'https://c.example']);
+  assert.equal(command.code, EXIT.done);
+  assert.match(command.out, /^Usage: woodshed herdr move /);
+
+  const missing = await run(['herdr', '--console', 'https://c.example', '--json']);
+  assert.equal(missing.code, EXIT.failed);
+  assert.deepEqual(JSON.parse(missing.out), { event: 'error', status: 'error', error: 'Missing Herdr subcommand. Run woodshed herdr --help.' });
+  const unknown = await run(['--json', 'herdr', 'status', '--help']);
+  assert.equal(unknown.code, EXIT.failed);
+  assert.match(JSON.parse(unknown.out).error, /^Unknown Herdr subcommand/);
+  const legacy = await run(['move']);
+  assert.equal(legacy.code, EXIT.failed);
+  assert.match(legacy.err, /unknown command move/);
 });
 
 test('the page opened is built from the code on the console named, never taken from its answer', async (t) => {

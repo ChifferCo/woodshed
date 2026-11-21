@@ -27,6 +27,10 @@ test('the packed CLI installs offline and runs status, config and review outside
   const help = run(cli, ['--help']);
   assert.match(help, /Usage: woodshed/);
   assert.match(help, /^  settings\s+plan\|push\|pull/m);
+  assert.match(run(cli, ['session', '--help']), /connect <id>/);
+  assert.match(run(cli, ['herdr', '--help']), /^  move\s/m);
+  assert.match(run(cli, ['herdr', 'move', '--help']), /Usage: woodshed herdr move /);
+  assert.equal(JSON.parse(run(cli, ['herdr', 'move', '--terminal', 't1', '--to', 'new', '--json'], 2)).status, 'signed-out');
   assert.equal(JSON.parse(run(cli, ['status', '--json'], 2)).signedIn, false);
   assert.match(run(cli, ['config', '--help']), /Usage: woodshed config/);
   assert.equal(JSON.parse(run(cli, ['settings', 'plan', '--only', 'skills', '--json'], 2)).status, 'signed-out');
