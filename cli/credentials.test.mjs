@@ -94,6 +94,21 @@ test('nothing but a command line token, for a console address, reaches a store',
   assert.deepEqual(keyring.calls, []);
 });
 
+test('a pending device flow uses a separate keyring item from the CLI token', (t) => {
+  const keyring = fakeKeyring();
+  const options = { platform: 'darwin', run: keyring.run, dir: tempDir(t), has: () => true };
+  const normal = createCredentials(options);
+  const pending = createCredentials({ ...options, pending: true });
+  const handoff = `wsd_${'ab'.repeat(32)}.BCDF-GHJK.1795255990000`;
+  const store = normal.save(ORIGIN, TOKEN);
+  pending.save(ORIGIN, handoff);
+  assert.equal(pending.find(ORIGIN).token, handoff);
+  assert.ok(keyring.calls.every((call) => !call.args.join(' ').includes(handoff)));
+  pending.find(ORIGIN).store.remove(ORIGIN);
+  assert.equal(pending.find(ORIGIN), null);
+  assert.equal(store.read(ORIGIN), TOKEN);
+});
+
 test('on Windows the token is sealed with DPAPI by System32\'s PowerShell, given on stdin, never in its arguments', (t) => {
   const win = fakeWindows();
   const { home, dir } = profileDir(t);

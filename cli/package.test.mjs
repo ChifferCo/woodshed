@@ -30,6 +30,8 @@ test('the packed CLI installs offline and runs settings, config, repo and review
   assert.match(help, /^  settings\s+plan\|push\|pull/m);
   assert.match(help, /^  repo\s/m);
   assert.match(run(cli, ['repo', '--help']), /Usage: woodshed repo/);
+  assert.match(help, /^  setup\s/m);
+  assert.match(run(cli, ['setup', '--help']), /Usage: woodshed setup/);
   assert.match(run(cli, ['session', '--help']), /connect <id>/);
   assert.match(run(cli, ['move', '--help']), /Usage: woodshed move --from herdr /);
   assert.equal(JSON.parse(run(cli, ['move', '--from=herdr', '--terminal', 't1', '--to', 'new', '--json'], 2)).status, 'signed-out');

@@ -1,6 +1,6 @@
 ---
 name: woodshed
-description: "Use the `woodshed` command line to work with a Woodshed console for the person: sign in, start a cloud session and follow it, list, stop, resume or remove sessions, give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, change their choices on My settings (terminal, reviews, default repo), and turn on Woodshed's review for a repo. Use when the person asks to start or check a Woodshed session, to run something in one, to keep one from pausing, to sync their Claude settings with Woodshed, to change a My settings choice, or to turn on Woodshed's review for a repo."
+description: "Use the `woodshed` command line to set up Woodshed for the person, sign in, start a cloud session and follow it, list, stop, resume or remove sessions, give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, change their My settings choices (terminal, reviews, default repo), and turn on Woodshed's review for a repo. Use when the person asks to set up Woodshed, start or check a session, run something in one, keep one from pausing, sync their Claude settings, change a My settings choice, or turn on Woodshed's review for a repo."
 ---
 
 # Work with Woodshed from the command line
@@ -8,6 +8,21 @@ description: "Use the `woodshed` command line to work with a Woodshed console fo
 Woodshed runs coding agents in cloud dev environments: a console, and a session (a container with its own branch,
 databases and running app) per task. `woodshed` is its command line. It acts as the person who signed it in, with a
 token the CLI keeps to itself. You run it for them; you never hold their credentials.
+
+## Start here with `woodshed setup`
+
+If they ask to get started, check `woodshed --help` for `setup`. Use the choices they gave you:
+
+```sh
+woodshed setup --yes --json --repo acme/app --repo-dir /path/to/app --reviews default --prompt "Fix the login redirect"
+```
+
+Pass the person's console with `--console <url>` when they use their own. Repeat `--repo` for multiple repos, in order
+with the first for their session. Each checklist entry has a `step`, `status`, and `message`. On exit 2, show them the
+message and any `url` or `userCode` and stop. Run setup again after they complete that step. They approve the CLI sign-in,
+install any GitHub Apps, and connect Claude or Codex on My settings in their browser. If the repo's project file needs
+a review configuration change, setup tells you to open an ordinary pull request. Use `--skip-reviews` or
+`--no-session` when the person chooses to skip those steps.
 
 ## 1. Check what this CLI has
 
@@ -72,6 +87,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 
 | Command | Does | Exits | Arrives in |
 | --- | --- | --- | --- |
+| `woodshed setup [--yes] [--repo R] [--repo-dir D] [--reviews CHOICE] [--prompt TEXT]` | Guides sign-in, repo and review setup, and the first session | 0 done, 2 needs the person, 3 refused, 1 failed | main |
 | `woodshed login [--no-browser]` | Prints a code and opens the console's `/cli` page; waits up to 10 minutes for the person to approve | 0 signed in, 2 code expired, 3 denied | main |
 | `woodshed logout` | Ends this computer's sign-in | 0 | main |
 | `woodshed status` | The console, its org, who is signed in, and the Herdr `hc` here with its version | 0, 2 not signed in | main |
