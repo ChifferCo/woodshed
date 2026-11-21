@@ -383,7 +383,10 @@ test('decoded transcript credential headers refuse a move before push or upload'
   const raw = JSON.stringify({ type: 'assistant', message: { content: `GET /fixture\nAuthorization: Bearer ${value}` } });
   const escaped = JSON.stringify({ type: 'tool_result', headers: { Authorization: `Bearer ${value}` } })
     .replace('Authorization', '\\u0041uthorization');
-  fs.appendFileSync(file, `${raw}\n${escaped}\n`);
+  const listValue = JSON.stringify({ type: 'tool_result', headers: { Authorization: [`Bearer ${value}`] } });
+  const pair = JSON.stringify({ type: 'tool_result', headers: [['Authorization', `Bearer ${value}`]] });
+  const requestLog = JSON.stringify({ type: 'tool_result', headers: [{ name: 'Authorization', value: `Bearer ${value}` }] });
+  fs.appendFileSync(file, `${[raw, escaped, listValue, pair, requestLog].join('\n')}\n`);
   fs.writeFileSync(path.join(l.repo.bare, 'hooks', 'pre-receive'), '#!/bin/sh\ntouch push-started\n', { mode: 0o755 });
 
   const out = await l.run(['move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json']);
@@ -391,6 +394,9 @@ test('decoded transcript credential headers refuse a move before push or upload'
   assert.deepEqual(out.events.find((event) => event.event === 'secrets')?.conversations, [
     { address: 't1', line: 3, kind: 'a credential header' },
     { address: 't1', line: 4, kind: 'a credential header' },
+    { address: 't1', line: 5, kind: 'a credential header' },
+    { address: 't1', line: 6, kind: 'a credential header' },
+    { address: 't1', line: 7, kind: 'a credential header' },
   ]);
   assert.ok(!(out.out + out.err).includes(value));
   assert.ok(!l.calls.some(([method]) => method === 'POST'));

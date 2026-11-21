@@ -11,6 +11,7 @@
 //   woodshed session new|list|get|herdr|stop|resume|remove|extend|limits   sessions (sessions.mjs); herdr makes one
 //                                                     a machine in Herdr's hc (hc.mjs)
 //   woodshed move [--terminal T|--tab T|--space S] --to <id>|new   terminals moved into a session (move.mjs)
+//   woodshed review enable|status                      review this checkout's pull requests in Woodshed sessions (review.mjs)
 //   woodshed config list|get|set                       your choices on My settings, never a secret (config.mjs)
 //
 // Every command takes --json. Exit codes: 0 done, 2 waiting on a person (a sign-in or an approval), 3 refused, 1 any
@@ -23,6 +24,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { createCredentials } from './credentials.mjs';
+import { reviewCommand } from './review.mjs';
 import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
 import { configCommand } from './config.mjs';
@@ -50,6 +52,7 @@ Commands:
   session   start, list, connect to, add to Herdr, stop, resume and remove sessions, and give them more time:
             woodshed session --help
   move      move terminals here into a session, agents with their conversations: woodshed move --help
+  review    review this checkout's pull requests in Woodshed sessions: woodshed review --help
   config    your choices on My settings (terminal, reviews, default repo, …), never a secret: woodshed config --help
 
 Options:
@@ -72,7 +75,7 @@ class CliError extends Error {
 /**
  * @returns {{command: string|null, args: string[], rest: string[]|null, console: string|null, json: boolean,
  *            browser: boolean, help: boolean}}  `args` follow the command; `rest` is everything after `--`. For
- *            `session`, `move` and `config`, `args` also takes their own options. `rest` can hold a session's prompt
+ *            `session`, `move`, `config` and `review`, `args` also takes their own options. `rest` can hold a session's prompt
  *            or a config value.
  */
 export function parseArgs(argv) {
@@ -85,6 +88,7 @@ export function parseArgs(argv) {
     } else if (arg === '--json') out.json = true;
     else if (arg === '--no-browser') out.browser = false;
     else if (arg === '--help' || arg === '-h') out.help = true;
+    else if (out.command === 'review' && arg !== '--console' && !arg.startsWith('--console=')) out.args.push(arg);
     else if (arg === '--console') {
       if (!argv[i + 1]) throw new CliError('--console needs a URL');
       out.console = argv[++i];
@@ -480,6 +484,7 @@ export async function main(argv, deps = {}) {
     json = args.json;
     if (args.command === 'session' && args.help) return await sessionCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.command === 'move' && args.help) return await moveCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
+    if (args.command === 'review' && args.help) return await reviewCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.command === 'config' && args.help) return await configCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.help || !args.command || args.command === 'help') {
       stdout.write(`${USAGE}\n`);
@@ -517,6 +522,11 @@ export async function main(argv, deps = {}) {
         ...(args.command === 'move' && !deps.hc ? { hc: programRunner({ bin: env.WOODSHED_HC_BIN || 'hc', env }) } : {}),
         app: deps.app ?? programRunner({ bin: env.WOODSHED_HERDR_APP_BIN || 'herdr-app', env }), git: deps.git ?? gitRunner({ env }), env,
         hostname: deps.hostname ?? os.hostname(), session: sessionCommand, ...(deps.moveId ? { moveId: deps.moveId } : {}),
+      });
+    }
+    if (args.command === 'review') {
+      return await reviewCommand({ origin, rest: args.args }, {
+        call, token: signedIn(origin).token, stdout, say, emit, json, EXIT, cwd: deps.cwd, fail: (message, opts) => new CliError(message, opts),
       });
     }
     if (args.command === 'config') {

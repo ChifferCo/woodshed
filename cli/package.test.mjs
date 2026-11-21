@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-test('the packed CLI installs offline and runs help and signed-out status outside the checkout', (t) => {
+test('the packed CLI installs offline and runs status, config and review outside the source checkout', (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-cli-pack-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const root = path.resolve(import.meta.dirname, '..');
@@ -29,6 +29,15 @@ test('the packed CLI installs offline and runs help and signed-out status outsid
   assert.match(run(cli, ['config', '--help']), /Usage: woodshed config /);
   assert.match(run(cli, ['move', '--help']), /Usage: woodshed move /);
   assert.equal(JSON.parse(run(cli, ['status', '--json'], 2)).signedIn, false);
+  assert.equal(JSON.parse(run(cli, ['config', 'list', '--json'], 2)).status, 'signed-out');
+  assert.match(run(cli, ['review', '--help']), /Usage: woodshed review/);
+  const repo = path.join(home, 'repo');
+  run('git', ['init', '--quiet', repo]);
+  run('git', ['-C', repo, 'remote', 'add', 'origin', 'https://github.com/example-org/example-repo.git']);
+  const review = JSON.parse(run(cli, ['review', 'enable', '--dir', repo, '--dry-run', '--json'], 2));
+  assert.equal(review.repo, 'example-org/example-repo');
+  assert.equal(review.written, false);
+  assert.equal(fs.existsSync(path.join(repo, '.woodshed', 'project.yaml')), false);
   const skill = path.join(prefix, 'package/skills/woodshed/SKILL.md');
   assert.equal(fs.readFileSync(skill, 'utf8'), fs.readFileSync(path.join(root, 'skills/woodshed/SKILL.md'), 'utf8'));
 });

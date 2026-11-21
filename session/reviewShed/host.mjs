@@ -30,11 +30,13 @@ async function loadShed(repoDir) {
 }
 
 /**
- * @param {{repoDir: string, sessionId: string, sessionKind?: string, load?: typeof loadShed, now?: () => number}} opts
+ * @param {{repoDir: string, sessionId: string, sessionKind?: string, agent?: string, model?: string, effort?: string, load?: typeof loadShed, now?: () => number}} opts
  * @returns {{handle: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => Promise<boolean>}}
  */
 export function createReviewHost({
-  repoDir, sessionId, sessionKind = process.env.SESSION_KIND, load = loadShed, now = Date.now,
+  repoDir, sessionId, sessionKind = process.env.SESSION_KIND,
+  agent, model, effort,
+  load = loadShed, now = Date.now,
 }) {
   const sessionName = `claude-${sessionId}`;
   let shed = null;
@@ -82,6 +84,7 @@ export function createReviewHost({
     }
     const ctx = {
       reqId, repoRoot: repoDir,
+      reviewAgent: { agent, model, effort },
       json: (r, status, body) => json(r, status, writable === false ? withoutPullRequest(body) : body),
       log: (event, fields) => console.log(`review: ${event}`, fields),
       worktreePathFor: () => repoDir,

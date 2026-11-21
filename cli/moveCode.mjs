@@ -144,6 +144,8 @@ const CREDENTIAL_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'x
 const headerNames = CREDENTIAL_HEADERS.join('|');
 export const CREDENTIAL_HEADER_ARGUMENT = new RegExp(`^(--header=|-H)?\\s*(?:${headerNames})\\s*:`, 'i');
 const CREDENTIAL_HEADER_TEXT = new RegExp(`(?:^|[^\\w-])(?:${headerNames})[\\t ]*:[\\t ]*\\S`, 'i');
+const isCredentialHeader = (name) => typeof name === 'string' && CREDENTIAL_HEADERS.includes(name.trim().toLowerCase());
+const hasHeaderValue = (value) => (Array.isArray(value) ? value : [value]).some((part) => typeof part === 'string' && part.trim());
 
 function transcriptHasCredentialHeader(line) {
   if (CREDENTIAL_HEADER_TEXT.test(line)) return true;
@@ -154,8 +156,11 @@ function transcriptHasCredentialHeader(line) {
     const item = pending.pop();
     if (typeof item === 'string' && CREDENTIAL_HEADER_TEXT.test(item)) return true;
     if (!item || typeof item !== 'object') continue;
+    // Decoded transcripts also record headers as [name, value] pairs and request log records.
+    if (Array.isArray(item) && item.length === 2 && isCredentialHeader(item[0]) && hasHeaderValue(item[1])) return true;
+    if (isCredentialHeader(item.name) && hasHeaderValue(item.value)) return true;
     for (const [key, value] of Object.entries(item)) {
-      if (typeof value === 'string' && value.trim() && CREDENTIAL_HEADERS.includes(key.toLowerCase())) return true;
+      if (isCredentialHeader(key) && hasHeaderValue(value)) return true;
       pending.push(value);
     }
   }
