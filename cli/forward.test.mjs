@@ -55,7 +55,11 @@ function procTcp(ports) {
 
 // A session's statusd (the real /exec and /port), its app, a console in front, and @mia-dev signed in.
 async function setup(t, { tainted = () => false } = {}) {
-  const app = http.createServer((req, res) => res.end(`app ${req.url}`));
+  // Plain text: the path it answers with is never read as a page.
+  const app = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'x-content-type-options': 'nosniff' });
+    res.end(`app ${req.url}`);
+  });
   const appPort = await listen(app);
   const echo = net.createServer((socket) => socket.pipe(socket));
   const echoPort = await listen(echo);
@@ -98,13 +102,13 @@ async function setup(t, { tainted = () => false } = {}) {
   });
   const lines = { once: `cat ${table}`, watch: `while :; do echo '${MARK}'; cat ${table}; echo; sleep 0.1; done` };
   // runForward as the command runs it, with what it says kept.
-  function forward({ specs = [], auto = false, token = signedIn.token, session = 'aaaa1111' } = {}) {
+  function forward({ specs = [], auto = false, token = signedIn.token, session = 'aaaa1111', retryMs = [50] } = {}) {
     const said = [];
     const warned = [];
     const events = [];
     const stop = new AbortController();
     const done = runForward({
-      origin, token, session, specs, auto, signal: stop.signal, lines, retryMs: [50],
+      origin, token, session, specs, auto, signal: stop.signal, lines, retryMs,
       say: (text) => said.push(text), warn: (text) => warned.push(text), emit: (object) => events.push(object),
     });
     t.after(() => stop.abort());
@@ -297,15 +301,29 @@ test('a local port that cannot be had is this computer\'s failure, and Ctrl-C en
   t.after(() => taken.close());
   await assert.rejects(listenFree(port, () => {}, { tries: 1 }), /no free port from/);
 
-  // The console is gone: the follower waits to try again, and Ctrl-C ends that wait, and the command, at once.
+  // The connection is cut and the follower waits a minute to try again: Ctrl-C ends that wait at once, and leaves no
+  // timer to hold the process open.
   const s = await setup(t);
   s.listening([]);
-  const run = s.forward({ auto: true });
+  const timers = () => process.getActiveResourcesInfo().filter((kind) => kind === 'Timeout').length;
+  const run = s.forward({ auto: true, retryMs: [60_000] });
   await until(() => run.said.some((text) => text.startsWith('Following')));
+  const before = timers();
   s.cut();
+  await until(() => run.warned.some((text) => text.startsWith('the connection to the session was cut')));
+  assert.ok(timers() > before, 'it is waiting to try again');
   const started = Date.now();
   assert.equal(await run.stop(), null);
   assert.ok(Date.now() - started < 1000, `stopped in ${Date.now() - started} ms`);
+  assert.ok(timers() <= before, 'the wait\'s timer is gone');
+});
+
+test('Ctrl-C while it first asks what the session listens on is a stop, not a failure', async (t) => {
+  const s = await setup(t);
+  const run = s.forward({ auto: true });
+  // Aborted before the first read can come back.
+  assert.equal(await run.stop(), null);
+  assert.deepEqual(run.warned, []);
 });
 
 test('a client that ends its side still gets the whole answer', async (t) => {

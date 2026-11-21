@@ -189,6 +189,8 @@ export async function runForward({ origin, token, session, specs, auto, say, war
   try {
     first = await listeningNow();
   } catch (err) {
+    // Ctrl-C while it asked: stopped, as at any other moment.
+    if (signal.aborted) return null;
     return { refused: err };
   }
   let own = null;
