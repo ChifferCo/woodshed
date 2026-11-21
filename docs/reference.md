@@ -23,6 +23,7 @@ here use `woodshed.example.com` for an installation's domain.
 | `providers/` | Where Woodshed runs. `providers/console.mjs` picks one and starts the console on it | [providers/README.md](../providers/README.md), and "Providers", below |
 | `desktop/` | The desktop app: the console in a window of its own, with notifications and a Dock badge, signing in through the browser. The one folder with dependencies (Electron, as dev dependencies) | [desktop/README.md](../desktop/README.md) |
 | `skills/` | Skills for the agents on a person's own computer: `woodshed/` teaches Claude Code and Codex the `woodshed` command line | [skills/README.md](../skills/README.md) |
+| `herdr-mod/` | A panel for the Herdr app (terminals and coding agents): your sessions, New session, Extend, and a toast naming the session when an agent there waits on you, each through the `woodshed` command line | [herdr-mod/README.md](../herdr-mod/README.md) |
 | `test/` | Checks across the folders: `layout.test.mjs` | |
 | `scripts/` | Tools for working on Woodshed itself: `prAssets.sh` attaches screenshots to a pull request, on a `refs/pr-assets/` ref that `.github/workflows/prAssetsCleanup.yml` deletes when the pull request is closed unmerged | |
 
