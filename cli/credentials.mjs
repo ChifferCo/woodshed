@@ -214,24 +214,41 @@ function writeOwnFile(dir, where, data, { platform, ownFolder }) {
 
 // On Windows a new file takes its folder's ACL as it is made, not a mode given with it as on macOS and Linux: someone
 // able to rename a folder above this one could put one of theirs in its place between the check and the write. So the
-// plain token is written on Windows only under the person's own profile, whose folders no other account may rename.
-function underProfile(dir, home) {
-  const rel = path.relative(home, dir);
-  return Boolean(home) && rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+// plain token is written on Windows only under the person's own profile, whose folders no other account may rename,
+// as both resolve with every link and junction followed: a folder spelled under the profile that leads elsewhere is not.
+// @returns {string|null}  the folder, resolved, to write in; null when it is not under the profile
+function resolvedUnderProfile(dir, home) {
+  if (!home) return null;
+  const real = (p) => (fs.realpathSync.native ?? fs.realpathSync)(p);
+  fs.mkdirSync(dir, { recursive: true });
+  let resolved;
+  let profile;
+  try {
+    resolved = real(dir);
+    profile = real(home);
+  } catch {
+    return null;
+  }
+  const rel = path.relative(profile, resolved);
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel) ? resolved : null;
 }
 
 function file(dir, platform, ownFolder, home) {
   const where = path.join(dir, 'credentials.json');
-  const write = (data) => writeOwnFile(dir, where, data, { platform, ownFolder });
+  const write = (data) => {
+    if (platform !== 'win32') return writeOwnFile(dir, where, data, { platform, ownFolder });
+    const resolved = resolvedUnderProfile(dir, home);
+    if (!resolved) {
+      throw new Error(`${dir} is not under your profile (${home}), the only place a token is kept unsealed on Windows: unset XDG_CONFIG_HOME and LOCALAPPDATA's override, or sign in where DPAPI can seal it`);
+    }
+    return writeOwnFile(resolved, path.join(resolved, 'credentials.json'), data, { platform, ownFolder });
+  };
   return {
     kind: 'file',
     label: where,
     file: where,
     save(origin, token) {
       checkArgs(origin, token);
-      if (platform === 'win32' && !underProfile(dir, home)) {
-        throw new Error(`${dir} is not under your profile (${home}), the only place a token is kept unsealed on Windows: unset XDG_CONFIG_HOME and LOCALAPPDATA's override, or sign in where DPAPI can seal it`);
-      }
       write({ ...readJson(where), [origin]: token });
       return true;
     },

@@ -40,7 +40,8 @@ function fakeKeyring({ works = true } = {}) {
 
 // A Windows config folder under the person's profile, as %LOCALAPPDATA%\\woodshed is: `home` is the profile.
 function profileDir(t) {
-  const home = tempDir(t);
+  // Resolved: the folder written in is, and macOS's temporary folder is under a link.
+  const home = fs.realpathSync(tempDir(t));
   const dir = path.join(home, 'AppData', 'Local', 'woodshed');
   fs.mkdirSync(dir, { recursive: true });
   return { home, dir };
@@ -154,6 +155,14 @@ test('on Windows with DPAPI refused, as over an SSH key\'s sign-in, the token go
   const outside = createCredentials({ platform: 'win32', run: win.run, dir: shared, has: () => true, tools: TOOLS, home: path.join(shared, 'not-above-it') });
   assert.throws(() => outside.save(ORIGIN, TOKEN), /is not under your profile .*the only place a token is kept unsealed on Windows/);
   assert.deepEqual(fs.readdirSync(shared), []);
+  // Spelled under the profile, but a link (a junction, on Windows) above it leads to the shared folder: not under it.
+  const profile = tempDir(t);
+  fs.mkdirSync(path.join(profile, 'AppData'));
+  fs.symlinkSync(shared, path.join(profile, 'AppData', 'Local'));
+  const redirected = createCredentials({ platform: 'win32', run: win.run, dir: path.join(profile, 'AppData', 'Local', 'woodshed'), has: () => false, tools: TOOLS, home: profile });
+  assert.throws(() => redirected.save(ORIGIN, TOKEN), /is not under your profile/);
+  assert.deepEqual(fs.readdirSync(path.join(shared, 'woodshed')), [], 'nothing written where the link leads');
+  fs.rmSync(path.join(shared, 'woodshed'), { recursive: true });
   const sealed = createCredentials({ platform: 'win32', run: fakeWindows().run, dir: shared, has: () => true, tools: TOOLS, home: path.join(shared, 'not-above-it') });
   assert.equal(sealed.save(ORIGIN, TOKEN).kind, 'dpapi', 'sealed, it may be kept there: only this account can open it');
 });
