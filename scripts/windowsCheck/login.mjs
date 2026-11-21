@@ -35,12 +35,13 @@ function woodshed(args) {
       "$ErrorActionPreference = 'Stop'",
       '$cred = New-Object System.Management.Automation.PSCredential($env:CHECK_USER, (ConvertTo-SecureString $env:CHECK_PASSWORD -AsPlainText -Force))',
       '$list = @($env:CHECK_ARGS | ConvertFrom-Json)',
-      '$p = Start-Process -FilePath $env:CHECK_NODE -ArgumentList $list -Credential $cred -LoadUserProfile -WorkingDirectory $env:CHECK_REPO -RedirectStandardOutput $env:CHECK_STDOUT -RedirectStandardError $env:CHECK_STDERR -PassThru -Wait',
+      '$p = Start-Process -FilePath $env:CHECK_NODE -ArgumentList $list -Credential $cred -LoadUserProfile -UseNewEnvironment -WorkingDirectory $env:CHECK_REPO -RedirectStandardOutput $env:CHECK_STDOUT -RedirectStandardError $env:CHECK_STDERR -PassThru -Wait',
       'exit $p.ExitCode',
     ].join('\n');
     child = spawn(windowsTools().powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
       cwd: repo, stdio: ['ignore', 'inherit', 'inherit'],
-      env: { ...process.env, CHECK_NODE: process.execPath, CHECK_ARGS: JSON.stringify([cli, ...args]), CHECK_REPO: repo, CHECK_STDOUT: out, CHECK_STDERR: err },
+      // Windows PowerShell 5.1 cannot load its own modules with PowerShell 7's module path.
+      env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toLowerCase() !== 'psmodulepath')), CHECK_NODE: process.execPath, CHECK_ARGS: JSON.stringify([cli, ...args]), CHECK_REPO: repo, CHECK_STDOUT: out, CHECK_STDERR: err },
     });
   }
   const done = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
@@ -96,7 +97,7 @@ if (code) {
 }
 const loginExit = await login.done;
 const signed = login.lines().find((l) => l.event === 'signed-in');
-check('login exited 0', loginExit === 0, `exit ${loginExit}; ${login.stderr().slice(0, 500)}`);
+check('login exited 0', loginExit === 0, `exit ${loginExit}; ${JSON.stringify(login.lines().find((l) => l.event === 'error') ?? null)} ${login.stderr().slice(0, 500)}`);
 check('signed in, token sealed with DPAPI', signed?.store === 'dpapi', signed ? `store ${signed.store}, login ${signed.login}, file ${signed.credentialsFile}` : 'no signed-in line');
 if (signed?.credentialsFile) {
   let read = null;

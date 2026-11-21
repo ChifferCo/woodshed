@@ -1,5 +1,6 @@
 // TEMPORARY, not for merge: runs the command line's Windows token storage (cli/credentials.mjs) for real, on Windows.
 // Prints PASS/FAIL per check and exits 1 on any failure. Never prints a token: the tokens here are made up for the check.
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -31,6 +32,32 @@ const me = /^"([^"]+)"/.exec(runCommand(tools.whoami, ['/user', '/fo', 'csv', '/
 const onlyMe = (acl) => acl.rules.length > 0 && acl.rules.every((r) => r.toLowerCase().startsWith(`${me.toLowerCase()}|allow`));
 
 console.log(`account: ${me}; node ${process.version}; USERPROFILE=${process.env.USERPROFILE}; LOCALAPPDATA=${process.env.LOCALAPPDATA}; homedir=${os.homedir()}`);
+
+// Diagnostics: what icacls and PowerShell answer, raw, on a fresh folder like the CLI's.
+{
+  const diag = path.join(process.env.LOCALAPPDATA, `wincheck-diag-${crypto.randomBytes(3).toString('hex')}`);
+  fs.mkdirSync(diag);
+  const show = (label, out) => console.log(`DIAG ${label}: status ${out.status}\n${(out.stdout + out.stderr).trim().split(/\r?\n/).map((l) => `    ${l}`).join('\n')}`);
+  const whoRaw = runCommand(tools.whoami, ['/user', '/fo', 'csv', '/nh']);
+  show('whoami /user', whoRaw);
+  const sid = /"(S-1-[0-9-]+)"/.exec(whoRaw.stdout)?.[1];
+  show('icacls . (fresh)', runCommand(tools.icacls, ['.'], { cwd: diag }));
+  show('icacls . /inheritance:r /grant:r', runCommand(tools.icacls, ['.', '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`], { cwd: diag }));
+  show('icacls . (after)', runCommand(tools.icacls, ['.'], { cwd: diag }));
+  show('icacls . /setowner', runCommand(tools.icacls, ['.', '/setowner', `*${sid}`], { cwd: diag }));
+  show('icacls . (after owner)', runCommand(tools.icacls, ['.'], { cwd: diag }));
+  const acl = aclOf(diag);
+  console.log(`DIAG Get-Acl: owner ${acl.owner}; protected ${acl.protected}; ${acl.rules.join('; ')}`);
+  const seal = (env) => {
+    const out = spawnSync(tools.powershell, ['-NoProfile', '-NonInteractive', '-Command', "Add-Type -AssemblyName System.Security; [Security.Cryptography.ProtectedData]::Protect([byte[]](1,2,3), $null, 'CurrentUser').Length"], { env, encoding: 'utf8' });
+    return { status: out.status, stdout: out.stdout ?? '', stderr: out.stderr ?? String(out.error ?? '') };
+  };
+  console.log(`DIAG PSModulePath=${process.env.PSModulePath}`);
+  show('seal, PSModulePath as inherited', seal(process.env));
+  const { PSModulePath, ...without } = process.env;
+  show('seal, without PSModulePath', seal(without));
+  fs.rmSync(diag, { recursive: true, force: true });
+}
 
 // Every command the store runs, to check none is given the token.
 const ran = [];

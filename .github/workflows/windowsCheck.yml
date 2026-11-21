@@ -62,7 +62,7 @@ jobs:
           $cred = New-Object System.Management.Automation.PSCredential($name, $secure)
 
           Write-Output '=== 3.1 storage, as Jürgen'
-          $p = Start-Process -FilePath C:\wincheck\node.exe -ArgumentList 'C:\wincheck\scripts\windowsCheck\storage.mjs' -Credential $cred -LoadUserProfile -WorkingDirectory C:\wincheck -RedirectStandardOutput C:\wincheck-out\storage.out -RedirectStandardError C:\wincheck-out\storage.err -PassThru -Wait
+          $p = Start-Process -FilePath C:\wincheck\node.exe -ArgumentList 'C:\wincheck\scripts\windowsCheck\storage.mjs' -Credential $cred -LoadUserProfile -UseNewEnvironment -WorkingDirectory C:\wincheck -RedirectStandardOutput C:\wincheck-out\storage.out -RedirectStandardError C:\wincheck-out\storage.err -PassThru -Wait
           Get-Content -Encoding utf8 C:\wincheck-out\storage.out, C:\wincheck-out\storage.err -ErrorAction SilentlyContinue
           $storage = $p.ExitCode
           Write-Output "storage as Jürgen exited $storage"
