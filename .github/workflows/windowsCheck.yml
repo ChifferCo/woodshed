@@ -1,0 +1,92 @@
+# TEMPORARY, not for merge: checks #289's Windows token storage and `woodshed login` on a real Windows runner.
+name: Windows login check (temporary)
+on:
+  push:
+    branches: [test/windows-login-check]
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: pwsh
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Versions
+        run: |
+          node --version
+          [System.Environment]::OSVersion.VersionString
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+          whoami
+      - name: 1. Storage, as the runner's account
+        id: storage
+        continue-on-error: true
+        run: node scripts/windowsCheck/storage.mjs
+      - name: 2. login, status and logout against the dev console
+        id: login
+        continue-on-error: true
+        run: |
+          $dc = Start-Process node -ArgumentList 'console/bin/devConsole.mjs','7690' -PassThru -RedirectStandardOutput devconsole.out -RedirectStandardError devconsole.err
+          try {
+            node scripts/windowsCheck/login.mjs http://localhost:7690
+            $code = $LASTEXITCODE
+          } finally {
+            taskkill /PID $dc.Id /T /F | Out-Null
+          }
+          Write-Output '--- dev console, its cliSignIn lines and any error'
+          Get-Content devconsole.out, devconsole.err -ErrorAction SilentlyContinue | Select-String -Pattern 'cliSignIn|rror|listening' | Select-Object -First 40
+          exit $code
+      - name: 3. As a new local account named Jürgen
+        id: other
+        continue-on-error: true
+        run: |
+          $name = "J$([char]0xFC)rgen"
+          $pw = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(18)) + 'aA1!'
+          Write-Output "::add-mask::$pw"
+          $secure = ConvertTo-SecureString $pw -AsPlainText -Force
+          New-LocalUser -Name $name -Password $secure -PasswordNeverExpires | Out-Null
+          Write-Output "account made: $name"
+          # The checkout and node where every account may read them, and a folder each may write its output to.
+          New-Item -ItemType Directory C:\wincheck | Out-Null
+          Copy-Item -Recurse -Path cli, console, scripts, shared, providers, session, package.json -Destination C:\wincheck -ErrorAction SilentlyContinue
+          Copy-Item (Get-Command node).Source C:\wincheck\node.exe
+          icacls C:\wincheck /grant '*S-1-5-32-545:(OI)(CI)RX' /T /Q | Out-Null
+          New-Item -ItemType Directory C:\wincheck-out | Out-Null
+          icacls C:\wincheck-out /grant '*S-1-1-0:(OI)(CI)M' /Q | Out-Null
+          $cred = New-Object System.Management.Automation.PSCredential($name, $secure)
+
+          Write-Output '=== 3.1 storage, as Jürgen'
+          $p = Start-Process -FilePath C:\wincheck\node.exe -ArgumentList 'C:\wincheck\scripts\windowsCheck\storage.mjs' -Credential $cred -LoadUserProfile -WorkingDirectory C:\wincheck -RedirectStandardOutput C:\wincheck-out\storage.out -RedirectStandardError C:\wincheck-out\storage.err -PassThru -Wait
+          Get-Content -Encoding utf8 C:\wincheck-out\storage.out, C:\wincheck-out\storage.err -ErrorAction SilentlyContinue
+          $storage = $p.ExitCode
+          Write-Output "storage as Jürgen exited $storage"
+
+          Write-Output '=== 3.2 login, status and logout, as Jürgen'
+          $dc = Start-Process node -ArgumentList 'console/bin/devConsole.mjs','7690' -PassThru -RedirectStandardOutput devconsole2.out -RedirectStandardError devconsole2.err
+          try {
+            $env:CHECK_USER = $name
+            $env:CHECK_PASSWORD = $pw
+            $env:CHECK_REPO = 'C:\wincheck'
+            $env:CHECK_OUT_DIR = 'C:\wincheck-out'
+            C:\wincheck\node.exe C:\wincheck\scripts\windowsCheck\login.mjs http://localhost:7690
+            $login = $LASTEXITCODE
+          } finally {
+            Remove-Item Env:CHECK_PASSWORD
+            taskkill /PID $dc.Id /T /F | Out-Null
+          }
+          Get-ChildItem C:\wincheck-out\cli-*.err | ForEach-Object { $t = Get-Content -Raw -Encoding utf8 $_; if ($t) { "--- $($_.Name)"; $t } }
+          Get-Content devconsole2.out, devconsole2.err -ErrorAction SilentlyContinue | Select-String -Pattern 'cliSignIn|rror' | Select-Object -First 40
+          if ($storage -ne 0 -or $login -ne 0) { exit 1 }
+      - name: Summary
+        if: always()
+        run: |
+          "1. storage as runner: ${{ steps.storage.outcome }}"
+          "2. login/status/logout: ${{ steps.login.outcome }}"
+          "3. as Jürgen: ${{ steps.other.outcome }}"
+          if ('${{ steps.storage.outcome }}' -ne 'success' -or '${{ steps.login.outcome }}' -ne 'success' -or '${{ steps.other.outcome }}' -ne 'success') { exit 1 }
