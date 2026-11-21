@@ -53,8 +53,9 @@ Commands:
             woodshed session --help
   config    your choices on My settings (terminal, reviews, default repo, …), never a secret: woodshed config --help
   settings  plan|push|pull [--only <what>,...] [--own-files <checkout>] [--replace]
-            your Claude and Codex settings, plugins, dotfiles and a checkout's ignored files, to and from
-            your private sessions. plan lists each item and sends nothing (cli/README.md, "Settings")
+            sync your Claude and Codex settings, plugins, dotfiles and ignored checkout files with private
+            sessions. Claude MCP definitions pushed from a computer stay between computers.
+            plan lists each item and sends nothing (cli/README.md, "Settings")
 
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};

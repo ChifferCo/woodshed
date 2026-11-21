@@ -11,7 +11,8 @@ import { createCliSignIn } from '../console/cliSignIn.mjs';
 import { createRepoSettings } from '../console/repoSettings.mjs';
 import { createUserSettings } from '../console/userSettings.mjs';
 import { createHandler } from '../console/server.mjs';
-import { applyItems } from '../session/settingsSync.mjs';
+import { createSessionApi } from '../console/sessionApi.mjs';
+import { applyItems, exchange, syncOnce } from '../session/settingsSync.mjs';
 import { createCredentials } from './credentials.mjs';
 import { envLike, matchesOnly, movePaths, parseSettingsArgs, runsOf, secretContent, secretName, SESSION_HOME, shownPath, translate } from './settings.mjs';
 import { EXIT, main } from './woodshed.mjs';
@@ -138,12 +139,12 @@ async function setUp(t, { home = laptopHome(t), claudeSettings: withSettings = t
   createCredentials({ platform: 'test', dir: path.join(dir, 'woodshed') }).save(origin, token);
   fs.writeFileSync(path.join(dir, 'woodshed', 'cli.json'), JSON.stringify({ current: origin, consoles: { [origin]: { login: 'mia-dev', store: 'file' } } }));
 
-  const run = async (args, { answer = null } = {}) => {
+  const run = async (args, { answer = null, home: localHome = home } = {}) => {
     let out = '';
     let err = '';
     const asked = [];
     const code = await main(args, {
-      env: { XDG_CONFIG_HOME: dir, HOME: home }, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
+      env: { XDG_CONFIG_HOME: dir, HOME: localHome }, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
       platform: 'test', credentials: createCredentials({ platform: 'test', dir: path.join(dir, 'woodshed') }),
       interactive: answer !== null, ask: async (q) => { asked.push(q); return typeof answer === 'function' ? answer(q) : answer; },
     });
@@ -275,6 +276,7 @@ test('push sends nothing until the list was shown; plan shows each item and send
   });
   assert.equal(fates['~/.claude/skills/deploy/notes.md'][1], 'holds what looks like a GitHub token');
   assert.equal(fates['mcp/linear'][1].startsWith('its env sets LINEAR_API_KEY'), true);
+  assert.ok(planJson.items.find((i) => i.name === 'mcp/docs').notes.includes('saved for computers only'));
   assert.ok(!planJson.out.includes(FAKE_GITHUB_TOKEN) && !planJson.out.includes('lin_api_not_real') && !planJson.out.includes('sk_test_not_real'), 'no value is ever printed');
   assert.equal(planJson.lines.at(-1).event, 'plan');
   assert.equal(planJson.lines.at(-1).sent, false);
@@ -285,31 +287,75 @@ test('push sends nothing until the list was shown; plan shows each item and send
   const done = pushed.lines.at(-1);
   assert.deepEqual([done.event, done.sent, done.ownFilesSent, done.version], ['pushed', 7, 2, 1]);
 
-  const { items } = await c.copy();
+  const { items, laptopMcp } = await c.copy();
   assert.deepEqual(Object.keys(items).sort(), [
-    '.claude.json#mcpServers/docs', '.claude.json#mcpServers/github', '.claude/CLAUDE.md', '.claude/agents/planner.md', '.claude/settings.json',
-    '.claude/skills/review/SKILL.md', '.claude/skills/review/format.sh',
+    '.claude/CLAUDE.md', '.claude/agents/planner.md', '.claude/settings.json', '.claude/skills/review/SKILL.md', '.claude/skills/review/format.sh',
   ]);
+  assert.deepEqual(Object.keys(laptopMcp).sort(), ['.claude.json#mcpServers/docs', '.claude.json#mcpServers/github']);
   const settings = JSON.parse(unb64(items['.claude/settings.json']));
   assert.equal(settings.statusLine, undefined, 'the laptop\'s status line stays on the laptop');
   assert.equal(settings.apiKeyHelper, undefined);
   assert.deepEqual(settings.env, { DISABLE_TELEMETRY: '1' });
   assert.deepEqual(settings.hooks.Stop[0].hooks, [], 'a hook running a script only the laptop has is left out');
   assert.equal(settings.hooks.PostToolUse[0].hooks[0].command, 'bash /home/node/.claude/skills/review/format.sh');
-  assert.deepEqual(JSON.parse(items['.claude.json#mcpServers/docs']), { type: 'stdio', command: 'npx', args: ['-y', 'docs-mcp'] });
+  assert.deepEqual(JSON.parse(laptopMcp['.claude.json#mcpServers/docs']), { type: 'stdio', command: 'npx', args: ['-y', 'docs-mcp'] });
 
   // My settings' own files for acme/app, as its page would show them.
   assert.deepEqual(Object.keys(await c.repoSettings.ownFiles({ login: 'mia-dev', project: 'app' })).sort(), ['.env.local', 'web/config.local.json']);
 
-  // A new private session's start (settingsSync's pull) gets the laptop's skill and MCP server.
-  const session = scratch(t, 'woodshed-session-');
-  await applyItems(session, items);
-  assert.equal(fs.readFileSync(path.join(session, '.claude/skills/review/SKILL.md'), 'utf8'), '---\nname: review\n---\nReview the diff.\n');
-  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(session, '.claude.json'), 'utf8')).mcpServers).sort(), ['docs', 'github']);
+  // A new private session takes the skill through the session API it calls at startup. Its reply excludes laptop MCPs.
+  const privateSession = { id: 'aaaa1111', status: 'starting', owner: 'mia-dev', token: 'fake-session-token' };
+  const sessionApi = createSessionApi({
+    fleet: { sessions: () => [privateSession] }, userSettings: { view: () => ({ setUp: true }) }, claudeSettings: c.claudeSettings,
+  });
+  const sessionServer = http.createServer(sessionApi);
+  const sessionPort = await listen(sessionServer);
+  t.after(() => sessionServer.close());
+  const sessionHome = scratch(t, 'woodshed-session-');
+  await syncOnce({
+    home: sessionHome, state: { version: null, synced: {} }, live: false,
+    send: async (body) => {
+      const answer = await exchange({ consoleUrl: `http://127.0.0.1:${sessionPort}`, token: privateSession.token, body });
+      assert.deepEqual(answer.items, items);
+      return answer;
+    },
+  });
+  assert.equal(fs.readFileSync(path.join(sessionHome, '.claude/skills/review/SKILL.md'), 'utf8'), '---\nname: review\n---\nReview the diff.\n');
+  assert.equal(fs.existsSync(path.join(sessionHome, '.claude.json')), false);
 
   const again = await c.run(['settings', 'push', '--own-files', repo]);
   assert.equal(again.code, EXIT.done, again.err);
   assert.match(again.out, /Nothing to send\./, 'a second push finds everything the same');
+});
+
+test('laptop MCP definitions can be pulled by another computer, and literal custom headers never sync', async (t) => {
+  const c = await setUp(t);
+  const custom = { type: 'http', url: 'https://example.com/mcp', headers: { 'X-Service-Access': 'opaque-test-value' } };
+  const portable = { ...custom, headers: { 'X-Service-Access': '${SERVICE_ACCESS}' } };
+  write(c.home, '.claude.json', { mcpServers: { custom, portable } });
+
+  const plan = await c.run(['settings', 'plan', '--only', 'mcp', '--json']);
+  assert.equal(fateOf(plan.items, 'mcp/custom'), 'refuse');
+  assert.equal(fateOf(plan.items, 'mcp/portable'), 'upload');
+  assert.ok(!plan.out.includes('opaque-test-value'));
+  const res = await fetch(`${c.origin}/api/cli/settings`, {
+    method: 'POST', headers: { authorization: `Bearer ${c.token}` },
+    body: JSON.stringify({ version: 0, changed: { '.claude.json#mcpServers/custom': JSON.stringify(custom) }, removed: [] }),
+  });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /literal HTTP header/);
+
+  assert.equal((await c.run(['settings', 'push', '--only', 'mcp'])).code, EXIT.done);
+  const { version, items, laptopMcp } = await c.copy();
+  assert.equal(version, 0, 'the laptop-only push does not initialize the session copy');
+  assert.deepEqual(items, {});
+  assert.deepEqual(Object.keys(laptopMcp), ['.claude.json#mcpServers/portable']);
+
+  const home = scratch(t, 'woodshed-second-laptop-');
+  assert.equal((await c.run(['settings', 'pull', '--only', 'mcp'], { home })).code, EXIT.waiting);
+  assert.equal((await c.run(['settings', 'plan', '--pull', '--only', 'mcp'], { home })).code, EXIT.done);
+  assert.equal((await c.run(['settings', 'pull', '--only', 'mcp'], { home })).code, EXIT.done);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8')).mcpServers, { portable });
 });
 
 test('an interactive push asks about items never listed, and sends nothing on no', async (t) => {

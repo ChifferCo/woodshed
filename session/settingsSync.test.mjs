@@ -139,6 +139,25 @@ test('MCP servers in ~/.claude.json reach a session as it starts, and a running 
   assert.deepEqual([json.mcpServers.aws.command, json.numStartups], ['v2', 9], 'the next start has it, and the rest of the file is its own');
 });
 
+test('a laptop MCP never reaches a session or overwrites a same-named session server', async () => {
+  const c = fakeConsole();
+  const id = '.claude.json#mcpServers/docs';
+  const laptop = JSON.stringify({ command: 'laptop-docs' });
+  const native = { command: 'session-docs' };
+  await c.settings.sync({ login: 'octocat', sessionId: 'cli:computer', version: 0, changed: { [id]: laptop }, removed: [] }, { fromLaptop: true });
+
+  const a = session(await makeHome({ '.claude.json': { mcpServers: { docs: native } } }), c.send('aaaaaaaa'));
+  assert.equal((await a.round({ live: false })).sent, 1, 'the first session still seeds its own copy');
+  const b = session(await makeHome({}), c.send('bbbbbbbb'));
+  await b.round({ live: false });
+  assert.deepEqual((await readJson(b.home, '.claude.json')).mcpServers, { docs: native });
+
+  const restarted = createClaudeSettings({ store: c.store });
+  const read = { login: 'octocat', sessionId: 'bbbbbbbb', version: null, changed: {}, removed: [] };
+  assert.deepEqual(await restarted.sync(read), { version: 1, items: { [id]: JSON.stringify(native) } });
+  assert.deepEqual(await restarted.sync({ ...read, sessionId: 'cli:another' }, { fromLaptop: true }), { version: 2, items: { [id]: laptop } });
+});
+
 test('a JSON file read mid-write is left out of the round, and a big file is neither sent nor deleted', async () => {
   const c = fakeConsole();
   const a = session(await makeHome({ '.claude/.credentials.json': { mcpOAuth: { 'x|1': { t: 1 } } }, '.claude/skills/big/data.bin': 'x'.repeat(MAX_ITEM_BYTES + 1) }), c.send('aaaaaaaa'));
@@ -328,8 +347,11 @@ test('a plugin installed for the whole home goes as its marketplace, and nothing
 test('the console refuses codex config holding a credential and a plugin\'s marketplace beyond what a session can add', async () => {
   const c = fakeConsole();
   const b64 = (text) => Buffer.from(text).toString('base64');
-  await assert.rejects(c.settings.sync({ login: 'octocat', sessionId: 'old', version: 0, removed: [], changed: { '.codex/config.toml': b64('[mcp_servers.x.env]\nAPI_KEY = "ABCD1234"\n') } }),
-    (err) => err.status === 400 && /config\.toml sets mcp_servers\.x\.env\.API_KEY/.test(err.message) && !err.message.includes('ABCD1234'));
+  const changed = { '.codex/config.toml': b64('[mcp_servers.x.env]\nAPI_KEY = "ABCD1234"\n') };
+  for (const fromLaptop of [false, true]) {
+    await assert.rejects(c.settings.sync({ login: 'octocat', sessionId: 'old', version: 0, removed: [], changed }, { fromLaptop }),
+      (err) => err.status === 400 && /config\.toml sets mcp_servers\.x\.env\.API_KEY/.test(err.message) && !err.message.includes('ABCD1234'));
+  }
   for (const marketplace of [{ source: 'git', url: 'https://mia:pw@example.com/t.git' }, { source: 'directory', path: '/Users/mia/p' }, { source: 'github', repo: 'a/b', extra: 1 }]) {
     await assert.rejects(c.settings.sync({ login: 'octocat', sessionId: 'old', version: 0, removed: [], changed: { '.claude/plugins/installed_plugins.json#plugins/p@m': JSON.stringify({ marketplace }) } }),
       (err) => err.status === 400, JSON.stringify(marketplace));

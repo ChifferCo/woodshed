@@ -81,7 +81,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed session extend <id>` | Puts its pause or stop off by an hour (allowed in its last 15 minutes) | 0, 3 refused | main |
 | `woodshed session limits <id> [--idle-hours N\|default] [--lifetime-hours N\|default]` | Its own idle pause and lifetime | 0, 1 out of range, 3 not theirs | main |
 | `woodshed settings plan [--pull] [--only …] [--own-files <checkout>]` | Lists what push (or pull) would do with each item; sends and writes nothing | 0 | main |
-| `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude and Codex settings, skills, MCP servers, plugins, a few dotfiles, and a checkout's ignored env files | 0, 2 not listed before or not confirmed | main |
+| `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude and Codex settings, skills, plugins, a few dotfiles and ignored checkout files. Imported Claude MCP definitions sync between computers. | 0, 2 not listed before or not confirmed | main |
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | main |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in their running session, in its checkout | the line's code, 255 the pipe failed | main |
 | `woodshed config list` | Their choices on My settings: `terminal`, `reviews`, `codex-reviews`, `claude-token-shared`, `default-repo`, `github-name`, `github-email` | 0 | main |
@@ -176,8 +176,9 @@ the like refuse without sending anything. Never ask the person for a token to ge
 
 Their private sessions keep Claude settings in step (`settings.json`, `CLAUDE.md`, keybindings, agents, commands,
 skills, user-scope MCP servers), Codex's (`~/.codex`'s `config.toml`, `AGENTS.md`, prompts, skills) and the plugins they
-installed. `settings` joins this computer to that, and also saves their git, readline and alias lines on My settings
-(`dotfile/gitconfig`, `dotfile/inputrc`, `dotfile/bash-aliases`), which replace what My settings had.
+installed. `settings` joins this computer to that. Imported Claude MCP definitions sync between computers.
+`settings` also saves their git, readline and alias lines on My settings (`dotfile/gitconfig`, `dotfile/inputrc`,
+`dotfile/bash-aliases`), which replace what My settings had.
 
 1. `woodshed settings plan` (add `--own-files <checkout>` for that checkout's ignored env files). Show the person the
    whole list: each item, its size, and `upload`, `skip` or `refuse` with why.
