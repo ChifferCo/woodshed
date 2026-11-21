@@ -92,3 +92,11 @@ test('a credential is refused in a comment or a section name too, and what would
   assert.match(dotfileProblem('gitconfig', '[alias]\n\tx = "!echo \\q"\n'), /line 2: an escape git does not read/);
   assert.equal(fromComputer('gitconfig', { '.gitconfig': '[color]\n\tui = always\n\tdiff = auto\n' }, { home: '/Users/mia' }).text, '[color]\n\tdiff = auto\n');
 });
+
+test('curl\'s --user with a password is a credential, one read from a variable is not, and a stray backslash is refused', () => {
+  assert.match(dotfileProblem('bash-aliases', "alias api='curl -u mia:hunter2 https://api.example.com'\n"), /line 1 holds a --user sign-in/);
+  assert.match(dotfileProblem('bash-aliases', "alias api='curl --user=mia:hunter2 https://x'\n"), /--user sign-in/);
+  assert.equal(dotfileProblem('bash-aliases', "alias api='curl -u \"$API_USER:$API_PASS\" https://x'\n"), null);
+  assert.equal(dotfileProblem('bash-aliases', "alias api='curl -u mia https://x'\n"), null, 'a name alone, curl asks for the password');
+  assert.match(dotfileProblem('gitconfig', '[alias]\n\tx = echo \\'), /an escape git does not read/);
+});

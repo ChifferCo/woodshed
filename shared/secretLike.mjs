@@ -43,6 +43,8 @@ export function shellCredential(text) {
   const option = /--(token|password|passwd|api-?key|secret|auth)(?:=|\s+)['"]?(?![$\s'"-])/i.exec(text);
   if (option) return `a --${option[1]} value`;
   if (/[a-z][a-z0-9+.-]*:\/\/[^\s/:@'"]+:[^\s/@'"]+@/i.test(text)) return 'a URL with a sign-in';
+  // curl -u name:password, --user=name:password: a literal password, not one read from a variable.
+  if (/(?:^|\s)(?:-u|--user)(?:\s+|=)['"]?[^\s'"$:]+:(?![$\s'"])/.test(text)) return 'a --user sign-in';
   if (/credential[.-]helper/i.test(text)) return 'a credential helper';
   return null;
 }

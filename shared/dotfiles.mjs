@@ -98,7 +98,7 @@ function valueSyntax(value) {
   let open = false;
   for (let i = 0; i < value.length; i++) {
     if (value[i] === '\\') {
-      if (!'\\"ntb'.includes(value[i + 1] ?? '')) return 'an escape git does not read (\\\\, \\", \\n, \\t, \\b)';
+      if (i + 1 >= value.length || !'\\"ntb'.includes(value[i + 1])) return 'an escape git does not read (\\\\, \\", \\n, \\t, \\b)';
       i++;
     } else if (value[i] === '"') open = !open;
     else if (!open && (value[i] === '#' || value[i] === ';')) break;

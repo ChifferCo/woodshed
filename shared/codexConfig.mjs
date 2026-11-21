@@ -113,6 +113,8 @@ export function readToml(text) {
     if (!parts || text[i] !== '=') return null;
     i++;
     const valueStart = i;
+    // Where the comment after the value starts, as the scan found it: a `#` inside a string is not one.
+    let commentAt = null;
     let depth = 0;
     for (;;) {
       if (i >= n) {
@@ -137,6 +139,7 @@ export function readToml(text) {
         if (end === -1 || text.slice(i, end).includes('\n')) return null;
         i = end + 1;
       } else if (c === '#') {
+        if (depth === 0) commentAt = i;
         i = lineEnd(i) - 1;
         if (text[i] !== '\n') i = n;
       } else if (c === '[' || c === '{') {
@@ -151,8 +154,8 @@ export function readToml(text) {
         break;
       } else i++;
     }
-    const raw = text.slice(valueStart, i).replace(/\r?\n$/, '');
-    const value = raw.replace(/^[ \t]+/, '').replace(/[ \t]*(#[^\n]*)?$/, '');
+    const raw = text.slice(valueStart, commentAt ?? i).replace(/\r?\n$/, '');
+    const value = raw.trim();
     out.push({ kind: 'kv', text: text.slice(start, i), table, key: parts, value });
   }
   return out;
@@ -295,7 +298,8 @@ const CREDENTIAL_HEADER = /^(authorization|proxy-authorization|cookie|x-api-key|
  * @returns {string|null}
  */
 export function credentialOf(statement) {
-  if (statement.kind !== 'kv') return null;
+  // A comment or a table's name can hold a key's shape too.
+  if (statement.kind !== 'kv') return secretContent(statement.text) ? `holds what looks like ${secretContent(statement.text)}` : null;
   const at = pathOf(statement);
   const name = keyText(at);
   const last = at.at(-1);
@@ -346,7 +350,8 @@ export function sharedPart(text) {
   const own = ownUnits(statements);
   // A blank line under an own entry's table goes with it, and the end is one newline: what a write here adds and this
   // takes away again leaves the same text, so the sync never sees a change that is not one.
-  const kept = textOf(tidy(statements.filter((s) => !own.has(s.kind === 'blank' ? tableUnit(s) : unitOf(s)))));
+  // A comment holding a key's shape is not sent either.
+  const kept = textOf(tidy(statements.filter((s) => !own.has(s.kind === 'blank' ? tableUnit(s) : unitOf(s)) && !(s.kind === 'blank' && credentialOf(s)))));
   return kept.trim() ? `${kept.replace(/\s+$/, '')}\n` : '';
 }
 
@@ -360,7 +365,8 @@ export function withOwnEntries(shared, local) {
 /** Whether a config.toml's text holds a credential, for the console to refuse it: what it is, or null. */
 export function configCredential(text) {
   const statements = readToml(text);
-  if (!statements) return secretContent(text) ? `holds what looks like ${secretContent(text)}` : null;
+  // What the console cannot read it cannot vouch for: a session holds such a file back, and a computer skips it.
+  if (!statements) return 'is not TOML the console reads';
   for (const s of statements) {
     const credential = credentialOf(s);
     if (credential) return credential;

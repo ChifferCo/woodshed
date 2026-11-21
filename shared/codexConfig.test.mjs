@@ -88,3 +88,16 @@ test('an entry holding a credential stays on the side it was set on, as its trus
   assert.equal(sharedPart(back), 'model = "gpt-5.5"\n');
   assert.ok(back.includes('LINEAR_API_KEY = "LINAPIKEY1234"') && back.includes('[projects."/work/app"]'), 'and stays here when the shared copy is written');
 });
+
+test('a # inside a quoted value is no comment, and a key\'s shape in a comment or a table\'s name is caught too', async () => {
+  const { credentialOf, configCredential } = await import('./codexConfig.mjs');
+  // Made here, so no file in the repo holds a string shaped like a real token.
+  const token = `ghp_${'x1'.repeat(18)}`;
+  const [pair] = readToml('[mcp_servers.x.env]\nAPI_KEY = "abc#def" # a note\n').filter((s) => s.kind === 'kv');
+  assert.equal(pair.value, '"abc#def"');
+  assert.equal(credentialOf(pair), 'sets mcp_servers.x.env.API_KEY');
+  const commented = `model = "o3"\n# ${token}\n[mcp_servers."${token}"]\ncommand = "npx"\n`;
+  assert.match(configCredential(commented), /GitHub token/);
+  assert.equal(sharedPart(commented), 'model = "o3"\n', 'neither the comment nor the table goes');
+  assert.equal(configCredential('model = "o3\n'), 'is not TOML the console reads');
+});
