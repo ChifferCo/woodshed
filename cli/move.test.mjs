@@ -396,6 +396,36 @@ test('filename-only and binary credentials stop the move without printing their 
   assert.equal(l.repo.sh(['cat-file', '-s', `${l.onGithub('woodshed/move-c0ffee42')}:cache.sqlite`], l.repo.root), String(fs.statSync(cache).size));
 });
 
+test('the move refuses a new Git LFS pointer before the upload hook runs', async (t) => {
+  const l = laptop(t);
+  const { root, dir, sh } = l.repo;
+  const filter = path.join(dir, 'lfs-clean.cjs');
+  // Stand in for Git LFS using Git's real clean-filter and pre-push hook paths, with no LFS service or network.
+  fs.writeFileSync(filter, `const bytes = require('node:fs').readFileSync(0);
+const hash = require('node:crypto').createHash('sha256').update(bytes).digest('hex');
+process.stdout.write('version https://git-lfs.github.com/spec/v1\\noid sha256:' + hash + '\\nsize ' + bytes.length + '\\n');\n`);
+  sh(['config', 'filter.lfs.clean', `node ${JSON.stringify(filter)}`], root);
+  sh(['config', 'filter.lfs.required', 'true'], root);
+  fs.writeFileSync(path.join(root, '.gitattributes'), '*.asset filter=lfs\n');
+  fs.writeFileSync(path.join(root, 'fixture.asset'), `ghp_${'7e'.repeat(18)}`);
+  const hook = path.join(root, '.git', 'hooks', 'pre-push');
+  fs.writeFileSync(hook, '#!/bin/sh\nprintf "%s\\n" "$GIT_LFS_SKIP_PUSH" > .git/pre-push-ran\nif [ "$GIT_LFS_SKIP_PUSH" != 1 ]; then touch .git/lfs-upload-started; fi\n', { mode: 0o755 });
+
+  const args = ['move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN];
+  const refused = await l.run(args);
+  assert.equal(refused.code, EXIT.refused);
+  assert.match(refused.err, /fixture\.asset  a Git LFS pointer whose payload cannot be screened/);
+  assert.ok(!refused.err.includes('ghp_'));
+  assert.ok(!fs.existsSync(path.join(root, '.git', 'pre-push-ran')));
+  assert.equal(l.onGithub('woodshed/move-c0ffee42'), null);
+
+  fs.unlinkSync(path.join(root, 'fixture.asset'));
+  const allowed = await l.run(args);
+  assert.equal(allowed.code, EXIT.done, allowed.err);
+  assert.equal(fs.readFileSync(path.join(root, '.git', 'pre-push-ran'), 'utf8'), '1\n');
+  assert.ok(!fs.existsSync(path.join(root, '.git', 'lfs-upload-started')));
+});
+
 test('a concurrent transcript import is preserved and only the failed upload is cleaned up', async (t) => {
   const l = laptop(t, { machine: { collides: true } });
   const out = await l.run(['move', '--space', 'api', '--to', 'aaaa0001', '--restart', 'never', '--console', ORIGIN]);

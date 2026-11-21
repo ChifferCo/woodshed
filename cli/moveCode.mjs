@@ -16,6 +16,7 @@ const GIT_MS = 60_000;
 const PUSH_MS = 180_000;
 // A file larger than this cannot be looked through for secrets and refuses the move.
 const SCAN_BYTES = 20 * 1024 * 1024;
+const LFS_VERSION = /^version (?:https:\/\/(?:git-lfs|hawser)\.github\.com\/spec\/v1|http:\/\/git-media\.io\/v\/2)\r?$/m;
 
 /**
  * Runs git in a folder. Never through a shell; GIT_TERMINAL_PROMPT=0 so a push with no credential fails rather than
@@ -242,9 +243,16 @@ async function surveyIndex(git, checkout, index, scanBytes) {
     }
     const bytes = await step(['cat-file', 'blob', sha], { raw: true });
     if (bytes.length !== size) throw new Error(`git did not return the whole blob ${sha.slice(0, 12)} for credential screening`);
+    // Git LFS puts a pointer in Git. The working payload is outside the surveyed tree.
+    const texts = scanTexts(bytes);
+    const plain = texts.at(-1);
+    if (size <= 1024 && LFS_VERSION.test(plain.trim()) && /^oid sha256:[0-9a-f]{64}\r?$/m.test(plain)) {
+      secrets.push({ path: file, line: null, kind: 'a Git LFS pointer whose payload cannot be screened' });
+      continue;
+    }
     const before = upstream ? await git(['show', `${upstream}:${file}`], { cwd: root, raw: true, limit: scanBytes }) : null;
     const earlier = before?.code === 0 ? scanTexts(before.stdout).join('\n') : '';
-    for (const text of scanTexts(bytes)) {
+    for (const text of texts) {
       for (const hit of secretsIn(text, earlier)) secrets.push({ path: file, ...hit });
     }
   }
@@ -344,7 +352,8 @@ export async function freeze(git, checkout, { tree, message }) {
  */
 export async function pushBranch(git, checkout, { commit, branch }) {
   // To the one URL the survey asked (the remote's push URL, rewrites applied), and with no tags following the branch.
-  const out = await git(['push', '--porcelain', '--no-follow-tags', checkout.pushUrl ?? checkout.remote, `${commit}:refs/heads/${branch}`], { cwd: checkout.root, timeoutMs: PUSH_MS });
+  // An existing LFS pointer can be part of the remote history. Keep its pre-push hook from sending any payloads.
+  const out = await git(['push', '--porcelain', '--no-follow-tags', checkout.pushUrl ?? checkout.remote, `${commit}:refs/heads/${branch}`], { cwd: checkout.root, timeoutMs: PUSH_MS, env: { GIT_LFS_SKIP_PUSH: '1' } });
   if (out.code === 0) return { ok: true };
   const rejected = out.stdout.split('\n').find((l) => l.startsWith('!'));
   return { ok: false, error: rejected ? rejected.split('\t').at(-1).trim() || lastLine(out) : lastLine(out) };
