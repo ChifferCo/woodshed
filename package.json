@@ -20,6 +20,7 @@
     "cli/moveCode.mjs",
     "cli/moveLayout.mjs",
     "cli/projectReview.mjs",
+    "cli/repos.mjs",
     "cli/review.mjs",
     "cli/sessions.mjs",
     "cli/settings.mjs",

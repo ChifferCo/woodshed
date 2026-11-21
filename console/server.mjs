@@ -207,6 +207,7 @@ import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
 import { safeNext, signInFailure } from './auth.mjs';
 import { handleDesktopSignIn } from './desktopSignIn.mjs';
 import { handleCliApi, handleCliPage } from './cliSignIn.mjs';
+import { CLI_REPOS_PATH, handleCliRepos } from './cliRepos.mjs';
 import { carriesCliToken, handleCliCall } from './cliSessions.mjs';
 import { REVIEW_READINESS_PATH, reviewReadinessReply } from './reviewReadiness.mjs';
 import { answerWithView, CLI_CONFIG_PATH, configView, isConfigWrite } from './cliConfig.mjs';
@@ -800,6 +801,11 @@ export function createHandler({
     if (trusted) return user?.role === 'owner';
     const login = user?.login;
     return !auth?.enabled() || !login || !members || !members.hasAdmin() || members.isAdmin(login);
+  }
+
+  function cliRepoRole(login) {
+    if (!trusted) return isAdmin({ login }) ? 'owner' : 'member';
+    return members?.hosted ? members.currentRole(login) : undefined;
   }
 
   function redirect(res, location, setCookie) {
@@ -2159,7 +2165,16 @@ export function createHandler({
     }
   }
 
-  // The same typed confirm as every other admin change is the page's; the server checks the value's bounds.
+  async function removeRepo(name, by) {
+    // Clear the repo's values first, so a failed delete can be retried. A repo that Remove would refuse keeps them.
+    if (addedProjects.view().some((p) => p.name === name && p.removable && !p.sessions)) await repoSettings?.forget(name);
+    await addedProjects.remove({ name, by });
+    projectColors?.forget({ name });
+    repoTriggers?.forget(name);
+    slack?.setProjectChannel({ project: name, channel: '', by });
+  }
+
+  // The server checks the value's bounds.
   async function consoleSettingsWrite(req, res, pathname, login) {
     if (!consoleSettings) return reply(res, 404, { error: 'this console has no settings page' });
     let body;
@@ -2187,17 +2202,7 @@ export function createHandler({
         if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
         const by = login ?? 'console';
         if (pathname === PROJECTS_PATH) await addedProjects.add({ repo: body.repo, name: body.name, by });
-        else {
-          // Its env values and instructions, the installation's and everyone's own, go first: a repo added again starts
-          // with none, and when a delete fails the repo stays listed, so Remove can be tried again. Only for a repo
-          // Remove would take: one refused (the installation's own, or one with live sessions) keeps its settings.
-          if (addedProjects.view().some((p) => p.name === body.name && p.removable && !p.sessions)) await repoSettings?.forget(body.name);
-          await addedProjects.remove({ name: body.name, by });
-          projectColors?.forget({ name: body.name });
-          repoTriggers?.forget(body.name);
-          // A repo added again later under the same name starts on the console's channel.
-          slack?.setProjectChannel({ project: body.name, channel: '', by });
-        }
+        else await removeRepo(body.name, by);
       } else if (pathname === '/api/console-settings') {
         const by = login ?? 'console';
         const values = body.values ?? {};
@@ -2474,6 +2479,9 @@ export function createHandler({
     if (url.pathname.startsWith('/api/cli/')) {
       if (!cli) return reply(res, 404, { error: 'this console has no command line sign-in' });
       if (url.pathname === CLI_CONFIG_PATH) return cliCall();
+      if (url.pathname === CLI_REPOS_PATH || url.pathname === `${CLI_REPOS_PATH}/remove`) {
+        return handleCliRepos({ req, res, url, cli, reply, readJson, addedProjects, roleFor: cliRepoRole, projectsView, removeRepo });
+      }
       if (await handleCliSettings({ req, res, url, cli, claudeSettings, repoSettingsApi })) return;
       return handleCliApi({ req, res, url, cli, publicUrl: config.publicUrl, about: cliAbout });
     }

@@ -14,6 +14,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { createGitHub, explainGhError } from './github.mjs';
+import { APP_PAGE_SIZE, INSTALLATION_REPO_PAGES } from './githubApp.mjs';
 import { ACTIVE_STATUSES } from './sessions.mjs';
 
 // `link`, when given, is {href, text}: where the page can send the admin to fix what the message says.
@@ -73,6 +74,7 @@ export function createAddedProjects({ store, config, check, list = null, host = 
       grant: (Array.isArray(found?.grant) ? found.grant : []).filter((g) => httpsLink(g?.href)).map((g) => ({ account: String(g.account ?? ''), href: g.href })),
       install: httpsLink(found?.install) ? found.install : null,
       via: 'host',
+      ...(found?.complete === true && { complete: true }),
     };
   }
 
@@ -80,12 +82,14 @@ export function createAddedProjects({ store, config, check, list = null, host = 
    * What Add a repo offers: the repos the App may reach that are not projects yet, and where on GitHub to give it more.
    * @returns {Promise<{repos: {repo: string, private: boolean}[], grant: {account: string, href: string}[], install: string|null}|null>}
    *   null where the console has no App to ask (the page then takes owner/name typed in)
+   *   `includeConnected` keeps the full inventory for reporting App access in the CLI.
    * @throws {Error}  with `shown`, when GitHub did not answer
    */
-  async function choices() {
+  async function choices({ includeConnected = false } = {}) {
     const source = host ? (host.list ? hostChoices : null) : list;
     if (!source) return null;
     const found = await source();
+    if (includeConnected) return found;
     const taken = new Set(everyProject().map((p) => p.repo.toLowerCase()));
     return { ...found, repos: found.repos.filter((r) => !taken.has(r.repo.toLowerCase())) };
   }
@@ -207,7 +211,7 @@ export function repoChecker({ appApi, read = (repo) => createGitHub({ repo }).de
         installationId = await appApi.installationOf(repo);
       } catch (err) {
         console.warn('projects: installation not read', { repo, message: firstLine(err) });
-        throw shown('GitHub did not answer about that repo. Try again; the console log says why.');
+        throw Object.assign(shown('GitHub did not answer about that repo. Try again; the console log says why.'), { status: 502 });
       }
       if (!installationId) {
         const owner = repo.split('/')[0].toLowerCase();
@@ -221,12 +225,12 @@ export function repoChecker({ appApi, read = (repo) => createGitHub({ repo }).de
         const app = slug ?? 'the GitHub App';
         const on = installations.find((i) => i.account.toLowerCase() === owner && i.settingsUrl);
         if (on) {
-          throw shown(`${slug ?? 'The GitHub App'} is installed on ${on.account}, but may not reach ${repo}, or the repo does not exist. Give it access to the repo on GitHub (Repository access), then add it again.`,
+          throw githubAppNeeded(`${slug ?? 'The GitHub App'} is installed on ${on.account}, but may not reach ${repo}, or the repo does not exist. Give it access to the repo on GitHub (Repository access), then add it again.`,
             { href: on.settingsUrl, text: `Give ${app} access to ${repo} on GitHub` });
         }
-        if (!slug) throw shown(`The GitHub App is not installed on ${repo}, or it does not exist. Install the App on it (GitHub, the App's Install page), then add it again.`);
+        if (!slug) throw githubAppNeeded(`The GitHub App is not installed on ${repo}, or it does not exist. Install the App on it (GitHub, the App's Install page), then add it again.`);
         // GitHub's page lists the accounts the App can go on.
-        throw shown(`The GitHub App is not installed on ${repo.split('/')[0]}, or ${repo} does not exist. Install the App on it, then add it again.`,
+        throw githubAppNeeded(`The GitHub App is not installed on ${repo.split('/')[0]}, or ${repo} does not exist. Install the App on it, then add it again.`,
           { href: installUrl(slug), text: `Install ${slug} on GitHub` });
       }
       return { installationId };
@@ -242,6 +246,7 @@ export function repoChecker({ appApi, read = (repo) => createGitHub({ repo }).de
 
 const firstLine = (err) => String(err?.message ?? err).split('\n')[0];
 const installUrl = (slug) => `https://github.com/apps/${encodeURIComponent(slug)}/installations/new`;
+const githubAppNeeded = (message, link) => Object.assign(shown(message, link), { needsGitHubApp: true });
 
 /**
  * What `list` is in the console with the GitHub App: every repo each of its installations may reach, each account's
@@ -266,12 +271,15 @@ export function repoLister({ appApi, appSlug = async () => null }) {
     }
     const slug = await appSlug().catch(() => null);
     const repos = lists.filter(Boolean).flat().sort((a, b) => a.repo.localeCompare(b.repo, undefined, { sensitivity: 'base' }));
+    // At the limit the inventory may have more pages. Absence from what we read cannot prove that access is gone.
+    const incomplete = installations.length >= APP_PAGE_SIZE || lists.some((r) => r === null || r.length >= APP_PAGE_SIZE * INSTALLATION_REPO_PAGES);
     console.log('projects: repos listed', { installations: installations.length, repos: repos.length });
     return {
       repos,
       grant: installations.filter((i) => i.settingsUrl).map((i) => ({ account: i.account, href: i.settingsUrl })),
       install: slug ? installUrl(slug) : null,
       via: 'app',
+      ...(incomplete && { incomplete: true }),
     };
   };
 }
