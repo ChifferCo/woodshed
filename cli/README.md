@@ -53,6 +53,7 @@ the tarball and its SHA-256 on woodshed.run. The site's installer checks that di
 | `woodshed repo list` | Lists connected repos and, for admins, which repos can be added and where the GitHub App has access. | 0 listed, 2 sign in, 1 failed |
 | `woodshed repo add <owner/name> [--name N]` | Adds a repo as in Console settings. Use `--name` on consoles that let you choose a project name. | 0 added, 2 GitHub App access or sign-in needed, 3 refused, 1 failed |
 | `woodshed repo remove <owner/name>` | Removes a repo and its Woodshed settings as in Console settings. | 0 removed, 2 sign in, 3 refused, 1 failed |
+| `woodshed review enable\|status` | In a checkout: reviews the repo's pull requests in Woodshed sessions, by its project file, and says what the console still needs. Below. | 0 done, 2 an admin's step, a sign-in or a merge still to come, 1 a project file that does not read or check |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 
 Every command takes:
@@ -80,6 +81,40 @@ see the console's GitHub App inventory or add and remove repos.
 When GitHub App access is needed, `repo add` exits 2 with `status: "needs-github-app"` and the install or access link
 in `url` when available. It opens that link from a terminal unless `--no-browser` is set. Grant access on GitHub, then
 run the same add again. If the console's response to a change is lost, run `repo list` to see whether it went through.
+
+## Review
+
+`woodshed review enable`, run in a checkout of a repo the console has, turns on Woodshed's review for it the way a
+connected repo has it: in a review session the console starts on each pull request, whose verdict the console posts as
+its reviewer App (console/README.md, "The reviewer App"). It needs no GitHub workflow, Actions secret or Anthropic key,
+and writes none: `scripts/enable-review.sh` is for a repo with no Woodshed console.
+
+```sh
+woodshed review enable                 # pullRequests.review with runner: woodshed, on commits tagged [woodshed-review]
+woodshed review enable --qa            # QA too, in a session, when the woodshed-qa label goes on a pull request
+woodshed review enable --every-commit  # each new commit, with no tag (--rerun <tag> for another tag)
+woodshed review enable --dry-run       # what it would change, nothing written
+woodshed review status                 # the checkout's file, the default branch's, and the console's reviewer App
+```
+
+`enable` edits `.woodshed/project.yaml` (made with `version: 1` when there is none): it adds or changes those lines and
+nothing else, keeping every other line, comment and the order, and reads the result back to prove the rest of the
+project reads the same (`cli/projectReview.mjs`). It writes no `author` or `commentAuthor`: with the session runner the
+console fills in its reviewer App's and its own App's logins, so renaming either needs no change. Moving from the
+Actions runner takes out the review's `workflow`, `author` and `commentAuthor` (and QA's `author`), which were the
+workflow's; the workflow file itself is left for you to delete. It then runs `project check`'s checks on the result,
+and writes nothing when they find a problem (exit 1).
+
+Then it asks the console what is missing on its side, with this computer's token, through one read-only route,
+`GET /api/review-readiness?repo=<owner/name>`: whether the repo is one you may start sessions on there, whether the
+reviewer App is made, and whether it is installed on the repo. Each missing step is printed with who takes it, and the
+command exits `2`, the file written all the same. With nothing missing it exits `0` and says to commit the file and
+open a pull request: the review starts once that is merged, since the console reads the default branch's file. It warns
+when the file's `runsOn` names another console, or names an `author` or `commentAuthor` that is not this console's.
+`enable` exits `1` when the console could not be asked or did not answer (an origin not on GitHub, a console with no
+GitHub App or from before the route): the file is written, but nothing says the review can run. `status` exits `0`
+once the default branch says it, the console runs its reviews (the default branch's `runsOn`, if any, names it, App and
+name, as its fleet reads it) and its reviewer App is known to be installed; else `2` with what comes next.
 
 ## The tunnel into a session
 
