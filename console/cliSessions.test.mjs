@@ -81,7 +81,7 @@ test('the command line\'s routes are exactly the session ones', () => {
     ['POST', '/api/sessions'], ['GET', '/api/my'], ['POST', '/api/my/claude-token'], ['POST', '/api/my/remove'], ['POST', '/api/my/tunnel-token'],
     ['GET', '/api/secrets'], ['POST', '/api/people/admin'], ['POST', '/api/sessions/0a1b2c3d/send'], ['POST', '/api/sessions/0a1b2c3d/delete'],
     ['POST', '/api/sessions/0a1b2c3d/resume'], ['GET', '/api/sessions/0a1b2c3d/transcript'], ['POST', '/api/sessions/0a1b2c3d/pin'], ['POST', '/api/sessions/0a1b2c3d/assign'], ['DELETE', '/api/sessions'], ['GET', '/api/sessions/'],
-    ['POST', '/api/my/sessions/0a1b2c3d/resume/x'], ['GET', '/term/0a1b2c3d/'], ['POST', '/api/my/cli-tokens/0123456789abcdef/revoke'],
+    ['POST', '/api/my/sessions/0a1b2c3d/resume/x'], ['GET', '/term/0a1b2c3d/'], ['POST', '/api/my/cli-tokens/0123456789abcdef/revoke'], ['POST', '/api/my/terminal'],
   ]) assert.equal(cliMayCall(method, path), false, `${method} ${path}`);
   assert.equal(carriesCliToken({ authorization: `Bearer wsc_${'0'.repeat(64)}` }), true);
   assert.equal(carriesCliToken({ authorization: 'Bearer wt_abc' }), false, 'the tunnel\'s token is not the command line\'s');
@@ -142,7 +142,7 @@ test('a command line token reaches nothing else, and no page can use one', async
   for (const [path, method] of [
     ['/api/my', 'GET'], ['/api/my/claude-token', 'POST'], ['/api/my/remove', 'POST'], ['/api/my/tunnel-token', 'POST'], ['/api/secrets', 'GET'],
     ['/api/people', 'GET'], ['/api/sessions', 'POST'], ['/api/sessions/aaaa0001/send', 'POST'], ['/api/sessions/aaaa0001/transcript', 'GET'],
-    ['/settings', 'GET'], ['/term/aaaa0001/', 'GET'], ['/api/my/cli-tokens/0123456789abcdef/revoke', 'POST'],
+    ['/settings', 'GET'], ['/term/aaaa0001/', 'GET'], ['/api/my/cli-tokens/0123456789abcdef/revoke', 'POST'], ['/api/my/terminal', 'POST'],
   ]) {
     const out = await c.call(path, { method, body: method === 'POST' ? { value: 'x' } : undefined });
     assert.equal(out.status, 403, `${method} ${path}`);
