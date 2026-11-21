@@ -149,6 +149,7 @@ wrong place never lands in a terminal's scrollback or an agent's captured output
 
 A switch reads `on` only where it has effect, as the page draws it: `claude-token-shared` with no token saved reads
 `off`. A value that starts with `-` goes after `--` (`config set github-name -- -mia-`).
+Setting `default-repo` to the installation's default clears your personal repo override.
 
 With `--json`, `list` prints `{"console","config":{…}}`, `get` `{"key","value"}`, and `set`
 `{"event":"set","key","value","changed","note"?,"config":{…}}`.

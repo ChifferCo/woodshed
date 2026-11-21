@@ -6,8 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createCliSignIn } from '../console/cliSignIn.mjs';
+import { createProjectAccess } from '../console/projectAccess.mjs';
 import { createHandler } from '../console/server.mjs';
 import { createUserSettings } from '../console/userSettings.mjs';
+import { createViewPrefs } from '../console/viewPrefs.mjs';
 import { CONFIG_KEYS } from './config.mjs';
 import { createCredentials } from './credentials.mjs';
 import { EXIT, main } from './woodshed.mjs';
@@ -29,20 +31,12 @@ async function consoleFor(t, { claudeToken = true, codexAuth = false, github = t
   const secrets = { read: async () => null, save: async () => {}, remove: async () => {}, configured: () => true };
   const userSettings = createUserSettings({ store, secrets });
   const cli = createCliSignIn({ store: { state: {}, save() {} } });
-  let saved = null;
-  const projects = [{ name: 'app', repo: 'acme/app' }, { name: 'tools', repo: 'acme/tools' }];
-  const projectAccess = {
-    view: async () => ({ projects, defaultProject: saved ?? 'app', saved: Boolean(saved) }),
-    forStart: async (login, name) => projects.find((p) => p.name === (name ?? 'app')) ?? null,
-    setDefault: async (login, name) => {
-      if (!projects.some((p) => p.name === name)) return null;
-      saved = name;
-      return projectAccess.view(login);
-    },
-  };
+  const projects = [{ name: 'app', repo: 'acme/app', default: true }, { name: 'tools', repo: 'acme/tools', default: false }];
   const auth = { enabled: () => true, available: () => true, sessionFor: async () => null, canWrite: async () => true };
-  const config = { host: '127.0.0.1', publicUrl: 'http://pending', extraHosts: [], repo: 'acme/app', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
-  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, cli, userSettings, projectAccess, viewPrefs: { view: () => null } });
+  const config = { host: '127.0.0.1', publicUrl: 'http://pending', extraHosts: [], repo: 'acme/app', projects, label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const viewPrefs = createViewPrefs(store);
+  const projectAccess = createProjectAccess({ config, githubFor: () => auth, viewPrefs });
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, cli, userSettings, projectAccess, viewPrefs });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
@@ -70,7 +64,7 @@ async function consoleFor(t, { claudeToken = true, codexAuth = false, github = t
   const signed = await run(['login', '--console', origin]);
   assert.equal(signed.code, EXIT.done, signed.err);
   asked.length = 0;
-  return { origin, run, asked, userSettings };
+  return { origin, run, asked, userSettings, projectAccess };
 }
 
 test('config list and get print the person\'s choices, and --json gives every key', async (t) => {
@@ -118,7 +112,11 @@ test('config set changes a choice through the page\'s route, and says when it re
   const repo = await c.run(['config', 'set', 'default-repo', 'acme/tools', '--json']);
   assert.equal(repo.code, EXIT.done, repo.err);
   assert.equal(repo.lines[0].value, 'tools', 'owner/name, as session new\'s --repo takes it, saved as the console\'s name');
+  assert.equal((await c.projectAccess.view('mia-dev')).saved, true);
+  assert.equal((await c.run(['config', 'get', 'default-repo'])).out, 'tools\n');
   assert.equal((await c.run(['config', 'set', 'default-repo', 'app'])).out, 'default-repo is app.\n');
+  assert.equal((await c.projectAccess.view('mia-dev')).saved, false, 'choosing the installation default clears the personal override');
+  assert.equal((await c.run(['config', 'get', 'default-repo'])).out, 'app\n');
 
   assert.equal((await c.run(['config', 'set', 'github-name', 'Mia D.'])).out, 'github-name is Mia D.. Your next session commits with it.\n');
   assert.equal((await c.run(['config', 'set', 'github-email', '--', 'mia@example.org'])).code, EXIT.done);
@@ -127,6 +125,25 @@ test('config set changes a choice through the page\'s route, and says when it re
   await c.userSettings.setGitIdentity('mia-dev', { name: 'מיה\u200f Dev', email: 'mia@example.org' });
   assert.equal((await c.run(['config', 'set', 'github-email', 'mia@example.net'])).code, EXIT.done);
   assert.deepEqual(c.userSettings.gitIdentity('mia-dev'), { name: 'מיה\u200f Dev', email: 'mia@example.net' });
+});
+
+test('config set reports a change even when the printable value stays the same', async (t) => {
+  const c = await consoleFor(t, { github: { name: 'מיה\u200fDev' } });
+  const before = await c.run(['config', 'get', 'github-name', '--json']);
+  const after = await c.run(['config', 'set', 'github-name', 'מיה Dev', '--json']);
+  assert.equal(after.code, EXIT.done, after.err);
+  assert.equal(c.userSettings.gitIdentity('mia-dev').name, 'מיה Dev');
+  assert.deepEqual([after.lines[0].value, after.lines[0].changed, after.lines[0].note], [before.lines[0].value, true, 'Your next session commits with it.']);
+});
+
+test('inherited names are usage errors whether signed in or signed out', async (t) => {
+  const c = await consoleFor(t);
+  for (const signedIn of [true, false]) {
+    const out = await c.run(['config', 'constructor', '--console', c.origin, '--json'], { signedIn });
+    assert.equal(out.code, EXIT.failed);
+    assert.match(out.lines[0].error, /^not a config command: use list, get or set$/);
+  }
+  assert.deepEqual(c.asked, []);
 });
 
 test('an unknown key, a bad value or a secret exits 3 and says what is valid, and a secret is never sent', async (t) => {

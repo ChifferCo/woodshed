@@ -105,8 +105,9 @@ export async function configCommand({ origin, rest }, ctx) {
   }
   const refused = (message) => fail(message, { code: EXIT.refused, status: 'refused' });
   const settingsPage = () => `${origin}/settings`;
-  const shape = { list: 0, get: 1, set: 2 }[sub];
-  if (shape === undefined) throw fail(`not a config command: use list, get or set\n\n${CONFIG_USAGE}`);
+  const arity = { list: 0, get: 1, set: 2 };
+  if (!Object.hasOwn(arity, sub)) throw fail(`not a config command: use list, get or set\n\n${CONFIG_USAGE}`);
+  const shape = arity[sub];
   const [key, value] = words;
   // A secret's key first, before anything that could print what follows it: `config set env A=<key> B=<key>`.
   if (shape > 0 && key !== undefined && SECRET_KEYS.has(key.toLowerCase())) {
@@ -169,8 +170,9 @@ export async function configCommand({ origin, rest }, ctx) {
   const out = await ask(spec.path, { method: 'POST', body: spec.body(sent, stored) });
   if (out.refusal) throw await refusalOf(out.refusal);
   const after = view(out.body);
-  const note = spec.after && after[key] !== current[key] ? spec.after : null;
-  if (json) emit({ event: 'set', key, value: after[key], changed: after[key] !== current[key], ...(note ? { note } : {}), config: after });
+  const changed = (out.body[key] ?? null) !== stored[key];
+  const note = changed ? spec.after : null;
+  if (json) emit({ event: 'set', key, value: after[key], changed, ...(note ? { note } : {}), config: after });
   else say(`${key} is ${after[key] ?? '(none)'}.${note ? ` ${note}` : ''}`);
   return EXIT.done;
 

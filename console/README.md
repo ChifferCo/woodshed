@@ -1861,8 +1861,9 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   `signInPaths` for the program's sign-in page.
 - The command line's routes are core's own (`cliSignIn.mjs`): `/cli` is behind the program's sign-in like any page, and
   `/api/cli/*` carries its own token in `Authorization`, so the program's proxy passes those through without its
-  sign-in, as it does `/api/tunnel/*`. So must it the session routes `cliSessions.mjs` lists, when they carry
-  `Authorization: Bearer wsc_…`: the console checks that token itself, and refuses it everywhere else.
+  sign-in, as it does `/api/tunnel/*`. When a request carries `Authorization: Bearer wsc_…`, also pass through the
+  session routes listed in `cliSessions.mjs` and the six settings writes listed in `cliConfig.mjs`. The console checks
+  the token itself and refuses it on other routes.
 - `cliDevices`, from `createCliDevices()` (`cliSignIn.mjs`): for a program serving several installations at one address,
   one waiting room for the command line's sign-ins that it gives them all. `POST /api/cli/device` and `/api/cli/token`
   carry no sign-in, so the program answers them itself, with `handleCliApi` and a `createCliSignIn` on that same room;
