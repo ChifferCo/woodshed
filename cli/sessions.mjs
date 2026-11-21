@@ -32,7 +32,7 @@ Commands:
   list [--all]               your sessions and the shared ones you can see, with their state and when each
                              pauses or stops by itself; --all also lists those that ended
   get <id>                   one session: its state, branch, pull request, and when it pauses or stops
-  stop <id>                  stop a session; its work is pushed first
+  stop <id>                  stop a session; a running one's work is pushed as it stops
   resume <id> [--no-wait]    start one of your stopped sessions again, its conversation and all, and wait for it
   remove <id> [--yes]        take one of your sessions off the list, with its saved conversation (stopped first)
   extend <id>                put its pause or stop off by an hour; the console allows it in the last 15 minutes
@@ -340,7 +340,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
     }
     const after = await ask(`/api/sessions/${id}/stop`, { method: 'POST', body: {}, deadlineMs: STOP_DEADLINE_MS });
     if (json) emit({ event: 'stopped', session: summary({ ...s, ...after }, { origin, login }), already: !LIVE.has(s.status) });
-    say(LIVE.has(s.status) ? `Stopped session ${id}. Its work was pushed first.` : `Session ${id} was already ${stateOf(s).word}: it is marked stopped by you, and waits on nobody now.`);
+    // The console's stop answers when it is done, and says nothing of whether the checkpoint pushed: none is made of a
+    // session still in line, and a failed one does not hold the stop. So this claims no push.
+    say(LIVE.has(s.status) ? `Stopped session ${id}.` : `Session ${id} was already ${stateOf(s).word}: it is marked stopped by you, and waits on nobody now.`);
     return EXIT.done;
   }
 
