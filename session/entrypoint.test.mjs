@@ -1336,3 +1336,18 @@ test('startClaude types the agent at once, or once its parent made its terminal,
     'handed to the init: the shell becomes statusd, which reaps nothing');
   assert.match(ENTRYPOINT, /^HERDR_PARENT_WAIT_SECONDS=300$/m, 'a constant: no per-session variable for the ECS launcher to drop');
 });
+
+test('while the agent\'s terminal is not there yet, the TUI tab says so and attaches once it is', () => {
+  assert.match(fn('startClaude'), /\[ ! -f "\$AGENT_TERMINAL_WAIT" \] \|\| attach=\(bash -c "\$TUI_WAIT_THEN_ATTACH"\)/);
+  const line = /^TUI_WAIT_THEN_ATTACH=(.*)$/m.exec(ENTRYPOINT)[1];
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-tui-wait-'));
+  try {
+    // hc that has the terminal once `made` exists, and records the attach.
+    fs.writeFileSync(path.join(tmp, 'hc'), `#!/bin/bash\ncase "$1" in get) [ -f ${tmp}/made ] ;; attach) echo "attached to $2" ;; esac\n`, { mode: 0o755 });
+    const script = `TUI_WAIT_THEN_ATTACH=${line}\n(sleep 1; touch ${tmp}/made) &\nbash -c "$TUI_WAIT_THEN_ATTACH"`;
+    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: `${tmp}:/usr/bin:/bin` } });
+    assert.match(out, /^Waiting for your Herdr to make the agent's terminal \(woodshed session new --herdr --parent\)\.\.\.\r\nattached to claude\n$/);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

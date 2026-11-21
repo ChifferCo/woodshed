@@ -1055,6 +1055,8 @@ agentTerminal() {
 # launcher's allowlist (PER_SESSION_ENV) has nothing to carry.
 AGENT_TERMINAL_WAIT=/tmp/woodshed-agent-terminal.json
 HERDR_PARENT_WAIT_SECONDS=300
+# The TUI tab's command while the agent's terminal is not there yet (startClaude).
+TUI_WAIT_THEN_ATTACH='hc get --json claude > /dev/null 2>&1 || printf "Waiting for your Herdr to make the agent'"'"'s terminal (woodshed session new --herdr --parent)...\r\n"; until hc get --json claude > /dev/null 2>&1; do sleep 1; done; exec hc attach claude'
 
 # Herdr's core (herdr-core, `hc`) for this session, with a terminal named claude in the checkout for the agent: a
 # shell, kept (a lost one is replaced in place), as tmux's pane is. Its programs get the environment it starts with, as
@@ -1182,6 +1184,9 @@ startClaude() {
   # The TUI tab: the agent's terminal, tmux's pane or Herdr's terminal, which a person's own Herdr can attach to too.
   local attach=(tmux attach -t claude)
   [ "$WOODSHED_TERMINAL" = tmux ] || attach=(hc attach claude)
+  # While the owner's Herdr has not made the agent's terminal yet, the tab says so and attaches once it is there, rather
+  # than an attach that finds nothing and closes. ttyd runs it for each browser that connects.
+  [ ! -f "$AGENT_TERMINAL_WAIT" ] || attach=(bash -c "$TUI_WAIT_THEN_ATTACH")
   ttyd --writable --port 7681 --base-path "/term/$SESSION_ID" --credential "woodshed:${TERMINAL_TOKEN:-$SESSION_TOKEN}" \
     -t "$theme" -t "$scrollback" -t disableLeaveAlert=true "${attach[@]}" >/tmp/ttyd.log 2>&1 &
   # The Terminal tab: a shell beside claude in the repo, with the same environment. Its own tmux session, so a
