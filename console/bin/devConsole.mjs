@@ -47,7 +47,11 @@ const tlsAskPort = process.argv[3] ? { WOODSHED_TLS_ASK_PORT: process.argv[3] } 
 // The console as its image starts it, on the local provider (the docker launcher). DEV_CONSOLE_HOST_REPOS=1 starts it as
 // an embedding program would, with a made-up repos hook, for Console settings' Repos card (scripts/devHostConsole.mjs).
 const woodshed = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const server = process.env.DEV_CONSOLE_HOST_REPOS === '1' ? path.join(woodshed, 'scripts', 'devHostConsole.mjs') : path.join(woodshed, 'providers', 'console.mjs');
+// DEV_CONSOLE_REVIEWER=none|made|installed gives it a made-up console App and reviewer App, for `woodshed review`
+// (scripts/devReviewerConsole.mjs): none made, made but not installed on example-org/example-repo, or installed there.
+const reviewerDev = ['none', 'made', 'installed'].includes(process.env.DEV_CONSOLE_REVIEWER) ? process.env.DEV_CONSOLE_REVIEWER : null;
+const server = path.join(woodshed, ...(process.env.DEV_CONSOLE_HOST_REPOS === '1' ? ['scripts', 'devHostConsole.mjs']
+  : reviewerDev ? ['scripts', 'devReviewerConsole.mjs'] : ['providers', 'console.mjs']));
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-console-'));
 
 const now = new Date().toISOString();
@@ -414,7 +418,10 @@ const RESTART_EXIT_CODE = 75;
 // made-up repos whose project files this gh answers, the first the sessions' own.
 const repoSettingsDev = process.env.DEV_CONSOLE_REPO_SETTINGS === '1' ? devRepoSettings(stateDir) : null;
 // New session's Work on list reads made-up open pull requests from this gh (devGh.mjs).
-const devGhDir = writeDevGh(path.join(stateDir, 'dev-gh'), { projectFiles: repoSettingsDev?.projectFiles });
+// With a made-up reviewer App, the default branch's project file has no review yet, for `woodshed review` to turn on.
+const devGhDir = writeDevGh(path.join(stateDir, 'dev-gh'), {
+  projectFiles: { ...(reviewerDev ? { 'example-org/example-repo': 'version: 1\n' } : {}), ...repoSettingsDev?.projectFiles },
+});
 
 // A local secret store, as the local provider keeps one.
 function devSecrets(dir) {

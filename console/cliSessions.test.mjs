@@ -72,11 +72,11 @@ async function consoleFor(t, { people = null, writers = null, claudeToken = true
   return { origin, call, calls, cli, tokens, asked, tick: (ms) => { clock += ms; } };
 }
 
-test('the command line\'s routes are exactly the session ones', () => {
+test('the command line allows only the session, config and review routes', () => {
   for (const [method, path] of [
     ['GET', '/api/sessions'], ['GET', '/api/my/projects'], ['POST', '/api/my/sessions'],
     ['POST', '/api/my/sessions/0a1b2c3d/resume'], ['POST', '/api/my/sessions/0a1b2c3d/remove'], ['POST', '/api/sessions/0a1b2c3d/stop'],
-    ['POST', '/api/sessions/0a1b2c3d/extend'], ['POST', '/api/sessions/0a1b2c3d/limits'],
+    ['POST', '/api/sessions/0a1b2c3d/extend'], ['POST', '/api/sessions/0a1b2c3d/limits'], ['GET', '/api/review-readiness'],
     // woodshed config's: the choices on My settings, never a secret.
     ['GET', '/api/cli/config'], ['POST', '/api/my/terminal'], ['POST', '/api/my/reviews'], ['POST', '/api/my/codex-auth/reviews'],
     ['POST', '/api/my/claude-token/shared'], ['POST', '/api/my/projects/default'], ['POST', '/api/my/github/identity'],
@@ -86,6 +86,7 @@ test('the command line\'s routes are exactly the session ones', () => {
     ['GET', '/api/secrets'], ['POST', '/api/people/admin'], ['POST', '/api/sessions/0a1b2c3d/send'], ['POST', '/api/sessions/0a1b2c3d/delete'],
     ['POST', '/api/sessions/0a1b2c3d/resume'], ['GET', '/api/sessions/0a1b2c3d/transcript'], ['POST', '/api/sessions/0a1b2c3d/pin'], ['POST', '/api/sessions/0a1b2c3d/assign'], ['DELETE', '/api/sessions'], ['GET', '/api/sessions/'],
     ['POST', '/api/my/sessions/0a1b2c3d/resume/x'], ['GET', '/term/0a1b2c3d/'], ['POST', '/api/my/cli-tokens/0123456789abcdef/revoke'],
+    ['POST', '/api/review-readiness'], ['GET', '/api/setup/github/reviewer'],
     // The secrets beside them on My settings, and the rest of the page.
     ['POST', '/api/my/claude-token/remove'], ['POST', '/api/my/codex-auth'], ['POST', '/api/my/codex-auth/remove'], ['POST', '/api/my/files/tmux-conf'],
     ['GET', '/api/my/files/tmux-conf'], ['POST', '/api/my/repos/app/env/api'], ['GET', '/api/my/repos/app/env/api'], ['POST', '/api/my/github/disconnect'],
