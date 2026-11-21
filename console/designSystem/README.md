@@ -289,8 +289,9 @@ button, never orange. A question they asked says "you asked" in `meta`.
 
 Its tab bar ends with **Submit review**, then, for an approved pull request, either **Squash and merge** or the merge
 hint (`components/MergeHint`): an Octicons info icon whose tip says why merging waits. The bar holds controls, never a
-sentence, so it stays on one line. On a touch screen up to 720px, where the page turns tips off, the hint shows its
-sentence beside the icon.
+sentence, and no tab or button wraps its label: when they do not all fit on one row, the controls move to a row of
+their own under the tabs, right-aligned. On a touch screen up to 720px, where the page turns tips off, the hint shows
+its sentence beside the icon.
 
 ## Iconography
 
