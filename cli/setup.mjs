@@ -3,7 +3,7 @@
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { CONFIG_KEYS } from './config.mjs';
+import { CONFIG_KEYS, CONFIG_UNAVAILABLE } from './config.mjs';
 import { ORIGIN_RE } from './credentials.mjs';
 import { repoOf } from '../shared/repoOf.mjs';
 
@@ -214,15 +214,16 @@ export async function setupCommand(args, ctx) {
   const canConfig = has('config');
   const canAttach = me.hc?.ok === true && ctx.platform !== 'win32';
   let terminal = opts['--terminal'];
-  if (!canConfig) {
-    const message = 'Set your agent terminal on My settings. This CLI has no config command.';
+  const checkTerminal = canConfig && (choose || terminal || (canAttach && !opts['--no-session']));
+  const currentTerminal = checkTerminal ? await call('config get terminal', 'config', 'get', 'terminal') : null;
+  if (!canConfig || currentTerminal?.error?.status === CONFIG_UNAVAILABLE) {
+    const reason = canConfig ? 'This console has no CLI settings endpoint.' : 'This CLI has no config command.';
     const fields = { url: `${origin}/settings` };
-    if (terminal) return stop('terminal', EXIT.waiting, `${message} Then rerun setup without --terminal.`, fields);
-    report('terminal', 'skipped', message, fields);
-  } else if (choose || terminal || (canAttach && !opts['--no-session'])) {
-    const current = await call('config get terminal', 'config', 'get', 'terminal');
-    const prior = current.last?.value;
-    if (current.code !== EXIT.done || !TERMINAL_CHOICES.includes(prior)) return childError('terminal', current, 'Could not read your agent terminal preference.');
+    if (terminal) return stop('terminal', EXIT.waiting, `${reason} Choose ${terminal} on My settings, then rerun setup without --terminal.`, fields);
+    report('terminal', 'skipped', `${reason} Set your agent terminal on My settings.`, fields);
+  } else if (currentTerminal) {
+    const prior = currentTerminal.last?.value;
+    if (currentTerminal.code !== EXIT.done || !TERMINAL_CHOICES.includes(prior)) return childError('terminal', currentTerminal, 'Could not read your agent terminal preference.');
     if (!terminal && choose) {
       const answer = await choose(`Use Herdr or tmux for agents in new private sessions? Enter keeps ${prior}. `);
       terminal = answer === '' ? prior : answer?.toLowerCase();

@@ -24,7 +24,8 @@ install any GitHub Apps, and connect Claude or Codex on My settings in their bro
 a review configuration change, setup tells you to open an ordinary pull request. Use `--skip-reviews` or
 `--no-session` when the person chooses to skip those steps.
 When `woodshed status` shows a compatible `hc` and the person hasn't chosen a terminal, ask whether they want Herdr
-for new private sessions. Use `--terminal herdr` or `--terminal tmux` when they choose a terminal.
+for new private sessions. Check `woodshed setup --help` for `--terminal` before passing `--terminal herdr` or
+`--terminal tmux`. On older builds, point the person to Agent terminal on My settings.
 
 ## 1. Check what this CLI has
 

@@ -288,6 +288,21 @@ test('setup accepts a terminal choice in agent mode even without a first session
   assert.deepEqual(after.questions, []);
 });
 
+test('setup can start a regular session when an older console has no config endpoint', async () => {
+  const { invoke } = fake({ commands: ['config'], answers: {
+    'config get': result(1, { event: 'error', status: 'config-unavailable' }),
+    'session list': result(0, { sessions: [] }),
+    'session new': result(0, { event: 'running', session: { id: '12345678', url: `${origin}/s/12345678` } }),
+  } });
+  const after = await invoke('--yes', '--skip-reviews', '--repo', repo, '--prompt', 'Fix the redirect.');
+  assert.equal(after.code, EXIT.done);
+  assert.equal(after.events.find((event) => event.step === 'terminal').status, 'skipped');
+  assert.deepEqual(after.calls.at(-1), ['session', 'new', '--repo', repo, '--agent', 'claude', '--', 'Fix the redirect.']);
+  const explicit = await invoke('--yes', '--terminal', 'herdr', '--skip-reviews', '--no-session');
+  assert.equal(explicit.code, EXIT.waiting);
+  assert.match(explicit.events.at(-1).message, /Choose herdr on My settings.*without --terminal/);
+});
+
 test('setup asks for a prompt or --no-session when an agent has no environment yet', async () => {
   const { invoke } = fake({ answers: { 'session list': result(0, { sessions: [] }) } });
   const after = await invoke('--yes', '--skip-reviews');
