@@ -12,9 +12,9 @@
 //                                                                        terminal to ask on) sent only after a plan. An
 //                                                                        item a session changed since is left alone
 //   woodshed settings pull  [same] [--replace]                           the shared copy written here: what is missing,
-//                                                                        and with --replace what differs. What runs here
-//                                                                        (an MCP server, settings.json, a script) is
-//                                                                        asked about, or held until a plan showed it
+//                                                                        and with --replace what differs. Each item but
+//                                                                        keybindings.json is shown with what it runs,
+//                                                                        then asked about, or held until a plan showed it
 //
 // A laptop is not a session: its home is the person's (~), a session's is /home/node, and settings name paths in it.
 // A path into what is synced (~/.claude/skills/...) is moved to the other home; a setting naming any other path in the
@@ -60,8 +60,9 @@ const SECRET_CONTENT = [
   ['a live Stripe key', /\b[rs]k_live_[A-Za-z0-9]{16,}/],
   ['a Google API key', /\bAIza[0-9A-Za-z_-]{35}\b/],
 ];
-// What an own file may still not hold: its point is a developer's own keys, but never production's.
-const PRODUCTION_CONTENT = SECRET_CONTENT.filter(([kind]) => kind === 'a private key' || kind === 'a live Stripe key');
+// What an own file may still not hold: its point is a developer's own keys, but never production's, real AWS keys or a
+// team's integration token (CLAUDE.md, "Rules").
+const PRODUCTION_CONTENT = SECRET_CONTENT.filter(([kind]) => ['a private key', 'a live Stripe key', 'an AWS access key', 'a Slack token'].includes(kind));
 
 /** @returns {string|null}  why a file of this name is refused as a secret, null when it is not one */
 export function secretName(file, { ownFile = false } = {}) {
@@ -233,6 +234,15 @@ function serverCredential(server) {
     if (/\$\{[^}]*:-[^}]+\}/.test(v)) return true;
     return v.replace(/\$\{[A-Za-z_][A-Za-z0-9_]*(:-)?\}/g, '').replace(/^\s*(Bearer|Basic|Token)\s+/i, '').trim() !== '';
   };
+  if (typeof server?.url === 'string') {
+    let url = null;
+    try {
+      url = new URL(server.url);
+    } catch {}
+    if (url && (url.username || url.password)) return 'its URL carries a sign-in';
+    const param = url && [...url.searchParams].find(([k, v]) => SECRET_VARIABLE.test(k) && literal(v));
+    if (param) return `its URL carries ${param[0]}`;
+  }
   const env = Object.entries(server?.env ?? {}).find(([k, v]) => SECRET_VARIABLE.test(k) && literal(v));
   if (env) return `its env sets ${env[0]}`;
   const header = Object.entries(server?.headers ?? {}).find(([k, v]) => SECRET_HEADER.test(k) && literal(v));
@@ -402,20 +412,24 @@ export async function claudePushPlan({ home, shared, only, synced = {} }) {
   return { rows: rows.map(({ value, ...row }) => row), changed };
 }
 
-// A command is shown whole, or its end could hide what it does: past this, the item is held to be read in the file.
-const RUNS_MAX = 2000;
+// A line is shown whole, or its end could hide what it does: an item with a longer one is refused, to be read in a session.
+export const RUNS_MAX = 2000;
 
-/** Whether an item runs here once written: an MCP server, settings.json (hooks, env, permissions), or a script. */
+/**
+ * Whether a pulled item can make this computer's claude run something, so a pull writes it only once its content was
+ * shown: everything but keybindings. MCP servers and settings.json run commands; a skill, command or agent can grant
+ * tools and run shell (`!` lines); CLAUDE.md and the rest are instructions claude follows; a script runs as it is.
+ */
 export function runsHere(id) {
-  if (id === SETTINGS) return true;
-  const entry = parseEntryId(id);
-  if (entry) return entry.key === 'mcpServers';
-  return !/\.(md|markdown|txt)$/i.test(id);
+  return id !== '.claude/keybindings.json';
 }
 
-/** What a pulled item would run or let claude do here, a line each, for the person to read before it is written. */
+const json1 = (v) => JSON.stringify(v);
+
+/** What a pulled item would run or let claude do here, a line each and whole, for the person to read before it is written. */
 export function runsOf(id, value) {
   const entry = parseEntryId(id);
+  const whole = (lines) => lines.map((l) => printable(l, Infinity));
   if (entry) {
     let server = {};
     try {
@@ -423,23 +437,45 @@ export function runsOf(id, value) {
     } catch {}
     const lines = [server.command ? `runs: ${[server.command, ...(Array.isArray(server.args) ? server.args : [])].join(' ')}` : `connects to: ${server.url ?? 'nothing named'}`];
     if (server.env && Object.keys(server.env).length) lines.push(`with env: ${Object.keys(server.env).join(', ')}`);
-    return lines.map((l) => printable(l, RUNS_MAX));
+    for (const [k, v] of Object.entries(server)) if (!['type', 'command', 'args', 'url', 'env'].includes(k)) lines.push(`${k}: ${json1(v)}`);
+    return whole(lines);
   }
   if (id === SETTINGS) {
+    // Every key, since any can change what claude may do here (defaultMode, plugins, a hook of another type).
     const json = decodeJson(value) ?? {};
     const lines = [];
-    for (const [event, groups] of Object.entries(json.hooks ?? {})) {
-      (Array.isArray(groups) ? groups : []).forEach((group, i) => (Array.isArray(group?.hooks) ? group.hooks : []).forEach((hook, j) => {
-        if (hook?.command) lines.push(`hook ${event}[${i}][${j}] runs: ${hook.command}`);
-      }));
+    for (const [key, v] of Object.entries(json)) {
+      if (key === 'hooks' && v && typeof v === 'object') {
+        for (const [event, groups] of Object.entries(v)) {
+          (Array.isArray(groups) ? groups : [groups]).forEach((group, i) => {
+            const hooks = Array.isArray(group?.hooks) ? group.hooks : [];
+            if (!hooks.length) lines.push(`hooks.${event}[${i}]: ${json1(group)}`);
+            hooks.forEach((hook, j) => lines.push(`hooks.${event}[${i}]${group?.matcher ? ` (${group.matcher})` : ''} [${j}]: ${hook?.command ? `runs ${hook.command}` : json1(hook)}`));
+          });
+        }
+      } else if (key === 'env' && v && typeof v === 'object') {
+        // A value can change what runs (NODE_OPTIONS), so it is shown, but never one named like a credential.
+        for (const [k, x] of Object.entries(v)) lines.push(`env.${k}: ${SECRET_VARIABLE.test(k) ? '(not shown)' : x}`);
+      } else if (v && typeof v === 'object' && !Array.isArray(v)) {
+        for (const [k, x] of Object.entries(v)) {
+          if (Array.isArray(x)) x.forEach((item) => lines.push(`${key}.${k}: ${typeof item === 'string' ? item : json1(item)}`));
+          else lines.push(`${key}.${k}: ${json1(x)}`);
+        }
+      } else lines.push(`${key}: ${json1(v)}`);
     }
-    // A value can change what runs (NODE_OPTIONS), so it is shown, but never one named like a credential.
-    if (json.env && Object.keys(json.env).length) lines.push(`env: ${Object.entries(json.env).map(([k, v]) => (SECRET_VARIABLE.test(k) ? `${k}=(not shown)` : `${k}=${v}`)).join(' ')}`);
-    for (const rule of json.permissions?.allow ?? []) lines.push(`allows: ${rule}`);
-    return (lines.length ? lines : ['no hooks, env or allowed tools']).map((l) => printable(l, RUNS_MAX));
+    return whole(lines.length ? lines : ['nothing set']);
   }
   const text = Buffer.from(value, 'base64').toString('utf8');
-  return [printable(text.startsWith('#!') ? `a script: ${text.split('\n')[0]}` : 'a file claude or a hook may run')];
+  if (/\.(md|markdown)$/i.test(id)) {
+    // Its frontmatter (allowed-tools, tools, hooks, model) and each line that runs shell as it loads (!`cmd`).
+    const lines = [];
+    const front = /^---\n([\s\S]*?)\n---/.exec(text)?.[1];
+    if (front) lines.push(...front.split('\n').filter((l) => l.trim()).map((l) => `frontmatter: ${l}`));
+    for (const line of text.split('\n')) if (/!`|^\s*!/.test(line)) lines.push(`runs as it loads: ${line.trim()}`);
+    lines.push(`${text.replace(/\n$/, '').split('\n').length} lines of instructions claude follows`);
+    return whole(lines);
+  }
+  return whole([text.startsWith('#!') ? `a script: ${text.split('\n')[0]}` : 'a file claude or a hook may run']);
 }
 
 /**
@@ -484,9 +520,15 @@ export async function claudePullPlan({ home, shared, only, replace }) {
         ];
       }
       items[id] = value;
+      const runs = runsHere(id) ? runsOf(id, value) : null;
+      if (runs?.some((l) => l.length > RUNS_MAX)) {
+        delete items[id];
+        rows.push({ ...row, fate: 'refuse', reason: `a line of it is over ${RUNS_MAX} characters, too long to show whole here: read it in a session` });
+        continue;
+      }
       rows.push({
         ...row, fate: id in local ? 'replace' : 'write', reason: id in local ? 'differs from yours' : 'new here', notes,
-        ...(runsHere(id) ? { runs: runsOf(id, value), gate: itemHash(id, value) } : {}),
+        ...(runs ? { runs, gate: itemHash(id, value) } : {}),
       });
     }
   }

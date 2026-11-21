@@ -132,7 +132,7 @@ no others (`console/cliSessions.mjs`), each as its person:
 | --- | --- | --- |
 | `woodshed settings plan` | Lists each item with its size and what push would do with it: `upload` (new or changed), `skip` or `refuse`, and why. Sends nothing. With `--pull` (and `--replace`), what pull would write instead, and what each item that runs here runs. Writes nothing. | 0 |
 | `woodshed settings push` | The same list, then the uploads. An item never listed before is asked about on a terminal; with no terminal (or `--json`) nothing is sent until `plan` has listed it. | 0 sent or nothing to send, 2 not shown before or not confirmed |
-| `woodshed settings pull` | Writes the shared copy here: what is missing, and with `--replace` what differs, keeping a copy of each replaced file under `~/.config/woodshed/backups/`. Never deletes. What runs here is held until its content was listed, below. | 0, 2 something held |
+| `woodshed settings pull` | Writes the shared copy here: what is missing, and with `--replace` what differs, keeping a copy of each replaced file under `~/.config/woodshed/backups/`. Never deletes. Anything but `keybindings.json` is held until its content was listed, below. | 0, 2 something held |
 
 Each takes:
 
@@ -149,11 +149,17 @@ Each takes:
 push never removes one from the copy (the console refuses a removal from a computer). Claude plugins, Codex's settings and
 shell dotfiles are not carried, nor a file's mode: a pulled script runs as `bash script.sh`, as it does in a session.
 
-**What runs here is shown first.** Sessions write the shared copy, unattended. So `pull` writes no MCP server, no
-`settings.json` and no file other than `.md` or `.txt` until a list has shown that exact content (by its hash): each is
-listed with what it runs (`runs: npx -y docs-mcp`, a hook's command, its env, the tools it allows, a script's first
-line). On a terminal pull asks; with none it holds them (`hold`, exit 2) and writes the rest, until
-`woodshed settings plan --pull` has listed them. A changed item is held again.
+**What runs here is shown first.** Sessions write the shared copy, unattended, and everything in it but
+`keybindings.json` can make this computer's claude run something. So `pull` writes nothing else until a list has shown
+that exact content (by its hash), listed with what it does: an MCP server's command and args or URL; every key of
+`settings.json` (hooks, env, permissions, `defaultMode`, plugins); a skill's, command's or agent's frontmatter (its
+`allowed-tools`) and each line that runs shell as it loads (`` !`cmd` ``); a script's first line. Values of env variables
+named like credentials are not shown. On a terminal pull asks; with none it holds them (`hold`, exit 2) and writes the
+rest, until `woodshed settings plan --pull` has listed them. A changed item is held again, and one with a line over 2000
+characters is refused, since it cannot be shown whole.
+
+An MCP server whose URL carries a sign-in (`https://user:pass@…`, a `?api_key=`) is refused both ways, and an own file
+holding an AWS access key or a Slack token is not uploaded: sessions never get those.
 
 **A session's edit is not undone.** Push sends an item only when the shared copy still holds what this computer last
 pushed or pulled. One a session changed since is skipped with `pull it first, or --only <its name> sends yours over it`;
