@@ -1270,6 +1270,87 @@ test('a Chat message sent while the lockdown restarts claude is refused as busy,
   assert.match(await fs.readFile(path.join(taintDir, 'tainted'), 'utf8'), /"at"/, 'the taint\'s files in the test\'s folder');
 });
 
+// A stand-in hc for a session whose claude runs in Herdr: its terminal `claude` is the test's own tmux pane of that name,
+// so the stand-in claude and the waits are the tmux test's. It answers what statusd's Herdr adapter calls (agentPane.mjs,
+// hcPane): get, read, keys and send, each with its options before `--`, and records every call.
+async function standInHc(dir) {
+  const file = path.join(dir, 'hc');
+  const calls = path.join(dir, 'hc-calls');
+  await fs.writeFile(file, `#!${process.execPath}
+const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const argv = process.argv.slice(2);
+const sep = argv.indexOf('--');
+const [command, options, [terminal, ...rest]] = [argv[0], argv.slice(1, sep), argv.slice(sep + 1)];
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify([command, ...options, '--', terminal, ...rest]) + '\\n');
+const tmux = (...args) => execFileSync('tmux', args, { encoding: 'utf8' });
+const KEYS = { enter: 'Enter', esc: 'Escape', up: 'Up', down: 'Down', space: 'Space', tab: 'Tab', backspace: 'BSpace' };
+if (command === 'get') {
+  const [pid, name] = tmux('display', '-p', '-t', terminal, '#{pane_pid} #{pane_current_command}').trim().split(' ');
+  console.log(JSON.stringify({ address: 't1', name: terminal, pid: Number(pid), status: null, foreground: { pid: 0, name, argv: [name], cwd: '' } }));
+} else if (command === 'read') {
+  console.log(JSON.stringify({ text: tmux('capture-pane', '-p', '-t', terminal), complete: true, how: 'screen' }));
+} else if (command === 'keys') {
+  tmux('send-keys', '-t', terminal, ...rest.map((k) => KEYS[k] ?? k.replace(/^ctrl\\+/, 'C-')));
+  console.log('{"turn":1}');
+} else if (command === 'send') {
+  tmux('send-keys', '-t', terminal, '-l', rest[0]);
+  tmux('send-keys', '-t', terminal, 'Enter');
+  console.log('{"turn":1}');
+} else {
+  process.exit(2);
+}
+`, { mode: 0o755 });
+  return { file, calls: async () => (await fs.readFile(calls, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) };
+}
+
+test('in Herdr, the lockdown stops claude, starts the locked-down one through hc, and a Chat message sent meanwhile goes in once', { skip: spawnSync('tmux', ['-V']).status !== 0 && 'no tmux here' }, async (t) => {
+  const taintDir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-taint-'));
+  t.after(() => fs.rm(taintDir, { recursive: true, force: true }));
+  const launcher = path.join(taintDir, 'claude-launch');
+  const flags = path.join(taintDir, 'flags');
+  const hc = await standInHc(taintDir);
+  const { call, tmux, got, program, script, stateFile, setState } = await promptPane(t, 'done', {
+    asClaude: true, inShell: true,
+    env: { WOODSHED_TERMINAL: 'herdr', WOODSHED_HC_BIN: hc.file, WOODSHED_TAINT_DIR: taintDir, WOODSHED_CLAUDE_BIN: launcher, WOODSHED_CLAUDE_FLAGS_FILE: flags },
+  });
+  const hook = (state) => `${process.execPath} -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({ state: process.argv[2], event: "x", at: Date.now(), shells: 0 }))' ${stateFile} ${state}`;
+  await fs.writeFile(launcher, `#!/bin/sh\n( sleep 1.5; ${hook('working')}; sleep 1.5; ${hook('done')} ) &\nexec ${program} ${script}\n`, { mode: 0o755 });
+  const send = () => call('POST', '/send', 'sess', JSON.stringify({ text: 'during the restart' }));
+  const paneCommand = async () => (await tmux('display', '-p', '-t', 'claude', '#{pane_current_command}')).stdout.trim();
+  const panePid = (await tmux('display', '-p', '-t', 'claude', '#{pane_pid}')).stdout.trim();
+  const oldClaude = Number(spawnSync('pgrep', ['-P', panePid], { encoding: 'utf8' }).stdout.trim().split('\n')[0]);
+  assert.ok(oldClaude > 0, 'the running claude, under the pane\'s shell');
+  await setState('done');
+
+  assert.deepEqual((await call('POST', '/taint', 'sess', '{}')).body, { tainted: true, egress: false });
+  for (let i = 0; i < 100 && (await paneCommand()) === 'claude'; i++) await new Promise((r) => setTimeout(r, 50));
+  const during = await send();
+  assert.deepEqual([during.status, during.body.why, during.body.busy], [409, 'typing', true], 'busy: the console holds it');
+
+  let answer = during;
+  const tries = [];
+  for (let i = 0; i < 60 && answer.status !== 200; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    answer = await send();
+    tries.push(answer.body.why ?? answer.status);
+  }
+  assert.equal(answer.status, 200, `typed in at last (tries: ${tries.join(', ')})`);
+  assert.equal(await paneCommand(), 'claude', 'into the new claude');
+  assert.throws(() => process.kill(oldClaude, 0), 'the old claude was stopped');
+  for (let i = 0; i < 50 && !(await got()).includes('during the restart'); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.equal((await got()).match(/during the restart/g)?.length, 1, 'once');
+
+  const calls = await hc.calls();
+  const sends = calls.filter((c) => c[0] === 'send').map((c) => c.at(-1));
+  assert.ok(calls.some((c) => c[0] === 'get' && c.at(-1) === 'claude'), 'the shell under claude, from hc');
+  const reopen = sends.find((text) => text.startsWith(`${launcher} `));
+  assert.ok(reopen, 'the locked-down claude started through hc');
+  assert.match(reopen, /"\$\(cat \S+message\.md\)"$/, 'with the lockdown\'s message');
+  assert.equal(sends.filter((text) => text === 'during the restart').length, 1, 'the Chat message through hc, once');
+  for (const c of calls) assert.ok(c.indexOf('--') > 0 && c.indexOf('--') < c.length - 1, `options before -- in ${JSON.stringify(c)}`);
+});
+
 test('POST /send with agentOnly types into a running agent and never into a shell, with the token only', { skip: spawnSync('tmux', ['-V']).status !== 0 && 'no tmux here' }, async (t) => {
   // A stand-in gh answering `gh pr view` with the pull request in the file it names, for the check just before typing.
   const ghDir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-gh-'));

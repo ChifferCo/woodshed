@@ -357,7 +357,13 @@ with **Project**, the repo the session works on. With one project it only names 
 can write to (`console/projectAccess.mjs`; GitHub is asked once every 10 minutes per person
 and project, so a person just given write access waits up to 10 minutes for it to show), opening on your default, marked **— your default**. **Make my default** beside
 another one saves it (`POST /api/my/projects/default`, kept per person in `viewPrefs`), as does
-the **My default project** row on My settings, saved as it is picked; `?project=<name>` picks one for that visit. Resume asks again, so a session on a project whose repo you can no longer write
+the **My default project** row on My settings, saved as it is picked; `?project=<name>` picks one for that visit.
+The **Agent terminal** row beside it picks what your private sessions run claude or codex in, saved as it is picked
+(`POST /api/my/terminal {"terminal": "tmux"|"herdr"}`, kept per person with the Reviews choice, `userSettings: terminal
+changed` in the log): **tmux**, the default, or **Herdr**, the session image's pinned herdr-core, whose terminal the
+TUI tab attaches to and your own Herdr can too (session/README.md, "What a container does"). It reaches your next
+private session in the session API's `/settings` answer (`terminal`); shared sessions, reviews, QA runs and questions
+are in tmux whatever it says. Resume asks again, so a session on a project whose repo you can no longer write
 to does not start (403). The form
 asks for a prompt and, optionally, the rest below. It asks for no name: the session starts named after the prompt's
 first line, and the console asks Claude Haiku for a better one on the team's Anthropic key (`console/autoName.mjs`).

@@ -22,6 +22,9 @@ const { loginKey } = logins;
 
 // Who may review a person's pull requests, as reviewAgents.mjs reads it.
 const REVIEW_CHOICES = ['none', 'claude', 'codex', 'both'];
+// What the person's private sessions run their agent in (session/agentPane.mjs): tmux, as every session does, or Herdr's
+// terminal runtime, which their own Herdr can attach to. tmux is the default, and the only one for every other session.
+export const TERMINALS = Object.freeze(['tmux', 'herdr']);
 
 const CLAUDE_TOKEN = 'claude-token';
 const CODEX_AUTH = 'codex-auth';
@@ -214,6 +217,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
       ownTokenForShared: record?.ownTokenForShared !== false,
       ownCodexForReviews: record?.ownCodexForReviews !== false,
       reviewAgents: REVIEW_CHOICES.includes(record?.reviewAgents) ? record.reviewAgents : null,
+      terminal: terminal(login),
       limits: { ...record?.limits },
       github: { connected: Boolean(github?.connectedAt), connectedAt: github?.connectedAt ?? null, name: github?.name ?? null, email: github?.email ?? null },
       home: { saved: Boolean(record?.home?.savedAt), savedAt: record?.home?.savedAt ?? null, bytes: record?.home?.bytes ?? 0 },
@@ -409,6 +413,23 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     return REVIEW_CHOICES.includes(saved) ? saved : null;
   }
 
+  /**
+   * What the person's private sessions run their agent in: `tmux` (the default) or `herdr`. Their next session reads it
+   * from the /settings answer (sessionApi.mjs); one running keeps what it started with.
+   * @throws {Error}  shown on the page, for anything else
+   */
+  function setTerminal(login, choice) {
+    if (!TERMINALS.includes(choice)) throw Object.assign(new Error(`the terminal must be one of ${TERMINALS.join(', ')}`), { shown: true, status: 400 });
+    touch(login, { terminal: choice === 'tmux' ? null : choice });
+    console.log('userSettings: terminal changed', { login, terminal: choice });
+  }
+
+  /** @returns {'tmux'|'herdr'}  the person's choice, tmux when they made none */
+  function terminal(login) {
+    const saved = recordFor(login)?.terminal;
+    return TERMINALS.includes(saved) ? saved : 'tmux';
+  }
+
   /** Replaces the person's own idle and lifetime hours; an empty object goes back to the console's numbers. */
   function setLimits(login, values) {
     const limits = checkLimits(values);
@@ -446,7 +467,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   return {
-    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setReviewAgents, reviewAgents, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
+    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setReviewAgents, reviewAgents, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }
