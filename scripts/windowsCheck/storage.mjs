@@ -116,11 +116,23 @@ const ORIGIN = 'https://check.example';
   }
   check('outside: nothing made there', !fs.existsSync(shared));
   try {
-    const sealed = createCredentials({ dir: shared, run }).save(ORIGIN, t);
-    check('outside: a sealed token may be kept there', sealed.kind === 'dpapi' && sealed.read(ORIGIN) === t, sealed.kind);
+    createCredentials({ dir: shared, run }).save(ORIGIN, t);
+    check('outside: a sealed token is not kept there either', false, 'it was kept');
   } catch (err) {
-    check('outside: a sealed token may be kept there', false, err.message);
+    check('outside: a sealed token is not kept there either', /the only place a token is kept on Windows/.test(err.message), err.message);
   }
+  // A blob sealed for the whole computer, which DPAPI opens for any account, planted there: not read.
+  fs.mkdirSync(shared, { recursive: true });
+  const machine = spawnSync(tools.powershell, ['-NoProfile', '-NonInteractive', '-Command',
+    "[void][Reflection.Assembly]::LoadWithPartialName('System.Security'); $e = [Text.Encoding]::UTF8.GetBytes('woodshed-cli ' + $env:CHECK_ORIGIN); [Convert]::ToBase64String([Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($env:CHECK_TOKEN), $e, 'LocalMachine'))"],
+    { env: { ...cleanEnv, CHECK_ORIGIN: ORIGIN, CHECK_TOKEN: t }, encoding: 'utf8' });
+  fs.writeFileSync(path.join(shared, 'credentials-dpapi.json'), JSON.stringify({ [ORIGIN]: machine.stdout.trim() }));
+  check('outside: a machine-sealed blob planted there is not read', createCredentials({ dir: shared, run }).storeFor('dpapi').read(ORIGIN) === null, `planted ${machine.stdout.trim().length} chars`);
+  // The same blob in the default folder would open, which is why only that folder is read.
+  const inDefault = createCredentials({ dir, run }).storeFor('dpapi');
+  fs.writeFileSync(path.join(dir, 'credentials-dpapi.json'), JSON.stringify({ [ORIGIN]: machine.stdout.trim() }));
+  console.log(`INFO a machine-sealed blob in the default folder opens: ${inDefault.read(ORIGIN) === t}`);
+  fs.writeFileSync(path.join(dir, 'credentials-dpapi.json'), '{}');
   fs.rmSync(shared, { recursive: true, force: true });
 }
 
