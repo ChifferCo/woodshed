@@ -273,7 +273,9 @@ export async function runForward({ origin, token, session, specs, auto, say, war
     watch();
   } else if (!forwards.size) {
     // Nothing it was asked for can be forwarded: a refusal (the session's own ports), or this computer's own failure.
-    if (localFailure && !own) return { refused: Object.assign(localFailure, { status: null }) };
+    // A port this computer could not listen on is the failure (exit 1), even beside one of the session's own, which
+    // was warned of above.
+    if (localFailure) return { refused: Object.assign(localFailure, { status: null }) };
     return { refused: Object.assign(new Error(own ?? 'nothing to forward'), { status: 403 }) };
   } else say('Ctrl-C stops.');
 

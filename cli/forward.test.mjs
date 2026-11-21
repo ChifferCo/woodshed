@@ -89,6 +89,7 @@ async function setup(t, { tainted = () => false } = {}) {
     if (!execPipe.handleUpgrade(req, socket, head)) socket.destroy();
   });
   const cut = () => { for (const socket of held) socket.destroy(); };
+  const holding = () => held.size;
   const origin = `http://localhost:${await listen(consoleServer)}`;
   const { deviceCode, userCode } = cli.start({ name: 'mia-laptop' });
   cli.decide({ code: userCode, login: 'mia-dev', approve: true });
@@ -114,7 +115,7 @@ async function setup(t, { tainted = () => false } = {}) {
     t.after(() => stop.abort());
     return { said, warned, events, done, stop: () => { stop.abort(); return done; } };
   }
-  return { origin, cli, signedIn, appPort, echoPort, listening, cut, forward };
+  return { origin, cli, signedIn, appPort, echoPort, listening, cut, holding, forward };
 }
 
 test('a port and an optional local port, each 1 to 65535', () => {
@@ -308,6 +309,8 @@ test('a local port that cannot be had is this computer\'s failure, and Ctrl-C en
   const timers = () => process.getActiveResourcesInfo().filter((kind) => kind === 'Timeout').length;
   const run = s.forward({ auto: true, retryMs: [60_000] });
   await until(() => run.said.some((text) => text.startsWith('Following')));
+  // Its follower's connection is open (it opens just after it says so), so the cut below cuts it.
+  await until(() => s.holding() > 0);
   const before = timers();
   s.cut();
   await until(() => run.warned.some((text) => text.startsWith('the connection to the session was cut')));
