@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { hideUrlPasswords } from './moveCode.mjs';
+import { CREDENTIAL_HEADER_ARGUMENT, hideUrlPasswords } from './moveCode.mjs';
 
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'mksh', 'nu', 'tcsh', 'csh', 'elvish', 'xonsh', 'pwsh']);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -319,8 +319,6 @@ export function withoutStateHooks(settings) {
 const SECRET_WORD_RE = /token|password|passwd|pass|pwd|secret|key|auth|credential/i;
 // A flag whose value is a credential only when it looks like one: curl's -u user:password, but not python's -u alone.
 const USER_FLAG_RE = /^(-u|-U|--user|--proxy-user)$/;
-// A header carrying a credential, as one word (-H 'Authorization: Bearer x', --header=Cookie:…).
-const SECRET_HEADER_RE = /^(--header=|-H)?\s*(authorization|proxy-authorization|cookie|x-api-key|api-key|x-auth-token)\s*:/i;
 
 /**
  * A program's command line as it may be shown: every value that may be a credential hidden as `…`. The real one is kept
@@ -329,6 +327,7 @@ const SECRET_HEADER_RE = /^(--header=|-H)?\s*(authorization|proxy-authorization|
  */
 export function shownCommand(argv, looksSecret = () => false) {
   const out = [];
+  let hideNext = false;
   for (let i = 0; i < argv.length; i++) {
     const word = String(argv[i]);
     const equals = word.indexOf('=');
@@ -336,20 +335,18 @@ export function shownCommand(argv, looksSecret = () => false) {
     const credentialName = /^[\w-]+$/.test(name) && SECRET_WORD_RE.test(name);
     const flag = name.startsWith('-');
     const safeUrl = hideUrlPasswords(word);
-    if (looksSecret(safeUrl)) out.push('…');
-    else if (SECRET_HEADER_RE.test(word)) out.push(`${word.split(':')[0]}: …`);
+    const hide = hideNext;
+    // A word hidden as the preceding switch's value can still be an option with a secret value of its own.
+    hideNext = i + 1 < argv.length && ((credentialName && flag && equals < 0)
+      || (USER_FLAG_RE.test(word) && String(argv[i + 1]).includes(':')));
+    if (hide || looksSecret(safeUrl)) out.push('…');
+    else if (CREDENTIAL_HEADER_ARGUMENT.test(word)) out.push(`${word.split(':')[0]}: …`);
     else if (safeUrl !== word) out.push(safeUrl);
     // curl's user:password joined to its flag: -uuser:pass, --user=user:pass.
     else if (/^(-[uU][^-\s]|--(proxy-)?user=)[^:]*:/.test(word)) out.push(`${word.startsWith('--') ? word.split('=')[0] : word.slice(0, 2)}…`);
-    else if (USER_FLAG_RE.test(word) && /:/.test(String(argv[i + 1] ?? ''))) {
-      out.push(word, '…');
-      i += 1;
-    }
     else if (credentialName && equals >= 0 && (flag || equals + 1 < word.length)) out.push(`${name}=…`);
-    else if (credentialName && flag && equals < 0 && i + 1 < argv.length) {
-      out.push(word, '…');
-      i += 1;
-    } else out.push(/^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`);
+    else if (hideNext) out.push(word);
+    else out.push(/^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`);
   }
   return out.join(' ');
 }

@@ -255,10 +255,11 @@ Then, in order (`move.mjs` says each step):
    `pane.split`, read from the `herdr-app` document in `hc` (never written). With no Herdr window open, each terminal is
    started with the `herdr.space` and `herdr.tab` labels the app adopts it by, its splits side by side. A split's size is
    not kept: no app command sets one.
-5. **The agents.** Two agents never work on one branch. In a new session, the first agent of each checkout becomes the
-   session's own (its first, empty claude ends with `/exit` and the conversation opens in its place, with its flags), so
-   the console follows it as any session's. That needs Herdr picked as Agent terminal on My settings, or the move is
-   refused. Every other agent, and every agent moved into a session that has its own, gets a branch of its own
+5. **The agents.** Two agents never work on one branch. In a new session, the first checkout for that repo is its
+   primary checkout. Its first agent, if any, takes the place of the session's empty starter and keeps its flags, so
+   the console follows it as the session's own. That needs Herdr picked as Agent terminal on My settings, or the move
+   is refused. Agents from other checkouts, additional agents in the primary checkout, and agents moved into an
+   existing session each get a branch of their own
    (`woodshed/move-<id>-<n>`) and a git worktree in the session's home, trusted for it ahead; those push their own
    branches, since a session's stop pushes only its own.
 6. **The hand-over.** Each local agent is ended (`/exit`, `/quit`) only once its moved one reports a state, and its

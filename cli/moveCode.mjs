@@ -140,6 +140,27 @@ const SECRET_CONTENT = [
   [/wsc_[0-9a-f]{64}(?![0-9a-f])/, 'a Woodshed command line token'],
   [/:_authToken=(?!\$\{)[^\s'"\0]{8,}/, 'an npm token'],
 ];
+const CREDENTIAL_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'x-api-key', 'api-key', 'x-auth-token'];
+const headerNames = CREDENTIAL_HEADERS.join('|');
+export const CREDENTIAL_HEADER_ARGUMENT = new RegExp(`^(--header=|-H)?\\s*(?:${headerNames})\\s*:`, 'i');
+const CREDENTIAL_HEADER_TEXT = new RegExp(`(?:^|[^\\w-])(?:${headerNames})[\\t ]*:[\\t ]*\\S`, 'i');
+
+function transcriptHasCredentialHeader(line) {
+  if (CREDENTIAL_HEADER_TEXT.test(line)) return true;
+  let record;
+  try { record = JSON.parse(line); } catch { return false; }
+  const pending = [record];
+  while (pending.length) {
+    const item = pending.pop();
+    if (typeof item === 'string' && CREDENTIAL_HEADER_TEXT.test(item)) return true;
+    if (!item || typeof item !== 'object') continue;
+    for (const [key, value] of Object.entries(item)) {
+      if (typeof value === 'string' && value.trim() && CREDENTIAL_HEADERS.includes(key.toLowerCase())) return true;
+      pending.push(value);
+    }
+  }
+  return false;
+}
 
 // Find the URL delimiter first so scanning an arbitrary string never retries every possible scheme prefix.
 function* urlPasswords(text) {
@@ -183,11 +204,12 @@ export function secretName(file) {
  * The secrets in a file's text that its earlier text (the commit it changes) did not already hold.
  * @returns {{line: number, kind: string}[]}
  */
-export function secretsIn(text, before = '') {
+export function secretsIn(text, before = '', { transcript = false } = {}) {
   const found = [];
   const lines = String(text).split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (transcript && transcriptHasCredentialHeader(line)) found.push({ line: i + 1, kind: 'a credential header' });
     for (const { user, end } of urlPasswords(line)) {
       if (before.includes(line.slice(user, end + 1))) continue;
       found.push({ line: i + 1, kind: 'a password in a URL' });

@@ -376,6 +376,28 @@ test('a password-bearing URL in a transcript refuses the move before push or upl
   assert.ok(!fs.existsSync(path.join(l.repo.bare, 'push-started')));
 });
 
+test('decoded transcript credential headers refuse a move before push or upload', async (t) => {
+  const l = laptop(t);
+  const value = 'inert-fixture-bearer-value';
+  const file = path.join(l.repo.dir, 'home', '.claude', 'projects', claudeProjectDir(l.cwd), `${CONVERSATION}.jsonl`);
+  const raw = JSON.stringify({ type: 'assistant', message: { content: `GET /fixture\nAuthorization: Bearer ${value}` } });
+  const escaped = JSON.stringify({ type: 'tool_result', headers: { Authorization: `Bearer ${value}` } })
+    .replace('Authorization', '\\u0041uthorization');
+  fs.appendFileSync(file, `${raw}\n${escaped}\n`);
+  fs.writeFileSync(path.join(l.repo.bare, 'hooks', 'pre-receive'), '#!/bin/sh\ntouch push-started\n', { mode: 0o755 });
+
+  const out = await l.run(['move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json']);
+  assert.equal(out.code, EXIT.refused);
+  assert.deepEqual(out.events.find((event) => event.event === 'secrets')?.conversations, [
+    { address: 't1', line: 3, kind: 'a credential header' },
+    { address: 't1', line: 4, kind: 'a credential header' },
+  ]);
+  assert.ok(!(out.out + out.err).includes(value));
+  assert.ok(!l.calls.some(([method]) => method === 'POST'));
+  assert.ok(!l.h.calls.some((call) => call.args?.[0] === 'file'));
+  assert.ok(!fs.existsSync(path.join(l.repo.bare, 'push-started')));
+});
+
 test('filename-only and binary credentials stop the move without printing their values', async (t) => {
   const l = laptop(t);
   const synthetic = `ghp_${'f4'.repeat(18)}`;
@@ -559,6 +581,24 @@ test('a program with a credential on its command line is never started again in 
   Object.assign(l.h.terminals.get(l.dev).foreground, { argv: ['curl', '-u', 'me:hunter2', `--header=x-k: sk_live_${'z'.repeat(24)}`] });
   const curl = await l.run(['move', '--space', 'api', '--to', 'new', '--dry-run', '--json', '--console', ORIGIN]);
   assert.equal(curl.events.find((e) => e.event === 'bundle').bundle.terminals.find((x) => x.process).process.command, 'curl -u … …');
+});
+
+test('a switch immediately before a password flag cannot disclose the password in the plan or result', async (t) => {
+  const l = laptop(t);
+  const password = 'inert-argument-password';
+  Object.assign(l.h.terminals.get(l.dev).foreground, { name: 'db', argv: ['db', '--no-keyring', '--password', password] });
+  const args = ['move', '--space', 'api', '--to', 'new', '--restart', 'auto', '--console', ORIGIN];
+  const dry = await l.run([...args, '--dry-run', '--json']);
+  assert.equal(dry.code, EXIT.done, dry.err);
+  assert.ok(!dry.out.includes(password));
+  const preview = dry.events.find((event) => event.event === 'bundle').bundle.terminals.find((terminal) => terminal.process).process;
+  assert.deepEqual(preview, { command: 'db --no-keyring … …', restart: 'never' });
+
+  const out = await l.run(args);
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.ok(!(out.out + out.err).includes(password));
+  assert.match(out.out, /a shell there: db --no-keyring … … was not started again/);
+  assert.ok(!JSON.stringify(l.h.calls).includes(password));
 });
 
 test('a Codex terminal moves with its rollout and is ended here with /quit though it never says it is idle', async (t) => {
