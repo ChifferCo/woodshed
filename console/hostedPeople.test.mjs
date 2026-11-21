@@ -288,7 +288,7 @@ test('an empty list is taken as it is on a console that never had anyone, but no
   assert.ok(stored.state.memberSwitches['lee-dev'], 'the switch is kept for when the program lists them again');
 });
 
-test('behind a proxy, a person the program drops loses their database tunnel token and open tunnels at the next read', async (t) => {
+test('behind a proxy, a person the program drops loses their database tunnel token, open tunnels and command line sign-ins at the next read', async (t) => {
   t.mock.method(console, 'log', () => {});
   t.mock.method(console, 'warn', () => {});
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-people-'));
@@ -298,8 +298,14 @@ test('behind a proxy, a person the program drops loses their database tunnel tok
   const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
   const later = new Date(Date.now() + 3_600_000).toISOString();
   // Sam has a token, and so does Lee, whom the program took off while the console was down.
+  const SAM_CLI = `wsc_${'c'.repeat(64)}`;
+  const LEE_CLI = `wsc_${'d'.repeat(64)}`;
+  const cliToken = (login, token) => ({ login, name: 'laptop', hash: sha(token), createdAt: new Date().toISOString(), expiresAt: later, lastUsedAt: new Date().toISOString() });
   const store = {
-    state: { tunnelTokens: { 'sam-member': { hash: sha(SAM_TOKEN), expiresAt: later }, 'lee-dev': { hash: sha(LEE_TOKEN), expiresAt: later } } },
+    state: {
+      tunnelTokens: { 'sam-member': { hash: sha(SAM_TOKEN), expiresAt: later }, 'lee-dev': { hash: sha(LEE_TOKEN), expiresAt: later } },
+      cliTokens: { '00000000000000a1': cliToken('sam-member', SAM_CLI), '00000000000000b2': cliToken('lee-dev', LEE_CLI) },
+    },
     save() {},
   };
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
@@ -319,9 +325,13 @@ test('behind a proxy, a person the program drops loses their database tunnel tok
   };
   assert.equal(tunnel.available, true);
   assert.equal(store.state.tunnelTokens['lee-dev'], undefined, 'the one dropped while the console was down is revoked at start');
+  assert.equal(store.state.cliTokens['00000000000000b2'], undefined, 'their command line sign-in too');
+  const cliSignedIn = (token) => installation.cli.tokenFor({ authorization: `Bearer ${token}` })?.login ?? null;
+  assert.equal(cliSignedIn(SAM_CLI), 'sam-member');
   assert.equal(await asks(SAM_TOKEN), 409, 'a listed person\'s token is accepted (409: their databases are not made here)');
   const closed = [];
   tunnel.revoke = ((revoke) => (login) => { closed.push(login); revoke(login); })(tunnel.revoke);
+  const listed = program.people;
   program.people = program.people.filter((p) => p.login !== 'Sam-Member');
   // The program's list is read again once it is older than 5 s, when something asks (here, the token's person).
   t.mock.timers.tick(5_001);
@@ -330,6 +340,14 @@ test('behind a proxy, a person the program drops loses their database tunnel tok
   assert.equal(store.state.tunnelTokens['sam-member'], undefined, 'the token is gone with the next read');
   assert.equal(await asks(SAM_TOKEN), 401);
   assert.deepEqual(closed, ['sam-member'], 'revoke, which closes open tunnels, ran for the one who left');
+  assert.equal(store.state.cliTokens['00000000000000a1'], undefined, 'the command line sign-in is gone too, not only refused');
+  // Listed again, they sign in again: what they held before stays ended.
+  program.people = listed;
+  t.mock.timers.tick(5_001);
+  await asks(SAM_TOKEN);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(await asks(SAM_TOKEN), 401);
+  assert.equal(cliSignedIn(SAM_CLI), null);
 });
 
 test('a list that cannot be read is tried again by itself, backing off, until the program answers; stop ends it', async (t) => {

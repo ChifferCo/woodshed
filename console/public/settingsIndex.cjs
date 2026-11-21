@@ -39,6 +39,8 @@
       words: 'postgres postgresql mongo mongodb redis database db restore dump reset data copy pgweb tunnel psql migrate seed' },
     { page: '/settings', id: 'my-github', title: 'My GitHub connection', note: 'Connect GitHub so your sessions push and review as you; your git name and email.',
       words: 'git github connect push commit author name email identity gh token pull request pr review as me bot app' },
+    { page: '/settings', id: 'my-cli', title: 'Command line', note: 'The computers the woodshed command line is signed in on as you, with Revoke.',
+      words: 'cli command line terminal woodshed login logout sign in signed in device code computer laptop token revoke status' },
     { page: '/settings', id: 'my-home', title: 'MCP logins and Claude memory', note: 'What your private sessions keep of ~/.claude between runs.',
       words: 'mcp slack notion plugins memory claude home claude.md skills settings sync login' },
     { page: '/settings', id: 'repo-settings', title: 'My repo settings', note: 'Your own env file values, instructions and files for each repo, in your private sessions.',

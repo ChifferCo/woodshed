@@ -332,6 +332,14 @@ URL on top of each env file's Repo settings values
   at that time. No `console: stopping` before the new console's `console: listening`
   means it was killed, not stopped: a crash, an out-of-memory kill or the box
   rebooting. A status other than 000 is the console's own answer, given after it.
+- **`woodshed login` or `woodshed status` fails.** The CLI's own message says which step (cli/README.md): `answered
+  404` is a console from before the command line could sign in, or a hosting proxy that does not pass `/api/cli/*`
+  through. The console logs `cliSignIn: sign-in started` with the computer's name, then `sign-in approved` or `denied`
+  and `token made`; `refused, a browser's call` is a call with an Origin header (a page, never the CLI). `status`
+  exiting 2 with `ended` is a token revoked on My settings' Command line row (`cliSignIn: token revoked` with `by`),
+  expired after 90 days, or one whose person left People (`refused, the token's person is no longer a member`): sign in
+  again. The token is in the macOS Keychain or libsecret, else in the file `woodshed status --json` names
+  (`credentialsFile`); never print it.
 - **A private session starts without its MCP logins, or Resume opens a blank
   claude.** The session's log says `Claude home restored`, `No Claude home
   saved yet` or `WARNING: Claude home not restored` with the status. Every 5

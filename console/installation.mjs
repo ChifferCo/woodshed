@@ -22,6 +22,7 @@ import { createDbRestore } from './dbRestore.mjs';
 import { createSlack } from './slack.mjs';
 import { checkSlackInstall, createSlackSetup } from './slackSetup.mjs';
 import { createTunnel, tunnelTargetsFor } from './dbTunnel.mjs';
+import { createCliSignIn } from './cliSignIn.mjs';
 import { createFleet } from './fleet.mjs';
 import { createGitHub } from './github.mjs';
 import { createAppApi } from './githubApp.mjs';
@@ -487,6 +488,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const tunnel = createTunnel({ store, targets: databaseTargets, databases, allowed: (login) => members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login) });
   // Behind a hosting proxy, whoever leaves the program's list loses their token and open tunnels at once, as People's Remove does.
   members?.whenLeft?.((login) => tunnel.revoke(login), { also: () => Object.keys(store.state.tunnelTokens ?? {}) });
+  // The woodshed command line's sign-ins, one per computer (cliSignIn.mjs): asked who may use them as the tunnel is.
+  const cli = createCliSignIn({ store, allowed: (login) => members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login) });
+  members?.whenLeft?.((login) => cli.revokeAll(login, 'the program\'s list'), { also: () => cli.logins().filter(Boolean) });
   const dbRestore = createDbRestore({
     store, dir: path.join(loaded.stateDir, 'restores'), databases, targets: databaseTargets,
     defaultBranchMigrations: tokens ? () => projectReader.migrationFiles('postgres') : null,
@@ -532,6 +536,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     githubConnectAutomatic: Boolean(hostConnect && githubConnect.automatic),
     woodshedUpdate,
     slackSetup,
+    cli,
   });
   const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
@@ -600,6 +605,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     config,
     fleet,
     tunnel,
+    cli,
     tokens,
     handle,
     upgrade,

@@ -1,5 +1,8 @@
 The card the desktop app's sign-in is told in, on pages that stand alone: no rail, no avatar menu. The browser shows two of
-them (`console/desktopSignIn.mjs`), the app two more (`desktop/setup.html`, `desktop/signin.html`), all one shape.
+them (`console/desktopSignIn.mjs`), the app two more (`desktop/setup.html`, `desktop/signin.html`), all one shape. The
+command line's sign-in (`console/cliSignIn.mjs`) uses the same card for its three: **Sign in the woodshed command
+line** (a box to type the code), **Sign in the woodshed command line?** and **The command line is signed in** (or
+**Sign-in denied**).
 
 - One `ground` card, `line` border, 12px radius and 32px padding, 440px wide at most, centred on the `stopped` ground,
   with 16px at the screen's edges on a phone. No shadow.
@@ -13,6 +16,10 @@ them (`console/desktopSignIn.mjs`), the app two more (`desktop/setup.html`, `des
   in the app: it is what keeps another program from signing itself in, so its words are not to be cut.
 - An error is a `bad` line under the paragraph, in words (`That sign-in has expired or was already used. Sign in again
   from the app.`), and the button stays, to try again.
+- The command line's code is shown as the terminal shows it, in JetBrains Mono at 24px, 600, with a `meta` line under
+  it (mono, `sub`) saying when it was asked. Its consent card names the computer and the account in
+  bold, and says to sign in only if the terminal shows that code. Deny is a quiet underlined button beside the orange
+  one, as Cancel is beside the app's.
 - The app's own pages carry the app's icon above the heading, at 72px with its own margin (`desktop/icon.png`); the
   browser's pages do not, as the console's address bar already says where they are.
 - Both themes, from the device: the console's tokens, redefined under `prefers-color-scheme: dark`. These pages load no

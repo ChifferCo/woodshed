@@ -386,6 +386,37 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       tunnelStatus);
   }
 
+  // The computers the woodshed command line is signed in on as you (console/cliSignIn.mjs), each with Revoke. A sign-in
+  // is made by `woodshed login` and approved on the console's /cli page, never here: this row only lists and ends them.
+  const cliStatus = h('p', { class: 'form-note', role: 'status' });
+
+  function cliCard() {
+    if (!me.cli) return null;
+    const tokens = me.cli.tokens ?? [];
+    const pill = tokens.length
+      ? h('span', { class: 'pill is-ok' }, `${tokens.length} signed in`)
+      : h('span', { class: 'pill' }, 'None');
+    // Run from a Woodshed checkout until the command line has an installer (cli/README.md).
+    const command = `node cli/woodshed.mjs login --console ${window.location.origin}`;
+    return row({
+      id: 'my-cli', title: 'Command line', pill,
+      value: tokens.length ? tokens.map((t) => t.name).join(', ') : 'Sign the woodshed command line in on your computer',
+    },
+      h('p', { class: 'sub' }, 'The woodshed command line signs in as you, once per computer, by a code you approve in this browser. Each sign-in lasts 90 days. Revoke ends it at once.'),
+      tokens.length ? howTo('How to sign in on another computer', steps({ text: 'In a terminal on that computer, from a Woodshed checkout:', command }))
+        : steps({ text: 'In a terminal on your computer, from a Woodshed checkout:', command },
+          { text: 'It opens this console on a page with a code. Check it is the one your terminal shows, and press Sign in the CLI.' }),
+      tokens.length > 0 && h('div', { class: 'set-rows' }, tokens.map((t) => h('div', { class: 'set-row' },
+        h('div', null,
+          h('div', { class: 'set-name' }, t.name),
+          h('div', { class: 'set-help' }, `Signed in ${W.when(t.createdAt)} · last used ${W.when(t.lastUsedAt ?? t.createdAt)} · ends ${W.when(t.expiresAt)}`)),
+        h('div', { class: 'set-value' }, h('button', {
+          type: 'button', class: 'btn btn-quiet', disabled: busy.has('cli'),
+          onclick: () => act({ card: 'cli', note: cliStatus, working: 'Revoking…', done: `${t.name} is signed out.`, call: async () => { me = await W.postJson(`/api/my/cli-tokens/${t.id}/revoke`, {}); } }),
+        }, 'Revoke'))))),
+      cliStatus);
+  }
+
   // Each repo whose sessions cannot start (databaseGate.mjs), where the console makes no databases of yours to show
   // them beside: every other repo still starts.
   function blockersCard() {
@@ -800,7 +831,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       // A repo sessions cannot start on is said first: it is what stops the person, whatever else is set.
       blockersCard(),
       // What a new person does first, then how their sessions run, what is kept between them, each repo's own, and the look.
-      group({ id: 'set-signins', label: 'Sign-ins' }, tokenCard(), codexCard(), githubCard()),
+      group({ id: 'set-signins', label: 'Sign-ins' }, tokenCard(), codexCard(), githubCard(), cliCard()),
       group({ id: 'set-sessions', label: 'Sessions' }, projectCard(), terminalCard(), reviewsCard(), limitsCard()),
       group({ id: 'set-kept', label: 'Kept for you' }, databasesCard(), homeCard()),
       group({
