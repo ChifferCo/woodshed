@@ -14,6 +14,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { createGitHub, explainGhError } from './github.mjs';
+import { APP_PAGE_SIZE, INSTALLATION_REPO_PAGES } from './githubApp.mjs';
 import { ACTIVE_STATUSES } from './sessions.mjs';
 
 // `link`, when given, is {href, text}: where the page can send the admin to fix what the message says.
@@ -270,13 +271,15 @@ export function repoLister({ appApi, appSlug = async () => null }) {
     }
     const slug = await appSlug().catch(() => null);
     const repos = lists.filter(Boolean).flat().sort((a, b) => a.repo.localeCompare(b.repo, undefined, { sensitivity: 'base' }));
+    // At the limit the inventory may have more pages. Absence from what we read cannot prove that access is gone.
+    const incomplete = installations.length >= APP_PAGE_SIZE || lists.some((r) => r === null || r.length >= APP_PAGE_SIZE * INSTALLATION_REPO_PAGES);
     console.log('projects: repos listed', { installations: installations.length, repos: repos.length });
     return {
       repos,
       grant: installations.filter((i) => i.settingsUrl).map((i) => ({ account: i.account, href: i.settingsUrl })),
       install: slug ? installUrl(slug) : null,
       via: 'app',
-      ...(lists.includes(null) && { incomplete: true }),
+      ...(incomplete && { incomplete: true }),
     };
   };
 }

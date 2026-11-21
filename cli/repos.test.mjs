@@ -9,12 +9,12 @@ import { main } from './woodshed.mjs';
 const origin = 'https://console.example';
 const install = 'https://github.com/apps/woodshed-example/installations/new';
 
-function cliFor(t, { status = 200, body, signedIn = true, isTerminal = true } = {}) {
+function cliFor(t, { status = 200, body, signedIn = true, isTerminal = true, current = origin } = {}) {
   const configHome = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-repo-cli-'));
   t.after(() => fs.rmSync(configHome, { recursive: true, force: true }));
   const dir = path.join(configHome, 'woodshed');
   fs.mkdirSync(dir);
-  fs.writeFileSync(path.join(dir, 'cli.json'), JSON.stringify({ current: origin, consoles: { [origin]: { store: 'file' } } }));
+  fs.writeFileSync(path.join(dir, 'cli.json'), JSON.stringify({ current, consoles: { [origin]: { store: 'file' } } }));
   const opened = [];
   const requests = [];
   return {
@@ -74,10 +74,10 @@ test('GitHub App access exits 2, prints the link and retry, and opens only from 
   const plain = await c.run('add', 'acme/web');
   assert.equal(plain.code, 2);
   assert.equal(plain.out.split('\n').find((line) => line.startsWith('Open ')), `Open ${install}`);
-  assert.match(plain.out, /run woodshed repo add acme\/web again/);
+  assert.equal(plain.out.split('\n').at(-2), `After granting access, run woodshed repo add acme/web --console ${origin} again.`);
   const json = await c.run('add', 'acme/web', '--json', '--no-browser');
   assert.equal(json.code, 2);
-  assert.deepEqual(JSON.parse(json.out), { event: 'error', ...options.body, repo: 'acme/web' });
+  assert.deepEqual(JSON.parse(json.out), { event: 'error', ...options.body, console: origin, repo: 'acme/web' });
   assert.deepEqual(c.opened, [install]);
   const noTerminal = cliFor(t, { ...options, isTerminal: false });
   assert.equal((await noTerminal.run('add', 'acme/web')).code, 2);
@@ -86,6 +86,13 @@ test('GitHub App access exits 2, prints the link and retry, and opens only from 
   const blocked = await untrusted.run('add', 'acme/web', '--json');
   assert.equal(JSON.parse(blocked.out).url, null);
   assert.deepEqual(untrusted.opened, []);
+});
+
+test('a retry keeps the secondary console and the requested project name', async (t) => {
+  const c = cliFor(t, { status: 409, body: { status: 'needs-github-app', url: install }, current: 'https://default.example' });
+  const out = await c.run('add', 'acme/web', '--name', 'web-tools', '--no-browser', '--console', origin);
+  assert.equal(out.code, 2);
+  assert.equal(out.out.split('\n').at(-2), `After granting access, run woodshed repo add acme/web --name web-tools --console ${origin} again.`);
 });
 
 test('repo usage, permission refusals, sign-in and failures have distinct exit codes', async (t) => {

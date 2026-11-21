@@ -36,6 +36,8 @@ function currentKey(privateKey) {
 }
 
 const GITHUB_HEADERS = { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'content-type': 'application/json' };
+export const APP_PAGE_SIZE = 100;
+export const INSTALLATION_REPO_PAGES = 10;
 
 /**
  * @param {{appId: string, installationId: string, privateKey: string|(() => string|null), repo: string,
@@ -131,25 +133,25 @@ export function createAppApi({ appId, privateKey, fetchImpl = fetch, now = Date.
      *   each is on, and its settings page on GitHub, where the repos it may reach are picked
      */
     async installations() {
-      const answer = await call('GET', '/app/installations?per_page=100');
+      const answer = await call('GET', `/app/installations?per_page=${APP_PAGE_SIZE}`);
       return (Array.isArray(answer) ? answer : []).map((i) => ({ id: String(i.id), account: i.account?.login ?? '', settingsUrl: i.html_url ?? '' }));
     },
     /**
      * Asked with a token of the installation narrowed to reading metadata, a page of 100 at a time.
      * @returns {Promise<{repo: string, private: boolean}[]>}  the repos the installation may reach
      */
-    async installationRepos(installationId, { maxPages = 10 } = {}) {
+    async installationRepos(installationId, { maxPages = INSTALLATION_REPO_PAGES } = {}) {
       const { token } = await call('POST', `/app/installations/${encodeURIComponent(installationId)}/access_tokens`, { permissions: { metadata: 'read' } });
       const repos = [];
       for (let page = 1; page <= maxPages; page += 1) {
-        const res = await fetchImpl(`${GITHUB_API}/installation/repositories?per_page=100&page=${page}`, {
+        const res = await fetchImpl(`${GITHUB_API}/installation/repositories?per_page=${APP_PAGE_SIZE}&page=${page}`, {
           headers: { authorization: `Bearer ${token}`, ...GITHUB_HEADERS },
         });
         const answer = await res.json().catch(() => ({}));
         if (!res.ok) throw Object.assign(new Error(`GitHub refused the installation's repos: HTTP ${res.status} ${String(answer.message ?? '').slice(0, 200)}`), { status: res.status });
         const got = answer.repositories ?? [];
         repos.push(...got.map((r) => ({ repo: r.full_name, private: Boolean(r.private) })));
-        if (got.length < 100) break;
+        if (got.length < APP_PAGE_SIZE) break;
       }
       return repos;
     },

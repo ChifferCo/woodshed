@@ -50,7 +50,8 @@ line).
 ## Choosing repos
 
 `woodshed repo list --json` returns a `repo-list` event with `projects`, `available` and `canChange`. Each row's
-`githubAppAccess` is `true` or `false` when known and `null` otherwise. If the inventory is unavailable, `choicesError`
+`githubAppAccess` is `true` or `false` when known and `null` otherwise. `choicesIncomplete` flags a partial inventory.
+If the inventory is unavailable, `choicesError`
 explains why and the connected repos still appear. Members can list repos they can start sessions on. Only admins can
 see the console's GitHub App inventory or add and remove repos.
 

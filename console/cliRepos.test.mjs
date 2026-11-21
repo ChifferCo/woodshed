@@ -6,13 +6,14 @@ import { createAddedProjects, createHostProjects, repoChecker, repoLister } from
 import { createCliSignIn } from './cliSignIn.mjs';
 import { liveConfig } from './consoleSettings.mjs';
 import { createHostedMembers } from './hostedMembers.mjs';
+import { APP_PAGE_SIZE, INSTALLATION_REPO_PAGES } from './githubApp.mjs';
 import { createHandler } from './server.mjs';
 
 const REPOS = '/api/cli/repos';
 const GRANT = 'https://github.com/organizations/acme/settings/installations/1';
 const INSTALL = 'https://github.com/apps/woodshed-example/installations/new';
 
-async function consoleFor(t, { hosted = false, roster = true } = {}) {
+async function consoleFor(t, { hosted = false, roster = true, hostComplete = false } = {}) {
   const app = {
     repos: new Set(['acme/app', 'acme/web', 'acme/private']),
     installations: async () => [{ id: '1', account: 'acme', settingsUrl: GRANT }],
@@ -29,7 +30,7 @@ async function consoleFor(t, { hosted = false, roster = true } = {}) {
   const config = liveConfig(base, store, { hostProjects });
   const host = hosted ? {
     names: false,
-    async list() { return { repos: [...app.repos], grant: [{ account: 'acme', href: GRANT }], install: null }; },
+    async list() { return { repos: [...app.repos], grant: [{ account: 'acme', href: GRANT }], install: null, complete: hostComplete }; },
     async add(args) {
       calls.push(['add', args]);
       if (!app.repos.has(args.repo)) throw Object.assign(new Error('Give the App access and try again.'), { shown: true, link: { href: GRANT } });
@@ -106,6 +107,21 @@ test('a GitHub inventory failure still lists connected repos with unknown access
   assert.equal(body.available, null);
   assert.deepEqual(body.projects.map((p) => [p.repo, p.githubAppAccess]), [['acme/app', null], ['acme/old', null]]);
   assert.match(body.choicesError, /GitHub did not list the App's repos/);
+});
+
+test('a GitHub inventory at a read limit reports missing repos as unknown', async (t) => {
+  const c = await consoleFor(t);
+  const installations = await c.app.installations();
+  c.app.installations = async () => Array.from({ length: APP_PAGE_SIZE }, (_, i) => ({ ...installations[0], id: String(i) }));
+  const cappedInstallations = (await c.request()).body;
+  assert.equal(cappedInstallations.choicesIncomplete, true);
+  assert.equal(cappedInstallations.projects.find((p) => p.repo === 'acme/old').githubAppAccess, null);
+
+  c.app.installations = async () => installations;
+  c.app.installationRepos = async () => Array.from({ length: APP_PAGE_SIZE * INSTALLATION_REPO_PAGES }, (_, i) => ({ repo: `acme/repo-${i}` }));
+  const cappedRepos = (await c.request()).body;
+  assert.equal(cappedRepos.choicesIncomplete, true);
+  assert.equal(cappedRepos.projects.find((p) => p.repo === 'acme/old').githubAppAccess, null);
 });
 
 test('the authenticated routes reject browser calls, other methods, lost write access, and member writes', async (t) => {
@@ -191,6 +207,13 @@ test('a hosted link for another account cannot be used to grant access to the re
   assert.deepEqual(await c.change('another/web'), {
     code: 409, body: { error: 'This workspace uses the GitHub App on acme. Use the workspace for another to add its repo.' },
   });
+});
+
+test('a complete hosted inventory reports missing repos as inaccessible', async (t) => {
+  const c = await consoleFor(t, { hosted: true, hostComplete: true });
+  const { body } = await c.request();
+  assert.equal(body.projects.find((p) => p.repo === 'acme/app').githubAppAccess, true);
+  assert.equal(body.projects.find((p) => p.repo === 'acme/old').githubAppAccess, false);
 });
 
 test('a hosted console without an admin roster refuses CLI changes even with browser identity headers', async (t) => {

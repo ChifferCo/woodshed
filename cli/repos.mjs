@@ -43,10 +43,10 @@ export async function repoCommand({ origin, args, rest, browser, help }, { stdou
     // Only open a GitHub web page. The console supplies the installation or the App's install page.
     const url = typeof body.url === 'string' ? URL.parse(body.url) : null;
     const href = url?.origin === 'https://github.com' && !url.username && !url.password ? url.href : null;
-    if (json) emit({ event: 'error', status: 'needs-github-app', repo, error: message, url: href });
+    if (json) emit({ event: 'error', status: 'needs-github-app', console: origin, repo, error: message, url: href });
     say(message);
     if (href) say(`Open ${href}`);
-    say(`After granting access, run woodshed repo add ${repo}${named ? ` --name ${name}` : ''} again.`);
+    say(`After granting access, run woodshed repo add ${printable(repo)}${named ? ` --name ${printable(name)}` : ''} --console ${origin} again.`);
     if (href && browser && isTerminal) open(href);
     return EXIT.waiting;
   }
@@ -62,6 +62,7 @@ export async function repoCommand({ origin, args, rest, browser, help }, { stdou
     else {
       say(body.available.length ? 'Available to add' : 'No more repos listed to add.');
       for (const project of body.available) say(`  ${printable(project.repo)} · ${appAccess(project)}`);
+      if (body.choicesIncomplete) say('Some GitHub App repos could not be listed.');
     }
   } else {
     if (typeof body.repo !== 'string' || typeof body.name !== 'string') throw fail(`${origin} did not confirm the repo change`);

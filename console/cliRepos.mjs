@@ -17,7 +17,7 @@ function githubAppLink(href) {
 function repoList(projects, choices, canChange) {
   const connected = new Set(projects.map((p) => p.repo.toLowerCase()));
   const reachable = new Set(choices?.repos.map((p) => p.repo.toLowerCase()));
-  const githubApp = choices?.via === 'app' || (choices?.via === 'host' && Boolean(choices.install || choices.grant.length));
+  const githubApp = choices?.via === 'app' || (choices?.via === 'host' && Boolean(choices.complete || choices.install || choices.grant.length));
   const complete = choices?.via === 'app' ? !choices.incomplete : choices?.complete === true;
   return {
     canChange,
@@ -27,6 +27,7 @@ function repoList(projects, choices, canChange) {
     })),
     available: choices?.repos.filter((p) => !connected.has(p.repo.toLowerCase()))
       .map(({ repo }) => ({ repo, githubAppAccess: githubApp ? true : null })) ?? null,
+    ...(choices?.incomplete && { choicesIncomplete: true }),
   };
 }
 
