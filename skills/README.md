@@ -21,7 +21,7 @@ mkdir -p "${CODEX_HOME:-$HOME/.codex}/skills" && cp -R skills/woodshed "${CODEX_
 ```
 
 The link follows the checkout as you pull; copy it again after a pull for Codex. To give it to one project only, put it
-in that project's `.claude/skills/` instead. A new conversation picks it up: ask it
+in that project's `.claude/skills/` (Claude Code) or `.codex/skills/` (Codex) instead. A new conversation picks it up: ask it
 to "start a Woodshed session on acme/app".
 
 The skill says which change each command arrives in, and checks `woodshed --help` before using one, so an older CLI

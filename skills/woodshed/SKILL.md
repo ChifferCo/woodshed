@@ -1,6 +1,6 @@
 ---
 name: woodshed
-description: Use the `woodshed` command line to work with a Woodshed console for the person: sign in, start a cloud session and follow it, list, stop, resume or remove sessions, give one more time before a long task, run a command in a session, bring a session's port to localhost, print its app's address, and carry Claude settings to and from private sessions. Use when the person asks to start or check a Woodshed session, to run or preview something in one, to keep one from pausing, or to sync their Claude settings with Woodshed.
+description: "Use the `woodshed` command line to work with a Woodshed console for the person: sign in, start a cloud session and follow it, list, stop, resume or remove sessions, give one more time before a long task, run a command in a session, bring a session's port to localhost, print its app's address, carry Claude settings to and from private sessions, and ask the console to turn on a repo's review. Use when the person asks to start or check a Woodshed session, to run or preview something in one, to keep one from pausing, to sync their Claude settings with Woodshed, or to turn on Woodshed's review for a repo."
 ---
 
 # Work with Woodshed from the command line
@@ -32,7 +32,7 @@ Every command uses the same codes:
 | `0` | Done. | Carry on. |
 | `2` | Waiting on a person: a sign-in to approve, a session that needs them, a confirmation, a list they must see first. | Tell the person exactly what is needed, with the link or code the command printed, then **stop**. Do not retry in a loop, and do not try to answer it yourself. |
 | `3` | Refused: not theirs, not allowed, an address it will not send a token to. | Report the reason as printed. Do not work around it (another session, another console, a different route, `--yes` they did not ask for). |
-| `1` | Anything else: the console not reached, out of range, a bug. | Read the message; retry once if it was the network, else report it. |
+| `1` | Anything else: the console not reached, out of range, a bug. | Read the message; retry once if it was the network, else report it. A `session new` or `resume` whose answer was lost may have started anyway: run `session list` before trying again. |
 
 `woodshed tunnel` is the one exception: it exits with the remote line's own code, and `255` when the pipe itself failed
 ("Run a command in a session", below). It also ignores `--json`: its output is the line's.
@@ -78,11 +78,13 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed settings plan [--pull] [--only …] [--own-files <checkout>]` | Lists what push (or pull) would do with each item; sends and writes nothing | 0 | #278 |
 | `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude settings, skills, MCP servers, and a checkout's ignored env files | 0, 2 not listed before or not confirmed | #278 |
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | #278 |
-| `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in their running session, in its checkout | the line's code, 255 the pipe failed | #280 |
+| `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in their running session, in its checkout | the line's code, 255 the pipe failed | main |
 | `woodshed forward <id> <port>[:<local>]...` | The session's port on this computer's `localhost`, until stopped | 0 at Ctrl-C, 2, 3, 1 | #281 |
 | `woodshed forward --auto <id>` | The same for every port the session listens on | as above | #281 |
 | `woodshed open <id>` | The session's app address, `https://<id>.<app domain>/` | 0, 2, 1 no app names on this console | #281 |
-| `woodshed review enable [--qa] <owner/repo>` | Asks the console to turn on the repo's review; prints the approval link and waits | planned: 0 applied, 2 waiting or expired, 3 refused, 1 failed | not opened yet (stacked on #276) |
+| `woodshed review enable [--qa] [--no-wait] <owner/repo>` | Asks the console to turn on the repo's review; prints the approval page and waits until it is decided | 0 applied, 2 waiting (`--no-wait`) or expired, 3 refused or withdrawn, 1 a step failed | #285 |
+| `woodshed review status <id> [--wait]` | One request: its state and steps | as `enable`; 2 while it waits | #285 |
+| `woodshed review list` | The requests they asked for, newest first | 0 | #285 |
 
 "main" is in every copy. A pull request number means the command arrives when that pull request merges; until then,
 section 1 applies. Session ids are 8 hex characters, as `session list` prints them.
@@ -173,24 +175,27 @@ skills, user-scope MCP servers). `settings` joins this computer to that.
    computer (an MCP server's command, hooks, a skill's shell lines). Those are held until a list has shown them, so that
    **the person** sees what will run here. Show them that list and wait for their yes before `woodshed settings pull`.
    Never run `plan --pull` just to unlock a held item. `--replace` overwrites files that differ (a copy of each goes
-   under `~/.config/woodshed/backups/`): only when they ask.
+   under `~/.config/woodshed/backups/`): only when they ask, and preview it with the same flags as the pull
+   (`woodshed settings plan --pull --replace`, and the same `--only`), so the list shows what it replaces.
 
 Refused items stay refused: MCP logins, keys in an MCP server's `env` or headers, files that look like secrets. Do not
 rename or edit a file to get it past the check.
 
 ### Turn on a repo's review
 
-Not in any copy of the CLI yet: `woodshed review enable` is planned in a pull request stacked on #276, which adds the
-console's side (a request an admin of the repo approves). As planned, it asks the console, prints the approval link and
-waits: 0 applied, 2 still waiting (or expired after 24 hours), 3 refused, 1 failed. Once `woodshed --help` lists
-`review`, read `woodshed review --help` for what shipped, then:
-
 ```sh
-woodshed review enable acme/app --json        # --qa to add QA
+woodshed review enable --no-wait acme/app --json        # --qa to add QA in the repo's CI
 ```
 
-Give the person the approval link, and on exit 2 stop. The console writes the workflows and sets the key with its own
-GitHub App and Anthropic key once an admin approves: you never see the key, and you never need an admin token.
+It asks the console and returns at once with exit 2: the first line, `{"event":"requested",…}`, has the request's `id`
+and its approval page, `url`. Give the person the link and stop. An admin of the repo approves it on the console, which
+then writes the workflows and sets the key with its own GitHub App and Anthropic key: you never see the key, and you
+never need an admin token. Without `--no-wait` the command waits until someone decides, up to 24 hours, so use it only
+when the person is approving it now.
 
-Until then, turning review on is the person's own step: `scripts/enable-review.sh` in a Woodshed checkout, run by them
-with their own `gh` and key. Do not run it for them, and do not ask for the key.
+Later, `woodshed review status <id> --json` says where it got to: exit 0 applied, 2 still waiting (or expired after
+24 hours), 3 refused or withdrawn, 1 a step failed (which one, and GitHub's reason, if they can write to the repo).
+Report a failure as it is: the console's page says what the repo or its GitHub App lacks.
+
+Do not run `scripts/enable-review.sh` for the person, and do not ask for their key or an admin token, whether or not
+this command is there yet.
