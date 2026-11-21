@@ -1,6 +1,6 @@
 ---
 name: woodshed
-description: "Use the `woodshed` command line to work with a Woodshed console for the person: sign in, start a cloud session and follow it, list, stop, resume or remove sessions, give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, and turn on Woodshed's review for a repo. Use when the person asks to start or check a Woodshed session, to run something in one, to keep one from pausing, to sync their Claude settings with Woodshed, or to turn on Woodshed's review for a repo."
+description: "Use the `woodshed` command line to work with a Woodshed console for the person: sign in, start a cloud session and follow it, list, stop, resume or remove sessions, give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, change their choices on My settings (terminal, reviews, default repo), and turn on Woodshed's review for a repo. Use when the person asks to start or check a Woodshed session, to run something in one, to keep one from pausing, to sync their Claude settings with Woodshed, to change a My settings choice, or to turn on Woodshed's review for a repo."
 ---
 
 # Work with Woodshed from the command line
@@ -70,7 +70,8 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed login [--no-browser]` | Prints a code and opens the console's `/cli` page; waits up to 10 minutes for the person to approve | 0 signed in, 2 code expired, 3 denied | main |
 | `woodshed logout` | Ends this computer's sign-in | 0 | main |
 | `woodshed status` | The console, its org, who is signed in, and the Herdr `hc` here with its version | 0, 2 not signed in | main |
-| `woodshed session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--no-wait\|--herdr] ["prompt"]` | Starts a private session and waits, step by step, until it runs; `--herdr` then adds it to Herdr as below | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on, or no `hc` | main |
+| `woodshed session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--no-wait\|--connect\|--herdr] ["prompt"]` | Starts a private session and waits, step by step, until it runs; `--connect` then puts the terminal on its agent's, `--herdr` adds it to Herdr as below | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on, or no `hc` | main |
+| `woodshed session connect <id> [--shell]` | Puts the person's own terminal on the session's agent, or its shell; resumes a paused one first. Interactive: suggest it to them, and use `tunnel` yourself | 0 disconnected, 1 could not open, 2 sign-in ended, 3 shared or saw production | main |
 | `woodshed session herdr <id>` | Makes one of their sessions a machine in Herdr, `woodshed-<id>`, in the app's sidebar; resumes a paused one first | 0 connected, 2 needs the person, 1 failed, 3 no `hc` 0.1.21 or newer, shared, or saw production | main |
 | `woodshed session list [--all]` | Their sessions and the shared ones they see, with state and when each pauses | 0 | main |
 | `woodshed session get <id>` | One session: state, branch, pull request, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
@@ -83,6 +84,9 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude settings, skills, MCP servers, and a checkout's ignored env files | 0, 2 not listed before or not confirmed | #278 |
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | #278 |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in their running session, in its checkout | the line's code, 255 the pipe failed | main |
+| `woodshed config list` | Their choices on My settings: `terminal`, `reviews`, `codex-reviews`, `claude-token-shared`, `default-repo`, `github-name`, `github-email` | 0 | main |
+| `woodshed config get <key>` | One of them, bare (an empty line for none) | 0, 3 unknown key or a secret | main |
+| `woodshed config set <key> <value>` | Changes it through My settings' own route and checks | 0, 3 unknown key, invalid value (it lists the valid ones), a secret, or a step only My settings does | main |
 
 "main" is in every copy. A pull request number means the command arrives when that pull request merges; until then,
 section 1 applies. Session ids are 8 hex characters, as `session list` prints them.
@@ -152,6 +156,21 @@ line started, so start a server that must outlive it with `setsid … &`.
 
 The command line has no command for this. Give the person the session's console page (`url` in `session get --json`),
 whose Open app opens it.
+
+### Change a choice on My settings
+
+```sh
+woodshed config list --json
+woodshed config set terminal herdr --json
+```
+
+Keys and values: `terminal` (`tmux`, `herdr`), `reviews` (`none`, `claude`, `codex`, `both`, `default`),
+`codex-reviews` and `claude-token-shared` (`on`, `off`), `default-repo` (`owner/name`), `github-name`, `github-email`.
+Change one only when the person asks. `set` prints a `note` when the change reaches only sessions started after it
+(`terminal`: running sessions keep theirs); pass it on. Exit 3 is final: an invalid value says `Valid: …` (pick from
+that, or ask), and `On My settings: <link>` means a step only the person does on the page first (save a Claude token or
+Codex sign-in, connect GitHub): give them the link and stop. Secrets are never set here: `config set claude-token` and
+the like refuse without sending anything. Never ask the person for a token to get past that.
 
 ### Carry Claude settings
 

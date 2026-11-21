@@ -1,10 +1,24 @@
 # The woodshed command line
 
 `woodshed` signs in to a Woodshed console from your computer, says who is signed in, starts and manages your sessions,
-opens a pipe into your running sessions, and adds them to Herdr's sidebar. Later commands (settings) are added here. It is plain Node 22 with no
-dependencies, like the rest of Woodshed.
+opens a pipe or a terminal into your running sessions, adds them to Herdr's sidebar, and reads and sets your choices
+on My settings. Later commands are added here. It is plain Node 22 with no dependencies, like the rest of Woodshed.
 
 ## Running it
+
+With Node 22 or newer, install or upgrade the CLI on macOS or Linux:
+
+```sh
+curl -fsSL https://woodshed.run/cli | sh
+```
+
+The installer puts the command in `~/.woodshed/cli` and links it from `~/.local/bin` (or `~/bin` if that is on
+PATH instead). If needed, it prints the line to add to your shell profile. Then ask your agent to run `woodshed login`.
+To install the optional Claude Code and Codex skill, run:
+
+```sh
+curl -fsSL https://woodshed.run/cli | sh -s -- --yes
+```
 
 From a checkout of this repository:
 
@@ -13,13 +27,21 @@ node cli/woodshed.mjs login --console https://console.example.com
 node cli/woodshed.mjs status
 ```
 
-To type `woodshed` instead, link it onto your PATH once:
+On Windows, run it with `node cli\woodshed.mjs` from the checkout.
+
+To type `woodshed` from a checkout on macOS or Linux, link it onto your PATH once:
 
 ```sh
 ln -s "$PWD/cli/woodshed.mjs" ~/.local/bin/woodshed
 ```
 
-An installer (`curl … | bash`, npm) comes later.
+### Packing the CLI for the website
+
+The repository-root `package.json` lists the runtime files and bundled skill. Update its `files` list when the CLI
+needs another file. Run `node --test cli/package.test.mjs` to pack, extract and run the standalone CLI.
+
+Woodshed Cloud's Site workflow pins a core commit, runs `npm pack --offline --ignore-scripts` on it, and publishes
+the tarball and its SHA-256 on woodshed.run. The site's installer checks that digest before installing the CLI.
 
 ## Commands
 
@@ -63,7 +85,8 @@ before the line ends (Ctrl-C, a cut network) hangs up everything the line starte
 
 | Command | What it does | Exits |
 | --- | --- | --- |
-| `session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--herdr] ["prompt"]` | Starts a private session, as My Woodshed's New session does: on `R` (`owner/name`, default the repo New session opens on for you), working on branch `B` or a pull request or issue (`123`, `pr 123`, its URL), with that agent and model. Then it waits, printing each start step as it is done, until the session runs. `--no-wait` returns once the console has it. Ctrl-C stops the wait, not the session. `--herdr` then adds it to Herdr, as `herdr` does (below), and checks for `hc` before starting anything. | 0 running (and with `--herdr`, added), 2 running and needs you, 1 failed or stopped (or `hc` could not add it), 3 a repo you cannot start on, or no `hc` |
+| `session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--connect\|--herdr] ["prompt"]` | Starts a private session, as My Woodshed's New session does: on `R` (`owner/name`, default the repo New session opens on for you), working on branch `B` or a pull request or issue (`123`, `pr 123`, its URL), with that agent and model. Then it waits, printing each start step as it is done, until the session runs. `--no-wait` returns once the console has it. Ctrl-C stops the wait, not the session. `--connect` then puts this terminal on its agent's, as `connect` does; `--herdr` adds it to Herdr, as `herdr` does (below), and checks for `hc` before starting anything. | 0 running (with `--connect`, until you disconnect; with `--herdr`, added), 2 running and needs you, 1 failed or stopped (or `hc` could not add it), 3 a repo you cannot start on, or no `hc` |
+| `session connect <id> [--shell]` | Puts this terminal on one of your sessions' agent, as its TUI tab shows it (claude or codex, in tmux or Herdr), or with `--shell` on its shell, the Terminal tab's. A paused or stopped one is resumed first. Below. | 0 disconnected (Ctrl-\\) or the session's terminal closed normally, 2 the sign-in ended, 1 could not open or reconnect, or the session's terminal closed it on an error, 3 a shared session, or one that has seen production data |
 | `session herdr <id>` | Makes one of your sessions a machine in Herdr, `woodshed-<id>`, so it shows in the app's sidebar beside this computer: below. A paused or stopped one is resumed first, and waited for as `resume` does. | 0 connected, 2 connected and the session needs you, 1 its start failed or `hc` could not add it, 3 no `hc`, one older than 0.1.21, a shared session, or one that has seen production data |
 | `session list [--all]` | Your sessions and the shared ones you can see: id, state (the page's words), whose, when it pauses or stops by itself, project and title. Ended shared sessions only with `--all`. | 0 |
 | `session get <id>` | One session: state, branch, agent, pull request, when it pauses or stops, and the hours it runs on. | 0, 1 none you can see |
@@ -82,6 +105,25 @@ then a `status` event as it goes in line or starts, a `step` event per start ste
 `failed` or `stopped` with the session; `list` one `{"console","login","sessions":[…]}`, `get` one `{"session":{…}}`.
 `herdr` (and `new --herdr` after its `running`) ends with `{"event":"connected","session":{…},"machine":{"name","action","state"},"agent":{"inHerdr","address"}}`,
 and `remove`'s `removed` event has `machine`: `{"name","removed"}`, or null with no `hc` here.
+
+## A terminal on a session
+
+`session connect <id>` makes this terminal the session's, as the console's tabs are in a browser: what it draws comes
+here, what you type goes there, and its size follows this window. It needs a terminal (not a pipe or a file: for a
+command, `woodshed tunnel`), and has no `--json`.
+
+- **The agent's terminal**, by default: claude or codex as the TUI tab shows it, in tmux, or in Herdr when its owner
+  picked Herdr. **`--shell`**: the Terminal tab's shell, a tmux of its own in the checkout. Each is the tab's own, so
+  what you type shows in the browser too, and the other way round.
+- **Ctrl-\\ disconnects** (as it detaches in Herdr's `hc`); the session and its terminal go on, and `connect` again picks
+  it up as it is. tmux's own detach (its prefix, then `d`) or the program ending also closes it.
+- **A dropped connection** (Wi-Fi, a laptop that slept, a console restarted) is opened again for a minute while the
+  session runs, and the terminal is drawn again; a ping every 30 s finds one that went quiet. A session that paused or
+  stopped meanwhile is said, and `connect` again resumes it.
+- **How:** one websocket per connection, `/api/tunnel/term/<id>` or `/api/tunnel/shell/<id>`, with this computer's token
+  (console/README.md, "A terminal from the command line"). The console hands it to the session's ttyd with ttyd's own
+  credential, which never reaches this computer. Only your own sessions, never one that has seen production data, as
+  for the tunnel. Being connected is not activity: the session pauses when idle as it would without it.
 
 ## Adding a session to Herdr
 
@@ -115,12 +157,47 @@ hc machine add --json --name woodshed-<id> --install \
 `hc` runs with your environment, so `HC_SESSION` and the XDG folders pick the core it talks to, as they do for `hc`
 itself. `WOODSHED_HC_BIN` names another `hc` than the PATH's.
 
-Besides its own `/api/cli/*` and the tunnel's `/api/tunnel/exec/<id>`, the console lets the token reach these routes and
+Besides its own `/api/cli/*`, the tunnel's `/api/tunnel/exec/<id>` and the terminals' `/api/tunnel/term|shell/<id>`, the console lets the token reach these routes and
 no others (`console/cliSessions.mjs`), each as its person:
 
 - `GET /api/sessions`, `GET /api/my/projects`
 - `POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume`, `POST /api/my/sessions/<id>/remove`
 - `POST /api/sessions/<id>/stop`, `POST /api/sessions/<id>/extend`, `POST /api/sessions/<id>/limits`
+- `GET /api/cli/config`, and `woodshed config`'s writes: `POST /api/my/terminal`, `/api/my/reviews`,
+  `/api/my/codex-auth/reviews`, `/api/my/claude-token/shared`, `/api/my/projects/default`, `/api/my/github/identity`
+
+## Your choices on My settings
+
+`woodshed config` reads and sets the choices on your My settings page, through the page's own routes and the same checks
+(`config.mjs`, `console/cliConfig.mjs`). It never reads or sets a secret: your Claude token, Codex sign-in, env file
+values, own files and tmux lines are saved on My settings only, and `config set claude-token` (or `get`, or any such key)
+refuses with a pointer there, without asking the console. No message repeats a key or value it refused, so a token pasted in the
+wrong place never lands in a terminal's scrollback or an agent's captured output.
+
+| Command | What it does | Exits |
+| --- | --- | --- |
+| `config list` | Every key below and its value. | 0 |
+| `config get <key>` | One value, bare, for a script (an empty line for none). | 0, 3 unknown key or a secret |
+| `config set <key> <value>` | Changes it, and prints the new value. A change that reaches only sessions started after it says so. | 0, 3 unknown key, a value that is not valid (it lists the valid ones), a secret, or a step My settings needs first |
+
+| Key | Values | Route |
+| --- | --- | --- |
+| `terminal` | `tmux`, `herdr`: what your private sessions run their agent in. Your next private session starts in it; running ones keep theirs. | `POST /api/my/terminal` |
+| `reviews` | `none`, `claude`, `codex`, `both`, `default` (the most this console can run): who reviews your pull requests. | `POST /api/my/reviews` |
+| `codex-reviews` | `on`, `off`: reviews of your pull requests run Codex on your own sign-in. Needs a Codex sign-in saved on My settings. | `POST /api/my/codex-auth/reviews` |
+| `claude-token-shared` | `on`, `off`: shared sessions you start from GitHub run on your own Claude token. Needs a token saved on My settings. | `POST /api/my/claude-token/shared` |
+| `default-repo` | A repo you can start sessions on, as `owner/name` or its name on the console: where New session and `session new` open. | `POST /api/my/projects/default` |
+| `github-name`, `github-email` | What your sessions' commits say. Needs GitHub connected on My settings; setting one keeps the other. | `POST /api/my/github/identity` |
+
+A switch reads `on` only where it has effect, as the page draws it: `claude-token-shared` with no token saved reads
+`off`. A value that starts with `-` goes after `--` (`config set github-name -- -mia-`).
+Setting `default-repo` to the installation's default clears your personal repo override.
+
+With `--json`, `list` prints `{"console","config":{…}}`, `get` `{"key","value"}`, and `set`
+`{"event":"set","key","value","changed","note"?,"config":{…}}`.
+
+The console reads them for the token at `GET /api/cli/config`, which answers these keys and nothing else, and each
+`set` answers with that same view, never the page's whole My settings answer.
 
 ## Where the token is kept
 
@@ -130,11 +207,24 @@ One token per console, never in a command's arguments:
 - Linux with a Secret Service (a desktop session's keyring): libsecret, through `secret-tool` on stdin.
 - Otherwise, on macOS and Linux: `~/.config/woodshed/credentials.json` (or under `$XDG_CONFIG_HOME`), readable only by you (`0600`). `login`
   and `status --json` print its path when it is used.
+- Windows: `%LOCALAPPDATA%\woodshed\credentials-dpapi.json`, each token sealed with DPAPI for your Windows account and
+  for its console's address (a token copied under another console's address does not open), by Windows PowerShell 5.1
+  (which ships with Windows), given the token on stdin. Where DPAPI cannot seal (an SSH sign-in with a key has no logon
+  secret to seal with), `%LOCALAPPDATA%\woodshed\credentials.json`. Either is kept and read only when that folder is
+  the default one, `%USERPROFILE%\AppData\Local\woodshed`, as spelled and as resolved through links and junctions: a
+  new file on Windows takes its folder's ACL as it is made, and what is read from a folder someone else could replace
+  could be theirs (DPAPI opens a blob sealed for the whole computer for any account). `XDG_CONFIG_HOME` is not read on
+  Windows. The folder is made yours by Windows PowerShell, as `0700` is on macOS and Linux: your account its owner,
+  nothing inherited from the folder above, and full control for your account and Windows' own SYSTEM and Administrators
+  alone (which may open anything on the computer, as root may on macOS and Linux). `login` reads it back and checks each
+  by SID, or refuses to keep the token there and ends it at the console. `%LOCALAPPDATA%`, not `%APPDATA%`, which a
+  roaming profile copies to a server. PowerShell and the browser's `rundll32` are run from `System32` by their full
+  path, never through a shell, and PowerShell without `PSModulePath`, which a PowerShell 7 terminal sets to modules
+  Windows PowerShell cannot load. A token sealed at the desktop cannot be opened over SSH: `logout` there leaves it as it
+  is and exits 3, so signing out at the desktop still ends it at the console.
 
-Windows is not supported yet: with no keyring here and no file mode to rely on, `login` refuses to keep the token.
-
-`~/.config/woodshed/cli.json` says which console you used last and, for each, who is signed in and which of these holds
-the token. It never holds a token.
+`~/.config/woodshed/cli.json` (`%LOCALAPPDATA%\woodshed\cli.json` on Windows) says which console you used last and, for
+each, who is signed in and which of these holds the token. It never holds a token.
 
 ## The console's side
 
@@ -159,6 +249,7 @@ To try it by hand against `node console/bin/devConsole.mjs 7712` (no sign-in, so
 node cli/woodshed.mjs login --console http://localhost:7712
 node cli/woodshed.mjs status --json
 node cli/woodshed.mjs session list
+node cli/woodshed.mjs config list
 node cli/woodshed.mjs logout
 ```
 
