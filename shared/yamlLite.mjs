@@ -17,7 +17,7 @@ function failAt(num, message) {
 const QUOTE_OPENS = /^(\s*|(-\s+)+|.*:\s+|.*[[{,]\s*)$/;
 
 // `#` starts a comment at the start of a line or after a space, outside quotes.
-function stripComment(text) {
+export function stripComment(text) {
   let quote = null;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];

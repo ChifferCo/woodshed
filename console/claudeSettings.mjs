@@ -32,9 +32,9 @@ export function hasLiteralCredential(value) {
   return value.replace(/\$\{[A-Za-z_][A-Za-z0-9_]*(:-)?\}/g, '').replace(/^\s*(Bearer|Basic|Token)\s+/i, '').trim() !== '';
 }
 
-/** An MCP service can use any header for auth. Only references and empty headers travel between computers. */
-export function hasLiteralMcpHeader(server) {
-  return Object.values(server?.headers ?? {}).some((value) => typeof value !== 'string' || hasLiteralCredential(value));
+/** An MCP service or an HTTP hook can use any header for auth. Carry only references and empty headers. */
+export function hasLiteralHttpHeader(config) {
+  return Object.values(config?.headers ?? {}).some((value) => typeof value !== 'string' || hasLiteralCredential(value));
 }
 
 function laptopMcpProblem(value) {
@@ -43,8 +43,19 @@ function laptopMcpProblem(value) {
     server = JSON.parse(value);
   } catch {}
   if (!server || typeof server !== 'object' || Array.isArray(server)) return 'expected an MCP server definition as a JSON object';
-  if (hasLiteralMcpHeader(server)) return 'an MCP server sends a literal HTTP header: use a variable reference';
+  if (hasLiteralHttpHeader(server)) return 'an MCP server sends a literal HTTP header: use a variable reference';
   return null;
+}
+
+function hasLiteralHookHeader(value) {
+  let settings;
+  try {
+    settings = JSON.parse(Buffer.from(value, 'base64').toString('utf8'));
+  } catch {
+    return false;
+  }
+  return Object.values(settings?.hooks ?? {}).some((groups) => Array.isArray(groups)
+    && groups.some((group) => Array.isArray(group?.hooks) && group.hooks.some(hasLiteralHttpHeader)));
 }
 
 function isItemId(id) {
@@ -143,6 +154,9 @@ export function createClaudeSettings({ store }) {
       const laptopItem = (id) => fromLaptop && isMcpServerItem(id);
       let sessionChanges = false;
       for (const [id, value] of changes) {
+        if (fromLaptop && id === '.claude/settings.json' && hasLiteralHookHeader(value)) {
+          throw Object.assign(new Error('a hook sends a literal HTTP header: use a variable reference'), { shown: true, status: 400 });
+        }
         const fromComputer = laptopItem(id);
         const problem = fromComputer ? laptopMcpProblem(value) : itemProblem(id, value);
         if (problem) throw Object.assign(new Error(problem), { shown: true, status: 400 });

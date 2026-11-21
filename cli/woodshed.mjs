@@ -10,6 +10,7 @@
 //   woodshed session connect <id> [--shell]            this terminal on your session's agent, or its shell (terminal.mjs)
 //   woodshed session new|list|get|herdr|stop|resume|remove|extend|limits   sessions (sessions.mjs); herdr makes one
 //                                                     a machine in Herdr's hc (hc.mjs)
+//   woodshed review enable|status                      review this checkout's pull requests in Woodshed sessions (review.mjs)
 //   woodshed config list|get|set                       your choices on My settings, never a secret (config.mjs)
 //   woodshed settings plan|push|pull [...]             Claude and Codex settings, plugins, dotfiles and ignored files
 //                                                     (settings.mjs)
@@ -24,6 +25,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { createCredentials } from './credentials.mjs';
+import { reviewCommand } from './review.mjs';
 import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
 import { configCommand } from './config.mjs';
@@ -51,6 +53,7 @@ Commands:
             exit code, or 255 when the pipe could not open or broke
   session   start, list, connect to, add to Herdr, stop, resume and remove sessions, and give them more time:
             woodshed session --help
+  review    review this checkout's pull requests in Woodshed sessions: woodshed review --help
   config    your choices on My settings (terminal, reviews, default repo, …), never a secret: woodshed config --help
   settings  plan|push|pull [--only <what>,...] [--own-files <checkout>] [--replace]
             sync your Claude and Codex settings, plugins, dotfiles and ignored checkout files with private
@@ -90,6 +93,7 @@ export function parseArgs(argv) {
     } else if (arg === '--json') out.json = true;
     else if (arg === '--no-browser') out.browser = false;
     else if (arg === '--help' || arg === '-h') out.help = true;
+    else if (out.command === 'review' && arg !== '--console' && !arg.startsWith('--console=')) out.args.push(arg);
     else if (arg === '--console') {
       if (!argv[i + 1]) throw new CliError('--console needs a URL');
       out.console = argv[++i];
@@ -484,6 +488,7 @@ export async function main(argv, deps = {}) {
     command = args.command;
     json = args.json;
     if (args.command === 'session' && args.help) return await sessionCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
+    if (args.command === 'review' && args.help) return await reviewCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.command === 'config' && args.help) return await configCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.help || !args.command || args.command === 'help') {
       stdout.write(`${USAGE}\n`);
@@ -515,6 +520,11 @@ export async function main(argv, deps = {}) {
         via: (session) => viaCommand({ ...(deps.self ?? selfCommand({ env })), origin, session, configHome: env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : null }),
         fail: (message, opts) => new CliError(message, opts),
         confirm: deps.confirm ?? ((question) => confirmOnTerminal(question, stderr)),
+      });
+    }
+    if (args.command === 'review') {
+      return await reviewCommand({ origin, rest: args.args }, {
+        call, token: signedIn(origin).token, stdout, say, emit, json, EXIT, cwd: deps.cwd, fail: (message, opts) => new CliError(message, opts),
       });
     }
     if (args.command === 'config') {
