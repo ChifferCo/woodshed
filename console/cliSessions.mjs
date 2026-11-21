@@ -16,9 +16,16 @@
 // extend or limits, and otherwise the session pauses and stops as its limits say.
 //
 // Each answers as it does the console's page, by the same code: a token is a sign-in, never more than the person's own.
+// It is held to what a browser's sign-in is (auth.mjs): its person must still be on People (cliSignIn.mjs's `allowed`)
+// and still have write access on GitHub, asked at the token's first use and then every hour, as a browser's is. When
+// GitHub says no, every command line sign-in of theirs ends, as the browser's session does.
 // The page's writes need `x-woodshed: 1` and the console's own Origin, which keep another site's form or script from
 // riding the browser's cookie. A token is sent by the command line alone, never by a browser on its own, so neither is
 // asked of it; a call that carries an Origin is a page's, and is refused.
+
+const RECHECK_MS = 3_600_000;
+// GitHub not answering lets the call through, as auth.mjs does, and is asked again after this.
+const RETRY_MS = 5 * 60_000;
 
 const ROUTES = [
   ['GET', /^\/api\/sessions$/],
@@ -39,14 +46,58 @@ export function carriesCliToken(headers) {
 }
 
 /**
+ * Whether a command line token's person still has write access, asked of GitHub at first and then hourly.
+ * @param {{canWrite: ((login: string) => Promise<boolean>)|null, revokeAll: (login: string, by: string) => void,
+ *          now?: () => number}} deps  `canWrite` null where sign-in does not ask GitHub (no sign-in, or a hosting proxy)
+ * @returns {{allowed: (login: string|null) => Promise<boolean>}}
+ */
+export function createCliAccess({ canWrite, revokeAll, now = Date.now }) {
+  const checkedAt = new Map();
+  const retryAfter = new Map();
+  const checking = new Map();
+
+  async function check(login) {
+    let still;
+    try {
+      still = await canWrite(login);
+    } catch (err) {
+      retryAfter.set(login, now() + RETRY_MS);
+      console.warn('cliSessions: write access not rechecked', { login, retryInMs: RETRY_MS, message: String(err?.message ?? err).split('\n')[0] });
+      return true;
+    }
+    retryAfter.delete(login);
+    if (!still) {
+      checkedAt.delete(login);
+      console.log('cliSessions: refused, write access gone', { login });
+      revokeAll(login, 'write access gone');
+      return false;
+    }
+    checkedAt.set(login, now());
+    return true;
+  }
+
+  async function allowed(login) {
+    if (!canWrite || !login) return true;
+    if (now() - (checkedAt.get(login) ?? -Infinity) < RECHECK_MS) return true;
+    if (now() < (retryAfter.get(login) ?? 0)) return true;
+    // A start's wait asks every few seconds: those share one check rather than one call to GitHub each.
+    if (!checking.has(login)) checking.set(login, check(login).finally(() => checking.delete(login)));
+    return checking.get(login);
+  }
+
+  return { allowed };
+}
+
+/**
  * A call with a command line token, on any route but /api/cli/*.
  * @param {{req, res, url: URL, cli: ReturnType<typeof import('./cliSignIn.mjs').createCliSignIn>|null,
  *          reply: (res, status: number, body: object) => void,
  *          read: (res, pathname: string, login: string|null) => unknown,
- *          write: (req, res, pathname: string, login: string|null) => unknown}} args
+ *          write: (req, res, pathname: string, login: string|null) => unknown,
+ *          access?: ReturnType<typeof createCliAccess>|null}} args
  *   `read` and `write` answer the route as the console's page would, past its sign-in and its browser checks
  */
-export async function handleCliCall({ req, res, url, cli, reply, read, write }) {
+export async function handleCliCall({ req, res, url, cli, reply, read, write, access = null }) {
   const { pathname } = url;
   if (!cli) return reply(res, 404, { error: 'this console has no command line sign-in' });
   if (req.headers.origin) {
@@ -60,6 +111,7 @@ export async function handleCliCall({ req, res, url, cli, reply, read, write }) 
   const signedIn = cli.tokenFor(req.headers);
   if (!signedIn) return reply(res, 401, { error: 'not signed in, or the sign-in ended: run woodshed login' });
   const { id, login } = signedIn;
+  if (access && !(await access.allowed(login))) return reply(res, 401, { error: 'you no longer have write access to the repository: your command line sign-in ended' });
   if (req.method === 'GET') return read(res, pathname, login);
   // Writes only: the start's wait reads the list every few seconds.
   console.log('cliSessions: call', { login, token: id, path: pathname });

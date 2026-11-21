@@ -21,7 +21,7 @@ const iso = (ms) => new Date(ms).toISOString();
 // A console's real handler and command line sign-in over a made-up fleet: mia-dev's sessions, octocat's, and shared
 // ones. A session the fleet starts or resumes takes the next of `script`'s steps each time the list is read, as a start
 // moves while the command line waits. The command line is signed in as mia-dev before each test.
-async function consoleFor(t, { script = [], refuse = null, claudeToken = true } = {}) {
+async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app' } = {}) {
   let clock = T0;
   const now = () => clock;
   const store = { state: {}, save() {} };
@@ -33,6 +33,9 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true } 
     { ...base, id: 'eeee0005', owner: 'octocat', title: 'Octocat\'s own', status: 'running', state: 'working' },
     { ...base, id: 'cccc0003', owner: null, title: 'Shared \x1b]0;pwned\x07work', status: 'running', state: 'needs-you', assignee: 'octocat', kept: true },
     { ...base, id: 'ffff0006', owner: null, title: 'Long done', status: 'stopped', kept: false, cleanedAt: iso(T0) },
+    { ...base, id: '1a1a0007', owner: null, title: 'In review', status: 'running', state: 'done', slackWaiting: true, assignee: 'mia-dev', kept: true },
+    { ...base, id: '1b1b0008', owner: null, title: 'Merged one', status: 'stopped', kept: true, prClosedAt: iso(T0), prMerged: true },
+    { ...base, id: '1c1c0009', owner: null, title: 'Odd fields', status: 'weird\x1b[2J', assignee: 'x\x1b]0;pwned\x07', kept: true },
   ];
   const calls = [];
   const moving = new Map();
@@ -44,6 +47,8 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true } 
   };
   const fleet = {
     sessions: () => { move(); return sessions; },
+    // Done, with its pull request waiting for the review and suites before Slack: the page's in review.
+    slackWaiting: () => new Set(['1a1a0007']),
     find: (id) => sessions.find((s) => s.id === id) ?? null,
     startPrivate: async (args) => {
       calls.push(['start', args]);
@@ -86,7 +91,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true } 
   };
   const userSettings = { view: () => ({ claudeToken: { set: claudeToken } }), refresh: async () => {}, limitsFor: () => ({ idleMs: 2 * 3_600_000, lifetimeMs: 12 * 3_600_000 }) };
   const projectAccess = {
-    view: async () => ({ projects: [{ name: 'app', repo: 'acme/app' }, { name: 'tools', repo: 'acme/tools' }], defaultProject: 'app', saved: false }),
+    view: async () => ({ projects: [{ name: 'app', repo: 'acme/app' }, { name: 'tools', repo: 'acme/tools' }], defaultProject: savedDefault, saved: savedDefault !== 'app' }),
     forStart: async (login, name) => (name === undefined ? { name: 'app', repo: 'acme/app' } : ['app', 'tools'].includes(name) ? { name, repo: `acme/${name}` } : null),
   };
   const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
@@ -166,6 +171,12 @@ test('session new ends waiting on a person when the session needs them, and fail
   assert.doesNotMatch(noWait.out, /Waiting/);
 });
 
+test('session new with no --repo starts on the default the person saved, not the console\'s', async (t) => {
+  const c = await consoleFor(t, { savedDefault: 'tools', script: [{ status: 'running', state: 'working' }] });
+  assert.equal((await c.run(['session', 'new', '--no-wait', 'go'])).code, EXIT.done);
+  assert.equal(c.calls.find(([kind]) => kind === 'start')[1].project?.name, 'tools');
+});
+
 test('session new says what the console refuses, with its exit code', async (t) => {
   const c = await consoleFor(t, { claudeToken: false });
   const other = await c.run(['session', 'new', '--repo', 'someone/else', 'go']);
@@ -193,6 +204,12 @@ test('session list shows your sessions and the shared ones, their state, and whe
   assert.match(text.out, /bbbb0002 +paused +mine +- +app +Paused one/);
   assert.match(text.out, /cccc0003 +needs you +@octocat +in 42m, idle +app +Shared  ]0;pwned work/, 'no escape code reaches the terminal');
   assert.doesNotMatch(text.out, /\x1b|\x07/);
+  assert.match(text.out, /1a1a0007 +in review +you /, 'the page\'s words, and yours');
+  assert.match(text.out, /1b1b0008 +merged /);
+  assert.match(text.out, /1c1c0009 +paused +@x ]0;pwned /, 'an assignee a console made up reaches the terminal printable');
+  const odd = await c.run(['session', 'get', '1c1c0009']);
+  assert.match(odd.out, /State: +paused \(weird \[2J\)\nWhose: +shared, @x ]0;pwned  has it\n/);
+  assert.doesNotMatch(odd.out, /\x1b|\x07/);
   assert.doesNotMatch(text.out, /eeee0005/, 'another person\'s private session is not listed');
   assert.doesNotMatch(text.out, /ffff0006/, 'one that ended, only with --all');
   assert.match((await c.run(['session', 'list', '--all'])).out, /ffff0006 +deleted/);

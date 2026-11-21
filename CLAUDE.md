@@ -352,7 +352,8 @@ URL on top of each env file's Repo settings values
   answered (cli/README.md, "Sessions"): exit 3 with `does not reach this` is a route its token may not call
   (`cliSessions: refused, not a route the command line may call`; the list is in `console/cliSessions.mjs`), and
   `answered 404` a console from before it, or a hosting proxy that does not pass the session routes through with a
-  `wsc_` token. The console logs `cliSessions: call` with the login, the token's id and the path for each write, then
+  `wsc_` token. Exit 2 with `no longer have write access` is GitHub saying the person lost write access to the repo
+  (`cliSessions: refused, write access gone`), which ends all their command line sign-ins. The console logs `cliSessions: call` with the login, the token's id and the path for each write, then
   what the page's own call would: `fleet: starting session`, `fleet: session extended`, `fleet: session limits
   changed`. A wait that stays at `Waiting in line` is the person's limit (`fleet: private session waits in line, at the
   limit`); otherwise it reads the same start steps as the page's checklist, above. Ctrl-C stops the wait, not the

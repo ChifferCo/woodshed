@@ -77,16 +77,25 @@ export function stateOf(s) {
   if (s.status === 'running') {
     if (s.state === 'needs-you') return { key: 'needs-you', word: 'needs you' };
     if (s.state === 'working') return { key: 'working', word: 'working' };
+    if (s.state === 'done' && s.slackWaiting) return { key: 'review', word: 'in review' };
+    // Done with its turn while a background shell waits on a job of its pull request: it needs nobody yet.
+    if (s.state === 'done' && s.shells > 0 && s.prUrl) return { key: 'job', word: 'waiting on a job' };
     if (s.state === 'done') return { key: 'done', word: 'done' };
     if (s.state === 'starting') return { key: 'starting', word: 'starting' };
     return { key: 'idle', word: `${agent} exited` };
   }
-  if (s.status === 'queued') return s.owner ? { key: 'queued', word: 'waiting' } : { key: 'queued', word: 'queued' };
-  if (s.status === 'failed') return { key: 'failed', word: 'failed' };
-  if (s.cleanedAt) return { key: 'deleted', word: 'deleted' };
+  if (!LIVE.has(s.status) && s.kept && !s.owner) {
+    if (s.prClosedAt) return { key: 'merged', word: s.prMerged ? 'merged' : 'closed' };
+    if (s.status === 'failed') return { key: 'failed', word: 'failed' };
+    if (s.slackPostedAt) return { key: 'finished', word: 'finished' };
+    return { key: 'paused', word: s.stoppedBy ? 'stopped' : 'paused' };
+  }
+  if (s.status === 'queued' && s.owner) return { key: 'queued', word: 'waiting' };
+  if (s.status === 'failed' || (s.owner && s.stopReason === 'did not start in time')) return { key: 'failed', word: 'failed' };
   if (s.status === 'stopped' && s.owner && !s.stoppedBy && /^(idle|ran) for /.test(s.stopReason ?? '')) return { key: 'paused', word: 'paused' };
-  if (s.status === 'stopped' && !s.owner && s.kept) return { key: 'paused', word: s.stoppedBy ? 'stopped' : 'paused' };
-  return { key: s.status, word: String(s.status ?? 'unknown') };
+  if (s.cleanedAt) return { key: 'stopped', word: 'deleted' };
+  const word = printable(s.status, 30) || 'unknown';
+  return { key: word, word };
 }
 
 /** @returns {boolean}  a session that ended for good: nothing of it is kept to resume */
@@ -103,13 +112,13 @@ export function summary(s, { origin, login }) {
   return {
     id: s.id,
     title: printable(s.title),
-    status: s.status,
+    status: printable(s.status, 30),
     state: key,
     stateWord: word,
     mine: Boolean(s.owner) && s.owner === login,
     shared: !s.owner,
-    owner: s.owner ?? null,
-    assignee: s.assignee ?? null,
+    owner: printable(s.owner, 60),
+    assignee: printable(s.assignee, 60),
     project: printable(s.project, 60),
     repo: printable(s.repo, 100),
     branch: printable(s.branch, 200),
@@ -176,7 +185,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
 
   async function list() {
     const body = await ask('/api/sessions');
-    const login = typeof body.login === 'string' ? body.login : null;
+    const login = typeof body.login === 'string' ? printable(body.login, 60) : null;
     return { login, sessions: Array.isArray(body.sessions) ? body.sessions.filter((s) => s && ID_RE.test(s.id)) : [] };
   }
 
@@ -266,8 +275,14 @@ export async function sessionCommand({ origin, rest }, ctx) {
     throw fail(`You cannot start sessions on ${repo} on ${origin}: it is not one of its repos, or you have no write access to it. Yours: ${yours}`, { code: EXIT.refused, status: 'refused' });
   }
 
+  async function defaultProjectName() {
+    const body = await ask('/api/my/projects');
+    return typeof body.defaultProject === 'string' && body.defaultProject ? body.defaultProject : undefined;
+  }
+
   if (sub === 'new') {
-    const project = opts.repo ? await projectFor(opts.repo) : undefined;
+    // With no --repo, the one New session opens on for this person (a default they saved), never the console's own.
+    const project = opts.repo ? await projectFor(opts.repo) : await defaultProjectName();
     const body = {
       prompt: opts.prompt, workOn: opts.branch ?? '', agent: opts.agent ?? 'claude', model: opts.model ?? '', ...(project ? { project } : {}),
     };

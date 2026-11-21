@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 
 import { createCliSignIn } from './cliSignIn.mjs';
-import { carriesCliToken, cliMayCall } from './cliSessions.mjs';
+import { carriesCliToken, cliMayCall, createCliAccess } from './cliSessions.mjs';
 import { createHandler } from './server.mjs';
 
 function listen(server) {
@@ -12,7 +12,7 @@ function listen(server) {
 
 // A console where mia-dev and octocat each have a private session and a shared one runs, with a command line token
 // made for each of them, and cookies for the page.
-async function consoleFor(t, { people = null } = {}) {
+async function consoleFor(t, { people = null, writers = null } = {}) {
   let clock = Date.parse('2026-11-20T10:00:00Z');
   const store = { state: {}, save() {} };
   const cli = createCliSignIn({ store, now: () => clock, allowed: (login) => !people || people.has(login) });
@@ -42,7 +42,12 @@ async function consoleFor(t, { people = null } = {}) {
     },
   };
   const userSettings = { view: () => ({ claudeToken: { set: true } }), refresh: async () => {}, limitsFor: () => ({ idleMs: 2 * 3_600_000, lifetimeMs: 12 * 3_600_000 }) };
-  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => (cookie ? { login: /woodshed_session=([\w-]+)/.exec(cookie)[1] } : null) };
+  const asked = [];
+  const auth = {
+    enabled: () => true, available: () => true, sessionFor: async (cookie) => (cookie ? { login: /woodshed_session=([\w-]+)/.exec(cookie)[1] } : null),
+    // GitHub's answer on write access to the repo, as auth.mjs asks it.
+    canWrite: async (login) => { asked.push(login); return !writers || writers.has(login); },
+  };
   const config = { host: '127.0.0.1', publicUrl: 'http://pending', extraHosts: [], repo: 'acme/app', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
   const handle = createHandler({ config, fleet, auth, cli, userSettings });
   const server = http.createServer((req, res) => { handle(req, res); });
@@ -63,7 +68,7 @@ async function consoleFor(t, { people = null } = {}) {
     });
     return { status: res.status, body: await res.json().catch(() => null) };
   }
-  return { origin, call, calls, cli, tokens, tick: (ms) => { clock += ms; } };
+  return { origin, call, calls, cli, tokens, asked, tick: (ms) => { clock += ms; } };
 }
 
 test('the command line\'s routes are exactly the session ones', () => {
@@ -178,4 +183,51 @@ test('the page\'s cookie path is as it was: its writes still need x-woodshed and
   assert.equal(page.status, 201);
   assert.equal((await c.call('/api/my', { token: null, headers: { cookie } })).status, 200, 'the page reads what a token may not');
   assert.equal((await c.call('/api/sessions', { token: null })).status, 401, 'no cookie and no token');
+});
+
+test('a token whose person lost write access on GitHub stops, though they are still on People, and all their sign-ins end', async (t) => {
+  const writers = new Set(['octocat']);
+  const c = await consoleFor(t, { people: new Set(['mia-dev', 'octocat']), writers });
+  const refused = await c.call('/api/my/sessions', { method: 'POST', body: { prompt: 'go' } });
+  assert.equal(refused.status, 401);
+  assert.match(refused.body.error, /no longer have write access/);
+  assert.equal(c.calls.length, 0, 'nothing started');
+  assert.deepEqual(c.cli.list('mia-dev'), [], 'her command line sign-ins ended, as a browser\'s session does');
+  assert.equal((await c.call('/api/sessions')).status, 401);
+
+  assert.equal((await c.call('/api/sessions', { token: c.tokens.octocat })).status, 200);
+  assert.equal((await c.call('/api/sessions', { token: c.tokens.octocat })).status, 200);
+  assert.equal(c.asked.filter((l) => l === 'octocat').length, 1, 'asked once, then trusted for the hour');
+});
+
+test('write access is asked at a token\'s first use and then hourly, and GitHub not answering lets the call through', async () => {
+  let clock = 0;
+  let answer = true;
+  const asked = [];
+  const revoked = [];
+  const access = createCliAccess({
+    canWrite: async (login) => {
+      asked.push(login);
+      if (answer === 'down') throw new Error('gh: 502');
+      return answer;
+    },
+    revokeAll: (login, by) => revoked.push([login, by]),
+    now: () => clock,
+  });
+  assert.equal(await access.allowed('mia'), true);
+  const together = await Promise.all([access.allowed('mia'), access.allowed('mia')]);
+  assert.deepEqual([together, asked.length], [[true, true], 1], 'one ask for the hour');
+  answer = false;
+  clock += 59 * 60_000;
+  assert.equal(await access.allowed('mia'), true, 'within the hour, as a browser\'s sign-in');
+  clock += 2 * 60_000;
+  answer = 'down';
+  assert.equal(await access.allowed('mia'), true, 'GitHub down does not shut everyone out');
+  assert.equal(await access.allowed('mia'), true);
+  assert.equal(asked.length, 2, 'and is not asked again until the retry');
+  clock += 5 * 60_000;
+  answer = false;
+  assert.equal(await access.allowed('mia'), false);
+  assert.deepEqual(revoked, [['mia', 'write access gone']]);
+  assert.equal(await createCliAccess({ canWrite: null, revokeAll() {} }).allowed('mia'), true, 'no GitHub sign-in, nothing to ask');
 });
