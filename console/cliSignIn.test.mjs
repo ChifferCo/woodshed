@@ -226,7 +226,7 @@ test('a client address may have 5 sign-ins waiting, then is refused with how lon
   assert.equal(over?.status, 429);
   assert.equal(over.scope, 'client');
   assert.equal(over.retryAfter, 5 * 60, 'the oldest of its codes, started 5 minutes ago, has 5 minutes left');
-  assert.match(over.message, /5 sign-ins from your address are already waiting: approve one, or try again in 5 minutes/);
+  assert.match(over.message, /5 sign-ins from your address are already waiting: finish one you started, or try again in 5 minutes/);
   assert.throws(() => cli.start({ name: 'same /64', from: '::ffff:198.51.100.9' }), { status: 429 }, 'the same address however it is written');
   assert.ok(cli.start({ name: 'someone else', from: '203.0.113.7' }).deviceCode, 'another client still starts one');
 

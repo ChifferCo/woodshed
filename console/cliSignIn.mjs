@@ -159,7 +159,7 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
     const minutes = Math.ceil(retryAfter / 60);
     const later = `try again in ${minutes} minute${minutes === 1 ? '' : 's'}`;
     const message = scope === 'client'
-      ? `${most} sign-ins from your address are already waiting: approve one, or ${later}`
+      ? `${most} sign-ins from your address are already waiting: finish one you started, or ${later}`
       : `too many sign-ins are waiting on this console: ${later}`;
     return Object.assign(new Error(message), { status: 429, retryAfter, scope });
   }
