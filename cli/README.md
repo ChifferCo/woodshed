@@ -25,7 +25,7 @@ An installer (`curl … | bash`, npm) comes later.
 
 | Command | What it does | Exits |
 | --- | --- | --- |
-| `woodshed login` | Asks the console for a code, prints it, and opens the console's `/cli` page in your browser. Check the page shows the same code and press **Sign in the CLI**. The token it gets is kept as below. Signing in again on the same computer ends its earlier sign-in. | 0 signed in, 2 the code expired with nobody approving it, 3 denied |
+| `woodshed login` | Asks the console for a code, prints it, and opens the console's `/cli` page in your browser. Check the page shows the same code and press **Sign in the CLI**. The token it gets is kept as below. Signing in again on the same computer ends its earlier sign-in. | 0 signed in, 2 the code expired with nobody approving it, 3 denied, 1 too many sign-ins waiting (below) |
 | `woodshed logout` | Ends the token at the console and forgets it here. | 0 |
 | `woodshed status` | The console's name and address, its org (the GitHub account its repos are on), and who is signed in. | 0 signed in, 2 not signed in or the sign-in ended |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
@@ -109,6 +109,11 @@ per computer and lasts 90 days. The console keeps only its hash, and My settings
 computer, with Revoke. Remove My Woodshed, and being taken off People, end them all.
 
 The routes are in `console/cliSignIn.mjs`, and console/README.md, "Sign-in", says how the sign-in is guarded.
+
+A console keeps at most 5 sign-ins waiting from one address, and 200 in all. A code waits until it is approved and
+collected, denied, or 10 minutes pass, so a `login` stopped part way holds its place until then. Past either limit,
+`login` says `Too many sign-ins from this address are waiting` (or that the console has too many) with the minutes to
+wait, and exits 1.
 
 ## Checking a change
 

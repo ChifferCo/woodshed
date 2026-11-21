@@ -494,7 +494,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   members?.whenLeft?.((login) => tunnel.revoke(login), { also: () => Object.keys(store.state.tunnelTokens ?? {}) });
   // The woodshed command line's sign-ins, one per computer (cliSignIn.mjs): asked who may use them as the tunnel is.
   // `cliDevices` is a waiting room a program running several consoles gives them all (console/README.md, "Embedding the console").
-  const cli = createCliSignIn({ store, devices: cliDevices, allowed: (login) => members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login) });
+  const cli = createCliSignIn({ store, devices: cliDevices, trustedProxies: config.trustedProxies, allowed: (login) => members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login) });
   members?.whenLeft?.((login) => cli.revokeAll(login, 'the program\'s list'), { also: () => cli.logins().filter(Boolean) });
   const dbRestore = createDbRestore({
     store, dir: path.join(loaded.stateDir, 'restores'), databases, targets: databaseTargets,
