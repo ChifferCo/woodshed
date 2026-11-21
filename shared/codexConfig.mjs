@@ -2,14 +2,18 @@
 // statements rather than parsed: the sync only ever leaves some out and puts some back, so each statement's text stays
 // as it was written, comments and all.
 //
-// Each side keeps its own trusted folders, `[projects."<path>"]`: a path on a computer means nothing in a session, and a
-// session trusts its own checkout as it starts (`node codexConfig.mjs trust`). So they are never part of what is synced,
-// and a write keeps the ones already there.
+// Each side keeps some entries its own: they are never part of what is synced, and a write keeps the ones already there.
+//   - its trusted folders, `[projects."<path>"]`: a path on a computer means nothing in a session, and a session trusts
+//     its own checkout as it starts (`node codexConfig.mjs trust`);
+//   - any entry holding a credential (credentialOf): an MCP server's key stays in the session or on the computer it was
+//     typed in, never in the shared copy, which the person's computer and their other sessions read. The console refuses
+//     a copy holding one.
 //
 //   node codexConfig.mjs trust <config.toml> <dir>   adds `[projects."<dir>"] trust_level = "trusted"` unless it is there
 
 import fs from 'node:fs';
-import { isMain } from '../shared/isMain.mjs';
+import { isMain } from './isMain.mjs';
+import { SECRET_HEADER, SECRET_VARIABLE, secretContent } from './secretLike.mjs';
 
 export const CODEX_CONFIG = '.codex/config.toml';
 // Tables keyed by a name the person picks: a statement in one belongs to its entry (mcp_servers.github), and an entry
@@ -169,10 +173,6 @@ export function unitOf(statement) {
   return keyText(NAMED_MAPS.has(full[0]) && full.length > 1 ? full.slice(0, 2) : full);
 }
 
-/** Whether a statement is about a folder this side trusts, which each side keeps its own. */
-export function isOwnProject(statement) {
-  return statement.kind !== 'blank' && pathOf(statement)[0] === 'projects';
-}
 
 export const textOf = (statements) => statements.map((s) => s.text).join('');
 
@@ -275,20 +275,94 @@ export function withEntries(base, own) {
   return compose(statements ? textOf(statements.filter((s) => !names.has(unitOf(s)))) : base, own);
 }
 
-/** config.toml as the sync carries it: without this side's trusted folders. The text as it is when it does not read. */
+// Tables whose values codex takes as they are (mcp_servers.x.env, shell_environment_policy.set, http_headers): a value
+// for a key named like a credential is one, whatever it looks like.
+const LITERAL_TABLES = new Set(['env', 'set', 'http_headers']);
+// Keys and tables whose values name an environment variable rather than hold a value (env_key, bearer_token_env_var,
+// env_http_headers): `OPENAI_API_KEY` there is a name.
+const namesVariable = (key, table) => /(^env_key|_env_var)$/.test(key) || table === 'env_http_headers';
+const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
+// A value that is only a variable's name ("${GITHUB_TOKEN}"), which holds no secret, whatever codex makes of it.
+const REFERENCE = /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/;
+// One of codex's own words (preferred_auth_method = "chatgpt", a credentials store = "file"), not a credential.
+const WORD = /^[a-z][a-z0-9_-]{0,24}$/;
+
+/**
+ * What in one of config.toml's statements is a credential, named, never shown: null for none.
+ * @param {ReturnType<typeof readToml>[number]} statement
+ * @returns {string|null}
+ */
+export function credentialOf(statement) {
+  if (statement.kind !== 'kv') return null;
+  const at = pathOf(statement);
+  const name = keyText(at);
+  const last = at.at(-1);
+  const table = at.at(-2);
+  const kind = secretContent(statement.text);
+  if (kind) return `holds what looks like ${kind}`;
+  const strings = stringsOf(statement.value);
+  if (/^(experimental_)?bearer_token$/.test(last) && strings.length) return `sets ${name}`;
+  for (const pair of inlinePairs(statement.value)) {
+    if (!pair.said.trim() || REFERENCE.test(pair.said) || (namesVariable(pair.key, last) && ENV_NAME.test(pair.said))) continue;
+    if (!LITERAL_TABLES.has(last) && WORD.test(pair.said)) continue;
+    if (SECRET_VARIABLE.test(pair.key) || (last === 'http_headers' && SECRET_HEADER.test(pair.key))) return `sets ${name}.${keyText([pair.key])}`;
+  }
+  const single = strings.length === 1 && statement.value.trim() === strings[0].raw ? strings[0].said : null;
+  if (single !== null && single.trim() && !REFERENCE.test(single)) {
+    if (LITERAL_TABLES.has(table) && (SECRET_VARIABLE.test(last) || (table === 'http_headers' && SECRET_HEADER.test(last)))) return `sets ${name}`;
+    if (SECRET_VARIABLE.test(last) && !WORD.test(single) && !(namesVariable(last, table) && ENV_NAME.test(single))) return `sets ${name}`;
+  }
+  for (const { said: text } of strings) {
+    let url = null;
+    try {
+      url = new URL(text);
+    } catch {}
+    if (url && (url.username || url.password)) return `${name}'s URL carries a sign-in`;
+    const param = url && [...url.searchParams].find(([k, v]) => SECRET_VARIABLE.test(k) && v && !/^\$/.test(v));
+    if (param) return `${name}'s URL carries ${param[0]}`;
+  }
+  return null;
+}
+
+/** The entries (unitOf) a side keeps its own: its trusted folders, and each that holds a credential. */
+export function ownUnits(statements) {
+  const own = new Set();
+  for (const s of statements) {
+    if (s.kind !== 'blank' && (pathOf(s)[0] === 'projects' || credentialOf(s))) own.add(unitOf(s));
+  }
+  return own;
+}
+
+// The entry a blank line belongs to: the one whose table it is under.
+const tableUnit = (statement) => (statement.table.length ? unitOf({ kind: 'header', table: statement.table }) : null);
+
+/** config.toml as the sync carries it: without this side's own entries. The text as it is when it does not read. */
 export function sharedPart(text) {
   const statements = readToml(text);
   if (!statements) return text;
-  // A blank line under a trusted folder's table goes with it, and the end is one newline: what a write here adds and
-  // this takes away again leaves the same text, so the sync never sees a change that is not one.
-  const kept = textOf(tidy(statements.filter((s) => !isOwnProject(s) && !(s.kind === 'blank' && s.table[0] === 'projects'))));
+  const own = ownUnits(statements);
+  // A blank line under an own entry's table goes with it, and the end is one newline: what a write here adds and this
+  // takes away again leaves the same text, so the sync never sees a change that is not one.
+  const kept = textOf(tidy(statements.filter((s) => !own.has(s.kind === 'blank' ? tableUnit(s) : unitOf(s)))));
   return kept.trim() ? `${kept.replace(/\s+$/, '')}\n` : '';
 }
 
-/** The shared config.toml written here, with this side's trusted folders kept. */
-export function withOwnProjects(shared, local) {
-  const statements = local === null ? [] : readToml(local);
-  return compose(sharedPart(shared), (statements ?? []).filter(isOwnProject));
+/** The shared config.toml written here, with this side's own entries kept in place of any of the same names. */
+export function withOwnEntries(shared, local) {
+  const statements = (local === null ? [] : readToml(local)) ?? [];
+  const own = ownUnits(statements);
+  return withEntries(sharedPart(shared), statements.filter((s) => s.kind !== 'blank' && own.has(unitOf(s))));
+}
+
+/** Whether a config.toml's text holds a credential, for the console to refuse it: what it is, or null. */
+export function configCredential(text) {
+  const statements = readToml(text);
+  if (!statements) return secretContent(text) ? `holds what looks like ${secretContent(text)}` : null;
+  for (const s of statements) {
+    const credential = credentialOf(s);
+    if (credential) return credential;
+  }
+  return null;
 }
 
 /** config.toml with `dir` trusted, as a session's checkout is. */

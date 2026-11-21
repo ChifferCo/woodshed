@@ -910,7 +910,7 @@ function configureCodex({ pulled = {} } = {}) {
   const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { echo "ERROR: $*"; exit 1; }',
     fn('configureCodex').replaceAll('/tmp/', `${tmp}/`), 'configureCodex'].join('\n');
   try {
-    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: tmp, SESSION_DIR, REPO_DIR: '/work/app', CODEX_HOME_DIR: codexHome } });
+    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: tmp, SESSION_DIR, SHARED_DIR, REPO_DIR: '/work/app', CODEX_HOME_DIR: codexHome } });
     const read = (name) => (fs.existsSync(path.join(codexHome, name)) ? fs.readFileSync(path.join(codexHome, name), 'utf8') : null);
     return { out, config: read('config.toml'), agents: read('AGENTS.md'), override: read('AGENTS.override.md') };
   } finally {
@@ -938,11 +938,11 @@ function installSyncedPlugins({ kind = 'private', synced = {}, installed = null,
   const home = path.join(tmp, 'home');
   fs.mkdirSync(path.join(sessionDir, 'bin'), { recursive: true });
   fs.mkdirSync(path.join(home, '.claude', 'plugins'), { recursive: true });
-  for (const name of ['syncedPlugins.mjs', 'defaultPlugins.mjs', 'settingsSync.mjs', 'codexConfig.mjs', 'missingPlugins.mjs']) {
+  for (const name of ['syncedPlugins.mjs', 'defaultPlugins.mjs', 'settingsSync.mjs', 'missingPlugins.mjs']) {
     fs.copyFileSync(path.join(SESSION_DIR, name), path.join(sessionDir, name));
   }
-  fs.mkdirSync(path.join(tmp, 'shared'));
-  fs.copyFileSync(path.join(SHARED_DIR, 'isMain.mjs'), path.join(tmp, 'shared', 'isMain.mjs'));
+  // Beside it, in the image's layout: ../shared/.
+  fs.cpSync(SHARED_DIR, path.join(tmp, 'shared'), { recursive: true });
   fs.writeFileSync(path.join(sessionDir, 'bin', 'claude'),
     `#!/bin/bash\necho "$*" >> ${tmp}/calls\n${failMarketplace ? '[ "$2" = marketplace ] && { echo "repo not found" >&2; exit 1; }\n' : ''}exit 0\n`, { mode: 0o755 });
   // The tests' macOS has no `timeout`: the image's coreutils one runs the command.
@@ -984,8 +984,9 @@ test('a private session installs the plugins its owner has elsewhere, adding a m
   assert.equal(run.calls, [
     'plugin marketplace add acme/claude-tools',
     'plugin install --scope user review@acme-tools',
+    'plugin marketplace add anthropics/claude-plugins-official',
     'plugin install --scope user pr-review-toolkit@claude-plugins-official',
-  ].map((l) => `${l}\n`).join(''), 'a marketplace claude knows is not added; one turned off is not installed');
+  ].map((l) => `${l}\n`).join(''), 'each marketplace this home has not is added first, the official one too; one turned off is not installed');
   assert.match(run.out, /WARNING: a plugin from your other sessions was not installed \(plugin: notes@laptop-only, why: its marketplace is a folder/);
   assert.match(run.out, /Plugins from your other sessions installed \(installed: 2, failed: 0, skipped: 1\)/);
   assert.deepEqual(run.offered, ['review@acme-tools', 'pr-review-toolkit@claude-plugins-official']);

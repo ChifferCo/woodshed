@@ -594,8 +594,12 @@ whatever its home held. Transcripts and the rest of claude's state stay each
 session's own. Your computer joins the same copy with `woodshed settings`
 (cli/README.md, "Settings").
 - **Codex:** each session keeps the folders it trusts (`[projects."…"]` in
-  `config.toml`, `session/codexConfig.mjs`) out of what it sends, and its own in
-  what it writes, so its checkout stays trusted. The session's rules win over
+  `config.toml`) and any entry holding a credential (an MCP server's key) out of
+  what it sends, and its own in what it writes (`shared/codexConfig.mjs`), so its
+  checkout stays trusted and a key stays where it was typed. The console refuses
+  a `config.toml` holding a credential, and a plugin's marketplace beyond what a
+  session can add: it logs `sessionApi: shared Claude settings refused` (or
+  `cliSettings: refused`) with the reason. The session's rules win over
   your `AGENTS.md`: codex reads `AGENTS.override.md` in its place, which the
   start writes as the rules followed by your `AGENTS.md`, left as it is.
 - **Plugins** go as their name and marketplace (`installed_plugins.json#plugins/<name@marketplace>`),

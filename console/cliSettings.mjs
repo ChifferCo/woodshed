@@ -83,7 +83,11 @@ export async function handleCliSettings({ req, res, url, cli, claudeSettings, re
     return true;
   }
   const dotfile = DOTFILE_RE.exec(pathname);
-  if (dotfile) return dotfileReply(req, res, { login, token: signedIn.id, key: dotfile[1] ?? null, userSettings }), true;
+  if (dotfile) {
+    // Awaited, so a secret store that fails reaches the server's own error answer rather than going unhandled.
+    await dotfileReply(req, res, { login, token: signedIn.id, key: dotfile[1] ?? null, userSettings });
+    return true;
+  }
   if (pathname !== CLI_SETTINGS_PATH) return reply(res, 404, { error: 'not found' }), true;
   if (!claudeSettings) {
     req.resume();
@@ -123,7 +127,7 @@ export async function handleCliSettings({ req, res, url, cli, claudeSettings, re
   } catch (err) {
     if (!err.shown) throw err;
     console.warn('cliSettings: refused', { login, token: signedIn.id, message: err.message });
-    return reply(res, 413, { error: err.message }), true;
+    return reply(res, err.status ?? 413, { error: err.message }), true;
   }
   console.log('cliSettings: pushed', { login, token: signedIn.id, changed: Object.keys(body.changed).length, version: answer.version });
   return reply(res, 200, answer.items ? { version: answer.version, items: withoutLogins(answer.items) } : { version: answer.version }), true;

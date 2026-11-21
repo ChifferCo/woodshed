@@ -989,7 +989,7 @@ installSyncedPlugins() {
 
 # How codex reaches OpenAI. The owner's own sign-in goes into codex's home as auth.json: an API key as the key file codex
 # reads, a ChatGPT login as it was saved. With none, session/bin/codex uses the console's proxy and the team key. The
-# rules go in codex's own AGENTS.md, which it reads at every start, so the terminal shows only the request.
+# rules go in codex's own AGENTS.override.md, which it reads at every start, so the terminal shows only the request.
 configureCodex() {
   mkdir -p "$CODEX_HOME_DIR"
   chmod 700 "$CODEX_HOME_DIR"
@@ -1007,7 +1007,7 @@ configureCodex() {
   # The checkout is trusted so codex loads the repo's .codex/config.toml and AGENTS.md without asking. The rest of
   # config.toml is a private session's owner's own, which pullSettings wrote and statusd keeps in step
   # (settingsSync.mjs): each side keeps its own trusted folders, so this one stays this session's.
-  node "$SESSION_DIR/codexConfig.mjs" trust "$CODEX_HOME_DIR/config.toml" "$REPO_DIR" || die "codex's config.toml could not be written"
+  node "$SHARED_DIR/codexConfig.mjs" trust "$CODEX_HOME_DIR/config.toml" "$REPO_DIR" || die "codex's config.toml could not be written"
   # The rules win. codex reads AGENTS.override.md in place of AGENTS.md: it holds the rules, then the owner's own
   # AGENTS.md, which stays theirs as it is synced.
   {
@@ -1247,7 +1247,7 @@ runSession() {
     installDefaultPlugins
     installSyncedPlugins
   fi
-  # Both have read it: the env files are written, and the instructions are in the rules (and codex's AGENTS.md).
+  # Both have read it: the env files are written, and the instructions are in the rules (and codex's AGENTS.override.md).
   rm -f "$REPO_SETTINGS_JSON"
   progress env
   startClaude

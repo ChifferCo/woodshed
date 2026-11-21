@@ -619,7 +619,7 @@ async function claudeSettingsReply(req, res, session, { claudeSettings, userSett
   } catch (err) {
     if (!err.shown) throw err;
     console.warn('sessionApi: shared Claude settings refused', { sessionId: session.id, owner: session.owner, message: err.message });
-    return reply(res, 413, { error: err.message });
+    return reply(res, err.status ?? 413, { error: err.message });
   }
 }
 
@@ -665,6 +665,6 @@ async function homeReply(req, res, session, { homes, userSettings, restore, peri
   } catch (err) {
     if (!err.shown) throw err;
     req.resume();
-    return reply(res, 413, { error: err.message });
+    return reply(res, err.status ?? 413, { error: err.message });
   }
 }

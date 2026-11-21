@@ -15,6 +15,7 @@
 // dotfileProblem is what the console refuses a save with. fromComputer is what a computer's own file gives, with what was
 // left out named: a credential there is left out rather than refused, so the rest still goes.
 
+import path from 'node:path';
 import { shellCredential } from './secretLike.mjs';
 
 export const DOTFILES = Object.freeze({
@@ -61,7 +62,10 @@ function gitLines(text) {
   for (let i = 0; i < raw.length; i++) {
     const number = i + 1;
     let line = raw[i];
-    while (/\\$/.test(line) && !/\\\\$/.test(line) && i + 1 < raw.length) line = `${line.slice(0, -1)}${raw[++i]}`;
+    // A comment never goes on to the next line, whatever it ends with: only a value does.
+    if (!COMMENT_RE.test(line)) {
+      while (/\\$/.test(line) && !/\\\\$/.test(line) && i + 1 < raw.length) line = `${line.slice(0, -1)}${raw[++i]}`;
+    }
     if (COMMENT_RE.test(line)) {
       out.push({ number, kind: 'comment', text: line });
       continue;
@@ -76,13 +80,33 @@ function gitLines(text) {
     }
     const kv = KEY_RE.exec(line);
     if (!kv) return { error: `line ${number} is not a section, a key or a comment` };
-    out.push({ number, kind: 'key', section, key: kv[1].toLowerCase(), value: kv[2] ?? '', text: line });
+    // git would not read the file past a quote left open, the start's identity and credential helper with it.
+    if (kv[2] !== undefined && openQuote(kv[2])) return { error: `line ${number}: a quote is left open` };
+    // A key with no `=` is a boolean that is true: written back the same way, never as `key = `, which is false.
+    out.push({ number, kind: 'key', section, key: kv[1].toLowerCase(), value: kv[2] ?? '', bare: kv[2] === undefined, text: line });
   }
   return { lines: out };
 }
 
 // A section as a message names it: a subsection's name can be a URL with a token in it ([url "https://<token>@..."]), so
 // only the section's own name is ever shown.
+/** Whether a git value leaves a double quote open, before any comment. */
+function openQuote(value) {
+  let open = false;
+  for (let i = 0; i < value.length; i++) {
+    if (value[i] === '\\') i++;
+    else if (value[i] === '"') open = !open;
+    else if (!open && (value[i] === '#' || value[i] === ';')) break;
+  }
+  return open;
+}
+
+/** An `$include` line of inputrc that names a file a session has: under /etc, once `..` is resolved. */
+function systemInclude(line) {
+  const m = /^\s*\$include\s+(\S+)\s*$/.exec(line);
+  return Boolean(m) && path.posix.normalize(m[1]).startsWith('/etc/');
+}
+
 const sectionName = (section) => (section.sub === null ? `[${section.name}]` : `[${section.name} "..."]`);
 // As it is written back: a subsection only ever of a section that takes one (GIT_SUBSECTIONS), whose name holds no URL.
 const sectionText = (section) => (section.sub === null ? `[${section.name}]` : `[${section.name} "${section.sub}"]`);
@@ -136,7 +160,7 @@ export function dotfileProblem(key, text) {
     const credential = shellCredential(line);
     if (credential) return `line ${i + 1} holds ${credential}: credentials stay off sessions`;
     if (key === 'inputrc') {
-      if (/^\s*\$include\b/.test(line) && !/^\s*\$include\s+\/etc\/[^\s]+\s*$/.test(line)) return `line ${i + 1}: $include of a file a session does not have`;
+      if (/^\s*\$include\b/.test(line) && !systemInclude(line)) return `line ${i + 1}: $include of a file a session does not have`;
       continue;
     }
     if (!aliasOf(line)) {
@@ -177,7 +201,7 @@ export function fromComputer(key, files, { home }) {
         if (!gitKeyAllowed(line.section, line.key)) leave(name);
         else if (credential) leave(`${name} (${credential})`);
         else if (namesHome(line.value)) leave(`${name} (names a path on this computer)`);
-        else current.lines.push(`\t${line.key} = ${line.value.trim()}`);
+        else current.lines.push(line.bare ? `\t${line.key}` : `\t${line.key} = ${line.value.trim()}`);
       }
     }
     const text = sections.filter((s) => s.lines.length).map((s) => `${sectionText(s.header)}\n${s.lines.join('\n')}\n`).join('');
@@ -188,7 +212,7 @@ export function fromComputer(key, files, { home }) {
     for (const line of (files['.inputrc'] ?? '').replace(/\r\n/g, '\n').split('\n')) {
       const credential = shellCredential(line);
       if (credential) leave(`a line holding ${credential}`);
-      else if (/^\s*\$include\b/.test(line) && !/^\s*\$include\s+\/etc\/[^\s]+\s*$/.test(line)) leave('$include of a file on this computer');
+      else if (/^\s*\$include\b/.test(line) && !systemInclude(line)) leave('$include of a file on this computer');
       else kept.push(line);
     }
     const text = kept.join('\n').replace(/\s+$/, '');

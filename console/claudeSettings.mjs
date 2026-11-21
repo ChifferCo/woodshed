@@ -6,6 +6,8 @@
 // Merged item by item: a session sends what it changed since the version it last had, and gets back the whole copy
 // whenever another session changed something in between.
 
+import { CODEX_CONFIG, configCredential } from '../shared/codexConfig.mjs';
+import { isCarriedSource } from '../shared/pluginSource.mjs';
 import logins from './public/logins.cjs';
 const { loginKey } = logins;
 
@@ -28,6 +30,30 @@ function isItemId(id) {
 function isItemMap(value) {
   return value && typeof value === 'object' && !Array.isArray(value)
     && Object.entries(value).every(([id, v]) => isItemId(id) && typeof v === 'string');
+}
+
+const PLUGIN_ITEM = '.claude/plugins/installed_plugins.json#plugins/';
+
+/**
+ * Why the shared copy may not hold an item as sent, or null. A session and a computer leave out what this refuses
+ * (session/settingsSync.mjs, cli/settings.mjs): a client that does not is refused here, so the copy, which the person's
+ * computer and every one of their sessions read, never holds codex config with a credential in it or a plugin's
+ * marketplace with more than a session can add again.
+ */
+export function itemProblem(id, value) {
+  if (id === CODEX_CONFIG) {
+    const credential = configCredential(Buffer.from(value, 'base64').toString('utf8'));
+    return credential ? `~/.codex/config.toml ${credential}: a credential stays where it was set` : null;
+  }
+  if (id.startsWith(PLUGIN_ITEM)) {
+    let item = null;
+    try {
+      item = JSON.parse(value);
+    } catch {}
+    const fine = item && typeof item === 'object' && Object.keys(item).join() === 'marketplace' && isCarriedSource(item.marketplace);
+    return fine ? null : `${id.slice(PLUGIN_ITEM.length)}'s marketplace is not one a session can add`;
+  }
+  return null;
 }
 
 /**
@@ -76,6 +102,10 @@ export function createClaudeSettings({ store }) {
       const current = version === copy.version;
       const changes = Object.keys(changed).length + removed.length;
       if (!changes) return current ? { version: copy.version } : { version: copy.version, items: copy.items };
+      for (const [id, value] of Object.entries(changed)) {
+        const problem = itemProblem(id, value);
+        if (problem) throw Object.assign(new Error(problem), { shown: true, status: 400 });
+      }
       const items = { ...copy.items, ...changed };
       for (const id of removed) delete items[id];
       const text = JSON.stringify({ version: copy.version + 1, items, updatedAt: new Date().toISOString(), updatedBy: sessionId });

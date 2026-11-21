@@ -324,3 +324,16 @@ test('a plugin installed for the whole home goes as its marketplace, and nothing
   assert.equal(parseSyncBody({ version: 0, removed: [], changed: { '.codex/../.bashrc': 'eA==' } }), null);
   assert.equal(parseSyncBody({ version: 0, removed: [], changed: { '.codexx/x': 'eA==' } }), null);
 });
+
+test('the console refuses codex config holding a credential and a plugin\'s marketplace beyond what a session can add', async () => {
+  const c = fakeConsole();
+  const b64 = (text) => Buffer.from(text).toString('base64');
+  await assert.rejects(c.settings.sync({ login: 'octocat', sessionId: 'old', version: 0, removed: [], changed: { '.codex/config.toml': b64('[mcp_servers.x.env]\nAPI_KEY = "ABCD1234"\n') } }),
+    (err) => err.status === 400 && /config\.toml sets mcp_servers\.x\.env\.API_KEY/.test(err.message) && !err.message.includes('ABCD1234'));
+  for (const marketplace of [{ source: 'git', url: 'https://mia:pw@example.com/t.git' }, { source: 'directory', path: '/Users/mia/p' }, { source: 'github', repo: 'a/b', extra: 1 }]) {
+    await assert.rejects(c.settings.sync({ login: 'octocat', sessionId: 'old', version: 0, removed: [], changed: { '.claude/plugins/installed_plugins.json#plugins/p@m': JSON.stringify({ marketplace }) } }),
+      (err) => err.status === 400, JSON.stringify(marketplace));
+  }
+  assert.equal(c.objects.size, 0, 'nothing kept');
+  await c.settings.sync({ login: 'octocat', sessionId: 'new', version: 0, removed: [], changed: { '.claude/plugins/installed_plugins.json#plugins/p@m': '{"marketplace":{"source":"directory"}}' } });
+});

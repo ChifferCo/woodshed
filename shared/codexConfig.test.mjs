@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { compose, readToml, sharedPart, textOf, unitOf, withEntries, withOwnProjects, withTrusted } from './codexConfig.mjs';
+import { compose, readToml, sharedPart, textOf, unitOf, withEntries, withOwnEntries, withTrusted } from './codexConfig.mjs';
 
 const CONFIG = `# mine
 model = "gpt-5.5" # the one I like
@@ -39,7 +39,7 @@ test('each side keeps the folders it trusts: the shared part leaves them out, an
   assert.ok(shared.endsWith('LOG = \'debug\'\n'));
   let local = withTrusted('', '/work/app');
   for (let round = 0; round < 3; round++) {
-    local = withOwnProjects(shared, local);
+    local = withOwnEntries(shared, local);
     assert.equal(sharedPart(local), shared, `round ${round}`);
   }
   assert.ok(local.endsWith('[projects."/work/app"]\ntrust_level = "trusted"\n'));
@@ -55,4 +55,34 @@ test('entries put into another file go under their own table, the top\'s before 
   assert.equal(compose('model = "o3"\n', readToml('[tui]\nx = 1\n').filter((s) => s.kind === 'kv')), 'model = "o3"\n\n[tui]\nx = 1\n', 'a table this file has not gets its header');
   assert.equal(withEntries('[mcp_servers.github]\ncommand = "gh-mcp"\n', readToml('[mcp_servers.github]\ncommand = "npx"\n')), '[mcp_servers.github]\ncommand = "npx"\n',
     'an entry of the same name is replaced whole, never doubled');
+});
+
+test('an entry holding a credential stays on the side it was set on, as its trusted folders do; a variable\'s name is no credential', async () => {
+  const { credentialOf, configCredential } = await import('./codexConfig.mjs');
+  const kv = (text) => readToml(text).find((s) => s.kind === 'kv');
+  for (const [text, why] of [
+    ['[mcp_servers.x.env]\nAPI_KEY = "ABCD1234EFGH5678"\n', 'sets mcp_servers.x.env.API_KEY'],
+    ['[mcp_servers.x]\nenv = { LINEAR_API_KEY = "LINAPIKEY1234" }\n', 'sets mcp_servers.x.env.LINEAR_API_KEY'],
+    ['[mcp_servers.x]\nhttp_headers = { Authorization = "Bearer abc" }\n', 'sets mcp_servers.x.http_headers.Authorization'],
+    ['[mcp_servers.x]\nbearer_token = "abc"\n', 'sets mcp_servers.x.bearer_token'],
+    ['[mcp_servers.x]\nurl = "https://mia:pw@example.com/mcp"\n', 'mcp_servers.x.url\'s URL carries a sign-in'],
+    ['[shell_environment_policy.set]\nGITHUB_TOKEN = "TOKENVALUE"\n', 'sets shell_environment_policy.set.GITHUB_TOKEN'],
+  ]) assert.equal(credentialOf(kv(text)), why, text);
+  for (const text of [
+    '[model_providers.x]\nenv_key = "OPENAI_API_KEY"\n',
+    '[mcp_servers.x]\nbearer_token_env_var = "GITHUB_TOKEN"\n',
+    '[mcp_servers.x]\nenv_http_headers = { Authorization = "MY_TOKEN" }\n',
+    '[mcp_servers.x]\nenv = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }\n',
+    'preferred_auth_method = "chatgpt"\n',
+    'mcp_oauth_credentials_store = "file"\n',
+  ]) assert.equal(credentialOf(kv(text)), null, text);
+
+  const session = 'model = "o3"\n\n[mcp_servers.linear]\ncommand = "npx"\n\n[mcp_servers.linear.env]\nLINEAR_API_KEY = "LINAPIKEY1234"\n\n[projects."/work/app"]\ntrust_level = "trusted"\n';
+  const shared = sharedPart(session);
+  assert.equal(shared, 'model = "o3"\n', 'the server with its key is not sent');
+  assert.equal(configCredential(shared), null);
+  assert.match(configCredential(session), /LINEAR_API_KEY/);
+  const back = withOwnEntries('model = "gpt-5.5"\n', session);
+  assert.equal(sharedPart(back), 'model = "gpt-5.5"\n');
+  assert.ok(back.includes('LINEAR_API_KEY = "LINAPIKEY1234"') && back.includes('[projects."/work/app"]'), 'and stays here when the shared copy is written');
 });

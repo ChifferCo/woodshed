@@ -119,7 +119,12 @@ async function setUp(t, { home = laptopHome(t), claudeSettings: withSettings = t
   const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
   const userSettings = withUserSettings ? createUserSettings({ store, secrets }) : null;
   const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, cli, claudeSettings, repoSettings, projectAccess, userSettings });
-  const server = http.createServer((req, res) => { handle(req, res); });
+  // As the console's own server does (server.mjs): a request that throws is answered 500.
+  const server = http.createServer((req, res) => {
+    handle(req, res).catch(() => {
+      if (!res.headersSent) res.writeHead(500).end();
+    });
+  });
   const port = await listen(server);
   t.after(() => server.close());
   const origin = `http://localhost:${port}`;
@@ -891,14 +896,24 @@ args = ["-y", "docs-mcp", "${c.home}/.codex/prompts"]
 [model_providers.ollama]
 base_url = "http://localhost:11434/v1"
 
+[projects."${c.home}/code/app"]
+trust_level = "trusted"
+
 [mcp_servers.linear]
 command = "npx"
 
 [mcp_servers.linear.env]
 LINEAR_API_KEY = "lin_api_not_real"
-
-[projects."${c.home}/code/app"]
-trust_level = "trusted"
 `, 'the shared settings, with this computer\'s provider, its server with a key, its notify and its trusted folder kept');
   assert.equal(fs.existsSync(path.join(c.home, '.claude/plugins/installed_plugins.json')) && JSON.parse(fs.readFileSync(path.join(c.home, '.claude/plugins/installed_plugins.json'), 'utf8')).plugins['notes@acme-tools'], undefined, 'nothing installed');
+});
+
+test('a secret store that fails on a computer\'s dotfile answers with an error, and the console goes on', async (t) => {
+  const c = await setUp(t, { home: laptopWithMore(t), userSettings: true });
+  c.secrets.save = async () => { throw new Error('the store is down'); };
+  const res = await fetch(`${c.origin}/api/cli/settings/dotfiles/inputrc`, {
+    method: 'POST', headers: { authorization: `Bearer ${c.token}`, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'set editing-mode vi\n' }),
+  });
+  assert.equal(res.status, 500);
+  assert.equal((await fetch(`${c.origin}/api/cli/settings`, { headers: { authorization: `Bearer ${c.token}` } })).status, 200, 'still answering');
 });

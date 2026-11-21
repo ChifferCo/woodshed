@@ -68,3 +68,13 @@ test('a credential in a line of shell is named by kind or variable, and a variab
     assert.equal(shellCredential(fine), null, fine);
   }
 });
+
+test('a comment never hides the next line, a bare boolean stays true, an $include is judged where it leads, and a quote left open is refused', () => {
+  assert.match(dotfileProblem('gitconfig', '[alias]\n# a note \\\n[credential]\n\thelper = store\n'), /line 3: \[credential\]/);
+  assert.equal(fromComputer('gitconfig', { '.gitconfig': '[pull]\n\trebase\n[push]\n\tautoSetupRemote = true\n' }, { home: '/Users/mia' }).text,
+    '[pull]\n\trebase\n[push]\n\tautosetupremote = true\n');
+  assert.match(dotfileProblem('inputrc', '$include /etc/../Users/mia/.inputrc\n'), /\$include of a file a session does not have/);
+  assert.equal(dotfileProblem('inputrc', '$include /etc/inputrc\n'), null);
+  assert.match(dotfileProblem('gitconfig', '[alias]\n\tlg = "log --graph\n'), /line 2: a quote is left open/);
+  assert.equal(dotfileProblem('gitconfig', '[alias]\n\tsay = "!echo \\"hi\\"" # a comment with a " in it\n'), null);
+});

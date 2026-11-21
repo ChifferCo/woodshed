@@ -16,7 +16,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { isMain } from '../shared/isMain.mjs';
-import { CODEX_CONFIG, sharedPart, withOwnProjects } from './codexConfig.mjs';
+import { CODEX_CONFIG, sharedPart, withOwnEntries } from '../shared/codexConfig.mjs';
+import { carriedSource } from '../shared/pluginSource.mjs';
 import { PLUGIN_ID_RE } from './missingPlugins.mjs';
 
 // codex's settings beside claude's. Never ~/.codex/auth.json: a Codex sign-in is My settings' (userSettings.mjs).
@@ -151,7 +152,7 @@ async function readJson(file) {
 }
 
 /**
- * The plugins installed for the whole home, each as `{"marketplace": <its source as claude recorded it>|null}`. None
+ * The plugins installed for the whole home, each as `{"marketplace": <its source, carriedSource>|null}`. None
  * while claude is writing the list: they are never taken as removed, so a round without them loses nothing.
  * @returns {Promise<Record<string, string>>}
  */
@@ -163,8 +164,8 @@ export async function pluginItems(home) {
   if (!plugins || typeof plugins !== 'object') return items;
   for (const [name, installs] of Object.entries(plugins)) {
     if (!PLUGIN_ID_RE.test(name) || !Array.isArray(installs) || !installs.some((i) => i?.scope === 'user')) continue;
-    const source = known?.[name.split('@')[1]]?.source;
-    items[pluginId(name)] = JSON.stringify({ marketplace: source && typeof source === 'object' ? source : null });
+    // Only what a session can add again: a folder's path or a URL with a sign-in never leaves this home.
+    items[pluginId(name)] = JSON.stringify({ marketplace: carriedSource(known?.[name.split('@')[1]]?.source) });
   }
   return items;
 }
@@ -185,7 +186,8 @@ export async function readSnapshot(home) {
     if (!content) continue;
     if (content.length > MAX_ITEM_BYTES) oversized.push(rel);
     else if (rel === CODEX_CONFIG) {
-      // Without this side's trusted folders (codexConfig.mjs); a file of nothing else is no item.
+      // Without this side's own entries: its trusted folders and any holding a credential (codexConfig.mjs). A file of
+      // nothing else is no item.
       const shared = sharedPart(content.toString('utf8'));
       if (shared) items[rel] = Buffer.from(shared).toString('base64');
     } else items[rel] = content.toString('base64');
@@ -242,13 +244,13 @@ export async function applyItems(home, items, { live = false, before = null } = 
     if (!isSyncedFile(id) || !inside(home, id) || same || oversized.includes(id) || !untouched(id)) continue;
     const target = path.join(home, id);
     await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.writeFile(target, id === CODEX_CONFIG ? await withOwnProjectsOf(target, Buffer.from(value, 'base64').toString('utf8')) : Buffer.from(value, 'base64'));
+    await fs.writeFile(target, id === CODEX_CONFIG ? await withOwnEntriesOf(target, Buffer.from(value, 'base64').toString('utf8')) : Buffer.from(value, 'base64'));
     written += 1;
   }
   for (const id of Object.keys(local)) {
     if (!isSyncedFile(id) || !inside(home, id) || id in items || !untouched(id)) continue;
-    // config.toml gone from the shared copy leaves this side's trusted folders.
-    if (id === CODEX_CONFIG) await fs.writeFile(path.join(home, id), await withOwnProjectsOf(path.join(home, id), ''));
+    // config.toml gone from the shared copy leaves this side's own entries.
+    if (id === CODEX_CONFIG) await fs.writeFile(path.join(home, id), await withOwnEntriesOf(path.join(home, id), ''));
     else await fs.rm(path.join(home, id), { force: true });
     deleted += 1;
   }
@@ -288,10 +290,10 @@ export async function applyItems(home, items, { live = false, before = null } = 
   return { written, deleted, skipped };
 }
 
-// The shared config.toml's text with the folders this side trusts kept from the file there now.
-async function withOwnProjectsOf(target, shared) {
+// The shared config.toml's text with this side's own entries (codexConfig.mjs) kept from the file there now.
+async function withOwnEntriesOf(target, shared) {
   const local = await fs.readFile(target, 'utf8').catch((err) => (err.code === 'ENOENT' ? null : Promise.reject(err)));
-  return withOwnProjects(shared, local);
+  return withOwnEntries(shared, local);
 }
 
 /** The applied state, for statusd to carry on from what the entrypoint pulled. */

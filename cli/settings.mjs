@@ -32,13 +32,13 @@ import readline from 'node:readline';
 import { isLoginItem } from '../console/cliSettings.mjs';
 import { MAX_SETTINGS_BYTES } from '../console/claudeSettings.mjs';
 import {
-  CODEX_CONFIG, inlinePairs, keyText, pathOf, readToml, sharedPart, stringsOf, textOf, unitOf, withEntries,
-} from '../session/codexConfig.mjs';
+  CODEX_CONFIG, credentialOf, keyText, pathOf, readToml, sharedPart, stringsOf, textOf, unitOf, withEntries,
+} from '../shared/codexConfig.mjs';
 import {
   applyItems, isSyncedFile, localChanges, MARKETPLACES_FILE, MAX_ITEM_BYTES, NO_STATUS_LINE, parseEntryId, parsePluginId, PLUGINS_FILE, readSnapshot,
   sameSettings, SETTINGS, SYNCED_DIRS, withStatusLineOf,
 } from '../session/settingsSync.mjs';
-import { marketplaceArg } from '../session/syncedPlugins.mjs';
+import { marketplaceArg } from '../shared/pluginSource.mjs';
 import { BUILT_IN_MARKETPLACES } from '../session/defaultPlugins.mjs';
 import { skipReason, writeOwnFiles } from '../session/ownFiles.mjs';
 import { DOTFILES, dotfileProblem, fromComputer } from '../shared/dotfiles.mjs';
@@ -143,6 +143,19 @@ export function linkOnPath(root, rel) {
     if (stat.isSymbolicLink()) return path.relative(root, at);
   }
   return null;
+}
+
+/**
+ * An item as this computer has it, for what is listed. config.toml's own entries (trusted folders, a key) are left out
+ * of the sync's snapshot (shared/codexConfig.mjs), and the list says each that stays here, so it reads the file whole.
+ */
+function wholeItem(home, id, value) {
+  if (id !== CODEX_CONFIG) return value;
+  try {
+    return fs.readFileSync(path.join(home, id)).toString('base64');
+  } catch {
+    return value;
+  }
 }
 
 const fileOf = (id) => (parsePluginId(id) ? PLUGINS_FILE : parseEntryId(id)?.file ?? id);
@@ -269,41 +282,6 @@ function serverCredential(server) {
 // session's codex runs on its owner's own sign-in or the console's proxy (session/bin/codex), and a computer's provider
 // (a local model, a company gateway) is not one a session reaches.
 const CODEX_OWN_KEYS = new Set(['projects', 'model_provider', 'model_providers', 'profile', 'profiles', 'openai_base_url', 'chatgpt_base_url']);
-// Tables whose keys are an environment variable's or a header's name (mcp_servers.x.env, shell_environment_policy.set).
-const CODEX_ENV_TABLES = new Set(['env', 'set', 'http_headers']);
-const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
-// A value that is one of codex's own words (preferred_auth_method = "chatgpt", a store = "file"), not a credential.
-const WORD = /^[a-z][a-z0-9_-]{0,24}$/;
-
-/** What in one of config.toml's statements is a credential, or null: named, never shown. */
-function codexCredential(statement) {
-  if (statement.kind !== 'kv') return null;
-  const at = pathOf(statement);
-  const name = keyText(at);
-  const kind = secretContent(statement.text);
-  if (kind) return `holds what looks like ${kind}`;
-  const strings = stringsOf(statement.value);
-  if (/^(experimental_)?bearer_token$/.test(at.at(-1)) && strings.length) return `sets ${name}`;
-  const pair = inlinePairs(statement.value).find((p) => (SECRET_VARIABLE.test(p.key) || SECRET_HEADER.test(p.key)) && !ENV_NAME.test(p.said) && p.said.trim());
-  if (pair) return `sets ${name}.${keyText([pair.key])}`;
-  const single = strings.length === 1 && statement.value.trim() === strings[0].raw ? strings[0].said : null;
-  const last = at.at(-1);
-  if (single !== null && single.trim() && !ENV_NAME.test(single)) {
-    if (CODEX_ENV_TABLES.has(at.at(-2)) && (SECRET_VARIABLE.test(last) || (at.at(-2) === 'http_headers' && SECRET_HEADER.test(last)))) return `sets ${name}`;
-    if (SECRET_VARIABLE.test(last) && !WORD.test(single)) return `sets ${name}`;
-  }
-  for (const { said } of strings) {
-    let url = null;
-    try {
-      url = new URL(said);
-    } catch {}
-    if (url && (url.username || url.password)) return `${name}'s URL carries a sign-in`;
-    const param = url && [...url.searchParams].find(([k, v]) => SECRET_VARIABLE.test(k) && v && !/^\$/.test(v));
-    if (param) return `${name}'s URL carries ${param[0]}`;
-  }
-  return null;
-}
-
 /**
  * ~/.codex/config.toml as it would be on the other side: each entry that is a side's own, holds a credential or names
  * a path the other side has not is left out whole (unitOf: an MCP server with its env, a provider), and paths into what
@@ -325,7 +303,7 @@ export function translateCodexConfig(value, { from, to }) {
       leave.set(unit, at[0] === 'projects' ? 'projects' : `${unit} (where codex sends its calls stays each side's own)`);
       continue;
     }
-    const credential = codexCredential(s);
+    const credential = credentialOf(s);
     if (credential) {
       leave.set(unit, `${unit} (${credential}, a credential)`);
       continue;
@@ -537,12 +515,19 @@ export async function claudePushPlan({ home, shared, only, synced = {} }) {
       rows.push({ ...row, fate: 'skip', reason: `~/${link} is a symlink, which is not followed: copy what it points to here` });
       continue;
     }
-    const out = translate(id, raw, { from: home, to: SESSION_HOME, statusLineOf: shared[SETTINGS] });
+    const out = translate(id, wholeItem(home, id, raw), { from: home, to: SESSION_HOME, statusLineOf: shared[SETTINGS] });
     if (out.fate) rows.push({ ...row, fate: out.fate, reason: out.reason });
     else {
       ready[id] = out.value;
       rows.push({ ...row, bytes: bytesOf(id, out.value), notes: out.notes, value: out.value });
     }
+  }
+  // A config.toml of nothing but what stays here is no item of the sync's: its row says what stays.
+  if (!(CODEX_CONFIG in items) && fs.existsSync(path.join(home, CODEX_CONFIG)) && !linkOnPath(home, CODEX_CONFIG)) {
+    const whole = fs.readFileSync(path.join(home, CODEX_CONFIG));
+    const row = { kind: 'claude', id: CODEX_CONFIG, name: nameOf(CODEX_CONFIG), category: 'codex', bytes: whole.length };
+    const out = translate(CODEX_CONFIG, whole.toString('base64'), { from: home, to: SESSION_HOME });
+    if (matchesOnly(only, row)) rows.push({ ...row, fate: out.fate ?? 'skip', reason: out.reason ?? 'nothing in it a session takes' });
   }
   // The sync's own comparison: what this computer has that the shared copy does not, or has otherwise.
   const { changed } = localChanges(shared, ready);
@@ -634,7 +619,7 @@ export function runsOf(id, value) {
   if (id === CODEX_CONFIG) {
     // Every key, as settings.json's, since any can change what codex may do here; a credential's value is never shown.
     const lines = (readToml(text) ?? []).filter((s) => s.kind === 'kv')
-      .map((s) => `${keyText(pathOf(s))} = ${codexCredential(s) ? '(not shown)' : s.value.replace(/\s*\n\s*/g, ' ')}`);
+      .map((s) => `${keyText(pathOf(s))} = ${credentialOf(s) ? '(not shown)' : s.value.replace(/\s*\n\s*/g, ' ')}`);
     return whole(lines.length ? lines : ['nothing set']);
   }
   if (/\.(md|markdown)$/i.test(id)) {
@@ -694,7 +679,8 @@ export async function claudePullPlan({ home, shared, only, replace }) {
       continue;
     }
     // Yours as a push would send it: the same as the shared copy means nothing here is behind it.
-    const mine = id in local ? translate(id, local[id], { from: home, to: SESSION_HOME, statusLineOf: raw }) : null;
+    const here = id in local || (id === CODEX_CONFIG && fs.existsSync(path.join(home, id)));
+    const mine = here ? translate(id, wholeItem(home, id, local[id]), { from: home, to: SESSION_HOME, statusLineOf: raw }) : null;
     const same = mine && !mine.fate && (mine.value === raw || (id === SETTINGS && sameSettings(mine.value, raw)));
     if (out.fate) rows.push({ ...row, fate: out.fate, reason: out.reason });
     else if (mine?.unreadable) rows.push({ ...row, fate: 'skip', reason: 'yours is not TOML this reads, so what it keeps to itself could not be told: fix it, then pull' });
