@@ -69,6 +69,7 @@ import { createAddedProjects, createHostProjects, ghRepoLister, repoChecker, rep
 import { createProjectColors } from './projectColors.mjs';
 import { createAppPorts } from './appPorts.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
+import { createReviewReadiness } from './reviewReadiness.mjs';
 import { createReviewerApp } from './reviewerApp.mjs';
 import { withAppLogins } from './reviewLogins.mjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
@@ -419,10 +420,12 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const ownReviewer = hostApp ? null : createReviewerApp({ store, secrets, config });
   const reviewerApp = hostApp ? hostApp.reviewer ?? null : ownReviewer;
   if (hostApp) console.log('console: GitHub App from the host', { login: hostApp.login() ?? null, reviewer: Boolean(hostApp.reviewer) });
+  // A project's pull request gates on its default branch, with the Apps' logins the file leaves out (reviewLogins.mjs).
+  const gatesOf = async (name) => withAppLogins(await readerOf(name).pullRequests(), { reviewerLogin: reviewerApp?.login() ?? null, ownLogin: await appIdentity.login() });
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, qaRecordings, pullWebhooksFlowing: pullWebhooks.flowing,
-    pullRequests: async (name) => withAppLogins(await readerOf(name).pullRequests(), { reviewerLogin: reviewerApp?.login() ?? null, ownLogin: await appIdentity.login() }),
+    pullRequests: gatesOf,
     projectBlocker: databaseGate.blocker, githubFor,
     consoleLinks: (name) => readerOf(name).consoleLinks(), ...(newId ? { newId } : {}),
     // The App that posts a QA session's check, so the brief trusts it.
@@ -548,6 +551,17 @@ export async function createInstallation({ config: loaded, store, provider, trus
     woodshedUpdate,
     slackSetup,
     cli,
+    // Whether a repo's review can run in a session, for `woodshed review`: none with no GitHub App to run it.
+    reviewReadiness: config.githubApp || hostApp ? createReviewReadiness({
+      publicUrl: config.publicUrl, reviewer: reviewerApp, ownReviewer: !hostApp, appLogin: () => appIdentity.login(), pullRequestsOf: gatesOf,
+      runsOnName: config.runsOnName ?? null,
+      // A token's person must still write to the repo, as sign-in asks of a browser's (auth.mjs). With no sign-in, or
+      // behind a hosting proxy, nobody's access is asked there either.
+      canWrite: auth && !trusted ? async (login, project) => {
+        const gh = auth.enabled() && login ? githubFor(project) : null;
+        return gh ? gh.canWrite(login) : true;
+      } : null,
+    }) : null,
   });
   // `woodshed tunnel <id> -- <line>`: a pipe into a running session of the token's person, through its statusd.
   const execPipe = createExecPipe({ fleet, cli });
