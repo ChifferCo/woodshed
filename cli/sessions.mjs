@@ -21,7 +21,7 @@
 // herdr makes one of your sessions a machine in Herdr's hc, `woodshed-<id>`, reached through `woodshed tunnel` (hc.mjs),
 // resuming it first when it paused; remove forgets that machine too.
 
-import { HC_MINIMUM, addMachine, agentOn, hcVersion, machineName, removeMachine } from './hc.mjs';
+import { HC_MINIMUM, addMachine, agentOn, hcVersion, machineName, removeMachine, shellQuote } from './hc.mjs';
 
 // A terminal whose connection dropped is opened again for this long, waiting a little longer each time.
 const RECONNECT_GIVE_UP_MS = 60_000;
@@ -364,11 +364,12 @@ export async function sessionCommand({ origin, rest }, ctx) {
   // console restarted) is opened again while the session runs: its terminal went on meanwhile, and is drawn again.
   async function onTerminal(s, kind) {
     const what = kind === 'shell' ? 'shell' : `${s.options?.agent === 'codex' ? 'codex' : 'claude'}'s terminal`;
+    const reconnect = `woodshed session connect ${s.id}${kind === 'shell' ? ' --shell' : ''} --console ${shellQuote(origin)}`;
     stderr.write(`Connecting to ${s.id}'s ${what}. Ctrl-\\ disconnects; the session goes on.\n`);
     let reconnectUntil = null;
     let tries = 0;
     let lastFailure;
-    const giveUp = () => fail(`Could not connect to ${s.id} again in ${RECONNECT_GIVE_UP_MS / 1000} s: ${lastFailure}. Run woodshed session connect ${s.id} to try again.`);
+    const giveUp = () => fail(`Could not connect to ${s.id} again in ${RECONNECT_GIVE_UP_MS / 1000} s: ${lastFailure}. Run ${reconnect} to try again.`);
     for (;;) {
       let out;
       if (reconnectUntil !== null) {
@@ -382,7 +383,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
         try {
           const { s: latest } = await find(s.id);
           if (latest.status !== 'running') {
-            throw fail(`Session ${s.id} is ${stateOf(latest).word} now. Run woodshed session connect ${s.id} to resume it and connect again.`);
+            throw fail(`Session ${s.id} is ${stateOf(latest).word} now. Run ${reconnect} to resume it and connect again.`);
           }
         } catch (err) {
           if (!err.unreachable && ![502, 503, 504].includes(err.http)) throw err;

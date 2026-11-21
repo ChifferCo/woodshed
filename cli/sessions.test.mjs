@@ -582,9 +582,9 @@ test('a connection that drops is opened again while the session runs, and not on
     },
   });
   const stopped = await consoleFor(t, { terminal: stopping });
-  const gone = await stopped.run(['session', 'connect', 'aaaa0001']);
+  const gone = await stopped.run(['session', 'connect', 'aaaa0001', '--shell']);
   assert.equal(gone.code, EXIT.failed);
-  assert.match(gone.err, /Session aaaa0001 is stopped now\. Run woodshed session connect aaaa0001 to resume it and connect again\./);
+  assert.ok(gone.err.includes(`Session aaaa0001 is stopped now. Run woodshed session connect aaaa0001 --shell --console ${stopped.origin} to resume it and connect again.`));
   assert.equal(stopping.calls.length, 1);
 });
 
@@ -623,9 +623,10 @@ test('a connection that drops at once, again and again, is given up on a minute 
   const quick = Array.from({ length: 40 }, () => ({ status: 'attached-then-cut', message: 'the connection closed', ms: 100 }));
   const terminal = fakeTerminal(quick);
   const c = await consoleFor(t, { terminal });
-  const out = await c.run(['session', 'connect', 'aaaa0001']);
+  const out = await c.run(['session', 'connect', 'aaaa0001', '--shell']);
   assert.equal(out.code, EXIT.failed);
   assert.match(out.err, /Could not connect to aaaa0001 again in 60 s: the connection closed/);
+  assert.ok(out.err.includes(`Run woodshed session connect aaaa0001 --shell --console ${c.origin} to try again.`));
   assert.equal(out.err.match(/connecting again/g).length, 1, 'the first drop starts the minute');
   assert.match(out.err, /it dropped again at once \(the connection closed\); still trying, for up to \d+ s more/);
   assert.ok(terminal.calls.length < 15, `${terminal.calls.length} tries`);
