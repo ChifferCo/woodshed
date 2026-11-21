@@ -147,8 +147,9 @@ const CREDENTIAL_HEADER_TEXT = new RegExp(`(?:^|[^\\w-])(?:${headerNames})[\\t ]
 const isCredentialHeader = (name) => typeof name === 'string' && CREDENTIAL_HEADERS.includes(name.trim().toLowerCase());
 const hasHeaderValue = (value) => (Array.isArray(value) ? value : [value]).some((part) => typeof part === 'string' && part.trim());
 
-function transcriptHasCredentialHeader(line) {
+function hasCredentialHeader(line) {
   if (CREDENTIAL_HEADER_TEXT.test(line)) return true;
+  if (!/^[\t\r ]*(?:\{|\[|")/.test(line)) return false;
   let record;
   try { record = JSON.parse(line); } catch { return false; }
   const pending = [record];
@@ -156,7 +157,7 @@ function transcriptHasCredentialHeader(line) {
     const item = pending.pop();
     if (typeof item === 'string' && CREDENTIAL_HEADER_TEXT.test(item)) return true;
     if (!item || typeof item !== 'object') continue;
-    // Decoded transcripts also record headers as [name, value] pairs and request log records.
+    // Structured request logs also record headers as [name, value] pairs and name/value objects.
     if (Array.isArray(item) && item.length === 2 && isCredentialHeader(item[0]) && hasHeaderValue(item[1])) return true;
     if (isCredentialHeader(item.name) && hasHeaderValue(item.value)) return true;
     for (const [key, value] of Object.entries(item)) {
@@ -209,12 +210,12 @@ export function secretName(file) {
  * The secrets in a file's text that its earlier text (the commit it changes) did not already hold.
  * @returns {{line: number, kind: string}[]}
  */
-export function secretsIn(text, before = '', { transcript = false } = {}) {
+export function secretsIn(text, before = '', { credentialHeaders = false } = {}) {
   const found = [];
   const lines = String(text).split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (transcript && transcriptHasCredentialHeader(line)) found.push({ line: i + 1, kind: 'a credential header' });
+    if (credentialHeaders && hasCredentialHeader(line)) found.push({ line: i + 1, kind: 'a credential header' });
     for (const { user, end } of urlPasswords(line)) {
       if (before.includes(line.slice(user, end + 1))) continue;
       found.push({ line: i + 1, kind: 'a password in a URL' });
@@ -316,7 +317,7 @@ async function surveyIndex(git, checkout, index, scanBytes) {
     const before = upstream ? await git(['show', `${upstream}:${file}`], { cwd: root, raw: true, limit: scanBytes }) : null;
     const earlier = before?.code === 0 ? scanTexts(before.stdout).join('\n') : '';
     for (const text of texts) {
-      for (const hit of secretsIn(text, earlier)) secrets.push({ path: file, ...hit });
+      for (const hit of secretsIn(text, earlier, { credentialHeaders: true })) secrets.push({ path: file, ...hit });
     }
   }
   // The messages of the commits the push sends are published with them: a token pasted into one is found too.
@@ -325,7 +326,7 @@ async function surveyIndex(git, checkout, index, scanBytes) {
     const parts = log.split('\0');
     for (let i = 0; i + 1 < parts.length; i += 2) {
       const sha = parts[i].trim();
-      for (const hit of secretsIn(parts[i + 1])) secrets.push({ path: `the message of commit ${sha.slice(0, 12)}`, line: hit.line, kind: hit.kind });
+      for (const hit of secretsIn(parts[i + 1], '', { credentialHeaders: true })) secrets.push({ path: `the message of commit ${sha.slice(0, 12)}`, line: hit.line, kind: hit.kind });
     }
   }
   // Ignored env files are named so the person knows they stay, and how theirs reach a session.

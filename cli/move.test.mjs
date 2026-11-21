@@ -404,6 +404,25 @@ test('decoded transcript credential headers refuse a move before push or upload'
   assert.ok(!fs.existsSync(path.join(l.repo.bare, 'push-started')));
 });
 
+test('credential headers in an untracked request log refuse the move before push', async (t) => {
+  const l = laptop(t);
+  const value = 'inert-fixture-bearer-value';
+  const file = 'request.log';
+  const record = JSON.stringify({ headers: { Authorization: `Bearer ${value}` } });
+  fs.writeFileSync(path.join(l.repo.root, file), `GET /fixture\nAuthorization: Bearer ${value}\n${record}\n`);
+  fs.writeFileSync(path.join(l.repo.bare, 'hooks', 'pre-receive'), '#!/bin/sh\ntouch push-started\n', { mode: 0o755 });
+
+  const out = await l.run(['herdr', 'move', '--terminal', 't2', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json']);
+  assert.equal(out.code, EXIT.refused);
+  assert.deepEqual(out.events.find((event) => event.event === 'secrets')?.files, [2, 3].map((line) => ({
+    root: fs.realpathSync(l.repo.root), path: file, line, kind: 'a credential header',
+  })));
+  assert.ok(!(out.out + out.err).includes(value));
+  assert.ok(!fs.existsSync(path.join(l.repo.bare, 'push-started')));
+  assert.equal(l.onGithub('woodshed/move-c0ffee42'), null);
+  assert.ok(!l.calls.some(([method]) => method === 'POST'));
+});
+
 test('filename-only and binary credentials stop the move without printing their values', async (t) => {
   const l = laptop(t);
   const synthetic = `ghp_${'f4'.repeat(18)}`;

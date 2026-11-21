@@ -192,7 +192,7 @@ async function runMove({ origin, rest }, ctx) {
   if (lost.length) throw fail(`The conversation of ${lost.map((a) => `${a}: ${conversations.get(a).error}`).join('; ')}. Nothing was moved.`, { status: 'no-conversation' });
   // A conversation holds what its agent read and ran: a credential in it would reach the session. Said by line and kind.
   const transcripts = new Map(agents.map((a) => [a, fs.readFileSync(conversations.get(a).file, 'utf8')]));
-  const heldSecrets = agents.flatMap((a) => secretsIn(transcripts.get(a), '', { transcript: true }).map((hit) => ({ address: a, ...hit })));
+  const heldSecrets = agents.flatMap((a) => secretsIn(transcripts.get(a), '', { credentialHeaders: true }).map((hit) => ({ address: a, ...hit })));
   if (heldSecrets.length) {
     if (json) emit({ event: 'secrets', conversations: heldSecrets });
     throw refused(`These conversations hold what looks like a secret, and the move would carry it into the session:\n${heldSecrets.map((h) => `  ${h.address}'s conversation ${conversations.get(h.address).id}, line ${h.line}: ${h.kind}`).join('\n')}\nRevoke the credential, then move a new conversation, or work on here. Nothing was moved.`);
