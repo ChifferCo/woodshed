@@ -1070,7 +1070,28 @@ ${DARK_PALETTE}
       width: 22px; height: 22px; border-radius: 999px; color: var(--muted); cursor: help;
     }
     .mergehint:hover { color: var(--ink); background: var(--sunk); }
-    .mergehint svg { width: 15px; height: 15px; fill: currentColor; }
+    .mergehint svg { width: 15px; height: 15px; fill: currentColor; flex: none; }
+    /* The sentence itself: read by a screen reader, and shown beside the icon
+       where the tip cannot open (below). */
+    .mergehint .mergehint-text {
+      position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+    }
+    @media (hover: none) and (max-width: 720px) {
+      /* Where the page turns tips off (above), the icon would say nothing, so
+         a phone shows the sentence, on a row of its own under the tabs. */
+      .tabbar { flex-wrap: wrap; row-gap: 0.2rem; }
+      .tabbar .right { width: 100%; justify-content: flex-end; }
+      .mergehint {
+        flex: 0 1 auto; width: auto; height: auto; min-width: 0; gap: 0.35rem; cursor: default;
+        font-size: 12px; line-height: 1.4;
+      }
+      .mergehint:hover { color: var(--muted); background: none; }
+      .mergehint .mergehint-text {
+        position: static; width: auto; height: auto; overflow: visible;
+        clip: auto; clip-path: none; white-space: normal;
+      }
+    }
     .flash .flash-act { margin-left: 0.8rem; padding: 0.25rem 0.7rem; font-size: 12.5px; }
     .mergelist {
       list-style: none; margin: 0.9rem 0 0; padding: 0;
@@ -2373,15 +2394,15 @@ ${DARK_PALETTE}
       return button;
     }
 
-    // Focusable, so the tip also opens from the keyboard, and labelled, so a
-    // screen reader reads the sentence the icon stands for.
+    // Focusable, so the tip also opens from the keyboard. The sentence is in
+    // the element too, hidden but for a screen reader, and shown on a phone,
+    // where the page turns tips off.
     function mergeHint(text) {
       var hint = el('span', 'mergehint');
       hint.tabIndex = 0;
-      hint.setAttribute('role', 'img');
-      hint.setAttribute('aria-label', text);
       hint.dataset.tip = text;
       hint.appendChild(svgIcon(INFO_D));
+      hint.appendChild(el('span', 'mergehint-text', text));
       return hint;
     }
 
