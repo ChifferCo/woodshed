@@ -23,10 +23,16 @@
 // they are for until a person approves the code on one. The console that approved it makes the token, in its own state,
 // checked by its own `allowed`, whichever console the CLI's next poll reaches; and `owns` says which console holds a
 // token, so the program can send each of the token's calls there.
+//
+// Starting a sign-in needs no identity, so how many may wait is limited per client address (clientAddress.mjs: behind
+// a trusted proxy, the address it forwards), and console-wide as a backstop: one client filling its share leaves the
+// rest to everyone else. Over either, /api/cli/device answers 429 with Retry-After, the seconds until the oldest of
+// those waiting expires.
 
 import { AsyncResource } from 'node:async_hooks';
 import crypto from 'node:crypto';
 import { isSameOrigin } from '../shared/sameOrigin.mjs';
+import { clientAddress, clientKey, parseTrustedProxies } from './clientAddress.mjs';
 import { PAGE_HEADERS, PAGE_STYLE } from './desktopSignIn.mjs';
 
 export const CLI_TOKEN_TTL_MS = 90 * 24 * 3_600_000;
@@ -34,6 +40,15 @@ const DEVICE_CODE_MS = 10 * 60_000;
 const POLL_SECONDS = 5;
 // More than this many sign-ins waiting at once, and a new one is refused until some expire: each holds a little memory.
 const MAX_PENDING = 200;
+// Denied codes hold no place (start), so they are bounded on their own: past this many, the oldest is dropped, and its
+// CLI, which has likely stopped asking, hears its code expired instead of denied.
+const MAX_DENIED = 200;
+// And this many from one client address: a person who runs login again, or a few people behind one office's address.
+// A code collected or denied in the browser stops counting at once (a denied one is kept, uncounted, for its CLI's next
+// poll); one left behind (a login stopped with Ctrl-C) counts until its 10 minutes are up.
+export const MAX_PENDING_PER_CLIENT = 5;
+// A flood of refused starts is logged at most this often for each limit, with how many there were.
+const REFUSAL_LOG_MS = 60_000;
 // A person's computers: past this, a new sign-in ends their oldest.
 const MAX_TOKENS_PER_PERSON = 20;
 // How often a token's last use is written down: each write saves state.json.
@@ -71,8 +86,9 @@ function deviceName(name) {
 
 /**
  * The sign-ins waiting for a person, for createCliSignIn's `devices`: one per console, or one several consoles share.
- * @returns {Map<string, object>}  deviceCode's hash -> {userCode, name, from, createdAt, expiresAt, lastPollAt,
- *   approved: {login, by, issue}|null, denied}: `by` is the console that approved, `issue` makes its token
+ * @returns {Map<string, object>}  deviceCode's hash -> {userCode, name, from, client, createdAt, expiresAt, lastPollAt,
+ *   approved: {login, by, issue}|null, denied}: `by` is the console that approved, `issue` makes its token, `client` the
+ *   key the limit per client counts by (clientAddress.mjs), across every console sharing the room
  */
 export function createCliDevices() {
   return new Map();
@@ -80,11 +96,13 @@ export function createCliDevices() {
 
 /**
  * @param {{store: {state: object, save: () => void}, now?: () => number,
- *          allowed?: (login: string|null) => boolean, devices?: ReturnType<typeof createCliDevices>}} deps
+ *          allowed?: (login: string|null) => boolean, devices?: ReturnType<typeof createCliDevices>,
+ *          trustedProxies?: ReturnType<typeof parseTrustedProxies>}} deps
  *   `allowed` says whether a login may still use the console (on the People list): a token whose person was taken off it
- *   stops working at once, not when it expires. `devices` is the waiting room, the console's own unless it shares one
+ *   stops working at once, not when it expires. `devices` is the waiting room, the console's own unless it shares one.
+ *   `trustedProxies` are those whose X-Forwarded-For names the client (WOODSHED_TRUSTED_PROXIES, loopback by default)
  */
-export function createCliSignIn({ store, now = Date.now, allowed = () => true, devices = createCliDevices() }) {
+export function createCliSignIn({ store, now = Date.now, allowed = () => true, devices = createCliDevices(), trustedProxies = parseTrustedProxies() }) {
   const pending = devices;
   // This console, as an approval names it: a shared room holds other consoles' approvals too.
   const self = Symbol('cliSignIn');
@@ -103,6 +121,8 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
       }
     }
   };
+  // For each limit: refused starts not logged yet, and when it last logged.
+  const refusals = { client: { count: 0, loggedAt: -Infinity }, console: { count: 0, loggedAt: -Infinity } };
 
   function tokens() {
     store.state.cliTokens ??= {};
@@ -126,20 +146,47 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
     return null;
   }
 
+  // Over a limit: refused with the seconds until the oldest of those it counted expires. Logged at most once a minute for
+  // each limit, with `refused`, how many of that limit's refusals since its last line (any addresses), and `lastFrom`,
+  // the address of the one that wrote it.
+  function refuse({ scope, counted, from, most }) {
+    const oldest = Math.min(...counted.map((device) => device.expiresAt));
+    const retryAfter = Math.max(1, Math.ceil((oldest - now()) / 1000));
+    const tally = refusals[scope];
+    tally.count += 1;
+    if (now() - tally.loggedAt >= REFUSAL_LOG_MS) {
+      console.warn('cliSignIn: sign-in refused, too many waiting', { scope, lastFrom: from, most, retryAfter, refused: tally.count });
+      tally.count = 0;
+      tally.loggedAt = now();
+    }
+    const minutes = Math.ceil(retryAfter / 60);
+    const later = `try again in ${minutes} minute${minutes === 1 ? '' : 's'}`;
+    const message = scope === 'client'
+      ? `${most} sign-ins from your address are already waiting: finish one you started, or ${later}`
+      : `too many sign-ins are waiting on this console: ${later}`;
+    return Object.assign(new Error(message), { status: 429, retryAfter, scope });
+  }
+
   /**
    * A new sign-in waiting for a person.
-   * @param {{name?: string, from?: string|null}} args  `from` is the address that asked, for the log: behind Caddy it is
-   *   Caddy's, so the page does not show it
+   * @param {{name?: string, from?: string|null}} args  `from` is the client's address (clientOf), which the limit per
+   *   client counts by and the log names
    * @returns {{deviceCode: string, userCode: string, expiresIn: number, interval: number}}
    */
   function start({ name, from = null }) {
     sweep();
-    if (pending.size >= MAX_PENDING) throw Object.assign(new Error('too many sign-ins are waiting: try again in a few minutes'), { status: 429 });
+    // A request with no address at all (a stand-in in a test) is one client of its own: the console-wide cap still holds.
+    const client = clientKey(from) ?? 'unknown';
+    // A denied code only waits for its CLI to hear so: it holds no place.
+    const waitingNow = [...pending.values()].filter((device) => !device.denied);
+    const mine = waitingNow.filter((device) => device.client === client);
+    if (mine.length >= MAX_PENDING_PER_CLIENT) throw refuse({ scope: 'client', counted: mine, from, most: MAX_PENDING_PER_CLIENT });
+    if (waitingNow.length >= MAX_PENDING) throw refuse({ scope: 'console', counted: waitingNow, from, most: MAX_PENDING });
     const deviceCode = crypto.randomBytes(32).toString('hex');
     let code = userCode();
     while (byUserCode(code)) code = userCode();
     pending.set(sha256(deviceCode), {
-      userCode: code, name: deviceName(name), from, createdAt: now(), expiresAt: now() + DEVICE_CODE_MS, lastPollAt: 0, approved: null, denied: false,
+      userCode: code, name: deviceName(name), from, client, createdAt: now(), expiresAt: now() + DEVICE_CODE_MS, lastPollAt: 0, approved: null, denied: false,
     });
     console.log('cliSignIn: sign-in started', { name: deviceName(name), from });
     return { deviceCode, userCode: code, expiresIn: DEVICE_CODE_MS / 1000, interval: POLL_SECONDS };
@@ -167,9 +214,17 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
         login, by: self,
         issue: AsyncResource.bind((name) => (allowed(login) ? { status: 'approved', login, about, ...issue({ login, name }) } : { status: 'denied' })),
       };
-    } else device.denied = true;
+    } else {
+      device.denied = true;
+      capDenied();
+    }
     console.log(approve ? 'cliSignIn: sign-in approved' : 'cliSignIn: sign-in denied', { login, name: device.name });
     return true;
+  }
+
+  function capDenied() {
+    const denied = [...pending.entries()].filter(([, device]) => device.denied).sort(([, a], [, b]) => a.createdAt - b.createdAt);
+    for (const [key] of denied.slice(0, Math.max(0, denied.length - MAX_DENIED))) pending.delete(key);
   }
 
   function issue({ login, name }) {
@@ -278,6 +333,7 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
         device.denied = true;
       }
     }
+    capDenied();
     const ids = Object.entries(tokens()).filter(([, r]) => r.login === login).map(([id]) => id);
     if (!ids.length) return;
     for (const id of ids) delete tokens()[id];
@@ -291,11 +347,16 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
     endedListeners.push(fn);
   }
 
-  return { id: consoleId, start, waiting, decide, poll, owns, tokenFor, list, revoke, revokeAll, whenEnded, logins: () => [...new Set(Object.values(tokens()).map((r) => r.login))] };
+  return {
+    id: consoleId, start, waiting, decide, poll, owns, tokenFor, list, revoke, revokeAll, whenEnded,
+    logins: () => [...new Set(Object.values(tokens()).map((r) => r.login))],
+    /** The address a request came from, through a trusted proxy's X-Forwarded-For (clientAddress.mjs). */
+    clientOf: (req) => clientAddress(req, trustedProxies),
+  };
 }
 
-function json(res, status, body) {
-  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+function json(res, status, body, headers = {}) {
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...headers });
   res.end(JSON.stringify(body));
 }
 
@@ -339,10 +400,10 @@ export async function handleCliApi({ req, res, url, cli, publicUrl, about }) {
     if (pathname === '/api/cli/device') {
       let started;
       try {
-        started = cli.start({ name: body.name, from: req.socket?.remoteAddress ?? null });
+        started = cli.start({ name: body.name, from: cli.clientOf(req) });
       } catch (err) {
         if (!err.status) throw err;
-        return json(res, err.status, { error: err.message }), true;
+        return json(res, err.status, { error: err.message, ...(err.scope ? { scope: err.scope } : {}) }, err.retryAfter ? { 'retry-after': String(err.retryAfter) } : {}), true;
       }
       const verificationUrl = `${publicUrl}${CLI_PAGE_PATH}`;
       return json(res, 200, { ...started, verificationUrl, verificationUrlComplete: `${verificationUrl}?code=${started.userCode}` }), true;

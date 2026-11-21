@@ -1520,6 +1520,20 @@ Revoke. Remove My Woodshed, People's Remove and leaving a hosting program's list
 `cliSignIn: sign-in started`, `sign-in approved` or `denied`, `token made`, `token revoked` with `by`, and `refused, a
 browser's call` or `refused, the token's person is no longer a member`.
 
+Starting a sign-in needs no identity, so at most 5 may wait from one client address (an IPv6 one counted by its /64),
+and 200 on the console as a backstop: one client filling its share leaves the rest to everyone else. Past either,
+`/api/cli/device` answers 429 with `Retry-After`, the seconds until the oldest of those waiting expires, and `scope`
+(`client` or `console`). A code stops counting once it is collected, or denied in the browser (a denied one is kept for its CLI's next
+poll, at most 200 of them, the oldest dropped first). The console logs `cliSignIn:
+sign-in refused, too many waiting` at most once a minute for each `scope`, with how many it `refused` since (from any
+address) and `lastFrom`, the address of the one that wrote the line. The client's address is the socket's, or, when that is a trusted
+proxy, the last entry of `X-Forwarded-For` that no trusted proxy wrote (`console/clientAddress.mjs`). Caddy writes the
+address it saw there and drops what the client sent, and the console's own Caddy (AWS's base box,
+providers/local/README.md) and Tailscale's serve reach it from loopback, which is trusted by default. A proxy that reaches
+the console from another address (Caddy in a container of its own, a load balancer) is listed in
+`WOODSHED_TRUSTED_PROXIES`; until it is, every client behind it is one address. The header from anyone else is ignored,
+so nobody makes up an address to get more places.
+
 **Into a session from the command line**: `woodshed tunnel <id> -- <line>` (cli/README.md) is one request,
 `/api/tunnel/exec/<id>` with `Upgrade: woodshed-tunnel`, that token, and the line base64'd in `x-woodshed-exec`
 (`console/execPipe.mjs`). The console checks, as it opens and every 15 seconds after, that the token is live and its
@@ -2576,6 +2590,7 @@ Remove My Woodshed.
 | `WOODSHED_ONE_PERSON` | tells by itself | `1`: one person uses this console, so the rail shows one list of every session with no Mine \| Everyone switch; `0`: always the two views. Unset, a console nobody signs in to or with one member on People is one person's. Hosted mode has no People list, so its host sets it. See "Hosted mode" |
 | `WOODSHED_LOCAL_LOGIN` | `local` | The handle a local console with no sign-in gives the person using it, so My settings (their Claude token, private sessions) works there. Ignored with a GitHub App or on AWS |
 | `WOODSHED_REQUIRE_SIGN_IN` | off | `1` requires GitHub sign-in on every route from the start, with or without a client secret. Set on the base box |
+| `WOODSHED_TRUSTED_PROXIES` | loopback (`127.0.0.0/8, ::1`) | The proxies whose `X-Forwarded-For` names a request's client, for limits kept per client (the command line's waiting sign-ins, "Sign-in"): addresses or CIDR ranges, comma-separated, replacing loopback, which must then be listed itself if it is still wanted; `none` trusts no proxy. A value that is not one stops the console at start (`clientAddress.mjs`). List only what reaches the console in front of everyone else: a proxy listed here can name any client |
 | `WOODSHED_TRUSTED_IDENTITY_SECRET` | none | Hosted mode: the secret a trusted proxy in front of the console signs each request's `X-Woodshed-Identity` header with, at least 32 characters. Set, that header is the only sign-in, and it is required; `role: owner` is an admin. See "Hosted mode" |
 | `WOODSHED_GITHUB_BROKER_URL`, `_GITHUB_BROKER_TOKEN_FILE` | none | Hosted mode: where the console asks its host for every installation token, and a file holding the bearer it asks with. Both or neither, and never with `WOODSHED_GITHUB_APP_ID`. See "Hosted mode" |
 | `WOODSHED_SUPERVISED` | on under systemd, else off | `1` says something starts the console again when it exits (a container with a restart policy), so the GitHub App setup page offers Restart; `0` says nothing does, even under systemd. See "Setting up the GitHub App from the console" |
