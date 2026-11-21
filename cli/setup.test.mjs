@@ -28,7 +28,10 @@ function fake({
     calls.push(words);
     if (words[0] === '--help') return help(commands);
     const command = words[0] === 'login' || words[0] === 'status' ? words[0] : words.slice(0, 2).join(' ');
-    return answers[command] ?? (command === 'status' ? result(0, ready) : { code: 99, stdout: '' });
+    if (answers[command]) return answers[command];
+    if (command === 'status') return result(0, ready);
+    if (command === 'config get') return result(0, { key: 'terminal', value: 'tmux' });
+    return { code: 99, stdout: '' };
   };
   const invoke = async (...args) => {
     const code = await setupCommand({ origin, args, rest: null, json, browser }, {
@@ -159,6 +162,7 @@ test('setup skips already enabled reviews, applies a changed personal choice and
   const { invoke } = fake({ commands: ['repo', 'review', 'config'], here: repo, checkouts: { [lib]: 'acme/lib' }, answers: {
     'repo list': result(0, { projects: [{ repo }, { repo: 'acme/lib' }], available: [] }),
     'review status': result(0, { on: true }),
+    'config get': result(0, { key: 'terminal', value: 'herdr' }),
     'config list': result(0, { config: { reviews: 'default' } }),
     'config set': result(0, { event: 'set', key: 'reviews', value: 'both' }),
     'session list': result(0, { sessions: [] }),
@@ -167,6 +171,7 @@ test('setup skips already enabled reviews, applies a changed personal choice and
   const after = await invoke('--yes', '--repo', repo, '--repo', 'acme/lib', '--repo-dir', lib, '--reviews', 'both', '--prompt=-v is broken');
   assert.equal(after.code, 0);
   assert.deepEqual(after.calls.slice(3), [
+    ['config', 'get', 'terminal'],
     ['review', 'status', '--dir', path.resolve('fake-checkout')], ['review', 'status', '--dir', lib],
     ['config', 'list'], ['config', 'set', 'reviews', 'both'], ['session', 'list'],
     ['session', 'new', '--herdr', '--repo', repo, '--agent', 'claude', '--', '-v is broken'],
@@ -182,7 +187,7 @@ test('setup skips subcommands absent from this build and launches normally witho
   } });
   const after = await invoke('--yes', '--repo', repo, '--prompt', 'Fix it.');
   assert.equal(after.code, 2);
-  assert.deepEqual(after.events.filter((event) => event.status === 'skipped').map((event) => event.step), ['repos', 'repo-review', 'review-choice']);
+  assert.deepEqual(after.events.filter((event) => event.status === 'skipped').map((event) => event.step), ['repos', 'terminal', 'repo-review', 'review-choice']);
   assert.deepEqual(after.calls.at(-1), ['session', 'new', '--repo', repo, '--agent', 'codex', '--', 'Fix it.']);
   assert.equal(after.events.at(-1).url, `${origin}/s/12345678`);
 });
@@ -213,7 +218,7 @@ test('without repo selection, setup asks before reusing a session from a previou
   assert.deepEqual(after.calls.at(-1), ['session', 'list']);
   const next = await invoke('--yes', '--repo', 'acme/new', '--reviews', 'codex', '--prompt', 'Fix the new repo.');
   assert.equal(next.code, EXIT.done);
-  assert.deepEqual(next.calls.at(-1), ['session', 'new', '--herdr', '--repo', 'acme/new', '--agent', 'claude', '--', 'Fix the new repo.']);
+  assert.deepEqual(next.calls.at(-1), ['session', 'new', '--repo', 'acme/new', '--agent', 'claude', '--', 'Fix the new repo.']);
 });
 
 test('a connection failure after launch gives the command to reconnect to that session', async () => {
@@ -241,8 +246,8 @@ test('setup in agent mode asks for the reviewer choice when config is available'
   assert.match(after.events.at(-1).message, /Current choice: default/);
 });
 
-test('setup asks on a terminal and can keep a personal choice and skip starting a session', async () => {
-  const { invoke } = fake({ json: false, tty: true, input: [repo, '', ''], commands: ['repo', 'config'], answers: {
+test('setup asks on a terminal and can keep personal choices and skip starting a session', async () => {
+  const { invoke } = fake({ json: false, tty: true, input: [repo, '', '', ''], commands: ['repo', 'config'], answers: {
     'repo list': result(0, { projects: [{ repo }], available: null }),
     'config list': result(0, { config: { reviews: 'default' } }),
     'session list': result(0, { sessions: [] }),
@@ -251,8 +256,36 @@ test('setup asks on a terminal and can keep a personal choice and skip starting 
   assert.equal(after.code, 0);
   assert.match(after.lines[1], /Repos on https:\/\/console\.example: acme\/app \(added\)/);
   assert.match(after.lines.at(-1), /^\[skipped\]/);
-  assert.equal(after.questions.length, 3);
+  assert.equal(after.questions.length, 4);
+  assert.match(after.questions[1], /Herdr or tmux.*Enter keeps tmux/);
+  assert.ok(!after.calls.some(([group, sub]) => group === 'config' && sub === 'set'));
   assert.deepEqual(after.calls.slice(-2), [['config', 'list'], ['session', 'list']]);
+});
+
+test('setup saves the interactive Herdr choice before starting and attaching the first session', async () => {
+  const session = { id: '12345678', url: `${origin}/s/12345678` };
+  const { invoke } = fake({ tty: true, input: ['Herdr'], commands: ['config'], answers: {
+    'config set': result(0, { event: 'set', key: 'terminal', value: 'herdr' }),
+    'session list': result(0, { sessions: [] }),
+    'session new': result(0, { event: 'connected', session }),
+  } });
+  const after = await invoke('--skip-reviews', '--repo', repo, '--prompt', 'Fix the redirect.');
+  assert.equal(after.code, EXIT.done);
+  assert.deepEqual(after.calls.slice(-4), [
+    ['config', 'get', 'terminal'], ['config', 'set', 'terminal', 'herdr'], ['session', 'list'],
+    ['session', 'new', '--herdr', '--repo', repo, '--agent', 'claude', '--', 'Fix the redirect.'],
+  ]);
+});
+
+test('setup accepts a terminal choice in agent mode even without a first session', async () => {
+  const { invoke } = fake({ tty: true, commands: ['config'], answers: {
+    'config get': result(0, { key: 'terminal', value: 'herdr' }),
+    'config set': result(0, { event: 'set', key: 'terminal', value: 'tmux' }),
+  } });
+  const after = await invoke('--yes', '--terminal', 'tmux', '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done);
+  assert.deepEqual(after.calls.slice(-2), [['config', 'get', 'terminal'], ['config', 'set', 'terminal', 'tmux']]);
+  assert.deepEqual(after.questions, []);
 });
 
 test('setup asks for a prompt or --no-session when an agent has no environment yet', async () => {

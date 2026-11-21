@@ -3,6 +3,7 @@
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
+import { CONFIG_KEYS } from './config.mjs';
 import { ORIGIN_RE } from './credentials.mjs';
 import { repoOf } from '../shared/repoOf.mjs';
 
@@ -14,6 +15,7 @@ export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--
   --reviews <choice>     personal reviewer choice: none, claude, codex, both, default
   --skip-reviews         skip both the project file and your reviewer choice
   --agent <name>         claude or codex (defaults to one already signed in)
+  --terminal <name>      agent terminal for new private sessions: herdr or tmux
   --prompt <text>        what the first session should work on
   --no-session           finish without starting a session
 
@@ -21,6 +23,7 @@ When you need to do something, setup prints what is needed and exits 2. Run it a
 
 const REPO = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\/(?!\.{1,2}$)[\w.-]+$/i;
 const REVIEW_CHOICES = ['none', 'claude', 'codex', 'both', 'default'];
+const TERMINAL_CHOICES = CONFIG_KEYS.terminal.values;
 const key = (repo) => repo.toLowerCase();
 
 function options(args, fail) {
@@ -31,7 +34,7 @@ function options(args, fail) {
       out[name] = true;
       continue;
     }
-    if (!['--repo', '--repo-dir', '--reviews', '--agent', '--prompt'].includes(name)) throw fail(`Unknown setup option ${name}. Run woodshed setup --help.`);
+    if (!['--repo', '--repo-dir', '--reviews', '--agent', '--terminal', '--prompt'].includes(name)) throw fail(`Unknown setup option ${name}. Run woodshed setup --help.`);
     const value = inline ?? args[++i];
     if (!value?.trim() || (inline === undefined && value.startsWith('--'))) throw fail(`${name} needs a value.`);
     if (name === '--repo') {
@@ -42,6 +45,7 @@ function options(args, fail) {
   }
   if (out['--reviews'] && !REVIEW_CHOICES.includes(out['--reviews'])) throw fail(`--reviews must be one of ${REVIEW_CHOICES.join(', ')}.`);
   if (out['--agent'] && !['claude', 'codex'].includes(out['--agent'])) throw fail('--agent must be claude or codex.');
+  if (out['--terminal'] && !TERMINAL_CHOICES.includes(out['--terminal'])) throw fail('--terminal must be herdr or tmux.');
   if (out['--skip-reviews'] && out['--reviews']) throw fail('Choose either --reviews or --skip-reviews.');
   if (out['--no-session'] && out['--prompt']) throw fail('Choose either --prompt or --no-session.');
   return out;
@@ -207,12 +211,36 @@ export async function setupCommand(args, ctx) {
     report('agent', 'done', `${agent === 'claude' ? 'Claude' : 'Codex'} is connected for sessions.`, { agent });
   }
 
+  const canConfig = has('config');
+  const canAttach = me.hc?.ok === true && ctx.platform !== 'win32';
+  let terminal = opts['--terminal'];
+  if (!canConfig) {
+    const message = 'Set your agent terminal on My settings. This CLI has no config command.';
+    const fields = { url: `${origin}/settings` };
+    if (terminal) return stop('terminal', EXIT.waiting, message, fields);
+    report('terminal', 'skipped', message, fields);
+  } else if (choose || terminal || (canAttach && !opts['--no-session'])) {
+    const current = await call('config get terminal', 'config', 'get', 'terminal');
+    const prior = current.last?.value;
+    if (current.code !== EXIT.done || !TERMINAL_CHOICES.includes(prior)) return childError('terminal', current, 'Could not read your agent terminal preference.');
+    if (!terminal && choose) {
+      const answer = await choose(`Use Herdr or tmux for agents in new private sessions? Enter keeps ${prior}. `);
+      terminal = answer === '' ? prior : answer?.toLowerCase();
+      if (!TERMINAL_CHOICES.includes(terminal)) return stop('terminal', EXIT.waiting, `Choose --terminal herdr or --terminal tmux. Current choice is ${prior}.`);
+    }
+    terminal ??= prior;
+    if (terminal !== prior) {
+      const set = await call('config set terminal', 'config', 'set', 'terminal', terminal);
+      if (set.code !== EXIT.done) return childError('terminal', set, 'Could not save your agent terminal preference.');
+    }
+    report('terminal', 'done', `New private sessions will run their agents in ${terminal === 'herdr' ? 'Herdr' : 'tmux'}.`, { terminal });
+  }
+
   if (opts['--skip-reviews']) {
     report('reviews', 'skipped', 'You chose to skip review setup.');
   } else {
     const levels = 'A repo’s .woodshed/project.yaml enables reviews through a pull request. Your reviewer choice controls who reviews your pull requests.';
     const canReview = has('review');
-    const canConfig = has('config');
     if (!canReview) report('repo-review', 'skipped', `${levels} This CLI has no review command yet. In a checkout, use: ${command('review', 'enable')}.`);
     else if (!selected.length) report('repo-review', 'skipped', `${levels} Run in the repo’s checkout: ${command('review', 'enable')}.`);
     else {
@@ -290,7 +318,7 @@ export async function setupCommand(args, ctx) {
     return EXIT.done;
   }
 
-  const useHc = me.hc?.ok === true && ctx.platform !== 'win32';
+  const useHc = canAttach && (terminal === 'herdr' || !canConfig);
   const newSession = ['session', 'new', ...(useHc ? ['--herdr'] : [])];
   let prompt = opts['--prompt'];
   if (!prompt && choose) {
@@ -306,6 +334,8 @@ export async function setupCommand(args, ctx) {
   const started = await call('session new', ...newSession, ...(repo ? ['--repo', repo] : []), '--agent', agent, '--', prompt);
   const session = started.events.findLast((event) => event.session)?.session;
   const url = linkTo(session?.url, origin);
+  const placementError = printable(started.events.findLast((event) => event.event === 'connected')?.agent?.placementError);
+  if (placementError) report('herdr', 'skipped', `The machine connected, but its agent could not be placed in a Herdr space. ${placementError}`, { url });
   if (useHc && started.error && /^[a-f0-9]{8}$/.test(session?.id)
       && started.events.some((event) => ['running', 'needs-you'].includes(event.event))) {
     const retry = command('session', 'herdr', session.id);
