@@ -22,6 +22,7 @@ const T0 = Date.parse('2026-11-20T10:00:00Z');
 // `taken`: the session made it itself as that run was on its way. `local`: this computer's terminals, by name.
 export function fakeHc({ version = '0.1.21', missing = false, agent = true, addFails = null, waiting = false, taken = false, local = { boss: 't9' } } = {}) {
   const machines = new Map();
+  const labels = new Map();
   const calls = [];
   const runs = [];
   let made = false;
@@ -64,11 +65,17 @@ export function fakeHc({ version = '0.1.21', missing = false, agent = true, addF
     if (first === 'get') {
       const [machine, terminal] = args.at(-1).split('/');
       if (!machines.has(machine)) return err('machine_unknown', `no machine "${machine}"`);
-      return agent ? ok({ address: `${machine}/t1`, name: terminal }) : err('not_found', `no terminal "${terminal}"`, 3);
+      const address = `${machine}/t1`;
+      return agent ? ok({ address, name: terminal, labels: labels.get(address) ?? {} }) : err('not_found', `no terminal "${terminal}"`, 3);
+    }
+    if (first === 'label') {
+      const [, , address, ...pairs] = args;
+      labels.set(address, Object.fromEntries(pairs.map((pair) => pair.split('='))));
+      return ok({ address, labels: labels.get(address) });
     }
     return err('usage', `unexpected ${args.join(' ')}`);
   };
-  return { run, calls, runs, machines, added: () => calls.filter((a) => a[0] === 'machine' && a[1] === 'add') };
+  return { run, calls, runs, machines, labels, added: () => calls.filter((a) => a[0] === 'machine' && a[1] === 'add') };
 }
 const iso = (ms) => new Date(ms).toISOString();
 
@@ -418,6 +425,7 @@ test('session herdr makes your running session a machine in hc, through this com
   assert.equal(connected.event, 'connected');
   assert.deepEqual(connected.machine, { name: 'woodshed-aaaa0001', action: 'added', state: null });
   assert.deepEqual(connected.agent, { inHerdr: true, address: 'woodshed-aaaa0001/t1' });
+  assert.deepEqual(c.hc.labels.get(connected.agent.address), { 'herdr.space': 'woodshed-aaaa0001', 'herdr.tab': 'woodshed-aaaa0001-agent' });
   assert.equal(connected.session.id, 'aaaa0001');
   assert.ok(!c.calls.some(([kind]) => kind === 'resume'), 'a running session is not resumed');
 
@@ -425,6 +433,7 @@ test('session herdr makes your running session a machine in hc, through this com
   assert.equal(again.code, EXIT.done, again.err);
   assert.match(again.out, /woodshed-aaaa0001 was already in Herdr, connected\.\nIts agent is woodshed-aaaa0001\/t1: hc attach woodshed-aaaa0001\/t1\n/);
   assert.equal(c.hc.added().length, 1, 'connected through the same line: left alone');
+  assert.equal(c.hc.calls.filter(([command]) => command === 'label').length, 1, 'the existing space and tab are kept');
 
   // Resumed since, the session is a new container, whose core hc does not take for the one it knew.
   c.hc.machines.get('woodshed-aaaa0001').state = 'unreachable';

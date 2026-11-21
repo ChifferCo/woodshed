@@ -57,10 +57,15 @@ follow the link or supply the choice it asks for, then run it again with the sam
 in your browser and setup collects the approval the next time you run it. Connect Claude or Codex for sessions on
 My settings.
 
+Setup asks whether new private sessions should run their agents in Herdr or tmux. Enter keeps the saved choice.
+Use `--terminal herdr` or `--terminal tmux` to set it explicitly. A run with `--yes` keeps the saved choice unless you
+pass `--terminal`.
+
 Use `--prompt=--help` for a prompt that looks like an option. Repeat `--repo` to choose several repos. The first is for the session. For each repo, setup uses the current checkout
 when its GitHub origin matches, or a checkout supplied by `--repo-dir`. Repo review setup prepares the project file
 change for a pull request. `--reviews` sets your own reviewer choice. Use `--skip-reviews` to skip both, or
-`--no-session` to finish without starting an environment. On macOS and Linux, setup uses `session new --herdr` when it finds a compatible `hc`.
+`--no-session` to finish without starting an environment. When the terminal choice is Herdr and setup finds a compatible
+`hc` on macOS or Linux, it uses `session new --herdr` to show the agent in a space on the session's machine.
 On Windows it starts a regular session and prints the link. If a private session already exists for the first repo,
 setup gives you its link.
 
@@ -236,9 +241,9 @@ hc machine add --json --name woodshed-<id> --install \
   from another install of this command, or one added with `--temp`) is forgotten and added again. `hc machine rm` leaves
   the terminals in the session running. `session remove` forgets a `woodshed-<id>` only when its line is this command
   line's tunnel to that session on that console, never a machine of that name you made yourself.
-- **The agent** is in the machine, as `woodshed-<id>/claude`, only when you picked Herdr under Agent terminal on My
-  settings before the session started. Otherwise it runs in tmux, which `hc` cannot reach: the machine still works for
-  new terminals and agents, and `herdr` says where the agent is.
+- **The agent** appears in a space on the machine when you picked Herdr under Agent terminal on My settings before the
+  session started. `session herdr` places the running terminal (`woodshed-<id>/claude`) and keeps any existing layout.
+  With tmux selected, open the agent in the browser or use `session connect`. The machine still works for new terminals.
 - **No `hc`,** or one older than 0.1.21, exits 3 and says so. Nothing here installs or updates it: `hc update` does,
   when you choose.
 - `hc` machines have no label of their own, so the sidebar shows the machine's name, `woodshed-<id>`; `session list`

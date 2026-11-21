@@ -365,7 +365,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
       if (!err.hc) throw err;
       throw fail(printable(err.message, 500));
     }
-    const agent = await agentOn(ctx.hc, name).catch(() => ({ inHerdr: null, address: null }));
+    const agent = await agentOn(ctx.hc, name, { place: ctx.placeHerdrAgent !== false }).catch(() => ({ inHerdr: null, address: null }));
     const shown = summary(s, { origin, login });
     let code = shown.state === 'needs-you' ? EXIT.waiting : EXIT.done;
     // Asked for and not given: the machine stays added, and the exit says the parent was not.
@@ -384,6 +384,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
       say(`Its agent's terminal ${child.address} is a child of ${parent} here${opts['end-with-parent'] ? ', and ends with it' : ', and outlives it'}: hc wait --children any wakes ${parent} when it ends a turn, blocks, errors or exits.`);
     }
     if (noParent) stderr.write(`woodshed: ${noParent}\n`);
+    if (agent.placementError) say(`Could not put the agent in a Herdr space: ${printable(agent.placementError, 500)}`);
     if (agent.inHerdr) say(`Its agent is ${agent.address}: hc attach ${agent.address}`);
     else if (agent.inHerdr === false) {
       say(`Its agent runs in tmux, not Herdr: Agent terminal on My settings was tmux when the session started. New terminals and agents on ${name} work; the agent itself is at ${shown.url}. Pick Herdr on My settings for your next sessions.`);

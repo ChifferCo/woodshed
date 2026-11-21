@@ -426,7 +426,8 @@ async function runMove({ origin, rest }, ctx) {
     } else sessionOf.set(repos[0], target.id);
     for (const sid of new Set(sessionOf.values())) {
       const events = [];
-      const code = await ctx.session({ origin, rest: ['herdr', sid] }, { ...ctx, token, json: true, emit: (o) => events.push(o), say: () => {} });
+      // The move places the agent in the copied layout once the machine is connected.
+      const code = await ctx.session({ origin, rest: ['herdr', sid] }, { ...ctx, token, placeHerdrAgent: false, json: true, emit: (o) => events.push(o), say: () => {} });
       const connected = events.find((e) => e.event === 'connected');
       if ((code !== EXIT.done && code !== EXIT.waiting) || !connected) {
         const said = events.find((e) => e.event === 'failed' || e.event === 'stopped' || e.event === 'error');
