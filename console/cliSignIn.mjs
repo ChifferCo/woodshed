@@ -88,6 +88,10 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
   const pending = devices;
   // This console, as an approval names it: a shared room holds other consoles' approvals too.
   const self = Symbol('cliSignIn');
+  // This console, as its consent page names it: consoles at one address can share every label the page shows (a name,
+  // an org, or none), so the form carries this, and a form from another console's page asks again. Not a secret: it
+  // only tells consoles apart, and a code outlives no restart, so one made at each start is enough.
+  const id = crypto.randomBytes(12).toString('hex');
 
   function tokens() {
     store.state.cliTokens ??= {};
@@ -210,7 +214,8 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
     const token = BEARER_RE.exec(String(headers?.authorization || ''))?.[1];
     if (!token) return false;
     const hash = sha256(token);
-    return Object.values(tokens()).some((r) => r.hash === hash && Date.parse(r.expiresAt) > now());
+    // Read as it is: a console that never made a token has no `cliTokens`, and routing writes nothing to it.
+    return Object.values(store.state.cliTokens ?? {}).some((r) => r.hash === hash && Date.parse(r.expiresAt) > now());
   }
 
   /** @returns {{id: string, login: string|null, record: object}|null}  the live token a request carries */
@@ -267,7 +272,7 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
     console.log('cliSignIn: every token revoked', { login, count: ids.length, by });
   }
 
-  return { start, waiting, decide, poll, owns, tokenFor, list, revoke, revokeAll, logins: () => [...new Set(Object.values(tokens()).map((r) => r.login))] };
+  return { id, start, waiting, decide, poll, owns, tokenFor, list, revoke, revokeAll, logins: () => [...new Set(Object.values(tokens()).map((r) => r.login))] };
 }
 
 function json(res, status, body) {
@@ -397,7 +402,7 @@ function shownAbout(about) {
 
 // The question before the token: who signs in, on which computer and to what, and that it is only for a sign-in the
 // person started.
-function consentPage({ consoleName, login, device, about }) {
+function consentPage({ consoleName, consoleId, login, device, about }) {
   const who = login ? `as <strong>@${escapeHtml(login)}</strong>` : '';
   const org = about?.org ? ` for <strong>${escapeHtml(about.org)}</strong>` : '';
   return page({
@@ -409,6 +414,7 @@ function consentPage({ consoleName, login, device, about }) {
     <input type="hidden" name="code" value="${escapeHtml(device.userCode)}">
     <input type="hidden" name="login" value="${escapeHtml(login ?? '')}">
     <input type="hidden" name="about" value="${escapeHtml(shownAbout(about))}">
+    <input type="hidden" name="console" value="${escapeHtml(consoleId)}">
     <button class="btn" type="submit" name="decision" value="approve">Sign in the CLI</button><button class="quiet" type="submit" name="decision" value="deny">Deny</button>
   </form>`,
   });
@@ -446,7 +452,7 @@ export async function handleCliPage({ req, res, url, cli, login, consoleName, ab
     if (!typed) return send(typePage({ consoleName }));
     const device = cli.waiting(typed);
     if (!device) return send(typePage({ consoleName, code: typed.slice(0, 20), error: 'No sign-in is waiting with that code. It lasts 10 minutes: run woodshed login again for a new one.' }), 404);
-    return send(consentPage({ consoleName, login, device, about: about(login) }));
+    return send(consentPage({ consoleName, consoleId: cli.id, login, device, about: about(login) }));
   }
   if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' }), true;
   // The consent page's own buttons: a browser always sends Origin with a form's POST, and another site's is refused.
@@ -459,10 +465,11 @@ export async function handleCliPage({ req, res, url, cli, login, consoleName, ab
   }
   const code = form.get('code') ?? '';
   // A page left open while this browser signed in as someone else, or moved to another console at this address, asks
-  // again, naming who and where it is now. A form with no `about` is from no page of this console's that can still
-  // approve: codes are kept in memory, so none outlives the restart that brought the field.
+  // again, naming who and where it is now. The console is told by its id, not its labels, which two consoles can share;
+  // the labels are checked too, so a page that named an org this console no longer says is asked again. A form with no
+  // id is from no page that can still approve: codes are kept in memory, so none outlives the restart that brought it.
   const aboutNow = about(login);
-  const otherConsole = form.has('about') && form.get('about') !== shownAbout(aboutNow);
+  const otherConsole = form.get('console') !== cli.id || form.get('about') !== shownAbout(aboutNow);
   if ((form.get('login') ?? '') !== (login ?? '') || otherConsole) {
     console.warn(otherConsole ? 'cliSignIn: the consent page named another console, asked again' : 'cliSignIn: the consent page named another account, asked again',
       { shown: String(form.get('login') ?? '').slice(0, 40), now: login });

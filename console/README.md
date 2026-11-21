@@ -1810,7 +1810,8 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   carry no sign-in, so the program answers them itself, with `handleCliApi` and a `createCliSignIn` on that same room;
   the installation whose `/cli` page the person approves the code on makes the token, in its own state and checked by
   its own `allowed`, when the command line next asks, and the token's answer says that installation's `about`. The
-  page names the org it signs in to, and asks again if the browser has moved to another installation since it showed.
+  page names the org it signs in to, and asks again if the browser has moved to another installation since it showed,
+  told by the installation's own id (`cli.id`), so two with the same name and org are still told apart.
   Every later call carries the token: `inst.cli.owns(headers)` says which installation holds it (no check of `allowed`,
   nothing written), and the program sends the request there, which answers or refuses it as its own.
 - `repos: {list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`: where the program keeps the

@@ -129,6 +129,7 @@ test('consoles sharing a waiting room: the one a code is approved on makes the t
   assert.deepEqual(b.store.savedIn, ['b'], 'made in b\'s context, so what it logs is b\'s');
   assert.equal(b.cli.tokenFor(bearer).login, 'mia-dev');
   assert.equal(b.cli.owns({ authorization: 'Bearer wsc_nope' }), false);
+  assert.equal('cliTokens' in a.store.state, false, 'asking a console that made no token writes nothing to its state');
 
   // A person's sign-ins ending on one console leaves their approval on another alone, and an approval by someone the
   // approving console no longer lets in is refused there.
@@ -141,21 +142,26 @@ test('consoles sharing a waiting room: the one a code is approved on makes the t
   assert.equal(front.cli.poll(late.deviceCode).status, 'denied');
 });
 
-// The /cli page and the CLI's calls on one console of two sharing a room, as a program embedding them serves them.
-async function pageServer({ about }) {
+// The /cli page and the CLI's calls on consoles sharing a room, as a program embedding them serves them: the CLI's calls
+// to a front desk, the page to whichever console `route.to` names (the one the browser is in now).
+async function pageServer({ about, route = { to: 'cli' } }) {
   const devices = createCliDevices();
   const front = createCliSignIn({ store: { state: {}, save() {} }, devices });
   const store = { state: {}, save() {} };
   const cli = createCliSignIn({ store, devices });
+  const twin = createCliSignIn({ store: { state: {}, save() {} }, devices });
+  const consoles = { cli, twin };
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     if (url.pathname.startsWith('/api/cli/')) return handleCliApi({ req, res, url, cli: front, publicUrl: 'http://x', about: () => ({ console: 'nobody', org: null }) });
-    if (!await handleCliPage({ req, res, url, cli, login: 'mia-dev', consoleName: 'Woodshed', about: () => about.now })) res.end('no');
+    if (!await handleCliPage({ req, res, url, cli: consoles[route.to], login: 'mia-dev', consoleName: 'Woodshed', about: () => about.now })) res.end('no');
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
-  return { base, cli, server };
+  return { base, cli, twin, server };
 }
+
+const hidden = (page, name) => new RegExp(`name="${name}" value="([^"]*)"`).exec(page)[1].replaceAll('&quot;', '"');
 
 test('the /cli page names the org it signs in to, asks again when the browser has moved to another, and the token says it', async (t) => {
   const about = { now: { console: 'Woodshed', org: 'acme' } };
@@ -164,11 +170,10 @@ test('the /cli page names the org it signs in to, asks again when the browser ha
   const started = await (await fetch(`${base}/api/cli/device`, { method: 'POST', body: JSON.stringify({ name: 'laptop' }) })).json();
   const page = await (await fetch(`${base}/cli?code=${started.userCode}`)).text();
   assert.match(page, /sign in to Woodshed for <strong>acme<\/strong> as <strong>@mia-dev<\/strong>/);
-  const shown = /name="about" value="([^"]*)"/.exec(page)[1].replaceAll('&quot;', '"');
   const approve = () => fetch(`${base}/cli`, {
     method: 'POST', redirect: 'manual',
     headers: { origin: base, host: new URL(base).host, 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ code: started.userCode, login: 'mia-dev', about: shown, decision: 'approve' }).toString(),
+    body: new URLSearchParams({ code: started.userCode, login: 'mia-dev', about: hidden(page, 'about'), console: hidden(page, 'console'), decision: 'approve' }).toString(),
   });
   about.now = { console: 'Woodshed', org: 'other-co' };
   const moved = await approve();
@@ -181,4 +186,30 @@ test('the /cli page names the org it signs in to, asks again when the browser ha
   assert.equal(token.status, 'approved');
   assert.equal(token.org, 'acme', 'the approving console\'s about, not the front\'s');
   assert.ok(cli.owns({ authorization: `Bearer ${token.token}` }));
+});
+
+test('the /cli page asks again when the browser moved to another console with the same name and org, and with none', async (t) => {
+  for (const labels of [{ console: 'Woodshed', org: 'acme' }, { console: 'Woodshed', org: null }]) {
+    const about = { now: labels };
+    const route = { to: 'cli' };
+    const { base, cli, twin, server } = await pageServer({ about, route });
+    t.after(() => server.close());
+    const started = await (await fetch(`${base}/api/cli/device`, { method: 'POST', body: JSON.stringify({ name: 'laptop' }) })).json();
+    const page = await (await fetch(`${base}/cli?code=${started.userCode}`)).text();
+    const form = (fields) => fetch(`${base}/cli`, {
+      method: 'POST', redirect: 'manual',
+      headers: { origin: base, host: new URL(base).host, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ code: started.userCode, login: 'mia-dev', decision: 'approve', ...fields }).toString(),
+    });
+    route.to = 'twin';
+    const moved = await form({ about: hidden(page, 'about'), console: hidden(page, 'console') });
+    assert.equal(moved.status, 303, `the page was cli's, the browser is in twin now, each labelled ${JSON.stringify(labels)}: asked again`);
+    assert.ok(twin.waiting(started.userCode), 'twin approved nothing');
+    assert.equal((await form({ about: hidden(page, 'about') })).status, 303, 'a form naming no console asks again');
+    route.to = 'cli';
+    assert.equal((await form({ about: hidden(page, 'about'), console: hidden(page, 'console') })).status, 200, 'back on the console the page named');
+    const token = await (await fetch(`${base}/api/cli/token`, { method: 'POST', body: JSON.stringify({ deviceCode: started.deviceCode }) })).json();
+    assert.ok(cli.owns({ authorization: `Bearer ${token.token}` }), 'kept by the console the page named');
+    assert.equal(twin.owns({ authorization: `Bearer ${token.token}` }), false);
+  }
 });
