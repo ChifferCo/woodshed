@@ -353,6 +353,13 @@ URL on top of each env file's Repo settings values
   session is being locked down`, `not running`). A pipe cut while the session ran on, with `why: 'ended'`, is the
   computer's side or the network going; one cut when the session paused is the idle pause, which a pipe does not hold
   off. In the session, statusd logs `statusd: exec opened` and `exec closed` with the exit code.
+- **`woodshed session connect` does not open, or drops.** It is the same path as the tunnel, a websocket to the
+  session's ttyd (console/README.md, "A terminal from the command line"), and the same lines with `kind: 'term'` or
+  `'shell'`: `execPipe: refused` with `why` (`no terminal` is a session image from before the Terminal tab, for
+  `--shell`), `refused by the session` with ttyd's status, `closed` with `why`. A terminal that opens and closes at
+  once with 1008 is ttyd refusing the console's first message: a ttyd other than 1.7.7's protocol. A drop says
+  `connecting again` and tries for a minute while the session runs; one that says the session is paused or stopped
+  needs `session connect` again, which resumes it.
 - **`woodshed session` fails, or a start it waits on never ends.** Each command's message says what the console
   answered (cli/README.md, "Sessions"): exit 3 with `does not reach this` is a route its token may not call
   (`cliSessions: refused, not a route the command line may call`; the list is in `console/cliSessions.mjs`), and
