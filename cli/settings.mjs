@@ -435,8 +435,10 @@ export function runsOf(id, value) {
     try {
       server = JSON.parse(value) ?? {};
     } catch {}
-    const lines = [server.command ? `runs: ${[server.command, ...(Array.isArray(server.args) ? server.args : [])].join(' ')}` : `connects to: ${server.url ?? 'nothing named'}`];
-    if (server.env && Object.keys(server.env).length) lines.push(`with env: ${Object.keys(server.env).join(', ')}`);
+    // The program and each argument as JSON, so where one argument ends is plain; each env value but a credential's,
+    // since one (NODE_OPTIONS, npm_config_registry) can change what runs.
+    const lines = [server.command ? `runs: ${json1([server.command, ...(Array.isArray(server.args) ? server.args : [])])}` : `connects to: ${server.url ?? 'nothing named'}`];
+    for (const [k, v] of Object.entries(server.env ?? {})) lines.push(`env.${k}: ${SECRET_VARIABLE.test(k) ? '(not shown)' : json1(v)}`);
     for (const [k, v] of Object.entries(server)) if (!['type', 'command', 'args', 'url', 'env'].includes(k)) lines.push(`${k}: ${json1(v)}`);
     return whole(lines);
   }
@@ -453,6 +455,9 @@ export function runsOf(id, value) {
             hooks.forEach((hook, j) => lines.push(`hooks.${event}[${i}]${group?.matcher ? ` (${group.matcher})` : ''} [${j}]: ${hook?.command ? `runs ${hook.command}` : json1(hook)}`));
           });
         }
+      } else if (CREDENTIAL_KEYS.includes(key)) {
+        // Only ever this computer's own, put back by a replace: a session's never comes (translate leaves them out).
+        lines.push(`${key}: (yours, not shown)`);
       } else if (key === 'env' && v && typeof v === 'object') {
         // A value can change what runs (NODE_OPTIONS), so it is shown, but never one named like a credential.
         for (const [k, x] of Object.entries(v)) lines.push(`env.${k}: ${SECRET_VARIABLE.test(k) ? '(not shown)' : x}`);
@@ -465,7 +470,7 @@ export function runsOf(id, value) {
     }
     return whole(lines.length ? lines : ['nothing set']);
   }
-  const text = Buffer.from(value, 'base64').toString('utf8');
+  const text = Buffer.from(value, 'base64').toString('utf8').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
   if (/\.(md|markdown)$/i.test(id)) {
     // Its frontmatter (allowed-tools, tools, hooks, model) and each line that runs shell as it loads (!`cmd`).
     const lines = [];
