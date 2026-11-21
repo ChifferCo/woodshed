@@ -237,10 +237,16 @@ export function findConversations(agents, { env = process.env, now = Date.now(),
   }
   // One conversation for two agents is a guess for at least one of them.
   const byId = new Map();
-  for (const [address, found] of out) if (found.id) byId.set(found.id, [...(byId.get(found.id) ?? []), address]);
-  for (const [id, addresses] of byId) {
-    if (addresses.length < 2) continue;
-    for (const address of addresses) out.set(address, { error: `${addresses.join(' and ')} would both get conversation ${id}: label each, hc label <t> claude.session=<id>` });
+  for (const agent of agents) {
+    const id = out.get(agent.address)?.id;
+    if (id) byId.set(id, [...(byId.get(id) ?? []), agent]);
+  }
+  for (const [id, matches] of byId) {
+    if (matches.length < 2) continue;
+    const addresses = matches.map(({ address }) => address).join(' and ');
+    for (const { address, agent } of matches) {
+      out.set(address, { error: `${addresses} would both get conversation ${id}: label each, hc label ${address} ${agent}.session=<id>` });
+    }
   }
   return out;
 }

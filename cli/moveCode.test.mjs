@@ -51,6 +51,7 @@ test('credential headers distinguish literals from references and placeholders',
     'Authorization: process.env.API_TOKEN',
     '{"cookie":"Cookie preferences","headers":{"Authorization":"Bearer ${token}"}}',
     'Cookie: session=$SESSION',
+    'curl -H "Cookie: theme=${THEME}" -H "Cookie: session=$SESSION"',
   ];
   for (const input of inputs) assert.deepEqual(secretsIn(input, '', options), [], input);
   for (const input of ['Authorization: Basic abc=', 'X-Api-Key: abc', 'Cookie: theme=$THEME; session=abc==']) {

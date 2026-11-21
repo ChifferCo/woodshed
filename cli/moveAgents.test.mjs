@@ -96,6 +96,10 @@ test('a Codex conversation is found by the folder its first record names', (t) =
   write(`rollout-2026-11-20T09-30-00-${UUID(6)}.jsonl`, '/w/other', UUID(6));
   const found = codexConversations(codexDir, '/w/app', { now });
   assert.deepEqual(found.map((c) => [c.id, c.relative]), [[UUID(5), `2026/11/20/rollout-2026-11-20T09-00-00-${UUID(5)}.jsonl`]]);
+  const ambiguous = findConversations(['t1', 't2'].map((address) => ({
+    address, agent: 'codex', cwd: '/w/app', argv: ['codex', 'resume', UUID(5)],
+  })), { env: { CODEX_HOME: codexDir }, now });
+  assert.match(ambiguous.get('t1').error, /hc label t1 codex\.session=<id>/);
 });
 
 test('a conversation\'s folders are said as the session\'s, under the checkout only, and everything else is kept byte for byte', () => {

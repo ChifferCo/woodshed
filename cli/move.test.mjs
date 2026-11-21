@@ -413,6 +413,34 @@ test('decoded transcript credential headers refuse a move before push or upload'
   assert.ok(!fs.existsSync(path.join(l.repo.bare, 'push-started')));
 });
 
+for (const source of ['checkout', 'transcript']) {
+  test(`a second quoted Cookie header in the ${source} refuses a move before push or upload`, async (t) => {
+    const l = laptop(t);
+    const value = 'inert-fixture-cookie-value';
+    const command = `curl -H "Cookie: theme=\${THEME}" -H "Cookie: session=${value}" https://example.test`;
+    const transcript = path.join(l.repo.dir, 'home', '.claude', 'projects', claudeProjectDir(l.cwd), `${CONVERSATION}.jsonl`);
+    const trace = path.join(l.repo.root, 'request.log');
+    fs.writeFileSync(path.join(l.repo.bare, 'hooks', 'pre-receive'), '#!/bin/sh\ntouch push-started\n', { mode: 0o755 });
+    const args = ['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json'];
+
+    if (source === 'checkout') fs.writeFileSync(trace, `${command}\n`);
+    else fs.appendFileSync(transcript, `${JSON.stringify({ type: 'tool_result', content: command })}\n`);
+    const result = await l.run(args);
+
+    assert.equal(result.code, EXIT.refused);
+    const findings = result.events.find((event) => event.event === 'secrets');
+    if (source === 'checkout') {
+      assert.deepEqual(findings?.files, [{ root: fs.realpathSync(l.repo.root), path: 'request.log', line: 1, kind: 'a credential header' }]);
+    } else {
+      assert.deepEqual(findings?.conversations, [{ address: 't1', line: 3, kind: 'a credential header' }]);
+    }
+    assert.ok(!(result.out + result.err).includes(value));
+    assert.ok(!l.calls.some(([method]) => method === 'POST'));
+    assert.ok(!l.h.calls.some((call) => call.args?.[0] === 'file'));
+    assert.ok(!fs.existsSync(path.join(l.repo.bare, 'push-started')));
+  });
+}
+
 test('credential headers in an untracked request log refuse the move before push', async (t) => {
   const l = laptop(t);
   const value = 'inert-fixture-bearer-value';
