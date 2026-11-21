@@ -326,8 +326,8 @@ test('behind a proxy, a person the program drops loses their database tunnel tok
   assert.equal(tunnel.available, true);
   assert.equal(store.state.tunnelTokens['lee-dev'], undefined, 'the one dropped while the console was down is revoked at start');
   assert.equal(store.state.cliTokens['00000000000000b2'], undefined, 'their command line sign-in too');
-  const cliSignedIn = (token) => installation.cli.tokenFor({ authorization: `Bearer ${token}` })?.login ?? null;
-  assert.equal(cliSignedIn(SAM_CLI), 'sam-member');
+  const cliSignedIn = async (token) => (await installation.cli.authenticate({ authorization: `Bearer ${token}` })).signedIn?.login ?? null;
+  assert.equal(await cliSignedIn(SAM_CLI), 'sam-member');
   assert.equal(await asks(SAM_TOKEN), 409, 'a listed person\'s token is accepted (409: their databases are not made here)');
   const closed = [];
   tunnel.revoke = ((revoke) => (login) => { closed.push(login); revoke(login); })(tunnel.revoke);
@@ -347,7 +347,7 @@ test('behind a proxy, a person the program drops loses their database tunnel tok
   await asks(SAM_TOKEN);
   await new Promise((r) => setImmediate(r));
   assert.equal(await asks(SAM_TOKEN), 401);
-  assert.equal(cliSignedIn(SAM_CLI), null);
+  assert.equal(await cliSignedIn(SAM_CLI), null);
 });
 
 test('a list that cannot be read is tried again by itself, backing off, until the program answers; stop ends it', async (t) => {

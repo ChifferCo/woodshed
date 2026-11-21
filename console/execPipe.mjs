@@ -10,8 +10,8 @@
 // (shared/execFrames.mjs). Nothing new is open: it is the console's own port, and statusd's, which the console already
 // reaches.
 //
-// Each connection is checked as it opens, and again every 15 seconds while it lasts: the token is live and its person
-// still on the console, the session is running, and the person may open it (`mayOpen`: its owner, for now). Revoking
+// Each connection is checked as it opens, and again every 15 seconds while it lasts: the token passes cliSignIn's
+// `authenticate` (live, its person still on the console and with write access on GitHub), the session is running, and the person may open it (`mayOpen`: its owner, for now). Revoking
 // the token closes its pipes at once (cliSignIn's `whenEnded`), and so does a session's lockdown starting
 // (fleet.onLocking): a tainted session's only way out is the console's egress proxy, so it gets no pipe at all.
 // An open pipe is not activity: the session pauses when idle as it would without one, which ends the pipe.
@@ -44,7 +44,7 @@ export function ownerOnly(session, login) {
 /**
  * @param {{fleet: {find: (id: string) => object|null, isLocked?: (session: object) => boolean,
  *            onLocking?: (fn: (id: string) => void) => void},
- *          cli: {tokenFor: (headers: object) => {id: string, login: string|null, record: object}|null,
+ *          cli: {authenticate: (headers: object) => Promise<{signedIn: {id: string, login: string|null, record: object}|null}>,
  *            whenEnded?: (fn: (ended: {id: string}) => void) => void},
  *          mayOpen?: (session: object, login: string) => boolean, now?: () => number, recheckMs?: number}} deps
  */
@@ -78,21 +78,28 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
     for (const pipe of pipes) if (test(pipe)) close(pipe, why);
   }
 
-  // Expiry, a person taken off the console, a session stopped or handed to someone else: each is found here.
-  function recheck() {
-    for (const pipe of pipes) {
-      if (!cli.tokenFor({ authorization: pipe.authorization })) close(pipe, 'the token ended');
+  // Expiry, a person taken off the console or without write access, a session stopped or handed to someone else: each
+  // is found here.
+  async function recheck() {
+    await Promise.all([...pipes].map(async (pipe) => {
+      let signedIn = null;
+      try {
+        ({ signedIn } = await cli.authenticate({ authorization: pipe.authorization }));
+      } catch (err) {
+        console.warn('execPipe: token not checked', { login: pipe.login, session: pipe.session, message: err.message });
+      }
+      if (!signedIn) close(pipe, 'the token ended');
       else {
         const checked = check(pipe.session, pipe.login);
         if (!checked.session) close(pipe, checked.why);
       }
-    }
+    }));
   }
 
   function track(pipe) {
     pipes.add(pipe);
     if (!timer) {
-      timer = setInterval(recheck, recheckMs);
+      timer = setInterval(() => { recheck(); }, recheckMs);
       timer.unref?.();
     }
   }
@@ -117,25 +124,33 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
       refuse(socket, 400, 'Bad Request', `upgrade to ${PROTOCOL}\n`);
       return true;
     }
-    const signedIn = cli.tokenFor(req.headers);
-    if (!signedIn) {
-      console.warn('execPipe: refused, no valid token', { session: id });
-      refuse(socket, 401, 'Unauthorized', 'not signed in, or the sign-in ended: run woodshed login\n');
-      return true;
-    }
-    const { login } = signedIn;
-    const checked = check(id, login);
-    if (!checked.session) {
-      console.warn('execPipe: refused', { login, session: id, why: checked.why });
-      refuse(socket, checked.status, checked.text, checked.message);
-      return true;
-    }
-    const line = req.headers[LINE_HEADER];
-    if (!decodeLine(line)) {
-      refuse(socket, 400, 'Bad Request', `no line to run in ${LINE_HEADER}, or one too long\n`);
-      return true;
-    }
-    forward({ signedIn, session: checked.session, line, authorization: req.headers.authorization, socket, head });
+    // Asking GitHub about write access can take a moment: the socket waits, and is let go of if it closes meanwhile. A
+    // reset while it waits is not an uncaught error: nothing else listens on the socket until forward().
+    socket.on('error', () => socket.destroy());
+    cli.authenticate(req.headers).then(({ signedIn, error }) => {
+      if (socket.destroyed) return;
+      if (!signedIn) {
+        console.warn('execPipe: refused, no valid token', { session: id });
+        refuse(socket, 401, 'Unauthorized', `${error}\n`);
+        return;
+      }
+      const { login } = signedIn;
+      const checked = check(id, login);
+      if (!checked.session) {
+        console.warn('execPipe: refused', { login, session: id, why: checked.why });
+        refuse(socket, checked.status, checked.text, checked.message);
+        return;
+      }
+      const line = req.headers[LINE_HEADER];
+      if (!decodeLine(line)) {
+        refuse(socket, 400, 'Bad Request', `no line to run in ${LINE_HEADER}, or one too long\n`);
+        return;
+      }
+      forward({ signedIn, session: checked.session, line, authorization: req.headers.authorization, socket, head });
+    }).catch((err) => {
+      console.warn('execPipe: token not checked', { session: id, message: err.message });
+      socket.destroy();
+    });
     return true;
   }
 
