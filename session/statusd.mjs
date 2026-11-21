@@ -82,6 +82,7 @@ import { ownClaudeTranscript, readSessionTranscript } from './sessionTranscript.
 import { ENGINE_NAMES, viewersOf } from '../shared/databases/index.mjs';
 import { expandPath, loadProject, usesVariable } from '../shared/project.mjs';
 import { isMain } from '../shared/isMain.mjs';
+import { EXEC_PATH, handleExecUpgrade } from './execPipe.mjs';
 
 const run = promisify(execFile);
 
@@ -1521,6 +1522,10 @@ function forwardToApp(req, res) {
  * editor, with the statusd token in Authorization as its other requests carry it.
  */
 export function handleUpgrade(req, socket, head, { token = TOKEN, port = APP_PORT, editorPort = EDITOR.port, editorOn = !ASK && PROJECT?.editor === true } = {}) {
+  // The exec pipe, from the console for the session's person (execPipe.mjs): never an app's request.
+  if (!(APP_HEADER in req.headers) && String(req.url || '/').split('?')[0] === EXEC_PATH) {
+    return handleExecUpgrade(req, socket, head, { isAuthorized: (header) => isAuthorized(header, token), cwd: REPO_DIR, tainted, ask: ASK });
+  }
   if (!(APP_HEADER in req.headers) && EDITOR_RE.test(new URL(req.url || '/', 'http://statusd').pathname)) {
     if (!isAuthorized(req.headers.authorization, token)) {
       socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');

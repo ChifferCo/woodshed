@@ -1497,11 +1497,30 @@ asked. Only that page's button, a form POST from the console's own page (Origin 
 approves it; Deny refuses it. The CLI asks `POST /api/cli/token` every 5 seconds meanwhile, and gets its token once.
 Both of those refuse a call with an Origin header, which a browser always sends and the CLI never does, so no web page
 starts a sign-in to hand someone the link of. The code lasts 10 minutes. The token (`wsc_…`) is its own kind, not the
-database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer` to `/api/cli/*` alone for now. The console
+database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer` to `/api/cli/*` and `/api/tunnel/exec/*` alone for now. The console
 keeps only its SHA-256, in `state.json` under `cliTokens`, and My settings' Command line row lists each computer with
 Revoke. Remove My Woodshed, People's Remove and leaving a hosting program's list end them all. The console logs
 `cliSignIn: sign-in started`, `sign-in approved` or `denied`, `token made`, `token revoked` with `by`, and `refused, a
 browser's call` or `refused, the token's person is no longer a member`.
+
+**Into a session from the command line**: `woodshed tunnel <id> -- <line>` (cli/README.md) is one request,
+`/api/tunnel/exec/<id>` with `Upgrade: woodshed-tunnel`, that token, and the line base64'd in `x-woodshed-exec`
+(`console/execPipe.mjs`). The console checks, as it opens and every 15 seconds after, that the token is live and its
+person still on People, that the session is running and is theirs (a My Woodshed session's owner: shares come later),
+and that it is not tainted or being locked down; then it sends the request to the session's statusd `/exec` with the
+session's token in place of the person's, as it reaches statusd for the viewers, and copies bytes both ways once statusd
+answers 101. statusd runs `sh -c <line>` as the session's user in the checkout, without `SESSION_TOKEN` or
+`TERMINAL_TOKEN` in its environment, and frames stdout, stderr and the exit code back (`session/execPipe.mjs`,
+`shared/execFrames.mjs`); `pipe()` on both hops and pausing the program's output on a full socket hold a slow reader's
+side back end to end. Revoking the token (My settings, `woodshed logout`, Remove My Woodshed, People's Remove, leaving a
+hosting program's list) closes its pipes at once, and so does a session's lockdown starting (`fleet.onLocking`). A
+pipe is not activity: the session pauses when idle as it does without one, which ends it: keeping a session up is
+done explicitly (its Extend), never by holding a pipe open. Nothing new is open: it is the console's port, through Caddy, and statusd's,
+which the console already reaches. The console logs `execPipe: opened` with who, the session, the token's id and the
+computer, `execPipe: closed` with its seconds, bytes and `why`, `execPipe: refused` with `why` (`not theirs`,
+`tainted`, `not running`), `refused, no valid token`, `refused by the session` with statusd's status, and `session
+unreachable`; statusd logs `statusd: exec opened` with the line's length (never the line) and `exec closed` with its
+exit code.
 
 **A console with no repo yet** (neither `WOODSHED_REPO` nor `WOODSHED_PROJECTS`, and nothing added on the
 Repos card) has no repository to ask about. It lets in the owner of the account its GitHub App is installed on: that

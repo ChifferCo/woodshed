@@ -340,6 +340,14 @@ URL on top of each env file's Repo settings values
   expired after 90 days, or one whose person left People (`refused, the token's person is no longer a member`): sign in
   again. The token is in the macOS Keychain or libsecret, else in the file `woodshed status --json` names
   (`credentialsFile`); never print it.
+- **`woodshed tunnel` exits 255.** Its stderr says why (cli/README.md, "The tunnel into a session"): `refused (401)`
+  is a sign-in revoked or expired (`woodshed login` again), `refused (404)` a session that is not that person's own,
+  `refused (409)` one not running (resume it) or one that has seen production data, which never gets a pipe. The
+  console logs `execPipe: refused` with `why`, `execPipe: session unreachable` when statusd's port did not answer, and
+  for a pipe that opened, `execPipe: closed` with `why` (`ended`, `the token was revoked`, `the token ended`, `the
+  session is being locked down`, `not running`). A pipe cut while the session ran on, with `why: 'ended'`, is the
+  computer's side or the network going; one cut when the session paused is the idle pause, which a pipe does not hold
+  off. In the session, statusd logs `statusd: exec opened` and `exec closed` with the exit code.
 - **A private session starts without its MCP logins, or Resume opens a blank
   claude.** The session's log says `Claude home restored`, `No Claude home
   saved yet` or `WARNING: Claude home not restored` with the status. Every 5

@@ -1,0 +1,116 @@
+// `woodshed tunnel <id> -- <line>`: runs <line> in the person's running session, with this command's stdin, stdout and
+// stderr as its own, the way `ssh host <line>` does. A terminal runtime reaches a session through it
+// (`--via 'woodshed tunnel <id> --'`), so it is a plain byte pipe: nothing is printed of its own but on stderr, and only
+// when something fails.
+//
+// One HTTPS request, `UPGRADE /api/tunnel/exec/<id>` with the command line's token (console/execPipe.mjs). What comes
+// back is framed (shared/execFrames.mjs): stdout to stdout, stderr to stderr, and the line's exit code is this command's.
+// 255 is the pipe's own failure: not signed in, refused, the console or the session not reached, or the pipe cut before
+// the line ended.
+
+import http from 'node:http';
+import https from 'node:https';
+
+import { FRAME, LINE_HEADER, PROTOCOL, createUnframer, encodeLine } from '../shared/execFrames.mjs';
+
+export const TUNNEL_FAILED = 255;
+// The console's answer to the upgrade; once it is open, the pipe waits as long as the line runs.
+const ANSWER_MS = 20_000;
+
+// What the console says goes to a terminal: only printable text of it.
+const plain = (text) => String(text).replace(/[^\x20-\x7e]/g, ' ').trim().slice(0, 300);
+
+/**
+ * @param {{origin: string, token: string, session: string, line: string,
+ *          stdin: import('node:stream').Readable, stdout: {write: Function}, stderr: {write: Function},
+ *          userAgent?: string, answerMs?: number}} args
+ * @returns {Promise<number>}  the line's exit code, or 255
+ */
+export function runTunnel({ origin, token, session, line, stdin, stdout, stderr, userAgent = 'woodshed-cli', answerMs = ANSWER_MS }) {
+  const url = new URL(`/api/tunnel/exec/${session}`, origin);
+  const fail = (message) => {
+    stderr.write(`woodshed: ${message}\n`);
+    return TUNNEL_FAILED;
+  };
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (code) => {
+      if (settled) return;
+      settled = true;
+      // Nothing more is read: a stdin left open (a terminal runtime's) does not keep this process alive.
+      stdin.unpipe?.();
+      stdin.pause?.();
+      stdin.destroy?.();
+      resolve(code);
+    };
+    const req = (url.protocol === 'https:' ? https : http).request(url, {
+      headers: {
+        connection: 'Upgrade', upgrade: PROTOCOL, authorization: `Bearer ${token}`, [LINE_HEADER]: encodeLine(line), 'user-agent': userAgent,
+      },
+      agent: false,
+    });
+    req.setTimeout(answerMs, () => {
+      req.destroy();
+      finish(fail(`${url.origin} did not answer in ${Math.round(answerMs / 1000)} s`));
+    });
+    req.on('error', (err) => finish(fail(`could not reach ${url.origin}: ${err.message}`)));
+    req.on('response', (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { if (text.length < 4096) text += chunk; });
+      res.on('end', () => {
+        const hint = res.statusCode === 401 ? ' (run woodshed login)' : '';
+        finish(fail(`refused (${res.statusCode}): ${plain(text) || 'no reason given'}${hint}`));
+      });
+      res.on('error', () => finish(fail(`refused (${res.statusCode})`)));
+    });
+    req.on('upgrade', (res, remote, head) => {
+      req.setTimeout(0);
+      remote.setTimeout(0);
+      remote.setNoDelay(true);
+      let code = null;
+      let broken = null;
+      // A reader slower than the session (a full pipe) holds the socket back, and so the session's program, rather than
+      // this process's memory filling.
+      let waiting = 0;
+      const write = (out, data) => {
+        if (out.write(data) === false && typeof out.once === 'function') {
+          waiting++;
+          remote.pause();
+          out.once('drain', () => {
+            if (--waiting === 0) remote.resume();
+          });
+        }
+      };
+      const read = createUnframer((kind, data) => {
+        if (kind === FRAME.stdout) write(stdout, data);
+        else if (kind === FRAME.stderr) write(stderr, data);
+        else code = data;
+      });
+      const onData = (chunk) => {
+        try {
+          read(chunk);
+        } catch (err) {
+          broken = err.message;
+          remote.destroy();
+        }
+      };
+      remote.on('data', onData);
+      if (head?.length) onData(head);
+      // stdin's end is the line's stdin's end; pipe() holds stdin back while the socket's buffer is full.
+      stdin.pipe(remote);
+      remote.on('error', () => {});
+      // A reader that went away (stdout closed) ends the pipe, as it would end the line.
+      for (const out of [stdout, stderr]) out.on?.('error', () => remote.destroy());
+      remote.on('close', () => {
+        if (code !== null) return finish(code);
+        finish(fail(broken ? `the pipe broke: ${broken}` : 'the pipe closed before the line ended'));
+      });
+    });
+    req.end();
+  }).then((code) => new Promise((resolve) => {
+    // What is still in stdout's buffer goes out first, or a reader at the far end of a pipe loses the end.
+    if (typeof stdout.write === 'function' && stdout.writableLength) stdout.write('', () => resolve(code));
+    else resolve(code);
+  }));
+}

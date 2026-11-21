@@ -305,6 +305,17 @@ const mcpServers = [
   { name: 'docs', url: 'https://docs.example.com/mcp', production: false, shared: true, people: '*', repos: '*', auth: 'oidc', audience: 'docs', header: null, headerSavedAt: null, updatedBy: 'local', updatedAt: '2026-11-19T09:00:00.000Z' },
   { name: 'tracker', url: 'https://tracker.example.com/mcp', production: false, shared: false, people: ['local'], repos: '*', auth: 'header', audience: null, header: 'x-api-key', headerSavedAt: null, updatedBy: 'local', updatedAt: '2026-11-19T09:00:00.000Z' },
 ];
+// DEV_CONSOLE_EXEC_PORT=<port> adds a running My Woodshed session of @local's, 55aa55aa, for `woodshed tunnel`
+// (console/execPipe.mjs): its statusd is a session container you started yourself, with its 7682 published on that
+// port of loopback and its SESSION_TOKEN in the file DEV_CONSOLE_EXEC_TOKEN_FILE (cli/README.md, "Trying the tunnel").
+const execPort = Number(process.env.DEV_CONSOLE_EXEC_PORT) || null;
+if (execPort) {
+  sessions.push(session('55aa55aa', null, 'A session your computer reaches', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null,
+    token: fs.readFileSync(process.env.DEV_CONSOLE_EXEC_TOKEN_FILE, 'utf8').trim(),
+    endpoint: { host: '127.0.0.1', statusPort: execPort, termPort: execPort },
+  }));
+}
 fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null, mcpServers }));
 
 // The shell's own console settings, under either name (shared/envNames.mjs: a GitHub App, required sign-in, the ECS
@@ -466,8 +477,9 @@ function startConsole() {
     },
   });
   child.on('exit', (code) => {
-    if (code === RESTART_EXIT_CODE) {
-      console.log('dev console: the console asked to be started again');
+    if (code === RESTART_EXIT_CODE || restarting) {
+      console.log(restarting ? 'dev console: the console stopped, starting it again on the same state' : 'dev console: the console asked to be started again');
+      restarting = false;
       startConsole();
       return;
     }
@@ -484,6 +496,13 @@ function startConsole() {
     process.exit(code ?? 0);
   });
 }
+// SIGHUP stops the console as a redeploy does (SIGTERM) and starts it again on the same state, for what must outlive a
+// console restart: terminals, tunnels, `woodshed tunnel`.
+let restarting = false;
+process.on('SIGHUP', () => {
+  restarting = true;
+  child.kill('SIGTERM');
+});
 startConsole();
 process.on('SIGINT', () => child.kill('SIGINT'));
 process.on('SIGTERM', () => child.kill('SIGTERM'));

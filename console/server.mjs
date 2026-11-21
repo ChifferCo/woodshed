@@ -2664,10 +2664,11 @@ function terminalTarget(fleet, login, members) {
  * Every websocket the console takes: a session app's (createAppUpgrade), woodshed-db.mjs's tunnel, and the terminals,
  * which need the console's own origin and whoever is signed in: the session cookie, or a hosting proxy's header.
  * @param {{config: object, fleet: object, auth?: object|null, members?: object|null, appShares?: object|null,
- *          tunnel?: {handleUpgrade: Function}|null, trusted?: ReturnType<typeof createTrustedIdentity>|null}} deps
+ *          tunnel?: {handleUpgrade: Function}|null, trusted?: ReturnType<typeof createTrustedIdentity>|null,
+ *          execPipe?: {handleUpgrade: Function}|null}} deps
  * @returns {(req: import('node:http').IncomingMessage, socket: import('node:net').Socket, head: Buffer) => void}
  */
-export function createConsoleUpgrade({ config, fleet, auth = null, members = null, appShares = null, tunnel = null, trusted = null, appPorts = null }) {
+export function createConsoleUpgrade({ config, fleet, auth = null, members = null, appShares = null, tunnel = null, trusted = null, appPorts = null, execPipe = null }) {
   const hosts = knownHosts(config);
   const appUpgrade = createAppUpgrade({ config, fleet, auth, members, appShares, trusted });
   return function upgrade(req, socket, head) {
@@ -2687,6 +2688,8 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
     if (appId) return appUpgrade(req, socket, head, appId);
     // woodshed-db.mjs is no browser: no Origin, no cookie, and a token that does what the same-origin check does here.
     if (isKnownHost(req.headers.host, hosts) && tunnel?.handleUpgrade(req, socket, head)) return;
+    // `woodshed tunnel`'s pipe into a session (execPipe.mjs): no browser either, and the command line's token.
+    if (isKnownHost(req.headers.host, hosts) && execPipe?.handleUpgrade(req, socket, head)) return;
     // A websocket is not covered by the same-origin policy, and this one types into claude.
     if (!isKnownHost(req.headers.host, hosts) || !isSameOrigin(req.headers)) {
       console.warn('console: terminal websocket refused', { host: String(req.headers.host).slice(0, 100), origin: String(req.headers.origin).slice(0, 100) });
