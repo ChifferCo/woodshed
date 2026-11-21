@@ -683,3 +683,35 @@ test('pull --own-files skips a saved file whose path holds a folder here, or run
   ]);
   assert.equal(fs.readFileSync(path.join(repo, '.env.test'), 'utf8'), 'B=2\n');
 });
+
+test('Woodshed\'s own tokens are refused in a setting, a hook and an own file, and never printed', async (t) => {
+  const cliToken = `wsc_${'0f'.repeat(32)}`;
+  const tunnelToken = `wt_${'ab'.repeat(32)}`;
+  const opts = { from: '/Users/mia', to: SESSION_HOME };
+  const hook = translate('.claude/settings.json', b64({ hooks: { Stop: [{ hooks: [{ type: 'command', command: `curl -H 'Authorization: Bearer ${cliToken}' https://x` }] }] } }), opts);
+  assert.equal(hook.fate, 'refuse');
+  assert.equal(hook.reason, 'holds what looks like a Woodshed command line token');
+  assert.equal(translate('.claude/skills/x/notes.md', b64(`use ${tunnelToken}\n`), opts).reason, 'holds what looks like a Woodshed database tunnel token');
+  const down = translate('.claude/settings.json', b64({ hooks: { Stop: [{ hooks: [{ type: 'command', command: `echo ${cliToken}` }] }] } }), { from: SESSION_HOME, to: '/Users/mia' });
+  assert.equal(down.fate, 'refuse', 'a pull refuses it before any preview');
+  const c = await setUp(t);
+  const repo = checkout(t);
+  write(repo, '.env.local', `WOODSHED_TOKEN=${cliToken}\n`);
+  for (const args of [['settings', 'plan', '--only', 'own-files', '--own-files', repo], ['settings', 'plan', '--only', 'own-files', '--own-files', repo, '--json']]) {
+    const out = await c.run(args);
+    assert.match(out.out, /refuse .*\.env\.local .*holds what looks like a Woodshed command line token|"name":"\.env\.local".*"fate":"refuse"/);
+    assert.ok(!out.out.includes(cliToken));
+  }
+});
+
+test('pull --own-files writes one of two saved paths where one is the other\'s folder, and says why not the other', async (t) => {
+  const c = await setUp(t);
+  const repo = checkout(t);
+  await c.repoSettings.saveOwnFile({ login: 'mia-dev', project: 'app', path: '.env.x', text: 'A=1\n' });
+  await c.repoSettings.saveOwnFile({ login: 'mia-dev', project: 'app', path: '.env.x/inner', text: 'B=2\n' });
+  const pulled = await c.run(['settings', 'pull', '--only', 'own-files', '--own-files', repo, '--json']);
+  assert.equal(pulled.code, EXIT.done, pulled.err);
+  assert.deepEqual(pulled.items.map((i) => [i.name, i.fate]), [['.env.x', 'write'], ['.env.x/inner', 'skip']]);
+  assert.match(pulled.items[1].reason, /^\.env\.x is saved too/);
+  assert.equal(fs.readFileSync(path.join(repo, '.env.x'), 'utf8'), 'A=1\n');
+});

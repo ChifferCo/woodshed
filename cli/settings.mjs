@@ -59,10 +59,13 @@ const SECRET_CONTENT = [
   ['an AWS access key', /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/],
   ['a live Stripe key', /\b[rs]k_live_[A-Za-z0-9]{16,}/],
   ['a Google API key', /\bAIza[0-9A-Za-z_-]{35}\b/],
+  // Woodshed's own: a computer's command line sign-in (cliSignIn.mjs), and the database tunnel's (dbTunnel.mjs).
+  ['a Woodshed command line token', /\bwsc_[0-9a-f]{64}\b/],
+  ['a Woodshed database tunnel token', /\bwt_[0-9a-f]{64}\b/],
 ];
 // What an own file may still not hold: its point is a developer's own keys, but never production's, real AWS keys or a
 // team's integration token (CLAUDE.md, "Rules").
-const PRODUCTION_CONTENT = SECRET_CONTENT.filter(([kind]) => ['a private key', 'a live Stripe key', 'an AWS access key', 'a Slack token'].includes(kind));
+const PRODUCTION_CONTENT = SECRET_CONTENT.filter(([kind]) => ['a private key', 'a live Stripe key', 'an AWS access key', 'a Slack token'].includes(kind) || kind.startsWith('a Woodshed'));
 
 /** @returns {string|null}  why a file of this name is refused as a secret, null when it is not one */
 export function secretName(file, { ownFile = false } = {}) {
@@ -731,6 +734,13 @@ export function ownFilesPullPlan({ top, project, stored, only, replace }) {
       write[file] = text;
       rows.push({ ...row, fate: here ? 'replace' : 'write', reason: here ? 'differs from yours' : 'new here' });
     }
+  }
+  // Two saved paths where one is the other's folder (app/.env and app/.env/x) cannot both be written: the deeper waits.
+  for (const row of rows) {
+    const over = Object.keys(write).find((other) => other !== row.name && row.name.startsWith(`${other}/`));
+    if (!over || !(row.name in write)) continue;
+    delete write[row.name];
+    Object.assign(row, { fate: 'skip', reason: `${over} is saved too, as a file where this path needs a folder: remove one on My settings` });
   }
   return { rows, write };
 }
