@@ -278,10 +278,12 @@ export async function setupCommand(args, ctx) {
   const existing = list.last.sessions.find((session) => session.mine === true && !['failed', 'deleted'].includes(session.stateWord) && session.state !== 'failed'
     && (!repo || (typeof session.repo === 'string' && key(repo) === key(session.repo))));
   if (existing) {
+    // A saved default is the console's project name. The session list identifies repos by GitHub owner/name.
+    if (!repo) return stop('session', EXIT.waiting, 'Rerun setup with --repo owner/name to check for an existing session on the repo you want.');
     const url = linkTo(existing.url, origin);
     if (existing.state === 'needs-you') return stop('session', EXIT.waiting, 'Your session needs your attention.', { url });
     const more = opts['--prompt'] ? ' To start another session with your prompt, use woodshed session new.' : '';
-    report('session', 'done', `You already have a session${repo ? ` on ${repo}` : ''}.${more}`, { url });
+    report('session', 'done', `You already have a session on ${repo}.${more}`, { url });
     return EXIT.done;
   }
 

@@ -189,6 +189,23 @@ test('setup does not start another environment on rerun', async () => {
   assert.match(after.events.at(-1).message, /woodshed session new/);
 });
 
+test('without repo selection, setup asks before reusing a session from a previous default repo', async () => {
+  const oldUrl = `${origin}/s/abcdef01`;
+  const { invoke } = fake({ commands: ['config'], answers: {
+    'config list': result(0, { config: { reviews: 'codex', 'default-repo': 'new' } }),
+    'session list': result(0, { sessions: [{ mine: true, repo: 'acme/old', state: 'paused', url: oldUrl }] }),
+    'session new': result(0, { event: 'running', session: { id: '12345678', url: `${origin}/s/12345678` } }),
+  } });
+  const after = await invoke('--yes', '--reviews', 'codex', '--prompt', 'Fix the new repo.');
+  assert.equal(after.code, EXIT.waiting);
+  assert.match(after.events.at(-1).message, /--repo owner\/name/);
+  assert.equal(after.events.at(-1).url, undefined);
+  assert.deepEqual(after.calls.at(-1), ['session', 'list']);
+  const next = await invoke('--yes', '--repo', 'acme/new', '--reviews', 'codex', '--prompt', 'Fix the new repo.');
+  assert.equal(next.code, EXIT.done);
+  assert.deepEqual(next.calls.at(-1), ['session', 'new', '--herdr', '--repo', 'acme/new', '--agent', 'claude', '--', 'Fix the new repo.']);
+});
+
 test('a connection failure after launch gives the command to reconnect to that session', async () => {
   const session = { id: '12345678', url: `${origin}/s/12345678` };
   const { invoke } = fake({ answers: {
