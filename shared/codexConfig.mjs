@@ -395,14 +395,16 @@ function findCredential(statement, commands) {
   for (const pair of inlinePairs(statement.value)) {
     const key = pair.parts.at(-1);
     const parent = pair.parts.at(-2) ?? last;
-    if (!pair.value.trim() || REFERENCE.test(pair.value) || (namesVariable(key, parent) && ENV_NAME.test(pair.value))) continue;
-    if (parent === 'http_headers' || SECRET_VARIABLE.test(key) || CREDENTIAL_HEADER.test(key)) {
+    if (!pair.value.trim()) continue;
+    const reference = REFERENCE.test(pair.value) || (namesVariable(key, parent) && ENV_NAME.test(pair.value));
+    if (parent === 'http_headers' || (!reference && (SECRET_VARIABLE.test(key) || CREDENTIAL_HEADER.test(key)))) {
       return `sets ${keyText([...at, ...pair.parts])}`;
     }
   }
   const single = strings.length === 1 && statement.value.trim() === strings[0].raw ? strings[0].said : null;
+  if (table === 'http_headers' && single?.trim()) return `sets ${name}`;
   if (single !== null && single.trim() && !REFERENCE.test(single)) {
-    if (table === 'http_headers' || (LITERAL_TABLES.has(table) && SECRET_VARIABLE.test(last))) return `sets ${name}`;
+    if (LITERAL_TABLES.has(table) && SECRET_VARIABLE.test(last)) return `sets ${name}`;
     if (SECRET_VARIABLE.test(last) && !WORD.test(single) && !(namesVariable(last, table) && ENV_NAME.test(single))) return `sets ${name}`;
   }
   // A program's arguments, read as its command line: `--api-key abc`, `-H "Authorization: …"`, `TOKEN=abc`.

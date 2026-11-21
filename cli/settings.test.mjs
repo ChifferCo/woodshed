@@ -987,8 +987,9 @@ test('the console refuses laptop Codex MCP definitions and keeps session servers
   }
 
   const sessionServer = '[mcp_servers.docs]\ncommand = "session-docs"\n';
+  const dottedServer = 'mcp_servers.dotted.command = "session-dotted"\n';
   await c.claudeSettings.sync({
-    login: 'mia-dev', sessionId: 'aaaaaaaa', version: 0, removed: [], changed: { [id]: b64(sessionServer) },
+    login: 'mia-dev', sessionId: 'aaaaaaaa', version: 0, removed: [], changed: { [id]: b64(`${dottedServer}\n${sessionServer}`) },
   });
   const planned = await c.run(['settings', 'plan', '--only', 'codex', '--json']);
   assert.equal(fateOf(planned.items, '~/.codex/config.toml'), 'upload');
@@ -997,6 +998,7 @@ test('the console refuses laptop Codex MCP definitions and keeps session servers
   const saved = unb64((await c.copy()).items[id]);
   assert.match(saved, /^model = "gpt-5\.5"/);
   assert.ok(saved.includes(sessionServer));
+  assert.ok(saved.includes(dottedServer));
   assert.doesNotMatch(saved, /mcp_servers\.github|mcp_servers\.linear/);
   const again = await c.run(['settings', 'plan', '--only', 'codex', '--json']);
   assert.equal(fateOf(again.items, '~/.codex/config.toml'), 'skip');
@@ -1007,6 +1009,7 @@ test('the console refuses laptop Codex MCP definitions and keeps session servers
   const changed = unb64((await c.copy()).items[id]);
   assert.match(changed, /^model = "new-model"/);
   assert.ok(changed.includes(sessionServer));
+  assert.ok(changed.includes(dottedServer));
 });
 
 test('an interactive push asks about each dotfile on its own, and saves only the ones said yes to', async (t) => {
@@ -1041,6 +1044,13 @@ test('the console checks a computer\'s dotfile as My settings does, and a pull l
   assert.equal((await post('constructor', 'x')).status, 404);
   assert.equal((await post('inputrc', '  ')).status, 400, 'a computer never clears them');
   assert.equal((await post('bash-aliases', "; shell aliases\nalias ll='ls -l'\n")).status, 400);
+  for (const [key, comment] of [['gitconfig', ';'], ['inputrc', '#'], ['bash-aliases', '#']]) {
+    const commentedKey = await post(key, `${comment} API_KEY=opaque-fixture\n`);
+    assert.equal(commentedKey.status, 400);
+    const message = (await commentedKey.json()).error;
+    assert.match(message, /line 1 holds a value for API_KEY/);
+    assert.doesNotMatch(message, /opaque-fixture/);
+  }
   assert.equal(c.secrets.values.size, 0);
 
   const pull = await c.run(['settings', 'plan', '--pull', '--json']);

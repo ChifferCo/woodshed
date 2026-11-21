@@ -180,10 +180,14 @@ export function aliasOf(line) {
  */
 export function dotfileProblem(key, text) {
   if (!Object.hasOwn(DOTFILES, key)) return `no file called ${key}`;
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const comment = key === 'bash-aliases' ? BASH_COMMENT_RE : COMMENT_RE;
   // Every line, comments and section names too: what is saved is written whole into the session.
-  for (const [i, line] of text.replace(/\r\n/g, '\n').split('\n').entries()) {
+  for (const [i, line] of lines.entries()) {
     const kind = secretContent(line);
     if (kind) return `line ${i + 1} holds what looks like ${kind}: credentials stay off sessions`;
+    const credential = comment.test(line) ? shellCredential(line) : null;
+    if (credential) return `line ${i + 1} holds ${credential}: credentials stay off sessions`;
   }
   if (key === 'gitconfig') {
     const read = gitLines(text);
@@ -202,8 +206,6 @@ export function dotfileProblem(key, text) {
     }
     return null;
   }
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
-  const comment = key === 'bash-aliases' ? BASH_COMMENT_RE : COMMENT_RE;
   for (const [i, line] of lines.entries()) {
     if (comment.test(line)) continue;
     const credential = shellCredential(line);
