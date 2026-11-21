@@ -68,6 +68,7 @@ class CliError extends Error {
  */
 export function parseArgs(argv) {
   const out = { command: null, args: [], rest: null, console: null, json: false, browser: true, help: false };
+  const badArgs = (message) => Object.assign(new CliError(message), { command: out.command });
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--') {
@@ -77,14 +78,14 @@ export function parseArgs(argv) {
     else if (arg === '--no-browser') out.browser = false;
     else if (arg === '--help' || arg === '-h') out.help = true;
     else if (arg === '--console') {
-      if (!argv[i + 1]) throw new CliError('--console needs a URL');
+      if (!argv[i + 1]) throw badArgs('--console needs a URL');
       out.console = argv[++i];
     } else if (arg.startsWith('--console=')) out.console = arg.slice('--console='.length);
     else if (out.command === 'session' || out.command === 'repo') out.args.push(arg);
-    else if (arg.startsWith('-')) throw new CliError(`unknown option ${arg}\n\n${USAGE}`);
+    else if (arg.startsWith('-')) throw badArgs(`unknown option ${arg}\n\n${USAGE}`);
     else if (!out.command) out.command = arg;
     else if (out.command === 'tunnel') out.args.push(arg);
-    else throw new CliError(`unexpected ${arg}\n\n${USAGE}`);
+    else throw badArgs(`unexpected ${arg}\n\n${USAGE}`);
   }
   return out;
 }
@@ -463,7 +464,7 @@ export async function main(argv, deps = {}) {
     throw new CliError(`unknown command ${args.command}\n\n${USAGE}`);
   } catch (err) {
     if (!(err instanceof CliError)) throw err;
-    if (command === 'tunnel' || (command === undefined && argv[0] === 'tunnel')) {
+    if ((command ?? err.command) === 'tunnel') {
       stderr.write(`woodshed: ${err.message}\n`);
       return TUNNEL_FAILED;
     }

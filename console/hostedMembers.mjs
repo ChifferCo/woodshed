@@ -88,7 +88,7 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
     if (dropped) console.warn('members: entries of the program\'s list left out', { dropped });
     if (!next.length && known()) {
       console.warn('members: the program\'s list came back empty, kept the last one', { members: roster?.length ?? 0 });
-      return;
+      return false;
     }
     previous = roster;
     roster = next;
@@ -103,6 +103,7 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
     sweep();
     const was = previous;
     for (const w of leavers) notifyLeft(w, was);
+    return true;
   }
 
   // Who holds a shared session now, from the fleet's own records in the same state.
@@ -168,8 +169,9 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
   function refresh() {
     reading ??= (async () => {
       try {
-        take(await hook.list());
+        const accepted = take(await hook.list());
         failures = 0;
+        return accepted;
       } catch (err) {
         retryLater();
         throw err;
@@ -213,6 +215,12 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
 
   function isAdmin(login) {
     return personOf(login)?.role === 'owner';
+  }
+
+  // CLI repo administration has no browser identity from the host. Require a successful roster read for it,
+  // even if the cached list is still used for other work after an error or an unexpected empty reply.
+  async function isCurrentAdmin(login) {
+    return await refresh() && isAdmin(login);
   }
 
   function hasAdmin() {
@@ -341,7 +349,7 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
   }
 
   return {
-    hosted: true, stop, refresh, load, whenGone, whenLeft, isMember, isAdmin, hasAdmin, hasGithubSessions, setGithubSessions, isAssignable, assignables,
+    hosted: true, stop, refresh, load, whenGone, whenLeft, isMember, isAdmin, isCurrentAdmin, hasAdmin, hasGithubSessions, setGithubSessions, isAssignable, assignables,
     setAssignable, add, remove, setRole, view, requestOf: () => null,
   };
 }

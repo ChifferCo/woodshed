@@ -25,7 +25,7 @@ export function devHostRepos() {
   return {
     names: false,
     async list() {
-      return { repos: REACHABLE, grant: [GRANT], install: INSTALL };
+      return { repos: REACHABLE, grant: [GRANT], install: INSTALL, complete: true };
     },
     async add({ repo, by }) {
       const wanted = repo.toLowerCase();

@@ -1871,8 +1871,9 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
 - `repos: {list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`: where the program keeps the
   installation's repos, which it built `config.projects` from, so Console settings' Repos card changes them there and
   core keeps no list of its own (`addedProjects`, above under the Repos card). `list` answers what Add a repo offers:
-  `{repos: [{repo, private}] (or owner/name strings), grant: [{account, href}], install}`, the links `https://` only.
-  Include connected repos so the CLI can report their access. Core takes them out of the Add a repo picker.
+  `{repos: [{repo, private}] (or owner/name strings), grant: [{account, href}], install, complete?}`, the links
+  `https://` only. Core takes connected repos out of the Add a repo picker. Set `complete: true` only when the list
+  includes every repo the App can reach, including connected ones. The CLI can then tell when a repo has lost access.
   `add` checks the repo, keeps it, and answers the project as the program
   named it, `{name, repo}`; `remove` takes one off. Either throws an error with `shown: true` (and `link: {href, text}`
   where the fix is a page, such as giving the GitHub App access) for a refusal the page shows as it is; core refuses

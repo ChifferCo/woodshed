@@ -50,8 +50,9 @@ line).
 ## Choosing repos
 
 `woodshed repo list --json` returns a `repo-list` event with `projects`, `available` and `canChange`. Each row's
-`githubAppAccess` is `true` or `false` when known and `null` otherwise. Members can list repos they can start sessions
-on. Only admins can see the console's GitHub App inventory or add and remove repos.
+`githubAppAccess` is `true` or `false` when known and `null` otherwise. If the inventory is unavailable, `choicesError`
+explains why and the connected repos still appear. Members can list repos they can start sessions on. Only admins can
+see the console's GitHub App inventory or add and remove repos.
 
 When GitHub App access is needed, `repo add` exits 2 with `status: "needs-github-app"` and the install or access link
 in `url` when available. It opens that link from a terminal unless `--no-browser` is set. Grant access on GitHub, then

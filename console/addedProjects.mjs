@@ -73,6 +73,7 @@ export function createAddedProjects({ store, config, check, list = null, host = 
       grant: (Array.isArray(found?.grant) ? found.grant : []).filter((g) => httpsLink(g?.href)).map((g) => ({ account: String(g.account ?? ''), href: g.href })),
       install: httpsLink(found?.install) ? found.install : null,
       via: 'host',
+      ...(found?.complete === true && { complete: true }),
     };
   }
 
@@ -80,6 +81,7 @@ export function createAddedProjects({ store, config, check, list = null, host = 
    * What Add a repo offers: the repos the App may reach that are not projects yet, and where on GitHub to give it more.
    * @returns {Promise<{repos: {repo: string, private: boolean}[], grant: {account: string, href: string}[], install: string|null}|null>}
    *   null where the console has no App to ask (the page then takes owner/name typed in)
+   *   `includeConnected` keeps the full inventory for reporting App access in the CLI.
    * @throws {Error}  with `shown`, when GitHub did not answer
    */
   async function choices({ includeConnected = false } = {}) {

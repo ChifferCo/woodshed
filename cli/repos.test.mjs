@@ -73,7 +73,7 @@ test('GitHub App access exits 2, prints the link and retry, and opens only from 
   const c = cliFor(t, options);
   const plain = await c.run('add', 'acme/web');
   assert.equal(plain.code, 2);
-  assert.ok(plain.out.includes(install));
+  assert.equal(plain.out.split('\n').find((line) => line.startsWith('Open ')), `Open ${install}`);
   assert.match(plain.out, /run woodshed repo add acme\/web again/);
   const json = await c.run('add', 'acme/web', '--json', '--no-browser');
   assert.equal(json.code, 2);
@@ -100,4 +100,15 @@ test('repo usage, permission refusals, sign-in and failures have distinct exit c
     assert.equal(output.code, code);
     assert.equal(JSON.parse(output.out).status, label);
   }
+});
+
+test('a tunnel with global flags before the command keeps stderr and exit 255 on a parse error', async () => {
+  let out = '';
+  let err = '';
+  const code = await main(['--console', origin, 'tunnel', 'aaaa0001', '--json', '-z', '--', 'ls'], {
+    stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
+  });
+  assert.equal(code, 255);
+  assert.equal(out, '');
+  assert.match(err, /unknown option -z/);
 });

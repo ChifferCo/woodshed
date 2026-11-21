@@ -58,7 +58,7 @@ export async function repoCommand({ origin, args, rest, browser, help }, { stdou
     say(body.projects.length ? 'Connected repos' : 'No connected repos.');
     for (const project of body.projects) say(`  ${printable(project.repo)} (${printable(project.name)}) · ${appAccess(project)}`);
     if (!body.canChange) say('An admin can list repos to add and change the repo list.');
-    else if (body.available === null) say('Type an owner/name to add a repo.');
+    else if (body.available === null) say(printable(body.choicesError) ?? 'Type an owner/name to add a repo.');
     else {
       say(body.available.length ? 'Available to add' : 'No more repos listed to add.');
       for (const project of body.available) say(`  ${printable(project.repo)} · ${appAccess(project)}`);

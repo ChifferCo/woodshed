@@ -796,12 +796,9 @@ export function createHandler({
     return !auth?.enabled() || !login || !members || !members.hasAdmin() || members.isAdmin(login);
   }
 
-  async function canManageRepos(login) {
+  function canManageRepos(login) {
     if (!trusted) return isAdmin({ login });
-    if (!members?.hosted) return null;
-    // The token names a person. For hosted consoles, ask the host's member list for their current role.
-    await members.load();
-    return members.isAdmin(login);
+    return members?.hosted ? members.isCurrentAdmin(login) : null;
   }
 
   function redirect(res, location, setCookie) {

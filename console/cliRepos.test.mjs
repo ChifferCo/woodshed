@@ -43,11 +43,19 @@ async function consoleFor(t, { hosted = false, roster = true } = {}) {
   });
   let now = 0;
   const people = [{ login: 'octocat', role: 'owner' }, { login: 'mia-dev', role: 'member' }];
-  const members = hosted ? roster ? createHostedMembers({ hook: { list: async () => people }, store, now: () => now }) : null : {
+  let rosterDown = false;
+  const list = async () => {
+    if (rosterDown) throw new Error('roster unavailable');
+    return people;
+  };
+  const members = hosted ? roster ? createHostedMembers({ hook: { list }, store, now: () => now }) : null : {
     hasAdmin: () => true, isAdmin: (login) => login === 'octocat',
   };
   await members?.load?.();
-  const cli = createCliSignIn({ store, canWrite: async (login) => login !== 'former-writer' });
+  t.after(() => members?.stop?.());
+  const cli = createCliSignIn({
+    store, allowed: (login) => !members?.hosted || members.isMember(login), canWrite: async (login) => login !== 'former-writer',
+  });
   const tokens = Object.fromEntries(['octocat', 'mia-dev', 'former-writer'].map((login) => {
     const { deviceCode, userCode } = cli.start({ name: `${login}-laptop` });
     cli.decide({ code: userCode, login, approve: true });
@@ -73,7 +81,7 @@ async function consoleFor(t, { hosted = false, roster = true } = {}) {
   const change = (repo, { remove, body, ...options } = {}) => request(remove ? `${REPOS}/remove` : REPOS, {
     method: 'POST', body: { repo, ...body }, ...options,
   });
-  return { request, change, app, calls, people, store, tick: (ms) => { now += ms; } };
+  return { request, change, app, calls, people, store, tick: (ms) => { now += ms; }, setRosterDown: (down) => { rosterDown = down; } };
 }
 
 test('admins see both connected and addable repos and their GitHub App access', async (t) => {
@@ -88,6 +96,16 @@ test('admins see both connected and addable repos and their GitHub App access', 
     ],
     available: [{ repo: 'acme/private', githubAppAccess: true }, { repo: 'acme/web', githubAppAccess: true }],
   });
+});
+
+test('a GitHub inventory failure still lists connected repos with unknown access and an explanation', async (t) => {
+  const c = await consoleFor(t);
+  c.app.installationRepos = async () => { throw new Error('GitHub unavailable'); };
+  const { code, body } = await c.request();
+  assert.equal(code, 200);
+  assert.equal(body.available, null);
+  assert.deepEqual(body.projects.map((p) => [p.repo, p.githubAppAccess]), [['acme/app', null], ['acme/old', null]]);
+  assert.match(body.choicesError, /GitHub did not list the App's repos/);
 });
 
 test('the authenticated routes reject browser calls, other methods, lost write access, and member writes', async (t) => {
@@ -134,6 +152,8 @@ test('hosted changes go through the repos hook and require the token holder to s
   const waiting = await c.change('acme/missing');
   assert.equal(waiting.body.status, 'needs-github-app');
   assert.equal(waiting.body.url, GRANT);
+  assert.equal((await c.request()).body.projects.find((p) => p.repo === 'acme/old').githubAppAccess, null,
+    'a hosted picker that may omit connected repos cannot prove an absence of access');
   const added = await c.change('acme/web');
   assert.deepEqual(added, { code: 200, body: { repo: 'acme/web', name: 'website' } });
   assert.equal((await c.request()).body.projects.at(-1).githubAppAccess, true);
@@ -147,6 +167,30 @@ test('hosted changes go through the repos hook and require the token holder to s
     ['add', { repo: 'acme/missing', by: 'octocat' }], ['add', { repo: 'acme/web', by: 'octocat' }],
     ['forget', 'website'], ['remove', { name: 'website', repo: 'acme/web', by: 'octocat' }],
   ]);
+});
+
+test('a cached hosted owner cannot read inventory or change repos after a failed or empty roster refresh', async (t) => {
+  const c = await consoleFor(t, { hosted: true });
+  assert.equal((await c.request()).body.canChange, true);
+  c.people[0].role = 'member';
+  c.setRosterDown(true);
+  c.tick(6_000);
+  assert.equal((await c.request()).code, 502, 'token authentication may have started the failing refresh');
+  assert.equal((await c.change('acme/web')).code, 502, 'a failed recent read cannot make the cached role current');
+  assert.deepEqual(c.calls, []);
+
+  c.setRosterDown(false);
+  c.people.length = 0;
+  assert.equal((await c.request()).body.available, null);
+  assert.equal((await c.change('acme/web')).code, 403, 'an unexpected empty roster cannot confirm the cached owner role');
+  assert.deepEqual(c.calls, []);
+});
+
+test('a hosted link for another account cannot be used to grant access to the requested repo', async (t) => {
+  const c = await consoleFor(t, { hosted: true });
+  assert.deepEqual(await c.change('another/web'), {
+    code: 409, body: { error: 'This workspace uses the GitHub App on acme. Use the workspace for another to add its repo.' },
+  });
 });
 
 test('a hosted console without an admin roster refuses CLI changes even with browser identity headers', async (t) => {
