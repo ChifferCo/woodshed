@@ -313,3 +313,12 @@ test('over HTTP, a made-up X-Forwarded-For from a peer that is not a trusted pro
   assert.equal(spoofed.status, 429, 'every request counted as the socket\'s own address');
   assert.ok(Number(spoofed.headers.get('retry-after')) > 0);
 });
+
+test('consoles sharing a waiting room count a client\'s places across all of them', () => {
+  const devices = createCliDevices();
+  const [a, b] = [0, 1].map(() => createCliSignIn({ store: { state: {}, save() {} }, devices }));
+  for (let i = 0; i < MAX_PENDING_PER_CLIENT; i++) (i % 2 ? a : b).start({ from: '198.51.100.9' });
+  assert.throws(() => a.start({ from: '198.51.100.9' }), { status: 429, scope: 'client' });
+  assert.throws(() => b.start({ from: '198.51.100.9' }), { status: 429, scope: 'client' });
+  assert.ok(b.start({ from: '203.0.113.7' }).deviceCode, 'another client still starts one');
+});
