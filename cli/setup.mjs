@@ -217,7 +217,7 @@ export async function setupCommand(args, ctx) {
   if (!canConfig) {
     const message = 'Set your agent terminal on My settings. This CLI has no config command.';
     const fields = { url: `${origin}/settings` };
-    if (terminal) return stop('terminal', EXIT.waiting, message, fields);
+    if (terminal) return stop('terminal', EXIT.waiting, `${message} Then rerun setup without --terminal.`, fields);
     report('terminal', 'skipped', message, fields);
   } else if (choose || terminal || (canAttach && !opts['--no-session'])) {
     const current = await call('config get terminal', 'config', 'get', 'terminal');
