@@ -302,7 +302,10 @@ export async function main(argv, deps = {}) {
       try {
         store = credentials.save(origin, token);
       } catch (err) {
-        throw new CliError(`Signed in, but the token could not be kept: ${err.message}. Revoke this sign-in on My settings.`);
+        // Nothing here can use it: it is ended at the console, so no sign-in is left there for nobody.
+        const out = await call(origin, '/api/cli/logout', { method: 'POST', token }).catch(() => null);
+        const ended = out?.status === 200 || out?.status === 401;
+        throw new CliError(`Signed in, but the token could not be kept: ${err.message}. ${ended ? 'It was ended at the console.' : 'Revoke this sign-in on My settings, under Command line.'}`);
       }
       const config = readConfig(dir);
       config.current = origin;

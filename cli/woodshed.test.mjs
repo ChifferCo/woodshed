@@ -251,6 +251,15 @@ test('on Windows login keeps the token sealed under %LOCALAPPDATA%, and status a
   assert.deepEqual(JSON.parse(fs.readFileSync(done.credentialsFile, 'utf8')), {}, 'forgotten here too');
 });
 
+test('a token that cannot be kept here is ended at the console, not left there for nobody', async (t) => {
+  const c = await consoleFor(t);
+  const refusing = { save: () => { throw new Error('C:\\shared\\woodshed could not be made a folder only you can open'); }, storeFor: () => null };
+  const out = await c.run(['login', '--console', c.origin], { credentials: refusing });
+  assert.equal(out.code, EXIT.failed);
+  assert.match(out.err, /token could not be kept: .*could not be made a folder only you can open\. It was ended at the console\./);
+  assert.deepEqual(c.cli.list('mia-dev'), [], 'no sign-in left on My settings');
+});
+
 test('login refused for too many sign-ins waiting says to try again later, in the minutes the console gives, and fails', async (t) => {
   const c = await consoleFor(t);
   // Sign-ins this computer started and left: the CLI reaches the console from loopback, with nothing forwarded.

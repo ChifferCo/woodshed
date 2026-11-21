@@ -21,14 +21,18 @@ const TOKEN_RE = /^wsc_[0-9a-f]{64}$/;
 // What may follow `-a` in a `security -i` line: an origin has no spaces or quotes, and anything else is refused.
 const ORIGIN_RE = /^https?:\/\/[A-Za-z0-9.\-[\]:]+$/;
 
-// DPAPI's seal and unseal, for this Windows account: what is sealed is read from stdin, and what comes out written to
-// stdout, so neither is ever in the command line. The scripts are fixed text, sent base64'd as -EncodedCommand asks.
-// The entropy keeps another program's casual Unprotect of the same account from opening it.
+// DPAPI's seal and unseal, for this Windows account: the console's origin and then what is sealed or opened are read
+// from stdin, one a line, and what comes out is written to stdout, so none is ever in the command line. The scripts are
+// fixed text, sent base64'd as -EncodedCommand asks. The entropy is the service and the origin: another program's
+// casual Unprotect of the same account does not open it, and a token sealed for one console does not open for another,
+// whatever the file says it is for.
 const DPAPI_PRELUDE = `$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Security
-$entropy = [Text.Encoding]::UTF8.GetBytes('${SERVICE}')
-$scope = [Security.Cryptography.DataProtectionScope]::CurrentUser
-$given = [Console]::In.ReadToEnd().Trim()`;
+$lines = [Console]::In.ReadToEnd().Split([char]10)
+$origin = $lines[0].Trim()
+$given = $lines[1].Trim()
+$entropy = [Text.Encoding]::UTF8.GetBytes('${SERVICE} ' + $origin)
+$scope = [Security.Cryptography.DataProtectionScope]::CurrentUser`;
 const DPAPI_SEAL = `${DPAPI_PRELUDE}
 $sealed = [Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($given), $entropy, $scope)
 [Console]::Out.Write([Convert]::ToBase64String($sealed))`;
@@ -53,8 +57,8 @@ export function powershellArgs(script) {
 }
 
 /** @returns {{status: number|null, stdout: string, stderr: string}} */
-export function runCommand(command, args, { input } = {}) {
-  const out = spawnSync(command, args, { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 15_000, windowsHide: true });
+export function runCommand(command, args, { input, cwd } = {}) {
+  const out = spawnSync(command, args, { input, cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 15_000, windowsHide: true });
   if (out.error) return { status: null, stdout: '', stderr: out.error.message };
   return { status: out.status, stdout: out.stdout ?? '', stderr: out.stderr ?? '' };
 }
@@ -120,10 +124,11 @@ function readJson(where) {
 }
 
 /**
- * The names icacls lists as holding a right on `dir`, from its output, or [] when it cannot be read as such.
+ * The names icacls lists as holding a right on `dir`, from its output, or [] when it cannot be read as such. icacls is
+ * run in the folder, on `.`, so the line it starts with is never a path to decode.
  * @returns {string[]}
  */
-export function aclHolders(output, dir) {
+export function aclHolders(output, dir = '.') {
   const lines = String(output).split(/\r?\n/);
   const holders = [];
   for (let i = 0; i < lines.length; i++) {
@@ -144,8 +149,10 @@ export function aclHolders(output, dir) {
 
 /**
  * Makes `dir` this Windows account's alone, as 0700 is on macOS and Linux: no rights inherited from the folder above,
- * full control for this account (its SID, as whoami says it), and what icacls then lists is checked to be that alone.
- * Entries of anyone else's already on the folder are not taken off: the folder is refused, as someone else's is there.
+ * full control for this account (its SID, as whoami says it), then this account as its owner, since an owner may always
+ * change who may open it; and what icacls then lists is checked to be that account alone. Entries of anyone else's
+ * already on the folder are not taken off, and a folder this account cannot take is not taken: either is refused, as
+ * someone else's folder is on macOS and Linux.
  * @returns {string|null}  why it could not be, or null once it is
  */
 export function windowsOwnFolder(dir, run, tools) {
@@ -153,10 +160,14 @@ export function windowsOwnFolder(dir, run, tools) {
   const me = /^"([^"]+)","(S-1-[0-9-]+)"/.exec(who.stdout.trim());
   if (who.status !== 0 || !me) return 'whoami did not say which account this is';
   const [, name, sid] = me;
-  const set = run(tools.icacls, [dir, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`]);
-  if (set.status !== 0) return `icacls could not set who may open it (${(set.stderr || set.stdout).trim().split(/\r?\n/)[0]})`;
-  const shown = run(tools.icacls, [dir]);
-  const holders = shown.status === 0 ? aclHolders(shown.stdout, dir) : [];
+  const firstLine = (out) => (out.stderr || out.stdout).trim().split(/\r?\n/)[0];
+  const icacls = (args) => run(tools.icacls, ['.', ...args], { cwd: dir });
+  const set = icacls(['/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`]);
+  if (set.status !== 0) return `icacls could not set who may open it (${firstLine(set)})`;
+  const owned = icacls(['/setowner', `*${sid}`]);
+  if (owned.status !== 0) return `it is another account's, and icacls could not make it yours (${firstLine(owned)})`;
+  const shown = icacls([]);
+  const holders = shown.status === 0 ? aclHolders(shown.stdout) : [];
   if (!holders.length) return 'icacls did not say who may open it';
   const others = holders.filter((holder) => holder.toLowerCase() !== name.toLowerCase());
   return others.length ? `others may still open it (${others.join(', ')})` : null;
@@ -225,20 +236,20 @@ function file(dir, platform, ownFolder) {
   };
 }
 
-// Each console's token sealed with DPAPI, which only this Windows account can open.
-// The file holds only what was sealed; its folder is still made this account's alone where icacls can, but a sealed
-// token needs no more than that it be sealed, so a folder icacls could not close does not stop it.
+// Each console's token sealed with DPAPI, which only this Windows account can open, and only for the console it was
+// sealed for. The file holds only what was sealed, in a folder made this account's alone as the plain file's is, so
+// what it says beside it (cli.json) is this account's own too.
 function dpapi(dir, run, tools, ownFolder) {
   const where = path.join(dir, 'credentials-dpapi.json');
   const powershell = (script, input) => run(tools.powershell, powershellArgs(script), { input });
-  const write = (data) => writeOwnFile(dir, where, data, { platform: 'win32', ownFolder: (d) => (ownFolder(d), null) });
+  const write = (data) => writeOwnFile(dir, where, data, { platform: 'win32', ownFolder });
   return {
     kind: 'dpapi',
     label: `${where}, sealed for your Windows account (DPAPI)`,
     file: where,
     save(origin, token) {
       checkArgs(origin, token);
-      const out = powershell(DPAPI_SEAL, token);
+      const out = powershell(DPAPI_SEAL, `${origin}\n${token}\n`);
       const sealed = out.status === 0 ? out.stdout.trim() : '';
       if (!SEALED_RE.test(sealed)) return false;
       write({ ...readJson(where), [origin]: sealed });
@@ -248,7 +259,7 @@ function dpapi(dir, run, tools, ownFolder) {
       checkArgs(origin);
       const sealed = readJson(where)[origin];
       if (typeof sealed !== 'string' || !SEALED_RE.test(sealed)) return null;
-      const out = powershell(DPAPI_UNSEAL, sealed);
+      const out = powershell(DPAPI_UNSEAL, `${origin}\n${sealed}\n`);
       const token = out.status === 0 ? out.stdout.trim() : '';
       return TOKEN_RE.test(token) ? token : null;
     },

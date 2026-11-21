@@ -97,13 +97,15 @@ One token per console, never in a command's arguments:
 - Linux with a Secret Service (a desktop session's keyring): libsecret, through `secret-tool` on stdin.
 - Otherwise, on macOS and Linux: `~/.config/woodshed/credentials.json` (or under `$XDG_CONFIG_HOME`), readable only by you (`0600`). `login`
   and `status --json` print its path when it is used.
-- Windows: `%LOCALAPPDATA%\woodshed\credentials-dpapi.json`, each token sealed with DPAPI for your Windows account by
-  Windows PowerShell 5.1 (which ships with Windows), given the token on stdin. Where DPAPI cannot seal (an SSH sign-in
-  with a key has no logon secret to seal with), `%LOCALAPPDATA%\woodshed\credentials.json`, in a folder `icacls` makes
-  yours alone: nothing inherited from the folder above, full control for your account, and `login` checks that `icacls`
-  then lists nobody else, or refuses to keep the token there. `%LOCALAPPDATA%`, not `%APPDATA%`, which a roaming profile
-  copies to a server. PowerShell, `icacls`, `whoami` and the browser's `rundll32` are run from `System32` by their full
-  path, never through a shell.
+- Windows: `%LOCALAPPDATA%\woodshed\credentials-dpapi.json`, each token sealed with DPAPI for your Windows account and
+  for its console's address (a token copied under another console's address does not open), by Windows PowerShell 5.1
+  (which ships with Windows), given the token on stdin. Where DPAPI cannot seal (an SSH sign-in with a key has no logon
+  secret to seal with), `%LOCALAPPDATA%\woodshed\credentials.json`. Either way its folder is made yours alone by
+  `icacls`, as `0700` is on macOS and Linux: nothing inherited from the folder above, full control for your account,
+  your account its owner, and `login` checks that `icacls` then lists nobody else, or refuses to keep the token there
+  and ends it at the console. `%LOCALAPPDATA%`, not `%APPDATA%`, which a roaming profile copies to a server.
+  PowerShell, `icacls`, `whoami` and the browser's `rundll32` are run from `System32` by their full path, never
+  through a shell.
 
 `~/.config/woodshed/cli.json` (`%LOCALAPPDATA%\woodshed\cli.json` on Windows) says which console you used last and, for
 each, who is signed in and which of these holds the token. It never holds a token.

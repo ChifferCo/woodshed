@@ -101,12 +101,23 @@ test('on Windows the token is sealed with DPAPI by System32\'s PowerShell, given
     assert.ok(/^C:\\Windows\\System32\\/.test(call.command), `${call.command} is System32's, by its full path`);
     assert.ok(!call.args.join(' ').includes(TOKEN), `${call.command} was not given the token in its arguments`);
   }
-  assert.equal(shells[0].input, TOKEN, 'the token goes in on stdin');
+  assert.equal(shells[0].input, `${ORIGIN}\n${TOKEN}\n`, 'the token goes in on stdin, after the console it is for');
   for (const call of shells) {
     assert.deepEqual(call.args.slice(0, 3), ['-NoLogo', '-NoProfile', '-NonInteractive']);
     assert.ok(!Buffer.from(call.args.at(-1), 'base64').toString('utf16le').includes('wsc_'), 'the script is fixed text, with no token in it');
   }
-  assert.deepEqual(win.calls.find((c) => c.command === TOOLS.icacls).args, [dir, '/inheritance:r', '/grant:r', `*${ME.sid}:(OI)(CI)F`], 'its folder made this account\'s alone too');
+  const icacls = win.calls.filter((c) => c.command === TOOLS.icacls);
+  assert.deepEqual(icacls.slice(0, 3).map((c) => [c.cwd, ...c.args]), [
+    [dir, '.', '/inheritance:r', '/grant:r', `*${ME.sid}:(OI)(CI)F`],
+    [dir, '.', '/setowner', `*${ME.sid}`],
+    [dir, '.'],
+  ], 'its folder made this account\'s alone and its own, in the folder, on `.`, then read back');
+
+  // A sealed token moved under another console's address in the file does not open for that console.
+  const sealed = JSON.parse(fs.readFileSync(store.file, 'utf8'));
+  fs.writeFileSync(store.file, JSON.stringify({ ...sealed, 'https://evil.example': sealed[ORIGIN] }));
+  assert.equal(store.read('https://evil.example'), null, 'sealed for its own console alone');
+  assert.equal(store.read(ORIGIN), TOKEN);
 
   store.save('https://other.example', TOKEN);
   store.remove(ORIGIN);
@@ -129,6 +140,16 @@ test('on Windows with DPAPI refused, as over an SSH key\'s sign-in, the token go
   assert.equal(none.save(ORIGIN, TOKEN).kind, 'file', 'no PowerShell at all: the file');
 });
 
+test('on Windows a folder of another account\'s that this one cannot take gets no token, sealed or not', (t) => {
+  const dir = tempDir(t);
+  for (const dpapi of [true, false]) {
+    const win = fakeWindows({ dpapi, foreignOwner: true });
+    const creds = createCredentials({ platform: 'win32', run: win.run, dir, has: () => true, tools: TOOLS });
+    assert.throws(() => creds.save(ORIGIN, TOKEN), /could not be made a folder only you can open: it is another account's, and icacls could not make it yours \(\.: Access is denied\.\)/);
+    assert.deepEqual(fs.readdirSync(dir), [], 'no file, sealed or plain, and no temporary one');
+  }
+});
+
 test('on Windows a folder others can still open gets no token, and says who', (t) => {
   const dir = tempDir(t);
   const win = fakeWindows({ dpapi: false, others: ['BUILTIN\\Users'] });
@@ -139,20 +160,17 @@ test('on Windows a folder others can still open gets no token, and says who', (t
 
   const unsaid = (run) => createCredentials({ platform: 'win32', run, dir, has: () => false, tools: TOOLS });
   assert.throws(() => unsaid(() => ({ status: null, stdout: '', stderr: 'ENOENT' })).save(ORIGIN, TOKEN), /whoami did not say which account/);
-  const refusing = (command, args) => (command === TOOLS.whoami ? fakeWindows().run(command, args) : { status: 5, stdout: '', stderr: 'Access is denied.\r\n' });
+  const refusing = (command, args, opts) => (command === TOOLS.whoami ? fakeWindows().run(command, args, opts) : { status: 5, stdout: '', stderr: 'Access is denied.\r\n' });
   assert.throws(() => unsaid(refusing).save(ORIGIN, TOKEN), /icacls could not set who may open it \(Access is denied\.\)/);
   assert.equal(fs.existsSync(path.join(dir, 'credentials.json')), false);
 });
 
 test('icacls\'s list is read only as the folder\'s own entries, or not at all', () => {
-  const dir = 'C:\\Users\\mia\\AppData\\Local\\woodshed';
-  const pad = ' '.repeat(dir.length + 1);
-  assert.deepEqual(aclHolders(`${dir} DESKTOP-1\\mia:(OI)(CI)(F)\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n`, dir), ['DESKTOP-1\\mia']);
-  assert.deepEqual(aclHolders(`${dir} NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\r\n${pad}DESKTOP-1\\mia:(OI)(CI)(F)\r\n\r\nSuccessfully processed 1 files\r\n`, dir), ['NT AUTHORITY\\SYSTEM', 'DESKTOP-1\\mia']);
-  assert.deepEqual(aclHolders(`${dir.toUpperCase()} DESKTOP-1\\mia:(F)\r\n`, dir), ['DESKTOP-1\\mia'], 'whatever the case icacls prints the path in');
-  assert.deepEqual(aclHolders(`C:\\elsewhere DESKTOP-1\\mia:(F)\r\n`, dir), [], 'another folder\'s');
-  assert.deepEqual(aclHolders(`${dir} something unexpected\r\n`, dir), [], 'a line that is not an entry');
-  assert.deepEqual(aclHolders('', dir), []);
+  assert.deepEqual(aclHolders('. DESKTOP-1\\mia:(OI)(CI)(F)\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n'), ['DESKTOP-1\\mia']);
+  assert.deepEqual(aclHolders('. NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\r\n  DESKTOP-1\\mia:(OI)(CI)(F)\r\n\r\nSuccessfully processed 1 files\r\n'), ['NT AUTHORITY\\SYSTEM', 'DESKTOP-1\\mia']);
+  assert.deepEqual(aclHolders('C:\\elsewhere DESKTOP-1\\mia:(F)\r\n'), [], 'another folder\'s');
+  assert.deepEqual(aclHolders('. something unexpected\r\n'), [], 'a line that is not an entry');
+  assert.deepEqual(aclHolders(''), []);
 });
 
 test('Windows tools come from System32 by their full path, and the browser opens with no shell', () => {
