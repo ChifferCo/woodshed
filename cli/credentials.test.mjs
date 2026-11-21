@@ -151,7 +151,7 @@ test('on Windows with DPAPI refused, as over an SSH key\'s sign-in, the token go
   // between the check and the write: nothing is written there unsealed.
   const shared = tempDir(t);
   const outside = createCredentials({ platform: 'win32', run: win.run, dir: shared, has: () => true, tools: TOOLS, home: path.join(shared, 'not-above-it') });
-  assert.throws(() => outside.save(ORIGIN, TOKEN), /is not .*AppData.Local.woodshed, the only place a token is kept unsealed on Windows/);
+  assert.throws(() => outside.save(ORIGIN, TOKEN), /is not .*AppData.Local.woodshed, and .* is the only place a token is kept unsealed on Windows/);
   assert.deepEqual(fs.readdirSync(shared), []);
   assert.deepEqual(fs.readdirSync(shared), [], 'not even its folder made');
   // Elsewhere under the profile (an XDG_CONFIG_HOME there): a folder on the way could be one shared with someone.
@@ -163,7 +163,7 @@ test('on Windows with DPAPI refused, as over an SSH key\'s sign-in, the token go
   fs.mkdirSync(path.join(profile, 'AppData'));
   fs.symlinkSync(shared, path.join(profile, 'AppData', 'Local'), 'junction');
   const redirected = createCredentials({ platform: 'win32', run: win.run, dir: path.join(profile, 'AppData', 'Local', 'woodshed'), has: () => false, tools: TOOLS, home: profile });
-  assert.throws(() => redirected.save(ORIGIN, TOKEN), /the only place a token is kept unsealed on Windows/);
+  assert.throws(() => redirected.save(ORIGIN, TOKEN), /leads elsewhere through a link or junction, and .* is the only place a token is kept unsealed on Windows/);
   assert.deepEqual(fs.readdirSync(shared), [], 'nothing made where the junction leads, not even a folder');
 
   // Nor is a plain file read from anywhere but the default folder: one there could be someone else's, with their token.

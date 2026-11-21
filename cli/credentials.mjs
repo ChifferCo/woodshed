@@ -222,32 +222,35 @@ function writeOwnFile(dir, where, data, { platform, ownFolder }) {
 // <profile>\AppData\Local\woodshed, as spelled and as resolved with every link and junction followed. Anywhere else
 // (an XDG_CONFIG_HOME, a LOCALAPPDATA moved elsewhere), a token is kept sealed or not at all.
 // Read by the same rule as written: a plain file anywhere else could be one someone else put there, with their token.
-// @returns {boolean}  `make`: the folder is made once its way there is checked, for a write
-function isDefaultLocalFolder(dir, home, { make = false } = {}) {
-  if (!home) return false;
+// @returns {string|null}  null for the default folder; else why not: `elsewhere`, or `led away` when it is spelled as
+//   the default but a link or junction on the way leads somewhere else. `make`: it is made once its way there is checked
+function notDefaultLocalFolder(dir, home, { make = false } = {}) {
+  if (!home) return 'elsewhere';
   const local = (profile) => path.join(profile, 'AppData', 'Local');
-  if (path.relative(path.join(local(home), 'woodshed'), path.resolve(dir)) !== '') return false;
+  if (path.relative(path.join(local(home), 'woodshed'), path.resolve(dir)) !== '') return 'elsewhere';
   const real = (p) => (fs.realpathSync.native ?? fs.realpathSync)(p);
   try {
     // The way there first, so nothing is made where a junction above would lead.
     const profile = real(home);
-    if (path.relative(local(profile), real(path.dirname(dir))) !== '') return false;
+    if (path.relative(local(profile), real(path.dirname(dir))) !== '') return 'led away';
     if (make) fs.mkdirSync(dir);
   } catch (err) {
-    if (err.code !== 'EEXIST') return false;
+    if (err.code !== 'EEXIST') return 'led away';
   }
   try {
-    return path.relative(path.join(local(real(home)), 'woodshed'), real(dir)) === '';
+    return path.relative(path.join(local(real(home)), 'woodshed'), real(dir)) === '' ? null : 'led away';
   } catch {
-    return false;
+    return 'led away';
   }
 }
 
 function file(dir, platform, ownFolder, home) {
   const where = path.join(dir, 'credentials.json');
   const write = (data) => {
-    if (platform === 'win32' && !isDefaultLocalFolder(dir, home, { make: true })) {
-      throw new Error(`${dir} is not ${path.join(home, 'AppData', 'Local', 'woodshed')}, the only place a token is kept unsealed on Windows: unset XDG_CONFIG_HOME and LOCALAPPDATA's override, or sign in where DPAPI can seal it`);
+    const why = platform === 'win32' ? notDefaultLocalFolder(dir, home, { make: true }) : null;
+    if (why) {
+      const only = path.join(home, 'AppData', 'Local', 'woodshed');
+      throw new Error(`${why === 'led away' ? `${dir} leads elsewhere through a link or junction` : `${dir} is not ${only}`}, and ${only} is the only place a token is kept unsealed on Windows: unset XDG_CONFIG_HOME and LOCALAPPDATA's override, or sign in where DPAPI can seal it`);
     }
     return writeOwnFile(dir, where, data, { platform, ownFolder });
   };
@@ -261,7 +264,7 @@ function file(dir, platform, ownFolder, home) {
       return true;
     },
     read(origin) {
-      if (platform === 'win32' && !isDefaultLocalFolder(dir, home)) return null;
+      if (platform === 'win32' && notDefaultLocalFolder(dir, home)) return null;
       const token = readJson(where)[origin];
       return TOKEN_RE.test(String(token)) ? token : null;
     },
