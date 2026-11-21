@@ -118,7 +118,7 @@ careful, and fair.
    no code walkthrough.
 
    > [!WARNING]
-   > **Merge risk: Medium**: the reason from step 7 tied to the change.
+   > **Merge risk: Medium**: the sentence from step 7 saying which rule decided it.
    >
    > **What you accept by merging**
    >
