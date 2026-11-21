@@ -13,6 +13,7 @@
 //                                                     a machine in Herdr's hc (hc.mjs)
 //   woodshed move --from herdr [--terminal T|--tab T|--space S] --to <id>|new   terminals moved into a session (move.mjs)
 //   woodshed review enable|status                      review this checkout's pull requests in Woodshed sessions (review.mjs)
+//   woodshed review <id>|<pull request>                review a session's change on this terminal (reviewOpen.mjs)
 //   woodshed config list|get|set                       your choices on My settings, never a secret (config.mjs)
 //   woodshed settings plan|push|pull [...]             Claude and Codex settings, plugins, dotfiles and ignored files
 //                                                     (settings.mjs)
@@ -63,7 +64,10 @@ Commands:
   session   start, list, connect to, add to Herdr, stop, resume and remove sessions, and give them more time:
             woodshed session --help
   move      move work into a session from a supported source: woodshed move --help
-  review    review this checkout's pull requests in Woodshed sessions: woodshed review --help
+  review <id>
+            review one of your sessions' change on this terminal: the analysis, the diff and its comments, the
+            conversation, and comment, verdict, rename and merge. A pull request number or URL finds its session
+  review    enable|status: review this checkout's pull requests in Woodshed sessions: woodshed review --help
   config    your choices on My settings (terminal, reviews, default repo, …), never a secret: woodshed config --help
   settings  plan|push|pull [--only <what>,...] [--own-files <checkout>] [--replace]
             sync your Claude and Codex settings, plugins, dotfiles and ignored checkout files with private
@@ -591,8 +595,13 @@ export async function main(argv, deps = {}) {
       });
     }
     if (args.command === 'review') {
+      const token = signedIn(origin).token;
+      const fail = (message, opts) => new CliError(message, opts);
       return await reviewCommand({ origin, rest: args.args }, {
-        call, token: signedIn(origin).token, stdout, say, emit, json, EXIT, cwd: deps.cwd, fail: (message, opts) => new CliError(message, opts),
+        call, token, stdout, stdin, stderr, say, emit, json, EXIT, cwd: deps.cwd, fail,
+        // `review <id>`: the terminal it draws on, and `session resume` for a paused session.
+        tty: Boolean(stdin.isTTY && stdout.isTTY), color: !env.NO_COLOR, tui: deps.reviewTui,
+        session: sessionCommand, sessionCtx: { call, token, stdout, stderr, say, emit, json, sleep, now, EXIT, platform, hc, fail },
       });
     }
     if (args.command === 'config') {

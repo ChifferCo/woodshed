@@ -100,7 +100,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--no-wait\|--connect\|--herdr] ["prompt"]` | Starts a private session and waits, step by step, until it runs; `--connect` then puts the terminal on its agent's, `--herdr` adds it to Herdr as below | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on, or no `hc` | main |
 | `woodshed session connect <id> [--shell]` | Puts the person's own terminal on the session's agent, or its shell; resumes a paused one first. Interactive: suggest it to them, and use `tunnel` yourself | 0 disconnected, 1 could not open, 2 sign-in ended, 3 shared or saw production | main |
 | `woodshed session herdr <id>` | Makes a session a machine in Herdr and shows its Herdr agent in a space. Resumes a paused session first | 0 connected, 2 needs the person, 1 failed, 3 no `hc` 0.1.21 or newer, shared, or saw production | main |
-| `woodshed session list [--all]` | Their sessions and the shared ones they see, with state and when each pauses | 0 | main |
+| `woodshed session list [--all]` | Their sessions and the shared ones they see, with state and when each pauses; each session's pull request (state, verdict, checks), `review it: woodshed review <id>` under those they can review, and their own open pull requests with no session | 0 | main |
 | `woodshed session get <id>` | One session: state, branch, pull request, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
 | `woodshed session stop <id>` | Stops it, checkpointing a running one's work on the way (waits up to 3 minutes) | 0, 1 not answered in time | main |
 | `woodshed session resume <id> [--no-wait]` | Starts one of their stopped sessions again, conversation and all | as `new`; 3 a shared session | main |
@@ -113,6 +113,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | main |
 | `woodshed review enable [--qa] [--rerun <tag>\|--every-commit] [--dry-run]` | In a checkout: writes `pullRequests.review` with `runner: woodshed` (and with `--qa`, QA in a session) into `.woodshed/project.yaml`, checks it, and asks the console what is missing | 0 ready to commit, 2 an admin's step or a sign-in, 1 the file does not read or check, or the console could not confirm | main |
 | `woodshed review status` | In a checkout: whether review is on, in the checkout's file, on the default branch, and on the console | 0 on, 2 not yet, 1 the console could not tell | main |
+| `woodshed review <id>\|<pull request>` | A full-screen review of one of their own sessions' change on their terminal, as the Review tab shows it: the analysis, Q&A, chat with the session's agent, the diff with comments, Re-review, and comment, verdict, rename, merge as them. Interactive: suggest it to them. `--json` (or no terminal) prints the analysis and the diff's summary once, for you | 0, 2 sign-in ended, 3 shared or saw production, 1 failed | main |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in their running session, in its checkout | the line's code, 255 the pipe failed | main |
 | `woodshed config list` | Their choices on My settings: `terminal`, `reviews`, `codex-reviews`, `claude-token-shared`, `default-repo`, `github-name`, `github-email` | 0 | main |
 | `woodshed config get <key>` | One of them, bare (an empty line for none) | 0, 3 unknown key or a secret | main |
@@ -190,6 +191,24 @@ command's stdin, stdout and stderr. It opens only into their own running My Wood
 production data. Exit 255 with a reason on stderr is the pipe's own failure: not signed in, refused, not reached, or cut.
 The line is at most 8 KB: write anything longer to a script in the session first. Closing the tunnel hangs up what the
 line started, so start a server that must outlive it with `setsid … &`.
+
+### Review a session's change
+
+When a session of theirs has work ready (its pull request is open, or `session list` prints `review it: woodshed review
+<id>` under it), suggest to the person that they run `woodshed review <id>` themselves: it is a full-screen review on
+their own terminal (in Herdr, say), and every write in it (a comment, a verdict, a rename, a merge) goes to GitHub as
+them. Never drive it yourself. To say what the change is, read it with:
+
+```sh
+woodshed review <id> --json      # or a pull request: woodshed review 123 --json, or its URL
+```
+
+It prints one `review` event: `title`, `pullRequest` (`number`, `state`, `review`, `checks`), `analysis` (`status`,
+`overview`, `decisions`, `architecture`) and `diff` (`files`, `additions`, `deletions`, and `groups` of files in the
+analysis's reading order, each with its `role` and `preamble`). Opening a review that has no analysis yet starts one,
+as the Review tab does; `analysis.status` is then `running`, so read it again a minute or two later. Only their own My
+Woodshed sessions open (exit 3 for a shared one or one that saw production data), and a paused one is resumed first. A
+pull request with no session of theirs exits 1 and says how to start one on it.
 
 ### Move work from this computer into a session
 
