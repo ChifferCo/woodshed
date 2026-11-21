@@ -338,6 +338,27 @@ test('the console refuses codex config holding a credential and a plugin\'s mark
   await c.settings.sync({ login: 'octocat', sessionId: 'new', version: 0, removed: [], changed: { '.claude/plugins/installed_plugins.json#plugins/p@m': '{"marketplace":{"source":"directory"}}' } });
 });
 
+test('dotted and quoted keys in inline Codex tables keep credentials out of sync', async () => {
+  const c = fakeConsole();
+  const model = 'model = "o3"\n';
+  const a = session(await makeHome({ '.codex/config.toml': model }), c.send('aaaaaaaa'));
+  await a.round({ live: false });
+
+  for (const [entry, field] of [
+    ['env.SERVICE_TOKEN', 'env.SERVICE_TOKEN'],
+    [String.raw`'http_headers' . "Authoriz\u0061tion"`, 'http_headers.Authorization'],
+    [String.raw`http_headers."X-Internal-\U00000041uth-Code"`, 'http_headers.X-Internal-Auth-Code'],
+  ]) {
+    const config = `${model}mcp_servers.demo = { command = "npx", ${entry} = "dummy-value" }\n`;
+    await fs.writeFile(path.join(a.home, '.codex/config.toml'), config);
+    assert.equal((await a.round()).sent, 0, 'the configured server stays local');
+    assert.equal(await read(a.home, '.codex/config.toml'), config);
+    await assert.rejects(c.settings.sync({
+      login: 'octocat', sessionId: 'old', version: 1, removed: [], changed: { '.codex/config.toml': Buffer.from(config).toString('base64') },
+    }), (err) => err.status === 400 && err.message.includes(`sets mcp_servers.demo.${field}`) && !err.message.includes('dummy-value'));
+  }
+});
+
 test('a config.toml that does not read as TOML is held out of the round, neither sent nor written over, until it reads', async () => {
   const c = fakeConsole();
   const a = session(await makeHome({ '.codex/config.toml': 'model = "o3"\n' }), c.send('aaaaaaaa'));

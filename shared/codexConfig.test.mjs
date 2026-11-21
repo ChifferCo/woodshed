@@ -67,13 +67,16 @@ test('an entry holding a credential stays on the side it was set on, as its trus
     ['[mcp_servers.x]\nbearer_token = "abc"\n', 'sets mcp_servers.x.bearer_token'],
     ['[mcp_servers.x]\nurl = "https://mia:pw@example.com/mcp"\n', 'mcp_servers.x.url\'s URL carries a sign-in'],
     ['[shell_environment_policy.set]\nGITHUB_TOKEN = "TOKENVALUE"\n', 'sets shell_environment_policy.set.GITHUB_TOKEN'],
-    ['[mcp_servers]\nx = { url = "https://example.com/mcp", http_headers = { Authorization = "Bearer abc" } }\n', 'sets mcp_servers.x.Authorization'],
-    ['[mcp_servers]\nx = { command = "npx", env = { API_KEY = "abc" } }\n', 'sets mcp_servers.x.API_KEY'],
+    ['[mcp_servers]\nx = { url = "https://example.com/mcp", http_headers = { Authorization = "Bearer abc" } }\n', 'sets mcp_servers.x.http_headers.Authorization'],
+    ['[mcp_servers]\nx = { command = "npx", env = { API_KEY = "abc" } }\n', 'sets mcp_servers.x.env.API_KEY'],
   ]) assert.equal(credentialOf(kv(text)), why, text);
   for (const text of [
     '[model_providers.x]\nenv_key = "OPENAI_API_KEY"\n',
     '[mcp_servers.x]\nbearer_token_env_var = "GITHUB_TOKEN"\n',
     '[mcp_servers.x]\nenv_http_headers = { Authorization = "MY_TOKEN" }\n',
+    '[mcp_servers]\nx = { env_http_headers.Authorization = "MY_TOKEN" }\n',
+    '[mcp_servers]\nx = { env_http_headers = { Authorization = "MY_TOKEN" } }\n',
+    '[mcp_servers.x]\nenv = { LOG = ", TOKEN = \u0027example\u0027" }\n',
     '[mcp_servers.x]\nenv = { GITHUB_TOKEN = "${GITHUB_TOKEN}" }\n',
     'preferred_auth_method = "chatgpt"\n',
     'mcp_oauth_credentials_store = "file"\n',

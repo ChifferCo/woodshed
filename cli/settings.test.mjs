@@ -928,3 +928,19 @@ test('a table named with a key\'s shape is left out and never printed, in the pu
   const pull = await c.run(['settings', 'plan', '--pull', '--replace', '--only', 'codex']);
   assert.ok(!pull.out.includes(FAKE_GITHUB_TOKEN) && !pull.err.includes(FAKE_GITHUB_TOKEN));
 });
+
+test('a credential-shaped alias name stays local without appearing in the dotfile plan', async (t) => {
+  const home = laptopHome(t);
+  write(home, '.bash_aliases', `alias ${FAKE_GITHUB_TOKEN}='cd ~/project'\nalias ll='ls -l'\n`);
+  const c = await setUp(t, { home, userSettings: true });
+  const plan = await c.run(['settings', 'plan', '--json', '--only', 'dotfile/bash-aliases']);
+  assert.equal(plan.code, EXIT.done, plan.err);
+  assert.ok(!plan.out.includes(FAKE_GITHUB_TOKEN) && !plan.err.includes(FAKE_GITHUB_TOKEN), 'plan output conceals the name');
+  const row = plan.items.find((row) => row.name === 'dotfile/bash-aliases');
+  assert.equal(row.fate, 'upload');
+  assert.match(row.notes.join('\n'), /alias \[redacted\] \(a GitHub token\)/);
+  const push = await c.run(['settings', 'push', '--json', '--only', 'dotfile/bash-aliases']);
+  assert.equal(push.code, EXIT.done, push.err);
+  assert.equal(push.lines.at(-1).dotfilesSent, 1);
+  assert.equal((await c.userSettings.ownFiles('mia-dev'))['bash-aliases'], "alias ll='ls -l'\n");
+});

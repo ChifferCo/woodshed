@@ -16,7 +16,7 @@
 // left out named: a credential there is left out rather than refused, so the rest still goes.
 
 import path from 'node:path';
-import { secretContent, shellCredential } from './secretLike.mjs';
+import { redact, secretContent, shellCredential } from './secretLike.mjs';
 
 export const DOTFILES = Object.freeze({
   gitconfig: { label: '~/.gitconfig', from: ['.gitconfig'] },
@@ -210,7 +210,8 @@ export function dotfileProblem(key, text) {
 export function fromComputer(key, files, { home }) {
   const left = [];
   const leave = (what) => {
-    if (!left.includes(what)) left.push(what);
+    const shown = redact(what);
+    if (!left.includes(shown)) left.push(shown);
   };
   const namesHome = (value) => value.includes(`${home}/`) || /(^|[\s'"=:])(~|\$HOME|\$\{HOME\})\//.test(value);
   if (key === 'gitconfig') {
@@ -258,7 +259,7 @@ export function fromComputer(key, files, { home }) {
         other += 1;
         continue;
       }
-      const credential = shellCredential(alias.value);
+      const credential = secretContent(alias.name) ?? shellCredential(alias.value);
       aliases.delete(alias.name);
       if (credential) leave(`alias ${alias.name} (${credential})`);
       else if (namesHome(alias.value)) leave(`alias ${alias.name} (names a path on this computer)`);

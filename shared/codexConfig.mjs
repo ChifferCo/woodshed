@@ -29,10 +29,35 @@ export function keyText(parts) {
 
 function decodeBasic(raw) {
   try {
-    return JSON.parse(raw);
+    // TOML's long Unicode escape has no JSON equivalent.
+    const json = raw.replace(/\\(?:\\|U([0-9A-Fa-f]{8}))/g, (match, hex) => {
+      if (!hex) return match;
+      return JSON.stringify(String.fromCodePoint(Number.parseInt(hex, 16))).slice(1, -1);
+    });
+    return JSON.parse(json);
   } catch {
     // An escape JSON has not (\e, \x): what is between the quotes is near enough for a name.
     return raw.slice(1, -1);
+  }
+}
+
+function skipSpace(text, at) {
+  while (text[at] === ' ' || text[at] === '\t') at++;
+  return at;
+}
+
+/** A bare, quoted or dotted TOML key starting at the given offset. */
+function readKey(text, at) {
+  const token = /"(?:[^"\\\n]|\\.)*"|'[^'\n]*'|[A-Za-z0-9_-]+/y;
+  const parts = [];
+  for (;;) {
+    token.lastIndex = skipSpace(text, at);
+    const match = token.exec(text);
+    if (!match) return null;
+    parts.push(said(match[0]));
+    at = skipSpace(text, token.lastIndex);
+    if (text[at] !== '.') return { parts, end: at };
+    at++;
   }
 }
 
@@ -52,37 +77,9 @@ export function readToml(text) {
     const at = text.indexOf('\n', from);
     return at === -1 ? n : at + 1;
   };
-  const space = () => {
-    while (i < n && (text[i] === ' ' || text[i] === '\t')) i++;
-  };
-  function key() {
-    const parts = [];
-    for (;;) {
-      space();
-      if (text[i] === '"') {
-        const m = /^"(?:[^"\\\n]|\\.)*"/.exec(text.slice(i));
-        if (!m) return null;
-        parts.push(decodeBasic(m[0]));
-        i += m[0].length;
-      } else if (text[i] === "'") {
-        const end = text.indexOf("'", i + 1);
-        if (end === -1 || text.slice(i, end).includes('\n')) return null;
-        parts.push(text.slice(i + 1, end));
-        i = end + 1;
-      } else {
-        const m = /^[A-Za-z0-9_-]+/.exec(text.slice(i));
-        if (!m) return null;
-        parts.push(m[0]);
-        i += m[0].length;
-      }
-      space();
-      if (text[i] !== '.') return parts;
-      i++;
-    }
-  }
   // The rest of a line once something ended: only a comment may follow.
   function endOfLine() {
-    space();
+    i = skipSpace(text, i);
     if (i < n && text[i] === '#') i = lineEnd(i);
     else if (i < n && text[i] === '\r' && text[i + 1] === '\n') i += 2;
     else if (i < n && text[i] === '\n') i++;
@@ -91,7 +88,7 @@ export function readToml(text) {
   }
   while (i < n) {
     const start = i;
-    space();
+    i = skipSpace(text, i);
     if (i >= n || text[i] === '\n' || text[i] === '\r' || text[i] === '#') {
       i = lineEnd(i);
       out.push({ kind: 'blank', text: text.slice(start, i), table });
@@ -100,18 +97,19 @@ export function readToml(text) {
     if (text[i] === '[') {
       const array = text[i + 1] === '[';
       i += array ? 2 : 1;
-      const parts = key();
-      if (!parts) return null;
+      const key = readKey(text, i);
+      if (!key) return null;
+      i = key.end;
       if (text.slice(i, i + (array ? 2 : 1)) !== (array ? ']]' : ']')) return null;
       i += array ? 2 : 1;
       if (!endOfLine()) return null;
-      table = parts;
+      table = key.parts;
       out.push({ kind: 'header', text: text.slice(start, i), table, array });
       continue;
     }
-    const parts = key();
-    if (!parts || text[i] !== '=') return null;
-    i++;
+    const key = readKey(text, i);
+    if (!key || text[key.end] !== '=') return null;
+    i = key.end + 1;
     const valueStart = i;
     // Where the comment after the value starts, as the scan found it: a `#` inside a string is not one.
     let commentAt = null;
@@ -156,7 +154,7 @@ export function readToml(text) {
     }
     const raw = text.slice(valueStart, commentAt ?? i).replace(/\r?\n$/, '');
     const value = raw.trim();
-    out.push({ kind: 'kv', text: text.slice(start, i), table, key: parts, value });
+    out.push({ kind: 'kv', text: text.slice(start, i), table, key: key.parts, value });
   }
   return out;
 }
@@ -253,7 +251,8 @@ const STRING_RE = /"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:[^"\\\n]|\\.)*"|'[^'\n]*'/g
 
 function said(raw) {
   if (raw.startsWith('"""') || raw.startsWith("'''")) return raw.slice(3, -3);
-  return raw.startsWith('"') ? decodeBasic(raw) : raw.slice(1, -1);
+  if (raw.startsWith('"')) return decodeBasic(raw);
+  return raw.startsWith("'") ? raw.slice(1, -1) : raw;
 }
 
 /** The string literals in a pair's value, each with its text as written and what it says. */
@@ -261,10 +260,29 @@ export function stringsOf(value) {
   return [...value.matchAll(STRING_RE)].map(([raw]) => ({ raw, said: said(raw) }));
 }
 
-/** The `key = "value"` pairs of an inline table in a pair's value: { Authorization = "Bearer …" }. */
-export function inlinePairs(value) {
-  const re = /(?:^|[{,])\s*(?:([A-Za-z0-9_-]+)|"((?:[^"\\\n]|\\.)*)"|'([^'\n]*)')\s*=\s*("(?:[^"\\\n]|\\.)*"|'[^'\n]*')/g;
-  return [...value.matchAll(re)].map((m) => ({ key: m[1] ?? m[2] ?? m[3], raw: m[4], said: said(m[4]) }));
+/** String-valued fields in inline tables, with dotted and nested keys expressed as paths. */
+function* inlinePairs(value) {
+  const tokens = new RegExp(String.raw`${STRING_RE.source}|#[^\n]*|[{},]`, 'g');
+  const string = new RegExp(STRING_RE.source, 'y');
+  const tables = [];
+  const paths = new Map();
+  for (const { 0: token, index } of value.matchAll(tokens)) {
+    if (token === '}') {
+      tables.pop();
+      continue;
+    }
+    if (token === '{') tables.push(paths.get(index) ?? []);
+    if ((token !== '{' && token !== ',') || !tables.length) continue;
+
+    const key = readKey(value, index + 1);
+    if (!key || value[key.end] !== '=') continue;
+    const parts = [...tables.at(-1), ...key.parts];
+    const start = skipSpace(value, key.end + 1);
+    if (value[start] === '{') paths.set(start, parts);
+    string.lastIndex = start;
+    const match = string.exec(value);
+    if (match) yield { parts, value: said(match[0]) };
+  }
 }
 
 /**
@@ -317,20 +335,28 @@ export function credentialOf(statement, commands = null) {
 
 function findCredential(statement, commands) {
   // A comment or a table's name can hold a key's shape too.
-  if (statement.kind !== 'kv') return secretContent(statement.text) ? `holds what looks like ${secretContent(statement.text)}` : null;
   const at = pathOf(statement);
   const name = keyText(at);
+  const kind = secretContent(statement.text) ?? secretContent(name);
+  if (kind) return `holds what looks like ${kind}`;
+  if (statement.kind !== 'kv') return null;
   const last = at.at(-1);
   const table = at.at(-2);
-  const kind = secretContent(statement.text);
-  if (kind) return `holds what looks like ${kind}`;
   const strings = stringsOf(statement.value);
+  for (const { said: text } of strings) {
+    const kind = secretContent(text);
+    if (kind) return `holds what looks like ${kind}`;
+  }
   if (/^(experimental_)?bearer_token$/.test(last) && strings.length) return `sets ${name}`;
   // An inline table's pairs, at any depth: its values are an MCP server's env or headers, which codex takes as they are,
   // so no word of codex's own passes here.
   for (const pair of inlinePairs(statement.value)) {
-    if (!pair.said.trim() || REFERENCE.test(pair.said) || (namesVariable(pair.key, last) && ENV_NAME.test(pair.said))) continue;
-    if (SECRET_VARIABLE.test(pair.key) || CREDENTIAL_HEADER.test(pair.key) || (last === 'http_headers' && SECRET_HEADER.test(pair.key))) return `sets ${name}.${keyText([pair.key])}`;
+    const key = pair.parts.at(-1);
+    const parent = pair.parts.at(-2) ?? last;
+    if (!pair.value.trim() || REFERENCE.test(pair.value) || (namesVariable(key, parent) && ENV_NAME.test(pair.value))) continue;
+    if (SECRET_VARIABLE.test(key) || CREDENTIAL_HEADER.test(key) || (parent === 'http_headers' && SECRET_HEADER.test(key))) {
+      return `sets ${keyText([...at, ...pair.parts])}`;
+    }
   }
   const single = strings.length === 1 && statement.value.trim() === strings[0].raw ? strings[0].said : null;
   if (single !== null && single.trim() && !REFERENCE.test(single)) {
