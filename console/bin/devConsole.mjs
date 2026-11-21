@@ -470,6 +470,13 @@ function startConsole() {
       // DEV_CONSOLE_HOMES_DIR keeps saved Claude homes in that folder (providers/local/homeStore.mjs), as the console's
       // own at `_sessions/<id>/claude-home.tar.gz`, for Console settings' Sessions holding data.
       ...(process.env.DEV_CONSOLE_HOMES_DIR ? { WOODSHED_LOCAL_HOMES_DIR: process.env.DEV_CONSOLE_HOMES_DIR } : {}),
+      // DEV_CONSOLE_SESSION_IMAGE starts New session's sessions from that session image, with the variables in the JSON
+      // file DEV_CONSOLE_SESSION_ENV_FILE on top (such as GIT_CONFIG_* pointing the made-up repo's clone at a local
+      // one), for a start in the real image: cli/README.md, "Trying session connect". DEV_CONSOLE_SESSION_API_PORT puts
+      // the session API on that port of loopback in place of 7691, which that file's WOODSHED_CONSOLE_URL then names.
+      ...(process.env.DEV_CONSOLE_SESSION_IMAGE ? { WOODSHED_IMAGE: process.env.DEV_CONSOLE_SESSION_IMAGE } : {}),
+      ...(process.env.DEV_CONSOLE_SESSION_ENV_FILE ? { WOODSHED_SESSION_ENV_FILE: process.env.DEV_CONSOLE_SESSION_ENV_FILE } : {}),
+      ...(process.env.DEV_CONSOLE_SESSION_API_PORT ? { WOODSHED_SESSION_API_HOST: '127.0.0.1', WOODSHED_SESSION_API_PORT: process.env.DEV_CONSOLE_SESSION_API_PORT } : {}),
       ...tlsAskPort,
       // DEV_CONSOLE_WEBHOOKS=1 names a webhook receiver, so Console settings shows its GitHub webhooks switch.
       // Polling is off here, so the receiver never listens and nothing arrives.
