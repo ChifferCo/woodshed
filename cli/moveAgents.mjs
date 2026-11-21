@@ -58,8 +58,9 @@ export function classify(terminal) {
  * @returns {string[]}
  */
 export function commandLine(argv) {
-  const words = argv.map(String).filter((w) => w !== '');
-  if (words.length === 1 && /\s/.test(words[0]) && !fs.existsSync(words[0])) return words[0].trim().split(/\s+/);
+  const words = argv.map(String);
+  // Only a retitled program's padding is dropped: an empty argument of an ordinary command (--prefix '') is its own.
+  if (words.length && /\s/.test(words[0]) && words.slice(1).every((w) => w === '') && !fs.existsSync(words[0])) return words[0].trim().split(/\s+/);
   return words;
 }
 

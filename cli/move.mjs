@@ -229,7 +229,7 @@ export async function moveCommand({ origin, rest }, ctx) {
   if (secrets.length) {
     cleanSurveys();
     if (json) emit({ event: 'secrets', files: secrets.map((s) => ({ root: s.root, path: s.path, line: s.line, kind: s.kind })) });
-    const lines = secrets.map((s) => `  ${path.join(s.root, s.path)}${s.line ? `:${s.line}` : ''}  ${s.kind}`);
+    const lines = secrets.map((s) => `  ${s.path.startsWith('the message of commit ') ? `${s.path} in ${s.root}` : path.join(s.root, s.path)}${s.line ? `:${s.line}` : ''}  ${s.kind}`);
     throw refused(`These look like secrets, and the move would push them to GitHub:\n${lines.join('\n')}\nTake them out of the work (or add them to .gitignore), then move again. Nothing was moved.`);
   }
 
@@ -377,7 +377,8 @@ export async function moveCommand({ origin, rest }, ctx) {
     if (opts.to === 'new') {
       for (const repo of repos) {
         const first = places.find((p) => p.repo === repo && p.main);
-        const agent = first.agent ? kinds.get(first.agent).agent : 'claude';
+        // The kind of the repo's agents, whichever checkout they are in (checked above to be one kind).
+        const agent = kindOf.get(repo) ?? 'claude';
         const spaceName = chosen.spaces[0]?.name || chosen.spaces[0]?.tabs[0]?.name || '';
         const name = `Moved from ${printable(ctx.hostname ?? os.hostname(), 40)}${spaceName ? `: ${printable(spaceName, 60)}` : ''}`;
         const s = await ask('/api/my/sessions', { method: 'POST', body: { project: projects.get(repo), workOn: first.branch, agent, model: '', name, prompt: '' } });

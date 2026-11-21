@@ -216,6 +216,15 @@ export async function survey(git, checkout, { tempDir = os.tmpdir(), tag = 'move
     const before = upstream ? (await git(['show', `${upstream}:${blob.path}`], { cwd: root })).stdout : '';
     for (const hit of secretsIn(text, before)) secrets.push({ path: blob.path, ...hit });
   }
+  // The messages of the commits the push sends are published with them: a token pasted into one is found too.
+  if (head) {
+    const log = await step(['log', '--format=%H%x00%B%x00', head, ...(known.length ? ['--not', ...known] : [])], { timeoutMs: 120_000 });
+    const parts = log.split('\0');
+    for (let i = 0; i + 1 < parts.length; i += 2) {
+      const sha = parts[i].trim();
+      for (const hit of secretsIn(parts[i + 1])) secrets.push({ path: `the message of commit ${sha.slice(0, 12)}`, line: hit.line, kind: hit.kind });
+    }
+  }
   // Ignored env files are named so the person knows they stay, and how theirs reach a session.
   const ignored = await git(['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--', ':(glob)**/.env', ':(glob)**/.env.*'], { cwd: root });
   const ignoredEnv = ignored.code === 0 ? ignored.stdout.split('\0').filter(Boolean).slice(0, 50) : [];
@@ -243,7 +252,8 @@ export async function freeze(git, checkout, { tree, message }) {
  * @returns {Promise<{ok: true}|{ok: false, error: string}>}
  */
 export async function pushBranch(git, checkout, { commit, branch }) {
-  const out = await git(['push', '--porcelain', checkout.remote, `${commit}:refs/heads/${branch}`], { cwd: checkout.root, timeoutMs: PUSH_MS });
+  // To the one URL the survey asked (the remote's push URL, rewrites applied), and with no tags following the branch.
+  const out = await git(['push', '--porcelain', '--no-follow-tags', checkout.pushUrl ?? checkout.remote, `${commit}:refs/heads/${branch}`], { cwd: checkout.root, timeoutMs: PUSH_MS });
   if (out.code === 0) return { ok: true };
   const rejected = out.stdout.split('\n').find((l) => l.startsWith('!'));
   return { ok: false, error: rejected ? rejected.split('\t').at(-1).trim() || lastLine(out) : lastLine(out) };
@@ -251,6 +261,6 @@ export async function pushBranch(git, checkout, { commit, branch }) {
 
 /** @returns {Promise<boolean>}  whether the branch is gone from the remote */
 export async function deleteBranch(git, checkout, branch) {
-  const out = await git(['push', '--porcelain', checkout.remote, '--delete', `refs/heads/${branch}`], { cwd: checkout.root, timeoutMs: PUSH_MS });
+  const out = await git(['push', '--porcelain', checkout.pushUrl ?? checkout.remote, '--delete', `refs/heads/${branch}`], { cwd: checkout.root, timeoutMs: PUSH_MS });
   return out.code === 0;
 }

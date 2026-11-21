@@ -184,3 +184,14 @@ test('what GitHub already has is asked of where the push goes, when it fetches f
   t.after(() => fs.rmSync(path.dirname(found.index), { recursive: true, force: true }));
   assert.deepEqual(found.secrets, [{ path: 'creds.js', line: 1, kind: 'a GitHub token' }]);
 });
+
+test('a token pasted into the message of a commit not pushed yet is found, said by the commit and never shown', async (t) => {
+  const { root, sh, git } = repoFor(t);
+  fs.writeFileSync(path.join(root, 'notes.md'), 'nothing secret\n');
+  sh(['add', 'notes.md'], root);
+  sh(['commit', '-q', '-m', 'wip', '-m', `token was xoxb-${'1'.repeat(12)}-abcdef`], root);
+  const found = await survey(git, await checkoutOf(git, root), { tag: 'test' });
+  t.after(() => fs.rmSync(path.dirname(found.index), { recursive: true, force: true }));
+  const sha = sh(['rev-parse', 'HEAD'], root).slice(0, 12);
+  assert.deepEqual(found.secrets, [{ path: `the message of commit ${sha}`, line: 3, kind: 'a Slack token' }]);
+});

@@ -385,3 +385,23 @@ test('an agent of the other kind than the session\'s is not moved into it: it wo
   assert.match(out.err, /t1 runs claude, and session c0dec0de runs codex: a session runs one kind of agent, with/);
   assert.equal(l.onGithub('woodshed/move-c0ffee42'), null, 'refused before anything was pushed');
 });
+
+test('a new session runs the kind of the repo\'s agents, whichever checkout of it they are in', async (t) => {
+  const l = laptop(t, { conversation: false });
+  // A second checkout of the same repo, with Codex in it; the first checkout has only a shell in this space.
+  const wt = path.join(l.repo.dir, 'app-other');
+  l.repo.sh(['worktree', 'add', '-q', '-b', 'other', wt], l.repo.root);
+  const wtReal = fs.realpathSync(wt);
+  const id = '33333333-4444-4555-8666-777777777777';
+  const day = path.join(l.repo.dir, 'home', '.codex', 'sessions', '2026', '11', '20');
+  fs.mkdirSync(day, { recursive: true });
+  fs.writeFileSync(path.join(day, `rollout-2026-11-20T09-00-00-${id}.jsonl`), `${JSON.stringify({ type: 'session_meta', payload: { id, cwd: wtReal } })}\n`);
+  Object.assign(l.h.terminals.get(l.claude), { foreground: { name: 'zsh', argv: ['-zsh'], cwd: l.cwd, pid: 9 }, status: null, status_ms: null });
+  const codex = l.h.add({ argv: ['/bin/zsh', '-l'], cwd: wtReal, foreground: { name: 'codex', argv: ['codex'], cwd: wtReal, pid: 10 }, status: null });
+  l.h.space('pair', [['main', { row: [l.claude, codex] }]]);
+  const out = await l.run(['move', '--space', 'pair', '--to', 'new', '--console', ORIGIN]);
+  assert.equal(out.code, EXIT.done, out.err + out.out);
+  const started = l.calls.find(([m, p]) => m === 'POST' && p === '/api/my/sessions');
+  assert.equal(started[2].agent, 'codex');
+  assert.ok(l.onGithub('woodshed/move-c0ffee42') && l.onGithub('woodshed/move-c0ffee42-2'), 'a branch for each checkout');
+});

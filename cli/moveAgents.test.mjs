@@ -41,7 +41,8 @@ test('a terminal is an agent by its program or its status record, a shell by its
   assert.equal(classify({ address: 't2', argv: ['sleep', '5'], cwd: '/w', foreground: null }).kind, 'process', 'with no foreground, the terminal\'s own program');
   // npm sets its own title, which the OS then gives as its whole command line in the first word (measured on macOS).
   assert.deepEqual(classify(t({ name: 'npm', argv: ['npm run dev', '', '', ''], cwd: '/w', pid: 4 })).argv, ['npm', 'run', 'dev']);
-  assert.deepEqual(commandLine(['node', 'server.js', '']), ['node', 'server.js']);
+  assert.deepEqual(commandLine(['npm run dev']), ['npm', 'run', 'dev']);
+  assert.deepEqual(commandLine(['node', 'build.js', '--prefix', '']), ['node', 'build.js', '--prefix', ''], 'an empty argument of its own is kept');
   assert.deepEqual(commandLine(['/bin/sh']), ['/bin/sh']);
 });
 
