@@ -8,6 +8,7 @@ import path from 'node:path';
 import { createCliSignIn } from '../console/cliSignIn.mjs';
 import { createHandler } from '../console/server.mjs';
 import { createCredentials } from './credentials.mjs';
+import { fakeWindows, TOOLS } from './__fixtures__/fakeWindows.mjs';
 import { approvalUrl, consoleOrigin, DEFAULT_CONSOLE, EXIT, main, parseArgs } from './woodshed.mjs';
 
 function listen(server) {
@@ -53,13 +54,12 @@ async function consoleFor(t, { decision = 'approve', approves = true, people = n
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-cli-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const run = async (args) => {
+  const run = async (args, { platform = 'test', env = { XDG_CONFIG_HOME: dir }, pendingCredentials, credentials = createCredentials({ platform: 'test', dir: path.join(dir, 'woodshed') }) } = {}) => {
     let out = '';
     let err = '';
     const code = await main(args, {
-      env: { XDG_CONFIG_HOME: dir }, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
-      sleep: async (ms) => { clock += ms; }, now, hostname: 'mia-laptop', platform: 'test',
-      credentials: createCredentials({ platform: 'test', dir: path.join(dir, 'woodshed') }),
+      env, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
+      sleep: async (ms) => { clock += ms; }, now, hostname: 'mia-laptop', platform, credentials, pendingCredentials,
       openBrowser: (url) => { approve(url).catch((e) => { err += e.stack; }); },
       // hc as found here: none (null), or one saying this version.
       hc: async () => (hcVersion === null ? { code: null, stdout: '', stderr: '', missing: true } : { code: 0, stdout: `hc ${hcVersion}\n`, stderr: '' }),
@@ -316,16 +316,99 @@ test('a console that hands out something other than a command line token gets a 
   assert.equal(fs.existsSync(path.join(dir, 'credentials.json')), false);
 });
 
-test('on Windows login refuses before it asks the console for a code', async () => {
-  let asked = false;
-  let err = '';
-  const code = await main(['login', '--console', 'https://c.example'], {
-    env: { XDG_CONFIG_HOME: os.tmpdir() }, stdout: { write() {} }, stderr: { write: (s) => { err += s; } }, platform: 'win32',
-    fetch: async () => { asked = true; throw new Error('not reached'); },
+test('on Windows login keeps the token sealed under %LOCALAPPDATA%, and status and logout read it there', async (t) => {
+  const c = await consoleFor(t);
+  const win = fakeWindows();
+  // An unseal that fails, as DPAPI does over an SSH sign-in for a token sealed at the desktop.
+  let unsealing = true;
+  const run = (command, args, opts) => {
+    const script = Buffer.from(String(args.at(-1)), 'base64').toString('utf16le');
+    return !unsealing && script.includes('::Unprotect(') ? { status: 1, stdout: '', stderr: 'Key not valid for use in specified state.' } : win.run(command, args, opts);
+  };
+  // The folder main picks on Windows: LOCALAPPDATA's, not the roaming APPDATA's, and never XDG_CONFIG_HOME's.
+  const profile = fs.realpathSync(c.dir);
+  const local = path.join(profile, 'AppData', 'Local');
+  fs.mkdirSync(local, { recursive: true });
+  const env = { LOCALAPPDATA: local, APPDATA: path.join(profile, 'AppData', 'Roaming'), XDG_CONFIG_HOME: path.join(profile, 'xdg') };
+  const windows = { platform: 'win32', env, credentials: createCredentials({ platform: 'win32', run, dir: path.join(local, 'woodshed'), has: () => true, tools: TOOLS, home: profile }) };
+  const signed = await c.run(['login', '--console', c.origin, '--json'], windows);
+  assert.equal(signed.code, EXIT.done, signed.err);
+  const done = signed.lines.at(-1);
+  assert.deepEqual([done.event, done.login, done.store], ['signed-in', 'mia-dev', 'dpapi']);
+  assert.equal(done.credentialsFile, path.join(local, 'woodshed', 'credentials-dpapi.json'));
+  assert.ok(fs.existsSync(path.join(local, 'woodshed', 'cli.json')), 'cli.json under LOCALAPPDATA');
+  assert.equal(fs.existsSync(env.APPDATA), false, 'nothing under the roaming profile');
+  assert.equal(fs.existsSync(env.XDG_CONFIG_HOME), false, 'nor under XDG_CONFIG_HOME, a Unix convention');
+  assert.ok(!fs.readFileSync(done.credentialsFile, 'utf8').includes('wsc_'));
+  assert.ok(win.calls.every((call) => !call.args.join(' ').includes('wsc_')), 'no token in any command\'s arguments');
+
+  const status = await c.run(['status', '--json'], windows);
+  assert.equal(status.code, EXIT.done);
+  assert.deepEqual([status.lines[0].signedIn, status.lines[0].login], [true, 'mia-dev']);
+
+  // Over SSH the sealed token cannot be opened: logout leaves it, so a sign-out where it opens still ends it.
+  unsealing = false;
+  const unread = await c.run(['logout', '--json'], windows);
+  assert.equal(unread.code, EXIT.refused);
+  assert.deepEqual([unread.lines[0].unreadable, unread.lines[0].endedAtConsole], [true, false]);
+  assert.equal(c.cli.list('mia-dev').length, 1, 'still live at the console');
+  unsealing = true;
+  const out = await c.run(['logout', '--json'], windows);
+  assert.deepEqual([out.lines[0].wasSignedIn, out.lines[0].endedAtConsole], [true, true]);
+  assert.deepEqual(c.cli.list('mia-dev'), []);
+  assert.deepEqual(JSON.parse(fs.readFileSync(done.credentialsFile, 'utf8')), {}, 'forgotten here too');
+});
+
+for (const kind of ['dpapi', 'file']) {
+  test(`Windows setup can resume a pending approval from the ${kind} store`, async (t) => {
+    const c = await consoleFor(t);
+    const home = fs.realpathSync(c.dir);
+    const local = path.join(home, 'AppData', 'Local');
+    fs.mkdirSync(local, { recursive: true });
+    const win = fakeWindows({ dpapi: kind === 'dpapi' });
+    const options = { platform: 'win32', dir: path.join(local, 'woodshed'), home, tools: TOOLS, run: win.run, has: () => true };
+    const pending = createCredentials({ ...options, pending: true });
+    const windows = { platform: 'win32', env: { LOCALAPPDATA: local }, credentials: createCredentials(options), pendingCredentials: pending };
+    const args = ['login', '--no-wait', '--no-browser', '--json', '--console', c.origin];
+    const waiting = await c.run(args, windows);
+    assert.equal(waiting.code, EXIT.waiting, waiting.err);
+    assert.equal(pending.find(c.origin).store.kind, kind);
+    assert.equal(windows.credentials.find(c.origin), null);
+    assert.deepEqual((await c.run(args, windows)).lines, waiting.lines);
+    await c.approve(waiting.lines[0].verificationUrlComplete);
+    const done = await c.run(args, windows);
+    assert.equal(done.code, EXIT.done, done.err);
+    assert.equal(done.lines[0].store, kind);
+    assert.equal(pending.find(c.origin), null);
+    assert.equal((await c.run(['status', '--json'], windows)).code, EXIT.done);
+    assert.equal((await c.run(['logout', '--json'], windows)).code, EXIT.done);
   });
-  assert.equal(code, EXIT.refused);
-  assert.equal(asked, false);
-  assert.match(err, /does not run on Windows yet/);
+}
+
+test('on Windows a cli.json naming another platform\'s store runs no helper, and status says not signed in', async (t) => {
+  const profile = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-win-')));
+  t.after(() => fs.rmSync(profile, { recursive: true, force: true }));
+  const local = path.join(profile, 'AppData', 'Local');
+  fs.mkdirSync(path.join(local, 'woodshed'), { recursive: true });
+  fs.writeFileSync(path.join(local, 'woodshed', 'cli.json'), JSON.stringify({ current: 'https://c.example', consoles: { 'https://c.example': { login: 'x', store: 'keychain' } } }));
+  const ran = [];
+  const run = (command) => { ran.push(command); return { status: 0, stdout: `wsc_${'ab'.repeat(32)}`, stderr: '' }; };
+  const code = await main(['status', '--json'], {
+    env: { LOCALAPPDATA: local }, stdout: { write() {} }, stderr: { write() {} }, platform: 'win32',
+    credentials: createCredentials({ platform: 'win32', run, dir: path.join(local, 'woodshed'), has: () => true, tools: TOOLS, home: profile }),
+    fetch: async () => { throw new Error('not reached'); },
+  });
+  assert.equal(code, EXIT.waiting);
+  assert.deepEqual(ran, [], 'no security, secret-tool or any other helper run');
+});
+
+test('a token that cannot be kept here is ended at the console, not left there for nobody', async (t) => {
+  const c = await consoleFor(t);
+  const refusing = { save: () => { throw new Error('C:\\shared\\woodshed could not be made a folder only you can open'); }, storeFor: () => null };
+  const out = await c.run(['login', '--console', c.origin], { credentials: refusing });
+  assert.equal(out.code, EXIT.failed);
+  assert.match(out.err, /token could not be kept: .*could not be made a folder only you can open\. It was ended at the console\./);
+  assert.deepEqual(c.cli.list('mia-dev'), [], 'no sign-in left on My settings');
 });
 
 test('login refused for too many sign-ins waiting says to try again later, in the minutes the console gives, and fails', async (t) => {
