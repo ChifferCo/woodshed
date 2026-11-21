@@ -26,6 +26,9 @@ import { HC_MINIMUM, addMachine, agentOn, hcVersion, machineName, removeMachine 
 // A terminal whose connection dropped is opened again for this long, waiting a little longer each time.
 const RECONNECT_GIVE_UP_MS = 60_000;
 const RECONNECT_WAITS_MS = [500, 1000, 2000, 4000, 8000];
+// A connection that lasted less than this before it dropped counts as no connection: the minute goes on from the first
+// drop, so one that opens and drops at once again and again is not tried for ever.
+const RECONNECT_HELD_MS = 10_000;
 
 // How often a start's wait reads the list, and how long it keeps trying through a console it cannot reach.
 const POLL_MS = 2000;
@@ -374,7 +377,8 @@ export async function sessionCommand({ origin, rest }, ctx) {
         throw fail(`The sign-in to ${origin} ended: ${out.message}. Run: woodshed login --console ${origin}`, { code: EXIT.waiting, status: 'signed-out' });
       }
       if (out.status === 'refused' && /production data/.test(out.message)) throw fail(`Session ${s.id}: ${out.message}`, { code: EXIT.refused, status: 'refused' });
-      if (out.status === 'attached-then-cut') {
+      const held = out.status === 'attached-then-cut' && (out.ms ?? 0) >= RECONNECT_HELD_MS;
+      if (out.status === 'attached-then-cut' && (held || droppedAt === null)) {
         droppedAt = now();
         tries = 0;
         stderr.write(`\r\nwoodshed: the connection to ${s.id} dropped (${out.message}); connecting again. Ctrl-C stops.\n`);
@@ -386,8 +390,15 @@ export async function sessionCommand({ origin, rest }, ctx) {
       }
       await sleep(RECONNECT_WAITS_MS[Math.min(tries, RECONNECT_WAITS_MS.length - 1)]);
       tries += 1;
-      // Asked before each try: a session that paused or stopped meanwhile is resumed by connect, not here.
-      const { s: latest } = await find(s.id);
+      // Asked before each try: a session that paused or stopped meanwhile is resumed by connect, not here. A console still
+      // out of reach is tried again within the minute, as the terminal is.
+      let latest;
+      try {
+        ({ s: latest } = await find(s.id));
+      } catch (err) {
+        if (!err.unreachable) throw err;
+        continue;
+      }
       if (latest.status !== 'running') {
         throw fail(`Session ${s.id} is ${stateOf(latest).word} now. Run woodshed session connect ${s.id} to resume it and connect again.`);
       }

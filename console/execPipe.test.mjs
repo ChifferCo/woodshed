@@ -326,3 +326,21 @@ test('a path that is not the exec pipe\'s is left to the rest of the console', a
   assert.equal(c.execPipe.handleUpgrade(req, null, null), false);
   assert.equal(c.execPipe.handleUpgrade({ url: '//a:99999', headers: {} }, null, null), false);
 });
+
+test('a computer that hangs up first ends the pipe at the console too, not only at the session', async (t) => {
+  const statusd = await statusdFor(t);
+  const c = await consoleFor(t, { statusd });
+  const { token } = c.signIn('mia-dev');
+  const { LINE_HEADER, PROTOCOL, encodeLine } = await import('../shared/execFrames.mjs');
+  const req = http.request(new URL('/api/tunnel/exec/aaaa1111', c.origin), {
+    headers: { connection: 'Upgrade', upgrade: PROTOCOL, authorization: `Bearer ${token}`, [LINE_HEADER]: encodeLine('sleep 30') }, agent: false,
+  });
+  const socket = await new Promise((resolve, reject) => {
+    req.on('upgrade', (res, s) => resolve(s));
+    req.on('error', reject);
+    req.end();
+  });
+  await until(() => c.execPipe.count() === 1);
+  socket.destroy();
+  await until(() => c.execPipe.count() === 0);
+});

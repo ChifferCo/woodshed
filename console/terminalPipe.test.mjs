@@ -224,13 +224,14 @@ test('the real ttyd, as a session runs it, takes the console\'s first message an
   const ttyd = spawn('ttyd', ['--writable', '--interface', '127.0.0.1', '--port', String(port), '--base-path', '/term/aaaa1111',
     '--credential', `woodshed:${TERMINAL_TOKEN}`, 'sh', '-c', 'stty size; read line; echo "got:$line"; stty size'], { stdio: 'ignore' });
   t.after(() => ttyd.kill());
+  let listening = false;
   await until(() => {
-    try {
-      execFileSync('sh', ['-c', `nc -z 127.0.0.1 ${port}`], { stdio: 'ignore' });
-      return true;
-    } catch {
-      return false;
-    }
+    const probe = net.connect(port, '127.0.0.1', () => {
+      listening = true;
+      probe.destroy();
+    });
+    probe.on('error', () => {});
+    return listening;
   });
   const c = await consoleFor(t, { termPort: port });
   const { token } = c.signIn('mia-dev');

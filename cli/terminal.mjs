@@ -85,7 +85,8 @@ export function attach({ socket, head = null, stdin, stdout, pingMs = PING_MS })
     const send = (frame) => {
       if (!socket.destroyed) socket.write(frame);
     };
-    const finish = (value) => {
+    // Ctrl-\ ends the socket, so the close frame on its way still goes; anything else is gone already, or never will.
+    const finish = (value, { gently = false } = {}) => {
       if (result) return;
       result = value;
       clearInterval(pinger);
@@ -94,7 +95,10 @@ export function attach({ socket, head = null, stdin, stdout, pingMs = PING_MS })
       stdout.off?.('drain', onDrain);
       if (stdin.isTTY) stdin.setRawMode?.(false);
       stdin.pause();
-      socket.destroy();
+      if (gently) {
+        socket.end();
+        setTimeout(() => socket.destroy(), 1000).unref?.();
+      } else socket.destroy();
       resolve(value);
     };
     const onDrain = () => {
@@ -128,7 +132,7 @@ export function attach({ socket, head = null, stdin, stdout, pingMs = PING_MS })
       if (typed.length) send(message('0', typed));
       if (at >= 0) {
         send(encodeFrame(OP.close, Buffer.from([0x03, 0xe8])));
-        finish({ status: 'detached' });
+        finish({ status: 'detached' }, { gently: true });
       }
     };
     const onResize = () => {

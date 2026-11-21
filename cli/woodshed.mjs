@@ -457,8 +457,9 @@ export async function main(argv, deps = {}) {
           const opened = await openTerminal({ origin, token: signedIn(origin).token, session, kind, size, userAgent: `woodshed-cli/${VERSION}` });
           if (opened.refused) return { status: 'refused', http: opened.refused.status, message: opened.refused.message };
           if (opened.unreachable) return { status: 'unreachable', message: opened.unreachable };
+          const openedAt = now();
           const out = await attach({ socket: opened.socket, head: opened.head, stdin, stdout });
-          return out.status === 'cut' ? { status: 'attached-then-cut', message: out.message } : out;
+          return out.status === 'cut' ? { status: 'attached-then-cut', message: out.message, ms: now() - openedAt } : out;
         }),
         via: (session) => viaCommand({ ...(deps.self ?? selfCommand({ env })), origin, session, configHome: env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : null }),
         fail: (message, opts) => new CliError(message, opts),
