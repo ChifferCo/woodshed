@@ -54,7 +54,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 - **Being connected does not keep a session awake.** A session pauses after its idle hours with nothing to do (its own
   agent not working) and stops at its lifetime, whatever tunnels or terminals are open. If you need it longer,
   ask for the time (section 5).
-- **Herdr's `hc` is the person's to install or update.** `session connect` exits 3 and says so when it is missing or
+- **Herdr's `hc` is the person's to install or update.** `session herdr` exits 3 and says so when it is missing or
   older than it needs: tell them, and do not run an installer or `hc update` for them.
 - **Stopping and removing are the person's call.** `session stop` ends the work in progress (a running one's
   work is checkpointed on the way, but exit 0 does not promise it reached GitHub: check the branch before saying so);
@@ -70,8 +70,8 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed login [--no-browser]` | Prints a code and opens the console's `/cli` page; waits up to 10 minutes for the person to approve | 0 signed in, 2 code expired, 3 denied | main |
 | `woodshed logout` | Ends this computer's sign-in | 0 | main |
 | `woodshed status` | The console, its org, who is signed in, and the Herdr `hc` here with its version | 0, 2 not signed in | main |
-| `woodshed session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--no-wait\|--connect] ["prompt"]` | Starts a private session and waits, step by step, until it runs; `--connect` then connects it as below | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on, or no `hc` | main |
-| `woodshed session connect <id>` | Makes one of their sessions a machine in Herdr, `woodshed-<id>`, in the app's sidebar; resumes a paused one first | 0 connected, 2 needs the person, 1 failed, 3 no `hc` 0.1.21 or newer, shared, or saw production | main |
+| `woodshed session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--no-wait\|--herdr] ["prompt"]` | Starts a private session and waits, step by step, until it runs; `--herdr` then adds it to Herdr as below | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on, or no `hc` | main |
+| `woodshed session herdr <id>` | Makes one of their sessions a machine in Herdr, `woodshed-<id>`, in the app's sidebar; resumes a paused one first | 0 connected, 2 needs the person, 1 failed, 3 no `hc` 0.1.21 or newer, shared, or saw production | main |
 | `woodshed session list [--all]` | Their sessions and the shared ones they see, with state and when each pauses | 0 | main |
 | `woodshed session get <id>` | One session: state, branch, pull request, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
 | `woodshed session stop <id>` | Stops it, checkpointing a running one's work on the way (waits up to 3 minutes) | 0, 1 not answered in time | main |

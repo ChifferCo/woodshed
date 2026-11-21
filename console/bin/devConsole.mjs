@@ -472,7 +472,7 @@ function startConsole() {
       ...(process.env.DEV_CONSOLE_HOMES_DIR ? { WOODSHED_LOCAL_HOMES_DIR: process.env.DEV_CONSOLE_HOMES_DIR } : {}),
       // DEV_CONSOLE_SESSION_IMAGE starts New session's sessions from that session image, with the variables in the JSON
       // file DEV_CONSOLE_SESSION_ENV_FILE on top (such as GIT_CONFIG_* pointing the made-up repo's clone at a local
-      // one), for a start in the real image: cli/README.md, "Trying session connect". DEV_CONSOLE_SESSION_API_PORT puts
+      // one), for a start in the real image: cli/README.md, "Trying session herdr". DEV_CONSOLE_SESSION_API_PORT puts
       // the session API on that port of loopback in place of 7691, which that file's WOODSHED_CONSOLE_URL then names.
       ...(process.env.DEV_CONSOLE_SESSION_IMAGE ? { WOODSHED_IMAGE: process.env.DEV_CONSOLE_SESSION_IMAGE } : {}),
       ...(process.env.DEV_CONSOLE_SESSION_ENV_FILE ? { WOODSHED_SESSION_ENV_FILE: process.env.DEV_CONSOLE_SESSION_ENV_FILE } : {}),

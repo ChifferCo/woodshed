@@ -7,7 +7,7 @@
 //   woodshed logout [--console <url>]                  ends that token at the console and forgets it here
 //   woodshed status [--console <url>]                  the console, its org, and who is signed in
 //   woodshed tunnel <id> -- <line>                     runs <line> in your session, piped to this terminal (tunnel.mjs)
-//   woodshed session new|list|get|connect|stop|resume|remove|extend|limits   sessions (sessions.mjs); connect makes one
+//   woodshed session new|list|get|herdr|stop|resume|remove|extend|limits   sessions (sessions.mjs); herdr makes one
 //                                                     a machine in Herdr's hc (hc.mjs)
 //
 // Every command takes --json. Exit codes: 0 done, 2 waiting on a person (a sign-in or an approval), 3 refused, 1 any
@@ -35,11 +35,11 @@ const USAGE = `Usage: woodshed <command> [--console <url>] [--json]
 Commands:
   login     sign in to a Woodshed console: approve the code it shows in your browser
   logout    sign out of the console, here and at the console
-  status    the console, its org, who is signed in, and the hc found here (Herdr's, for session connect)
+  status    the console, its org, who is signed in, and the hc found here (Herdr's, for session herdr)
   tunnel <id> -- <line>
             run <line> in your running session, with this command's stdin, stdout and stderr; exits with its
             exit code, or 255 when the pipe could not open or broke
-  session   start, list, connect to, stop, resume and remove sessions, and give them more time:
+  session   start, list, add to Herdr, stop, resume and remove sessions, and give them more time:
             woodshed session --help
 
 Options:
@@ -373,10 +373,10 @@ export async function main(argv, deps = {}) {
 
   async function status(origin) {
     const { entry, store, token } = signedIn(origin);
-    // Said whether or not anyone is signed in: whether session connect can run here.
+    // Said whether or not anyone is signed in: whether session herdr can run here.
     const herdr = await hcVersion(hc);
-    const herdrText = !herdr.installed ? `not found: session connect needs hc ${herdr.minimum} or newer`
-      : herdr.ok ? `hc ${herdr.version}` : `hc ${herdr.version ?? '(no version)'}, older than the ${herdr.minimum} session connect needs: hc update`;
+    const herdrText = !herdr.installed ? `not found: session herdr needs hc ${herdr.minimum} or newer`
+      : herdr.ok ? `hc ${herdr.version}` : `hc ${herdr.version ?? '(no version)'}, older than the ${herdr.minimum} session herdr needs: hc update`;
     if (!token) {
       if (json) emit({ console: origin, signedIn: false, hc: herdr });
       say(`Not signed in to ${origin}. Run: woodshed login${origin === DEFAULT_CONSOLE ? '' : ` --console ${origin}`}`);

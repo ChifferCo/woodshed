@@ -93,7 +93,7 @@ test('login prints a code, the person approves it in the console, and status say
     [status.lines[0].signedIn, status.lines[0].login, status.lines[0].org, status.lines[0].name, status.lines[0].device],
     [true, 'mia-dev', 'acme', 'Acme Woodshed', 'mia-laptop'],
   );
-  assert.deepEqual(status.lines[0].hc, { installed: true, version: '0.1.21', minimum: '0.1.21', ok: true }, 'the hc session connect would use');
+  assert.deepEqual(status.lines[0].hc, { installed: true, version: '0.1.21', minimum: '0.1.21', ok: true }, 'the hc session herdr would use');
   const text = await c.run(['status']);
   assert.match(text.out, /Console: +Acme Woodshed \(http:\/\/localhost:\d+\)\nOrg: +acme\nSigned in: +@mia-dev\n/);
   assert.match(text.out, /\nHerdr: +hc 0\.1\.21\n$/);
@@ -127,17 +127,17 @@ test('Revoke on My settings ends a computer\'s sign-in, and status says so', asy
   assert.deepEqual(status.lines[0], { console: c.origin, signedIn: false, ended: true, hc: { installed: true, version: '0.1.21', minimum: '0.1.21', ok: true } });
 });
 
-test('status says when there is no hc, or one too old for session connect, signed in or not', async (t) => {
+test('status says when there is no hc, or one too old for session herdr, signed in or not', async (t) => {
   const none = await consoleFor(t, { hcVersion: null });
   const out = await none.run(['status', '--console', none.origin]);
   assert.equal(out.code, EXIT.waiting);
-  assert.match(out.out, /Herdr: +not found: session connect needs hc 0\.1\.21 or newer\n/);
+  assert.match(out.out, /Herdr: +not found: session herdr needs hc 0\.1\.21 or newer\n/);
   const old = await consoleFor(t, { hcVersion: '0.1.9' });
   assert.equal((await old.run(['login', '--console', old.origin])).code, EXIT.done);
   const json = await old.run(['status', '--json']);
   assert.equal(json.code, EXIT.done, 'an old hc is said, not a failure of status');
   assert.deepEqual(json.lines[0].hc, { installed: true, version: '0.1.9', minimum: '0.1.21', ok: false });
-  assert.match((await old.run(['status'])).out, /Herdr: +hc 0\.1\.9, older than the 0\.1\.21 session connect needs: hc update\n/);
+  assert.match((await old.run(['status'])).out, /Herdr: +hc 0\.1\.9, older than the 0\.1\.21 session herdr needs: hc update\n/);
 });
 
 test('a denied sign-in is refused, and one nobody approves expires waiting on a person', async (t) => {

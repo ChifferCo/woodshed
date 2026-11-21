@@ -1,4 +1,4 @@
-// The terminal runtime `woodshed session connect` adds a session to: Herdr's `hc` (herdr-core), run as a program with
+// The terminal runtime `woodshed session herdr` adds a session to: Herdr's `hc` (herdr-core), run as a program with
 // its documented CLI and --json, never through a shell. A session becomes one of its machines, `woodshed-<id>`, reached
 // through `woodshed tunnel <id> --` (tunnel.mjs), so it shows in the Herdr app's sidebar beside this computer.
 //
@@ -63,7 +63,7 @@ export function hcRunner({ bin = 'hc', env = process.env } = {}) {
 }
 
 /**
- * @returns {Promise<{installed: boolean, version: string|null, minimum: string, ok: boolean}>}  ok: new enough to connect
+ * @returns {Promise<{installed: boolean, version: string|null, minimum: string, ok: boolean}>}  ok: new enough to add a session
  */
 export async function hcVersion(run) {
   const out = await run(['--version'], { timeoutMs: 10_000 });

@@ -17,7 +17,7 @@ function listen(server) {
 
 const T0 = Date.parse('2026-11-20T10:00:00Z');
 
-// hc as `session connect` drives it: its machines, and whether a machine has the agent's terminal. Each call is kept.
+// hc as `session herdr` drives it: its machines, and whether a machine has the agent's terminal. Each call is kept.
 export function fakeHc({ version = '0.1.21', missing = false, agent = true, addFails = null } = {}) {
   const machines = new Map();
   const calls = [];
@@ -378,9 +378,9 @@ test('an unknown session command is a usage error, even one named like an object
   }
 });
 
-test('session connect makes your running session a machine in hc, through this command line\'s tunnel, once', async (t) => {
+test('session herdr makes your running session a machine in hc, through this command line\'s tunnel, once', async (t) => {
   const c = await consoleFor(t);
-  const out = await c.run(['session', 'connect', 'aaaa0001', '--json']);
+  const out = await c.run(['session', 'herdr', 'aaaa0001', '--json']);
   assert.equal(out.code, EXIT.done, out.err);
   const via = c.hc.added()[0]?.[6];
   assert.deepEqual(c.hc.added(), [['machine', 'add', '--json', '--name', 'woodshed-aaaa0001', '--via', via, '--install']], 'never --temp, which the app\'s sidebar hides');
@@ -393,106 +393,106 @@ test('session connect makes your running session a machine in hc, through this c
   assert.equal(connected.session.id, 'aaaa0001');
   assert.ok(!c.calls.some(([kind]) => kind === 'resume'), 'a running session is not resumed');
 
-  const again = await c.run(['session', 'connect', 'aaaa0001']);
+  const again = await c.run(['session', 'herdr', 'aaaa0001']);
   assert.equal(again.code, EXIT.done, again.err);
   assert.match(again.out, /woodshed-aaaa0001 was already in Herdr, connected\.\nIts agent is woodshed-aaaa0001\/t1: hc attach woodshed-aaaa0001\/t1\n/);
   assert.equal(c.hc.added().length, 1, 'connected through the same line: left alone');
 
   // Resumed since, the session is a new container, whose core hc does not take for the one it knew.
   c.hc.machines.get('woodshed-aaaa0001').state = 'unreachable';
-  assert.equal((await c.run(['session', 'connect', 'aaaa0001'])).code, EXIT.done);
+  assert.equal((await c.run(['session', 'herdr', 'aaaa0001'])).code, EXIT.done);
   assert.equal(c.hc.added().length, 2, 'added again');
   assert.ok(c.hc.calls.some((a) => a.join(' ') === 'machine rm --json woodshed-aaaa0001'), 'after forgetting the old one');
   c.hc.machines.get('woodshed-aaaa0001').target = 'woodshed tunnel aaaa0001 --';
-  const moved = await c.run(['session', 'connect', 'aaaa0001', '--json']);
+  const moved = await c.run(['session', 'herdr', 'aaaa0001', '--json']);
   assert.equal(moved.lines[0].machine.action, 'updated', 'a line of another command line\'s is replaced');
   assert.equal(c.hc.machines.get('woodshed-aaaa0001').target, via);
   c.hc.machines.get('woodshed-aaaa0001').temporary = true;
-  const temp = await c.run(['session', 'connect', 'aaaa0001', '--json']);
+  const temp = await c.run(['session', 'herdr', 'aaaa0001', '--json']);
   assert.equal(temp.lines[0].machine.action, 'updated', 'a --temp one, which the sidebar hides, is replaced');
   assert.equal(c.hc.machines.get('woodshed-aaaa0001').temporary, false);
 });
 
 test('a relative XDG_CONFIG_HOME is named absolute in the via line, since hc\'s core runs it from its own folder', async (t) => {
   const c = await consoleFor(t, { relativeConfig: true });
-  assert.equal((await c.run(['session', 'connect', 'aaaa0001'])).code, EXIT.done);
+  assert.equal((await c.run(['session', 'herdr', 'aaaa0001'])).code, EXIT.done);
   const via = c.hc.added()[0][6];
   assert.ok(via.startsWith(`XDG_CONFIG_HOME=${c.dir} `), via);
 });
 
-test('session connect resumes a paused session first, and waits for it to run', async (t) => {
+test('session herdr resumes a paused session first, and waits for it to run', async (t) => {
   const c = await consoleFor(t, { script: [...START, { status: 'running', state: 'working' }] });
-  const out = await c.run(['session', 'connect', 'bbbb0002']);
+  const out = await c.run(['session', 'herdr', 'bbbb0002']);
   assert.equal(out.code, EXIT.done, out.err);
   assert.deepEqual(c.calls.find(([kind]) => kind === 'resume'), ['resume', { owner: 'mia-dev', id: 'bbbb0002' }]);
-  assert.match(out.out, /Resuming session bbbb0002: Paused one\n[\s\S]*Session bbbb0002 is running: [^\n]+\nConnecting bbbb0002 to Herdr as woodshed-bbbb0002…\nwoodshed-bbbb0002 is in Herdr: it shows in the app's sidebar\.\n/);
+  assert.match(out.out, /Resuming session bbbb0002: Paused one\n[\s\S]*Session bbbb0002 is running: [^\n]+\nAdding bbbb0002 to Herdr as woodshed-bbbb0002…\nwoodshed-bbbb0002 is in Herdr: it shows in the app's sidebar\.\n/);
 
   const fails = await consoleFor(t, { script: [{ status: 'starting', startedAt: iso(T0) }, { status: 'failed', error: 'no room' }] });
-  const failed = await fails.run(['session', 'connect', 'bbbb0002']);
+  const failed = await fails.run(['session', 'herdr', 'bbbb0002']);
   assert.equal(failed.code, EXIT.failed);
   assert.equal(fails.hc.added().length, 0, 'nothing added for a session that did not start');
 });
 
-test('session connect says the agent runs in tmux when its owner did not pick Herdr', async (t) => {
+test('session herdr says the agent runs in tmux when its owner did not pick Herdr', async (t) => {
   const c = await consoleFor(t, { hc: fakeHc({ agent: false }) });
-  const out = await c.run(['session', 'connect', 'aaaa0001']);
+  const out = await c.run(['session', 'herdr', 'aaaa0001']);
   assert.equal(out.code, EXIT.done, out.err);
   assert.match(out.out, /Its agent runs in tmux, not Herdr: Agent terminal on My settings was tmux when the session started\. New terminals and agents on woodshed-aaaa0001 work; the agent itself is at http:\/\/localhost:\d+\/s\/aaaa0001\. Pick Herdr on My settings/);
-  assert.deepEqual((await c.run(['session', 'connect', 'aaaa0001', '--json'])).lines[0].agent, { inHerdr: false, address: null });
+  assert.deepEqual((await c.run(['session', 'herdr', 'aaaa0001', '--json'])).lines[0].agent, { inHerdr: false, address: null });
   c.sessions.find((s) => s.id === 'aaaa0001').state = 'needs-you';
-  const needs = await c.run(['session', 'connect', 'aaaa0001']);
+  const needs = await c.run(['session', 'herdr', 'aaaa0001']);
   assert.equal(needs.code, EXIT.waiting, 'connected, and waiting on you, as a start that needs you is');
   assert.match(needs.out, /It needs you: http:\/\/localhost:\d+\/s\/aaaa0001\n$/);
 });
 
-test('session connect refuses with no hc or an old one, a shared session and one that saw production, before resuming anything', async (t) => {
+test('session herdr refuses with no hc or an old one, a shared session and one that saw production, before resuming anything', async (t) => {
   const none = await consoleFor(t, { hc: fakeHc({ missing: true }) });
-  const missing = await none.run(['session', 'connect', 'bbbb0002', '--json']);
+  const missing = await none.run(['session', 'herdr', 'bbbb0002', '--json']);
   assert.equal(missing.code, EXIT.refused);
   assert.equal(missing.lines.at(-1).status, 'no-hc');
-  assert.match(missing.lines.at(-1).error, /needs Herdr's hc, 0\.1\.21 or newer, and there is no hc on your PATH/);
+  assert.match(missing.lines.at(-1).error, /needs its hc, 0\.1\.21 or newer, and there is no hc on your PATH/);
   assert.ok(!none.calls.length, 'nothing resumed');
-  const started = await none.run(['session', 'new', '--connect', 'go']);
+  const started = await none.run(['session', 'new', '--herdr', 'go']);
   assert.equal(started.code, EXIT.refused);
   assert.ok(!none.calls.length, 'nothing started');
 
   const old = await consoleFor(t, { hc: fakeHc({ version: '0.1.9' }) });
-  const tooOld = await old.run(['session', 'connect', 'aaaa0001']);
+  const tooOld = await old.run(['session', 'herdr', 'aaaa0001']);
   assert.equal(tooOld.code, EXIT.refused);
   assert.match(tooOld.err, /needs hc 0\.1\.21 or newer, and yours is 0\.1\.9\. Update it \(hc update\)/);
   assert.ok(!old.hc.calls.some((a) => a[0] !== '--version'), 'hc is only asked its version: never updated from here');
 
   const c = await consoleFor(t);
-  const shared = await c.run(['session', 'connect', 'cccc0003']);
+  const shared = await c.run(['session', 'herdr', 'cccc0003']);
   assert.equal(shared.code, EXIT.refused);
-  assert.match(shared.err, /a shared session: the command line can connect to only your own/);
+  assert.match(shared.err, /a shared session: the command line can add to Herdr only your own/);
   c.sessions.find((s) => s.id === 'aaaa0001').taintedAt = iso(T0);
-  const tainted = await c.run(['session', 'connect', 'aaaa0001']);
+  const tainted = await c.run(['session', 'herdr', 'aaaa0001']);
   assert.equal(tainted.code, EXIT.refused);
   assert.match(tainted.err, /has seen production data/);
   assert.equal(c.hc.added().length, 0);
 
   const unreachable = await consoleFor(t, { hc: fakeHc({ addFails: 'the via command exited 255: woodshed: the session is not running' }) });
-  const cut = await unreachable.run(['session', 'connect', 'aaaa0001', '--json']);
+  const cut = await unreachable.run(['session', 'herdr', 'aaaa0001', '--json']);
   assert.equal(cut.code, EXIT.failed);
   assert.match(cut.lines.at(-1).error, /hc could not add woodshed-aaaa0001: the via command exited 255/);
 });
 
-test('session new --connect starts a session and connects it once it runs', async (t) => {
+test('session new --herdr starts a session and adds it to Herdr once it runs', async (t) => {
   const c = await consoleFor(t, { script: [...START, { status: 'running', state: 'working' }] });
-  const out = await c.run(['session', 'new', '--connect', '--json', 'fix the login bug']);
+  const out = await c.run(['session', 'new', '--herdr', '--json', 'fix the login bug']);
   assert.equal(out.code, EXIT.done, out.err);
   assert.deepEqual(out.lines.map((l) => l.event).filter((e) => e !== 'step' && e !== 'status'), ['started', 'running', 'connected']);
   assert.equal(out.lines.at(-1).machine.name, 'woodshed-dddd0004');
   assert.equal(c.hc.added().length, 1);
-  const noWait = await c.run(['session', 'new', '--connect', '--no-wait', 'go']);
+  const noWait = await c.run(['session', 'new', '--herdr', '--no-wait', 'go']);
   assert.equal(noWait.code, EXIT.failed);
-  assert.match(noWait.err, /--connect waits for the session to run/);
+  assert.match(noWait.err, /--herdr waits for the session to run/);
 });
 
 test('session remove forgets the session\'s machine in hc too', async (t) => {
   const c = await consoleFor(t, { script: [...START, { status: 'running', state: 'working' }] });
-  assert.equal((await c.run(['session', 'connect', 'bbbb0002'])).code, EXIT.done);
+  assert.equal((await c.run(['session', 'herdr', 'bbbb0002'])).code, EXIT.done);
   const out = await c.run(['session', 'remove', 'bbbb0002', '--yes']);
   assert.equal(out.code, EXIT.done, out.err);
   assert.match(out.out, /Removed session bbbb0002\.\nForgot woodshed-bbbb0002 in Herdr\.\n$/);
