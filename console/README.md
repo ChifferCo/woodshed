@@ -1511,9 +1511,11 @@ Every other route refuses it with 403, and so do those for a call with an Origin
 `x-woodshed` header or Origin, which only stand between another site and the browser's cookie; each logs
 `cliSessions: call` with the login, the token's id and the path, and a refusal `cliSessions: refused, not a route the
 command line may call`. Like a browser's sign-in, its person must still have write access on GitHub, asked at the
-token's first use and then hourly: when GitHub says no, every command line sign-in of theirs ends (`cliSessions:
-refused, write access gone`), and GitHub not answering lets the call through and is asked again 5 minutes later
-(`cliSessions: write access not rechecked`). A session a terminal is connected to is not kept awake by it: `woodshed session extend` and
+token's first use and then hourly by the one check every call with a token goes through (`authenticate` in
+`cliSignIn.mjs`: `/api/cli/me`, `/api/cli/logout`, these routes and the pipe into a session alike): when GitHub says no,
+every command line sign-in of theirs ends (`cliSignIn: refused, write access gone`), and a `woodshed logout` that finds
+it so answers that the token ended, as it asked. GitHub not answering lets the call through and is asked again 5
+minutes later (`cliSignIn: write access not rechecked`). A session a terminal is connected to is not kept awake by it: `woodshed session extend` and
 `limits` ask for more time, as Extend and the session's own Pause and stop do on its page. The console
 keeps only its SHA-256, in `state.json` under `cliTokens`, and My settings' Command line row lists each computer with
 Revoke. Remove My Woodshed, People's Remove and leaving a hosting program's list end them all. The console logs
@@ -1537,7 +1539,7 @@ so nobody makes up an address to get more places.
 **Into a session from the command line**: `woodshed tunnel <id> -- <line>` (cli/README.md) is one request,
 `/api/tunnel/exec/<id>` with `Upgrade: woodshed-tunnel`, that token, and the line base64'd in `x-woodshed-exec`
 (`console/execPipe.mjs`). The console checks, as it opens and every 15 seconds after, that the token is live and its
-person still on People, that the session is running and is theirs (a My Woodshed session's owner: shares come later),
+person still on People with write access (`authenticate`, above), that the session is running and is theirs (a My Woodshed session's owner: shares come later),
 and that it is not tainted or being locked down; then it sends the request to the session's statusd `/exec` with the
 session's token in place of the person's, as it reaches statusd for the viewers, and copies bytes both ways once statusd
 answers 101. statusd runs `sh -c <line>` as the session's user in the checkout, without `SESSION_TOKEN` or

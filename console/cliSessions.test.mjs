@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 
 import { createCliSignIn } from './cliSignIn.mjs';
-import { carriesCliToken, cliMayCall, createCliAccess } from './cliSessions.mjs';
+import { carriesCliToken, cliMayCall } from './cliSessions.mjs';
 import { createHandler } from './server.mjs';
 
 function listen(server) {
@@ -15,7 +15,10 @@ function listen(server) {
 async function consoleFor(t, { people = null, writers = null, claudeToken = true } = {}) {
   let clock = Date.parse('2026-11-20T10:00:00Z');
   const store = { state: {}, save() {} };
-  const cli = createCliSignIn({ store, now: () => clock, allowed: (login) => !people || people.has(login) });
+  const asked = [];
+  // GitHub's answer on write access to the repo, as auth.mjs asks it.
+  const canWrite = async (login) => { asked.push(login); return !writers || writers.has(login); };
+  const cli = createCliSignIn({ store, now: () => clock, allowed: (login) => !people || people.has(login), canWrite });
   const sessions = [
     { id: 'aaaa0001', owner: 'mia-dev', title: 'Mia\'s', status: 'running', token: 'statusd-secret', terminalToken: 'ttyd-secret' },
     { id: 'bbbb0002', owner: 'octocat', title: 'Octocat\'s', status: 'stopped', token: 'statusd-secret-2', options: { agent: 'codex' } },
@@ -42,11 +45,9 @@ async function consoleFor(t, { people = null, writers = null, claudeToken = true
     },
   };
   const userSettings = { view: () => ({ claudeToken: { set: claudeToken } }), refresh: async () => {}, limitsFor: () => ({ idleMs: 2 * 3_600_000, lifetimeMs: 12 * 3_600_000 }) };
-  const asked = [];
   const auth = {
     enabled: () => true, available: () => true, sessionFor: async (cookie) => (cookie ? { login: /woodshed_session=([\w-]+)/.exec(cookie)[1] } : null),
-    // GitHub's answer on write access to the repo, as auth.mjs asks it.
-    canWrite: async (login) => { asked.push(login); return !writers || writers.has(login); },
+    canWrite,
   };
   const config = { host: '127.0.0.1', publicUrl: 'http://pending', extraHosts: [], repo: 'acme/app', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
   const handle = createHandler({ config, fleet, auth, cli, userSettings });
@@ -198,38 +199,6 @@ test('a token whose person lost write access on GitHub stops, though they are st
   assert.equal((await c.call('/api/sessions', { token: c.tokens.octocat })).status, 200);
   assert.equal((await c.call('/api/sessions', { token: c.tokens.octocat })).status, 200);
   assert.equal(c.asked.filter((l) => l === 'octocat').length, 1, 'asked once, then trusted for the hour');
-});
-
-test('write access is asked at a token\'s first use and then hourly, and GitHub not answering lets the call through', async () => {
-  let clock = 0;
-  let answer = true;
-  const asked = [];
-  const revoked = [];
-  const access = createCliAccess({
-    canWrite: async (login) => {
-      asked.push(login);
-      if (answer === 'down') throw new Error('gh: 502');
-      return answer;
-    },
-    revokeAll: (login, by) => revoked.push([login, by]),
-    now: () => clock,
-  });
-  assert.equal(await access.allowed('mia'), true);
-  const together = await Promise.all([access.allowed('mia'), access.allowed('mia')]);
-  assert.deepEqual([together, asked.length], [[true, true], 1], 'one ask for the hour');
-  answer = false;
-  clock += 59 * 60_000;
-  assert.equal(await access.allowed('mia'), true, 'within the hour, as a browser\'s sign-in');
-  clock += 2 * 60_000;
-  answer = 'down';
-  assert.equal(await access.allowed('mia'), true, 'GitHub down does not shut everyone out');
-  assert.equal(await access.allowed('mia'), true);
-  assert.equal(asked.length, 2, 'and is not asked again until the retry');
-  clock += 5 * 60_000;
-  answer = false;
-  assert.equal(await access.allowed('mia'), false);
-  assert.deepEqual(revoked, [['mia', 'write access gone']]);
-  assert.equal(await createCliAccess({ canWrite: null, revokeAll() {} }).allowed('mia'), true, 'no GitHub sign-in, nothing to ask');
 });
 
 test('resume answers someone else\'s private session as it does one that does not exist, whatever it runs', async (t) => {

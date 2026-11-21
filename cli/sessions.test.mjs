@@ -25,7 +25,8 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
   let clock = T0;
   const now = () => clock;
   const store = { state: {}, save() {} };
-  const cli = createCliSignIn({ store, now });
+  // GitHub's answer on write access, as the console's sign-in asks it.
+  const cli = createCliSignIn({ store, now, canWrite: async (login) => !writers || writers.has(login) });
   const base = { repo: 'acme/app', project: 'app', createdAt: iso(T0 - 3_600_000), startedAt: iso(T0 - 3_600_000), options: { agent: 'claude' }, token: 'statusd-secret' };
   const sessions = [
     { ...base, id: 'aaaa0001', owner: 'mia-dev', title: 'Fix the login bug', status: 'running', state: 'working', branch: 'woodshed/aaaa0001' },
@@ -96,7 +97,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
     view: async () => ({ projects: [{ name: 'app', repo: 'acme/app' }, { name: 'tools', repo: 'acme/tools' }], defaultProject: savedDefault, saved: savedDefault !== 'app' }),
     forStart: async (login, name) => (name === undefined ? { name: 'app', repo: 'acme/app' } : ['app', 'tools'].includes(name) ? { name, repo: `acme/${name}` } : null),
   };
-  const auth = { enabled: () => true, available: () => true, sessionFor: async () => null, canWrite: async (login) => !writers || writers.has(login) };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
   const config = { host: '127.0.0.1', publicUrl: 'http://pending', extraHosts: [], repo: 'acme/app', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
   const handle = createHandler({ config, fleet, auth, cli, userSettings, projectAccess });
   const server = http.createServer((req, res) => { handle(req, res); });

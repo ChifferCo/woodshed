@@ -4,17 +4,19 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import http from 'node:http';
 
 import { parseTrustedProxies } from './clientAddress.mjs';
-import { CLI_TOKEN_TTL_MS, createCliDevices, createCliSignIn, handleCliApi, handleCliPage, MAX_PENDING_PER_CLIENT, normalUserCode } from './cliSignIn.mjs';
+import { CLI_TOKEN_TTL_MS, createCliDevices, createCliSignIn, createWriteAccess, handleCliApi, handleCliPage, MAX_PENDING_PER_CLIENT, normalUserCode } from './cliSignIn.mjs';
 
-function signIn({ allowed } = {}) {
+function signIn({ allowed, canWrite } = {}) {
   let clock = Date.parse('2026-11-20T10:00:00Z');
   let saves = 0;
   const store = { state: {}, save() { saves += 1; } };
-  const cli = createCliSignIn({ store, now: () => clock, allowed });
+  const cli = createCliSignIn({ store, now: () => clock, allowed, canWrite });
   return { cli, store, tick: (ms) => { clock += ms; }, saves: () => saves };
 }
 
-test('a code waits for the person, says slow down to a CLI that asks too often, and hands its token out once', () => {
+const whoIs = async (cli, token) => (await cli.authenticate({ authorization: `Bearer ${token}` })).signedIn;
+
+test('a code waits for the person, says slow down to a CLI that asks too often, and hands its token out once', async () => {
   const { cli, store, tick } = signIn();
   const { deviceCode, userCode, interval } = cli.start({ name: 'mia-laptop\u0007', from: '10.0.0.4' });
   assert.equal(interval, 5);
@@ -32,9 +34,9 @@ test('a code waits for the person, says slow down to a CLI that asks too often, 
   assert.equal(got.login, 'mia-dev');
   assert.equal(cli.poll(deviceCode).status, 'expired', 'once only');
   assert.ok(!JSON.stringify(store.state).includes(got.token), 'state.json keeps only its hash');
-  assert.equal(cli.tokenFor({ authorization: `Bearer ${got.token}` }).login, 'mia-dev');
+  assert.equal((await whoIs(cli, got.token)).login, 'mia-dev');
   tick(CLI_TOKEN_TTL_MS);
-  assert.equal(cli.tokenFor({ authorization: `Bearer ${got.token}` }), null, 'it ends after 90 days');
+  assert.equal(await whoIs(cli, got.token), null, 'it ends after 90 days');
   assert.deepEqual(cli.list('mia-dev'), []);
 });
 
@@ -57,7 +59,7 @@ test('a code nobody answers expires, a denied one is refused, and an approval by
   assert.equal(cli.poll('not a code').status, 'expired');
 });
 
-test('each computer is a sign-in of its own, revoked alone or all together; a person keeps at most 20', () => {
+test('each computer is a sign-in of its own, revoked alone or all together; a person keeps at most 20', async () => {
   const { cli, tick } = signIn();
   const make = (login, name) => {
     const { deviceCode, userCode } = cli.start({ name });
@@ -71,8 +73,8 @@ test('each computer is a sign-in of its own, revoked alone or all together; a pe
   assert.deepEqual(cli.list('mia-dev').map((t) => t.name), ['desktop', 'laptop'], 'newest first');
   assert.equal(cli.revoke('sam-ops', laptop.id), false, 'nobody revokes another person\'s');
   assert.equal(cli.revoke('mia-dev', laptop.id), true);
-  assert.equal(cli.tokenFor({ authorization: `Bearer ${laptop.token}` }), null);
-  assert.ok(cli.tokenFor({ authorization: `Bearer ${desktop.token}` }));
+  assert.equal(await whoIs(cli, laptop.token), null);
+  assert.ok(await whoIs(cli, desktop.token));
   const approved = cli.start({ name: 'not collected yet' });
   cli.decide({ code: approved.userCode, login: 'mia-dev', approve: true });
   cli.revokeAll('mia-dev', 'test');
@@ -85,18 +87,102 @@ test('each computer is a sign-in of its own, revoked alone or all together; a pe
   assert.ok(!kept.some((t) => t.name === 'box 0'), 'the oldest ended');
 });
 
-test('a token\'s last use is written down at most once an hour', () => {
+test('a token\'s last use is written down at most once an hour', async () => {
   const { cli, tick, saves } = signIn();
   const { deviceCode, userCode } = cli.start({ name: 'x' });
   cli.decide({ code: userCode, login: 'mia-dev', approve: true });
   const { token } = cli.poll(deviceCode);
   const before = saves();
-  for (let i = 0; i < 5; i++) cli.tokenFor({ authorization: `Bearer ${token}` });
+  for (let i = 0; i < 5; i++) await whoIs(cli, token);
   assert.equal(saves(), before);
   tick(60 * 60_000);
-  cli.tokenFor({ authorization: `Bearer ${token}` });
+  await whoIs(cli, token);
   assert.equal(saves(), before + 1);
   assert.equal(cli.list('mia-dev')[0].lastUsedAt, '2026-11-20T11:00:00.000Z');
+});
+
+test('write access is asked at a token\'s first use and then hourly, and GitHub not answering lets the call through', async () => {
+  let clock = 0;
+  let answer = true;
+  const asked = [];
+  const revoked = [];
+  const access = createWriteAccess({
+    canWrite: async (login) => {
+      asked.push(login);
+      if (answer === 'down') throw new Error('gh: 502');
+      return answer;
+    },
+    revokeAll: (login, by) => revoked.push([login, by]),
+    now: () => clock,
+  });
+  assert.equal(await access.allowed('mia'), true);
+  const together = await Promise.all([access.allowed('mia'), access.allowed('mia')]);
+  assert.deepEqual([together, asked.length], [[true, true], 1], 'one ask for the hour');
+  answer = false;
+  clock += 59 * 60_000;
+  assert.equal(await access.allowed('mia'), true, 'within the hour, as a browser\'s sign-in');
+  clock += 2 * 60_000;
+  answer = 'down';
+  assert.equal(await access.allowed('mia'), true, 'GitHub down does not shut everyone out');
+  assert.equal(await access.allowed('mia'), true);
+  assert.equal(asked.length, 2, 'and is not asked again until the retry');
+  clock += 5 * 60_000;
+  answer = false;
+  assert.equal(await access.allowed('mia'), false);
+  assert.deepEqual(revoked, [['mia', 'write access gone']]);
+  assert.equal(await createWriteAccess({ canWrite: null, revokeAll() {} }).allowed('mia'), true, 'no GitHub sign-in, nothing to ask');
+});
+
+// /api/cli/* over HTTP, as the console answers it, for mia-dev's token.
+async function apiServer(t, { canWrite }) {
+  const { cli, tick } = signIn({ canWrite });
+  const server = http.createServer((req, res) => {
+    handleCliApi({ req, res, url: new URL(req.url, 'http://x'), cli, publicUrl: 'https://console.example', about: () => ({ console: 'Woodshed', org: 'acme' }) });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const tokenOf = (login) => {
+    const { deviceCode, userCode } = cli.start({ name: `${login}-laptop` });
+    cli.decide({ code: userCode, login, approve: true });
+    return cli.poll(deviceCode).token;
+  };
+  const call = async (pathname, token, method = 'GET') => {
+    const res = await fetch(`http://127.0.0.1:${port}${pathname}`, { method, headers: { authorization: `Bearer ${token}` } });
+    return { status: res.status, body: await res.json() };
+  };
+  return { cli, tick, tokenOf, call };
+}
+
+test('/api/cli/me refuses a token whose person lost write access, and ends all their sign-ins', async (t) => {
+  const writers = new Set(['mia-dev', 'octocat']);
+  const asked = [];
+  const c = await apiServer(t, { canWrite: async (login) => { asked.push(login); return writers.has(login); } });
+  const mia = c.tokenOf('mia-dev');
+  c.tokenOf('mia-dev');
+  assert.equal((await c.call('/api/cli/me', mia)).body.login, 'mia-dev');
+  writers.delete('mia-dev');
+  assert.equal((await c.call('/api/cli/me', mia)).status, 200, 'within the hour, as a browser\'s sign-in');
+  c.tick(61 * 60_000);
+  const refused = await c.call('/api/cli/me', mia);
+  assert.equal(refused.status, 401);
+  assert.match(refused.body.error, /no longer have write access/);
+  assert.deepEqual(c.cli.list('mia-dev'), [], 'both her computers\' sign-ins ended');
+  assert.equal((await c.call('/api/cli/me', mia)).status, 401);
+  assert.equal((await c.call('/api/cli/me', c.tokenOf('octocat'))).status, 200);
+  assert.deepEqual(asked, ['mia-dev', 'mia-dev', 'octocat'], 'GitHub asked at first use and an hour on, not for each call');
+});
+
+test('logout ends a token whose person lost write access, or while GitHub does not answer', async (t) => {
+  let answer = false;
+  const c = await apiServer(t, { canWrite: async () => { if (answer === 'down') throw new Error('gh: 502'); return answer; } });
+  const gone = c.tokenOf('mia-dev');
+  assert.deepEqual(await c.call('/api/cli/logout', gone, 'POST'), { status: 200, body: { ok: true } }, 'what logout asked for is done');
+  assert.deepEqual(c.cli.list('mia-dev'), []);
+  answer = 'down';
+  const down = c.tokenOf('octocat');
+  assert.deepEqual(await c.call('/api/cli/logout', down, 'POST'), { status: 200, body: { ok: true } });
+  assert.deepEqual(c.cli.list('octocat'), []);
 });
 
 test('a code is eight letters with no vowels, typed in any case, with or without its dash', () => {
@@ -106,7 +192,7 @@ test('a code is eight letters with no vowels, typed in any case, with or without
   assert.equal(normalUserCode(null), null);
 });
 
-test('consoles sharing a waiting room: the one a code is approved on makes the token, whichever the CLI asks through', () => {
+test('consoles sharing a waiting room: the one a code is approved on makes the token, whichever the CLI asks through', async () => {
   const devices = createCliDevices();
   const context = new AsyncLocalStorage();
   const made = (name) => {
@@ -128,7 +214,7 @@ test('consoles sharing a waiting room: the one a code is approved on makes the t
   assert.equal(a.cli.owns(bearer), false);
   assert.equal(front.cli.owns(bearer), false);
   assert.deepEqual(b.store.savedIn, ['b'], 'made in b\'s context, so what it logs is b\'s');
-  assert.equal(b.cli.tokenFor(bearer).login, 'mia-dev');
+  assert.equal((await b.cli.authenticate(bearer)).signedIn.login, 'mia-dev');
   assert.equal(b.cli.owns({ authorization: 'Bearer wsc_nope' }), false);
   assert.equal('cliTokens' in a.store.state, false, 'asking a console that made no token writes nothing to its state');
 

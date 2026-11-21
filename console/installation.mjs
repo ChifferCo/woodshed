@@ -492,9 +492,15 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const tunnel = createTunnel({ store, targets: databaseTargets, databases, allowed: (login) => members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login) });
   // Behind a hosting proxy, whoever leaves the program's list loses their token and open tunnels at once, as People's Remove does.
   members?.whenLeft?.((login) => tunnel.revoke(login), { also: () => Object.keys(store.state.tunnelTokens ?? {}) });
-  // The woodshed command line's sign-ins, one per computer (cliSignIn.mjs): asked who may use them as the tunnel is.
+  // The woodshed command line's sign-ins, one per computer (cliSignIn.mjs): asked who may use them as the tunnel is, and
+  // whether their person keeps write access on GitHub as a browser's sign-in is, only where GitHub sign-in is on: with
+  // none, or behind a hosting proxy, nobody's access is asked there either.
   // `cliDevices` is a waiting room a program running several consoles gives them all (console/README.md, "Embedding the console").
-  const cli = createCliSignIn({ store, devices: cliDevices, trustedProxies: config.trustedProxies, allowed: (login) => members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login) });
+  const cli = createCliSignIn({
+    store, devices: cliDevices, trustedProxies: config.trustedProxies,
+    allowed: (login) => members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login),
+    canWrite: auth?.canWrite ? (login) => (auth.enabled() ? auth.canWrite(login) : true) : null,
+  });
   members?.whenLeft?.((login) => cli.revokeAll(login, 'the program\'s list'), { also: () => cli.logins().filter(Boolean) });
   const dbRestore = createDbRestore({
     store, dir: path.join(loaded.stateDir, 'restores'), databases, targets: databaseTargets,
