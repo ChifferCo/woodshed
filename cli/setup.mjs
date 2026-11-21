@@ -277,7 +277,8 @@ export async function setupCommand(args, ctx) {
   if (existing) {
     const url = linkTo(existing.url, origin);
     if (existing.state === 'needs-you') return stop('session', EXIT.waiting, 'Your session needs your attention.', { url });
-    report('session', 'done', `You already have a session${repo ? ` on ${repo}` : ''}.`, { url });
+    const more = opts['--prompt'] ? ' To start another session with your prompt, use woodshed session new.' : '';
+    report('session', 'done', `You already have a session${repo ? ` on ${repo}` : ''}.${more}`, { url });
     return EXIT.done;
   }
 
@@ -297,6 +298,11 @@ export async function setupCommand(args, ctx) {
   const started = await call('session new', ...newSession, ...(repo ? ['--repo', repo] : []), '--agent', agent, '--', prompt);
   const session = started.events.findLast((event) => event.session)?.session;
   const url = linkTo(session?.url, origin);
+  if (useHc && started.error && /^[a-f0-9]{8}$/.test(session?.id)
+      && started.events.some((event) => ['running', 'needs-you'].includes(event.event))) {
+    const retry = command('session', 'herdr', session.id);
+    return stop('session', started.code, `Session ${session.id} started. ${printable(started.error.error)} Reconnect with ${retry}.`, { url, retry });
+  }
   if (started.code === EXIT.waiting && url) return stop('session', EXIT.waiting, 'Your session needs your attention.', { url });
   if (started.code !== EXIT.done || !session) return childError('session', started, printable(session?.error) || 'Could not start a session.', { url });
   report('session', 'done', 'Your first session is running.', { url });

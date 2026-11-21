@@ -185,6 +185,21 @@ test('setup does not start another environment on rerun', async () => {
   assert.equal(after.code, 0);
   assert.deepEqual(after.calls.slice(-2), [['config', 'list'], ['session', 'list']]);
   assert.match(after.events.at(-1).message, /already have a session/);
+  assert.match(after.events.at(-1).message, /woodshed session new/);
+});
+
+test('a connection failure after launch gives the command to reconnect to that session', async () => {
+  const session = { id: '12345678', url: `${origin}/s/12345678` };
+  const { invoke } = fake({ answers: {
+    'session list': result(0, { sessions: [] }),
+    'session new': result(1, { event: 'running', session }, { event: 'error', error: 'Could not connect.' }),
+  } });
+  const after = await invoke('--yes', '--skip-reviews', '--repo', repo, '--prompt', 'Fix the redirect.');
+  assert.equal(after.code, 1);
+  const last = after.events.at(-1);
+  assert.match(last.message, /Could not connect/);
+  assert.equal(last.url, session.url);
+  assert.equal(last.retry, `woodshed session herdr 12345678 --console '${origin}'`);
 });
 
 test('setup in agent mode asks for the reviewer choice when config is available', async () => {
