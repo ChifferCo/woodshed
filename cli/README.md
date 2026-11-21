@@ -27,7 +27,9 @@ node cli/woodshed.mjs login --console https://console.example.com
 node cli/woodshed.mjs status
 ```
 
-To type `woodshed` instead, link it onto your PATH once:
+On Windows, run it with `node cli\woodshed.mjs` from the checkout.
+
+To type `woodshed` from a checkout on macOS or Linux, link it onto your PATH once:
 
 ```sh
 ln -s "$PWD/cli/woodshed.mjs" ~/.local/bin/woodshed
@@ -200,11 +202,24 @@ One token per console, never in a command's arguments:
 - Linux with a Secret Service (a desktop session's keyring): libsecret, through `secret-tool` on stdin.
 - Otherwise, on macOS and Linux: `~/.config/woodshed/credentials.json` (or under `$XDG_CONFIG_HOME`), readable only by you (`0600`). `login`
   and `status --json` print its path when it is used.
+- Windows: `%LOCALAPPDATA%\woodshed\credentials-dpapi.json`, each token sealed with DPAPI for your Windows account and
+  for its console's address (a token copied under another console's address does not open), by Windows PowerShell 5.1
+  (which ships with Windows), given the token on stdin. Where DPAPI cannot seal (an SSH sign-in with a key has no logon
+  secret to seal with), `%LOCALAPPDATA%\woodshed\credentials.json`. Either is kept and read only when that folder is
+  the default one, `%USERPROFILE%\AppData\Local\woodshed`, as spelled and as resolved through links and junctions: a
+  new file on Windows takes its folder's ACL as it is made, and what is read from a folder someone else could replace
+  could be theirs (DPAPI opens a blob sealed for the whole computer for any account). `XDG_CONFIG_HOME` is not read on
+  Windows. The folder is made yours by Windows PowerShell, as `0700` is on macOS and Linux: your account its owner,
+  nothing inherited from the folder above, and full control for your account and Windows' own SYSTEM and Administrators
+  alone (which may open anything on the computer, as root may on macOS and Linux). `login` reads it back and checks each
+  by SID, or refuses to keep the token there and ends it at the console. `%LOCALAPPDATA%`, not `%APPDATA%`, which a
+  roaming profile copies to a server. PowerShell and the browser's `rundll32` are run from `System32` by their full
+  path, never through a shell, and PowerShell without `PSModulePath`, which a PowerShell 7 terminal sets to modules
+  Windows PowerShell cannot load. A token sealed at the desktop cannot be opened over SSH: `logout` there leaves it as it
+  is and exits 3, so signing out at the desktop still ends it at the console.
 
-Windows is not supported yet: with no keyring here and no file mode to rely on, `login` refuses to keep the token.
-
-`~/.config/woodshed/cli.json` says which console you used last and, for each, who is signed in and which of these holds
-the token. It never holds a token.
+`~/.config/woodshed/cli.json` (`%LOCALAPPDATA%\woodshed\cli.json` on Windows) says which console you used last and, for
+each, who is signed in and which of these holds the token. It never holds a token.
 
 ## The console's side
 
