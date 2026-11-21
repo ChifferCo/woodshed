@@ -7,6 +7,7 @@
 //   woodshed logout [--console <url>]                  ends that token at the console and forgets it here
 //   woodshed status [--console <url>]                  the console, its org, and who is signed in
 //   woodshed tunnel <id> -- <line>                     runs <line> in your session, piped to this terminal (tunnel.mjs)
+//   woodshed session connect <id> [--shell]            this terminal on your session's agent, or its shell (terminal.mjs)
 //   woodshed session new|list|get|herdr|stop|resume|remove|extend|limits   sessions (sessions.mjs); herdr makes one
 //                                                     a machine in Herdr's hc (hc.mjs)
 //   woodshed config list|get|set                       your choices on My settings, never a secret (config.mjs)
@@ -25,6 +26,7 @@ import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
 import { configCommand } from './config.mjs';
 import { hcRunner, hcVersion, viaCommand } from './hc.mjs';
+import { attach, openTerminal } from './terminal.mjs';
 
 export const { version: VERSION } = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 export const DEFAULT_CONSOLE = 'https://console.woodshed.run';
@@ -41,7 +43,7 @@ Commands:
   tunnel <id> -- <line>
             run <line> in your running session, with this command's stdin, stdout and stderr; exits with its
             exit code, or 255 when the pipe could not open or broke
-  session   start, list, add to Herdr, stop, resume and remove sessions, and give them more time:
+  session   start, list, connect to, add to Herdr, stop, resume and remove sessions, and give them more time:
             woodshed session --help
   config    your choices on My settings (terminal, reviews, default repo, …), never a secret: woodshed config --help
 
@@ -225,6 +227,7 @@ export function approvalUrl(origin, userCode) {
 export async function main(argv, deps = {}) {
   const env = deps.env ?? process.env;
   const stdout = deps.stdout ?? process.stdout;
+  const stdin = deps.stdin ?? process.stdin;
   const stderr = deps.stderr ?? process.stderr;
   const fetchFn = deps.fetch ?? globalThis.fetch;
   const sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -461,7 +464,7 @@ export async function main(argv, deps = {}) {
       return TUNNEL_FAILED;
     }
     // As ssh does: the words after -- are one line, joined by spaces, for the session's sh -c.
-    return runTunnel({ origin, token, session, line: args.rest.join(' '), stdin: deps.stdin ?? process.stdin, stdout, stderr, userAgent: `woodshed-cli/${VERSION}` });
+    return runTunnel({ origin, token, session, line: args.rest.join(' '), stdin, stdout, stderr, userAgent: `woodshed-cli/${VERSION}` });
   }
 
   // The command as typed, for the catch below: only the tunnel's failures exit 255, whatever the other commands' words.
@@ -488,6 +491,17 @@ export async function main(argv, deps = {}) {
         call, token: signedIn(origin).token, stdout, stderr, say, emit, json, sleep, now, EXIT, platform, hc,
         // The line hc keeps for a session's machine: this command line's tunnel into it, on this console.
         // A relative config folder is made absolute: hc's core runs the line from a folder of its own.
+        // This terminal on the session's, once: closed, detached, refused, unreachable, or cut once it was open.
+        tty: Boolean(stdin.isTTY && stdout.isTTY),
+        terminal: deps.terminal ?? (async (session, kind) => {
+          const size = { columns: stdout.columns || 80, rows: stdout.rows || 24 };
+          const opened = await openTerminal({ origin, token: signedIn(origin).token, session, kind, size, userAgent: `woodshed-cli/${VERSION}` });
+          if (opened.refused) return { status: 'refused', http: opened.refused.status, message: opened.refused.message };
+          if (opened.unreachable) return { status: 'unreachable', message: opened.unreachable };
+          const openedAt = now();
+          const out = await attach({ socket: opened.socket, head: opened.head, stdin, stdout });
+          return out.status === 'cut' ? { status: 'attached-then-cut', message: out.message, ms: now() - openedAt } : out;
+        }),
         via: (session) => viaCommand({ ...(deps.self ?? selfCommand({ env })), origin, session, configHome: env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : null }),
         fail: (message, opts) => new CliError(message, opts),
         confirm: deps.confirm ?? ((question) => confirmOnTerminal(question, stderr)),
