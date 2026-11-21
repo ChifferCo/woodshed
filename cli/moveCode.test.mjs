@@ -133,11 +133,33 @@ test('what the push would send is looked through: a secret in a commit not pushe
   fs.writeFileSync(path.join(root, 'debug.log'), `${'line\n'.repeat(400)}${token}\n`);
   const big = await survey(git, await checkoutOf(git, root), { tag: 'test', scanBytes: 1000 });
   t.after(() => fs.rmSync(path.dirname(big.index), { recursive: true, force: true }));
-  assert.deepEqual(big.secrets, [{ path: 'debug.log', line: null, kind: 'text too large to check for secrets (1 MB)' }]);
+  assert.deepEqual(big.secrets, [{ path: 'debug.log', line: null, kind: 'file too large to check for secrets (1 MB)' }]);
   fs.writeFileSync(path.join(root, 'debug.log'), Buffer.concat([Buffer.from([0, 1, 2]), Buffer.alloc(5000, 7)]));
   const binary = await survey(git, await checkoutOf(git, root), { tag: 'test', scanBytes: 1000 });
   t.after(() => fs.rmSync(path.dirname(binary.index), { recursive: true, force: true }));
-  assert.deepEqual(binary.secrets, [], 'a binary file is not text to read through');
+  assert.deepEqual(binary.secrets, [{ path: 'debug.log', line: null, kind: 'file too large to check for secrets (1 MB)' }]);
+});
+
+test('outgoing trees are screened for credential names even when the blob is known or has several names', async (t) => {
+  const { root, sh, git } = repoFor(t);
+  const known = `ghp_${'e1'.repeat(18)}`;
+  const duplicate = `AKIA${'E'.repeat(16)}`;
+  const directory = `fixture-${known}`;
+  fs.mkdirSync(path.join(root, directory));
+  // The directory name goes out even though the README bytes already exist on the destination.
+  sh(['mv', 'README.md', `${directory}/moved.md`], root);
+  sh(['commit', '-qm', 'move the readme'], root);
+  sh(['mv', `${directory}/moved.md`, 'README.md'], root);
+  sh(['commit', '-qm', 'put the readme back'], root);
+  // The ordinary path sorts first, so rev-list can omit the second name for this new blob.
+  fs.writeFileSync(path.join(root, 'a-first.txt'), 'identical fixture bytes');
+  fs.writeFileSync(path.join(root, `z-backup\n${duplicate}.txt`), 'identical fixture bytes');
+  const result = await survey(git, await checkoutOf(git, root));
+  t.after(() => fs.rmSync(path.dirname(result.index), { recursive: true, force: true }));
+  assert.deepEqual(result.secrets.map((s) => s.kind).sort(), ['a GitHub token', 'an AWS access key']);
+  assert.ok(result.secrets.every((s) => /^a name in Git tree [0-9a-f]{12}$/.test(s.path)));
+  assert.deepEqual(result.files, [], 'refusal carries no offending paths');
+  assert.ok(!JSON.stringify(result).includes(known) && !JSON.stringify(result).includes(duplicate));
 });
 
 test('a remote that pushes to more than one place is refused: the move pushes to the one repo it checked', async (t) => {

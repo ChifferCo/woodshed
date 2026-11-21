@@ -27,7 +27,7 @@ import fs from 'node:fs';
 import zlib from 'node:zlib';
 
 import { HC_MINIMUM, hcVersion, machineName, shellQuote } from './hc.mjs';
-import { checkoutOf, deleteBranch, freeze, pushBranch, secretsIn, survey } from './moveCode.mjs';
+import { checkoutOf, deleteBranch, freeze, pushBranch, redactCredentials, secretsIn, survey } from './moveCode.mjs';
 import { classify, claudeProjectDir, findConversations, rewriteConversation, rootsOf, shownCommand, withoutStateHooks } from './moveAgents.mjs';
 import { appSpaces, buildWithApp, buildWithLabels, choose, failureOf, leavesOf, localLayout, placesOf, readDoc } from './moveLayout.mjs';
 
@@ -95,15 +95,31 @@ function parsed(text) {
 }
 
 // eslint-disable-next-line no-control-regex
-const printable = (text, most = 200) => (text === null || text === undefined ? null : String(text).replace(/[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g, ' ').slice(0, most));
+const printable = (text, most = 200) => (text === null || text === undefined ? null : redactCredentials(String(text)).replace(/[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g, ' ').slice(0, most));
 
 /**
  * @param {{origin: string, rest: string[]}} args
  * @param {object} ctx  as sessionCommand's, with `app` (herdr-app), `git`, `env`, `hostname` and `session` (sessionCommand)
  * @returns {Promise<number>}
  */
-export async function moveCommand({ origin, rest }, ctx) {
-  const { call, say, emit, json, sleep, now, stderr, fail, EXIT, hc, app, git } = ctx;
+// Redact before JSON escaping so unusual characters in a path cannot hide a credential from the matcher.
+function safeOutput(value) {
+  return JSON.parse(JSON.stringify(value, (_key, field) => typeof field === 'string' ? redactCredentials(field) : field));
+}
+
+export async function moveCommand(args, ctx) {
+  try {
+    return await runMove(args, ctx);
+  } catch (error) {
+    if (typeof error?.message === 'string') error.message = redactCredentials(error.message);
+    throw error;
+  }
+}
+
+async function runMove({ origin, rest }, ctx) {
+  const { call, json, sleep, now, stderr, fail, EXIT, hc, app, git } = ctx;
+  const say = (line) => ctx.say(redactCredentials(line));
+  const emit = (event) => ctx.emit(safeOutput(event));
   const env = ctx.env ?? process.env;
   if (!rest.length || rest[0] === 'help') {
     ctx.stdout.write(`${MOVE_USAGE}\n`);
@@ -230,7 +246,10 @@ export async function moveCommand({ origin, rest }, ctx) {
   if (secrets.length) {
     cleanSurveys();
     if (json) emit({ event: 'secrets', files: secrets.map((s) => ({ root: s.root, path: s.path, line: s.line, kind: s.kind })) });
-    const lines = secrets.map((s) => `  ${s.path.startsWith('the message of commit ') ? `${s.path} in ${s.root}` : path.join(s.root, s.path)}${s.line ? `:${s.line}` : ''}  ${s.kind}`);
+    const lines = secrets.map((s) => {
+      const where = /^(the message of commit |a name in Git tree )/.test(s.path) ? `${s.path} in ${s.root}` : path.join(s.root, s.path);
+      return `  ${where}${s.line ? `:${s.line}` : ''}  ${s.kind}`;
+    });
     throw refused(`These look like secrets, and the move would push them to GitHub:\n${lines.join('\n')}\nTake them out of the work (or add them to .gitignore), then move again. Nothing was moved.`);
   }
 
@@ -268,7 +287,7 @@ export async function moveCommand({ origin, rest }, ctx) {
     else if (opts.restart === 'auto' || opts.restart === 'never') restart.set(a, opts.restart === 'auto');
     else if (opts.dryRun) restart.set(a, null);
     else {
-      const answer = await ctx.confirm(`Start "${printable(line, 120)}" again in the session (${a})? Its local copy keeps running here. [y/N] `);
+      const answer = await ctx.confirm(redactCredentials(`Start "${printable(line, 120)}" again in the session (${a})? Its local copy keeps running here. [y/N] `));
       restart.set(a, answer === true);
     }
   }
@@ -308,7 +327,7 @@ export async function moveCommand({ origin, rest }, ctx) {
       say(`Would move ${addresses.length} terminal${addresses.length === 1 ? '' : 's'} to ${opts.to === 'new' ? `${repos.length === 1 ? 'a new session' : `${repos.length} new sessions`}` : `session ${opts.to}`} (move ${id}):`);
       for (const r of b.repos) say(`  ${r.repo}: ${r.files} changed file${r.files === 1 ? '' : 's'} from ${r.root} to woodshed/move-${id}${r.ignoredEnv.length ? `; stays here: ${r.ignoredEnv.join(', ')}` : ''}`);
       for (const t of b.terminals) say(`  ${t.address}  ${t.layout.space || '-'} / ${t.layout.tab || '-'}  ${t.kind}${t.agent ? ` ${t.agent.kind} ${t.agent.sessionRef} (${t.agent.from})` : t.process ? ` ${t.process.command}` : ''}  in ${t.repo.subdir || '.'}`);
-      say(JSON.stringify(b, null, 2));
+      say(JSON.stringify(safeOutput(b), null, 2));
     }
     return EXIT.done;
   }

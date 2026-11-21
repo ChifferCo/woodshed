@@ -358,6 +358,44 @@ test('a conversation that holds a secret is refused before the push', async (t) 
   assert.equal(l.onGithub('woodshed/move-c0ffee42'), null);
 });
 
+test('filename-only and binary credentials stop the move without printing their values', async (t) => {
+  const l = laptop(t);
+  const synthetic = `ghp_${'f4'.repeat(18)}`;
+  const renamed = path.join(l.repo.root, `export_${synthetic}.md`);
+  fs.copyFileSync(path.join(l.repo.root, 'README.md'), renamed);
+  const args = ['move', '--space', 'api', '--to', 'new', '--console', ORIGIN];
+  for (const extra of [[], ['--json']]) {
+    const out = await l.run([...args, '--dry-run', ...extra]);
+    assert.equal(out.code, EXIT.refused);
+    assert.match(out.out + out.err, /a name in Git tree [0-9a-f]{12}.*a GitHub token/);
+    assert.ok(!(out.out + out.err).includes(synthetic));
+  }
+  fs.unlinkSync(renamed);
+
+  const cache = path.join(l.repo.root, 'cache.sqlite');
+  fs.writeFileSync(cache, Buffer.from(`SQLite format 3\0\x01key\0${synthetic}\0`));
+  const out = await l.run([...args, '--json']);
+  assert.equal(out.code, EXIT.refused);
+  assert.equal(out.events.find((event) => event.event === 'secrets').files[0].path, 'cache.sqlite');
+  assert.ok(!(out.out + out.err).includes(synthetic));
+  assert.equal(l.onGithub('woodshed/move-c0ffee42'), null);
+  assert.ok(!l.calls.some(([method]) => method === 'POST'));
+
+  // An ordinary binary file still moves, and an ignored path never discloses a credential in the plan.
+  fs.writeFileSync(cache, Buffer.from('SQLite format 3\0fixture bytes'));
+  const ignored = path.join(l.repo.root, `ignored-${synthetic}`);
+  fs.mkdirSync(ignored);
+  fs.writeFileSync(path.join(ignored, '.env'), 'FIXTURE=local\n');
+  const dry = await l.run([...args, '--dry-run', '--json']);
+  assert.equal(dry.code, EXIT.done, dry.err);
+  assert.ok(!dry.out.includes(synthetic));
+  assert.ok(dry.events.find((event) => event.event === 'bundle').bundle.repos[0].ignoredEnv.includes('ignored-…/.env'));
+  const moved = await l.run([...args, '--restart', 'never', '--json']);
+  assert.equal(moved.code, EXIT.done, moved.err);
+  assert.ok(!moved.out.includes(synthetic));
+  assert.equal(l.repo.sh(['cat-file', '-s', `${l.onGithub('woodshed/move-c0ffee42')}:cache.sqlite`], l.repo.root), String(fs.statSync(cache).size));
+});
+
 test('a concurrent transcript import is preserved and only the failed upload is cleaned up', async (t) => {
   const l = laptop(t, { machine: { collides: true } });
   const out = await l.run(['move', '--space', 'api', '--to', 'aaaa0001', '--restart', 'never', '--console', ORIGIN]);
@@ -467,7 +505,9 @@ test('a conversation over hc\'s 8 MB goes in gzipped parts, and is put together 
   // Twelve MiB of turns that still span several parts after compression.
   const lines = [];
   for (let i = 0, size = 0; size < 12 * 1024 * 1024; i++) {
-    lines.push(JSON.stringify({ type: 'assistant', cwd: l.cwd, message: { content: `${i} ${crypto.randomBytes(600).toString('base64')}` } }));
+    // Base64 has no hyphens or underscores. Drop A so the fixture cannot make a Google or AWS key by chance.
+    const content = crypto.createHash('shake256', { outputLength: 600 }).update(String(i)).digest('base64').replaceAll('A', '0');
+    lines.push(JSON.stringify({ type: 'assistant', cwd: l.cwd, message: { content: `${i} ${content}` } }));
     size += lines.at(-1).length + 1;
   }
   fs.appendFileSync(file, `${lines.join('\n')}\n`);

@@ -14,7 +14,7 @@ import path from 'node:path';
 
 const GIT_MS = 60_000;
 const PUSH_MS = 180_000;
-// A text file larger than this cannot be looked through for secrets, and refuses the move: a log can hold a token.
+// A file larger than this cannot be looked through for secrets and refuses the move.
 const SCAN_BYTES = 20 * 1024 * 1024;
 
 /**
@@ -128,17 +128,22 @@ const SECRET_NAMES = [
 // Secrets by their shape. Each is named by its kind; the match itself is never printed.
 const SECRET_CONTENT = [
   [/-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----/, 'a private key'],
-  [/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/, 'an AWS access key'],
-  [/\bgh[pousr]_[A-Za-z0-9]{36,}\b/, 'a GitHub token'],
-  [/\bgithub_pat_[A-Za-z0-9_]{50,}\b/, 'a GitHub token'],
-  [/\bsk-ant-[A-Za-z0-9_-]{20,}/, 'an Anthropic key'],
-  [/\bsk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{40,}/, 'an OpenAI key'],
-  [/\bxox[abposr]-[A-Za-z0-9-]{10,}/, 'a Slack token'],
-  [/\b[rs]k_live_[A-Za-z0-9]{20,}/, 'a Stripe key'],
-  [/\bAIza[0-9A-Za-z_-]{35}\b/, 'a Google API key'],
-  [/\bwsc_[0-9a-f]{64}\b/, 'a Woodshed command line token'],
-  [/:_authToken=(?!\$\{)[^\s'"]{8,}/, 'an npm token'],
+  [/(?:AKIA|ASIA)[0-9A-Z]{16}(?![0-9A-Z])/, 'an AWS access key'],
+  [/gh[pousr]_[A-Za-z0-9]{36,}/, 'a GitHub token'],
+  [/github_pat_[A-Za-z0-9_]{50,}/, 'a GitHub token'],
+  [/sk-ant-[A-Za-z0-9_-]{20,}/, 'an Anthropic key'],
+  [/sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{40,}/, 'an OpenAI key'],
+  [/xox[abposr]-[A-Za-z0-9-]{10,}/, 'a Slack token'],
+  [/[rs]k_live_[A-Za-z0-9]{20,}/, 'a Stripe key'],
+  [/AIza[0-9A-Za-z_-]{35}/, 'a Google API key'],
+  [/wsc_[0-9a-f]{64}(?![0-9a-f])/, 'a Woodshed command line token'],
+  [/:_authToken=(?!\$\{)[^\s'"\0]{8,}/, 'an npm token'],
 ];
+
+export function redactCredentials(text) {
+  for (const [re] of SECRET_CONTENT) text = text.replace(new RegExp(re.source, `${re.flags}g`), '…');
+  return text;
+}
 
 /** @returns {string|null}  why a path's name alone makes it a secret */
 export function secretName(file) {
@@ -155,7 +160,7 @@ export function secretsIn(text, before = '') {
   for (let i = 0; i < lines.length; i++) {
     for (const [re, kind] of SECRET_CONTENT) {
       // Every one on the line: a new token beside one the remote already had is still new.
-      const fresh = [...lines[i].matchAll(new RegExp(re.source, `${re.flags.replace('g', '')}g`))].some((m) => !String(before).includes(m[0]));
+      const fresh = [...lines[i].matchAll(new RegExp(re.source, `${re.flags}g`))].some((m) => !before.includes(m[0]));
       if (fresh) found.push({ line: i + 1, kind });
     }
   }
@@ -166,14 +171,23 @@ export function secretsIn(text, before = '') {
  * What would be frozen in a checkout, and what refuses it. The files the commit adds or changes over HEAD (untracked
  * ones included, ignored ones never) are listed; what is looked through for secrets is every file the push would send
  * that the remote does not hold: the snapshot's, and those of commits here not pushed yet, which a later commit may
- * have taken a secret out of while it stays in history. Each is read as git stores it, after its filters. A text file
+ * have taken a secret out of while it stays in history. Each is read as git stores it, after its filters. A file
  * too large to read through refuses the move. The index used is a temporary one; the person's is left as it is.
  * @returns {Promise<{files: {path: string, status: string}[], secrets: {path: string, line: number|null, kind: string}[],
  *          ignoredEnv: string[], tree: string, index: string}>}  `index`: the temporary index, which the caller removes
  */
 export async function survey(git, checkout, { tempDir = os.tmpdir(), tag = 'move', scanBytes = SCAN_BYTES } = {}) {
-  const { root, head, remote } = checkout;
   const index = path.join(fs.mkdtempSync(path.join(tempDir, `woodshed-${tag}-`)), 'index');
+  try {
+    return await surveyIndex(git, checkout, index, scanBytes);
+  } catch (error) {
+    fs.rmSync(path.dirname(index), { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function surveyIndex(git, checkout, index, scanBytes) {
+  const { root, head, remote } = checkout;
   const env = { GIT_INDEX_FILE: index };
   const step = async (args, opts = {}) => {
     const out = await git(args, { cwd: root, env, ...opts });
@@ -203,33 +217,36 @@ export async function survey(git, checkout, { tempDir = os.tmpdir(), tag = 'move
   const pathOf = new Map();
   for (const line of listed.split('\n')) {
     const [sha, ...rest] = line.split(' ');
-    if (sha && rest.length) pathOf.set(sha, rest.join(' '));
+    if (sha) pathOf.set(sha, rest.join(' '));
   }
   const kinds = await step(['cat-file', '--batch-check=%(objectname) %(objecttype) %(objectsize)'], { input: `${[...pathOf.keys()].join('\n')}\n` });
-  const blobs = kinds.split('\n').map((l) => l.split(' ')).filter(([, type]) => type === 'blob').map(([sha, , size]) => ({ sha, size: Number(size), path: pathOf.get(sha) }));
+  const objects = kinds.split('\n').filter(Boolean).map((l) => l.split(' ')).map(([sha, type, size]) => ({ sha, type, size: Number(size) }));
+  const trees = objects.filter(({ type }) => type === 'tree');
+  const names = await treeNameSecrets(step, trees, tree.length / 2);
+  if (names.length) return { files: [], secrets: names, ignoredEnv: [], tree, index };
   // A secret the remote's copy of a file already held is not the move's doing: its branch's, as the remote has it now.
   const upstreamRef = (await git(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], { cwd: root })).stdout.trim();
   const upstreamSha = remoteHeads.get(`refs/heads/${upstreamRef.slice(remote.length + 1)}`) ?? remoteHeads.get(`refs/heads/${checkout.branch}`) ?? null;
   const upstream = upstreamSha && known.includes(upstreamSha) ? upstreamSha : '';
   const secrets = [];
-  for (const blob of blobs) {
-    const byName = secretName(blob.path);
+  for (const { sha, size } of objects.filter(({ type }) => type === 'blob')) {
+    const file = pathOf.get(sha);
+    const byName = secretName(file);
     if (byName) {
-      secrets.push({ path: blob.path, line: null, kind: byName });
+      secrets.push({ path: file, line: null, kind: byName });
       continue;
     }
-    const start = (await git(['cat-file', 'blob', blob.sha], { cwd: root, raw: true, limit: 8000 })).stdout;
-    // UTF-16 text has NULs in it too: read as such, not skipped as binary.
-    const utf16 = utf16Of(start);
-    if (!utf16 && start.subarray(0, 8000).includes(0)) continue;
-    if (blob.size > scanBytes) {
-      secrets.push({ path: blob.path, line: null, kind: `text too large to check for secrets (${Math.max(1, Math.round(blob.size / 1048576))} MB)` });
+    if (size > scanBytes) {
+      secrets.push({ path: file, line: null, kind: `file too large to check for secrets (${Math.max(1, Math.round(size / 1048576))} MB)` });
       continue;
     }
-    const bytes = blob.size <= start.length ? start : (await git(['cat-file', 'blob', blob.sha], { cwd: root, raw: true })).stdout;
-    const text = utf16 ? decodeUtf16(bytes, utf16) : bytes.toString('utf8');
-    const before = upstream ? (await git(['show', `${upstream}:${blob.path}`], { cwd: root })).stdout : '';
-    for (const hit of secretsIn(text, before)) secrets.push({ path: blob.path, ...hit });
+    const bytes = await step(['cat-file', 'blob', sha], { raw: true });
+    if (bytes.length !== size) throw new Error(`git did not return the whole blob ${sha.slice(0, 12)} for credential screening`);
+    const before = upstream ? await git(['show', `${upstream}:${file}`], { cwd: root, raw: true, limit: scanBytes }) : null;
+    const earlier = before?.code === 0 ? scanTexts(before.stdout).join('\n') : '';
+    for (const text of scanTexts(bytes)) {
+      for (const hit of secretsIn(text, earlier)) secrets.push({ path: file, ...hit });
+    }
   }
   // The messages of the commits the push sends are published with them: a token pasted into one is found too.
   if (head) {
@@ -245,6 +262,42 @@ export async function survey(git, checkout, { tempDir = os.tmpdir(), tag = 'move
   const ignoredEnv = ignored.code === 0 ? ignored.stdout.split('\0').filter(Boolean).slice(0, 50) : [];
   const unique = [...new Map(secrets.map((x) => [`${x.path}:${x.line}:${x.kind}`, x])).values()];
   return { files, secrets: unique, ignoredEnv, tree, index };
+}
+
+// rev-list reports one path per object. Read the outgoing trees themselves to see every name, including a new name
+// for a blob the destination already has. A tree entry is mode, space, name, NUL, then the raw object ID.
+async function treeNameSecrets(step, trees, oidBytes) {
+  const secrets = [];
+  for (let i = 0; i < trees.length; i += 128) {
+    const batch = trees.slice(i, i + 128);
+    const bytes = await step(['cat-file', '--batch'], { raw: true, input: `${batch.map(({ sha }) => sha).join('\n')}\n` });
+    let pos = 0;
+    for (const { sha, size } of batch) {
+      const header = `${sha} tree ${size}\n`;
+      const path = `a name in Git tree ${sha.slice(0, 12)}`;
+      if (bytes.toString('ascii', pos, pos + header.length) !== header) throw new Error(`git could not read ${path}`);
+      pos += header.length;
+      const end = pos + size;
+      const kinds = new Set();
+      while (pos < end) {
+        const start = bytes.indexOf(0x20, pos) + 1;
+        const stop = bytes.indexOf(0, start);
+        if (start <= pos || stop < start || stop + 1 + oidBytes > end) throw new Error(`git could not read ${path}`);
+        for (const { kind } of secretsIn(bytes.toString('utf8', start, stop))) kinds.add(kind);
+        pos = stop + 1 + oidBytes;
+      }
+      if (bytes[pos++] !== 0x0a) throw new Error(`git could not read ${path}`);
+      for (const kind of kinds) secrets.push({ path, kind, line: null });
+    }
+  }
+  return secrets;
+}
+
+function scanTexts(bytes) {
+  const utf16 = utf16Of(bytes);
+  // Always look for plaintext, even if a binary header looks like a text encoding.
+  const plain = bytes.toString('utf8');
+  return utf16 ? [decodeUtf16(bytes, utf16), plain] : [plain];
 }
 
 // 'le' or 'be' for text in UTF-16 (a byte-order mark, or every other byte NUL as in ASCII text), else null.

@@ -162,8 +162,9 @@ Then, in order (`move.mjs` says each step):
    its name (`.env`, `*.pem`, `id_ed25519`, `credentials.json`) or its content (a private key, an AWS, GitHub,
    Anthropic, OpenAI, Slack or Stripe key, an npm token), refuses the move with its path, line and kind, never the value.
    What is read is everything the push would send that the remote does not have (its branches asked of it with
-   `ls-remote`), commits not pushed yet included, as git stores each file; a text file over 20 MB refuses it too. A
-   remote that pushes to more than one place, or that git rewrites to another repo (`pushInsteadOf`), is refused.
+   `ls-remote`), commits not pushed yet included. The move checks outgoing file and directory names and scans blobs,
+   including binary files, for recognized credentials. Files over 20 MB refuse the move. A remote that pushes to more
+   than one place, or that git rewrites to another repo (`pushInsteadOf`), is refused.
    A conversation holding what looks like a credential refuses the move too.
 2. **The session.** `--to <id>` is one of your own sessions on the same repo, resumed when paused; `--to new` starts one
    per repo on its branch, with no prompt (`Moved from <computer>: <space>`). Each is added to Herdr as `session herdr` does (a resumed one is added again, since its core is new).
