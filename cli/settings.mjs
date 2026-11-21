@@ -32,37 +32,31 @@ import readline from 'node:readline';
 import { isLoginItem } from '../console/cliSettings.mjs';
 import { hasLiteralCredential, hasLiteralHttpHeader, MAX_SETTINGS_BYTES } from '../console/claudeSettings.mjs';
 import {
-  applyItems, isSyncedFile, localChanges, MAX_ITEM_BYTES, NO_STATUS_LINE, parseEntryId, readSnapshot, sameSettings,
-  SETTINGS, SYNCED_DIRS, withStatusLineOf,
+  CODEX_CONFIG, commandsOf, credentialOf, keyText, pathOf, readToml, sharedPart, stringsOf, textOf, unitOf, withEntries,
+} from '../shared/codexConfig.mjs';
+import {
+  applyItems, isSyncedFile, linkOnPath, localChanges, MARKETPLACES_FILE, MAX_ITEM_BYTES, NO_STATUS_LINE, parseEntryId, parsePluginId, PLUGINS_FILE, readSnapshot,
+  sameSettings, SETTINGS, SYNCED_DIRS, withStatusLineOf,
 } from '../session/settingsSync.mjs';
+import { marketplaceArg } from '../shared/pluginSource.mjs';
+import { BUILT_IN_MARKETPLACES } from '../session/defaultPlugins.mjs';
 import { skipReason, writeOwnFiles } from '../session/ownFiles.mjs';
+import { DOTFILES, dotfileProblem, fromComputer } from '../shared/dotfiles.mjs';
 import { DEFAULT_MAX_VALUE_BYTES, MAX_OWN_FILES } from '../shared/ownFiles.mjs';
+import { redact, SECRET_CONTENT, SECRET_HEADER, SECRET_VARIABLE, secretContent } from '../shared/secretLike.mjs';
 import { loadProject, repoOf } from '../shared/project.mjs';
+
+export { secretContent };
 
 // The session image's user (session/Dockerfile, USER node): the home its synced paths are under.
 export const SESSION_HOME = '/home/node';
-export const CATEGORIES = Object.freeze(['settings', 'keybindings', 'memory', 'agents', 'commands', 'skills', 'mcp', 'own-files']);
+export const CATEGORIES = Object.freeze(['settings', 'keybindings', 'memory', 'agents', 'commands', 'skills', 'mcp', 'codex', 'plugins', 'dotfiles', 'own-files']);
+// What My settings keeps of a dotfile: a secret's limit, as tmux's own lines.
+const MAX_DOTFILE_BYTES = 65_536;
 // Programs an MCP server is often given by its full path on a Mac or Linux: on a session's PATH by their bare name.
 const PATH_DIRS = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'];
 // settings.json keys that run a program to hand claude a credential: the session has its own way in.
 const CREDENTIAL_KEYS = ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'otelHeadersHelper'];
-const SECRET_VARIABLE = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|AUTH|COOKIE|SESSION)(_|$)/i;
-const SECRET_HEADER = /^(authorization|proxy-authorization|cookie|x-api-key|api-key)$|(token|secret|key|auth)/i;
-
-// What a file's content can hold that is a credential, by kind: the plan names the kind, never the match.
-const SECRET_CONTENT = [
-  ['a private key', /-----BEGIN [A-Z ]*PRIVATE KEY-----/],
-  ['a GitHub token', /\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{50,})/],
-  ['an Anthropic API key', /\bsk-ant-[A-Za-z0-9_-]{20,}/],
-  ['an OpenAI API key', /\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}/],
-  ['a Slack token', /\bxox[abposr]-[A-Za-z0-9-]{10,}/],
-  ['an AWS access key', /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/],
-  ['a live Stripe key', /\b[rs]k_live_[A-Za-z0-9]{16,}/],
-  ['a Google API key', /\bAIza[0-9A-Za-z_-]{35}\b/],
-  // Woodshed's own: a computer's command line sign-in (cliSignIn.mjs), and the database tunnel's (dbTunnel.mjs).
-  ['a Woodshed command line token', /\bwsc_[0-9a-f]{64}\b/],
-  ['a Woodshed database tunnel token', /\bwt_[0-9a-f]{64}\b/],
-];
 // What an own file may still not hold: its point is a developer's own keys, but never production's, real AWS keys or a
 // team's integration token (CLAUDE.md, "Rules").
 const PRODUCTION_CONTENT = SECRET_CONTENT.filter(([kind]) => ['a private key', 'a live Stripe key', 'an AWS access key', 'a Slack token'].includes(kind) || kind.startsWith('a Woodshed'));
@@ -78,11 +72,6 @@ export function secretName(file, { ownFile = false } = {}) {
   return null;
 }
 
-/** @returns {string|null}  the kind of credential the text holds, null for none */
-export function secretContent(text, kinds = SECRET_CONTENT) {
-  return kinds.find(([, re]) => re.test(text))?.[0] ?? null;
-}
-
 /** @returns {boolean}  a name an env file goes by, which --own-files takes without being named */
 export function envLike(file) {
   const base = path.posix.basename(file).toLowerCase();
@@ -91,7 +80,9 @@ export function envLike(file) {
 }
 
 function categoryOf(id) {
+  if (parsePluginId(id) || id === PLUGINS_FILE || id === MARKETPLACES_FILE) return 'plugins';
   if (parseEntryId(id) || id === '.claude.json' || id === '.claude/.credentials.json') return 'mcp';
+  if (id === '.codex' || id.startsWith('.codex/')) return 'codex';
   if (id === SETTINGS) return 'settings';
   if (id === '.claude/keybindings.json') return 'keybindings';
   if (id === '.claude/CLAUDE.md') return 'memory';
@@ -100,6 +91,8 @@ function categoryOf(id) {
 
 /** What the person sees and types for an item: ~/.claude/skills/x/SKILL.md, mcp/github, or an own file's path. */
 function nameOf(id) {
+  const plugin = parsePluginId(id);
+  if (plugin) return `plugin/${plugin}`;
   const entry = parseEntryId(id);
   if (entry) return entry.key === 'mcpServers' ? `mcp/${entry.name}` : `${entry.file}#${entry.key}/${entry.name}`;
   return `~/${id}`;
@@ -111,7 +104,8 @@ function nameOf(id) {
  */
 export function matchesOnly(only, { category, name }, { byName = false } = {}) {
   if (!only.length) return !byName;
-  const short = name.replace(/^~\/\.claude\//, '');
+  // ~/.claude's items by their name in it (skills/review), ~/.codex's by theirs in the home (.codex/skills/review).
+  const short = name.replace(/^~\/\.claude\//, '').replace(/^~\//, '');
   return only.some((raw) => {
     const want = raw.replace(/^~\//, '').replace(/^\.claude\//, '').replace(/\/$/, '');
     // A kind is not a name, even where it is also a folder (skills/): --only skills does not name each skill.
@@ -131,27 +125,7 @@ function printable(text, max = 200) {
   return out.length > max ? `${out.slice(0, max)}…` : out;
 }
 
-/**
- * The first folder or file on a path under `root` that is a symlink, which the sync never reads or writes through: a
- * linked skills folder would send another checkout's files, and a pull would write into it.
- * @returns {string|null}  the symlink's path under root
- */
-export function linkOnPath(root, rel) {
-  let at = root;
-  for (const part of rel.split('/')) {
-    at = path.join(at, part);
-    let stat;
-    try {
-      stat = fs.lstatSync(at);
-    } catch {
-      return null;
-    }
-    if (stat.isSymbolicLink()) return path.relative(root, at);
-  }
-  return null;
-}
-
-const fileOf = (id) => parseEntryId(id)?.file ?? id;
+const fileOf = (id) => (parsePluginId(id) ? PLUGINS_FILE : parseEntryId(id)?.file ?? id);
 
 /**
  * A dropped path as the list shows it: the home by name and at most its first two plain folder or file names, so a token
@@ -265,6 +239,98 @@ function serverCredential(server) {
   return null;
 }
 
+// config.toml's keys that stay each side's own: the folders it trusts, and where codex sends its calls and as whom. A
+// session's codex runs on its owner's own sign-in or the console's proxy (session/bin/codex), and a computer's provider
+// (a local model, a company gateway) is not one a session reaches.
+const CODEX_OWN_KEYS = new Set(['projects', 'model_provider', 'model_providers', 'profile', 'profiles', 'openai_base_url', 'chatgpt_base_url']);
+/**
+ * ~/.codex/config.toml as it would be on the other side: each entry that is a side's own, holds a credential or names
+ * a path the other side has not is left out whole (unitOf: an MCP server with its env, a provider), and paths into what
+ * is synced are moved.
+ * @returns {{value: string, notes: string[], own: object[]}|{fate: 'skip'|'refuse', reason: string}}  own: the statements
+ *   left out but trusted folders, which a pull keeps of this computer's own
+ */
+export function translateCodexConfig(value, { from, to }) {
+  const statements = readToml(Buffer.from(value, 'base64').toString('utf8'));
+  if (!statements) return { fate: 'skip', reason: 'not TOML this reads: edit it in a session, or fix it here', unreadable: true };
+  const leave = new Map();
+  const texts = new Map();
+  const commands = commandsOf(statements);
+  let moved = 0;
+  for (const s of statements) {
+    const unit = unitOf(s);
+    if (!unit || leave.has(unit)) continue;
+    const at = pathOf(s);
+    if (CODEX_OWN_KEYS.has(at[0])) {
+      leave.set(unit, at[0] === 'projects' ? 'projects' : `${unit} (where codex sends its calls stays each side's own)`);
+      continue;
+    }
+    const credential = credentialOf(s, commands);
+    if (credential) {
+      leave.set(unit, `${unit} (${credential}, a credential)`);
+      continue;
+    }
+    if (s.kind !== 'kv') continue;
+    let text = s.text;
+    // An MCP server's program by its full path, as an MCP server of claude's (translate): by its bare name from a
+    // folder every PATH has, and otherwise left here.
+    const program = at.at(-1) === 'command' && stringsOf(s.value).length === 1 ? stringsOf(s.value)[0] : null;
+    if (program && path.posix.isAbsolute(program.said) && !program.said.startsWith(`${from}/`)) {
+      if (!PATH_DIRS.includes(path.posix.dirname(program.said))) {
+        leave.set(unit, `${unit} (runs a program at ${shownPath(program.said, '', { prefix: '/' })}, a path the other side may not have)`);
+        continue;
+      }
+      text = text.replace(program.raw, JSON.stringify(path.posix.basename(program.said)));
+    }
+    for (const { raw, said: str } of stringsOf(s.value)) {
+      const r = movePaths([str], { from, to });
+      if (r.dropped.length) {
+        leave.set(unit, `${unit} (names ${shownPath(r.dropped[0].path, from)}, not on the other side)`);
+        break;
+      }
+      if (r.moved) {
+        moved += r.moved;
+        text = text.replace(raw, JSON.stringify(r.value[0]));
+      }
+    }
+    texts.set(s, text);
+  }
+  const kept = statements.filter((s) => !leave.has(unitOf(s))).map((s) => ({ ...s, text: texts.get(s) ?? s.text }));
+  const out = sharedPart(textOf(kept));
+  const own = statements.filter((s) => leave.has(unitOf(s)) && pathOf(s)[0] !== 'projects');
+  // An entry is named as the list shows it: a key's shape in a table's name is redacted.
+  const notes = [...new Set(leave.values())].filter((n) => n !== 'projects').map(redact);
+  if (!out.trim()) return { fate: 'skip', reason: notes.length ? `nothing left once these are left out: ${notes.join(', ')}` : 'nothing in it but trusted folders, which each side keeps its own', own };
+  return {
+    value: Buffer.from(out).toString('base64'), own,
+    notes: [...(notes.length ? [`left out: ${notes.join(', ')}`] : []), ...(moved ? [`${moved} path${moved === 1 ? '' : 's'} moved to ${to}`] : [])],
+  };
+}
+
+/** A plugin's item, which names its marketplace: one only this computer has, or one with a sign-in in its URL, stays here. */
+function translatePlugin(id, value) {
+  let marketplace = null;
+  try {
+    ({ marketplace } = JSON.parse(value));
+  } catch {
+    return { fate: 'skip', reason: 'not JSON' };
+  }
+  const name = parsePluginId(id);
+  const market = name.split('@')[1];
+  if (secretContent(value)) return { fate: 'refuse', reason: `its marketplace holds what looks like ${secretContent(value)}` };
+  if (marketplace && typeof marketplace === 'object' && typeof marketplace.url === 'string') {
+    let url = null;
+    try {
+      url = new URL(marketplace.url);
+    } catch {}
+    if (url && (url.username || url.password)) return { fate: 'refuse', reason: 'its marketplace\'s URL carries a sign-in, a credential' };
+  }
+  if (!BUILT_IN_MARKETPLACES.includes(market) && !marketplaceArg(marketplace)) {
+    return { fate: 'skip', reason: `a session cannot add its marketplace ${market} (a folder on this computer, a pinned ref, or none recorded)` };
+  }
+  return { value, notes: [] };
+}
+
 /**
  * One item as it would be on the other side: moved to that home, with what it may not carry left out.
  * @param {string} id
@@ -275,6 +341,8 @@ function serverCredential(server) {
  */
 export function translate(id, value, { from, to, statusLineOf }) {
   if (isLoginItem(id)) return { fate: 'refuse', reason: 'an MCP login: sign in to the server where you use it' };
+  if (parsePluginId(id)) return translatePlugin(id, value);
+  if (id === CODEX_CONFIG) return translateCodexConfig(value, { from, to });
   const entry = parseEntryId(id);
   if (entry) {
     let server;
@@ -375,7 +443,7 @@ function withOwnCredentials(b64, mine) {
 }
 
 function bytesOf(id, value) {
-  return parseEntryId(id) ? Buffer.byteLength(value) : Buffer.from(value, 'base64').length;
+  return parseEntryId(id) || parsePluginId(id) ? Buffer.byteLength(value) : Buffer.from(value, 'base64').length;
 }
 
 function claudePathProblem(home, file, directory = false) {
@@ -396,7 +464,7 @@ const SAME_AS_YOURS = 'the same as yours';
  */
 export async function claudePushPlan({ home, shared, only, synced = {} }) {
   const blocked = new Map();
-  const { items, unreadable, oversized } = await readSnapshot(home, {
+  const { items, unreadable, oversized, codexConfig } = await readSnapshot(home, {
     skipPath(file, directory) {
       const problem = claudePathProblem(home, file, directory);
       if (problem) blocked.set(problem.path, problem.reason);
@@ -405,6 +473,8 @@ export async function claudePushPlan({ home, shared, only, synced = {} }) {
   });
   const rows = [];
   const ready = {};
+  // The plan needs the whole file to explain which entries stay here, even when none can be shared.
+  if (codexConfig !== undefined) items[CODEX_CONFIG] = codexConfig;
   for (const [id, raw] of Object.entries(items)) {
     const row = { kind: 'claude', id, name: nameOf(id), category: categoryOf(id), bytes: bytesOf(id, raw) };
     if (!matchesOnly(only, row)) {
@@ -506,6 +576,14 @@ export function runsOf(id, value) {
     return whole(lines.length ? lines : ['nothing set']);
   }
   const text = Buffer.from(value, 'base64').toString('utf8').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  if (id === CODEX_CONFIG) {
+    // Every key, as settings.json's, since any can change what codex may do here; a credential's value is never shown.
+    const statements = readToml(text) ?? [];
+    const commands = commandsOf(statements);
+    const lines = statements.filter((s) => s.kind === 'kv')
+      .map((s) => redact(`${keyText(pathOf(s))} = ${credentialOf(s, commands) ? '(not shown)' : s.value.replace(/\s*\n\s*/g, ' ')}`));
+    return whole(lines.length ? lines : ['nothing set']);
+  }
   if (/\.(md|markdown)$/i.test(id)) {
     // Its frontmatter (allowed-tools, tools, hooks, model) and each line that runs shell as it loads (!`cmd`).
     const lines = [];
@@ -524,14 +602,20 @@ export function runsOf(id, value) {
  *   items and before: applyItems' arguments
  */
 export async function claudePullPlan({ home, shared, only, replace }) {
-  const { items: local, oversized } = await readSnapshot(home, {
+  const { items: local, oversized, codexConfig } = await readSnapshot(home, {
     skipPath: (file, directory) => Boolean(claudePathProblem(home, file, directory)),
   });
+  let knownHere = null;
+  if (!claudePathProblem(home, MARKETPLACES_FILE)) {
+    try {
+      knownHere = JSON.parse(fs.readFileSync(path.join(home, MARKETPLACES_FILE), 'utf8'));
+    } catch {}
+  }
   const rows = [];
   const items = {};
   for (const [id, raw] of Object.entries(shared)) {
     const row = { kind: 'claude', id, name: nameOf(id), category: categoryOf(id), bytes: bytesOf(id, raw) };
-    if (!isSyncedFile(id) && !parseEntryId(id)) {
+    if (!isSyncedFile(id) && !parseEntryId(id) && !parsePluginId(id)) {
       rows.push({ ...row, fate: 'skip', reason: 'not an item this computer syncs' });
       continue;
     }
@@ -549,14 +633,33 @@ export async function claudePullPlan({ home, shared, only, replace }) {
       continue;
     }
     const out = translate(id, raw, { from: SESSION_HOME, to: home, statusLineOf: local[SETTINGS] });
+    // A plugin is never installed from here: what it runs is its marketplace's, which a list cannot show. Its row says
+    // how to install it by hand.
+    if (parsePluginId(id) && !out.fate) {
+      const name = parsePluginId(id);
+      const add = marketplaceArg(JSON.parse(raw).marketplace);
+      const known = BUILT_IN_MARKETPLACES.includes(name.split('@')[1]) || !add || Boolean(knownHere?.[name.split('@')[1]]);
+      rows.push(id in local ? { ...row, fate: 'skip', reason: SAME_AS_YOURS } : {
+        ...row, fate: 'skip', reason: `not installed here: ${known ? '' : `claude plugin marketplace add ${add}, then `}claude plugin install ${name}`,
+      });
+      continue;
+    }
     // Yours as a push would send it: the same as the shared copy means nothing here is behind it.
-    const mine = id in local ? translate(id, local[id], { from: home, to: SESSION_HOME, statusLineOf: raw }) : null;
+    const here = id === CODEX_CONFIG ? codexConfig : local[id];
+    const mine = here != null ? translate(id, here, { from: home, to: SESSION_HOME, statusLineOf: raw }) : null;
     const same = mine && !mine.fate && (mine.value === raw || (id === SETTINGS && sameSettings(mine.value, raw)));
     if (out.fate) rows.push({ ...row, fate: out.fate, reason: out.reason });
+    else if (mine?.unreadable) rows.push({ ...row, fate: 'skip', reason: 'yours is not TOML this reads, so what it keeps to itself could not be told: fix it, then pull' });
     else if (same || local[id] === out.value) rows.push({ ...row, fate: 'skip', reason: SAME_AS_YOURS });
     else if (id in local && !replace) rows.push({ ...row, fate: 'skip', reason: 'yours differs: --replace takes the shared one' });
     else {
       let { value, notes } = out;
+      if (id === CODEX_CONFIG && mine?.own?.length) {
+        // What this computer keeps to itself of its config.toml (its provider, an MCP server with a key) stays as it is,
+        // in place of the shared copy's entries of the same names. Its trusted folders stay too (applyItems).
+        value = Buffer.from(withEntries(Buffer.from(value, 'base64').toString('utf8'), mine.own)).toString('base64');
+        notes = [`yours kept: ${redact([...new Set(mine.own.map(unitOf).filter(Boolean))].join(', '))}`];
+      }
       if (id === SETTINGS && id in local) {
         const own = withOwnCredentials(value, local[id]);
         value = own.value;
@@ -582,7 +685,60 @@ export async function claudePullPlan({ home, shared, only, replace }) {
   // replaces, so this computer's own files go back in as they are. `before` is what was read here: a file written since
   // (claude making a skill as this runs) is neither overwritten nor deleted.
   const keep = Object.fromEntries(Object.entries(local).filter(([id]) => isSyncedFile(id)));
-  return { rows, items: { ...keep, ...items }, before: local, replaced: Object.keys(items).filter((id) => id in local) };
+  const before = codexConfig === undefined ? local : { ...local, [CODEX_CONFIG]: codexConfig };
+  return { rows, items: { ...keep, ...items }, before, replaced: Object.keys(items).filter((id) => id in local) };
+}
+
+/**
+ * This computer's dotfiles as the person's own lines on My settings (shared/dotfiles.mjs): what a session takes of each,
+ * with what was left out named. Only ever pushed: the computer's own file is where they come from, so a pull leaves
+ * them out.
+ * @param {{home: string, stored: Record<string, string|null>, only: string[]}} args  stored: My settings' lines now
+ * @returns {{rows: object[], upload: Record<string, string>}}
+ */
+export function dotfilesPushPlan({ home, stored, only }) {
+  const rows = [];
+  const upload = {};
+  for (const [key, { label, from }] of Object.entries(DOTFILES)) {
+    const files = {};
+    for (const name of from) {
+      try {
+        // Read through a symlink: a dotfiles repo often holds them, and nothing is ever written here.
+        files[name] = fs.readFileSync(path.join(home, name), 'utf8');
+      } catch {}
+    }
+    if (!Object.keys(files).length) continue;
+    const row = { kind: 'dotfile', id: `dotfile:${key}`, name: `dotfile/${key}`, category: 'dotfiles', bytes: 0 };
+    if (!matchesOnly(only, row)) {
+      rows.push({ ...row, fate: 'skip', reason: ONLY });
+      continue;
+    }
+    const sources = Object.keys(files).map((n) => `~/${n}`).join(', ');
+    const { text, left } = fromComputer(key, files, { home });
+    const notes = [`your own ${label} lines, from ${sources}`, ...(left.length ? [`left out: ${left.join(', ')}`] : [])];
+    row.bytes = Buffer.byteLength(text);
+    if (!text.trim()) {
+      rows.push({ ...row, fate: 'skip', reason: `nothing in ${sources} a session takes`, notes });
+      continue;
+    }
+    // The console's own check, as it saves them: what fromComputer kept always passes it, so this is a second look.
+    const problem = dotfileProblem(key, text);
+    if (problem) {
+      rows.push({ ...row, fate: 'refuse', reason: problem });
+      continue;
+    }
+    if (row.bytes > MAX_DOTFILE_BYTES) {
+      rows.push({ ...row, fate: 'skip', reason: `over the ${MAX_DOTFILE_BYTES / 1024} KB My settings keeps` });
+      continue;
+    }
+    if (stored[key] != null && normal(stored[key]).trim() === text.trim()) {
+      rows.push({ ...row, fate: 'skip', reason: 'the same as on My settings', notes });
+      continue;
+    }
+    upload[key] = text;
+    rows.push({ ...row, fate: 'upload', reason: stored[key] == null ? 'new' : 'changed: replaces your lines on My settings', notes });
+  }
+  return { rows, upload };
 }
 
 function git(dir, args) {
@@ -856,6 +1012,7 @@ export async function settingsCommand(ctx) {
   const interactive = !json && (ctx.interactive ?? Boolean(process.stdin.isTTY));
   const ask = ctx.ask ?? askOnTerminal;
   if (ctx.env.CLAUDE_CONFIG_DIR) ctx.warn(`CLAUDE_CONFIG_DIR is set, but woodshed settings reads ${home}/.claude and ${home}/.claude.json only`);
+  if (ctx.env.CODEX_HOME) ctx.warn(`CODEX_HOME is set, but woodshed settings reads ${home}/.codex only`);
 
   async function get(pathname) {
     const answer = await call(origin, pathname, { token });
@@ -881,8 +1038,17 @@ export async function settingsCommand(ctx) {
     const { files = {} } = await get(`/api/cli/settings/files/${encodeURIComponent(project.project)}`);
     own = { ...checkout, project: project.project, stored: files };
   }
-
+  // Dotfiles go one way, from here: a pull leaves them out (dotfilesPushPlan).
   const pulling = args.sub === 'pull' || args.pull;
+  let dotfiles = null;
+  const hasDotfile = Object.values(DOTFILES).some(({ from }) => from.some((name) => fs.existsSync(path.join(home, name))));
+  if (!pulling && hasDotfile && (!args.only.length || args.only.some((o) => o === 'dotfiles' || o.startsWith('dotfile/')))) {
+    const answer = await call(origin, '/api/cli/settings/dotfiles', { token });
+    if (answer.status === 200 && answer.body?.files) dotfiles = answer.body.files;
+    else if (answer.status === 401) throw fail(`The sign-in to ${origin} ended: run woodshed login --console ${origin}`, { code: EXIT.waiting, status: 'signed-out' });
+    else ctx.warn(`${origin} keeps no dotfiles from a computer (${answer.status}): a console from before them, or one with no secret store`);
+  }
+
   const state = stateStore(ctx.dir, origin);
   const kept = state.read();
   const claude = !claudeWanted ? { rows: [], changed: {}, items: {} }
@@ -891,9 +1057,10 @@ export async function settingsCommand(ctx) {
   const ownPlan = !own ? { rows: [], upload: {}, write: {} }
     : pulling ? ownFilesPullPlan({ top: own.top, project: own.project, stored: own.stored, only: args.only, replace: args.replace })
       : ownFilesPushPlan({ top: own.top, envFiles: own.envFiles, project: own.project, stored: own.stored, only: args.only });
+  const dotPlan = dotfiles ? dotfilesPushPlan({ home, stored: dotfiles, only: args.only }) : { rows: [], upload: {} };
 
   const moving = pulling ? ['write', 'replace'] : ['upload'];
-  const rows = [...claude.rows, ...ownPlan.rows];
+  const rows = [...claude.rows, ...ownPlan.rows, ...dotPlan.rows];
   const gated = claude.rows.filter((r) => moving.includes(r.fate) && r.gate);
   // A pull writes nothing that runs here (an MCP server, settings.json, a script) whose content no list has shown: a
   // session writes the shared copy unattended, and this computer holds what sessions must never reach.
@@ -928,11 +1095,12 @@ export async function settingsCommand(ctx) {
     }
   }
   if (claudeWanted) show(pulling
-    ? `Your shared Claude settings on ${origin} (version ${shared.version}), into ${home}:`
-    : `Claude settings in ${home}/.claude and ${home}/.claude.json, against your shared copy on ${origin} (version ${shared.version}):`, claude.rows);
+    ? `Your shared Claude and Codex settings on ${origin} (version ${shared.version}), into ${home}:`
+    : `Claude and Codex settings in ${home}/.claude, ${home}/.claude.json and ${home}/.codex, against your shared copy on ${origin} (version ${shared.version}):`, claude.rows);
   if (own) show(pulling
     ? `Your own files for ${own.repo} on My settings, into ${own.top}:`
     : `Files git ignores in ${own.top}, as your own files for ${own.repo} on My settings:`, ownPlan.rows);
+  show('Dotfiles in your home, as your own lines for them on My settings, which your private sessions write after their own:', dotPlan.rows);
   const tally = () => Object.fromEntries(['upload', 'write', 'replace', 'hold', 'skip', 'refuse'].map((f) => [f, rows.filter((r) => r.fate === f).length]));
   let counts = tally();
   const words = Object.entries(counts).filter(([, n]) => n).map(([f, n]) => `${n} ${f === 'skip' ? 'skipped' : f === 'refuse' ? 'refused' : f === 'hold' ? 'held' : `to ${f}`}`).join(', ') || 'nothing found';
@@ -1014,13 +1182,24 @@ export async function settingsCommand(ctx) {
     if (!interactive) {
       throw fail(`${unseen.length} of these ${unseen.length === 1 ? 'was' : 'were'} never shown before. Nothing sent: run woodshed settings plan, which sends nothing, then push again.`, { code: EXIT.waiting, status: 'not-shown' });
     }
-    const answer = await ask(`Upload ${outgoing.length} item${outgoing.length === 1 ? '' : 's'} to ${origin}? [y/N] `);
-    if (!/^y(es)?$/i.test(String(answer).trim())) {
-      say('Nothing sent.');
-      return EXIT.waiting;
+    const together = outgoing.filter((r) => r.kind !== 'dotfile');
+    if (unseen.some((r) => r.kind !== 'dotfile')) {
+      const answer = await ask(`Upload ${together.length} item${together.length === 1 ? '' : 's'} to ${origin}? [y/N] `);
+      if (!/^y(es)?$/i.test(String(answer).trim())) {
+        say('Nothing sent.');
+        return EXIT.waiting;
+      }
     }
+    // A dotfile is asked about on its own: it is a whole file of this computer's, where the rest are Claude's and Codex's.
+    for (const row of unseen.filter((r) => r.kind === 'dotfile')) {
+      const answer = await ask(`Save ${row.name}'s lines (${row.notes?.[0] ?? ''}) on My settings, for your private sessions? [y/N] `);
+      if (/^y(es)?$/i.test(String(answer).trim())) continue;
+      Object.assign(row, { fate: 'skip', reason: 'not confirmed' });
+      delete dotPlan.upload[row.id.slice('dotfile:'.length)];
+    }
+    counts = tally();
   }
-  outgoing.forEach((r) => kept.shown.add(r.id));
+  outgoing.filter((r) => r.fate === 'upload').forEach((r) => kept.shown.add(r.id));
   state.save(kept);
   let version = shared.version;
   const claudeChanges = Object.entries(claude.changed);
@@ -1039,12 +1218,19 @@ export async function settingsCommand(ctx) {
     if (answer.status !== 200) failed.push({ file, error: String(answer.body?.error ?? answer.status).slice(0, 200) });
   }
   const sentOwn = Object.keys(ownPlan.upload).length - failed.length;
+  let sentDotfiles = 0;
+  for (const [key, text] of Object.entries(dotPlan.upload)) {
+    const answer = await call(origin, `/api/cli/settings/dotfiles/${key}`, { method: 'POST', token, body: { text } });
+    if (answer.status === 200) sentDotfiles += 1;
+    else failed.push({ file: `dotfile/${key}`, error: String(answer.body?.error ?? answer.status).slice(0, 300) });
+  }
   const sentMcp = claudeChanges.filter(([id]) => parseEntryId(id)?.key === 'mcpServers').length;
   const sentSessions = claudeChanges.length - sentMcp;
-  if (json) emit({ event: 'pushed', console: origin, version, sent: claudeChanges.length, ownFilesSent: sentOwn, failed, ...counts });
-  if (sentSessions) say(`Sent ${sentSessions} Claude item${sentSessions === 1 ? '' : 's'} to your shared copy (version ${version}). Running sessions take them within a minute.`);
+  if (json) emit({ event: 'pushed', console: origin, version, sent: claudeChanges.length, ownFilesSent: sentOwn, dotfilesSent: sentDotfiles, failed, ...counts });
+  if (sentSessions) say(`Sent ${sentSessions} item${sentSessions === 1 ? '' : 's'} to your shared settings (version ${version}). Running sessions take them within a minute.`);
   if (sentMcp) say(`Saved ${sentMcp} MCP definition${sentMcp === 1 ? '' : 's'} for your computers (version ${version}).`);
   if (own) say(`Saved ${sentOwn} own file${sentOwn === 1 ? '' : 's'} for ${own.repo}: your next session on it writes them.`);
+  if (sentDotfiles) say(`Saved ${sentDotfiles} dotfile${sentDotfiles === 1 ? '' : 's'} on My settings: your next private session writes ${sentDotfiles === 1 ? 'it' : 'them'}.`);
   for (const { file, error } of failed) ctx.warn(`${file} not saved: ${error}`);
   return failed.length ? EXIT.failed : EXIT.done;
 }

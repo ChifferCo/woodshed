@@ -1,4 +1,4 @@
-// Each person's shared Claude settings (session/settingsSync.mjs has which items): the copy their running My Woodshed
+// Each person's shared Claude and Codex settings (session/settingsSync.mjs has which items): the copy their running My Woodshed
 // sessions keep in step with, a few seconds apart. Held here and saved to the homes bucket after each change, as
 // `<login>/claude-settings.json`, so a console restart loses nothing; a person's is read back the first time one of
 // their sessions asks.
@@ -7,6 +7,9 @@
 // whenever another session changed something in between. Servers sent by a computer are kept in a separate map in
 // the same object. The session API never returns that map, so importing a laptop's server cannot install it there.
 
+import { CODEX_CONFIG, configCredential } from '../shared/codexConfig.mjs';
+import { isCarriedSource } from '../shared/pluginSource.mjs';
+import { redact, secretContent } from '../shared/secretLike.mjs';
 import logins from './public/logins.cjs';
 const { loginKey } = logins;
 
@@ -18,8 +21,8 @@ function settingsKey(login) {
 }
 
 // The session checks each id against what it syncs; this keeps a path out of the shared copy that could reach outside
-// ~/.claude in the owner's other sessions.
-const ITEM_ID_RE = /^\.claude(?:\/[^/\\\0]+)+$|^\.claude\.json#mcpServers\/[^\0]+$/;
+// ~/.claude and ~/.codex in the owner's other sessions. A plugin's item is under ~/.claude too (its list's file).
+const ITEM_ID_RE = /^\.(?:claude|codex)(?:\/[^/\\\0]+)+$|^\.claude\.json#mcpServers\/[^\0]+$/;
 const isMcpServerItem = (id) => id.startsWith('.claude.json#mcpServers/');
 
 /** Whether a credential field holds text other than variable references and an optional auth scheme. */
@@ -63,6 +66,33 @@ function isItemId(id) {
 function isItemMap(value) {
   return value && typeof value === 'object' && !Array.isArray(value)
     && Object.entries(value).every(([id, v]) => isItemId(id) && typeof v === 'string');
+}
+
+const PLUGIN_ITEM = '.claude/plugins/installed_plugins.json#plugins/';
+
+/**
+ * Why the shared copy may not hold an item as sent, or null. A session and a computer leave out what this refuses
+ * (session/settingsSync.mjs, cli/settings.mjs): a client that does not is refused here, so the copy, which the person's
+ * computer and every one of their sessions read, never holds codex config with a credential in it or a plugin's
+ * marketplace with more than a session can add again.
+ */
+export function itemProblem(id, value) {
+  if (id === '.codex/auth.json') return 'a Codex sign-in stays where it was set';
+  if (id === CODEX_CONFIG) {
+    const credential = configCredential(Buffer.from(value, 'base64').toString('utf8'));
+    return credential ? `~/.codex/config.toml ${credential}: a credential stays where it was set` : null;
+  }
+  if (id.startsWith(PLUGIN_ITEM)) {
+    // Its name is said back and logged: one with a key's shape is refused without it.
+    if (secretContent(id)) return 'a plugin\'s name holds what looks like a key';
+    let item = null;
+    try {
+      item = JSON.parse(value);
+    } catch {}
+    const fine = item && typeof item === 'object' && Object.keys(item).join() === 'marketplace' && isCarriedSource(item.marketplace);
+    return fine ? null : `${redact(id.slice(PLUGIN_ITEM.length))}'s marketplace is not one a session can add`;
+  }
+  return null;
 }
 
 /**
@@ -127,9 +157,10 @@ export function createClaudeSettings({ store }) {
         if (fromLaptop && id === '.claude/settings.json' && hasLiteralHookHeader(value)) {
           throw Object.assign(new Error('a hook sends a literal HTTP header: use a variable reference'), { shown: true, status: 400 });
         }
-        if (laptopItem(id)) {
-          const problem = laptopMcpProblem(value);
-          if (problem) throw Object.assign(new Error(problem), { shown: true, status: 400 });
+        const fromComputer = laptopItem(id);
+        const problem = fromComputer ? laptopMcpProblem(value) : itemProblem(id, value);
+        if (problem) throw Object.assign(new Error(problem), { shown: true, status: 400 });
+        if (fromComputer) {
           laptopMcp[id] = value;
         } else {
           items[id] = value;
