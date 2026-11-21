@@ -437,8 +437,8 @@ reversible consequences, or changes that need more than a quick check. Low cover
 consequences that are easy to verify. The base branch's `.woodshed/riskAreas.md` helps reviewers look for failures
 specific to the repo.
 
-When both session reviewers finish and only one rates the change High, that reviewer needs to provide a reason and a
-verification step to set the combined tier. In their absence the check reports Medium and explains what is missing.
+The highest reported tier wins. When both reviewers rate the change High, the check prefers a report with a failure
+reason and a pre-merge check.
 
 ## The review in another repo
 

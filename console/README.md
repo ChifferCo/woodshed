@@ -1016,9 +1016,8 @@ review that runs on it later clears the skip.
 The two verdicts become one (`codeReview.mjs merge`):
 
 - The stricter conclusion wins, so a pull request is approved only when both approve.
-- The higher merge risk wins when both reviewers rate the change. If only one of two completed reviews rates the
-  change High, the report needs a failure reason and pre-merge check to set High. Otherwise the check reports Medium.
-  If both rate it High, the check prefers a report with both pieces of evidence.
+- The highest reported merge risk wins. When both rate it High, the check prefers a report with a failure reason
+  and a pre-merge check.
 - The comment and summary have a section from each, and each inline comment says whose it is.
 - An earlier comment is resolved when the reviewer who wrote it (its `**Claude Code:**` or `**Codex:**`, read from the
   comment records `review.sh` keeps in `earlier-comments.jsonl`) found it fixed;

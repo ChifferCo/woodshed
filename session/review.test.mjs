@@ -143,13 +143,13 @@ test('with Codex beside Claude Code, both review the same diff and the stricter 
   assert.deepEqual(body.inlineComments.map((c) => c.body), ['**Claude Code:** Say what it is for.', '**Codex:** This link 404s.']);
 });
 
-test('a disputed High without a pre-merge check is reported as Medium without changing the verdict', async (t) => {
+test('a disputed High without a pre-merge check stays High without changing the verdict', async (t) => {
   const codex = FAKE_CODEX.replace('MEDIUM', 'HIGH');
   const { reports, output } = await runReview(t, { agents: 'claude codex', codex });
   assert.match(output, /Verdict sent to the console \(status: 204\)/);
   const { body } = reports.find((r) => r.path === '/review-report');
-  assert.equal(body.mergeRisk.tier, 'Medium');
-  assert.match(body.mergeRisk.summary, /the High rating lacks a failure reason or a pre-merge check/);
+  assert.equal(body.mergeRisk.tier, 'High');
+  assert.match(body.mergeRisk.summary, /The higher of the reviewers' tiers: Codex's/);
   assert.equal(body.conclusion, 'REQUEST_CHANGES');
 });
 

@@ -140,11 +140,6 @@ function combinedMergeRisk(reviews) {
   const highestReports = rated.filter(({ verdict }) => verdict.mergeRisk.tier === tier);
   const supportedHigh = tier === 'High' && highestReports.find(({ verdict }) => hasHighRiskEvidence(verdict.mergeRisk));
   const { name, verdict: { mergeRisk } } = supportedHigh || highest;
-  if (reviews.length > 1 && tier === 'High' && highestReports.length === 1 && !supportedHigh) {
-    const reason = 'Only one reviewer rated this High, and the High rating lacks a failure reason or a pre-merge check.';
-    const reported = mergeRisk.reason ? `\n\n${name} reported: ${mergeRisk.reason}` : '';
-    return { tier: 'Medium', reason, summary: `MEDIUM\n${reason}${reported}` };
-  }
   if (rated.length < 2 || highestReports.length === rated.length) return { ...mergeRisk };
   return { ...mergeRisk, summary: `${mergeRisk.summary}\n\n(The higher of the reviewers' tiers: ${name}'s.)` };
 }
@@ -152,8 +147,8 @@ function combinedMergeRisk(reviews) {
 /**
  * One review from two reviewers' verdicts, each `{name, verdict}` with a verdict as verdictIn reads it. The strictest
  * conclusion wins (REQUEST_CHANGES, then COMMENT, then APPROVE), so a pull request is approved only when both approve.
- * When both reviewers finish but only one rates it High, High needs a reason and a pre-merge check to set the
- * combined tier. The comment and summary keep a section from each, and the inline comments say whose they are.
+ * The highest reported risk tier wins. The comment and summary keep a section from each, and the inline comments
+ * say whose they are.
  * An earlier comment one of them wrote (`authors`) is resolved when that one found it fixed: the other often leaves a
  * finding that is not its own off its list. One with no known writer, or whose writer wrote no verdict, is resolved only
  * when every reviewer with a verdict found it fixed. A reviewer that wrote no verdict is left out, and the comment says

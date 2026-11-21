@@ -166,16 +166,15 @@ test('the failure reason and pre-merge check can appear in either order', (t) =>
     ]).mergeRisk.tier;
   };
   assert.equal(merge(`HIGH\n${highRiskCheck}\nA new route could expose a private session.\n`), 'High');
-  assert.equal(merge(`HIGH\n${highRiskCheck}\n`), 'Medium');
+  assert.equal(merge(`HIGH\n${highRiskCheck}\n`), 'High');
 });
 
-test('an unrated verdict cannot let the other reviewer set High without evidence', () => {
+test('a High rating survives an unrated verdict without a pre-merge check', () => {
   const high = verdictOf('APPROVE', { tier: 'High' });
   high.mergeRisk.summary = 'HIGH\nHigh reason';
   const unrated = verdictOf('APPROVE', { tier: null });
   const merged = mergeVerdicts([{ name: 'Claude Code', verdict: unrated }, { name: 'Codex', verdict: high }]);
-  assert.equal(merged.mergeRisk.tier, 'Medium');
-  assert.match(merged.mergeRisk.summary, /Codex reported: High reason/);
+  assert.deepEqual(merged.mergeRisk, high.mergeRisk);
   assert.equal(merged.conclusion, 'APPROVE');
 });
 
