@@ -338,7 +338,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
       if (!err.hc) throw err;
       throw fail(printable(err.message, 500));
     }
-    const agent = await agentOn(ctx.hc, name).catch(() => ({ inHerdr: null, address: null }));
+    const agent = await agentOn(ctx.hc, name, { place: ctx.placeHerdrAgent !== false }).catch(() => ({ inHerdr: null, address: null }));
     const shown = summary(s, { origin, login });
     const code = shown.state === 'needs-you' ? EXIT.waiting : EXIT.done;
     if (json) {
@@ -346,6 +346,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
       return code;
     }
     say(added.action === 'kept' ? `${name} was already in Herdr, connected.` : `${name} is in Herdr: it shows in the app's sidebar.`);
+    if (agent.placementError) say(`Could not put the agent in a Herdr space: ${printable(agent.placementError, 500)}`);
     if (agent.inHerdr) say(`Its agent is ${agent.address}: hc attach ${agent.address}`);
     else if (agent.inHerdr === false) {
       say(`Its agent runs in tmux, not Herdr: Agent terminal on My settings was tmux when the session started. New terminals and agents on ${name} work; the agent itself is at ${shown.url}. Pick Herdr on My settings for your next sessions.`);

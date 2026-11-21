@@ -128,17 +128,22 @@ export async function addMachine(run, { name, via }) {
 }
 
 /**
- * Whether the session's agent runs in hc there: its terminal is there when the owner picked Herdr on My settings, and
- * absent when the session runs it in tmux.
- * @returns {Promise<{inHerdr: boolean|null, address: string|null}>}  null: hc could not tell
+ * Find the session's agent in hc. When requested, give an unplaced agent a space and tab for the app to show.
+ * @returns {Promise<{inHerdr: boolean|null, address: string|null, placementError?: string}>}  null: hc could not tell
  */
-export async function agentOn(run, name) {
+export async function agentOn(run, name, { place = false } = {}) {
   const out = await run(['get', '--json', `${name}/${AGENT_TERMINAL}`]);
-  if (out.code === 0) {
-    const terminal = parsed(out.stdout);
-    return { inHerdr: true, address: typeof terminal?.address === 'string' ? terminal.address : `${name}/${AGENT_TERMINAL}` };
+  if (out.code !== 0) return { inHerdr: hcError(out).kind === 'not_found' ? false : null, address: null };
+  const terminal = parsed(out.stdout);
+  const reported = typeof terminal?.address === 'string' ? terminal.address : AGENT_TERMINAL;
+  const address = reported.startsWith(`${name}/`) ? reported : `${name}/${reported}`;
+  const agent = { inHerdr: true, address };
+  if (place && terminal && terminal.state !== 'finished' && !terminal.labels?.['herdr.space'] && !terminal.labels?.['herdr.tab']) {
+    // Stable ids let the app adopt the terminal again when the machine reconnects.
+    const labels = await run(['label', '--json', address, `herdr.space=${name}`, `herdr.tab=${name}-agent`]);
+    if (labels.code !== 0) return { ...agent, placementError: hcError(labels).message };
   }
-  return { inHerdr: hcError(out).kind === 'not_found' ? false : null, address: null };
+  return agent;
 }
 
 /**

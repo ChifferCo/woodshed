@@ -8,6 +8,8 @@
 
 import { printable } from './sessions.mjs';
 
+export const CONFIG_UNAVAILABLE = 'config-unavailable';
+
 // Each key, the route that sets it, what it sends, and what it says after a change that does not reach a running
 // session. `values` is what the command line offers; the console checks what it is sent, as it does the page's.
 export const CONFIG_KEYS = Object.freeze({
@@ -134,7 +136,7 @@ export async function configCommand({ origin, rest }, ctx) {
     if (out.status === 401) {
       throw fail(`The sign-in to ${origin} ended: ${why ?? 'it was revoked, or it expired'}. Run: woodshed login --console ${origin}`, { code: EXIT.waiting, status: 'signed-out' });
     }
-    if (out.status === 404 && (method === 'GET' || !why)) throw fail(`${origin} answered 404: a console from before woodshed config`);
+    if (out.status === 404 && (method === 'GET' || !why)) throw fail(`${origin} answered 404: a console from before woodshed config`, { status: CONFIG_UNAVAILABLE });
     if (out.status === 403 && /does not reach this/.test(why ?? '')) throw fail(`${origin} does not let the command line change ${key ?? 'settings'}: a console from before woodshed config`);
     if (out.status >= 400) return { refusal: { status: out.status, error: why ?? `${origin} answered ${out.status}` } };
     if (!out.body || typeof out.body !== 'object') throw fail(`${origin} answered ${out.status} with no JSON: not a Woodshed console`);
