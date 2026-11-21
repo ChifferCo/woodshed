@@ -18,11 +18,15 @@ import {
 } from "herdr";
 import {
   EXIT, SESSION_ID, sessionOfMachine, terminalName, newSessionArgs, startProgress, outcomeOf,
-  pauseText, mayExtend, newlyBlocked, blockedNotice,
+  pauseText, mayExtend, newlyBlocked, blockedNotice, shouldTell,
 } from "./woodshed.js";
 import {
-  readPanel, tidyStarts, startRefusal, startInTerminal, pollStart, readSession, extendSession,
+  readPanel, tidyStarts, startRefusal, startInTerminal, pollStart, readSession, extendSession, signInCommand,
 } from "./actions.js";
+
+// When each blocked agent was last told of, shared by every copy of the panel (module code is), so two panels in
+// the layout make one toast.
+const toldAt = new Map();
 
 const I = (name) => `mods/workspace-chrome/${name}.svg`;
 const LIVE = new Set(["queued", "starting", "running", "stopping"]);
@@ -190,7 +194,8 @@ export default class Woodshed extends View {
 
   async signIn() {
     try {
-      run("tab.new", { name: "woodshed login", argv: [await cli(), "login"], folder: home() });
+      const command = signInCommand(await cli(), home());
+      run(command.name, command.args);
     } catch (err) {
       notify({ title: "Woodshed", body: err.message, level: "error" });
     }
@@ -373,6 +378,8 @@ export default class Woodshed extends View {
           ? "Extend puts its pause or stop off by an hour."
           : "Extend opens in the last 15 minutes before it pauses or stops. A connection does not keep it awake.") : ""))
       .when(Boolean(this.extendSaid), (el) => el.child(div().pt(6).text_size(12).text_color(t.blocked).child(this.extendSaid)))
+      .when(Boolean(this.infoError), (el) => el.child(div().pt(6).text_size(12).text_color(t.blocked)
+        .child(`Not read again: ${this.infoError}. This is what it said last.`)))
       .child(h_flex().pt(16).gap(8).justify_end().flex_wrap()
         .child(button("ws-console", "Open on the console", false, true, (_e, cx) => openUrl(cx, s.url)))
         .child(button("ws-extend", this.extending ? "Extending…" : "Extend", true, running && canExtend, (_e, cx) => this.extend(cx))));
@@ -392,5 +399,6 @@ function newlyBlockedOnce(panel) {
   const first = !panel.watching;
   panel.watching = true;
   const fresh = newlyBlocked(panel.seen, agents(), spaces());
-  return first ? [] : fresh.map((b) => blockedNotice(b, panel.sessions));
+  if (first) return [];
+  return fresh.filter((b) => shouldTell(toldAt, b.address, Date.now())).map((b) => blockedNotice(b, panel.sessions));
 }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  readPanel, tidyStarts, startRefusal, pollStart, readSession, extendSession, startInTerminal,
+  readPanel, tidyStarts, startRefusal, pollStart, readSession, extendSession, startInTerminal, signInCommand,
 } from './woodshed/actions.js';
 import { terminalName, newSessionArgs } from './woodshed/woodshed.js';
 
@@ -135,4 +135,11 @@ test('Session info reads the session, and Extend sends that session\'s id and re
   assert.equal(await extendSession(cli, 'cd34ef56'), 'Only in its last 15 minutes');
   assert.deepEqual(await readSession(cli, 'cd34ef56'), { error: 'No session cd34ef56 you can see' });
   assert.deepEqual(calls.filter((c) => c[1] === 'extend'), [['session', 'extend', 'ab12cd34', '--json'], ['session', 'extend', 'cd34ef56', '--json']]);
+});
+
+test('Sign in runs login in a new space on this computer, never the focused one', () => {
+  assert.deepEqual(signInCommand('/usr/local/bin/woodshed', '/home/ana'), {
+    name: 'space.new',
+    args: { name: 'woodshed login', machine: '', folder: '/home/ana', argv: ['/usr/local/bin/woodshed', 'login'] },
+  });
 });

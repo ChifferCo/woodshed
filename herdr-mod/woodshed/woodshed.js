@@ -144,6 +144,16 @@ export function newlyBlocked(seen, agents, spaces) {
   return out;
 }
 
+/**
+ * Whether to tell of an agent now. Every copy of the panel sees the same agents, so the copies share `toldAt`
+ * (address -> ms) and only the first tells within `windowMs`.
+ */
+export function shouldTell(toldAt, address, now, windowMs = 10_000) {
+  if (now - (toldAt.get(address) ?? -Infinity) < windowMs) return false;
+  toldAt.set(address, now);
+  return true;
+}
+
 /** The notification for an agent that needs the person, naming its session. */
 export function blockedNotice({ address, session, agent }, sessions) {
   const known = (sessions ?? []).find((s) => s.id === session);

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   sessionOfMachine, terminalName, terminalKind, newSessionArgs, jsonLines, startProgress, errorOf, outcomeOf, pauseText,
-  mayExtend, newlyBlocked, blockedNotice,
+  mayExtend, newlyBlocked, blockedNotice, shouldTell,
 } from './woodshed/woodshed.js';
 
 // The lines below are what the command line prints with --json: `session new` (cli/sessions.mjs).
@@ -87,4 +87,12 @@ test('an agent in a session\'s machine that becomes blocked is told once, naming
 
 test('jsonLines keeps objects only', () => {
   assert.deepEqual(jsonLines('plain\n{"a":1}\n[1]\n{bad\n'), [{ a: 1 }]);
+});
+
+test('two panels tell of the same blocked agent once', () => {
+  const toldAt = new Map();
+  assert.equal(shouldTell(toldAt, 'woodshed-ab12cd34/t2', 1_000), true);
+  assert.equal(shouldTell(toldAt, 'woodshed-ab12cd34/t2', 1_500), false, 'the second panel, the same moment');
+  assert.equal(shouldTell(toldAt, 'woodshed-ab12cd34/t3', 1_500), true, 'another agent');
+  assert.equal(shouldTell(toldAt, 'woodshed-ab12cd34/t2', 20_000), true, 'blocked again later');
 });

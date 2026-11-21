@@ -75,6 +75,15 @@ export async function tidyStarts(core, finishedBefore) {
   for (const name of finished) finishedBefore.add(name);
 }
 
+/**
+ * The app command that signs the command line in: `woodshed login` in a new space on this computer (`machine: ""`),
+ * where the person sees the code. Never the focused space, which may be on another machine: the token would be kept
+ * there.
+ */
+export function signInCommand(path, home) {
+  return { name: 'space.new', args: { name: 'woodshed login', machine: '', folder: home, argv: [path, 'login'] } };
+}
+
 // ---- New session ----
 
 /** @returns {string|null}  why the form cannot start yet (the console refuses no prompt unless on a branch or PR) */

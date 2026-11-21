@@ -24,7 +24,8 @@ window. It stays out of your spaces, and is removed once it ends. `hc ls` lists 
 ## What it needs
 
 - The `woodshed` command line on your shell's `PATH`, signed in (`woodshed login`). With no sign-in, the panel offers
-  **Sign in…**, which runs `woodshed login` in a new tab, where you see the code.
+  **Sign in…**, which runs `woodshed login` in a new space on this computer (never the focused space, which may be
+  another machine's), where you see the code.
 - Its `session` commands, which the command line has had since #279.
 - For notifications, a session added to Herdr as the machine `woodshed-<id>`. That is the name `woodshed session
   connect` is to use; until it ships, add one by hand with `woodshed tunnel`:
