@@ -11,22 +11,22 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   // are Repo settings (myRepoSettings.js).
   const FILE_ROWS = {
     'tmux-conf': {
-      title: 'tmux', placeholder: 'set -g prefix C-a',
+      id: 'my-tmux', title: 'tmux', placeholder: 'set -g prefix C-a',
       about: 'Your sessions use the image\'s tmux config, and add your own lines after it, so a setting in both uses yours. Your next My Woodshed session picks up what you save; running ones keep theirs. Your own values for a repo\'s env files are under Repo settings.',
       after: 'Loaded by claude\'s tmux. Prefix then r reloads it in a running session.',
     },
     gitconfig: {
-      title: 'git', placeholder: '[alias]\n\tco = checkout\n[pull]\n\trebase = true',
+      id: 'my-gitconfig', title: 'git', placeholder: '[alias]\n\tco = checkout\n[pull]\n\trebase = true',
       about: 'Your own aliases and colors, and how diff, merge, pull, push and rebase behave, after what your session sets. Your session commits as you and signs in to GitHub by itself, so [user], [credential], [url], [include], a pager, an editor, a path or a credential is refused.',
       after: 'woodshed settings push fills it from your computer\'s ~/.gitconfig, leaving out what a session does not take.',
     },
     inputrc: {
-      title: 'readline', placeholder: 'set editing-mode vi',
+      id: 'my-inputrc', title: 'readline', placeholder: 'set editing-mode vi',
       about: 'Your own ~/.inputrc lines for the bash in your session\'s terminals, after the system\'s own. An $include only of a file under /etc.',
       after: 'woodshed settings push fills it from your computer\'s ~/.inputrc.',
     },
     'bash-aliases': {
-      title: 'Shell aliases', placeholder: "alias ll='ls -la'",
+      id: 'my-bash-aliases', title: 'Shell aliases', placeholder: "alias ll='ls -la'",
       about: 'Alias lines alone, one to a line, which bash reads in your session\'s terminals. Nothing that sets a variable or runs a command as it is read, and no credential.',
       after: 'woodshed settings push fills it from the aliases in your computer\'s ~/.bash_aliases, ~/.bashrc and ~/.zshrc.',
     },
@@ -591,7 +591,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     const shared = Boolean(f?.sharedText);
     const cleared = shared ? `Your sessions use the shared ${label} alone.` : `Your sessions get none of your own lines for ${label}.`;
     return row({
-      id: `my-${key}`, title: text.title, pill,
+      id: text.id, title: text.title, pill,
       value: f?.custom ? `Your own lines, after the ${shared ? 'shared' : 'session\'s'} ${label}` : shared ? `The shared ${label}, and your own lines after it once you add some` : `Your own lines for ${label}, once you add some`,
     },
     h('p', { class: 'sub' }, text.about),
