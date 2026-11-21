@@ -319,6 +319,8 @@ export function withoutStateHooks(settings) {
 const SECRET_WORD_RE = /token|password|passwd|pass|pwd|secret|key|auth|credential/i;
 // A flag whose value is a credential only when it looks like one: curl's -u user:password, but not python's -u alone.
 const USER_FLAG_RE = /^(-u|-U|--user|--proxy-user)$/;
+// curl's no-argument short switches can precede -b in a group such as -sSb.
+const CURL_COOKIE_SHORT = /^-[#012346aBfGgIiJjkLlMNnOpqRSsVvZ:]*b/;
 
 /**
  * A program's command line as it may be shown: every value that may be a credential hidden as `…`. The real one is kept
@@ -335,17 +337,18 @@ export function shownCommand(argv, looksSecret = () => false) {
     const name = equals < 0 ? word : word.slice(0, equals);
     const credentialName = /^[\w-]+$/.test(name) && SECRET_WORD_RE.test(name);
     const flag = name.startsWith('-');
+    const cookie = curl && (name === '--cookie' ? name : CURL_COOKIE_SHORT.exec(word)?.[0]);
+    const attached = cookie ? word.slice(cookie.length + (cookie === '--cookie' ? 1 : 0)) : '';
     const safeUrl = hideUrlPasswords(word);
     const hide = hideNext;
     // A word hidden as the preceding switch's value can still be an option with a secret value of its own.
     hideNext = i + 1 < argv.length && ((credentialName && flag && equals < 0)
       || (USER_FLAG_RE.test(word) && String(argv[i + 1]).includes(':'))
-      || (curl && (word === '-b' || word === '--cookie') && String(argv[i + 1]).includes('=')));
+      || (cookie === word && String(argv[i + 1]).includes('=')));
     if (hide || looksSecret(safeUrl)) out.push('…');
     else if (CREDENTIAL_HEADER_ARGUMENT.test(word)) out.push(`${word.split(':')[0]}: …`);
     // curl reads a cookie file when there is no '=' and uses the value inline when there is.
-    else if (curl && word.startsWith('--cookie=') && word.slice('--cookie='.length).includes('=')) out.push('--cookie=…');
-    else if (curl && word.startsWith('-b') && equals >= 0) out.push('-b…');
+    else if (attached.includes('=')) out.push(cookie === '--cookie' ? '--cookie=…' : cookie + '…');
     else if (safeUrl !== word) out.push(safeUrl);
     // curl's user:password joined to its flag: -uuser:pass, --user=user:pass.
     else if (/^(-[uU][^-\s]|--(proxy-)?user=)[^:]*:/.test(word)) out.push(`${word.startsWith('--') ? word.split('=')[0] : word.slice(0, 2)}…`);

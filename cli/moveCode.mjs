@@ -144,8 +144,12 @@ const CREDENTIAL_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'x
 const headerNames = CREDENTIAL_HEADERS.join('|');
 export const CREDENTIAL_HEADER_ARGUMENT = new RegExp(`^(--header=|-H)?\\s*(?:${headerNames})\\s*:`, 'i');
 const CREDENTIAL_HEADER_TEXT = new RegExp(`(?:^|[^\\w-])(${headerNames})[\\t ]*:[\\t ]*(["'\\x60]?)([^"'\\x60,()}\\r\\n\\0]+)`, 'gi');
+const COOKIE_HEADER_TEXT = /(?:^|[^\w-])(cookie)[\t ]*:([^\r\n\0]+)/gi;
+const DIGEST_HEADER_TEXT = /(?:^|[^\w-])((?:proxy-)?authorization)[\t ]*:[\t ]*["'\x60]?(digest[\t ]+[^\r\n\0]+)/gi;
 const isCredentialHeader = (name) => typeof name === 'string' && CREDENTIAL_HEADERS.includes(name.trim().toLowerCase());
 const AUTH_SCHEME = /^(?:bearer|basic|token)[\t ]+/i;
+const DIGEST_SCHEME = /^digest[\t ]+/i;
+const DIGEST_RESPONSE = /(?:^|,)[\t ]*response[\t ]*=[\t ]*(?:"([^"\r\n]+)"|([^",\s]+))/gi;
 const PLACEHOLDER = /^(?:\$|<[^>]+>|…|\.{3}|(?:process\.env|os\.environ|req(?:uest)?\.headers)(?:\.|\[|$))/i;
 const TYPE_OR_SCHEME = /^(?:string|number|boolean|unknown|any|null|undefined|never|object|bearer|basic|token)(?:\[\])?;?$/i;
 
@@ -153,28 +157,37 @@ function isLiteral(value) {
   return value && !PLACEHOLDER.test(value) && !value.includes('${') && !value.includes('{{');
 }
 
-function headerLiteral(name, raw) {
-  const text = raw.trim();
-  const value = text.replace(AUTH_SCHEME, '');
+function hasLiteralHeader(name, raw, isNew) {
+  let text = raw.trim();
   // Cookie headers carry name=value pairs. A source member access or a "cookie" translation is not one.
   if (name === 'cookie') {
-    const hasCookie = value.split(';').some((pair) => {
+    const boundary = /^["'\x60]/.test(text) ? text.indexOf(text[0], 1) : -1;
+    if (boundary >= 0) text = text.slice(1, boundary);
+    return text.split(';').some((pair) => {
       const equals = pair.indexOf('=');
-      return equals > 0 && isLiteral(pair.slice(equals + 1).trim());
+      if (equals <= 0) return false;
+      const key = pair.slice(0, equals).trim().replace(/^["'\x60]/, '');
+      if (!/^[\w!#$%&'*+.^\x60|~-]+$/.test(key)) return false;
+      const value = pair.slice(equals + 1).trim().replace(/^["']|["']$/g, '');
+      return isLiteral(value) && isNew(name, `${key}=${value}`);
     });
-    return hasCookie ? value : null;
   }
-  return isLiteral(value) && (value !== text || !TYPE_OR_SCHEME.test(value)) ? value : null;
+  if (name.endsWith('authorization') && DIGEST_SCHEME.test(text)) {
+    for (const [, quoted, bare] of text.replace(DIGEST_SCHEME, '').matchAll(DIGEST_RESPONSE)) {
+      const response = quoted ?? bare;
+      if (isLiteral(response) && isNew(name, response)) return true;
+    }
+    return false;
+  }
+  const value = text.replace(AUTH_SCHEME, '');
+  return isLiteral(value) && (value !== text || !TYPE_OR_SCHEME.test(value)) && isNew(name, value);
 }
 
 function credentialHeaderKind(text, isNew) {
   const header = 'a credential header';
   const hasValue = (name, value) => {
     name = name.trim().toLowerCase();
-    return (Array.isArray(value) ? value : [value]).some((part) => {
-      const literal = typeof part === 'string' ? headerLiteral(name, part) : null;
-      return literal !== null && isNew(name, literal);
-    });
+    return (Array.isArray(value) ? value : [value]).some((part) => typeof part === 'string' && hasLiteralHeader(name, part, isNew));
   };
   const pending = [text];
   // Keep the existing per-record scan and bound extra decoding by both the input length and the blob scan limit.
@@ -182,21 +195,35 @@ function credentialHeaderKind(text, isNew) {
   while (pending.length) {
     const item = pending.pop();
     if (typeof item === 'string') {
+      if (/^\ufeff?[\t\r\n ]*(?:\{|\[|")/.test(item)) {
+        remaining -= item.length;
+        if (remaining < 0) return 'embedded JSON exceeds the credential scan budget';
+        try {
+          pending.push(JSON.parse(item.replace(/^\ufeff/, '')));
+          continue;
+        } catch {
+          // The string may contain plain text that starts like JSON.
+        }
+      }
+      for (const [, name, value] of item.matchAll(COOKIE_HEADER_TEXT)) {
+        if (hasValue(name, value)) return header;
+      }
+      for (const [, name, value] of item.matchAll(DIGEST_HEADER_TEXT)) {
+        if (hasValue(name, value)) return header;
+      }
       for (const match of item.matchAll(CREDENTIAL_HEADER_TEXT)) {
         const [whole, name, quote, value] = match;
         const next = item[match.index + whole.length];
         const bare = value.trim();
+        const key = name.toLowerCase();
+        if (key === 'cookie' || (key.endsWith('authorization') && DIGEST_SCHEME.test(bare))) continue;
         // Unquoted calls and identifiers before JS object delimiters are expressions.
         if (!quote && !AUTH_SCHEME.test(bare)
             && (next === '(' || ((next === ',' || next === '}') && /^[\w.$]+$/.test(bare)))) continue;
         // A short bare identifier in an Authorization field can also be a source variable at the end of a line.
-        if (!quote && name.toLowerCase() === 'authorization' && bare.length < 16 && /^[a-z_$][\w$]*$/i.test(bare)) continue;
+        if (!quote && key.endsWith('authorization') && bare.length < 16 && /^[a-z_$][\w$]*$/i.test(bare)) continue;
         if (hasValue(name, value)) return header;
       }
-      if (!/^\ufeff?[\t\r\n ]*(?:\{|\[|")/.test(item)) continue;
-      remaining -= item.length;
-      if (remaining < 0) return 'embedded JSON exceeds the credential scan budget';
-      try { pending.push(JSON.parse(item.replace(/^\ufeff/, ''))); } catch {}
       continue;
     }
     if (!item || typeof item !== 'object') continue;

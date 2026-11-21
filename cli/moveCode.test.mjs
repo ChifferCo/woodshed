@@ -44,6 +44,8 @@ test('credential headers distinguish literals from references and placeholders',
     'curl -H "Authorization: Bearer $TOKEN"',
     'Authorization: Bearer <token>',
     'interface Request { authorization: string; }',
+    JSON.stringify({ content: 'const headers = {\n  Authorization: token\n};' }),
+    JSON.stringify({ content: 'interface Request {\n  authorization: string;\n  cookie?: string;\n}' }),
     'const headers = { authorization: token, cookie: req.headers.cookie };',
     'const headers = { authorization: getToken() };',
     'Authorization: process.env.API_TOKEN',
@@ -55,6 +57,11 @@ test('credential headers distinguish literals from references and placeholders',
     assert.deepEqual(secretsIn(input, '', options), [{ line: 1, kind: 'a credential header' }]);
     assert.deepEqual(secretsIn(input, input, options), []);
   }
+  const digest = (response) => `Authorization: Digest username="fixture", response="${response}"`;
+  assert.deepEqual(secretsIn(digest('new-inert-response'), digest('old-inert-response'), options), [
+    { line: 1, kind: 'a credential header' },
+  ]);
+  assert.deepEqual(secretsIn('Cookie: theme=${THEME}; session=abc==', '', options), [{ line: 1, kind: 'a credential header' }]);
 });
 
 test('embedded JSON inspection allows ordinary tool output and refuses when decoding exceeds its budget', () => {

@@ -391,7 +391,8 @@ test('decoded transcript credential headers refuse a move before push or upload'
   const requestLog = JSON.stringify({ type: 'tool_result', headers: [{ name: 'Authorization', value: `Bearer ${value}` }] });
   const output = JSON.stringify({ type: 'tool_result', content: JSON.stringify({ headers: { Authorization: `Bearer ${value}` } }, null, 2) });
   const wrapped = JSON.stringify({ type: 'tool_result', content: JSON.stringify({ stdout: output }) });
-  fs.appendFileSync(file, `${[raw, escaped, listValue, pair, requestLog, output, wrapped].join('\n')}\n`);
+  const cookie = JSON.stringify({ type: 'tool_result', content: `GET /fixture\nCookie: theme=\${THEME}; session=${value}` });
+  fs.appendFileSync(file, `${[raw, escaped, listValue, pair, requestLog, output, wrapped, cookie].join('\n')}\n`);
   fs.writeFileSync(path.join(l.repo.bare, 'hooks', 'pre-receive'), '#!/bin/sh\ntouch push-started\n', { mode: 0o755 });
 
   const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json']);
@@ -404,6 +405,7 @@ test('decoded transcript credential headers refuse a move before push or upload'
     { address: 't1', line: 7, kind: 'a credential header' },
     { address: 't1', line: 8, kind: 'a credential header' },
     { address: 't1', line: 9, kind: 'a credential header' },
+    { address: 't1', line: 10, kind: 'a credential header' },
   ]);
   assert.ok(!(out.out + out.err).includes(value));
   assert.ok(!l.calls.some(([method]) => method === 'POST'));
@@ -655,7 +657,7 @@ test('a program with a credential on its command line is never started again in 
 test('curl inline cookies stay out of the move preview and remote command', async (t) => {
   const value = 'inert-inline-cookie';
   const cookie = `session=${value}`;
-  for (const flag of [['-b', cookie], ['--cookie', cookie], [`-b${cookie}`], [`--cookie=${cookie}`]]) {
+  for (const flag of [['-b', cookie], ['--cookie', cookie], [`-b${cookie}`], [`--cookie=${cookie}`], ['-sb', cookie], [`-sSbsession=${value}`]]) {
     const l = laptop(t);
     Object.assign(l.h.terminals.get(l.dev).foreground, { name: 'curl', argv: ['/usr/bin/curl', ...flag, 'https://example.invalid'] });
     const args = ['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--restart', 'auto', '--console', ORIGIN, '--json'];
