@@ -147,6 +147,21 @@ export function linkOnPath(root, rel) {
 
 const fileOf = (id) => parseEntryId(id)?.file ?? id;
 
+/**
+ * A dropped path as the list shows it: the home by name and at most its first two plain folder or file names, so a token
+ * inside the rest of an argument (a query string, a key in a file name) is never printed.
+ */
+export function shownPath(dropped, from) {
+  const rest = dropped.startsWith(from) ? dropped.slice(from.length) : dropped.replace(/^(~|\$HOME|\$\{HOME\})/, '');
+  const parts = rest.split('/').filter(Boolean);
+  const plain = [];
+  for (const part of parts.slice(0, 2)) {
+    if (!/^[A-Za-z0-9._-]{1,32}$/.test(part) || secretContent(part)) break;
+    plain.push(part);
+  }
+  return `~/${plain.join('/')}${plain.length < parts.length ? `${plain.length ? '/' : ''}...` : ''}`;
+}
+
 const DROP = Symbol('drop');
 const ONLY = 'left out by --only';
 
@@ -246,7 +261,7 @@ function serverCredential(server) {
   const env = Object.entries(server?.env ?? {}).find(([k, v]) => SECRET_VARIABLE.test(k) && literal(v));
   if (env) return `its env sets ${env[0]}`;
   const header = Object.entries(server?.headers ?? {}).find(([k, v]) => SECRET_HEADER.test(k) && literal(v));
-  if (header) return `it sends a ${header[0]} header`;
+  if (header) return `it sends its ${header[0]} header`;
   return null;
 }
 
@@ -277,7 +292,7 @@ export function translate(id, value, { from, to, statusLineOf }) {
       server = { ...server, command: path.posix.basename(server.command) };
     }
     const moved = movePaths(server, { from, to });
-    if (moved.value === DROP || moved.dropped.length) return { fate: 'skip', reason: `names ${moved.dropped[0]?.path ?? from}, a path the other side does not have` };
+    if (moved.value === DROP || moved.dropped.length) return { fate: 'skip', reason: `names ${moved.dropped[0] ? shownPath(moved.dropped[0].path, from) : '~'}, a path the other side does not have` };
     if (moved.moved) notes.push(`${moved.moved} path${moved.moved === 1 ? '' : 's'} moved to ${to}`);
     const text = JSON.stringify(moved.value);
     const kind = secretContent(text);
@@ -322,7 +337,7 @@ export function translate(id, value, { from, to, statusLineOf }) {
   }
   const { statusLine, ...rest } = json;
   const moved = movePaths(rest, { from, to });
-  notes.push(...moved.dropped.map((d) => `${d.at} (names ${d.path}, not on the other side)`));
+  notes.push(...moved.dropped.map((d) => `${d.at} (names ${shownPath(d.path, from)}, not on the other side)`));
   const body = moved.value === DROP ? {} : moved.value;
   const out = withStatusLineOf(encodeJson(statusLine === undefined ? body : { ...body, statusLine }), statusLineOf ?? NO_STATUS_LINE);
   const kind = secretContent(Buffer.from(out, 'base64').toString('utf8'));
@@ -507,7 +522,7 @@ export function runsOf(id, value) {
  *   items and before: applyItems' arguments
  */
 export async function claudePullPlan({ home, shared, only, replace }) {
-  const { items: local } = await readSnapshot(home);
+  const { items: local, oversized } = await readSnapshot(home);
   const rows = [];
   const items = {};
   for (const [id, raw] of Object.entries(shared)) {
@@ -523,6 +538,10 @@ export async function claudePullPlan({ home, shared, only, replace }) {
     const link = linkOnPath(home, fileOf(id));
     if (link) {
       rows.push({ ...row, fate: 'skip', reason: `~/${link} is a symlink here, which is not written through` });
+      continue;
+    }
+    if (oversized.includes(id)) {
+      rows.push({ ...row, fate: 'skip', reason: `yours is over ${MAX_ITEM_BYTES / 1024 / 1024} MB, and is left as it is` });
       continue;
     }
     const out = translate(id, raw, { from: SESSION_HOME, to: home, statusLineOf: local[SETTINGS] });

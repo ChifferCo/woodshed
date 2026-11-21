@@ -12,7 +12,7 @@ import { createRepoSettings } from '../console/repoSettings.mjs';
 import { createHandler } from '../console/server.mjs';
 import { applyItems } from '../session/settingsSync.mjs';
 import { createCredentials } from './credentials.mjs';
-import { envLike, matchesOnly, movePaths, parseSettingsArgs, runsOf, secretContent, secretName, SESSION_HOME, translate } from './settings.mjs';
+import { envLike, matchesOnly, movePaths, parseSettingsArgs, runsOf, secretContent, secretName, SESSION_HOME, shownPath, translate } from './settings.mjs';
 import { EXIT, main } from './woodshed.mjs';
 
 const b64 = (value) => Buffer.from(typeof value === 'string' ? value : `${JSON.stringify(value, null, 2)}\n`).toString('base64');
@@ -165,7 +165,7 @@ test('settings.json loses its status line, credential helpers and secret env, an
     hooks: { Stop: [{ hooks: [{ type: 'command', command: 'bash /home/node/.claude/skills/x/run.sh' }] }] },
   });
   const said = out.notes.join(' ');
-  for (const words of ['statusLine', 'apiKeyHelper (a credential helper)', 'env.GITHUB_TOKEN (a credential)', 'hooks.Stop[0].hooks[0] (names /Users/mia/bin/n.sh', 'permissions.allow[1]', '1 path moved to /home/node']) {
+  for (const words of ['statusLine', 'apiKeyHelper (a credential helper)', 'env.GITHUB_TOKEN (a credential)', 'hooks.Stop[0].hooks[0] (names ~/bin/n.sh', 'permissions.allow[1]', '1 path moved to /home/node']) {
     assert.ok(said.includes(words), `says ${words}: ${said}`);
   }
   assert.ok(!said.includes('not-a-real') && !said.includes('"x"'), 'never a value');
@@ -181,8 +181,8 @@ test('an MCP server: a program on the PATH by its bare name, a key in its env re
   assert.equal(entry({ url: 'https://x', headers: { Authorization: 'Bearer abc' } }).fate, 'refuse');
   assert.equal(entry({ url: 'https://x', headers: { Authorization: 'Bearer ${TOKEN}' } }).fate, undefined, 'a variable of the session\'s is no secret');
   assert.equal(entry({ command: 'npx', env: { API_KEY: '${API_KEY:-}' } }).fate, undefined);
-  assert.match(entry({ command: 'node', args: ['/Users/mia/code/mcp/index.js'] }).reason, /names \/Users\/mia\/code\/mcp\/index\.js/);
-  assert.match(entry({ command: '/Users/mia/.local/bin/thing' }).reason, /names \/Users\/mia\/.local\/bin\/thing/);
+  assert.match(entry({ command: 'node', args: ['/Users/mia/code/mcp/index.js'] }).reason, /names ~\/code\/mcp\/\.\.\./);
+  assert.match(entry({ command: '/Users/mia/.local/bin/thing' }).reason, /names ~\/\.local\/bin\/\.\.\./);
   assert.match(entry({ command: '/nix/store/abc/bin/thing' }).reason, /runs \/nix\/store\/abc\/bin\/thing/);
   assert.equal(translate('.claude/.credentials.json#mcpOAuth/x', '{}', opts).fate, 'refuse');
 });
@@ -603,10 +603,37 @@ test('a hook carrying a credential is left out both ways, and never printed', ()
   const up = translate('.claude/settings.json', b64({ hooks }), { from: '/Users/mia', to: SESSION_HOME });
   const sent = JSON.parse(unb64(up.value));
   assert.deepEqual(sent.hooks.Stop[0].hooks.map((h) => h.url ?? h.command), ['https://hooks.example/ok', 'echo done']);
-  assert.match(up.notes.join(' '), /hooks\.Stop\[0\]\.hooks\[0\] \(sends a Authorization header, a credential\)/);
+  assert.match(up.notes.join(' '), /hooks\.Stop\[0\]\.hooks\[0\] \(sends its Authorization header, a credential\)/);
   assert.ok(!up.notes.join(' ').includes('dummy-hook-secret'));
   const down = translate('.claude/settings.json', b64({ hooks }), { from: SESSION_HOME, to: '/Users/mia' });
   const runs = runsOf('.claude/settings.json', down.value);
   assert.ok(!runs.join('\n').includes('dummy-hook-secret'), 'a pull\'s preview never shows it');
   assert.equal(JSON.parse(unb64(down.value)).hooks.Stop[0].hooks.length, 2);
+});
+
+test('a dropped path is shown by its first plain names only, so a token in an argument is never printed', async (t) => {
+  const token = FAKE_GITHUB_TOKEN;
+  assert.equal(shownPath('/Users/mia/notes/**', '/Users/mia'), '~/notes/...');
+  assert.equal(shownPath('/Users/mia/bin/notify.sh', '/Users/mia'), '~/bin/notify.sh');
+  assert.equal(shownPath(`/Users/mia/bin/hook?token=${token}`, '/Users/mia'), '~/bin/...');
+  assert.equal(shownPath(`~/${token}/x`, '/Users/mia'), '~/...');
+  const home = laptopHome(t);
+  const settings = JSON.parse(fs.readFileSync(path.join(home, '.claude/settings.json'), 'utf8'));
+  settings.hooks.Stop[0].hooks.push({ type: 'command', command: `${home}/bin/post.sh?key=${token}` });
+  write(home, '.claude/settings.json', settings);
+  const c = await setUp(t, { home });
+  for (const args of [['settings', 'plan'], ['settings', 'plan', '--json']]) {
+    const out = await c.run(args);
+    assert.equal(out.code, EXIT.done, out.err);
+    assert.ok(!out.out.includes(token), `${args.join(' ')} never prints it`);
+    assert.match(out.out, /hooks\.Stop\[0\]\.hooks\[1\] \(names ~\/bin\/\.\.\., not on the other side\)/);
+  }
+});
+
+test('pull leaves a local file over 1 MB as it is, rather than planning it as new', async (t) => {
+  const c = await setUp(t);
+  write(c.home, '.claude/skills/big/SKILL.md', 'x'.repeat(1024 * 1024 + 1));
+  await c.claudeSettings.sync({ login: 'mia-dev', sessionId: 'aaaa1111', version: 0, removed: [], changed: { '.claude/skills/big/SKILL.md': b64('small\n') } });
+  const plan = await c.run(['settings', 'plan', '--pull', '--json']);
+  assert.match(plan.items.find((i) => i.name === '~/.claude/skills/big/SKILL.md').reason, /^yours is over 1 MB, and is left as it is/);
 });
