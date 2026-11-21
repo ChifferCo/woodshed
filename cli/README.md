@@ -100,7 +100,9 @@ One token per console, never in a command's arguments:
 - Windows: `%LOCALAPPDATA%\woodshed\credentials-dpapi.json`, each token sealed with DPAPI for your Windows account and
   for its console's address (a token copied under another console's address does not open), by Windows PowerShell 5.1
   (which ships with Windows), given the token on stdin. Where DPAPI cannot seal (an SSH sign-in with a key has no logon
-  secret to seal with), `%LOCALAPPDATA%\woodshed\credentials.json`. Either way its folder is made yours alone by
+  secret to seal with), `%LOCALAPPDATA%\woodshed\credentials.json`, and only when that folder is under your profile
+  (`%USERPROFILE%`), whose folders no other account may rename: a new file on Windows takes its folder's ACL as it is
+  made, so a folder above that someone else could swap is no place for an unsealed token. Either way its folder is made yours alone by
   `icacls`, as `0700` is on macOS and Linux: nothing inherited from the folder above, full control for your account,
   your account its owner, and `login` checks that `icacls` then lists nobody else, or refuses to keep the token there
   and ends it at the console. `%LOCALAPPDATA%`, not `%APPDATA%`, which a roaming profile copies to a server.

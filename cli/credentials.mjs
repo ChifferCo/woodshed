@@ -4,8 +4,8 @@
 // Keychain gets it through `security -i` on stdin, and secret-tool reads it from stdin.
 //
 // On Windows, a file sealed with DPAPI for this Windows account (Windows PowerShell 5.1, which ships with Windows, does
-// the sealing, with the token on its stdin), else a plain file in a folder icacls makes this account's alone, checked
-// after it is set. Each Windows tool is run from System32 by its full path, never found on the PATH or in the current
+// the sealing, with the token on its stdin), else a plain file under the person's profile, in a folder icacls makes this
+// account's alone, checked after it is set. Each Windows tool is run from System32 by its full path, never found on the PATH or in the current
 // folder, and never through a shell.
 //
 // Each store is keyed by the console's origin (https://console.example), so signing in to a second console keeps the
@@ -13,6 +13,7 @@
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -211,7 +212,15 @@ function writeOwnFile(dir, where, data, { platform, ownFolder }) {
   fs.renameSync(temp, where);
 }
 
-function file(dir, platform, ownFolder) {
+// On Windows a new file takes its folder's ACL as it is made, not a mode given with it as on macOS and Linux: someone
+// able to rename a folder above this one could put one of theirs in its place between the check and the write. So the
+// plain token is written on Windows only under the person's own profile, whose folders no other account may rename.
+function underProfile(dir, home) {
+  const rel = path.relative(home, dir);
+  return Boolean(home) && rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+function file(dir, platform, ownFolder, home) {
   const where = path.join(dir, 'credentials.json');
   const write = (data) => writeOwnFile(dir, where, data, { platform, ownFolder });
   return {
@@ -220,6 +229,9 @@ function file(dir, platform, ownFolder) {
     file: where,
     save(origin, token) {
       checkArgs(origin, token);
+      if (platform === 'win32' && !underProfile(dir, home)) {
+        throw new Error(`${dir} is not under your profile (${home}), the only place a token is kept unsealed on Windows: unset XDG_CONFIG_HOME and LOCALAPPDATA's override, or sign in where DPAPI can seal it`);
+      }
       write({ ...readJson(where), [origin]: token });
       return true;
     },
@@ -274,15 +286,15 @@ function dpapi(dir, run, tools, ownFolder) {
 
 /**
  * @param {{platform?: string, run?: typeof runCommand, dir: string, has?: (command: string) => boolean,
- *          tools?: ReturnType<typeof windowsTools>}} opts
+ *          tools?: ReturnType<typeof windowsTools>, home?: string}} opts  `home`: the person's profile, on Windows
  *   `dir` is the command line's config folder, for the files; `has` says whether a command is on the PATH, or for a
  *   Windows tool's full path, whether it is there
  * @returns {{storeFor: (kind: string) => object, save: (origin: string, token: string) => object}}
  *   `save` keeps the token in the first store that takes it and gives back that store
  */
-export function createCredentials({ platform = process.platform, run = runCommand, dir, has = (command) => hasCommand(command), tools = windowsTools() }) {
+export function createCredentials({ platform = process.platform, run = runCommand, dir, has = (command) => hasCommand(command), tools = windowsTools(), home = os.homedir() }) {
   const ownFolder = (folder) => windowsOwnFolder(folder, run, tools);
-  const stores = { keychain: keychain(run), libsecret: libsecret(run), dpapi: dpapi(dir, run, tools, ownFolder), file: file(dir, platform, ownFolder) };
+  const stores = { keychain: keychain(run), libsecret: libsecret(run), dpapi: dpapi(dir, run, tools, ownFolder), file: file(dir, platform, ownFolder, home) };
   const order = [
     ...(platform === 'darwin' && has('security') ? ['keychain'] : []),
     ...(platform === 'linux' && has('secret-tool') ? ['libsecret'] : []),

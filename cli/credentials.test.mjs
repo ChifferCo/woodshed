@@ -38,6 +38,14 @@ function fakeKeyring({ works = true } = {}) {
   return { run, calls, items };
 }
 
+// A Windows config folder under the person's profile, as %LOCALAPPDATA%\\woodshed is: `home` is the profile.
+function profileDir(t) {
+  const home = tempDir(t);
+  const dir = path.join(home, 'AppData', 'Local', 'woodshed');
+  fs.mkdirSync(dir, { recursive: true });
+  return { home, dir };
+}
+
 function tempDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-creds-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -127,8 +135,8 @@ test('on Windows the token is sealed with DPAPI by System32\'s PowerShell, given
 
 test('on Windows with DPAPI refused, as over an SSH key\'s sign-in, the token goes to a file in a folder only this account can open', (t) => {
   const win = fakeWindows({ dpapi: false });
-  const dir = tempDir(t);
-  const creds = createCredentials({ platform: 'win32', run: win.run, dir, has: () => true, tools: TOOLS });
+  const { home, dir } = profileDir(t);
+  const creds = createCredentials({ platform: 'win32', run: win.run, dir, has: () => true, tools: TOOLS, home });
   const store = creds.save(ORIGIN, TOKEN);
   assert.equal(store.kind, 'file');
   assert.equal(store.file, path.join(dir, 'credentials.json'));
@@ -136,29 +144,39 @@ test('on Windows with DPAPI refused, as over an SSH key\'s sign-in, the token go
   assert.deepEqual(win.acls.get(dir), [ME.shown], 'icacls was asked to take off what the folder inherits and give this account alone full control');
   assert.equal(fs.existsSync(path.join(dir, 'credentials-dpapi.json')), false);
 
-  const none = createCredentials({ platform: 'win32', run: win.run, dir: tempDir(t), has: () => false, tools: TOOLS });
+  const other = profileDir(t);
+  const none = createCredentials({ platform: 'win32', run: win.run, dir: other.dir, has: () => false, tools: TOOLS, home: other.home });
   assert.equal(none.save(ORIGIN, TOKEN).kind, 'file', 'no PowerShell at all: the file');
+
+  // Outside the profile (XDG_CONFIG_HOME on a shared drive), a folder above could be swapped for another account's
+  // between the check and the write: nothing is written there unsealed.
+  const shared = tempDir(t);
+  const outside = createCredentials({ platform: 'win32', run: win.run, dir: shared, has: () => true, tools: TOOLS, home: path.join(shared, 'not-above-it') });
+  assert.throws(() => outside.save(ORIGIN, TOKEN), /is not under your profile .*the only place a token is kept unsealed on Windows/);
+  assert.deepEqual(fs.readdirSync(shared), []);
+  const sealed = createCredentials({ platform: 'win32', run: fakeWindows().run, dir: shared, has: () => true, tools: TOOLS, home: path.join(shared, 'not-above-it') });
+  assert.equal(sealed.save(ORIGIN, TOKEN).kind, 'dpapi', 'sealed, it may be kept there: only this account can open it');
 });
 
 test('on Windows a folder of another account\'s that this one cannot take gets no token, sealed or not', (t) => {
-  const dir = tempDir(t);
+  const { home, dir } = profileDir(t);
   for (const dpapi of [true, false]) {
     const win = fakeWindows({ dpapi, foreignOwner: true });
-    const creds = createCredentials({ platform: 'win32', run: win.run, dir, has: () => true, tools: TOOLS });
+    const creds = createCredentials({ platform: 'win32', run: win.run, dir, has: () => true, tools: TOOLS, home });
     assert.throws(() => creds.save(ORIGIN, TOKEN), /could not be made a folder only you can open: it is another account's, and icacls could not make it yours \(\.: Access is denied\.\)/);
     assert.deepEqual(fs.readdirSync(dir), [], 'no file, sealed or plain, and no temporary one');
   }
 });
 
 test('on Windows a folder others can still open gets no token, and says who', (t) => {
-  const dir = tempDir(t);
+  const { home, dir } = profileDir(t);
   const win = fakeWindows({ dpapi: false, others: ['BUILTIN\\Users'] });
-  const creds = createCredentials({ platform: 'win32', run: win.run, dir, has: () => true, tools: TOOLS });
+  const creds = createCredentials({ platform: 'win32', run: win.run, dir, has: () => true, tools: TOOLS, home });
   assert.throws(() => creds.save(ORIGIN, TOKEN), /could not be made a folder only you can open: others may still open it \(BUILTIN\\Users\)/);
   assert.equal(fs.existsSync(path.join(dir, 'credentials.json')), false);
   assert.deepEqual(fs.readdirSync(dir), [], 'not even a temporary file');
 
-  const unsaid = (run) => createCredentials({ platform: 'win32', run, dir, has: () => false, tools: TOOLS });
+  const unsaid = (run) => createCredentials({ platform: 'win32', run, dir, has: () => false, tools: TOOLS, home });
   assert.throws(() => unsaid(() => ({ status: null, stdout: '', stderr: 'ENOENT' })).save(ORIGIN, TOKEN), /whoami did not say which account/);
   const refusing = (command, args, opts) => (command === TOOLS.whoami ? fakeWindows().run(command, args, opts) : { status: 5, stdout: '', stderr: 'Access is denied.\r\n' });
   assert.throws(() => unsaid(refusing).save(ORIGIN, TOKEN), /icacls could not set who may open it \(Access is denied\.\)/);
