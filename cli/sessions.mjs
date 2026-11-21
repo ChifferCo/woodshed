@@ -75,7 +75,7 @@ const ID_RE = /^[0-9a-f]{8}$/;
 // cursor, retitle the window or make one id read as another. Other text, accents and all, is kept.
 // eslint-disable-next-line no-control-regex
 const UNPRINTABLE_RE = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
-function printable(text, most = 200) {
+export function printable(text, most = 200) {
   if (text === null || text === undefined) return null;
   return String(text).replace(UNPRINTABLE_RE, ' ').slice(0, most);
 }

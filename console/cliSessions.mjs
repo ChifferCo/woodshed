@@ -1,8 +1,6 @@
 // The woodshed command line's token (wsc_, cliSignIn.mjs) on the console's own session routes: the few `woodshed
-// session` calls, as exactly the person the token was approved for. Every other route refuses it, so a token that leaks
-// from a laptop reaches no console settings, people, terminals or apps. Its own /api/cli/* routes are apart: among them
-// /api/cli/settings (cliSettings.mjs) reaches that person's shared Claude settings and own files for their repos, which
-// are theirs, and which `woodshed settings` carries.
+// session` and `woodshed config` calls act as the person who approved the token. The separate /api/cli/settings routes
+// (cliSettings.mjs) allow `woodshed settings` to reach that person's shared Claude settings and own files for their repos.
 //
 //   GET  /api/sessions                      woodshed session list, and the wait on a start: what that person sees
 //   GET  /api/my/projects                   the repos that person may start on, for --repo
@@ -13,6 +11,7 @@
 //   POST /api/sessions/<id>/extend          woodshed session extend: its pause or stop an hour later, in its last minutes
 //   POST /api/sessions/<id>/limits          woodshed session limits: its own pause and stop. These two are a private
 //                                           session's owner's and a shared one's assignee's alone, as on the page
+//   GET  /api/cli/config, and a few My settings writes   woodshed config: their choices, never a secret (cliConfig.mjs)
 //
 // A terminal connected to a session never keeps it awake: more time is asked for, by the person or their agent, with
 // extend or limits, and otherwise the session pauses and stops as its limits say.
@@ -24,12 +23,15 @@
 // riding the browser's cookie. A token is sent by the command line alone, never by a browser on its own, so neither is
 // asked of it; a call that carries an Origin is a page's, and is refused.
 
+import { CONFIG_ROUTES } from './cliConfig.mjs';
+
 const ROUTES = [
   ['GET', /^\/api\/sessions$/],
   ['GET', /^\/api\/my\/projects$/],
   ['POST', /^\/api\/my\/sessions$/],
   ['POST', /^\/api\/my\/sessions\/[0-9a-f]{8}\/(resume|remove)$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/(stop|extend|limits)$/],
+  ...CONFIG_ROUTES,
 ];
 
 /** @returns {boolean}  a route the command line's token may call */
@@ -43,7 +45,7 @@ export function carriesCliToken(headers) {
 }
 
 /**
- * A call with a command line token, on any route but /api/cli/*.
+ * A call on a session or config route with a command line token.
  * @param {{req, res, url: URL, cli: ReturnType<typeof import('./cliSignIn.mjs').createCliSignIn>|null,
  *          reply: (res, status: number, body: object) => void,
  *          read: (res, pathname: string, login: string|null) => unknown,
