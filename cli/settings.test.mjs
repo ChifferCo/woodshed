@@ -99,7 +99,7 @@ function listen(server) {
 
 // A console with the command line's sign-in, the shared Claude settings and repo settings, and mia-dev signed in on a
 // laptop whose home is `home`.
-async function setUp(t, { home = laptopHome(t), claudeSettings: withSettings = true } = {}) {
+async function setUp(t, { home = laptopHome(t), claudeSettings: withSettings = true, canWrite = null } = {}) {
   const store = { state: {}, save() {} };
   const cli = createCliSignIn({ store });
   const homes = memoryHomes();
@@ -115,7 +115,7 @@ async function setUp(t, { home = laptopHome(t), claudeSettings: withSettings = t
     view: async () => ({ projects: [projects[0]], defaultProject: 'app' }),
     forStart: async (_login, name) => (name === 'app' ? projects[0] : null),
   };
-  const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async () => null, ...(canWrite ? { canWrite } : {}) };
   const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, cli, claudeSettings, repoSettings, projectAccess });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
@@ -649,4 +649,19 @@ test('pull leaves a local file over 1 MB as it is, rather than planning it as ne
   await c.claudeSettings.sync({ login: 'mia-dev', sessionId: 'aaaa1111', version: 0, removed: [], changed: { '.claude/skills/big/SKILL.md': b64('small\n') } });
   const plan = await c.run(['settings', 'plan', '--pull', '--json']);
   assert.match(plan.items.find((i) => i.name === '~/.claude/skills/big/SKILL.md').reason, /^yours is over 1 MB, and is left as it is/);
+});
+
+test('the console holds the settings routes to a browser sign-in: write access gone ends the token, and a page\'s call is refused', async (t) => {
+  const c = await setUp(t, { canWrite: async () => true });
+  const get = (headers = {}) => fetch(`${c.origin}/api/cli/settings`, { headers: { authorization: `Bearer ${c.token}`, ...headers } });
+  assert.equal((await get()).status, 200);
+  const page = await get({ origin: 'https://evil.example' });
+  assert.equal(page.status, 403);
+  assert.match((await page.json()).error, /not a page/);
+  // Someone whose write access GitHub no longer grants, at the token's first use.
+  const later = await setUp(t, { canWrite: async () => false });
+  const gone = await fetch(`${later.origin}/api/cli/settings/repos`, { headers: { authorization: `Bearer ${later.token}` } });
+  assert.equal(gone.status, 401);
+  assert.match((await gone.json()).error, /no longer have write access/);
+  assert.equal((await fetch(`${later.origin}/api/cli/settings`, { headers: { authorization: `Bearer ${later.token}` } })).status, 401, 'every sign-in of theirs ended');
 });
