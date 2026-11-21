@@ -142,14 +142,39 @@ function gitValueProblem(section, value) {
   return section.name === 'color' && /^\s*"?always"?\s*$/i.test(beforeComment(value)) ? 'always, which colors output that the session\'s tools read: auto does what you see' : null;
 }
 
-// An alias's value: one shell word, quoted or not, with no command substitution, which runs as the file is read, and
-// nothing after it, which would too.
-const ALIAS_RE = /^\s*alias\s+(?!-)([A-Za-z0-9_.:+@%,-]+)=('[^']*'|"(?:[^"\\`$]|\\.|\$(?![({]))*"|[^\s'"`;&|<>()$\\]+)\s*(?:#.*)?$/;
+const ALIAS_START = /^\s*alias\s+(?!-)([A-Za-z0-9_.:+@%,-]+)=/;
+const BARE_ALIAS_CHAR = /[^\s'"`;&|<>()$\\]/;
+
+// A single shell word, with no interpolation that would run while the shell reads the file.
+function aliasValueEnd(line, start) {
+  if (line[start] === "'") {
+    const end = line.indexOf("'", start + 1);
+    return end < 0 ? -1 : end + 1;
+  }
+  if (line[start] === '"') {
+    for (let i = start + 1; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') return i + 1;
+      if (char === '\\') {
+        i++;
+        if (/[\n\r\u2028\u2029]/.test(line[i] ?? '')) return -1;
+      } else if (char === '`' || (char === '$' && (line[i + 1] === '(' || line[i + 1] === '{'))) return -1;
+    }
+    return -1;
+  }
+  let end = start;
+  while (BARE_ALIAS_CHAR.test(line[end] ?? '')) end++;
+  return end === start ? -1 : end;
+}
 
 /** @returns {{name: string, value: string}|null}  a plain alias line's alias */
 export function aliasOf(line) {
-  const m = ALIAS_RE.exec(line);
-  return m ? { name: m[1], value: m[2] } : null;
+  const match = ALIAS_START.exec(line);
+  if (!match) return null;
+  const start = match[0].length;
+  const end = aliasValueEnd(line, start);
+  if (end < 0 || !BASH_COMMENT_RE.test(line.slice(end))) return null;
+  return { name: match[1], value: line.slice(start, end) };
 }
 
 /**

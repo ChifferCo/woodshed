@@ -46,16 +46,50 @@ function skipSpace(text, at) {
   return at;
 }
 
+function lineEnd(text, start) {
+  const end = text.indexOf('\n', start);
+  return end < 0 ? text.length : end + 1;
+}
+
+/** End of a TOML string starting at a quote, or -1 if it is unterminated. */
+function stringEnd(text, start, allowMultiline = true) {
+  const quote = text[start];
+  const delimiter = quote.repeat(3);
+  const multiline = allowMultiline && text.startsWith(delimiter, start);
+  for (let i = start + (multiline ? 3 : 1); i < text.length; i++) {
+    const char = text[i];
+    if (!multiline && char === '\n') return -1;
+    if (quote === '"' && char === '\\') {
+      if (!multiline && /[\n\r\u2028\u2029]/.test(text[i + 1] ?? '')) return -1;
+      i++;
+    } else if (char === quote) {
+      if (!multiline) return i + 1;
+      if (text.startsWith(delimiter, i)) {
+        // The end can include up to two of the string's own quotes.
+        let end = i + 3;
+        while (end < i + 5 && text[end] === quote) end++;
+        return end;
+      }
+    }
+  }
+  return -1;
+}
+
 /** A bare, quoted or dotted TOML key starting at the given offset. */
 function readKey(text, at) {
-  const token = /"(?:[^"\\\n]|\\.)*"|'[^'\n]*'|[A-Za-z0-9_-]+/y;
   const parts = [];
   for (;;) {
-    token.lastIndex = skipSpace(text, at);
-    const match = token.exec(text);
-    if (!match) return null;
-    parts.push(said(match[0]));
-    at = skipSpace(text, token.lastIndex);
+    const start = skipSpace(text, at);
+    let end = start;
+    if (text[start] === '"' || text[start] === "'") {
+      end = stringEnd(text, start, false);
+      if (end < 0) return null;
+    } else {
+      while (/[A-Za-z0-9_-]/.test(text[end] ?? '')) end++;
+      if (end === start) return null;
+    }
+    parts.push(said(text.slice(start, end)));
+    at = skipSpace(text, end);
     if (text[at] !== '.') return { parts, end: at };
     at++;
   }
@@ -73,14 +107,10 @@ export function readToml(text) {
   let i = 0;
   let table = [];
   const n = text.length;
-  const lineEnd = (from) => {
-    const at = text.indexOf('\n', from);
-    return at === -1 ? n : at + 1;
-  };
   // The rest of a line once something ended: only a comment may follow.
   function endOfLine() {
     i = skipSpace(text, i);
-    if (i < n && text[i] === '#') i = lineEnd(i);
+    if (i < n && text[i] === '#') i = lineEnd(text, i);
     else if (i < n && text[i] === '\r' && text[i + 1] === '\n') i += 2;
     else if (i < n && text[i] === '\n') i++;
     else if (i < n) return false;
@@ -90,7 +120,7 @@ export function readToml(text) {
     const start = i;
     i = skipSpace(text, i);
     if (i >= n || text[i] === '\n' || text[i] === '\r' || text[i] === '#') {
-      i = lineEnd(i);
+      i = lineEnd(text, i);
       out.push({ kind: 'blank', text: text.slice(start, i), table });
       continue;
     }
@@ -120,25 +150,12 @@ export function readToml(text) {
         break;
       }
       const c = text[i];
-      if (text.startsWith('"""', i) || text.startsWith("'''", i)) {
-        const quote = text.slice(i, i + 3);
-        let j = i + 3;
-        while (j < n && !text.startsWith(quote, j)) j += quote === '"""' && text[j] === '\\' ? 2 : 1;
-        if (j >= n) return null;
-        // Up to two quotes of the string's own may come right before its end ("""a""""" is `a""`).
-        i = j + 3;
-        for (let extra = 0; extra < 2 && text[i] === quote[0]; extra++) i++;
-      } else if (c === '"') {
-        const m = /^"(?:[^"\\\n]|\\.)*"/.exec(text.slice(i));
-        if (!m) return null;
-        i += m[0].length;
-      } else if (c === "'") {
-        const end = text.indexOf("'", i + 1);
-        if (end === -1 || text.slice(i, end).includes('\n')) return null;
-        i = end + 1;
+      if (c === '"' || c === "'") {
+        i = stringEnd(text, i);
+        if (i < 0) return null;
       } else if (c === '#') {
         if (depth === 0) commentAt = i;
-        i = lineEnd(i) - 1;
+        i = lineEnd(text, i) - 1;
         if (text[i] !== '\n') i = n;
       } else if (c === '[' || c === '{') {
         depth++;
@@ -247,26 +264,47 @@ export function compose(base, own) {
   return tail ? `${ends(out)}${out.trim() ? tail : tail.replace(/^\n/, '')}` : out;
 }
 
-const STRING_RE = /"""(?:[^"\\]|\\[\s\S]|"{1,2}(?!"))*"{3,5}|'''(?:[^']|'{1,2}(?!'))*'{3,5}|"(?:[^"\\\n]|\\.)*"|'[^'\n]*'/g;
-
 function said(raw) {
   if (raw.startsWith('"')) return decodeBasic(raw);
   if (raw.startsWith("'''")) return raw.slice(3, -3).replace(/^\r?\n/, '');
   return raw.startsWith("'") ? raw.slice(1, -1) : raw;
 }
 
+/** Walk strings and inline table punctuation once, leaving comments as ordinary statement text. */
+function* valueTokens(value) {
+  let i = 0;
+  while (i < value.length) {
+    const char = value[i];
+    if (char === '"' || char === "'") {
+      const end = stringEnd(value, i);
+      if (end < 0) return;
+      yield { kind: 'string', start: i, end };
+      i = end;
+    } else if (char === '#') {
+      i = lineEnd(value, i);
+    } else {
+      if ('{},'.includes(char)) yield { kind: char, start: i };
+      i++;
+    }
+  }
+}
+
 /** The string literals in a pair's value, each with its text as written and what it says. */
 export function stringsOf(value) {
-  return [...value.matchAll(STRING_RE)].map(([raw]) => ({ raw, said: said(raw) }));
+  const strings = [];
+  for (const { kind, start, end } of valueTokens(value)) {
+    if (kind !== 'string') continue;
+    const raw = value.slice(start, end);
+    strings.push({ raw, said: said(raw) });
+  }
+  return strings;
 }
 
 /** String-valued fields in inline tables, with dotted and nested keys expressed as paths. */
 function* inlinePairs(value) {
-  const tokens = new RegExp(String.raw`${STRING_RE.source}|#[^\n]*|[{},]`, 'g');
-  const string = new RegExp(STRING_RE.source, 'y');
   const tables = [];
   const paths = new Map();
-  for (const { 0: token, index } of value.matchAll(tokens)) {
+  for (const { kind: token, start: index } of valueTokens(value)) {
     if (token === '}') {
       tables.pop();
       continue;
@@ -279,9 +317,10 @@ function* inlinePairs(value) {
     const parts = [...tables.at(-1), ...key.parts];
     const start = skipSpace(value, key.end + 1);
     if (value[start] === '{') paths.set(start, parts);
-    string.lastIndex = start;
-    const match = string.exec(value);
-    if (match) yield { parts, value: said(match[0]) };
+    if (value[start] === '"' || value[start] === "'") {
+      const end = stringEnd(value, start);
+      if (end >= 0) yield { parts, value: said(value.slice(start, end)) };
+    }
   }
 }
 

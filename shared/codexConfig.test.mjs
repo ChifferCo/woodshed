@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { compose, readToml, sharedPart, textOf, unitOf, withEntries, withOwnEntries, withTrusted } from './codexConfig.mjs';
+import { compose, readToml, sharedPart, stringsOf, textOf, unitOf, withEntries, withOwnEntries, withTrusted } from './codexConfig.mjs';
 
 const CONFIG = `# mine
 model = "gpt-5.5" # the one I like
@@ -45,6 +45,22 @@ test('each side keeps the folders it trusts: the shared part leaves them out, an
   assert.ok(local.endsWith('[projects."/work/app"]\ntrust_level = "trusted"\n'));
   assert.equal(sharedPart('[projects."/x"]\ntrust_level = "trusted"\n'), '', 'nothing but trusted folders is nothing to sync');
   assert.equal(withTrusted(local, '/work/app'), local, 'trusted once');
+});
+
+test('TOML quoting preserves escaped keys and multiline delimiters while ignoring array comments', () => {
+  const escaped = '\\"'.repeat(16_384);
+  const config = '["a\\"b".\'literal.key\']\n'
+    + 'args = [\n  # an unmatched " in a comment\n  "a#b",\n'
+    + '  """first\\\n    second""""",\n'
+    + "  '''\nthird''',\n"
+    + ']\n'
+    + 'notes = "' + escaped + '"\n';
+  const [table, args, notes] = readToml(config);
+  assert.deepEqual(table.table, ['a"b', 'literal.key']);
+  assert.deepEqual(stringsOf(args.value).map(({ said }) => said), ['a#b', 'firstsecond""', 'third']);
+  assert.equal(stringsOf(notes.value)[0].said, '"'.repeat(16_384));
+  assert.equal(textOf([table, args, notes]), config);
+  assert.equal(readToml('["unterminated\\"]\n'), null);
 });
 
 test('entries put into another file go under their own table, the top\'s before the first header', () => {

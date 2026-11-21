@@ -30,6 +30,46 @@ export function redact(text) {
   return SECRET_CONTENT.reduce((out, [, re]) => out.replace(new RegExp(re.source, 'g'), '[redacted]'), String(text));
 }
 
+function skipWhitespace(text, start) {
+  while (/\s/.test(text[start] ?? '')) start++;
+  return start;
+}
+
+/** A credential-bearing shell header option, by name alone. */
+function literalHeader(text) {
+  const name = /authorization|proxy-authorization|x-api-key|api-key|cookie/iy;
+  const scheme = /(?:bearer|basic|token)(?=\s)/iy;
+  for (const option of text.matchAll(/--header|-h/gi)) {
+    let start = option.index + option[0].length;
+    while (/[\s=]/.test(text[start] ?? '')) start++;
+    if (text[start] === '"' || text[start] === "'") start++;
+    name.lastIndex = skipWhitespace(text, start);
+    const header = name.exec(text);
+    if (!header) continue;
+    const colon = skipWhitespace(text, name.lastIndex);
+    if (text[colon] !== ':') continue;
+    const value = skipWhitespace(text, colon + 1);
+    if (!text[value] || /[$'"]/.test(text[value])) continue;
+    scheme.lastIndex = value;
+    if (scheme.test(text) && text[skipWhitespace(text, scheme.lastIndex)] === '$') continue;
+    return header[0];
+  }
+  return null;
+}
+
+function urlHasSignIn(text) {
+  const userInfo = /[^\s/:@'"]+:[^\s/@'"]+@/y;
+  for (const { index } of text.matchAll(/:\/\//g)) {
+    // The scheme can end in numbers or punctuation, but must contain a letter.
+    let before = index - 1;
+    while (/[0-9+.-]/.test(text[before] ?? '')) before--;
+    if (!/[a-z]/i.test(text[before] ?? '')) continue;
+    userInfo.lastIndex = index + 3;
+    if (userInfo.test(text)) return true;
+  }
+  return false;
+}
+
 /**
  * A credential in a line of shell (an alias, a git alias's `!` command): a key of a known kind, a variable named like a
  * credential given a literal value, a header or option that carries one, a URL with a sign-in, or a credential helper.
@@ -43,13 +83,13 @@ export function shellCredential(text) {
     if (SECRET_VARIABLE.test(name)) return `a value for ${name}`;
   }
   // A header's value read from a variable ("Authorization: Bearer $TOKEN") is none.
-  const header = /(?:-H|--header)[\s=]*['"]?\s*(authorization|proxy-authorization|x-api-key|api-key|cookie)\s*:\s*(?!(?:(?:bearer|basic|token)\s+)?\$)(?![\s'"])/i.exec(text);
-  if (header) return `the ${header[1]} header`;
+  const header = literalHeader(text);
+  if (header) return `the ${header} header`;
   // curl requires a bearer argument, even if its first character is a dash.
   if (/--oauth2-bearer(?:=|\s+)['"]?(?![$\s'"])/i.test(text)) return 'a --oauth2-bearer value';
   const option = /--(token|password|passwd|api-?key|secret|auth)(?:=|\s+)['"]?(?![$\s'"-])/i.exec(text);
   if (option) return `a --${option[1]} value`;
-  if (/[a-z][a-z0-9+.-]*:\/\/[^\s/:@'"]+:[^\s/@'"]+@/i.test(text)) return 'a URL with a sign-in';
+  if (urlHasSignIn(text)) return 'a URL with a sign-in';
   // curl -u name:password, --user=name:password: a literal password, not one read from a variable. Only curl's and
   // wget's: docker's -u 1000:1000 or --user root:root is a user and a group.
   if (/\b(?:curl|wget)\b[^|;&]*\s(?:-u|--user|--http-user)(?:\s+|=)['"]?[^\s'"$:]+:(?![$\s'"])/.test(text)) return 'a --user sign-in';

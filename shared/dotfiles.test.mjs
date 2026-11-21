@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { dotfileProblem, fromComputer } from './dotfiles.mjs';
+import { aliasOf, dotfileProblem, fromComputer } from './dotfiles.mjs';
 import { shellCredential } from './secretLike.mjs';
 
 // Made here, so no file in the repo holds a string shaped like a real token.
@@ -67,6 +67,24 @@ test('a credential in a line of shell is named by kind or variable, and a variab
   for (const fine of ['NPM_TOKEN=$NPM_TOKEN npm publish', 'curl -H "Authorization: Bearer $TOKEN" x', 'curl --oauth2-bearer "$TOKEN" x', 'deploy --token "$TOKEN"', 'ls -la', 'DEBUG=1 run']) {
     assert.equal(shellCredential(fine), null, fine);
   }
+});
+
+test('shell aliases keep a single value with quotes or a literal hash and accept trailing comments', () => {
+  assert.deepEqual(aliasOf('alias x=echo#tag # a comment'), { name: 'x', value: 'echo#tag' });
+  assert.deepEqual(aliasOf('alias x="echo \\"a # b\\"" # a comment'), { name: 'x', value: '"echo \\"a # b\\""' });
+  assert.deepEqual(aliasOf("alias x='git status'"), { name: 'x', value: "'git status'" });
+  assert.equal(aliasOf('alias x="echo $(printf hello)"'), null);
+  assert.equal(aliasOf("alias x='echo hello'; echo again"), null);
+  assert.equal(aliasOf('alias x=echo more'), null);
+});
+
+test('shell credential checks keep header formatting and URL authority boundaries', () => {
+  assert.equal(shellCredential('curl -H =" Proxy-Authorization  :  Basic fixture" https://example.com'), 'the Proxy-Authorization header');
+  assert.equal(shellCredential('curl -H "Authorization :  bearer  $TOKEN" https://example.com'), null);
+  assert.equal(shellCredential('curl --header "Authorization:" --header "Cookie: fixture" https://example.com'), 'the Cookie header');
+  assert.equal(shellCredential('git clone git+ssh://demo:fixture:value@example.com/repo'), 'a URL with a sign-in');
+  assert.equal(shellCredential('git clone ssh://git@example.com/repo'), null);
+  assert.equal(shellCredential('curl https://example.com/path:part@place'), null);
 });
 
 test('a comment never hides the next line, a bare boolean stays true, an $include is judged where it leads, and a quote left open is refused', () => {
