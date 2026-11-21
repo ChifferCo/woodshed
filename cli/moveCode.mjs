@@ -99,7 +99,7 @@ export async function checkoutOf(git, cwd) {
     return { error: `${root}'s remote ${remote} is ${repo}, but git pushes it to ${pushTo.replace(/\/\/[^@/]*@/, '//')} (a url rewrite): the move pushes only to the repo it checked` };
   }
   return {
-    root, subdir: subdir === '' ? '' : subdir, remote, repo,
+    root, subdir: subdir === '' ? '' : subdir, remote, repo, pushUrl: pushTo,
     head: head.code === 0 ? head.stdout.trim() : null, branch: branch.code === 0 ? branch.stdout.trim() : null,
   };
 }
@@ -179,11 +179,14 @@ export async function survey(git, checkout, { tempDir = os.tmpdir(), tag = 'move
 
   // The objects the push sends: reachable from the snapshot and HEAD, and from no ref the remote has now. Its refs are
   // asked of it (ls-remote), not taken from this checkout's tracking refs, which can outlive a branch deleted there.
-  const there = await git(['ls-remote', '--heads', remote], { cwd: root, timeoutMs: 120_000 });
+  // The push's own destination, which a remote may have apart from where it fetches from.
+  const there = await git(['ls-remote', '--heads', checkout.pushUrl ?? remote], { cwd: root, timeoutMs: 120_000 });
   if (there.code !== 0) throw new Error(`git could not read ${remote}'s branches, so what the push would add cannot be checked: ${lastLine(there)}`);
   const remoteHeads = new Map(there.stdout.split('\n').filter(Boolean).map((l) => l.split('\t')).map(([sha, ref]) => [ref, sha]));
-  const known = [];
-  for (const sha of new Set(remoteHeads.values())) if ((await git(['cat-file', '-e', `${sha}^{commit}`], { cwd: root })).code === 0) known.push(sha);
+  // Those of them this checkout has, asked in one call.
+  const shas = [...new Set(remoteHeads.values())];
+  const have = shas.length ? (await git(['cat-file', '--batch-check=%(objectname) %(objecttype)'], { cwd: root, input: `${shas.join('\n')}\n` })).stdout : '';
+  const known = have.split('\n').map((l) => l.split(' ')).filter(([, type]) => type === 'commit').map(([sha]) => sha);
   const listed = await step(['rev-list', '--objects', ...(head ? [head] : []), tree, ...(known.length ? ['--not', ...known] : [])], { timeoutMs: 180_000 });
   const pathOf = new Map();
   for (const line of listed.split('\n')) {

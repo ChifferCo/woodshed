@@ -167,3 +167,20 @@ test('a push rewritten to another repo is refused, and a branch deleted on GitHu
   t.after(() => fs.rmSync(path.dirname(found.index), { recursive: true, force: true }));
   assert.deepEqual(found.secrets, [{ path: 'creds.js', line: 1, kind: 'a GitHub token' }]);
 });
+
+test('what GitHub already has is asked of where the push goes, when it fetches from elsewhere', async (t) => {
+  const { root, dir, sh, git } = repoFor(t);
+  const token = `ghp_${'d4'.repeat(18)}`;
+  fs.writeFileSync(path.join(root, 'creds.js'), `module.exports = "${token}";\n`);
+  sh(['add', 'creds.js'], root);
+  sh(['commit', '-q', '-m', 'creds'], root);
+  sh(['push', '-q', 'origin', 'main'], root);
+  // Pushes now go to a second, empty repo, which has never seen that commit; fetches still come from the first.
+  const second = path.join(dir, 'second.git');
+  sh(['init', '-q', '--bare', '-b', 'main', second], dir);
+  sh(['config', `url.${second}.pushInsteadOf`, 'https://github.com/acme/app.git'], root);
+  fs.rmSync(path.join(root, 'creds.js'));
+  const found = await survey(git, await checkoutOf(git, root), { tag: 'test' });
+  t.after(() => fs.rmSync(path.dirname(found.index), { recursive: true, force: true }));
+  assert.deepEqual(found.secrets, [{ path: 'creds.js', line: 1, kind: 'a GitHub token' }]);
+});

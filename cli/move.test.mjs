@@ -382,6 +382,6 @@ test('an agent of the other kind than the session\'s is not moved into it: it wo
   const l = laptop(t, { sessions: [{ id: 'c0dec0de', owner: 'mia-dev', repo: 'acme/app', project: 'app', status: 'running', state: 'done', title: 'Codex one', options: { agent: 'codex' } }] });
   const out = await l.run(['move', '--terminal', 't1', '--to', 'c0dec0de', '--console', ORIGIN]);
   assert.equal(out.code, EXIT.refused);
-  assert.match(out.err, /t1 runs claude, and session c0dec0de runs codex: a session runs one kind of agent/);
+  assert.match(out.err, /t1 runs claude, and session c0dec0de runs codex: a session runs one kind of agent, with/);
   assert.equal(l.onGithub('woodshed/move-c0ffee42'), null, 'refused before anything was pushed');
 });

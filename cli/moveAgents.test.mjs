@@ -140,6 +140,8 @@ test('a program\'s command line is shown with what may be a credential hidden', 
     'node server.js --api-key … --token=… DB_PASSWORD=… --port 3000');
   assert.equal(shownCommand(['curl', 'ghp_x'], (w) => w.startsWith('ghp_')), 'curl …');
   assert.equal(shownCommand(['echo', 'two words']), "echo 'two words'");
+  assert.equal(shownCommand(['curl', '-H', 'Authorization: Bearer abc.def', '-u', 'me:pw', 'https://x']), 'curl -H Authorization: … -u … https://x');
+  assert.equal(shownCommand(['python', '-u', 'server.py']), 'python -u server.py', 'python\'s -u is no user');
 });
 
 test('a Codex conversation is told the model provider the session\'s codex runs on', () => {
