@@ -194,6 +194,9 @@ test('a file named like a secret, or holding one, is refused by name and kind', 
   for (const name of ['SKILL.md', 'tokens.md', 'format.sh', 'settings.json']) assert.equal(secretName(name), null, name);
   assert.equal(secretName('.env.local', { ownFile: true }), null, 'an own file is where an env file goes');
   assert.match(secretName('.env.production', { ownFile: true }), /production/);
+  assert.match(secretName('deploy/production/.env', { ownFile: true }), /production/);
+  assert.match(secretName('prod/.env.local', { ownFile: true }), /production/);
+  assert.equal(secretName('product/.env.local', { ownFile: true }), null, 'a folder that only starts like it is not production');
   assert.equal(secretContent(`key: ${FAKE_GITHUB_TOKEN}`), 'a GitHub token');
   assert.equal(secretContent('-----BEGIN OPENSSH PRIVATE KEY-----'), 'a private key');
   assert.equal(secretContent('nothing here'), null);
@@ -215,6 +218,8 @@ test('--only takes a kind of item, a name, or a folder of names', () => {
   assert.throws(() => parseSettingsArgs(['push', '--pull']), /--pull is for plan/);
   assert.ok(matchesOnly(['settings.json'], { category: 'settings', name: '~/.claude/settings.json' }, { byName: true }));
   assert.ok(!matchesOnly(['settings'], { category: 'settings', name: '~/.claude/settings.json' }, { byName: true }), 'a kind does not name an item');
+  assert.ok(!matchesOnly(['skills'], { category: 'skills', name: '~/.claude/skills/review/SKILL.md' }, { byName: true }), 'nor a kind that is also a folder');
+  assert.ok(matchesOnly(['skills/review'], { category: 'skills', name: '~/.claude/skills/review/SKILL.md' }, { byName: true }));
   assert.throws(() => parseSettingsArgs([]), /plan, push or pull/);
 });
 
@@ -485,6 +490,12 @@ test('push leaves an item a session changed since this computer had it, unless i
   assert.match(pushed.items.find((i) => i.name === '~/.claude/settings.json').reason, /^changed in a session since this computer last had it: pull it first, or --only settings\.json sends yours over it/);
   assert.equal(fateOf(pushed.items, '~/.claude/skills/review/SKILL.md'), 'upload');
   assert.equal(JSON.parse(unb64((await c.copy()).items['.claude/settings.json'])).model, 'haiku', 'the session\'s edit stays');
+  // A session's edit to a skill is not sent over by --only skills, which names a kind, not the skill.
+  const { version: v2 } = await c.copy();
+  await c.claudeSettings.sync({ login: 'mia-dev', sessionId: 'aaaa1111', version: v2, removed: [], changed: { '.claude/skills/review/SKILL.md': b64('The session\'s review.\n') } });
+  const kind = await c.run(['settings', 'push', '--only', 'skills', '--json']);
+  assert.match(kind.items.find((i) => i.name === '~/.claude/skills/review/SKILL.md').reason, /^changed in a session since/);
+  assert.equal(unb64((await c.copy()).items['.claude/skills/review/SKILL.md']), 'The session\'s review.\n');
   const named = await c.run(['settings', 'push', '--only', 'settings.json', '--json']);
   assert.equal(fateOf(named.items, '~/.claude/settings.json'), 'upload');
   assert.equal(JSON.parse(unb64((await c.copy()).items['.claude/settings.json'])).model, 'opus');

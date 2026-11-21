@@ -69,7 +69,8 @@ export function secretName(file, { ownFile = false } = {}) {
   const base = path.posix.basename(file).toLowerCase();
   if (/\.(pem|key|p12|pfx|jks|keystore|ppk|gpg|kdbx)$/.test(base) || /^id_(rsa|dsa|ecdsa|ed25519)/.test(base)) return 'named like a private key or certificate';
   if (/^(\.netrc|\.npmrc|\.pypirc|\.pgpass|\.git-credentials|\.htpasswd)$/.test(base) || /(^|[._-])credentials?([._-]|$)/.test(base) || /^service-account.*\.json$/.test(base)) return 'named like a credentials file';
-  if (ownFile) return /(^|[._-])prod(uction)?([._-]|$)/.test(base) ? 'named for production: sessions never get production credentials' : null;
+  // Any folder on its way counts too: deploy/production/.env is production's as much as .env.production is.
+  if (ownFile) return file.toLowerCase().split('/').some((part) => /(^|[._-])prod(uction)?([._-]|$)/.test(part)) ? 'named for production: sessions never get production credentials' : null;
   if (/^\.env(\..+)?$|\.env$/.test(base) || /(^|[._-])secrets?([._-]|$)/.test(base)) return 'named like a secret';
   return null;
 }
@@ -110,6 +111,8 @@ export function matchesOnly(only, { category, name }, { byName = false } = {}) {
   const short = name.replace(/^~\/\.claude\//, '');
   return only.some((raw) => {
     const want = raw.replace(/^~\//, '').replace(/^\.claude\//, '').replace(/\/$/, '');
+    // A kind is not a name, even where it is also a folder (skills/): --only skills does not name each skill.
+    if (byName && CATEGORIES.includes(want)) return false;
     return (!byName && want === category) || want === short || short.startsWith(`${want}/`) || want === name;
   });
 }
