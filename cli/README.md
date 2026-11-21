@@ -1,7 +1,8 @@
 # The woodshed command line
 
-`woodshed` signs in to a Woodshed console from your computer, says who is signed in, and opens a pipe into your
-running sessions. Later commands (sessions, settings) are added here. It is plain Node 22 with no dependencies, like the rest of Woodshed.
+`woodshed` signs in to a Woodshed console from your computer, says who is signed in, starts and manages your sessions,
+and opens a pipe into your running sessions. Later commands (settings) are added here. It is plain Node 22 with no
+dependencies, like the rest of Woodshed.
 
 ## Running it
 
@@ -56,6 +57,36 @@ line ended), and it always says why on stderr. A line that itself exits 255 exit
 on stderr, as ssh does. The line is at most 8 KB: a longer one belongs in a script in the session. Closing the tunnel
 before the line ends (Ctrl-C, a cut network) hangs up everything the line started in the session.
 
+## Sessions
+
+`woodshed session` starts and manages sessions as the person signed in, as the console's pages do (`sessions.mjs`):
+
+| Command | What it does | Exits |
+| --- | --- | --- |
+| `session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] ["prompt"]` | Starts a private session, as My Woodshed's New session does: on `R` (`owner/name`, default the repo New session opens on for you), working on branch `B` or a pull request or issue (`123`, `pr 123`, its URL), with that agent and model. Then it waits, printing each start step as it is done, until the session runs. `--no-wait` returns once the console has it. Ctrl-C stops the wait, not the session. | 0 running, 2 running and needs you, 1 failed or stopped, 3 a repo you cannot start on |
+| `session list [--all]` | Your sessions and the shared ones you can see: id, state (the page's words), whose, when it pauses or stops by itself, project and title. Ended shared sessions only with `--all`. | 0 |
+| `session get <id>` | One session: state, branch, agent, pull request, when it pauses or stops, and the hours it runs on. | 0, 1 none you can see |
+| `session stop <id>` | Stops it, and waits until the console has stopped it, a running one's work checkpointed on the way (up to 3 minutes: past that it says to check with `get`). One that paused or failed by itself is marked stopped by you, as the page's Stop does, so it no longer waits on you. | 0, 1 not answered in time |
+| `session resume <id> [--no-wait]` | Starts one of your stopped sessions again, its conversation and all, and waits as `new` does. | as `new`; 3 a shared session (resume it on the console) |
+| `session remove <id> [--yes]` | Takes one of your sessions off the list with its saved conversation, stopping it first. It asks first on a terminal; with no terminal it needs `--yes`. | 0, 2 not confirmed, 3 a shared session |
+| `session extend <id>` | Puts its pause or stop off by an hour. The console allows it in the session's last 15 minutes, to its owner, or a shared session's assignee. | 0, 3 refused |
+| `session limits <id> [--idle-hours N\|default] [--lifetime-hours N\|default]` | Its own idle pause and lifetime, in place of yours or the console's; `default` goes back to them. The other is kept. | 0, 1 out of range, 3 not yours to change |
+
+Nothing keeps a session awake for being connected to: it pauses after its idle hours and stops at its lifetime unless
+you, or an agent working for you, ask for more with `extend` or `limits`. `list` and `get` (`pause` in `--json`: `at`
+and `why`, `idle` or `lifetime`) say when, so an agent can decide whether to.
+
+With `--json` each prints one object per line: `new` and `resume` an `{"event":"started"|"resumed","session":{…}}`,
+then a `status` event as it goes in line or starts, a `step` event per start step, and last `running`, `needs-you`,
+`failed` or `stopped` with the session; `list` one `{"console","login","sessions":[…]}`, `get` one `{"session":{…}}`.
+
+Besides its own `/api/cli/*` and the tunnel's `/api/tunnel/exec/<id>`, the console lets the token reach these routes and
+no others (`console/cliSessions.mjs`), each as its person:
+
+- `GET /api/sessions`, `GET /api/my/projects`
+- `POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume`, `POST /api/my/sessions/<id>/remove`
+- `POST /api/sessions/<id>/stop`, `POST /api/sessions/<id>/extend`, `POST /api/sessions/<id>/limits`
+
 ## Where the token is kept
 
 One token per console, never in a command's arguments:
@@ -87,6 +118,7 @@ To try it by hand against `node console/bin/devConsole.mjs 7712` (no sign-in, so
 ```sh
 node cli/woodshed.mjs login --console http://localhost:7712
 node cli/woodshed.mjs status --json
+node cli/woodshed.mjs session list
 node cli/woodshed.mjs logout
 ```
 

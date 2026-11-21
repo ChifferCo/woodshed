@@ -49,6 +49,9 @@
 //                                device code, and its token's calls (cliSignIn.mjs); GET/POST /cli is the page the code is
 //                                approved on, signed in
 //   POST /api/my/cli-tokens/<id>/revoke   ends one computer's command line sign-in, from My settings
+//   Its token also signs in to GET /api/sessions, GET /api/my/projects, POST /api/my/sessions,
+//   POST /api/my/sessions/<id>/resume|remove and POST /api/sessions/<id>/stop|extend|limits, as its person, and to nothing
+//   else (cliSessions.mjs)
 //   POST /api/sessions           {"number": 123, "startedBy": "login", "prompt": "..."}
 //   POST /api/sessions/<id>/stop
 //   POST /api/sessions/<id>/pin     {"on": true}   pinned to the top of your rail; yours alone
@@ -200,6 +203,7 @@ import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
 import { safeNext, signInFailure } from './auth.mjs';
 import { handleDesktopSignIn } from './desktopSignIn.mjs';
 import { handleCliApi, handleCliPage } from './cliSignIn.mjs';
+import { carriesCliToken, createCliAccess, handleCliCall } from './cliSessions.mjs';
 import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
 import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
 import { QA_POSTER_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
@@ -719,6 +723,9 @@ export function createHandler({
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
   cli = null,
 }) {
+  // A command line token's person keeps write access on GitHub, asked as a browser's sign-in is (cliSessions.mjs). Only
+  // where GitHub sign-in is on: with none, or behind a hosting proxy, nobody's access is asked there either.
+  const cliAccess = cli ? createCliAccess({ canWrite: auth?.canWrite ? (login) => (auth.enabled() ? auth.canWrite(login) : true) : null, revokeAll: (login, by) => cli.revokeAll(login, by) }) : null;
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
   const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
@@ -1561,6 +1568,8 @@ export function createHandler({
           return reply(res, 200, { removed: actionMatch[1] });
         }
         const resuming = fleet.find(actionMatch[1]);
+        // Whose it is before anything of it is read: someone else's private session answers as one that does not exist.
+        if (!resuming || resuming.owner !== login) return reply(res, 409, { error: 'no session you can open with that id' });
         await userSettings?.refresh?.(login, { force: true });
         if (resuming?.options?.agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
         if (!databasesReady(login)) return reply(res, 409, { error: DATABASES_NOT_READY });
@@ -2304,6 +2313,12 @@ export function createHandler({
   async function write(req, res, pathname, login) {
     if (req.headers['x-woodshed'] !== '1') return reply(res, 403, { error: 'missing x-woodshed header' });
     if (!isSameOrigin(req.headers)) return reply(res, 403, { error: 'cross-origin request refused' });
+    return writeRoute(req, res, pathname, login);
+  }
+
+  // A write past its sign-in and the page's own checks: the page's, through write(), and the command line's few
+  // (cliSessions.mjs).
+  async function writeRoute(req, res, pathname, login) {
     if (pathname === '/api/secrets-manager') return managerWrite(req, res, login);
     if (SECRET_RE.test(pathname) || WEBHOOK_RE.test(pathname)) return settingsWrite(req, res, pathname);
     if (SETUP_WRITE_RE.test(pathname)) return githubSetupWrite(req, res, pathname, login);
@@ -2440,6 +2455,11 @@ export function createHandler({
     if (url.pathname.startsWith('/api/cli/')) {
       if (!cli) return reply(res, 404, { error: 'this console has no command line sign-in' });
       return handleCliApi({ req, res, url, cli, publicUrl: config.publicUrl, about: cliAbout });
+    }
+    // Its token on the few other routes it may call, as its person: `woodshed session`.
+    if (carriesCliToken(req.headers)) {
+      const read = async (r, pathname, login) => reply(r, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
+      return handleCliCall({ req, res, url, cli, reply, read, write: writeRoute, access: cliAccess });
     }
     // Sign-in's cookies belong to one host name, and GitHub sends people back only to publicUrl's. Once sign-in
     // can be used, a page opened on another public name (the bare IP) moves there.

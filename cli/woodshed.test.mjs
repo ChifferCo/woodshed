@@ -165,6 +165,10 @@ test('the console refuses a browser\'s call to start a sign-in, and the CLI refu
 test('the arguments: one command, --console, --json, and the default console', () => {
   assert.deepEqual(parseArgs(['status', '--console=https://c.example', '--json']), { command: 'status', args: [], rest: null, console: 'https://c.example', json: true, browser: true, help: false });
   assert.throws(() => parseArgs(['status', '--colsone', 'x']), /unknown option --colsone/);
+  // After `session`, the rest is its own; --json and --console stay the command line's, except after `--`.
+  const session = parseArgs(['session', 'new', '--repo', 'a/b', '--json', '--', 'use --json here']);
+  assert.deepEqual([session.args, session.rest, session.json], [['new', '--repo', 'a/b'], ['use --json here'], true]);
+  assert.equal(parseArgs(['session', 'list', '--json']).json, true);
   assert.equal(DEFAULT_CONSOLE, 'https://console.woodshed.run');
 });
 
