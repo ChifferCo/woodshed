@@ -166,8 +166,14 @@ test('on Windows with DPAPI refused, as over an SSH key\'s sign-in, the token go
   fs.symlinkSync(shared, path.join(profile, 'AppData', 'Local'), 'junction');
   const redirected = createCredentials({ platform: 'win32', run: win.run, dir: path.join(profile, 'AppData', 'Local', 'woodshed'), has: () => false, tools: TOOLS, home: profile });
   assert.throws(() => redirected.save(ORIGIN, TOKEN), /the only place a token is kept unsealed on Windows/);
-  assert.deepEqual(fs.readdirSync(path.join(shared, 'woodshed')), [], 'nothing written where the link leads');
-  fs.rmSync(path.join(shared, 'woodshed'), { recursive: true });
+  assert.deepEqual(fs.readdirSync(shared), [], 'nothing made where the junction leads, not even a folder');
+
+  // Nor is a plain file read from anywhere but the default folder: one there could be someone else's, with their token.
+  fs.mkdirSync(path.join(shared, 'woodshed'));
+  fs.writeFileSync(path.join(shared, 'woodshed', 'credentials.json'), JSON.stringify({ [ORIGIN]: TOKEN }));
+  assert.equal(redirected.storeFor('file').read(ORIGIN), null);
+  fs.writeFileSync(path.join(shared, 'credentials.json'), JSON.stringify({ [ORIGIN]: TOKEN }));
+  assert.equal(outside.storeFor('file').read(ORIGIN), null);
   const sealed = createCredentials({ platform: 'win32', run: fakeWindows().run, dir: shared, has: () => true, tools: TOOLS, home: path.join(shared, 'not-above-it') });
   assert.equal(sealed.save(ORIGIN, TOKEN).kind, 'dpapi', 'sealed, it may be kept there: only this account can open it');
 });

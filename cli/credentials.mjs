@@ -217,15 +217,23 @@ function writeOwnFile(dir, where, data, { platform, ownFolder }) {
 // So the plain token is written on Windows only in the one folder whose way there is Windows' own and private,
 // <profile>\AppData\Local\woodshed, as spelled and as resolved with every link and junction followed. Anywhere else
 // (an XDG_CONFIG_HOME, a LOCALAPPDATA moved elsewhere), a token is kept sealed or not at all.
-// @returns {boolean}
-function isDefaultLocalFolder(dir, home) {
+// Read by the same rule as written: a plain file anywhere else could be one someone else put there, with their token.
+// @returns {boolean}  `make`: the folder is made once its way there is checked, for a write
+function isDefaultLocalFolder(dir, home, { make = false } = {}) {
   if (!home) return false;
-  const expected = (profile) => path.join(profile, 'AppData', 'Local', 'woodshed');
-  if (path.relative(expected(home), path.resolve(dir)) !== '') return false;
+  const local = (profile) => path.join(profile, 'AppData', 'Local');
+  if (path.relative(path.join(local(home), 'woodshed'), path.resolve(dir)) !== '') return false;
   const real = (p) => (fs.realpathSync.native ?? fs.realpathSync)(p);
   try {
-    fs.mkdirSync(dir, { recursive: true });
-    return path.relative(expected(real(home)), real(dir)) === '';
+    // The way there first, so nothing is made where a junction above would lead.
+    const profile = real(home);
+    if (path.relative(local(profile), real(path.dirname(dir))) !== '') return false;
+    if (make) fs.mkdirSync(dir);
+  } catch (err) {
+    if (err.code !== 'EEXIST') return false;
+  }
+  try {
+    return path.relative(path.join(local(real(home)), 'woodshed'), real(dir)) === '';
   } catch {
     return false;
   }
@@ -234,7 +242,7 @@ function isDefaultLocalFolder(dir, home) {
 function file(dir, platform, ownFolder, home) {
   const where = path.join(dir, 'credentials.json');
   const write = (data) => {
-    if (platform === 'win32' && !isDefaultLocalFolder(dir, home)) {
+    if (platform === 'win32' && !isDefaultLocalFolder(dir, home, { make: true })) {
       throw new Error(`${dir} is not ${path.join(home, 'AppData', 'Local', 'woodshed')}, the only place a token is kept unsealed on Windows: unset XDG_CONFIG_HOME and LOCALAPPDATA's override, or sign in where DPAPI can seal it`);
     }
     return writeOwnFile(dir, where, data, { platform, ownFolder });
@@ -249,6 +257,7 @@ function file(dir, platform, ownFolder, home) {
       return true;
     },
     read(origin) {
+      if (platform === 'win32' && !isDefaultLocalFolder(dir, home)) return null;
       const token = readJson(where)[origin];
       return TOKEN_RE.test(String(token)) ? token : null;
     },
