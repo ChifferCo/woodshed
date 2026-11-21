@@ -58,14 +58,18 @@ function literalHeader(text) {
 }
 
 function urlHasSignIn(text) {
-  const userInfo = /[^\s/:@'"]+:[^\s/@'"]+@/y;
   for (const { index } of text.matchAll(/:\/\//g)) {
     // The scheme can end in numbers or punctuation, but must contain a letter.
     let before = index - 1;
     while (/[0-9+.-]/.test(text[before] ?? '')) before--;
     if (!/[a-z]/i.test(text[before] ?? '')) continue;
-    userInfo.lastIndex = index + 3;
-    if (userInfo.test(text)) return true;
+    const start = index + 3;
+    let colon = start;
+    while (/[^\s/:@'"]/.test(text[colon] ?? '')) colon++;
+    if (colon === start || text[colon] !== ':') continue;
+    let end = colon + 1;
+    while (/[^\s/@'"]/.test(text[end] ?? '')) end++;
+    if (end > colon + 1 && text[end] === '@') return true;
   }
   return false;
 }

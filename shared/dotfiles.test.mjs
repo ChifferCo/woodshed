@@ -84,6 +84,8 @@ test('shell credential checks keep header formatting and URL authority boundarie
   assert.equal(shellCredential('curl --header "Authorization:" --header "Cookie: fixture" https://example.com'), 'the Cookie header');
   assert.equal(shellCredential('git clone git+ssh://demo:fixture:value@example.com/repo'), 'a URL with a sign-in');
   assert.equal(shellCredential('git clone ssh://git@example.com/repo'), null);
+  assert.equal(shellCredential('curl https://example.com:8443/'), null);
+  assert.equal(shellCredential('curl file:///tmp/guide https://demo:fixture@example.com'), 'a URL with a sign-in');
   assert.equal(shellCredential('curl https://example.com/path:part@place'), null);
 });
 
