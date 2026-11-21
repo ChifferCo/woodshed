@@ -322,3 +322,19 @@ test('consoles sharing a waiting room count a client\'s places across all of the
   assert.throws(() => b.start({ from: '198.51.100.9' }), { status: 429, scope: 'client' });
   assert.ok(b.start({ from: '203.0.113.7' }).deviceCode, 'another client still starts one');
 });
+
+test('denied codes, which hold no place, are bounded on their own: past 200 the oldest is dropped', () => {
+  const { cli, tick } = signIn();
+  const codes = [];
+  for (let i = 0; i < 250; i++) {
+    const started = cli.start({ from: '198.51.100.9' });
+    assert.equal(cli.decide({ code: started.userCode, login: 'mia-dev', approve: false }), true);
+    codes.push(started);
+    tick(1);
+  }
+  assert.equal(cli.poll(codes[0].deviceCode).status, 'expired', 'the oldest denied record is gone');
+  assert.equal(cli.poll(codes[49].deviceCode).status, 'expired');
+  assert.equal(cli.poll(codes[50].deviceCode).status, 'denied', 'the newest 200 still say denied');
+  assert.equal(cli.poll(codes[249].deviceCode).status, 'denied');
+  assert.ok(cli.start({ from: '198.51.100.9' }).deviceCode, 'and none of them held a place');
+});

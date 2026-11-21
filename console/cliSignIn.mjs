@@ -40,6 +40,9 @@ const DEVICE_CODE_MS = 10 * 60_000;
 const POLL_SECONDS = 5;
 // More than this many sign-ins waiting at once, and a new one is refused until some expire: each holds a little memory.
 const MAX_PENDING = 200;
+// Denied codes hold no place (start), so they are bounded on their own: past this many, the oldest is dropped, and its
+// CLI, which has likely stopped asking, hears its code expired instead of denied.
+const MAX_DENIED = 200;
 // And this many from one client address: a person who runs login again, or a few people behind one office's address.
 // A code collected or denied in the browser stops counting at once (a denied one is kept, uncounted, for its CLI's next
 // poll); one left behind (a login stopped with Ctrl-C) counts until its 10 minutes are up.
@@ -211,9 +214,17 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
         login, by: self,
         issue: AsyncResource.bind((name) => (allowed(login) ? { status: 'approved', login, about, ...issue({ login, name }) } : { status: 'denied' })),
       };
-    } else device.denied = true;
+    } else {
+      device.denied = true;
+      capDenied();
+    }
     console.log(approve ? 'cliSignIn: sign-in approved' : 'cliSignIn: sign-in denied', { login, name: device.name });
     return true;
+  }
+
+  function capDenied() {
+    const denied = [...pending.entries()].filter(([, device]) => device.denied).sort(([, a], [, b]) => a.createdAt - b.createdAt);
+    for (const [key] of denied.slice(0, Math.max(0, denied.length - MAX_DENIED))) pending.delete(key);
   }
 
   function issue({ login, name }) {
@@ -322,6 +333,7 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true, d
         device.denied = true;
       }
     }
+    capDenied();
     const ids = Object.entries(tokens()).filter(([, r]) => r.login === login).map(([id]) => id);
     if (!ids.length) return;
     for (const id of ids) delete tokens()[id];
