@@ -66,14 +66,14 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed login [--no-browser]` | Prints a code and opens the console's `/cli` page; waits up to 10 minutes for the person to approve | 0 signed in, 2 code expired, 3 denied | main |
 | `woodshed logout` | Ends this computer's sign-in | 0 | main |
 | `woodshed status` | The console, its org, and who is signed in | 0, 2 not signed in | main |
-| `woodshed session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--no-wait] ["prompt"]` | Starts a private session and waits, step by step, until it runs | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on | #279 |
-| `woodshed session list [--all]` | Their sessions and the shared ones they see, with state and when each pauses | 0 | #279 |
-| `woodshed session get <id>` | One session: state, branch, pull request, pause, the hours it runs on, its console link | 0, 1 none they can see | #279 |
-| `woodshed session stop <id>` | Stops it once its work is pushed (waits up to 3 minutes) | 0, 1 not answered in time | #279 |
-| `woodshed session resume <id> [--no-wait]` | Starts one of their stopped sessions again, conversation and all | as `new`; 3 a shared session | #279 |
-| `woodshed session remove <id> [--yes]` | Takes it off the list with its saved conversation | 0, 2 not confirmed, 3 a shared session | #279 |
-| `woodshed session extend <id>` | Puts its pause or stop off by an hour (allowed in its last 15 minutes) | 0, 3 refused | #279 |
-| `woodshed session limits <id> [--idle-hours N\|default] [--lifetime-hours N\|default]` | Its own idle pause and lifetime | 0, 1 out of range, 3 not theirs | #279 |
+| `woodshed session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--no-wait] ["prompt"]` | Starts a private session and waits, step by step, until it runs | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on | main |
+| `woodshed session list [--all]` | Their sessions and the shared ones they see, with state and when each pauses | 0 | main |
+| `woodshed session get <id>` | One session: state, branch, pull request, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
+| `woodshed session stop <id>` | Stops it once its work is pushed (waits up to 3 minutes) | 0, 1 not answered in time | main |
+| `woodshed session resume <id> [--no-wait]` | Starts one of their stopped sessions again, conversation and all | as `new`; 3 a shared session | main |
+| `woodshed session remove <id> [--yes]` | Takes it off the list with its saved conversation | 0, 2 not confirmed, 3 a shared session | main |
+| `woodshed session extend <id>` | Puts its pause or stop off by an hour (allowed in its last 15 minutes) | 0, 3 refused | main |
+| `woodshed session limits <id> [--idle-hours N\|default] [--lifetime-hours N\|default]` | Its own idle pause and lifetime | 0, 1 out of range, 3 not theirs | main |
 | `woodshed settings plan [--pull] [--only …] [--own-files <checkout>]` | Lists what push (or pull) would do with each item; sends and writes nothing | 0 | #278 |
 | `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude settings, skills, MCP servers, and a checkout's ignored env files | 0, 2 not listed before or not confirmed | #278 |
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | #278 |
@@ -110,7 +110,8 @@ it. Exit 2 means the code expired, 3 that they denied it: say so and stop.
 woodshed session new --repo acme/app --branch 123 --json "Fix the login redirect loop"
 ```
 
-`--branch` takes a branch, or a pull request or issue (`123`, `pr 123`, its URL). Without `--repo`, the repo New session
+`--branch` takes a branch, or a pull request or issue (`123`, `pr 123`, its URL). A prompt is needed, except on a
+branch or pull request, where a session with none starts as a review of it. Without `--repo`, the repo New session
 opens on for them. Each start step is a `{"event":"step",…}` line, and the last line is `running`, `needs-you`,
 `failed` or `stopped` with the session, whose `url` is its page on the console. On `needs-you` (exit 2), give the
 person that `url` and stop. With `--no-wait` the command returns as soon as the console has the session: follow it with
@@ -181,8 +182,10 @@ rename or edit a file to get it past the check.
 
 Woodshed's review runs in a review session the console starts, and is turned on in the repo's own project file,
 `.woodshed/project.yaml`: its `pullRequests.review` with `runner: woodshed`. The verdict is posted by the console's
-reviewer App, so `author` is that App's `<slug>[bot]` login, and `commentAuthor` the console's own App's; `rerun` is
-what a commit subject carries to run the review again, and `workflow` may be left out. `project.reference.yaml` in a
+reviewer App, so `author` is that App's `<slug>[bot]` login, and `commentAuthor` the console's own App's; `heading`
+(required) is how the review's body starts, `rerun` what a commit subject carries to run the review again, and
+`workflow` may be left out. Check the file with `node <a Woodshed checkout>/shared/project.mjs check`, run from the
+repo, before proposing it. `project.reference.yaml` in a
 Woodshed checkout has every field. No GitHub workflow, Actions secret or Anthropic key is involved, so nothing here needs a credential.
 
 A `woodshed review enable` command that writes this and checks the console is ready for it is being built; it is in no
