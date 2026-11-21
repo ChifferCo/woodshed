@@ -27,6 +27,7 @@ import { createCredentials } from './credentials.mjs';
 import { reviewCommand } from './review.mjs';
 import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
+import { repoCommand } from './repos.mjs';
 import { configCommand } from './config.mjs';
 import { hcRunner, hcVersion, viaCommand } from './hc.mjs';
 import { settingsCommand } from './settings.mjs';
@@ -39,7 +40,7 @@ const REQUEST_MS = 20_000;
 export const EXIT = Object.freeze({ done: 0, failed: 1, waiting: 2, refused: 3 });
 
 // Commands that read their own options: what follows them, but --console, --json and --help, is theirs (in `args`).
-const OWN_ARGS = new Set(['session', 'config', 'settings']);
+const OWN_ARGS = new Set(['session', 'config', 'repo', 'settings']);
 
 const USAGE = `Usage: woodshed <command> [--console <url>] [--json]
 
@@ -47,6 +48,7 @@ Commands:
   login     sign in to a Woodshed console: approve the code it shows in your browser
   logout    sign out of the console, here and at the console
   status    the console, its org, who is signed in, and the hc found here (Herdr's, for session herdr)
+  repo      list, add and remove repos: woodshed repo --help
   tunnel <id> -- <line>
             run <line> in your running session, with this command's stdin, stdout and stderr; exits with its
             exit code, or 255 when the pipe could not open or broke
@@ -61,7 +63,7 @@ Commands:
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};
                    WOODSHED_CONSOLE sets it too)
-  --no-browser     login prints the address to open instead of opening it
+  --no-browser     print the address to open instead of opening it
   --json           machine-readable output: one JSON object per line
   --help           this text
 
@@ -184,8 +186,7 @@ export function selfCommand({ execPath = process.execPath, argv1 = process.argv[
   return { node: onPath ?? execPath, script: linked ?? script };
 }
 
-// Only an address this command line built (approvalUrl), and never through a shell: cmd's `start` would read & and | in
-// it as commands of their own. On Windows, rundll32 from System32 by its full path, never one in the current folder.
+// Open a checked web address without a shell. On Windows, use the full System32 path to rundll32.
 export function browserCommand(url, platform, env = process.env) {
   if (platform === 'darwin') return ['open', [url]];
   if (platform === 'win32') return [path.win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'rundll32.exe'), ['url.dll,FileProtocolHandler', url]];
@@ -485,6 +486,7 @@ export async function main(argv, deps = {}) {
     const args = parseArgs(argv);
     command = args.command;
     json = args.json;
+    if (args.command === 'repo' && args.help) return repoCommand(args, { stdout, EXIT });
     if (args.command === 'session' && args.help) return await sessionCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.command === 'review' && args.help) return await reviewCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.command === 'config' && args.help) return await configCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
@@ -498,6 +500,10 @@ export async function main(argv, deps = {}) {
     if (args.command === 'logout') return await logout(origin);
     if (args.command === 'status') return await status(origin);
     if (args.command === 'tunnel') return await tunnel(origin, args);
+    if (args.command === 'repo') return await repoCommand({ ...args, origin }, {
+      stdout, call, token: signedIn(origin).token, open, isTerminal: deps.isTerminal ?? Boolean(stdout.isTTY), json, emit, say, EXIT,
+      fail: (message, opts) => new CliError(message, opts),
+    });
     if (args.command === 'session') {
       // Its prompt may follow `--`, so a word of it is never read as an option.
       return await sessionCommand({ origin, rest: [...args.args, ...(args.rest ? ['--', ...args.rest] : [])] }, {
