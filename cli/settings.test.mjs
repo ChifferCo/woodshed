@@ -860,7 +860,7 @@ test('the console checks a computer\'s dotfile as My settings does, and a pull l
   const refused = await post('bash-aliases', `export GITHUB_TOKEN=${FAKE_GITHUB_TOKEN}\n`);
   assert.equal(refused.status, 400);
   const body = await refused.json();
-  assert.match(body.error, /line 1 holds a GitHub token/);
+  assert.match(body.error, /line 1 holds what looks like a GitHub token/);
   assert.ok(!JSON.stringify(body).includes(FAKE_GITHUB_TOKEN));
   assert.equal((await post('gitconfig', '[user]\n\temail = x@example.com\n')).status, 400);
   assert.equal((await post('secrets', 'x')).status, 404);

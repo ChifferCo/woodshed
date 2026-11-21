@@ -337,3 +337,15 @@ test('the console refuses codex config holding a credential and a plugin\'s mark
   assert.equal(c.objects.size, 0, 'nothing kept');
   await c.settings.sync({ login: 'octocat', sessionId: 'new', version: 0, removed: [], changed: { '.claude/plugins/installed_plugins.json#plugins/p@m': '{"marketplace":{"source":"directory"}}' } });
 });
+
+test('a config.toml that does not read as TOML is held out of the round, neither sent nor written over, until it reads', async () => {
+  const c = fakeConsole();
+  const a = session(await makeHome({ '.codex/config.toml': 'model = "o3"\n' }), c.send('aaaaaaaa'));
+  await a.round({ live: false });
+  await fs.writeFile(path.join(a.home, '.codex/config.toml'), 'model = "o3\n[mcp_servers.x.env]\nAPI_KEY = "ABCD1234"\n');
+  const held = await a.round();
+  assert.deepEqual([held.sent, held.removed, held.written], [0, 0, 0], 'not sent, not taken as removed, not written over');
+  assert.equal(await read(a.home, '.codex/config.toml'), 'model = "o3\n[mcp_servers.x.env]\nAPI_KEY = "ABCD1234"\n');
+  await fs.writeFile(path.join(a.home, '.codex/config.toml'), 'model = "o4"\n');
+  assert.equal((await a.round()).sent, 1, 'it goes once it reads');
+});

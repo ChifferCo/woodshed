@@ -286,6 +286,8 @@ const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
 const REFERENCE = /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/;
 // One of codex's own words (preferred_auth_method = "chatgpt", a credentials store = "file"), not a credential.
 const WORD = /^[a-z][a-z0-9_-]{0,24}$/;
+// A header that carries a credential, wherever in an inline table it is ({ http_headers = { Authorization = … } }).
+const CREDENTIAL_HEADER = /^(authorization|proxy-authorization|cookie|x-api-key|api-key)$/i;
 
 /**
  * What in one of config.toml's statements is a credential, named, never shown: null for none.
@@ -302,10 +304,11 @@ export function credentialOf(statement) {
   if (kind) return `holds what looks like ${kind}`;
   const strings = stringsOf(statement.value);
   if (/^(experimental_)?bearer_token$/.test(last) && strings.length) return `sets ${name}`;
+  // An inline table's pairs, at any depth: its values are an MCP server's env or headers, which codex takes as they are,
+  // so no word of codex's own passes here.
   for (const pair of inlinePairs(statement.value)) {
     if (!pair.said.trim() || REFERENCE.test(pair.said) || (namesVariable(pair.key, last) && ENV_NAME.test(pair.said))) continue;
-    if (!LITERAL_TABLES.has(last) && WORD.test(pair.said)) continue;
-    if (SECRET_VARIABLE.test(pair.key) || (last === 'http_headers' && SECRET_HEADER.test(pair.key))) return `sets ${name}.${keyText([pair.key])}`;
+    if (SECRET_VARIABLE.test(pair.key) || CREDENTIAL_HEADER.test(pair.key) || (last === 'http_headers' && SECRET_HEADER.test(pair.key))) return `sets ${name}.${keyText([pair.key])}`;
   }
   const single = strings.length === 1 && statement.value.trim() === strings[0].raw ? strings[0].said : null;
   if (single !== null && single.trim() && !REFERENCE.test(single)) {

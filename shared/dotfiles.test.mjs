@@ -78,3 +78,17 @@ test('a comment never hides the next line, a bare boolean stays true, an $includ
   assert.match(dotfileProblem('gitconfig', '[alias]\n\tlg = "log --graph\n'), /line 2: a quote is left open/);
   assert.equal(dotfileProblem('gitconfig', '[alias]\n\tsay = "!echo \\"hi\\"" # a comment with a " in it\n'), null);
 });
+
+test('a credential is refused in a comment or a section name too, and what would break a session\'s own git reading is not taken', () => {
+  for (const [key, text] of [
+    ['bash-aliases', `# my token: ${TOKEN}\nalias ll='ls -la'\n`],
+    ['inputrc', `# ${TOKEN}\nset editing-mode vi\n`],
+    ['gitconfig', `; ${TOKEN}\n[alias]\n\tco = checkout\n`],
+  ]) assert.match(dotfileProblem(key, text), /line 1 holds what looks like a GitHub token/, key);
+  assert.match(dotfileProblem('gitconfig', '[diff]\n\tmnemonicPrefix = true\n'), /diff\.mnemonicprefix is not one a session takes/);
+  assert.match(dotfileProblem('gitconfig', '[status]\n\tshowUntrackedFiles = no\n'), /status\.showuntrackedfiles is not one/);
+  assert.match(dotfileProblem('gitconfig', '[color]\n\tui = always\n'), /color\.ui is always/);
+  assert.equal(dotfileProblem('gitconfig', '[color]\n\tui = auto\n'), null);
+  assert.match(dotfileProblem('gitconfig', '[alias]\n\tx = "!echo \\q"\n'), /line 2: an escape git does not read/);
+  assert.equal(fromComputer('gitconfig', { '.gitconfig': '[color]\n\tui = always\n\tdiff = auto\n' }, { home: '/Users/mia' }).text, '[color]\n\tdiff = auto\n');
+});

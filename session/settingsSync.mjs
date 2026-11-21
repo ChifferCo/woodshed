@@ -16,7 +16,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { isMain } from '../shared/isMain.mjs';
-import { CODEX_CONFIG, sharedPart, withOwnEntries } from '../shared/codexConfig.mjs';
+import { CODEX_CONFIG, readToml, sharedPart, withOwnEntries } from '../shared/codexConfig.mjs';
 import { carriedSource } from '../shared/pluginSource.mjs';
 import { PLUGIN_ID_RE } from './missingPlugins.mjs';
 
@@ -172,19 +172,23 @@ export async function pluginItems(home) {
 
 /**
  * @param {string} home
- * @returns {Promise<{items: Record<string, string>, unreadable: string[], oversized: string[]}>}  each item's content: a
+ * @returns {Promise<{items: Record<string, string>, unreadable: string[], oversized: string[], unparsed: string[]}>}  each item's content: a
  *   file's as base64, an entry's as JSON. `unreadable` names the JSON files left out this round, whose entries must not
- *   read as removed; `oversized` the files over MAX_ITEM_BYTES, which are neither removed nor overwritten
+ *   read as removed; `oversized` the files over MAX_ITEM_BYTES, which are neither removed nor overwritten; `unparsed`
+ *   a config.toml that does not read as TOML (codex writing it, or a typo), held the same way until it reads, since what
+ *   it keeps its own could not be told apart
  */
 export async function readSnapshot(home) {
   const items = {};
   const oversized = [];
+  const unparsed = [];
   const files = [...SYNCED_FILES];
   for (const dir of SYNCED_DIRS) files.push(...await filesUnder(home, dir));
   for (const rel of files) {
     const content = await fs.readFile(path.join(home, rel)).catch((err) => (err.code === 'ENOENT' || err.code === 'EISDIR' ? null : Promise.reject(err)));
     if (!content) continue;
     if (content.length > MAX_ITEM_BYTES) oversized.push(rel);
+    else if (rel === CODEX_CONFIG && !readToml(content.toString('utf8'))) unparsed.push(rel);
     else if (rel === CODEX_CONFIG) {
       // Without this side's own entries: its trusted folders and any holding a credential (codexConfig.mjs). A file of
       // nothing else is no item.
@@ -204,7 +208,7 @@ export async function readSnapshot(home) {
     if (!map || typeof map !== 'object') continue;
     for (const [name, value] of Object.entries(map)) items[entryId(file, key, name)] = JSON.stringify(value);
   }
-  return { items, unreadable, oversized };
+  return { items, unreadable, oversized, unparsed };
 }
 
 /**
@@ -235,7 +239,8 @@ export async function applyItems(home, items, { live = false, before = null } = 
   let written = 0;
   let deleted = 0;
   const skipped = [];
-  const { items: local, oversized } = await readSnapshot(home);
+  const { items: local, oversized: tooBig, unparsed } = await readSnapshot(home);
+  const oversized = [...tooBig, ...unparsed];
   const untouched = (id) => !before || before[id] === local[id];
   for (const [id, shared] of Object.entries(items)) {
     // This session's own status line stays (see SETTINGS).
@@ -371,7 +376,8 @@ export async function withRetries(call, { tries = START_TRIES, delayMs = START_R
  *   the console keeps no settings
  */
 export async function syncOnce({ home, state, live, send }) {
-  const { items: local, unreadable, oversized } = await readSnapshot(home);
+  const { items: local, unreadable, oversized: tooBig, unparsed } = await readSnapshot(home);
+  const oversized = [...tooBig, ...unparsed];
   const known = state.version !== null;
   let { changed, removed } = known ? localChanges(state.synced, local, oversized) : { changed: {}, removed: [] };
   // A JSON file read mid-write is left out of this round entirely: its entries are neither sent nor counted as gone.

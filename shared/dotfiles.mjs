@@ -16,7 +16,7 @@
 // left out named: a credential there is left out rather than refused, so the rest still goes.
 
 import path from 'node:path';
-import { shellCredential } from './secretLike.mjs';
+import { secretContent, shellCredential } from './secretLike.mjs';
 
 export const DOTFILES = Object.freeze({
   gitconfig: { label: '~/.gitconfig', from: ['.gitconfig'] },
@@ -34,7 +34,8 @@ const GIT_KEYS = {
   column: ['ui'],
   commit: ['verbose'],
   core: ['autocrlf', 'whitespace', 'quotepath', 'abbrev', 'safecrlf', 'eol'],
-  diff: ['algorithm', 'colormoved', 'colormovedws', 'renames', 'mnemonicprefix', 'context', 'indentheuristic', 'submodule'],
+  // Never mnemonicPrefix or noPrefix: the Diff and Review tabs read `git diff`'s a/ and b/.
+  diff: ['algorithm', 'colormoved', 'colormovedws', 'renames', 'context', 'indentheuristic', 'submodule'],
   fetch: ['prune', 'prunetags', 'parallel'],
   grep: ['linenumber', 'patterntype'],
   help: ['autocorrect'],
@@ -45,7 +46,8 @@ const GIT_KEYS = {
   push: ['default', 'autosetupremote', 'followtags'],
   rebase: ['autosquash', 'autostash', 'updaterefs', 'stat'],
   rerere: ['enabled', 'autoupdate'],
-  status: ['short', 'branch', 'showuntrackedfiles', 'submodulesummary', 'showstash'],
+  // Never showUntrackedFiles: the Diff tab and the stop's checkpoint read `git status --porcelain` for new files.
+  status: ['short', 'branch', 'submodulesummary', 'showstash'],
   tag: ['sort'],
 };
 const GIT_SUBSECTIONS = new Set(['color']);
@@ -81,7 +83,8 @@ function gitLines(text) {
     const kv = KEY_RE.exec(line);
     if (!kv) return { error: `line ${number} is not a section, a key or a comment` };
     // git would not read the file past a quote left open, the start's identity and credential helper with it.
-    if (kv[2] !== undefined && openQuote(kv[2])) return { error: `line ${number}: a quote is left open` };
+    const syntax = kv[2] === undefined ? null : valueSyntax(kv[2]);
+    if (syntax) return { error: `line ${number}: ${syntax}` };
     // A key with no `=` is a boolean that is true: written back the same way, never as `key = `, which is false.
     out.push({ number, kind: 'key', section, key: kv[1].toLowerCase(), value: kv[2] ?? '', bare: kv[2] === undefined, text: line });
   }
@@ -90,15 +93,17 @@ function gitLines(text) {
 
 // A section as a message names it: a subsection's name can be a URL with a token in it ([url "https://<token>@..."]), so
 // only the section's own name is ever shown.
-/** Whether a git value leaves a double quote open, before any comment. */
-function openQuote(value) {
+/** What git would refuse in a value, before any comment: a double quote left open, or an escape it does not know. */
+function valueSyntax(value) {
   let open = false;
   for (let i = 0; i < value.length; i++) {
-    if (value[i] === '\\') i++;
-    else if (value[i] === '"') open = !open;
+    if (value[i] === '\\') {
+      if (!'\\"ntb'.includes(value[i + 1] ?? '')) return 'an escape git does not read (\\\\, \\", \\n, \\t, \\b)';
+      i++;
+    } else if (value[i] === '"') open = !open;
     else if (!open && (value[i] === '#' || value[i] === ';')) break;
   }
-  return open;
+  return open ? 'a quote is left open' : null;
 }
 
 /** An `$include` line of inputrc that names a file a session has: under /etc, once `..` is resolved. */
@@ -120,6 +125,11 @@ function gitKeyAllowed(section, key) {
   return keys === '*' || keys.includes(key);
 }
 
+/** Why a value an allowed key holds is still not taken, or null: color always, which puts color codes in output tools read. */
+function gitValueProblem(section, value) {
+  return section.name === 'color' && /^\s*"?always"?\s*$/i.test(value) ? 'always, which colors output that the session\'s tools read: auto does what you see' : null;
+}
+
 // An alias's value: one shell word, quoted or not, with no command substitution, which runs as the file is read, and
 // nothing after it, which would too.
 const ALIAS_RE = /^\s*alias\s+(?!-)([A-Za-z0-9_.:+@%,-]+)=('[^']*'|"(?:[^"\\`$]|\\.|\$(?![({]))*"|[^\s'"`;&|<>()$\\]+)\s*(?:#.*)?$/;
@@ -139,6 +149,11 @@ export function aliasOf(line) {
  */
 export function dotfileProblem(key, text) {
   if (!DOTFILES[key]) return `no file called ${key}`;
+  // Every line, comments and section names too: what is saved is written whole into the session.
+  for (const [i, line] of text.replace(/\r\n/g, '\n').split('\n').entries()) {
+    const kind = secretContent(line);
+    if (kind) return `line ${i + 1} holds what looks like ${kind}: credentials stay off sessions`;
+  }
   if (key === 'gitconfig') {
     const read = gitLines(text);
     if (read.error) return read.error;
@@ -151,6 +166,8 @@ export function dotfileProblem(key, text) {
       if (!gitKeyAllowed(line.section, line.key)) return `line ${line.number}: ${line.section.name}.${line.key} is not one a session takes`;
       const credential = shellCredential(line.value);
       if (credential) return `line ${line.number}: ${line.section.name}.${line.key} holds ${credential}: credentials stay off sessions`;
+      const value = gitValueProblem(line.section, line.value);
+      if (value) return `line ${line.number}: ${line.section.name}.${line.key} is ${value}`;
     }
     return null;
   }
@@ -200,6 +217,7 @@ export function fromComputer(key, files, { home }) {
         const credential = shellCredential(line.value);
         if (!gitKeyAllowed(line.section, line.key)) leave(name);
         else if (credential) leave(`${name} (${credential})`);
+        else if (gitValueProblem(line.section, line.value)) leave(`${name} (always)`);
         else if (namesHome(line.value)) leave(`${name} (names a path on this computer)`);
         else current.lines.push(line.bare ? `\t${line.key}` : `\t${line.key} = ${line.value.trim()}`);
       }
