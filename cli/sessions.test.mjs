@@ -333,3 +333,11 @@ test('a stop the console has not answered in time says so, and a refused sign-in
   assert.equal(out.code, EXIT.waiting);
   assert.match(out.err, /ended: you no longer have write access to the repository/);
 });
+
+test('an unknown session command is a usage error, even one named like an object\'s own', async () => {
+  const { parseSessionArgs } = await import('./sessions.mjs');
+  const fail = (message) => new Error(message);
+  for (const sub of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'nope']) {
+    assert.throws(() => parseSessionArgs(sub, ['--bad-flag'], fail), /unknown session command/, sub);
+  }
+});
