@@ -1,10 +1,24 @@
 # The woodshed command line
 
 `woodshed` signs in to a Woodshed console from your computer, says who is signed in, starts and manages your sessions,
-opens a pipe into your running sessions, adds them to Herdr's sidebar, and carries your Claude settings to and from your
-private sessions. It is plain Node 22 with no dependencies, like the rest of Woodshed.
+opens a pipe into your running sessions, and adds them to Herdr's sidebar. It reads and sets your choices on My settings
+and carries your Claude settings between your computer and private sessions. It is plain Node 22 with no dependencies.
 
 ## Running it
+
+With Node 22 or newer, install or upgrade the CLI on macOS or Linux:
+
+```sh
+curl -fsSL https://woodshed.run/cli | sh
+```
+
+The installer puts the command in `~/.woodshed/cli` and links it from `~/.local/bin` (or `~/bin` if that is on
+PATH instead). If needed, it prints the line to add to your shell profile. Then ask your agent to run `woodshed login`.
+To install the optional Claude Code and Codex skill, run:
+
+```sh
+curl -fsSL https://woodshed.run/cli | sh -s -- --yes
+```
 
 From a checkout of this repository:
 
@@ -19,7 +33,13 @@ To type `woodshed` instead, link it onto your PATH once:
 ln -s "$PWD/cli/woodshed.mjs" ~/.local/bin/woodshed
 ```
 
-An installer (`curl … | bash`, npm) comes later.
+### Packing the CLI for the website
+
+The repository-root `package.json` lists the runtime files and bundled skill. Update its `files` list when the CLI
+needs another file. Run `node --test cli/package.test.mjs` to pack, extract and run the standalone CLI.
+
+Woodshed Cloud's Site workflow pins a core commit, runs `npm pack --offline --ignore-scripts` on it, and publishes
+the tarball and its SHA-256 on woodshed.run. The site's installer checks that digest before installing the CLI.
 
 ## Commands
 
@@ -29,6 +49,7 @@ An installer (`curl … | bash`, npm) comes later.
 | `woodshed logout` | Ends the token at the console and forgets it here. | 0 |
 | `woodshed status` | The console's name and address, its org (the GitHub account its repos are on), who is signed in, and the Herdr `hc` found here with its version (`hc` in `--json`: `installed`, `version`, `minimum`, `ok`), for `session herdr`. | 0 signed in, 2 not signed in or the sign-in ended |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
+| `woodshed config list\|get\|set` | Reads or sets [your choices on My settings](#your-choices-on-my-settings). | as below |
 | `woodshed settings plan\|push\|pull` | Your Claude and Codex settings, plugins, a few dotfiles and a checkout's ignored files, to and from your private sessions: [Settings](#settings). | as below |
 
 Every command takes:
@@ -122,6 +143,40 @@ no others (`console/cliSessions.mjs`), each as its person:
 - `GET /api/sessions`, `GET /api/my/projects`
 - `POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume`, `POST /api/my/sessions/<id>/remove`
 - `POST /api/sessions/<id>/stop`, `POST /api/sessions/<id>/extend`, `POST /api/sessions/<id>/limits`
+- `GET /api/cli/config`, and `woodshed config`'s writes: `POST /api/my/terminal`, `/api/my/reviews`,
+  `/api/my/codex-auth/reviews`, `/api/my/claude-token/shared`, `/api/my/projects/default`, `/api/my/github/identity`
+
+## Your choices on My settings
+
+`woodshed config` reads and sets the choices on your My settings page, through the page's own routes and the same checks
+(`config.mjs`, `console/cliConfig.mjs`). `config` refuses keys for credentials, repo env values, own files and tmux
+lines with a pointer to My settings. Use `settings --own-files` to sync whole ignored files. No message repeats a key
+or value `config` refused, so a token pasted in the wrong place stays out of captured output.
+
+| Command | What it does | Exits |
+| --- | --- | --- |
+| `config list` | Every key below and its value. | 0 |
+| `config get <key>` | One value, bare, for a script (an empty line for none). | 0, 3 unknown key or a secret |
+| `config set <key> <value>` | Changes it, and prints the new value. A change that reaches only sessions started after it says so. | 0, 3 unknown key, a value that is not valid (it lists the valid ones), a secret, or a step My settings needs first |
+
+| Key | Values | Route |
+| --- | --- | --- |
+| `terminal` | `tmux`, `herdr`: what your private sessions run their agent in. Your next private session starts in it; running ones keep theirs. | `POST /api/my/terminal` |
+| `reviews` | `none`, `claude`, `codex`, `both`, `default` (the most this console can run): who reviews your pull requests. | `POST /api/my/reviews` |
+| `codex-reviews` | `on`, `off`: reviews of your pull requests run Codex on your own sign-in. Needs a Codex sign-in saved on My settings. | `POST /api/my/codex-auth/reviews` |
+| `claude-token-shared` | `on`, `off`: shared sessions you start from GitHub run on your own Claude token. Needs a token saved on My settings. | `POST /api/my/claude-token/shared` |
+| `default-repo` | A repo you can start sessions on, as `owner/name` or its name on the console: where New session and `session new` open. | `POST /api/my/projects/default` |
+| `github-name`, `github-email` | What your sessions' commits say. Needs GitHub connected on My settings; setting one keeps the other. | `POST /api/my/github/identity` |
+
+A switch reads `on` only where it has effect, as the page draws it: `claude-token-shared` with no token saved reads
+`off`. A value that starts with `-` goes after `--` (`config set github-name -- -mia-`).
+Setting `default-repo` to the installation's default clears your personal repo override.
+
+With `--json`, `list` prints `{"console","config":{…}}`, `get` `{"key","value"}`, and `set`
+`{"event":"set","key","value","changed","note"?,"config":{…}}`.
+
+The console reads them for the token at `GET /api/cli/config`, which answers these keys and nothing else, and each
+`set` answers with that same view, never the page's whole My settings answer.
 
 ## Settings
 
@@ -252,6 +307,7 @@ To try it by hand against `node console/bin/devConsole.mjs 7712` (no sign-in, so
 node cli/woodshed.mjs login --console http://localhost:7712
 node cli/woodshed.mjs status --json
 node cli/woodshed.mjs session list
+node cli/woodshed.mjs config list
 node cli/woodshed.mjs logout
 ```
 
