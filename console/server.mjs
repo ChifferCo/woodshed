@@ -773,7 +773,8 @@ export function createHandler({
   // on (the default project's owner), as the org. Null with no repo yet.
   function cliAbout() {
     const repo = defaultProject(config).repo || null;
-    return { console: consoleName, org: repo ? repo.split('/')[0] : null };
+    // appDomain: where a session's app is, `<id>.<appDomain>`, for `woodshed open` (none where apps have no names).
+    return { console: consoleName, org: repo ? repo.split('/')[0] : null, appDomain: config.appDomain || null };
   }
 
   // Who is signed in to the console: the hosting proxy's identity, or the browser's session cookie.

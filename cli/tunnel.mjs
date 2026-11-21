@@ -23,6 +23,50 @@ const ANSWER_MS = 20_000;
 const plain = (text) => String(text).replace(/[^\x20-\x7e]/g, ' ').trim().slice(0, 300);
 
 /**
+ * One upgrade request to the console, as the tunnel and `woodshed forward` make them.
+ * @param {{url: URL, token: string, headers?: object, userAgent?: string, answerMs?: number}} args
+ * @returns {Promise<{socket: import('node:net').Socket, head: Buffer}>}  rejects with an Error whose `status` is the
+ *   console's answer (absent when it was not reached) and whose message says why, printable
+ */
+export function openUpgrade({ url, token, headers = {}, userAgent = 'woodshed-cli', answerMs = ANSWER_MS }) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const failed = (message, status = null) => {
+      if (settled) return;
+      settled = true;
+      reject(Object.assign(new Error(message), { status }));
+    };
+    const req = (url.protocol === 'https:' ? https : http).request(url, {
+      headers: { connection: 'Upgrade', upgrade: PROTOCOL, authorization: `Bearer ${token}`, 'user-agent': userAgent, ...headers },
+      agent: false,
+    });
+    req.setTimeout(answerMs, () => {
+      req.destroy();
+      failed(`${url.origin} did not answer in ${Math.round(answerMs / 1000)} s`);
+    });
+    req.on('error', (err) => failed(`could not reach ${url.origin}: ${err.message}`));
+    req.on('response', (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { if (text.length < 4096) text += chunk; });
+      res.on('end', () => {
+        const hint = res.statusCode === 401 ? ' (run woodshed login)' : '';
+        failed(`refused (${res.statusCode}): ${plain(text) || 'no reason given'}${hint}`, res.statusCode);
+      });
+      res.on('error', () => failed(`refused (${res.statusCode})`, res.statusCode));
+    });
+    req.on('upgrade', (res, socket, head) => {
+      req.setTimeout(0);
+      socket.setTimeout(0);
+      socket.setNoDelay(true);
+      settled = true;
+      resolve({ socket, head });
+    });
+    req.end();
+  });
+}
+
+/**
  * @param {{origin: string, token: string, session: string, line: string,
  *          stdin: import('node:stream').Readable, stdout: {write: Function}, stderr: {write: Function},
  *          userAgent?: string, answerMs?: number}} args
@@ -45,31 +89,7 @@ export function runTunnel({ origin, token, session, line, stdin, stdout, stderr,
       stdin.destroy?.();
       resolve(code);
     };
-    const req = (url.protocol === 'https:' ? https : http).request(url, {
-      headers: {
-        connection: 'Upgrade', upgrade: PROTOCOL, authorization: `Bearer ${token}`, [LINE_HEADER]: encodeLine(line), 'user-agent': userAgent,
-      },
-      agent: false,
-    });
-    req.setTimeout(answerMs, () => {
-      req.destroy();
-      finish(fail(`${url.origin} did not answer in ${Math.round(answerMs / 1000)} s`));
-    });
-    req.on('error', (err) => finish(fail(`could not reach ${url.origin}: ${err.message}`)));
-    req.on('response', (res) => {
-      let text = '';
-      res.setEncoding('utf8');
-      res.on('data', (chunk) => { if (text.length < 4096) text += chunk; });
-      res.on('end', () => {
-        const hint = res.statusCode === 401 ? ' (run woodshed login)' : '';
-        finish(fail(`refused (${res.statusCode}): ${plain(text) || 'no reason given'}${hint}`));
-      });
-      res.on('error', () => finish(fail(`refused (${res.statusCode})`)));
-    });
-    req.on('upgrade', (res, remote, head) => {
-      req.setTimeout(0);
-      remote.setTimeout(0);
-      remote.setNoDelay(true);
+    openUpgrade({ url, token, headers: { [LINE_HEADER]: encodeLine(line) }, userAgent, answerMs }).then(({ socket: remote, head }) => {
       let code = null;
       let broken = null;
       // A reader slower than the session (a full pipe) holds the socket back, and so the session's program, rather than
@@ -118,8 +138,7 @@ export function runTunnel({ origin, token, session, line, stdin, stdout, stderr,
         if (code !== null) return finish(code);
         finish(fail(broken ? `the pipe broke: ${broken}` : 'the pipe closed before the line ended'));
       });
-    });
-    req.end();
+    }, (err) => finish(fail(err.message)));
   }).then((code) => new Promise((resolve) => {
     // What is still in stdout's buffer goes out first, or a reader at the far end of a pipe loses the end.
     if (typeof stdout.write === 'function' && stdout.writableLength) stdout.write('', () => resolve(code));

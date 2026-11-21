@@ -3,6 +3,8 @@
 //
 //   UPGRADE /api/tunnel/exec/<id>   `Authorization: Bearer wsc_...` (the command line's token, cliSignIn.mjs),
 //                                   `Upgrade: woodshed-tunnel`, `x-woodshed-exec: <the line, base64>`
+//   UPGRADE /api/tunnel/port/<id>/<port>   the same token: a TCP stream to that port in the session, for
+//                                   `woodshed forward` (cli/forward.mjs), through statusd's /port/<port>
 //
 // The console checks the token and the session, then sends the request on to the session's statusd `/exec` with the
 // session's token in place of the person's, as it reaches statusd for the terminals' viewers, and copies bytes both
@@ -20,9 +22,12 @@ import net from 'node:net';
 
 import logins from './public/logins.cjs';
 import { LINE_HEADER, PROTOCOL, decodeLine } from '../shared/execFrames.mjs';
+import { SESSION_PORTS, portNumber } from '../shared/listeningPorts.mjs';
 const { loginKey } = logins;
 
-const PATH_RE = /^\/api\/tunnel\/exec\/([0-9a-f]{8})$/;
+// /api/tunnel/exec/<id>, or /api/tunnel/port/<id>/<port>: a TCP stream to that port in the session, for `woodshed
+// forward` (cli/forward.mjs), through statusd's /port/<port> (session/portPipe.mjs), on the same checks.
+const PATH_RE = /^\/api\/tunnel\/(?:exec\/([0-9a-f]{8})|port\/([0-9a-f]{8})\/(\d{1,5}))$/;
 const RECHECK_MS = 15_000;
 // statusd's answer to the upgrade, before the console gives up on it.
 const ANSWER_MS = 15_000;
@@ -108,11 +113,13 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
   cli.whenEnded?.(({ id }) => closeWhere((pipe) => pipe.tokenId === id, 'the token was revoked'));
   fleet.onLocking?.((id) => closeWhere((pipe) => pipe.session === id, 'the session is being locked down'));
 
-  /** @returns {boolean}  false when the path is not the exec pipe's */
+  /** @returns {boolean}  false when the path is neither the exec pipe's nor a port's */
   function handleUpgrade(req, socket, head) {
     // The raw path, not new URL(): a path like //a:99999 makes it throw, and nothing above this catches.
-    const id = PATH_RE.exec(String(req.url || '/').split('?')[0])?.[1];
-    if (!id) return false;
+    const match = PATH_RE.exec(String(req.url || '/').split('?')[0]);
+    if (!match) return false;
+    const id = match[1] ?? match[2];
+    const port = match[2] ? portNumber(match[3]) : null;
     if (String(req.headers.upgrade).toLowerCase() !== PROTOCOL) {
       refuse(socket, 400, 'Bad Request', `upgrade to ${PROTOCOL}\n`);
       return true;
@@ -130,18 +137,31 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
       refuse(socket, checked.status, checked.text, checked.message);
       return true;
     }
+    if (match[2]) {
+      if (!port) {
+        refuse(socket, 400, 'Bad Request', 'not a port\n');
+        return true;
+      }
+      if (SESSION_PORTS.includes(port)) {
+        refuse(socket, 403, 'Forbidden', `port ${port} is the session's own: open it from the console\n`);
+        return true;
+      }
+      forward({ signedIn, session: checked.session, kind: 'port', port, path: `/port/${port}`, headers: [], authorization: req.headers.authorization, socket, head });
+      return true;
+    }
     const line = req.headers[LINE_HEADER];
     if (!decodeLine(line)) {
       refuse(socket, 400, 'Bad Request', `no line to run in ${LINE_HEADER}, or one too long\n`);
       return true;
     }
-    forward({ signedIn, session: checked.session, line, authorization: req.headers.authorization, socket, head });
+    forward({ signedIn, session: checked.session, kind: 'exec', port: null, path: '/exec', headers: [`${LINE_HEADER}: ${line}`], authorization: req.headers.authorization, socket, head });
     return true;
   }
 
-  function forward({ signedIn, session, line, authorization, socket, head }) {
+  function forward({ signedIn, session, kind, port, path, headers, authorization, socket, head }) {
     const { host, statusPort } = session.endpoint;
     const pipe = { socket, upstream: null, tokenId: signedIn.id, login: signedIn.login, session: session.id, authorization, openedAt: now(), why: null };
+    const named = kind === 'port' ? { port } : {};
     track(pipe);
     let answered = false;
     const upstream = net.connect(statusPort, host);
@@ -152,8 +172,8 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
       upstream.destroy();
     }, ANSWER_MS);
     upstream.on('connect', () => {
-      const lines = [`GET /exec HTTP/1.1`, `host: ${host}:${statusPort}`, 'connection: Upgrade', `upgrade: ${PROTOCOL}`,
-        `authorization: Bearer ${session.token}`, `${LINE_HEADER}: ${line}`];
+      const lines = [`GET ${path} HTTP/1.1`, `host: ${host}:${statusPort}`, 'connection: Upgrade', `upgrade: ${PROTOCOL}`,
+        `authorization: Bearer ${session.token}`, ...headers];
       upstream.write(`${lines.join('\r\n')}\r\n\r\n`);
       if (head?.length) upstream.write(head);
     });
@@ -172,7 +192,7 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
       answered = true;
       const status = Number(/^HTTP\/1\.[01] (\d{3})/.exec(buffered.subarray(0, end).toString('latin1'))?.[1]);
       if (status !== 101) {
-        console.warn('execPipe: refused by the session', { login: pipe.login, session: pipe.session, status: status || null });
+        console.warn('execPipe: refused by the session', { login: pipe.login, session: pipe.session, kind, ...named, status: status || null });
         socket.write(buffered);
         upstream.pipe(socket);
         return;
@@ -184,7 +204,7 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
       upstream.pipe(socket);
       socket.pipe(upstream);
       pipe.connected = true;
-      console.log('execPipe: opened', { login: pipe.login, session: pipe.session, token: pipe.tokenId, device: signedIn.record?.name ?? null });
+      console.log('execPipe: opened', { login: pipe.login, session: pipe.session, kind, ...named, token: pipe.tokenId, device: signedIn.record?.name ?? null });
     };
     upstream.on('data', readAnswer);
     upstream.on('error', (err) => {
@@ -204,7 +224,7 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
       untrack(pipe);
       if (!pipe.connected) return;
       console.log('execPipe: closed', {
-        login: pipe.login, session: pipe.session, token: pipe.tokenId, seconds: Math.round((now() - pipe.openedAt) / 1000),
+        login: pipe.login, session: pipe.session, kind, ...named, token: pipe.tokenId, seconds: Math.round((now() - pipe.openedAt) / 1000),
         sent: upstream.bytesWritten, received: upstream.bytesRead, why: pipe.why ?? 'ended',
       });
     });

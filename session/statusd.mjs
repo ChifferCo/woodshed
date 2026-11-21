@@ -84,6 +84,7 @@ import { ENGINE_NAMES, viewersOf } from '../shared/databases/index.mjs';
 import { expandPath, loadProject, usesVariable } from '../shared/project.mjs';
 import { isMain } from '../shared/isMain.mjs';
 import { EXEC_PATH, handleExecUpgrade } from './execPipe.mjs';
+import { PORT_PATH_RE, handlePortUpgrade } from './portPipe.mjs';
 
 const run = promisify(execFile);
 
@@ -1495,6 +1496,10 @@ export function handleUpgrade(req, socket, head, { token = TOKEN, port = APP_POR
   // The exec pipe, from the console for the session's person (execPipe.mjs): never an app's request.
   if (!(APP_HEADER in req.headers) && String(req.url || '/').split('?')[0] === EXEC_PATH) {
     return handleExecUpgrade(req, socket, head, { isAuthorized: (header) => isAuthorized(header, token), cwd: REPO_DIR, tainted, ask: ASK });
+  }
+  // A TCP stream to a port in the session, for `woodshed forward` (portPipe.mjs).
+  if (!(APP_HEADER in req.headers) && PORT_PATH_RE.test(String(req.url || '/').split('?')[0])) {
+    return handlePortUpgrade(req, socket, head, { isAuthorized: (header) => isAuthorized(header, token), tainted, ask: ASK });
   }
   if (!(APP_HEADER in req.headers) && EDITOR_RE.test(new URL(req.url || '/', 'http://statusd').pathname)) {
     if (!isAuthorized(req.headers.authorization, token)) {

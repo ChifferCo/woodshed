@@ -28,6 +28,9 @@ An installer (`curl … | bash`, npm) comes later.
 | `woodshed logout` | Ends the token at the console and forgets it here. | 0 |
 | `woodshed status` | The console's name and address, its org (the GitHub account its repos are on), and who is signed in. | 0 signed in, 2 not signed in or the sign-in ended |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
+| `woodshed forward <id> <port>[:<local>]...` | Your session's port on this computer's `localhost`, on `<local>` when given, else the same number, until Ctrl-C. A local port that is taken (on 127.0.0.1 or ::1) moves to the next free one, and it says which. Below. | 0 at Ctrl-C, 2 not signed in, 3 refused, 1 anything else |
+| `woodshed forward --auto <id>` | The same for every port your session listens on, as it starts and stops listening. | as above |
+| `woodshed open <id>` | Your session's app's address, `https://<id>.<app domain>/`, which opens behind the console's sign-in (or a share link made on the console). | 0, 2 not signed in, 1 a console whose apps have no names of their own |
 
 Every command takes:
 
@@ -55,6 +58,21 @@ tunnel. Exit 255 is the tunnel's own failure (not signed in, refused, the consol
 line ended), and it always says why on stderr. A line that itself exits 255 exits 255 too, with nothing of the tunnel's
 on stderr, as ssh does. The line is at most 8 KB: a longer one belongs in a script in the session. Closing the tunnel
 before the line ends (Ctrl-C, a cut network) hangs up everything the line started in the session.
+
+## Ports on your computer
+
+`woodshed forward` listens on `localhost` and makes each connection there one request to the console,
+`/api/tunnel/port/<id>/<port>`, which the session's statusd connects to `localhost:<port>` inside the session
+(`console/execPipe.mjs`, `session/portPipe.mjs`). The same rules as the tunnel's hold: your own running session, never
+a tainted one, closed when the sign-in is revoked. A console restart or a dropped network cuts only the connections
+open at that moment; the next one opens again by itself, so a dev server's page reloads as if nothing happened. The
+session's own ports (its terminals, statusd, the viewers, the editor, Redis) are never forwarded: the console opens
+those.
+
+`--auto` reads the session's socket tables (`/proc/net/tcp` and `tcp6`) every 2 seconds through one tunnel it holds
+open, and forwards each port something listens on where `localhost` reaches it. A port that stops listening has its
+forward closed. When that tunnel is cut, the forwards stay and it follows again by itself. `--json` writes
+`{"event":"forwarding","port":…,"local":…,"moved":…,"url":…}` for each, and `{"event":"closed",…}`.
 
 ## Where the token is kept
 

@@ -348,6 +348,12 @@ URL on top of each env file's Repo settings values
   session is being locked down`, `not running`). A pipe cut while the session ran on, with `why: 'ended'`, is the
   computer's side or the network going; one cut when the session paused is the idle pause, which a pipe does not hold
   off. In the session, statusd logs `statusd: exec opened` and `exec closed` with the exit code.
+- **`woodshed forward` says a port is refused, or a forwarded page does not load.** `refused (502): nothing answers on
+  port N in the session` is a dev server not listening (or listening on an address other than localhost's);
+  `refused (403)` a port of the session's own, which the console opens instead. Otherwise it is the tunnel's own
+  refusals above: the console logs them as `execPipe:` lines with `kind: 'port'`. `--auto` follows what
+  `/proc/net/tcp` and `tcp6` list in the session as listening on any address or loopback; a server bound to the
+  container's own address alone is not followed.
 - **A private session starts without its MCP logins, or Resume opens a blank
   claude.** The session's log says `Claude home restored`, `No Claude home
   saved yet` or `WARNING: Claude home not restored` with the status. Every 5

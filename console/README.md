@@ -1529,6 +1529,14 @@ computer, `execPipe: closed` with its seconds, bytes and `why`, `execPipe: refus
 unreachable`; statusd logs `statusd: exec opened` with the line's length (never the line) and `exec closed` with its
 exit code.
 
+**A session's port on the computer**: `woodshed forward` (cli/README.md) makes each connection on the person's
+`localhost` one request, `/api/tunnel/port/<id>/<port>` with `Upgrade: woodshed-tunnel` and the same token, through
+the same module and checks, and the same closing on revoke or lockdown. The console sends it to statusd's
+`/port/<port>`, which connects to `localhost:<port>` in the session and copies bytes raw (`session/portPipe.mjs`). The
+session's own ports (`SESSION_PORTS`, `shared/listeningPorts.mjs`) are refused with 403 at both. The console logs it as
+the pipe, with `kind: 'port'` and the `port`.
+
+
 **A console with no repo yet** (neither `WOODSHED_REPO` nor `WOODSHED_PROJECTS`, and nothing added on the
 Repos card) has no repository to ask about. It lets in the owner of the account its GitHub App is installed on: that
 user, or an active admin of that organization (`console/appOwner.mjs`, asked with a token of the installation narrowed

@@ -15,13 +15,14 @@ import net from 'node:net';
 import { promisify } from 'node:util';
 
 import { isMain } from '../shared/isMain.mjs';
+import { SESSION_PORTS } from '../shared/listeningPorts.mjs';
 
 const execFileAsync = promisify(execFile);
 
 export const POLL_MS = 5_000;
-// The session's own: its Redis, then its terminals, status, viewers and editor (entrypoint.sh's header). A container
-// publishing one of these is not forwarded, even before the session listens on it.
-export const SESSION_PORTS = Object.freeze([6379, 7681, 7682, 7683, 7684, 7685, 7686, 7687, 7688]);
+// The session's own (shared/listeningPorts.mjs): a container publishing one of these is not forwarded, even before the
+// session listens on it.
+export { SESSION_PORTS };
 const SESSION_LABEL = 'woodshed.session';
 const OLD_SESSION_LABEL = 'woodshed-cloud.session';
 // One line a container: its id, either session label, then its ports as `docker ps` writes them.

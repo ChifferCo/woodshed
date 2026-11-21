@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-// The woodshed command line: signs in to a Woodshed console, says who is signed in, and opens a pipe into one's own
-// running session. Later commands (sessions, settings) are added here. Plain Node 22, no dependencies, as the rest of Woodshed (cli/README.md).
+// The woodshed command line: signs in to a Woodshed console, says who is signed in, opens a pipe into one's own running
+// session, and brings its ports to this computer. Later commands (sessions, settings) are added here. Plain Node 22, no dependencies, as the rest of Woodshed (cli/README.md).
 //
 //   woodshed login  [--console <url>] [--no-browser]   a code to approve in the browser, then a token kept in the keychain
 //   woodshed logout [--console <url>]                  ends that token at the console and forgets it here
 //   woodshed status [--console <url>]                  the console, its org, and who is signed in
 //   woodshed tunnel <id> -- <line>                     runs <line> in your session, piped to this terminal (tunnel.mjs)
+//   woodshed forward <id> <port>[:<local>] | --auto <id>   a port in your session on localhost (forward.mjs)
+//   woodshed open <id>                                 your session's app's address
 //
 // Every command takes --json. Exit codes: 0 done, 2 waiting on a person (a sign-in or an approval), 3 refused, 1 any
 // other failure.
@@ -18,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 import { createCredentials } from './credentials.mjs';
 import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
+import { parseSpec, runForward } from './forward.mjs';
 
 export const VERSION = '0.1.0';
 export const DEFAULT_CONSOLE = 'https://console.woodshed.run';
@@ -34,11 +37,18 @@ Commands:
   tunnel <id> -- <line>
             run <line> in your running session, with this command's stdin, stdout and stderr; exits with its
             exit code, or 255 when the pipe could not open or broke
+  forward <id> <port>[:<local>]...
+            your session's port on this computer's localhost (on <local> if given), until Ctrl-C; a port taken
+            here moves to the next free one
+  forward --auto <id>
+            the same for every port your session listens on, as it starts and stops listening
+  open <id> your session's app's address
 
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};
                    WOODSHED_CONSOLE sets it too)
   --no-browser     login prints the address to open instead of opening it
+  --auto           forward follows the session's ports
   --json           machine-readable output: one JSON object per line
   --help           this text
 
@@ -57,13 +67,14 @@ class CliError extends Error {
  *            browser: boolean, help: boolean}}  `args` follow the command; `rest` is everything after `--`
  */
 export function parseArgs(argv) {
-  const out = { command: null, args: [], rest: null, console: null, json: false, browser: true, help: false };
+  const out = { command: null, args: [], rest: null, console: null, json: false, browser: true, help: false, auto: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--') {
       out.rest = argv.slice(i + 1);
       break;
     } else if (arg === '--json') out.json = true;
+    else if (arg === '--auto') out.auto = true;
     else if (arg === '--no-browser') out.browser = false;
     else if (arg === '--help' || arg === '-h') out.help = true;
     else if (arg === '--console') {
@@ -72,7 +83,7 @@ export function parseArgs(argv) {
     } else if (arg.startsWith('--console=')) out.console = arg.slice('--console='.length);
     else if (arg.startsWith('-')) throw new CliError(`unknown option ${arg}\n\n${USAGE}`);
     else if (!out.command) out.command = arg;
-    else if (out.command === 'tunnel') out.args.push(arg);
+    else if (['tunnel', 'forward', 'open'].includes(out.command)) out.args.push(arg);
     else throw new CliError(`unexpected ${arg}\n\n${USAGE}`);
   }
   return out;
@@ -362,6 +373,55 @@ export async function main(argv, deps = {}) {
     return runTunnel({ origin, token, session, line: args.rest.join(' '), stdin: deps.stdin ?? process.stdin, stdout, stderr, userAgent: `woodshed-cli/${VERSION}` });
   }
 
+  async function forward(origin, args) {
+    const usage = 'usage: woodshed forward <session id> <port>[:<local port>]..., or woodshed forward --auto <session id>';
+    const [session, ...texts] = args.args;
+    if (!/^[0-9a-f]{8}$/.test(session ?? '')) throw new CliError(usage);
+    const specs = texts.map((text) => {
+      const spec = parseSpec(text);
+      if (!spec) throw new CliError(`not a port: ${text}\n${usage}`);
+      return spec;
+    });
+    if (!args.auto && !specs.length) throw new CliError(usage);
+    const { token } = signedIn(origin);
+    if (!token) throw new CliError(`not signed in to ${origin}. Run: woodshed login${origin === DEFAULT_CONSOLE ? '' : ` --console ${origin}`}`, { code: EXIT.waiting, status: 'signed-out' });
+    // Ctrl-C ends it: every forward is closed, and it exits 0.
+    let signal = deps.signal;
+    if (!signal) {
+      const stop = new AbortController();
+      for (const name of ['SIGINT', 'SIGTERM']) process.once(name, () => stop.abort());
+      signal = stop.signal;
+    }
+    const out = await runForward({
+      origin, token, session, specs, auto: args.auto, signal, userAgent: `woodshed-cli/${VERSION}`,
+      say, warn: (text) => { if (!json) stderr.write(`woodshed: ${text}\n`); }, emit: (object) => { if (json) emit(object); },
+    });
+    if (out?.refused) {
+      const { status, message } = out.refused;
+      if (status === 401) throw new CliError(message, { code: EXIT.waiting, status: 'signed-out' });
+      if (status >= 400 && status < 500) throw new CliError(message, { code: EXIT.refused, status: 'refused' });
+      throw new CliError(message);
+    }
+    return EXIT.done;
+  }
+
+  // The app's own address, behind the console's sign-in (or a share link the owner made on the console).
+  async function openApp(origin, args) {
+    const [session, ...extra] = args.args;
+    if (!/^[0-9a-f]{8}$/.test(session ?? '') || extra.length) throw new CliError('usage: woodshed open <session id>');
+    const { token } = signedIn(origin);
+    if (!token) throw new CliError(`not signed in to ${origin}. Run: woodshed login${origin === DEFAULT_CONSOLE ? '' : ` --console ${origin}`}`, { code: EXIT.waiting, status: 'signed-out' });
+    const me = await call(origin, '/api/cli/me', { token });
+    if (me.status === 401) throw new CliError(`The sign-in to ${origin} ended. Run: woodshed login --console ${origin}`, { code: EXIT.waiting, status: 'signed-out' });
+    if (me.status !== 200 || !me.body) throw consoleNoCli(origin, me.status);
+    const domain = plain(me.body.appDomain);
+    if (!domain || !/^[a-z0-9.-]+(:\d{1,5})?$/i.test(domain)) throw new CliError(`${origin} serves no session app at a name of its own: open the app from the console`);
+    const url = `https://${session}.${domain}/`;
+    if (json) emit({ session, url });
+    say(url);
+    return EXIT.done;
+  }
+
   try {
     const args = parseArgs(argv);
     json = args.json;
@@ -375,6 +435,8 @@ export async function main(argv, deps = {}) {
     if (args.command === 'logout') return await logout(origin);
     if (args.command === 'status') return await status(origin);
     if (args.command === 'tunnel') return await tunnel(origin, args);
+    if (args.command === 'forward') return await forward(origin, args);
+    if (args.command === 'open') return await openApp(origin, args);
     throw new CliError(`unknown command ${args.command}\n\n${USAGE}`);
   } catch (err) {
     if (!(err instanceof CliError)) throw err;
