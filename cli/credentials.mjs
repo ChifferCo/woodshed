@@ -213,35 +213,31 @@ function writeOwnFile(dir, where, data, { platform, ownFolder }) {
 }
 
 // On Windows a new file takes its folder's ACL as it is made, not a mode given with it as on macOS and Linux: someone
-// able to rename a folder above this one could put one of theirs in its place between the check and the write. So the
-// plain token is written on Windows only under the person's own profile, whose folders no other account may rename,
-// as both resolve with every link and junction followed: a folder spelled under the profile that leads elsewhere is not.
-// @returns {string|null}  the folder, resolved, to write in; null when it is not under the profile
-function resolvedUnderProfile(dir, home) {
-  if (!home) return null;
+// able to replace a folder on the way to this one could put one of theirs in its place between the check and the write.
+// So the plain token is written on Windows only in the one folder whose way there is Windows' own and private,
+// <profile>\AppData\Local\woodshed, as spelled and as resolved with every link and junction followed. Anywhere else
+// (an XDG_CONFIG_HOME, a LOCALAPPDATA moved elsewhere), a token is kept sealed or not at all.
+// @returns {boolean}
+function isDefaultLocalFolder(dir, home) {
+  if (!home) return false;
+  const expected = (profile) => path.join(profile, 'AppData', 'Local', 'woodshed');
+  if (path.relative(expected(home), path.resolve(dir)) !== '') return false;
   const real = (p) => (fs.realpathSync.native ?? fs.realpathSync)(p);
-  fs.mkdirSync(dir, { recursive: true });
-  let resolved;
-  let profile;
   try {
-    resolved = real(dir);
-    profile = real(home);
+    fs.mkdirSync(dir, { recursive: true });
+    return path.relative(expected(real(home)), real(dir)) === '';
   } catch {
-    return null;
+    return false;
   }
-  const rel = path.relative(profile, resolved);
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel) ? resolved : null;
 }
 
 function file(dir, platform, ownFolder, home) {
   const where = path.join(dir, 'credentials.json');
   const write = (data) => {
-    if (platform !== 'win32') return writeOwnFile(dir, where, data, { platform, ownFolder });
-    const resolved = resolvedUnderProfile(dir, home);
-    if (!resolved) {
-      throw new Error(`${dir} is not under your profile (${home}), the only place a token is kept unsealed on Windows: unset XDG_CONFIG_HOME and LOCALAPPDATA's override, or sign in where DPAPI can seal it`);
+    if (platform === 'win32' && !isDefaultLocalFolder(dir, home)) {
+      throw new Error(`${dir} is not ${path.join(home, 'AppData', 'Local', 'woodshed')}, the only place a token is kept unsealed on Windows: unset XDG_CONFIG_HOME and LOCALAPPDATA's override, or sign in where DPAPI can seal it`);
     }
-    return writeOwnFile(resolved, path.join(resolved, 'credentials.json'), data, { platform, ownFolder });
+    return writeOwnFile(dir, where, data, { platform, ownFolder });
   };
   return {
     kind: 'file',

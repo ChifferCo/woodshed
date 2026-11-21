@@ -153,14 +153,19 @@ test('on Windows with DPAPI refused, as over an SSH key\'s sign-in, the token go
   // between the check and the write: nothing is written there unsealed.
   const shared = tempDir(t);
   const outside = createCredentials({ platform: 'win32', run: win.run, dir: shared, has: () => true, tools: TOOLS, home: path.join(shared, 'not-above-it') });
-  assert.throws(() => outside.save(ORIGIN, TOKEN), /is not under your profile .*the only place a token is kept unsealed on Windows/);
+  assert.throws(() => outside.save(ORIGIN, TOKEN), /is not .*AppData.Local.woodshed, the only place a token is kept unsealed on Windows/);
   assert.deepEqual(fs.readdirSync(shared), []);
-  // Spelled under the profile, but a link (a junction, on Windows) above it leads to the shared folder: not under it.
-  const profile = tempDir(t);
+  assert.deepEqual(fs.readdirSync(shared), [], 'not even its folder made');
+  // Elsewhere under the profile (an XDG_CONFIG_HOME there): a folder on the way could be one shared with someone.
+  const own = profileDir(t);
+  const elsewhere = createCredentials({ platform: 'win32', run: win.run, dir: path.join(own.home, 'config', 'woodshed'), has: () => false, tools: TOOLS, home: own.home });
+  assert.throws(() => elsewhere.save(ORIGIN, TOKEN), /the only place a token is kept unsealed on Windows/);
+  // Spelled as the default, but a link (a junction, which needs no privilege on Windows) above it leads elsewhere.
+  const profile = fs.realpathSync(tempDir(t));
   fs.mkdirSync(path.join(profile, 'AppData'));
-  fs.symlinkSync(shared, path.join(profile, 'AppData', 'Local'));
+  fs.symlinkSync(shared, path.join(profile, 'AppData', 'Local'), 'junction');
   const redirected = createCredentials({ platform: 'win32', run: win.run, dir: path.join(profile, 'AppData', 'Local', 'woodshed'), has: () => false, tools: TOOLS, home: profile });
-  assert.throws(() => redirected.save(ORIGIN, TOKEN), /is not under your profile/);
+  assert.throws(() => redirected.save(ORIGIN, TOKEN), /the only place a token is kept unsealed on Windows/);
   assert.deepEqual(fs.readdirSync(path.join(shared, 'woodshed')), [], 'nothing written where the link leads');
   fs.rmSync(path.join(shared, 'woodshed'), { recursive: true });
   const sealed = createCredentials({ platform: 'win32', run: fakeWindows().run, dir: shared, has: () => true, tools: TOOLS, home: path.join(shared, 'not-above-it') });
