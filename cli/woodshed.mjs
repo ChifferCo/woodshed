@@ -9,6 +9,7 @@
 //   woodshed tunnel <id> -- <line>                     runs <line> in your session, piped to this terminal (tunnel.mjs)
 //   woodshed session new|list|get|herdr|stop|resume|remove|extend|limits   sessions (sessions.mjs); herdr makes one
 //                                                     a machine in Herdr's hc (hc.mjs)
+//   woodshed move [--terminal T|--tab T|--space S] --to <id>|new   terminals moved into a session (move.mjs)
 //
 // Every command takes --json. Exit codes: 0 done, 2 waiting on a person (a sign-in or an approval), 3 refused, 1 any
 // other failure.
@@ -23,6 +24,9 @@ import { createCredentials } from './credentials.mjs';
 import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
 import { hcRunner, hcVersion, viaCommand } from './hc.mjs';
+import { moveCommand } from './move.mjs';
+import { programRunner } from './moveLayout.mjs';
+import { gitRunner } from './moveCode.mjs';
 
 export const VERSION = '0.1.0';
 export const DEFAULT_CONSOLE = 'https://console.woodshed.run';
@@ -41,6 +45,7 @@ Commands:
             exit code, or 255 when the pipe could not open or broke
   session   start, list, add to Herdr, stop, resume and remove sessions, and give them more time:
             woodshed session --help
+  move      move terminals here into a session, agents with their conversations: woodshed move --help
 
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};
@@ -78,7 +83,7 @@ export function parseArgs(argv) {
       if (!argv[i + 1]) throw new CliError('--console needs a URL');
       out.console = argv[++i];
     } else if (arg.startsWith('--console=')) out.console = arg.slice('--console='.length);
-    else if (out.command === 'session') out.args.push(arg);
+    else if (out.command === 'session' || out.command === 'move') out.args.push(arg);
     else if (arg.startsWith('-')) throw new CliError(`unknown option ${arg}\n\n${USAGE}`);
     else if (!out.command) out.command = arg;
     else if (out.command === 'tunnel') out.args.push(arg);
@@ -431,6 +436,7 @@ export async function main(argv, deps = {}) {
     const args = parseArgs(argv);
     json = args.json;
     if (args.command === 'session' && args.help) return await sessionCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
+    if (args.command === 'move' && args.help) return await moveCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.help || !args.command || args.command === 'help') {
       stdout.write(`${USAGE}\n`);
       return args.command || args.help ? EXIT.done : EXIT.failed;
@@ -441,15 +447,21 @@ export async function main(argv, deps = {}) {
     if (args.command === 'logout') return await logout(origin);
     if (args.command === 'status') return await status(origin);
     if (args.command === 'tunnel') return await tunnel(origin, args);
-    if (args.command === 'session') {
+    if (args.command === 'session' || args.command === 'move') {
       // Its prompt may follow `--`, so a word of it is never read as an option.
-      return await sessionCommand({ origin, rest: [...args.args, ...(args.rest ? ['--', ...args.rest] : [])] }, {
+      const command = args.command === 'move' ? moveCommand : sessionCommand;
+      return await command({ origin, rest: [...args.args, ...(args.rest ? ['--', ...args.rest] : [])] }, {
         call, token: signedIn(origin).token, stdout, stderr, say, emit, json, sleep, now, EXIT, platform, hc,
         // The line hc keeps for a session's machine: this command line's tunnel into it, on this console.
         // A relative config folder is made absolute: hc's core runs the line from a folder of its own.
         via: (session) => viaCommand({ ...(deps.self ?? selfCommand({ env })), origin, session, configHome: env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : null }),
         fail: (message, opts) => new CliError(message, opts),
         confirm: deps.confirm ?? ((question) => confirmOnTerminal(question, stderr)),
+        // move's own: the Herdr app, git, and `session connect` to call.
+        // hc as move runs it, with what is piped to it (hc file write).
+        ...(args.command === 'move' && !deps.hc ? { hc: programRunner({ bin: env.WOODSHED_HC_BIN || 'hc', env }) } : {}),
+        app: deps.app ?? programRunner({ bin: env.WOODSHED_HERDR_APP_BIN || 'herdr-app', env }), git: deps.git ?? gitRunner({ env }), env,
+        hostname: deps.hostname ?? os.hostname(), session: sessionCommand, ...(deps.moveId ? { moveId: deps.moveId } : {}),
       });
     }
     throw new CliError(`unknown command ${args.command}\n\n${USAGE}`);

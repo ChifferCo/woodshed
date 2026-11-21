@@ -59,6 +59,10 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 - **Stopping and removing are the person's call.** `session stop` ends the work in progress (a running one's
   work is checkpointed on the way, but exit 0 does not promise it reached GitHub: check the branch before saying so);
   `session remove` deletes the saved conversation. Do either only when asked, and pass `--yes` to `remove` only then.
+- **Moving is the person's call.** `woodshed move` ends the local agents it moves and pushes the work to a branch.
+  Run it only when asked, and `--dry-run` first to show them what would move. Programs restart in the session only with
+  `--restart auto` or their yes; never pass `--restart auto` for them unasked. Exit 3 listing secret-looking files means
+  those files must leave the work (or go in `.gitignore`): do not move them some other way.
 - **Use the console the person gave you.** `--console <url>`, else `WOODSHED_CONSOLE`, else the last one signed in to,
   else the hosted `https://console.woodshed.run`. On a fresh computer that is the hosted one, so for a self-hosted
   console pass its `--console <url>` to `login` and `status` alike. Plain `http://` is refused except on `localhost`.
@@ -79,6 +83,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed session remove <id> [--yes]` | Takes it off the list with its saved conversation, and forgets its Herdr machine | 0, 2 not confirmed, 3 a shared session | main |
 | `woodshed session extend <id>` | Puts its pause or stop off by an hour (allowed in its last 15 minutes) | 0, 3 refused | main |
 | `woodshed session limits <id> [--idle-hours N\|default] [--lifetime-hours N\|default]` | Its own idle pause and lifetime | 0, 1 out of range, 3 not theirs | main |
+| `woodshed move [--terminal T …\|--tab T\|--space S] --to <id>\|new [--restart ask\|auto\|never] [--dry-run]` | Moves terminals on this computer into a session: each agent with its conversation, each shell, each program started again; pushes the work to `woodshed/move-<id>` first, and ends a local agent only once its moved one runs | 0 moved, 2 a moved agent needs the person, 3 a secret in the work, an agent mid-turn, another repo, 1 failed (all undone) | main |
 | `woodshed settings plan [--pull] [--only …] [--own-files <checkout>]` | Lists what push (or pull) would do with each item; sends and writes nothing | 0 | #278 |
 | `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude settings, skills, MCP servers, and a checkout's ignored env files | 0, 2 not listed before or not confirmed | #278 |
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | #278 |
@@ -147,6 +152,19 @@ command's stdin, stdout and stderr. It opens only into their own running My Wood
 production data. Exit 255 with a reason on stderr is the pipe's own failure: not signed in, refused, not reached, or cut.
 The line is at most 8 KB: write anything longer to a script in the session first. Closing the tunnel hangs up what the
 line started, so start a server that must outlive it with `setsid … &`.
+
+### Move work from this computer into a session
+
+```sh
+woodshed move --space api --to new --dry-run --json   # what would move: the move bundle, nothing done
+woodshed move --space api --to new                    # or --to <id>: one of theirs on the same repo
+```
+
+`--terminal <t>` (repeatable, `hc ls` addresses), `--tab` or `--space` (by id or name, `herdr-app ls`) choose what moves.
+Each agent between turns moves with its conversation; one mid-turn exits 3, so wait for it. Two agents in one folder
+need a `claude.session=<id>` label each (`hc label <t> claude.session=<id>`), or which conversation is whose cannot be
+told. Databases do not move: the session has its own. Ignored files (`.env`) stay: `settings push --own-files` gives
+their sessions their own.
 
 ### See a session's app
 

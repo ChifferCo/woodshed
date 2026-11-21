@@ -1009,8 +1009,9 @@ startClaude() {
     tmux new-session -d -s claude -x 200 -y 50 -c "$REPO_DIR"
     tmux set-option -t claude remain-on-exit on
   fi
-  # woodshed-login reopens claude with the same flags once it signed in.
-  [ "${AGENT:-claude}" = codex ] || claudeFlags > /tmp/woodshed-claude-flags
+  # woodshed-login reopens claude with the same flags once it signed in, and `woodshed move` opens a conversation moved
+  # from a laptop with the agent's own (cli/move.mjs).
+  if [ "${AGENT:-claude}" = codex ]; then codexFlags > /tmp/woodshed-codex-flags; else claudeFlags > /tmp/woodshed-claude-flags; fi
   if [ "${SESSION_MODE:-}" = qa ]; then
     # After statusd's port is open: the run asks it for the app's port and to start the app. Working from the start.
     touch /tmp/qa-running

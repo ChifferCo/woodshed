@@ -1,7 +1,7 @@
 # The woodshed command line
 
 `woodshed` signs in to a Woodshed console from your computer, says who is signed in, starts and manages your sessions,
-opens a pipe into your running sessions, and adds them to Herdr's sidebar. Later commands (settings) are added here. It is plain Node 22 with no
+opens a pipe into your running sessions, adds them to Herdr's sidebar, and moves work from your Herdr into one. Later commands (settings) are added here. It is plain Node 22 with no
 dependencies, like the rest of Woodshed.
 
 ## Running it
@@ -28,6 +28,7 @@ An installer (`curl … | bash`, npm) comes later.
 | `woodshed login` | Asks the console for a code, prints it, and opens the console's `/cli` page in your browser. Check the page shows the same code and press **Sign in the CLI**. The token it gets is kept as below. Signing in again on the same computer ends its earlier sign-in. | 0 signed in, 2 the code expired with nobody approving it, 3 denied, 1 too many sign-ins waiting (below) |
 | `woodshed logout` | Ends the token at the console and forgets it here. | 0 |
 | `woodshed status` | The console's name and address, its org (the GitHub account its repos are on), who is signed in, and the Herdr `hc` found here with its version (`hc` in `--json`: `installed`, `version`, `minimum`, `ok`), for `session herdr`. | 0 signed in, 2 not signed in or the sign-in ended |
+| `woodshed move [--terminal T\|--tab T\|--space S] --to <id>\|new` | Moves terminals here into a session, agents with their conversations: below. | 0 moved, 2 a moved agent needs you, 3 refused, 1 failed and undone |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 
 Every command takes:
@@ -121,6 +122,62 @@ no others (`console/cliSessions.mjs`), each as its person:
 - `GET /api/sessions`, `GET /api/my/projects`
 - `POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume`, `POST /api/my/sessions/<id>/remove`
 - `POST /api/sessions/<id>/stop`, `POST /api/sessions/<id>/extend`, `POST /api/sessions/<id>/limits`
+
+## Moving work into a session
+
+`woodshed move` (`move.mjs`) takes terminals from this computer's Herdr into one of your sessions, as they are:
+
+```sh
+woodshed move --space api --to new          # a new session for each repo the space's terminals are in
+woodshed move --terminal t3 --terminal t5 --to <id>   # into one of yours, on the same repo
+woodshed move --tab main --to new --dry-run --json    # the move bundle, and nothing done
+```
+
+`--terminal` (repeatable; an `hc ls` address or a name), `--tab` or `--space` (an id or a name, as `herdr-app ls`
+shows them) choose what moves. Each terminal is read from `hc` and is one of:
+
+- **an agent,** Claude Code or Codex, by its program or its status record. Its conversation is its `claude.session`
+  (or `codex.session`) label, else the id on its command line (`--resume`, `--session-id`), else the conversation of its
+  folder last written when it last changed state, else, alone in its folder, the folder's newest
+  (`~/.claude/projects/<folder>/<id>.jsonl`, or Codex's rollout file). One mid-turn refuses the move: a conversation
+  moves between turns. Two whose conversation cannot be told apart refuse it too, and say to label them.
+- **a shell,** in its folder;
+- **a program** (`Terminal.foreground`'s argv): started again there only when you say so, with `--restart auto`, or yes
+  to the question (`--restart ask`, the default; with no terminal to ask on, it is not).
+
+Then, in order (`move.mjs` says each step):
+
+1. **The code.** Each checkout's work is committed as it is, untracked files included, built in a temporary index so your
+   branch, index and files are never touched, and pushed to `woodshed/move-<id>`. Files git ignores (`.env`) never go,
+   and are named: `woodshed settings push --own-files` gives your sessions your own. A file that looks like a secret, by
+   its name (`.env`, `*.pem`, `id_ed25519`, `credentials.json`) or its content (a private key, an AWS, GitHub,
+   Anthropic, OpenAI, Slack or Stripe key, an npm token), refuses the move with its path, line and kind, never the value.
+2. **The session.** `--to <id>` is one of your own sessions on the same repo, resumed when paused; `--to new` starts one
+   per repo on its branch, with no prompt (`Moved from <computer>: <space>`). Each is added to Herdr as `session herdr` does (a resumed one is added again, since its core is new).
+3. **The conversations,** with every folder in them said as the session's, written with `hc file write --on` where the
+   session's agent reads them. Nothing else of your home goes.
+4. **The layout:** the same spaces, tabs and splits, with `herdr-app do space.new --machine woodshed-<id>`, `tab.new` and
+   `pane.split`, read from the `herdr-app` document in `hc` (never written). With no Herdr window open, each terminal is
+   started with the `herdr.space` and `herdr.tab` labels the app adopts it by, its splits side by side. A split's size is
+   not kept: no app command sets one.
+5. **The agents.** Two agents never work on one branch. In a new session, the first agent of each checkout becomes the
+   session's own (its first, empty claude ends with `/exit` and the conversation opens in its place, with its flags), so
+   the console follows it as any session's. That needs Herdr picked as Agent terminal on My settings, or the move is
+   refused. Every other agent, and every agent moved into a session that has its own, gets a branch of its own
+   (`woodshed/move-<id>-<n>`) and a git worktree in the session's home, trusted for it ahead; those push their own
+   branches, since a session's stop pushes only its own.
+6. **The hand-over.** Each local agent is ended (`/exit`, `/quit`) only once its moved one reports a state, and its
+   terminal is labelled `woodshed.moved=<where it went>`.
+
+Anything failing before the hand-over undoes what the move made, in the session (its spaces, worktrees and files, or the
+new session itself) and on GitHub (its branches), and leaves this computer as it was. Programs restart rather than move,
+and their local copies keep running. Databases stay: the session has its own.
+
+Exits: 0 moved; 2 a moved agent needs you (or not signed in); 3 refused (a secret, an agent mid-turn, another repo, a
+shared or tainted session, no `hc`, or a new session's agent in tmux); 1 anything else, after undoing. With `--json`,
+each step is a `step` event (`pushed`, `session`, `connected`, `conversation`, `layout`, `resumed`, `live`), and the
+last is `moved` with the sessions, branches, each terminal's new address and the move bundle; `--dry-run` writes one
+`bundle` event.
 
 ## Where the token is kept
 
