@@ -74,8 +74,9 @@ async function fakeStatusd(t) {
       const body = raw ? JSON.parse(raw) : null;
       seen.push({ method: req.method, section, auth: req.headers.authorization, body });
       const answer = answers.get(`${req.method} ${section}`);
-      res.writeHead(answer ? 200 : 404, { 'content-type': 'application/json' });
-      res.end(JSON.stringify(answer ? answer(body) : { ok: false, error: 'not found' }));
+      const known = typeof answer === 'function';
+      res.writeHead(known ? 200 : 404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(known ? answer(body) : { ok: false, error: 'not found' }));
     });
   });
   const port = await listen(server);
