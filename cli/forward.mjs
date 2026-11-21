@@ -215,6 +215,8 @@ export async function runForward({ origin, token, session, specs, auto, say, war
         const { socket, head } = await upgrade(`/api/tunnel/exec/${session}`, { [LINE_HEADER]: encodeLine(lines.watch) });
         if (stopped) return socket.destroy();
         if (lastFailure) say(`Following session ${session}'s ports again.`);
+        // Its connection is open: what --json reads to know it is following now.
+        emit({ event: 'following', session, again: Boolean(lastFailure) });
         lastFailure = null;
         attempt = 0;
         watcher = socket;

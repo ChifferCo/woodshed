@@ -414,8 +414,9 @@ export async function main(argv, deps = {}) {
     const me = await call(origin, '/api/cli/me', { token });
     if (me.status === 401) throw new CliError(`The sign-in to ${origin} ended. Run: woodshed login --console ${origin}`, { code: EXIT.waiting, status: 'signed-out' });
     if (me.status !== 200 || !me.body) throw consoleNoCli(origin, me.status);
-    const domain = plain(me.body.appDomain);
-    if (!domain || !/^[a-z0-9.-]+(:\d{1,5})?$/i.test(domain)) throw new CliError(`${origin} serves no session app at a name of its own: open the app from the console`);
+    // The whole name, checked as it came: a printable cut of it would make an address that is not the app's.
+    const domain = typeof me.body.appDomain === 'string' ? me.body.appDomain : '';
+    if (!domain || domain.length > 253 || !/^[a-z0-9.-]+(:\d{1,5})?$/i.test(domain)) throw new CliError(`${origin} serves no session app at a name of its own: open the app from the console`);
     const url = `https://${session}.${domain}/`;
     if (json) emit({ session, url });
     say(url);

@@ -74,7 +74,8 @@ should not reach it.
 `--auto` reads the session's socket tables (`/proc/net/tcp` and `tcp6`) every 2 seconds through one tunnel it holds
 open, and forwards each port something listens on where `localhost` reaches it. A port that stops listening has its
 forward closed. When that tunnel is cut, the forwards stay and it follows again by itself. `--json` writes
-`{"event":"forwarding","port":…,"local":…,"moved":…,"url":…}` for each, and `{"event":"closed",…}`.
+`{"event":"following","again":…}` each time its connection to the session opens,
+`{"event":"forwarding","port":…,"local":…,"moved":…,"url":…}` for each port, and `{"event":"closed",…}`.
 
 ## Where the token is kept
 

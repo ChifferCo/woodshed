@@ -89,7 +89,6 @@ async function setup(t, { tainted = () => false } = {}) {
     if (!execPipe.handleUpgrade(req, socket, head)) socket.destroy();
   });
   const cut = () => { for (const socket of held) socket.destroy(); };
-  const holding = () => held.size;
   const origin = `http://localhost:${await listen(consoleServer)}`;
   const { deviceCode, userCode } = cli.start({ name: 'mia-laptop' });
   cli.decide({ code: userCode, login: 'mia-dev', approve: true });
@@ -115,7 +114,7 @@ async function setup(t, { tainted = () => false } = {}) {
     t.after(() => stop.abort());
     return { said, warned, events, done, stop: () => { stop.abort(); return done; } };
   }
-  return { origin, cli, signedIn, appPort, echoPort, listening, cut, holding, forward };
+  return { origin, cli, signedIn, appPort, echoPort, listening, cut, forward };
 }
 
 test('a port and an optional local port, each 1 to 65535', () => {
@@ -177,8 +176,8 @@ test('--auto forwards each port as the session starts listening, closes it when 
   const s = await setup(t);
   s.listening([]);
   const run = s.forward({ auto: true });
-  await until(() => run.said.some((text) => text.startsWith('Following')));
-  assert.equal(run.events.length, 0, 'nothing listens yet');
+  await until(() => run.events.some((e) => e.event === 'following'));
+  assert.deepEqual(run.events, [{ event: 'following', session: 'aaaa1111', again: false }], 'nothing listens yet');
   s.listening([s.appPort]);
   await until(() => run.events.some((e) => e.event === 'forwarding'));
   const { local } = run.events.find((e) => e.event === 'forwarding');
@@ -187,6 +186,7 @@ test('--auto forwards each port as the session starts listening, closes it when 
   // The pipe that follows the ports is cut, as a console restart cuts it: the forward stays, and it follows again.
   s.cut();
   await until(() => run.said.includes('Following session aaaa1111\'s ports again.'));
+  assert.ok(run.events.some((e) => e.event === 'following' && e.again));
   assert.equal(await get(local, '/still'), 'app /still');
 
   s.listening([]);
@@ -270,6 +270,11 @@ test('woodshed open prints the session app\'s address, and says plainly when the
   cli.revoke('mia-dev', id);
   assert.equal((await run(['open', 'aaaa1111'])).code, 2, 'a sign-in that ended waits on the person');
 
+  // A long name is used whole, never cut to fit the terminal.
+  const long = `${'a'.repeat(60)}.${'b'.repeat(60)}.example.com`;
+  const named = await signedInCli(t, { appDomain: long });
+  assert.equal((await named.run(['open', 'aaaa1111'])).out, `https://aaaa1111.${long}/\n`);
+
   const none = await signedInCli(t, { appDomain: '' });
   const ran = await none.run(['open', 'aaaa1111']);
   assert.equal(ran.code, 1);
@@ -309,8 +314,8 @@ test('a local port that cannot be had is this computer\'s failure, and Ctrl-C en
   const timers = () => process.getActiveResourcesInfo().filter((kind) => kind === 'Timeout').length;
   const run = s.forward({ auto: true, retryMs: [60_000] });
   await until(() => run.said.some((text) => text.startsWith('Following')));
-  // Its follower's connection is open (it opens just after it says so), so the cut below cuts it.
-  await until(() => s.holding() > 0);
+  // Its follower's connection is open, so the cut below cuts it.
+  await until(() => run.events.some((e) => e.event === 'following'));
   const before = timers();
   s.cut();
   await until(() => run.warned.some((text) => text.startsWith('the connection to the session was cut')));
