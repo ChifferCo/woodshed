@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 
 import { claudeProjectDir } from './moveAgents.mjs';
 import { parseMoveArgs } from './move.mjs';
@@ -55,6 +56,13 @@ function laptop(t, { window = true, sessions = [], conversation = true, agentSta
         // What is already in the session: the files written, and those it had before.
         if (argv[0] === 'test' && argv[1] === '-e') return { code: h.files.has(`${name}:${argv[2]}`) || (machine.has ?? []).includes(argv[2]) ? 0 : 1 };
         if (argv[0] === 'cat' && argv[1] === '/opt/woodshed/session/claudeHooks.json') return { code: 0, stdout: SESSION_SETTINGS };
+        // A large conversation put together from its gzipped parts, as the session's sh does.
+        if (script.startsWith('out=$1; shift; cat "$@" | gunzip')) {
+          const [, , , , out, ...parts] = argv;
+          h.files.set(`${name}:${out}`, zlib.gunzipSync(Buffer.concat(parts.map((p) => h.files.get(`${name}:${p}`)))));
+          for (const p of parts) h.files.delete(`${name}:${p}`);
+          return { code: 0 };
+        }
         return { code: 0, stdout: '' };
       },
     };
@@ -404,4 +412,21 @@ test('a new session runs the kind of the repo\'s agents, whichever checkout of i
   const started = l.calls.find(([m, p]) => m === 'POST' && p === '/api/my/sessions');
   assert.equal(started[2].agent, 'codex');
   assert.ok(l.onGithub('woodshed/move-c0ffee42') && l.onGithub('woodshed/move-c0ffee42-2'), 'a branch for each checkout');
+});
+
+test('a conversation over hc\'s 8 MB goes in gzipped parts, and is put together there byte for byte', async (t) => {
+  const l = laptop(t);
+  const file = fs.readdirSync(path.join(l.repo.dir, 'home', '.claude', 'projects')).map((d) => path.join(l.repo.dir, 'home', '.claude', 'projects', d, `${CONVERSATION}.jsonl`))[0];
+  // Ten megabytes of turns that do not compress to nothing.
+  const filler = Array.from({ length: 9000 }, (_, i) => JSON.stringify({ type: 'assistant', cwd: l.cwd, message: { content: `${i} ${Buffer.from(String(Math.sin(i))).toString('base64').repeat(30)}` } })).join('\n');
+  fs.appendFileSync(file, `${filler}\n`);
+  assert.ok(fs.statSync(file).size > 8 * 1024 * 1024);
+  const out = await l.run(['move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN]);
+  assert.equal(out.code, EXIT.done, out.err + out.out);
+  const parts = l.h.calls.filter((c) => c.args?.[0] === 'file' && c.args.at(-1).includes('.woodshed-part-'));
+  assert.ok(parts.length >= 1 && parts.every((c) => c.input.length <= 6 * 1024 * 1024), 'each part within what hc takes');
+  const dest = `woodshed-dddd0004:/home/node/.claude/projects/${claudeProjectDir('/home/node/work/app/services/api')}/${CONVERSATION}.jsonl`;
+  const expected = fs.readFileSync(file, 'utf8').split(l.cwd).join('/home/node/work/app/services/api');
+  assert.equal(l.h.files.get(dest).toString('utf8'), expected);
+  assert.ok(![...l.h.files.keys()].some((k) => k.includes('.woodshed-part-')), 'the parts are gone');
 });

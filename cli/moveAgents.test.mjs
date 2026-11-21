@@ -143,6 +143,7 @@ test('a program\'s command line is shown with what may be a credential hidden', 
   assert.equal(shownCommand(['echo', 'two words']), "echo 'two words'");
   assert.equal(shownCommand(['curl', '-H', 'Authorization: Bearer abc.def', '-u', 'me:pw', 'https://x']), 'curl -H Authorization: … -u … https://x');
   assert.equal(shownCommand(['python', '-u', 'server.py']), 'python -u server.py', 'python\'s -u is no user');
+  assert.equal(shownCommand(['curl', '-ume:pw', '--user=me:pw', 'https://x']), 'curl -u… --user… https://x');
 });
 
 test('a Codex conversation is told the model provider the session\'s codex runs on', () => {

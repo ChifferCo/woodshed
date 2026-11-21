@@ -333,6 +333,8 @@ export function shownCommand(argv, looksSecret = () => false) {
     const assign = SECRET_ASSIGN_RE.exec(word);
     if (looksSecret(word)) out.push('…');
     else if (SECRET_HEADER_RE.test(word)) out.push(`${word.split(':')[0]}: …`);
+    // curl's user:password joined to its flag: -uuser:pass, --user=user:pass.
+    else if (/^(-u[^-\s]|--(proxy-)?user=)[^:]*:/.test(word)) out.push(`${word.startsWith('-u') && !word.startsWith('--') ? '-u' : word.split('=')[0]}…`);
     else if (USER_FLAG_RE.test(word) && /:/.test(String(argv[i + 1] ?? ''))) {
       out.push(word, '…');
       i += 1;

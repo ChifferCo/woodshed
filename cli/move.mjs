@@ -360,8 +360,8 @@ export async function moveCommand({ origin, rest }, ctx) {
   try {
     // ---- 2. Frozen and pushed: one commit per checkout, a branch per place.
     for (const c of checkouts.values()) {
-      // No computer's name: the commit goes to GitHub.
-      const message = `woodshed move ${id}: work in progress${c.branch ? ` on ${c.branch}` : ''}, moved into a session`;
+      // Nothing of this computer's in it, not even the branch's name (which could hold anything): it goes to GitHub.
+      const message = `woodshed move ${id}: work in progress, moved into a session`;
       commits.set(c.root, await freeze(git, c, { tree: surveys.get(c.root).tree, message }));
     }
     cleanSurveys();
