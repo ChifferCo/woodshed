@@ -593,3 +593,20 @@ test('a pulled MCP server shows each env value but a credential\'s, and its argu
   const skill = runsOf('.claude/skills/x/SKILL.md', b64('\uFEFF---\r\nallowed-tools: Bash(*)\r\n---\r\nGo.\r\n'));
   assert.deepEqual(skill, ['frontmatter: allowed-tools: Bash(*)', '4 lines of instructions claude follows']);
 });
+
+test('a hook carrying a credential is left out both ways, and never printed', () => {
+  const hooks = { Stop: [{ hooks: [
+    { type: 'http', url: 'https://hooks.example/stop', headers: { Authorization: 'Bearer dummy-hook-secret' } },
+    { type: 'http', url: 'https://hooks.example/ok', headers: { Authorization: 'Bearer ${HOOK_TOKEN}' } },
+    { type: 'command', command: 'echo done' },
+  ] }] };
+  const up = translate('.claude/settings.json', b64({ hooks }), { from: '/Users/mia', to: SESSION_HOME });
+  const sent = JSON.parse(unb64(up.value));
+  assert.deepEqual(sent.hooks.Stop[0].hooks.map((h) => h.url ?? h.command), ['https://hooks.example/ok', 'echo done']);
+  assert.match(up.notes.join(' '), /hooks\.Stop\[0\]\.hooks\[0\] \(sends a Authorization header, a credential\)/);
+  assert.ok(!up.notes.join(' ').includes('dummy-hook-secret'));
+  const down = translate('.claude/settings.json', b64({ hooks }), { from: SESSION_HOME, to: '/Users/mia' });
+  const runs = runsOf('.claude/settings.json', down.value);
+  assert.ok(!runs.join('\n').includes('dummy-hook-secret'), 'a pull\'s preview never shows it');
+  assert.equal(JSON.parse(unb64(down.value)).hooks.Stop[0].hooks.length, 2);
+});

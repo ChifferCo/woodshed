@@ -303,6 +303,23 @@ export function translate(id, value, { from, to, statusLineOf }) {
     if (secretEnv.length) json.env = Object.fromEntries(Object.entries(json.env).filter(([k]) => !secretEnv.includes(k)));
     notes.push(...helpers.map((k) => `${k} (a credential helper)`), ...secretEnv.map((k) => `env.${k} (a credential)`));
   }
+  // A hook that calls a URL or runs with headers or env can carry a credential, as an MCP server can: such a hook stays
+  // where it is, either way, and is never shown.
+  if (json.hooks && typeof json.hooks === 'object') {
+    const hooks = {};
+    for (const [event, groups] of Object.entries(json.hooks)) {
+      hooks[event] = !Array.isArray(groups) ? groups : groups.map((group, i) => {
+        if (!Array.isArray(group?.hooks)) return group;
+        const kept = group.hooks.filter((hook, j) => {
+          const credential = hook && typeof hook === 'object' ? serverCredential(hook) : null;
+          if (credential) notes.push(`hooks.${event}[${i}].hooks[${j}] (${credential.replace(/^its |^it /, '')}, a credential)`);
+          return !credential;
+        });
+        return kept.length === group.hooks.length ? group : { ...group, hooks: kept };
+      });
+    }
+    json = { ...json, hooks };
+  }
   const { statusLine, ...rest } = json;
   const moved = movePaths(rest, { from, to });
   notes.push(...moved.dropped.map((d) => `${d.at} (names ${d.path}, not on the other side)`));
