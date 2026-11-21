@@ -263,7 +263,45 @@ test('the arguments: one command, --console, --json, and the default console', (
   assert.deepEqual([session.args, session.rest, session.json], [['new', '--repo', 'a/b'], ['use --json here'], true]);
   assert.equal(parseArgs(['session', 'list', '--json']).json, true);
   assert.deepEqual(parseArgs(['review', 'enable', '--qa', '--dir', 'x', '--json', '--console', 'c.example']).args, ['enable', '--qa', '--dir', 'x'], 'review\'s own options are its own');
+  const move = parseArgs(['--console=c.example', 'move', '--from', 'herdr', '--terminal', 't1', '--json', '--to', 'new', '--dry-run']);
+  assert.deepEqual(move, { command: 'move', args: ['--from', 'herdr', '--terminal', 't1', '--to', 'new', '--dry-run'], rest: null, console: 'c.example', json: true, browser: true, help: false });
   assert.equal(DEFAULT_CONSOLE, 'https://console.woodshed.run');
+});
+
+test('move help and source errors are available before sign-in', async (t) => {
+  const config = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-move-help-'));
+  t.after(() => fs.rmSync(config, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(config, 'woodshed'));
+  fs.writeFileSync(path.join(config, 'woodshed', 'cli.json'), JSON.stringify({
+    current: 'https://c.example', consoles: { 'https://c.example': { store: 'file' } },
+  }));
+  const cannotAuthenticate = () => assert.fail('help and usage errors should precede sign-in');
+  async function run(args) {
+    let out = '';
+    let err = '';
+    const code = await main(args, {
+      platform: 'test', env: { XDG_CONFIG_HOME: config }, credentials: { storeFor: cannotAuthenticate },
+      fetch: cannotAuthenticate, stdout: { write: (value) => { out += value; } }, stderr: { write: (value) => { err += value; } },
+    });
+    return { code, out, err };
+  }
+
+  const top = await run(['--help']);
+  assert.equal(top.code, EXIT.done);
+  assert.match(top.out, /^  move\s/m);
+  const command = await run(['move', '--help', '--console', 'https://c.example']);
+  assert.equal(command.code, EXIT.done);
+  assert.match(command.out, /^Usage: woodshed move --from herdr /);
+
+  const missing = await run(['move', '--console', 'https://c.example', '--json']);
+  assert.equal(missing.code, EXIT.failed);
+  assert.deepEqual(JSON.parse(missing.out), { event: 'error', status: 'error', error: 'move needs --from herdr' });
+  const unknown = await run(['--json', 'move', '--from', 'other', '--terminal', 't1', '--to', 'new']);
+  assert.equal(unknown.code, EXIT.failed);
+  assert.deepEqual(JSON.parse(unknown.out), { event: 'error', status: 'error', error: '--from must be herdr' });
+  const previous = await run(['herdr', 'move']);
+  assert.equal(previous.code, EXIT.failed);
+  assert.match(previous.err, /unexpected move/);
 });
 
 test('the page opened is built from the code on the console named, never taken from its answer', async (t) => {

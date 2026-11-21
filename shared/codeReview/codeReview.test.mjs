@@ -101,9 +101,8 @@ test('the session\'s inline comments and the earlier comments it found fixed are
   assert.deepEqual(verdictIn(d).inlineComments, []);
 });
 
-// The two runners must review the same way: the session's prompt is the Actions review's, with the session's paths, and
-// its inline comments written to a file for the console instead of posted through the action's tool.
-test('the session\'s review prompt is the Actions review\'s, apart from where things are and how inline comments go out', () => {
+// Keep the common review instructions in sync with the reusable Actions workflow.
+test('the session and Actions prompts share the common review instructions', () => {
   const workflow = parseYaml(fs.readFileSync(new URL('../../.github/workflows/review.yml', import.meta.url), 'utf8'));
   const step = workflow.jobs.review.steps.find((s) => s.with?.prompt);
   const words = (text) => text.replace(/\s+/g, ' ').trim();
@@ -118,16 +117,19 @@ test('the session\'s review prompt is the Actions review\'s, apart from where th
     .replaceAll('/D/summary.md', '/tmp/review-summary.md').replaceAll('/D/merge-risk.md', '/tmp/merge-risk.md')
     .replaceAll('/D/resolved.txt', '/tmp/claude-resolved.txt')
     .replace('The console puts it', 'The next step puts it').replace('so the console submits them', 'so the next steps submit them');
-  // Step 6's bar for what blocks, and step 9's blocker line, are the session review's alone for now: review.yml, which
-  // only other repos call, keeps its older wording until it is brought over.
+  // The reusable workflow still has the earlier verdict and merge-risk rules and formats.
   const bar = (text) => text.replace(/6\. Decide the verdict.*?- COMMENT:/, '6. VERDICT - COMMENT:')
+    .replace(/7\. Rate the .*?risk.*?8\. Write/, '7. MERGE RISK 8. Write')
+    .replace(/the tier from step 7 alone on the first line.*?(?= - `\/tmp\/claude-resolved\.txt`)/, 'MERGE RISK FORMAT')
     .replace(/list each blocking issue as `path\/to\/file\.mjs:123 — [^`]*`/, 'list each blocking issue as BLOCKER');
   assert.equal(bar(session), bar(actions));
 });
 
+const highRiskCheck = '- Verify before merging: Try to open the terminal with an unrelated account.';
+
 const verdictOf = (conclusion, { tier = 'Low', comments = [], resolved = [], text = conclusion } = {}) => ({
   conclusion, summary: `${text} summary`, comment: `${text} comment`,
-  mergeRisk: tier ? { tier, reason: `${tier} reason`, summary: `${tier.toUpperCase()}\n${tier} reason` } : { tier: null, reason: '', summary: '' },
+  mergeRisk: tier ? { tier, reason: `${tier} reason`, summary: `${tier.toUpperCase()}\n${tier} reason${tier === 'High' ? `\n${highRiskCheck}` : ''}` } : { tier: null, reason: '', summary: '' },
   inlineComments: comments, resolved,
 });
 
@@ -138,11 +140,47 @@ test('two reviews become one: the stricter verdict and the higher merge risk win
   ]);
   assert.equal(merged.conclusion, 'REQUEST_CHANGES');
   assert.equal(merged.mergeRisk.tier, 'High');
-  assert.match(merged.mergeRisk.summary, /^HIGH\nHigh reason\n\n\(The higher of the reviewers' tiers: Codex's\.\)$/);
+  assert.equal(merged.mergeRisk.summary, `HIGH\nHigh reason\n${highRiskCheck}\n\n(The higher of the reviewers' tiers: Codex's.)`);
   assert.equal(merged.comment, '### Claude Code: APPROVE\n\nAPPROVE comment\n\n### Codex: REQUEST_CHANGES\n\nREQUEST_CHANGES comment');
   assert.match(merged.summary, /### Claude Code: APPROVE\n\nAPPROVE summary/);
   assert.deepEqual(merged.inlineComments, [{ path: 'a.js', line: 1, body: '**Claude Code:** Fine.' }, { path: 'b.js', line: 2, body: '**Codex:** Broken.' }]);
   assert.deepEqual(merged.resolved, [2], 'an earlier comment with no known writer is resolved only when both found it fixed');
+});
+
+test('when High ratings tie, the report with a pre-merge check wins', () => {
+  const claude = verdictOf('APPROVE', { tier: 'High' });
+  claude.mergeRisk.summary = 'HIGH\nHigh reason';
+  const codex = verdictOf('APPROVE', { tier: 'High' });
+  const merged = mergeVerdicts([{ name: 'Claude Code', verdict: claude }, { name: 'Codex', verdict: codex }]);
+  assert.deepEqual(merged.mergeRisk, codex.mergeRisk);
+});
+
+test('a High tie prefers the complete report with the reason and check in either order', (t) => {
+  const d = dir(t);
+  fs.writeFileSync(path.join(d, 'verdict.txt'), 'APPROVE');
+  const claude = verdictOf('APPROVE', { tier: 'High' });
+  claude.mergeRisk.summary = 'HIGH\nHigh reason';
+  const merge = (report) => {
+    fs.writeFileSync(path.join(d, 'merge-risk.md'), report);
+    return mergeVerdicts([
+      { name: 'Claude Code', verdict: claude },
+      { name: 'Codex', verdict: verdictIn(d) },
+    ]).mergeRisk;
+  };
+  const reason = 'A new route could expose a private session.';
+  for (const summary of [`HIGH\n${highRiskCheck}\n${reason}`, `HIGH\n${reason}\n${highRiskCheck}`]) {
+    assert.deepEqual(merge(summary), { tier: 'High', reason, summary });
+  }
+  assert.deepEqual(merge(`HIGH\n${highRiskCheck}\n`), claude.mergeRisk);
+});
+
+test('a High rating survives an unrated verdict without a pre-merge check', () => {
+  const high = verdictOf('APPROVE', { tier: 'High' });
+  high.mergeRisk.summary = 'HIGH\nHigh reason';
+  const unrated = verdictOf('APPROVE', { tier: null });
+  const merged = mergeVerdicts([{ name: 'Claude Code', verdict: unrated }, { name: 'Codex', verdict: high }]);
+  assert.deepEqual(merged.mergeRisk, high.mergeRisk);
+  assert.equal(merged.conclusion, 'APPROVE');
 });
 
 test('an earlier comment one reviewer wrote is resolved when that one found it fixed, whatever the other listed', () => {
