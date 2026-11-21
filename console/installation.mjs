@@ -23,6 +23,7 @@ import { createSlack } from './slack.mjs';
 import { checkSlackInstall, createSlackSetup } from './slackSetup.mjs';
 import { createTunnel, tunnelTargetsFor } from './dbTunnel.mjs';
 import { createCliSignIn } from './cliSignIn.mjs';
+import { createExecPipe } from './execPipe.mjs';
 import { createFleet } from './fleet.mjs';
 import { createGitHub } from './github.mjs';
 import { createAppApi } from './githubApp.mjs';
@@ -538,7 +539,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
     slackSetup,
     cli,
   });
-  const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts });
+  // `woodshed tunnel <id> -- <line>`: a pipe into a running session of the token's person, through its statusd.
+  const execPipe = createExecPipe({ fleet, cli });
+  const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts, execPipe });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,

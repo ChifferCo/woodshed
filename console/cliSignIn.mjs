@@ -71,6 +71,17 @@ function deviceName(name) {
 export function createCliSignIn({ store, now = Date.now, allowed = () => true }) {
   // deviceCode's hash -> {userCode, name, from, createdAt, expiresAt, lastPollAt, approved: {login}|null, denied}
   const pending = new Map();
+  // Told of each token that ends before its time, so what it holds open closes with it (execPipe.mjs).
+  const endedListeners = [];
+  const ended = (id, login, why) => {
+    for (const fn of endedListeners) {
+      try {
+        fn({ id, login, why });
+      } catch (err) {
+        console.warn('cliSignIn: a listener failed at a token\'s end', { id, message: err.message });
+      }
+    }
+  };
 
   function tokens() {
     store.state.cliTokens ??= {};
@@ -139,6 +150,7 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true })
     for (const [oldId] of mine.slice(0, Math.max(0, mine.length - MAX_TOKENS_PER_PERSON + 1))) {
       console.log('cliSignIn: oldest sign-in ended, past the most a person keeps', { login, id: oldId, most: MAX_TOKENS_PER_PERSON });
       delete tokens()[oldId];
+      ended(oldId, login, 'past the most a person keeps');
     }
     tokens()[id] = { login, name, hash: sha256(token), createdAt, expiresAt, lastUsedAt: createdAt };
     store.save();
@@ -208,6 +220,7 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true })
     delete tokens()[id];
     store.save();
     console.log('cliSignIn: token revoked', { login, id, name: record.name, by });
+    ended(id, login, 'revoked');
     return true;
   }
 
@@ -225,9 +238,15 @@ export function createCliSignIn({ store, now = Date.now, allowed = () => true })
     for (const id of ids) delete tokens()[id];
     store.save();
     console.log('cliSignIn: every token revoked', { login, count: ids.length, by });
+    for (const id of ids) ended(id, login, 'revoked');
   }
 
-  return { start, waiting, decide, poll, tokenFor, list, revoke, revokeAll, logins: () => [...new Set(Object.values(tokens()).map((r) => r.login))] };
+  /** @param {(ended: {id: string, login: string|null, why: string}) => void} fn  called as each token is revoked */
+  function whenEnded(fn) {
+    endedListeners.push(fn);
+  }
+
+  return { start, waiting, decide, poll, tokenFor, list, revoke, revokeAll, whenEnded, logins: () => [...new Set(Object.values(tokens()).map((r) => r.login))] };
 }
 
 function json(res, status, body) {
