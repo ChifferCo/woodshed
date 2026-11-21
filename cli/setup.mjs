@@ -159,10 +159,12 @@ export async function setupCommand(args, ctx) {
   } else {
     const listed = await call('repo list', 'repo', 'list');
     if (listed.code !== EXIT.done) return childError('repos', listed, 'Could not list repos.');
-    const repos = listed.last?.repos;
-    if (!Array.isArray(repos)) return stop('repos', EXIT.failed, 'Could not read the repo list.');
-    const named = repos.filter((entry) => typeof entry?.repo === 'string' && REPO.test(entry.repo));
-    const added = new Set(named.filter((entry) => entry.added === true).map((entry) => key(entry.repo)));
+    const { projects, available } = listed.last ?? {};
+    if (!Array.isArray(projects) || !(available === null || Array.isArray(available))) return stop('repos', EXIT.failed, 'Could not read the repo list.');
+    const valid = (entry) => typeof entry?.repo === 'string' && REPO.test(entry.repo);
+    const connected = projects.filter(valid);
+    const added = new Set(connected.map(({ repo }) => key(repo)));
+    const named = [...connected, ...(available ?? []).filter(valid)].map(({ repo }) => ({ repo, added: added.has(key(repo)) }));
     const show = named.map((entry) => `${entry.repo}${entry.added === true ? ' (added)' : ''}`).join(', ') || 'none listed';
     // In agent mode the list accompanies the instruction when a choice has yet to be made.
     if (choose && !selected.length) {

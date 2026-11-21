@@ -62,7 +62,7 @@ test('setup hands off browser approval with the code and does no more work', asy
 
 test('setup shows repo choices without asking when --yes is set even on a terminal', async () => {
   const { invoke } = fake({ commands: ['repo'], tty: true, answers: {
-    'repo list': result(0, { repos: [{ repo, added: true }, { repo: 'acme/lib', added: false }] }),
+    'repo list': result(0, { projects: [{ repo }], available: [{ repo: 'acme/lib' }] }),
   } });
   const after = await invoke('--yes');
   assert.equal(after.code, 2);
@@ -74,8 +74,8 @@ test('setup shows repo choices without asking when --yes is set even on a termin
 test('setup skips repos already added and stops at the GitHub App install link', async () => {
   const url = 'https://github.com/apps/acme-woodshed/installations/new';
   const { invoke } = fake({ commands: ['repo', 'review'], answers: {
-    'repo list': result(0, { repos: [{ repo: 'Acme/App', added: true }, { repo: 'acme/lib', added: false }] }),
-    'repo add': result(2, { event: 'error', status: 'needs-github-app', installUrl: url }),
+    'repo list': result(0, { projects: [{ repo: 'Acme/App' }], available: [{ repo: 'acme/lib' }] }),
+    'repo add': result(2, { event: 'error', status: 'needs-github-app', url }),
   } });
   const after = await invoke('--yes', '--repo', repo, '--repo', 'acme/lib');
   assert.equal(after.code, 2);
@@ -85,7 +85,7 @@ test('setup skips repos already added and stops at the GitHub App install link',
 
 test('setup does not treat a repo refusal as a browser handoff', async () => {
   const { invoke } = fake({ commands: ['repo'], answers: {
-    'repo list': result(0, { repos: [] }),
+    'repo list': result(0, { projects: [], available: [] }),
     'repo add': result(3, { event: 'error', error: 'Only an admin can add repos.' }),
   } });
   const after = await invoke('--yes', '--repo', repo);
@@ -146,7 +146,7 @@ test('setup skips already enabled reviews, applies a changed personal choice and
   const url = `${origin}/s/12345678`;
   const lib = path.resolve('other-checkout');
   const { invoke } = fake({ commands: ['repo', 'review', 'config'], here: repo, checkouts: { [lib]: 'acme/lib' }, answers: {
-    'repo list': result(0, { repos: [{ repo, added: true }, { repo: 'acme/lib', added: true }] }),
+    'repo list': result(0, { projects: [{ repo }, { repo: 'acme/lib' }], available: [] }),
     'review status': result(0, { on: true }),
     'config list': result(0, { config: { reviews: 'default' } }),
     'config set': result(0, { event: 'set', key: 'reviews', value: 'both' }),
@@ -200,7 +200,7 @@ test('setup in agent mode asks for the reviewer choice when config is available'
 
 test('setup asks on a terminal and can keep a personal choice and skip starting a session', async () => {
   const { invoke } = fake({ json: false, tty: true, input: [repo, '', ''], commands: ['repo', 'config'], answers: {
-    'repo list': result(0, { repos: [{ repo, added: true }] }),
+    'repo list': result(0, { projects: [{ repo }], available: null }),
     'config list': result(0, { config: { reviews: 'default' } }),
     'session list': result(0, { sessions: [] }),
   } });
