@@ -163,7 +163,8 @@ installed. `settings` joins this computer to that, and also saves their git, rea
 1. `woodshed settings plan` (add `--own-files <checkout>` for that checkout's ignored env files). Show the person the
    whole list: each item, its size, and `upload`, `skip` or `refuse` with why.
 2. Push only what they agree to: `woodshed settings push`, with `--only <name>` for a part of it. An item never listed
-   before exits 2 until a plan has shown it. A dotfile goes only when they name it (`--only dotfile/gitconfig`). A pull
+   before exits 2 until a plan has shown it. Push with an `--only` that leaves out `dotfiles` unless the person named
+   one (`--only dotfile/gitconfig`): a dotfile replaces their lines on My settings. A pull
    never installs a plugin: its list gives the `claude plugin install` for them to run if they want it.
 3. For pull, `woodshed settings plan --pull` lists what pull would write and what each item would run on this
    computer (an MCP server's command, hooks, a skill's shell lines). Those are held until a list has shown them, so that

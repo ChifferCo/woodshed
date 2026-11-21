@@ -8,6 +8,7 @@
 
 import { CODEX_CONFIG, configCredential } from '../shared/codexConfig.mjs';
 import { isCarriedSource } from '../shared/pluginSource.mjs';
+import { redact, secretContent } from '../shared/secretLike.mjs';
 import logins from './public/logins.cjs';
 const { loginKey } = logins;
 
@@ -46,12 +47,14 @@ export function itemProblem(id, value) {
     return credential ? `~/.codex/config.toml ${credential}: a credential stays where it was set` : null;
   }
   if (id.startsWith(PLUGIN_ITEM)) {
+    // Its name is said back and logged: one with a key's shape is refused without it.
+    if (secretContent(id)) return 'a plugin\'s name holds what looks like a key';
     let item = null;
     try {
       item = JSON.parse(value);
     } catch {}
     const fine = item && typeof item === 'object' && Object.keys(item).join() === 'marketplace' && isCarriedSource(item.marketplace);
-    return fine ? null : `${id.slice(PLUGIN_ITEM.length)}'s marketplace is not one a session can add`;
+    return fine ? null : `${redact(id.slice(PLUGIN_ITEM.length))}'s marketplace is not one a session can add`;
   }
   return null;
 }

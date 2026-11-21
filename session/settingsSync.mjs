@@ -18,6 +18,7 @@ import path from 'node:path';
 import { isMain } from '../shared/isMain.mjs';
 import { CODEX_CONFIG, readToml, sharedPart, withOwnEntries } from '../shared/codexConfig.mjs';
 import { carriedSource } from '../shared/pluginSource.mjs';
+import { secretContent } from '../shared/secretLike.mjs';
 import { PLUGIN_ID_RE } from './missingPlugins.mjs';
 
 // codex's settings beside claude's. Never ~/.codex/auth.json: a Codex sign-in is My settings' (userSettings.mjs).
@@ -163,7 +164,8 @@ export async function pluginItems(home) {
   const plugins = installed?.plugins;
   if (!plugins || typeof plugins !== 'object') return items;
   for (const [name, installs] of Object.entries(plugins)) {
-    if (!PLUGIN_ID_RE.test(name) || !Array.isArray(installs) || !installs.some((i) => i?.scope === 'user')) continue;
+    // A name with a key's shape in it is no plugin's: it stays here, never in the shared copy.
+    if (!PLUGIN_ID_RE.test(name) || secretContent(name) || !Array.isArray(installs) || !installs.some((i) => i?.scope === 'user')) continue;
     // Only what a session can add again: a folder's path or a URL with a sign-in never leaves this home.
     items[pluginId(name)] = JSON.stringify({ marketplace: carriedSource(known?.[name.split('@')[1]]?.source) });
   }

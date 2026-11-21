@@ -349,3 +349,17 @@ test('a config.toml that does not read as TOML is held out of the round, neither
   await fs.writeFile(path.join(a.home, '.codex/config.toml'), 'model = "o4"\n');
   assert.equal((await a.round()).sent, 1, 'it goes once it reads');
 });
+
+test('a plugin named with a key\'s shape never reaches the shared copy, and the console refuses one without saying it', async () => {
+  const token = `ghp_${'x1'.repeat(18)}`;
+  const c = fakeConsole();
+  const a = session(await makeHome({
+    '.claude/plugins/installed_plugins.json': { version: 2, plugins: { [`${token}@acme-tools`]: [{ scope: 'user' }], 'review@acme-tools': [{ scope: 'user' }] } },
+  }), c.send('aaaaaaaa'));
+  await a.round({ live: false });
+  assert.deepEqual(Object.keys(JSON.parse([...c.objects.values()][0]).items), ['.claude/plugins/installed_plugins.json#plugins/review@acme-tools']);
+  await assert.rejects(c.settings.sync({ login: 'octocat', sessionId: 'old', version: 1, removed: [], changed: { [`.claude/plugins/installed_plugins.json#plugins/${token}@m`]: '{"marketplace":null}' } }),
+    (err) => err.status === 400 && err.message === 'a plugin\'s name holds what looks like a key');
+  await assert.rejects(c.settings.sync({ login: 'octocat', sessionId: 'old', version: 1, removed: [], changed: { [`.claude/plugins/installed_plugins.json#plugins/p@${token}`]: '{"marketplace":{"source":"directory","path":"/x"}}' } }),
+    (err) => err.status === 400 && !err.message.includes(token));
+});
