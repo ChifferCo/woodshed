@@ -339,8 +339,9 @@ export function withEntries(base, own) {
   return compose(statements ? textOf(statements.filter((s) => !names.has(unitOf(s)))) : base, own);
 }
 
-// Codex takes these environment values as written. HTTP headers can carry credentials under any name.
-const LITERAL_TABLES = new Set(['env', 'set']);
+// Codex takes these values as written: an MCP server's environment, and a provider's query parameters, which go on every
+// request's URL. HTTP headers can carry credentials under any name.
+const LITERAL_TABLES = new Set(['env', 'set', 'query_params']);
 // Keys and tables whose values name an environment variable rather than hold a value (env_key, bearer_token_env_var,
 // env_http_headers): `OPENAI_API_KEY` there is a name.
 const namesVariable = (key, table) => /(^env_key|_env_var)$/.test(key) || table === 'env_http_headers';

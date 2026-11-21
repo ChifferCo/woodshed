@@ -118,6 +118,12 @@ test('a credential is refused in a comment or a section name too, and what would
     ['inputrc', `# ${TOKEN}\nset editing-mode vi\n`],
     ['gitconfig', `; ${TOKEN}\n[alias]\n\tco = checkout\n`],
   ]) assert.match(dotfileProblem(key, text), /line 1 holds what looks like a GitHub token/, key);
+  for (const comment of ['#', ';']) {
+    const problem = dotfileProblem('gitconfig', `[alias] ${comment} API_TOKEN=opaque-fixture\n\tco = checkout\n`);
+    assert.match(problem, /line 1 holds a value for API_TOKEN/, 'a comment after a section\'s name is written into the session too');
+    assert.doesNotMatch(problem, /opaque-fixture/);
+  }
+  assert.equal(dotfileProblem('gitconfig', '[alias] # my shortcuts\n\tco = checkout\n'), null);
   assert.match(dotfileProblem('gitconfig', '[diff]\n\tmnemonicPrefix = true\n'), /diff\.mnemonicprefix is not one a session takes/);
   assert.match(dotfileProblem('gitconfig', '[status]\n\tshowUntrackedFiles = no\n'), /status\.showuntrackedfiles is not one/);
   assert.match(dotfileProblem('gitconfig', '[color]\n\tui = always\n'), /color\.ui is always/);

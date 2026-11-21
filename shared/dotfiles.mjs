@@ -193,6 +193,9 @@ export function dotfileProblem(key, text) {
     const read = gitLines(text);
     if (read.error) return read.error;
     for (const line of read.lines) {
+      // A section's line can end in a comment, which is written into the session with it.
+      const inHeader = line.kind === 'header' ? shellCredential(line.text) : null;
+      if (inHeader) return `line ${line.number} holds ${inHeader}: credentials stay off sessions`;
       if (line.kind === 'header' && !gitSectionAllowed(line.section)) {
         return `line ${line.number}: ${sectionName(line.section)} is not one a session takes. Aliases, colors and how diff, merge, pull, push, rebase and the like behave are; your session's git identity and credentials are its own`;
       }
