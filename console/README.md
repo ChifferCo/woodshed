@@ -1503,7 +1503,15 @@ asked. Only that page's button, a form POST from the console's own page (Origin 
 approves it; Deny refuses it. The CLI asks `POST /api/cli/token` every 5 seconds meanwhile, and gets its token once.
 Both of those refuse a call with an Origin header, which a browser always sends and the CLI never does, so no web page
 starts a sign-in to hand someone the link of. The code lasts 10 minutes. The token (`wsc_…`) is its own kind, not the
-database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer` to `/api/cli/*` and `/api/tunnel/exec/*` alone for now. The console
+database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. Besides `/api/cli/*` and
+`/api/tunnel/exec/*` it signs in to `woodshed session`'s routes alone (`console/cliSessions.mjs`): `GET /api/sessions`, `GET /api/my/projects`,
+`POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume|remove` and `POST /api/sessions/<id>/stop|extend|limits`,
+each answered by the page's own code as the token's person, so it sees and changes exactly what they could on the page.
+Every other route refuses it with 403, and so do those for a call with an Origin header (a page's). Those writes need no
+`x-woodshed` header or Origin, which only stand between another site and the browser's cookie; each logs
+`cliSessions: call` with the login, the token's id and the path, and a refusal `cliSessions: refused, not a route the
+command line may call`. A session a terminal is connected to is not kept awake by it: `woodshed session extend` and
+`limits` ask for more time, as Extend and the session's own Pause and stop do on its page. The console
 keeps only its SHA-256, in `state.json` under `cliTokens`, and My settings' Command line row lists each computer with
 Revoke. Remove My Woodshed, People's Remove and leaving a hosting program's list end them all. The console logs
 `cliSignIn: sign-in started`, `sign-in approved` or `denied`, `token made`, `token revoked` with `by`, and `refused, a
@@ -1830,7 +1838,8 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   `signInPaths` for the program's sign-in page.
 - The command line's routes are core's own (`cliSignIn.mjs`): `/cli` is behind the program's sign-in like any page, and
   `/api/cli/*` carries its own token in `Authorization`, so the program's proxy passes those through without its
-  sign-in, as it does `/api/tunnel/*`.
+  sign-in, as it does `/api/tunnel/*`. So must it the session routes `cliSessions.mjs` lists, when they carry
+  `Authorization: Bearer wsc_…`: the console checks that token itself, and refuses it everywhere else.
 - `repos: {list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`: where the program keeps the
   installation's repos, which it built `config.projects` from, so Console settings' Repos card changes them there and
   core keeps no list of its own (`addedProjects`, above under the Repos card). `list` answers what Add a repo offers:
