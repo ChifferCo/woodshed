@@ -16,6 +16,8 @@
 
 // How often a start's wait reads the list, and how long it keeps trying through a console it cannot reach.
 const POLL_MS = 2000;
+// A stop answers once the session's work is pushed and its container gone: its checkpoint alone may take 90 s.
+const STOP_DEADLINE_MS = 180_000;
 const UNREACHABLE_GIVE_UP_MS = 60_000;
 
 export const SESSION_USAGE = `Usage: woodshed session <command> [--console <url>] [--json]
@@ -172,10 +174,20 @@ export async function sessionCommand({ origin, rest }, ctx) {
 
   // A call to the console, its refusals said as the command line's exit codes.
   // `policy400`: a 400 is the console's rule, not a mistake in what was sent (extend outside its window).
-  async function ask(pathname, { method = 'GET', body, policy400 = false } = {}) {
-    const out = await call(origin, pathname, { method, body, token: ctx.token });
+  async function ask(pathname, { method = 'GET', body, policy400 = false, deadlineMs = null } = {}) {
+    let out;
+    try {
+      out = await call(origin, pathname, { method, body, token: ctx.token, deadlineMs });
+    } catch (err) {
+      // A write still under way at the console: what happened is told by the session's state, not this answer.
+      if (err.timedOut && method !== 'GET') throw fail(`${origin} did not answer in time; it may still be doing it. Check with: woodshed session get ${pathname.match(/[0-9a-f]{8}/)?.[0] ?? '<id>'}`);
+      throw err;
+    }
     if (out.status === 400 && policy400) throw fail(printable(out.body?.error) ?? `${origin} refused that`, { code: EXIT.refused, status: 'refused' });
-    if (out.status === 401) throw fail(`The sign-in to ${origin} ended: it was revoked, or it expired. Run: woodshed login --console ${origin}`, { code: EXIT.waiting, status: 'signed-out' });
+    if (out.status === 401) {
+      const why = printable(out.body?.error) ?? 'it was revoked, or it expired';
+      throw fail(`The sign-in to ${origin} ended: ${why}. Run: woodshed login --console ${origin}`, { code: EXIT.waiting, status: 'signed-out' });
+    }
     if (out.status === 403) throw fail(printable(out.body?.error) ?? `${origin} refused that`, { code: EXIT.refused, status: 'refused' });
     if (out.status === 404 && !out.body?.error) throw fail(`${origin} answered 404: a console from before the command line could start sessions`);
     if (out.status >= 400) throw fail(printable(out.body?.error) ?? `${origin} answered ${out.status}`);
@@ -318,14 +330,17 @@ export async function sessionCommand({ origin, rest }, ctx) {
   const { login, s } = await find(id);
 
   if (sub === 'stop') {
-    if (!LIVE.has(s.status) || s.status === 'stopping') {
+    // One that stopped by itself (paused, or failed) is still sent: the console then has it wait on nobody, as the page's
+    // Stop does. One a person stopped, or that is stopping, has nothing left to do.
+    const settled = s.status === 'stopping' || (!LIVE.has(s.status) && (s.stoppedBy || !['stopped', 'failed'].includes(s.status)));
+    if (settled) {
       if (json) emit({ event: 'stopped', session: summary(s, { origin, login }), already: true });
       say(`Session ${id} is not running: it is ${stateOf(s).word}.`);
       return EXIT.done;
     }
-    const after = await ask(`/api/sessions/${id}/stop`, { method: 'POST', body: {} });
-    if (json) emit({ event: 'stopped', session: summary({ ...s, ...after }, { origin, login }), already: false });
-    say(`Stopping session ${id}. Its work is pushed first.`);
+    const after = await ask(`/api/sessions/${id}/stop`, { method: 'POST', body: {}, deadlineMs: STOP_DEADLINE_MS });
+    if (json) emit({ event: 'stopped', session: summary({ ...s, ...after }, { origin, login }), already: !LIVE.has(s.status) });
+    say(LIVE.has(s.status) ? `Stopped session ${id}. Its work was pushed first.` : `Session ${id} was already ${stateOf(s).word}: it is marked stopped by you, and waits on nobody now.`);
     return EXIT.done;
   }
 
@@ -408,7 +423,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
       return EXIT.done;
     }
   }
-  await ask(`/api/my/sessions/${id}/remove`, { method: 'POST', body: {} });
+  await ask(`/api/my/sessions/${id}/remove`, { method: 'POST', body: {}, deadlineMs: STOP_DEADLINE_MS });
   if (json) emit({ event: 'removed', id });
   say(`Removed session ${id}.`);
   return EXIT.done;
