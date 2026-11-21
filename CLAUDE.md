@@ -345,6 +345,9 @@ URL on top of each env file's Repo settings values
   at once, all with one `lastFrom`, is a proxy in front that reaches the console from an address `WOODSHED_TRUSTED_PROXIES`
   does not list (loopback is trusted by default), so its `X-Forwarded-For` is not read. The token is in the macOS
   Keychain or libsecret, else in the file `woodshed status --json` names (`credentialsFile`); never print it.
+  `woodshed settings` (cli/README.md, "Settings") lists each item with why it is skipped or refused, and the console
+  logs `cliSettings: pushed` or `cliSettings: refused`; `answered 404 to /api/cli/settings` is a console with nowhere to
+  keep Claude homes, or one from before the command.
 - **`woodshed tunnel` exits 255.** Its stderr says why (cli/README.md, "The tunnel into a session"): `refused (401)`
   is a sign-in revoked or expired, or its person's write access gone (`woodshed login` again), `refused (404)` a session that is not that person's own,
   `refused (409)` one not running (resume it) or one that has seen production data, which never gets a pipe. The

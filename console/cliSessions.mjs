@@ -1,6 +1,8 @@
 // The woodshed command line's token (wsc_, cliSignIn.mjs) on the console's own session routes: the few `woodshed
 // session` calls, as exactly the person the token was approved for. Every other route refuses it, so a token that leaks
-// from a laptop reaches no settings, secrets, people, terminals or apps.
+// from a laptop reaches no console settings, people, terminals or apps. Its own /api/cli/* routes are apart: among them
+// /api/cli/settings (cliSettings.mjs) reaches that person's shared Claude settings and own files for their repos, which
+// are theirs, and which `woodshed settings` carries.
 //
 //   GET  /api/sessions                      woodshed session list, and the wait on a start: what that person sees
 //   GET  /api/my/projects                   the repos that person may start on, for --repo

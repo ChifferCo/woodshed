@@ -605,6 +605,12 @@ session's own.
   session's own, and a file over 1 MB is not sent: your other sessions keep the
   last version that was. Forget it and Remove My Woodshed delete
   the shared copy with your homes.
+- **From your computer:** `woodshed settings push` sends your laptop's items into the same copy, and `pull` writes
+  the copy's into your laptop (cli/README.md, "Settings"), through `GET/POST /api/cli/settings` with the command
+  line's token (`cliSettings.mjs`). It merges as a session's round does, but a computer never sends or gets an MCP
+  login, and never removes an item. The console logs `cliSettings: pushed` with the token's id and the counts, and
+  `cliSettings: refused` when the copy would go over 5 MB. `--own-files` saves into your own files on My settings
+  through the Repo settings routes, with their checks and log lines.
 
 **Resume**, on a stopped private session's rail card or page, starts the same
 session again, with its page, branch and options, and runs
@@ -1503,8 +1509,8 @@ asked. Only that page's button, a form POST from the console's own page (Origin 
 approves it; Deny refuses it. The CLI asks `POST /api/cli/token` every 5 seconds meanwhile, and gets its token once.
 Both of those refuse a call with an Origin header, which a browser always sends and the CLI never does, so no web page
 starts a sign-in to hand someone the link of. The code lasts 10 minutes. The token (`wsc_…`) is its own kind, not the
-database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. Besides `/api/cli/*` and
-`/api/tunnel/exec/*` it signs in to `woodshed session`'s routes alone (`console/cliSessions.mjs`): `GET /api/sessions`, `GET /api/my/projects`,
+database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. Besides `/api/cli/*` (which include
+`/api/cli/settings`: the person's shared Claude settings and own files, below) and `/api/tunnel/exec/*` it signs in to `woodshed session`'s routes alone (`console/cliSessions.mjs`): `GET /api/sessions`, `GET /api/my/projects`,
 `POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume|remove` and `POST /api/sessions/<id>/stop|extend|limits`,
 each answered by the page's own code as the token's person, so it sees and changes exactly what they could on the page.
 Every other route refuses it with 403, and so do those for a call with an Origin header (a page's). Those writes need no

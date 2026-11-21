@@ -48,6 +48,8 @@
 //   POST /api/cli/device, /api/cli/token, GET /api/cli/me, POST /api/cli/logout   the woodshed command line's sign-in by a
 //                                device code, and its token's calls (cliSignIn.mjs); GET/POST /cli is the page the code is
 //                                approved on, signed in
+//   GET/POST /api/cli/settings[/repos|/files/<project>]   that token's turn at your shared Claude settings, and your own
+//                                files for a repo (cliSettings.mjs)
 //   POST /api/my/cli-tokens/<id>/revoke   ends one computer's command line sign-in, from My settings
 //   Its token also signs in to GET /api/sessions, GET /api/my/projects, POST /api/my/sessions,
 //   POST /api/my/sessions/<id>/resume|remove and POST /api/sessions/<id>/stop|extend|limits, as its person, and to nothing
@@ -204,6 +206,7 @@ import { safeNext, signInFailure } from './auth.mjs';
 import { handleDesktopSignIn } from './desktopSignIn.mjs';
 import { handleCliApi, handleCliPage } from './cliSignIn.mjs';
 import { carriesCliToken, handleCliCall } from './cliSessions.mjs';
+import { handleCliSettings } from './cliSettings.mjs';
 import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
 import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
 import { QA_POSTER_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
@@ -2451,6 +2454,7 @@ export function createHandler({
     // The woodshed command line has no cookie either: a device code, then its token, is its sign-in.
     if (url.pathname.startsWith('/api/cli/')) {
       if (!cli) return reply(res, 404, { error: 'this console has no command line sign-in' });
+      if (await handleCliSettings({ req, res, url, cli, claudeSettings, repoSettingsApi })) return;
       return handleCliApi({ req, res, url, cli, publicUrl: config.publicUrl, about: cliAbout });
     }
     // Its token on the few other routes it may call, as its person: `woodshed session`.

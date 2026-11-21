@@ -34,9 +34,9 @@ export const MAX_ITEM_BYTES = 1024 * 1024;
 // a path in that session's image. Carried between sessions, a newer image's path would reach a session still on an
 // older one, which may not have it, and stop its status line. So a session keeps its own on apply, and sends the
 // shared copy's back unchanged.
-const SETTINGS = '.claude/settings.json';
+export const SETTINGS = '.claude/settings.json';
 // A settings.json with no status line, for what a session sends when no shared copy has one to keep.
-const NO_STATUS_LINE = Buffer.from('{}').toString('base64');
+export const NO_STATUS_LINE = Buffer.from('{}').toString('base64');
 
 function settingsJson(b64) {
   try {
@@ -54,7 +54,7 @@ function canonical(value) {
 }
 
 /** Whether two settings.json contents say the same, whatever their formatting. */
-function sameSettings(a, b) {
+export function sameSettings(a, b) {
   const x = settingsJson(a);
   const y = settingsJson(b);
   return x && y ? canonical(x) === canonical(y) : a === b;
