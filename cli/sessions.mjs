@@ -7,6 +7,7 @@
 //   woodshed session herdr <id>
 //   woodshed session list [--all]
 //   woodshed session get <id>
+//   woodshed session app <id> [start [--app <name>] [--no-wait]|stop]
 //   woodshed session stop <id>
 //   woodshed session resume <id> [--no-wait]
 //   woodshed session remove <id> [--yes]
@@ -16,6 +17,9 @@
 //
 // Nothing here keeps a session awake: it pauses when idle and stops at its lifetime, as its limits say, unless its
 // person (or their agent) asks for more time with extend or limits. list and get say when each will.
+//
+// app says whether the session's app runs and where it opens, and starts or stops it, as the page's Open app, Start app
+// and Stop app do. Set up app, which asks the session's agent to write the project file's app, stays on the page.
 //
 // connect puts this terminal on one of your sessions' (terminal.mjs): its agent's, or with --shell the Terminal tab's
 // shell, resuming it first when it paused.
@@ -56,7 +60,11 @@ Commands:
                              reached through woodshed tunnel; a paused one is resumed first, and waited for
   list [--all]               your sessions and the shared ones you can see, with their state and when each
                              pauses or stops by itself; --all also lists those that ended
-  get <id>                   one session: its state, branch, pull request, and when it pauses or stops
+  get <id>                   one session: its state, branch, pull request, its app, and when it pauses or stops
+  app <id> [start|stop]      whether a running session's app is up, and its link to open in a browser; start starts
+                             it (one to three minutes) and waits until it is up, stop stops it
+      --app <name>           start this one of the project's apps, where it has several
+      --no-wait              return once the session has been asked to start it
   stop <id>                  stop a session; a running one's work is pushed as it stops
   resume <id> [--no-wait]    start one of your stopped sessions again, its conversation and all, and wait for it
   remove <id> [--yes]        take one of your sessions off the list, with its saved conversation (stopped first),
@@ -87,6 +95,11 @@ const START_STEPS = [
 ];
 
 const LIVE = new Set(['queued', 'starting', 'running', 'stopping']);
+// The app's states, as the session's statusd reports them (session/statusd.mjs, appState; console/sessions.mjs).
+const APP_STATES = new Set(['running', 'api-down', 'frontend-down', 'starting', 'stopping', 'failed', 'stopped', 'none']);
+// How long `session app start` waits for the app to come up: the page says one to three minutes.
+const APP_START_DEADLINE_MS = 300_000;
+const HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/i;
 const ID_RE = /^[0-9a-f]{8}$/;
 
 // What a console says reaches a terminal: never a control character or a direction override, which could move the
@@ -135,8 +148,45 @@ function ended(s) {
   return !s.kept || s.kind === 'ask';
 }
 
+/**
+ * Where a running session's app opens, as the console's page links Open app (console/public/common.js, appUrl): its
+ * own name under the console's app domain, on the console's scheme and port; with app ports, the port the console
+ * lent it, or the console's /auth/app, which lends one. A browser signed in to the console opens it.
+ * @param {{domain: string|null, ports: boolean}|null} appsOn  what the console's list says of session apps
+ * @returns {string|null}  none while the session is not running, has no app, or the console serves no session apps
+ */
+export function appUrlOf(s, { origin, appsOn }) {
+  if (!appsOn?.domain || s.status !== 'running' || s.kind === 'ask' || !APP_STATES.has(s.app) || s.app === 'none') return null;
+  if (appsOn.ports) return typeof s.appUrl === 'string' && /^https?:\/\//.test(s.appUrl) ? printable(s.appUrl, 300) : `${origin}/auth/app?id=${s.id}&next=/`;
+  const { protocol, port } = new URL(origin);
+  return `${protocol}//${s.id}.${appsOn.domain}${port ? `:${port}` : ''}/`;
+}
+
+/** @returns {{domain: string|null, ports: boolean}}  what the console's list says of session apps */
+function appsOnOf(body) {
+  const domain = typeof body?.appDomain === 'string' && body.appDomain.length <= 253 && HOST_RE.test(body.appDomain) ? body.appDomain.toLowerCase() : null;
+  return { domain, ports: body?.appPorts === true };
+}
+
+/** @returns {string}  what `get` and a start say of the session's app, with the next step; empty when it has none to say */
+export function appText(x) {
+  const label = x.appName && x.apps?.length > 1 ? ` (${x.appName})` : '';
+  const start = `woodshed session app ${x.id} start`;
+  switch (x.app) {
+    case 'running': return `running${label}: ${x.appUrl}`;
+    case 'api-down': return `up${label}, but its API is down, so its calls fail: ${x.appUrl}`;
+    case 'frontend-down': return `its frontend is down${label}. Start it again: ${start}`;
+    case 'starting': return `starting${label}; it opens at ${x.appUrl}`;
+    case 'stopping': return 'stopping';
+    case 'failed': return `its start failed${label}. Its log is /tmp/woodshed-app.log in the session; try again: ${start}`;
+    case 'stopped': return `not running. Start it: ${start}`;
+    case 'none': return `none yet: the project file names no app. Set up app on ${x.url} has the agent write one`;
+    default: return '';
+  }
+}
+
 /** The fields the command line prints of a session, with the console's text made printable. */
-export function summary(s, { origin, login }) {
+export function summary(s, { origin, login, appsOn = null }) {
   const { key, word } = stateOf(s);
   const hours = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
   return {
@@ -167,6 +217,12 @@ export function summary(s, { origin, login }) {
     runsOn: s.runsOn ? { idleHours: hours(s.runsOn.idleHours), lifetimeHours: hours(s.runsOn.lifetimeHours) } : null,
     ownLimits: s.limits ? { idleHours: hours(s.limits.idleHours), lifetimeHours: hours(s.limits.lifetimeHours) } : null,
     extendedUntil: printable(s.extendedUntil, 40),
+    // Its app, while it runs on a console that serves session apps: its state, which of the project's apps it is, and
+    // the link that opens it in a browser signed in to the console. null when there is nothing to open.
+    app: appsOn?.domain && s.status === 'running' && s.kind !== 'ask' && APP_STATES.has(s.app) ? s.app : null,
+    appName: printable(s.appName, 60),
+    apps: Array.isArray(s.apps) ? s.apps.map((a) => printable(a?.name, 60)).filter(Boolean) : null,
+    appUrl: appUrlOf(s, { origin, appsOn }),
   };
 }
 
@@ -223,8 +279,12 @@ export async function sessionCommand({ origin, rest }, ctx) {
     return out.body;
   }
 
+  // What the console's last list said of session apps, for summary's app link.
+  let appsOn = null;
+
   async function list() {
     const body = await ask('/api/sessions');
+    appsOn = appsOnOf(body);
     const login = typeof body.login === 'string' ? printable(body.login, 60) : null;
     return { login, sessions: Array.isArray(body.sessions) ? body.sessions.filter((s) => s && ID_RE.test(s.id)) : [] };
   }
@@ -264,7 +324,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
       }
       const s = got.sessions.find((x) => x.id === id);
       if (!s) throw fail(`Session ${id} is no longer on ${origin}'s list: it was removed.`);
-      const shown = summary(s, { origin, login: got.login });
+      const shown = summary(s, { origin, login: got.login, appsOn });
       if (shown.stateWord !== lastWord && (s.status === 'queued' || s.status === 'starting')) {
         lastWord = shown.stateWord;
         if (json) emit({ event: 'status', id, status: s.status, state: shown.state });
@@ -288,6 +348,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
         }
         if (json) emit({ event: 'running', session: shown });
         say(`Session ${id} is running: ${shown.url}`);
+        if (appText(shown)) say(`Its app: ${appText(shown)}`);
         return EXIT.done;
       }
       if (s.status === 'failed') {
@@ -343,7 +404,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
       throw fail(printable(err.message, 500));
     }
     const agent = await agentOn(ctx.hc, name, { place: ctx.placeHerdrAgent !== false }).catch(() => ({ inHerdr: null, address: null }));
-    const shown = summary(s, { origin, login });
+    const shown = summary(s, { origin, login, appsOn });
     // Its space named after the session's title and its tab after its agent, in the Herdr app's window. The console
     // names a session a few seconds after it starts: running this again picks the title up. Not for move, which lays
     // out its own spaces.
@@ -454,7 +515,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
     };
     const s = await ask('/api/my/sessions', { method: 'POST', body });
     if (!ID_RE.test(String(s.id))) throw fail(`${origin} answered with no session id`);
-    const shown = summary(s, { origin, login: s.owner ?? null });
+    const shown = summary(s, { origin, login: s.owner ?? null, appsOn });
     if (json) emit({ event: 'started', session: shown });
     say(`Started session ${shown.id}${shown.title ? `: ${shown.title}` : ''}`);
     say(`  ${shown.url}`);
@@ -483,7 +544,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
 
   if (sub === 'list') {
     const { login, sessions } = await list();
-    const shown = sessions.filter((s) => opts.all || !ended(s)).map((s) => summary(s, { origin, login }));
+    const shown = sessions.filter((s) => opts.all || !ended(s)).map((s) => summary(s, { origin, login, appsOn }));
     const gone = await leftovers(sessions);
     if (json) {
       emit({ console: origin, login, sessions: shown, ...(gone ? { herdrLeftovers: gone.map((m) => m.name) } : {}) });
@@ -546,12 +607,12 @@ export async function sessionCommand({ origin, rest }, ctx) {
     // Stop does. One a person stopped, or that is stopping, has nothing left to do.
     const settled = s.status === 'stopping' || (!LIVE.has(s.status) && (s.stoppedBy || !['stopped', 'failed'].includes(s.status)));
     if (settled) {
-      if (json) emit({ event: 'stopped', session: summary(s, { origin, login }), already: true });
+      if (json) emit({ event: 'stopped', session: summary(s, { origin, login, appsOn }), already: true });
       say(`Session ${id} is not running: it is ${stateOf(s).word}.`);
       return EXIT.done;
     }
     const after = await ask(`/api/sessions/${id}/stop`, { method: 'POST', body: {}, deadlineMs: STOP_DEADLINE_MS });
-    if (json) emit({ event: 'stopped', session: summary({ ...s, ...after }, { origin, login }), already: !LIVE.has(s.status) });
+    if (json) emit({ event: 'stopped', session: summary({ ...s, ...after }, { origin, login, appsOn }), already: !LIVE.has(s.status) });
     // The console's stop answers when it is done, and says nothing of whether the checkpoint pushed: none is made of a
     // session still in line, and a failed one does not hold the stop. So this claims no push.
     say(LIVE.has(s.status) ? `Stopped session ${id}.` : `Session ${id} was already ${stateOf(s).word}: it is marked stopped by you, and waits on nobody now.`);
@@ -562,13 +623,13 @@ export async function sessionCommand({ origin, rest }, ctx) {
   async function resumeAndWait() {
     if (LIVE.has(s.status)) {
       if (s.status === 'stopping') throw fail(`Session ${id} is stopping: resume it once it has stopped.`);
-      if (json) emit({ event: 'resumed', session: summary(s, { origin, login }), already: true });
+      if (json) emit({ event: 'resumed', session: summary(s, { origin, login, appsOn }), already: true });
       say(`Session ${id} is already ${stateOf(s).word}.`);
       if (s.status === 'running') return stateOf(s).key === 'needs-you' ? EXIT.waiting : EXIT.done;
       return opts.wait === false ? EXIT.done : follow(id);
     }
     const after = await ask(`/api/my/sessions/${id}/resume`, { method: 'POST', body: {} });
-    if (json) emit({ event: 'resumed', session: summary({ ...s, ...after }, { origin, login }), already: false });
+    if (json) emit({ event: 'resumed', session: summary({ ...s, ...after }, { origin, login, appsOn }), already: false });
     say(`Resuming session ${id}${s.title ? `: ${printable(s.title)}` : ''}`);
     if (opts.wait === false) return EXIT.done;
     return follow(id);
@@ -603,8 +664,64 @@ export async function sessionCommand({ origin, rest }, ctx) {
     return connect(found.s, found.login);
   }
 
+  if (sub === 'app') {
+    const x = summary(s, { origin, login, appsOn });
+    if (s.kind === 'ask') throw fail(`Session ${id} answers a question from Slack: it has no app.`, { code: EXIT.refused, status: 'refused' });
+    if (!appsOn?.domain) throw fail(`${origin} serves no session apps: a session's app opens only on a console with an app domain or app ports.`, { code: EXIT.refused, status: 'refused' });
+    if (s.status !== 'running') {
+      const resume = s.owner && s.owner === login ? `: woodshed session resume ${id} first` : '';
+      throw fail(`Session ${id} is ${stateOf(s).word}. Its app runs only while it does${resume}.`, { code: EXIT.refused, status: 'not-running' });
+    }
+    if (!opts.action) {
+      if (json) emit({ event: 'app', session: x });
+      say(x.app ? `Its app: ${appText(x)}` : `Session ${id} has not said yet whether its app runs. Try again in a few seconds, or open ${x.url}`);
+      return EXIT.done;
+    }
+    if (opts.action === 'start' && x.app === 'none') {
+      throw fail(`Session ${id}'s project file names no app yet. Set up app on ${x.url} has its agent write one.`, { code: EXIT.waiting, status: 'no-app' });
+    }
+    if (opts.app !== undefined && opts.action !== 'start') throw fail('--app picks the app to start: use it with start');
+    let after;
+    try {
+      after = await ask(`/api/sessions/${id}/app/${opts.action}`, { method: 'POST', body: opts.app ? { app: opts.app } : {} });
+    } catch (err) {
+      // The session's own refusal: not running, no app by that name, an image from before Start app.
+      if (err.http === 409) throw fail(err.message, { code: EXIT.refused, status: 'refused' });
+      throw err;
+    }
+    const asked = summary({ ...s, ...after }, { origin, login, appsOn });
+    if (opts.action === 'stop') {
+      if (json) emit({ event: 'app-stopping', session: asked });
+      say(`Stopping session ${id}'s app.`);
+      return EXIT.done;
+    }
+    if (json) emit({ event: 'app-starting', session: asked });
+    say(`Starting session ${id}'s app${asked.appName && asked.apps?.length > 1 ? ` (${asked.appName})` : ''}: one to three minutes.`);
+    if (opts.wait === false) return EXIT.done;
+    // Up once its frontend and backend both answer. Between the start script's end and its servers listening it can
+    // read as stopped or half up for a moment, so only a failed start ends the wait early.
+    const until = now() + APP_START_DEADLINE_MS;
+    let last = asked;
+    for (;;) {
+      await sleep(POLL_MS);
+      const got = await list();
+      const latest = got.sessions.find((y) => y.id === id);
+      if (!latest || latest.status !== 'running') throw fail(`Session ${id} stopped while its app was starting.`);
+      last = summary(latest, { origin, login: got.login, appsOn });
+      if (last.app === 'running') {
+        if (json) emit({ event: 'app-running', session: last });
+        say(`Its app is up: ${last.appUrl}`);
+        return EXIT.done;
+      }
+      if (last.app === 'failed' || now() >= until) break;
+    }
+    if (json) emit({ event: 'app-not-up', session: last });
+    say(last.app === 'failed' ? `Its app: ${appText(last)}` : `Its app is not up after ${APP_START_DEADLINE_MS / 60_000} minutes: ${appText(last) || 'it says nothing yet'}. Its start log is /tmp/woodshed-app.log in the session.`);
+    return EXIT.failed;
+  }
+
   if (sub === 'get') {
-    const x = summary(s, { origin, login });
+    const x = summary(s, { origin, login, appsOn });
     if (json) {
       emit({ session: x });
       return EXIT.done;
@@ -619,6 +736,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
       ['Pauses', x.pause ? `${pauseText(x.pause, now())} (${x.pause.at.slice(0, 16).replace('T', ' ')} UTC)` : LIVE.has(x.status) ? 'not yet: it is busy, or starting' : 'not running'],
       ['Runs on', x.runsOn ? `${hoursText(x.runsOn.idleHours)} idle, ${hoursText(x.runsOn.lifetimeHours)} lifetime${x.ownLimits ? ' (its own)' : ''}` : ''],
       ['Pull req.', x.prUrl ?? ''],
+      ['App', appText(x)],
       ['Stopped', x.status === 'running' ? '' : [x.stopReason, x.error].filter(Boolean).join(': ')],
       ['Open', x.url],
     ];
@@ -628,7 +746,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
 
   if (sub === 'extend') {
     if (s.status !== 'running') throw fail(`Session ${id} is not running: it is ${stateOf(s).word}. Only a running session can be extended.`, { code: EXIT.refused, status: 'refused' });
-    const after = summary({ ...s, ...(await ask(`/api/sessions/${id}/extend`, { method: 'POST', body: {}, policy400: true })) }, { origin, login });
+    const after = summary({ ...s, ...(await ask(`/api/sessions/${id}/extend`, { method: 'POST', body: {}, policy400: true })) }, { origin, login, appsOn });
     if (json) emit({ event: 'extended', session: after });
     say(after.pause ? `Session ${id} now ${after.pause.why === 'lifetime' ? 'stops' : 'pauses'} ${pauseText(after.pause, now()).replace(/, \w+$/, '')}.` : `Session ${id} was extended.`);
     return EXIT.done;
@@ -647,7 +765,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
         body[key] = value;
       }
     }
-    const after = summary({ ...s, ...(await ask(`/api/sessions/${id}/limits`, { method: 'POST', body })) }, { origin, login });
+    const after = summary({ ...s, ...(await ask(`/api/sessions/${id}/limits`, { method: 'POST', body })) }, { origin, login, appsOn });
     if (json) emit({ event: 'limits', session: after });
     const runs = after.runsOn ? `${after.runsOn.idleHours} h idle, ${after.runsOn.lifetimeHours} h lifetime` : 'its new limits';
     say(`Session ${id} runs on ${runs}${after.pause ? `; it ${after.pause.why === 'lifetime' ? 'stops' : 'pauses'} ${pauseText(after.pause, now()).replace(/, \w+$/, '')}` : ''}.`);
@@ -688,7 +806,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
 
 /**
  * @returns {{prompt?: string, repo?: string, branch?: string, agent?: string, model?: string, wait?: boolean,
- *            all?: boolean, yes?: boolean, id?: string}}
+ *            all?: boolean, yes?: boolean, id?: string, action?: 'start'|'stop', app?: string}}
  */
 export function parseSessionArgs(sub, words, fail) {
   const commands = {
@@ -697,6 +815,7 @@ export function parseSessionArgs(sub, words, fail) {
     herdr: { values: [], flags: [], words: 'id' },
     list: { values: [], flags: ['all'], words: null },
     get: { values: [], flags: [], words: 'id' },
+    app: { values: ['app'], flags: ['no-wait'], words: 'id-action' },
     extend: { values: [], flags: [], words: 'id' },
     limits: { values: ['idle-hours', 'lifetime-hours'], flags: [], words: 'id' },
     stop: { values: [], flags: [], words: 'id' },
@@ -733,7 +852,13 @@ export function parseSessionArgs(sub, words, fail) {
   if (sub === 'limits' && out['idle-hours'] === undefined && out['lifetime-hours'] === undefined) throw fail('session limits needs --idle-hours or --lifetime-hours (a number, or default)');
   if (out.agent !== undefined && !['claude', 'codex'].includes(out.agent)) throw fail('--agent must be claude or codex');
   if (takes.words === 'prompt') out.prompt = positional.join(' ');
-  else if (takes.words === 'id') {
+  else if (takes.words === 'id-action') {
+    // session app <id> [start|stop]
+    if (positional.length < 1 || positional.length > 2) throw fail(`session ${sub} takes a session id, then start or stop\n\n${SESSION_USAGE}`);
+    if (positional[1] !== undefined && !['start', 'stop'].includes(positional[1])) throw fail(`session app ${positional[1]}: start or stop`);
+    if (!ID_RE.test(positional[0])) throw fail(`${positional[0]} is not a session id: eight letters and digits, as woodshed session list shows`);
+    [out.id, out.action] = positional;
+  } else if (takes.words === 'id') {
     if (positional.length !== 1) throw fail(`session ${sub} takes one session id\n\n${SESSION_USAGE}`);
     if (!ID_RE.test(positional[0])) throw fail(`${positional[0]} is not a session id: eight letters and digits, as woodshed session list shows`);
     [out.id] = positional;

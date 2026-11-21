@@ -187,7 +187,8 @@ before the line ends (Ctrl-C, a cut network) hangs up everything the line starte
 | `session connect <id> [--shell]` | Puts this terminal on one of your sessions' agent, as its TUI tab shows it (claude or codex, in tmux or Herdr), or with `--shell` on its shell, the Terminal tab's. A paused or stopped one is resumed first. Below. | 0 disconnected (Ctrl-\\) or the session's terminal closed normally, 2 the sign-in ended, 1 could not open or reconnect, or the session's terminal closed it on an error, 3 a shared session, or one that has seen production data |
 | `session herdr <id>` | Makes one of your sessions a machine in Herdr, `woodshed-<id>`, so it shows in the app's sidebar beside this computer: below. A paused or stopped one is resumed first, and waited for as `resume` does. | 0 connected, 2 connected and the session needs you, 1 its start failed or `hc` could not add it, 3 no `hc`, one older than 0.1.21, a shared session, or one that has seen production data |
 | `session list [--all]` | Your sessions and the shared ones you can see: id, state (the page's words), whose, when it pauses or stops by itself, project and title. Ended shared sessions only with `--all`. With `hc` here, it also names the `woodshed-<id>` machines in Herdr whose session is no longer on the console (`herdrLeftovers` in `--json`), and says to run `prune`. | 0 |
-| `session get <id>` | One session: state, branch, agent, pull request, when it pauses or stops, and the hours it runs on. | 0, 1 none you can see |
+| `session get <id>` | One session: state, branch, agent, pull request, its app, when it pauses or stops, and the hours it runs on. | 0, 1 none you can see |
+| `session app <id> [start [--app NAME] [--no-wait]\|stop]` | A running session's app, as the page's Open app, Start app and Stop app: whether it is up and the link that opens it. `start` starts it (or `NAME`, one of the project's apps) and waits up to 5 minutes for it to come up; `stop` stops it. Below. | 0 up, asked or stopping, 2 the project file names no app (Set up app on the page), 1 not up in time or its start failed, 3 not running, a question from Slack, a console that serves no session apps, or the session refused |
 | `session stop <id>` | Stops it, and waits until the console has stopped it, a running one's work checkpointed on the way (up to 3 minutes: past that it says to check with `get`). One that paused or failed by itself is marked stopped by you, as the page's Stop does, so it no longer waits on you. | 0, 1 not answered in time |
 | `session resume <id> [--no-wait]` | Starts one of your stopped sessions again, its conversation and all, and waits as `new` does. | as `new`; 3 a shared session (resume it on the console) |
 | `session remove <id> [--yes]` | Takes one of your sessions off the list with its saved conversation, stopping it first, and forgets its `woodshed-<id>` machine in Herdr when there is one. It asks first on a terminal; with no terminal it needs `--yes`. | 0, 2 not confirmed, 3 a shared session |
@@ -204,6 +205,23 @@ then a `status` event as it goes in line or starts, a `step` event per start ste
 `failed` or `stopped` with the session; `list` one `{"console","login","sessions":[…]}`, `get` one `{"session":{…}}`.
 `herdr` (and `new --herdr` after its `running`) ends with `{"event":"connected","session":{…},"machine":{"name","action","state"},"agent":{"inHerdr","address"}}`,
 and `remove`'s `removed` event has `machine`: `{"name","removed"}`, or null with no `hc` here.
+
+### A session's app
+
+A session runs its repo's app (the project file's `app`) once Start app, or `session app <id> start`, starts it, or its
+agent does. `get`, `app`, and a start that reaches `running` say how it is: in `--json`, the session's `app` is the
+page's state (`running`, `api-down`, `frontend-down`, `starting`, `stopping`, `failed`, `stopped`, or `none` when the
+project file names no app), `appName` and `apps` which of several apps it is, and `appUrl` where it opens. That is the
+link the page's Open app opens: `<id>.<app domain>` on the console's scheme and port, or with app ports the port the
+console lent it, or the console's `/auth/app`, which lends one. A browser signed in to the console opens it; it is not
+a public link (sharing the app with others is the page's Share the app). `app` and `appUrl` are null while the session
+is not running, or on a console that serves no session apps.
+
+`session app <id> start` waits until both the app's frontend and backend answer, and says when its start failed or
+it is not up in 5 minutes: its start log is `/tmp/woodshed-app.log` in the session (`woodshed tunnel <id> -- tail -n
+50 /tmp/woodshed-app.log`). A project file with no app exits 2: Set up app, which asks the session's agent to write
+one, is on the console's page only. With `--json`, `app` prints `{"event":"app","session":{…}}`, and `start` an
+`app-starting` event, then `app-running` or `app-not-up` with the session; `stop` an `app-stopping`.
 
 ## A terminal on a session
 

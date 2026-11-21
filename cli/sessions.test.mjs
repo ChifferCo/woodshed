@@ -9,7 +9,7 @@ import { createCliSignIn } from '../console/cliSignIn.mjs';
 import { createHandler } from '../console/server.mjs';
 import { createCredentials } from './credentials.mjs';
 import { viaCommand } from './hc.mjs';
-import { pauseText, stateOf } from './sessions.mjs';
+import { appUrlOf, pauseText, stateOf } from './sessions.mjs';
 import { EXIT, main } from './woodshed.mjs';
 
 function listen(server) {
@@ -100,7 +100,7 @@ const iso = (ms) => new Date(ms).toISOString();
 // A console's real handler and command line sign-in over a made-up fleet: mia-dev's sessions, octocat's, and shared
 // ones. A session the fleet starts or resumes takes the next of `script`'s steps each time the list is read, as a start
 // moves while the command line waits. The command line is signed in as mia-dev before each test.
-async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app', writers = null, stopTimesOut = false, hc = fakeHc(), app = fakeApp(null, { missing: true }), relativeConfig = false, tty = true, terminal = null } = {}) {
+async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app', writers = null, stopTimesOut = false, hc = fakeHc(), app = fakeApp(null, { missing: true }), relativeConfig = false, tty = true, terminal = null, appDomain = null, appScript = [] } = {}) {
   let clock = T0;
   const now = () => clock;
   const store = { state: {}, save() {} };
@@ -165,6 +165,21 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       calls.push(['extend', { id: s.id, by }]);
       s.extendedUntil = iso(clock + 102 * 60_000);
     },
+    // As the fleet's: the session's statusd runs the project file's app.start, and the next status checks say how it
+    // goes, which `appScript` plays one step per list read.
+    startApp: async (session, { app = null } = {}) => {
+      if (session.status !== 'running') throw Object.assign(new Error('the session is not running'), { notRunning: true });
+      if (app !== null && !session.apps?.some((a) => a.name === app)) throw Object.assign(new Error(`the project has no app named ${app}`), { refused: true });
+      calls.push(['startApp', { id: session.id, app }]);
+      Object.assign(session, { app: 'starting' }, app !== null && { appName: app });
+      moving.set(session.id, appScript.map((step) => ({ ...step })));
+      return session;
+    },
+    stopApp: async (session) => {
+      calls.push(['stopApp', { id: session.id }]);
+      session.app = 'stopping';
+      return session;
+    },
     setLimits: (s, values, by) => {
       for (const v of Object.values(values)) if (v !== null && (v < 0.5 || v > 72)) throw Object.assign(new Error('idle hours must be from 0.5 to 72'), { shown: true });
       calls.push(['limits', { id: s.id, by, values }]);
@@ -177,7 +192,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
     forStart: async (login, name) => (name === undefined ? { name: 'app', repo: 'acme/app' } : ['app', 'tools'].includes(name) ? { name, repo: `acme/${name}` } : null),
   };
   const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
-  const config = { host: '127.0.0.1', publicUrl: 'http://pending', extraHosts: [], repo: 'acme/app', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const config = { host: '127.0.0.1', publicUrl: 'http://pending', extraHosts: [], repo: 'acme/app', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, ...(appDomain && { appDomain }) };
   const handle = createHandler({ config, fleet, auth, cli, userSettings, projectAccess });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
@@ -387,6 +402,107 @@ test('session extend and limits ask for more time, where the console allows it',
   assert.match(outOfRange.err, /from 0\.5 to 72/);
   assert.equal((await c.run(['session', 'limits', 'bbbb0002'])).code, EXIT.failed, 'nothing asked');
   assert.equal((await c.run(['session', 'limits', 'bbbb0002', '--idle-hours', 'lots'])).code, EXIT.failed);
+});
+
+test('session get and a start say whether the app runs and where it opens, on a console that serves session apps', async (t) => {
+  const c = await consoleFor(t, { appDomain: 'apps.example.test', script: [{ status: 'running', state: 'working', app: 'stopped' }] });
+  const port = new URL(c.origin).port;
+  Object.assign(c.sessions.find((s) => s.id === 'aaaa0001'), { app: 'running', appName: 'web', apps: [{ name: 'web', label: 'Web' }, { name: 'admin', label: 'Admin' }] });
+  const got = await c.run(['session', 'get', 'aaaa0001', '--json']);
+  assert.equal(got.code, EXIT.done, got.err);
+  assert.deepEqual(
+    [got.lines[0].session.app, got.lines[0].session.appName, got.lines[0].session.apps, got.lines[0].session.appUrl],
+    ['running', 'web', ['web', 'admin'], `http://aaaa0001.apps.example.test:${port}/`],
+    'on the console\'s scheme and port, as the page links it',
+  );
+  const text = await c.run(['session', 'get', 'aaaa0001']);
+  assert.match(text.out, new RegExp(`App: {7}running \\(web\\): http://aaaa0001\\.apps\\.example\\.test:${port}/\n`));
+
+  const paused = await c.run(['session', 'get', 'bbbb0002', '--json']);
+  assert.deepEqual([paused.lines[0].session.app, paused.lines[0].session.appUrl], [null, null], 'nothing to open while it is not running');
+  assert.doesNotMatch((await c.run(['session', 'get', 'bbbb0002'])).out, /App:/);
+
+  const started = await c.run(['session', 'new', 'go']);
+  assert.equal(started.code, EXIT.done, started.err);
+  assert.match(started.out, /Session dddd0004 is running: .*\nIts app: not running\. Start it: woodshed session app dddd0004 start\n$/);
+
+  // A console with no app domain and no app ports serves no session apps: nothing is said of one.
+  const none = await consoleFor(t);
+  none.sessions.find((s) => s.id === 'aaaa0001').app = 'running';
+  const plain = await none.run(['session', 'get', 'aaaa0001', '--json']);
+  assert.deepEqual([plain.lines[0].session.app, plain.lines[0].session.appUrl], [null, null]);
+  const refused = await none.run(['session', 'app', 'aaaa0001', 'start']);
+  assert.equal(refused.code, EXIT.refused);
+  assert.match(refused.err, /serves no session apps/);
+  assert.equal(none.calls.length, 0);
+});
+
+test('session app starts a running session\'s app and waits until it is up, and stops it', async (t) => {
+  const c = await consoleFor(t, { appDomain: 'apps.example.test', appScript: [{ app: 'starting' }, { app: 'stopped' }, { app: 'frontend-down' }, { app: 'running' }] });
+  const s = c.sessions.find((x) => x.id === 'aaaa0001');
+  s.app = 'stopped';
+  const asked = await c.run(['session', 'app', 'aaaa0001']);
+  assert.equal(asked.code, EXIT.done, asked.err);
+  assert.match(asked.out, /^Its app: not running\. Start it: woodshed session app aaaa0001 start\n$/);
+
+  const up = await c.run(['session', 'app', 'aaaa0001', 'start', '--json']);
+  assert.equal(up.code, EXIT.done, up.err);
+  assert.deepEqual(c.calls.at(-1), ['startApp', { id: 'aaaa0001', app: null }]);
+  assert.deepEqual(up.lines.map((l) => l.event), ['app-starting', 'app-running'], 'stopped and half up in between are waited through');
+  assert.match(up.lines.at(-1).session.appUrl, /^http:\/\/aaaa0001\.apps\.example\.test:\d+\/$/);
+
+  s.apps = [{ name: 'web', label: 'Web' }, { name: 'admin', label: 'Admin' }];
+  const picked = await c.run(['session', 'app', 'aaaa0001', 'start', '--app', 'admin', '--no-wait']);
+  assert.equal(picked.code, EXIT.done, picked.err);
+  assert.deepEqual(c.calls.at(-1), ['startApp', { id: 'aaaa0001', app: 'admin' }]);
+  assert.match(picked.out, /Starting session aaaa0001's app \(admin\): one to three minutes\.\n$/);
+  const unknown = await c.run(['session', 'app', 'aaaa0001', 'start', '--app', 'nope']);
+  assert.equal(unknown.code, EXIT.refused, 'the session\'s own refusal');
+  assert.match(unknown.err, /no app named nope/);
+
+  const stopped = await c.run(['session', 'app', 'aaaa0001', 'stop']);
+  assert.equal(stopped.code, EXIT.done, stopped.err);
+  assert.deepEqual(c.calls.at(-1), ['stopApp', { id: 'aaaa0001' }]);
+  assert.equal((await c.run(['session', 'app', 'aaaa0001', 'stop', '--app', 'web'])).code, EXIT.failed, '--app is for start');
+});
+
+test('session app says why it cannot start the app, and gives up on one that does not come up', async (t) => {
+  const failing = await consoleFor(t, { appDomain: 'apps.example.test', appScript: [{ app: 'starting' }, { app: 'failed' }] });
+  failing.sessions.find((x) => x.id === 'aaaa0001').app = 'stopped';
+  const failed = await failing.run(['session', 'app', 'aaaa0001', 'start']);
+  assert.equal(failed.code, EXIT.failed);
+  assert.match(failed.out, /its start failed\. Its log is \/tmp\/woodshed-app\.log in the session/);
+
+  const slow = await consoleFor(t, { appDomain: 'apps.example.test', appScript: [{ app: 'starting' }] });
+  const t0 = slow.now();
+  const late = await slow.run(['session', 'app', 'aaaa0001', 'start', '--json']);
+  assert.equal(late.code, EXIT.failed);
+  assert.equal(late.lines.at(-1).event, 'app-not-up');
+  assert.ok(slow.now() - t0 >= 300_000, 'it waited the five minutes');
+
+  const c = await consoleFor(t, { appDomain: 'apps.example.test' });
+  c.sessions.find((x) => x.id === 'aaaa0001').app = 'none';
+  const none = await c.run(['session', 'app', 'aaaa0001', 'start', '--json']);
+  assert.equal(none.code, EXIT.waiting, 'Set up app is the person\'s, on the page');
+  assert.match(none.lines.at(-1).error, /names no app yet\. Set up app on http:\/\/localhost:\d+\/s\/aaaa0001/);
+  const paused = await c.run(['session', 'app', 'bbbb0002', 'start']);
+  assert.equal(paused.code, EXIT.refused);
+  assert.match(paused.err, /Its app runs only while it does: woodshed session resume bbbb0002 first/);
+  assert.equal(c.calls.length, 0, 'nothing asked of a session that cannot start its app');
+  assert.equal((await c.run(['session', 'app', 'aaaa0001', 'restart'])).code, EXIT.failed);
+  assert.equal((await c.run(['session', 'app'])).code, EXIT.failed);
+});
+
+test('with app ports the app opens on the port the console lent it, or through the console, which lends one', () => {
+  const origin = 'http://mac.tail1.ts.net';
+  const appsOn = { domain: 'mac.tail1.ts.net', ports: true };
+  const s = { id: 'aaaa0001', status: 'running', app: 'running', appUrl: 'http://mac.tail1.ts.net:7701/' };
+  assert.equal(appUrlOf(s, { origin, appsOn }), 'http://mac.tail1.ts.net:7701/');
+  assert.equal(appUrlOf({ ...s, app: 'stopped', appUrl: null }, { origin, appsOn }), 'http://mac.tail1.ts.net/auth/app?id=aaaa0001&next=/');
+  assert.equal(appUrlOf({ ...s, appUrl: 'javascript:alert(1)' }, { origin, appsOn }), 'http://mac.tail1.ts.net/auth/app?id=aaaa0001&next=/', 'only a web link');
+  assert.equal(appUrlOf({ ...s, app: 'none' }, { origin, appsOn }), null);
+  assert.equal(appUrlOf({ ...s, kind: 'ask' }, { origin, appsOn }), null, 'a question from Slack has no app');
+  assert.equal(appUrlOf(s, { origin: 'https://console.example.test', appsOn: { domain: 'apps.example.test', ports: false } }), 'https://aaaa0001.apps.example.test/');
 });
 
 test('session commands wait on a person to sign in, and say so once the sign-in ended', async (t) => {
