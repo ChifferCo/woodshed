@@ -107,8 +107,8 @@ test('GET /api/review-readiness answers a cookie or the command line\'s token, a
   s.cli.revoke('bob', id);
   assert.equal((await s.get('/api/review-readiness?repo=acme/game', { authorization: `Bearer ${token}` })).status, 401);
   const post = await fetch(`${s.origin}/api/review-readiness?repo=acme/game`, { method: 'POST', headers: { authorization: `Bearer ${eve}` } });
-  assert.equal(post.status, 405, 'read-only');
-  for (const p of ['/api/sessions', '/api/my', '/api/setup/github/reviewer']) assert.notEqual((await s.get(p, { authorization: `Bearer ${eve}` })).status, 200, `${p} is not reached by a token`);
+  assert.equal(post.status, 403, 'read-only: the command line\'s gate takes a GET alone');
+  for (const p of ['/api/my', '/api/people', '/api/setup/github/reviewer']) assert.notEqual((await s.get(p, { authorization: `Bearer ${eve}` })).status, 200, `${p} is not reached by a token`);
 });
 
 test('a console with no GitHub App answers 404', async (t) => {

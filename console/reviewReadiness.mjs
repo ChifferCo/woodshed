@@ -10,10 +10,10 @@
 //
 // It answers about a repo the asker may start sessions on, and about no other: for any other repo it says only that
 // the console does not have it for them, and asks GitHub nothing more. The command line's token (wsc_, cliSignIn.mjs)
-// may call it, as its person; a call that carries an Origin with that token is a page's, and is refused. Every call,
-// a cookie's or a token's, is held to write access on the repo, asked of GitHub each time (a command asks once, never
-// in a loop): a person who lost it reads nothing more of the repo from that moment, though still on People and still
-// holding a cookie auth.mjs has not rechecked yet.
+// may call it, as its person, through the one gate its routes share (cliSessions.mjs): a call that carries an Origin
+// with that token is a page's, and is refused. Every call, a cookie's or a token's, is held to write access on the
+// repo, asked of GitHub each time (a command asks once, never in a loop): a person who lost it reads nothing more of
+// the repo from that moment, though still on People and still holding a cookie auth.mjs has not rechecked yet.
 //
 // Ready means: the repo is the asker's to start on, the reviewer App is made and known to be installed on it, and the
 // default branch's runsOn, when it names one, names this console as the fleet reads it (fleet.mjs, runsElsewhere).
@@ -144,28 +144,4 @@ export async function reviewReadinessReply({ req, res, url, login, readiness, pr
     console.error('reviewReadiness: not read', { repo, login, message: firstLine(err) });
     return reply(res, 502, { error: `the console could not tell: ${firstLine(err)}` });
   }
-}
-
-/** @returns {boolean}  a call to this route that signs in with the command line's token, not a cookie */
-export function isCliReviewReadinessCall(headers, pathname) {
-  return pathname === REVIEW_READINESS_PATH && /^Bearer wsc_/.test(String(headers?.authorization ?? ''));
-}
-
-/**
- * The same route for the command line's token: `woodshed review enable` and `status`. A token's person reads what
- * their cookie would; a call carrying an Origin is a page's, and is refused.
- * @param {{req, res, url: URL, cli: ReturnType<typeof import('./cliSignIn.mjs').createCliSignIn>|null,
- *          readiness: ReturnType<typeof createReviewReadiness>|null,
- *          projects: (login: string|null) => Promise<{name: string, repo: string}[]>,
- *          reply: (res, status: number, body: object) => void}} args
- */
-export async function cliReviewReadinessReply({ req, res, url, cli, readiness, projects, reply }) {
-  if (!cli) return reply(res, 404, { error: 'this console has no command line sign-in' });
-  if (req.headers.origin) {
-    console.warn('reviewReadiness: refused, a browser\'s call with a command line token', { origin: String(req.headers.origin).slice(0, 100) });
-    return reply(res, 403, { error: 'a command line token is for the woodshed command line, not a page' });
-  }
-  const signedIn = cli.tokenFor(req.headers);
-  if (!signedIn) return reply(res, 401, { error: 'not signed in, or the sign-in ended: run woodshed login' });
-  return reviewReadinessReply({ req, res, url, login: signedIn.login, readiness, projects, reply });
 }
