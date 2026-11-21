@@ -1,7 +1,7 @@
 // `woodshed settings`: this computer's Claude settings join the copy a person's private sessions keep in step
 // (console/claudeSettings.mjs, session/settingsSync.mjs), and a checkout's ignored files become their own files for its
 // repo on My settings (console/repoSettings.mjs). The items, how they merge and which paths they may name are the
-// session sync's own, imported here; console/cliSettings.mjs is the console's side.
+// session sync's own, imported here. The console keeps laptop-supplied MCP definitions for computers only.
 //
 //   woodshed settings plan  [--only <what>,...] [--own-files <checkout>]   each item, its size, and upload, skip or
 //                                                                        refuse with why. Nothing is sent
@@ -30,7 +30,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 
 import { isLoginItem } from '../console/cliSettings.mjs';
-import { MAX_SETTINGS_BYTES } from '../console/claudeSettings.mjs';
+import { hasLiteralCredential, hasLiteralMcpHeader, MAX_SETTINGS_BYTES } from '../console/claudeSettings.mjs';
 import {
   applyItems, isSyncedFile, localChanges, MAX_ITEM_BYTES, NO_STATUS_LINE, parseEntryId, readSnapshot, sameSettings,
   SETTINGS, SYNCED_DIRS, withStatusLineOf,
@@ -249,24 +249,18 @@ const encodeJson = (json) => Buffer.from(`${JSON.stringify(json, null, 2)}\n`).t
 
 /** An MCP server entry's literal credentials: an env variable or header named like one, not one made of a ${VARIABLE}. */
 function serverCredential(server) {
-  // A value is safe only when it is made of variables with no fallback, after an optional scheme (Bearer ${TOKEN}).
-  const literal = (v) => {
-    if (typeof v !== 'string' || !v.trim()) return false;
-    // Remove only complete references without a fallback value. Anything malformed or literal remains.
-    return v.replace(/\$\{[A-Za-z_][A-Za-z0-9_]*(:-)?\}/g, '').replace(/^\s*(Bearer|Basic|Token)\s+/i, '').trim() !== '';
-  };
   if (typeof server?.url === 'string') {
     let url = null;
     try {
       url = new URL(server.url);
     } catch {}
     if (url && (url.username || url.password)) return 'its URL carries a sign-in';
-    const param = url && [...url.searchParams].find(([k, v]) => SECRET_VARIABLE.test(k) && literal(v));
+    const param = url && [...url.searchParams].find(([k, v]) => SECRET_VARIABLE.test(k) && hasLiteralCredential(v));
     if (param) return `its URL carries ${param[0]}`;
   }
-  const env = Object.entries(server?.env ?? {}).find(([k, v]) => SECRET_VARIABLE.test(k) && literal(v));
+  const env = Object.entries(server?.env ?? {}).find(([k, v]) => SECRET_VARIABLE.test(k) && hasLiteralCredential(v));
   if (env) return `its env sets ${env[0]}`;
-  const header = Object.entries(server?.headers ?? {}).find(([k, v]) => SECRET_HEADER.test(k) && literal(v));
+  const header = Object.entries(server?.headers ?? {}).find(([k, v]) => SECRET_HEADER.test(k) && hasLiteralCredential(v));
   if (header) return `it sends its ${header[0]} header`;
   return null;
 }
@@ -291,6 +285,7 @@ export function translate(id, value, { from, to, statusLineOf }) {
     }
     const credential = serverCredential(server);
     if (credential) return { fate: 'refuse', reason: `${credential}, a credential: API keys stay where they are` };
+    if (hasLiteralMcpHeader(server)) return { fate: 'refuse', reason: 'sends a literal HTTP header: use a variable reference' };
     const notes = [];
     if (typeof server?.command === 'string' && path.posix.isAbsolute(server.command) && !server.command.startsWith(`${from}/`)) {
       if (!PATH_DIRS.includes(path.posix.dirname(server.command))) return { fate: 'skip', reason: `runs a program at ${shownPath(server.command, '', { prefix: '/' })}, a path the other side may not have` };
@@ -418,7 +413,8 @@ export async function claudePushPlan({ home, shared, only, synced = {} }) {
     if (out.fate) rows.push({ ...row, fate: out.fate, reason: out.reason });
     else {
       ready[id] = out.value;
-      rows.push({ ...row, bytes: bytesOf(id, out.value), notes: out.notes, value: out.value });
+      const notes = row.category === 'mcp' ? [...out.notes, 'saved for computers only'] : out.notes;
+      rows.push({ ...row, bytes: bytesOf(id, out.value), notes, value: out.value });
     }
   }
   // The sync's own comparison: what this computer has that the shared copy does not, or has otherwise.

@@ -11,8 +11,7 @@
 //   woodshed session new|list|get|herdr|stop|resume|remove|extend|limits   sessions (sessions.mjs); herdr makes one
 //                                                     a machine in Herdr's hc (hc.mjs)
 //   woodshed config list|get|set                       your choices on My settings, never a secret (config.mjs)
-//   woodshed settings plan|push|pull [...]            this computer's Claude settings and a checkout's ignored files, to
-//                                                      and from your private sessions (settings.mjs)
+//   woodshed settings plan|push|pull [...]            Claude settings and a checkout's ignored files (settings.mjs)
 //
 // Every command takes --json. Exit codes: 0 done, 2 waiting on a person (a sign-in or an approval), 3 refused, 1 any
 // other failure.
@@ -53,8 +52,8 @@ Commands:
             woodshed session --help
   config    your choices on My settings (terminal, reviews, default repo, …), never a secret: woodshed config --help
   settings  plan|push|pull [--only <what>,...] [--own-files <checkout>] [--replace]
-            your Claude settings, skills and MCP servers, and a checkout's ignored files, to and from
-            your private sessions. plan lists each item and sends nothing (cli/README.md, "Settings")
+            sync your Claude settings and ignored checkout files with private sessions. MCP definitions
+            pushed from a computer stay between computers. plan lists items and sends nothing
 
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};

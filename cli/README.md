@@ -52,7 +52,7 @@ the tarball and its SHA-256 on woodshed.run. The site's installer checks that di
 | `woodshed status` | The console's name and address, its org (the GitHub account its repos are on), who is signed in, and the Herdr `hc` found here with its version (`hc` in `--json`: `installed`, `version`, `minimum`, `ok`), for `session herdr`. | 0 signed in, 2 not signed in or the sign-in ended |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 | `woodshed config list\|get\|set` | Reads or sets [your choices on My settings](#your-choices-on-my-settings). | as below |
-| `woodshed settings plan\|push\|pull` | Your Claude settings and a checkout's ignored files, to and from your private sessions: [Settings](#settings). | as below |
+| `woodshed settings plan\|push\|pull` | Sync [Claude settings and a checkout's ignored files](#settings) with private sessions, and MCP definitions between computers. | as below |
 
 Every command takes:
 
@@ -226,6 +226,10 @@ Each takes:
 push never removes one from the copy (the console refuses a removal from a computer). Claude plugins, Codex's settings and
 shell dotfiles are not carried, nor a file's mode: a pulled script runs as `bash script.sh`, as it does in a session.
 
+MCP definitions pushed from a computer are available to the person's computers only. Pull can also bring in a server
+configured in a private session. If a laptop and a session save the same name, each keeps its definition. Servers the
+console provides to sessions are configured by an admin and use its relay.
+
 **What runs here is shown first.** Sessions write the shared copy, unattended, and everything in it but
 `keybindings.json` can make this computer's claude run something. So `pull` writes nothing else until a list has shown
 that exact content (by its hash), listed with what it does: an MCP server's command and args or URL; every key of
@@ -253,8 +257,8 @@ naming it (`--only settings.json`, not `--only settings`) sends yours.
 - An MCP server run as `/opt/homebrew/bin/npx` (or from `/usr/local/bin`, `/usr/bin`, `/bin`) runs as `npx`, from the
   session's PATH. Any other absolute program path is skipped.
 
-**What is refused**, by name or kind, never by showing it: MCP logins (sign in to the server in a session), an MCP server
-whose `env` or headers hold a literal key (`${VARIABLE}` is fine), a file named like a secret (`.env`, `*.pem`, `id_rsa`,
+**What is refused**, by name or kind, never by showing it: MCP logins (sign in to the server where you use it), an MCP server
+whose `env` holds a literal key or whose HTTP headers contain literal values (`${VARIABLE}` is fine), a file named like a secret (`.env`, `*.pem`, `id_rsa`,
 `credentials.json`) in a skills, agents or commands folder, and one holding what looks like a private key or a GitHub,
 Anthropic, OpenAI, Slack, AWS, Stripe live or Google key. For own files, keys and certificates, files named for production
 (`.env.production`) and live keys.

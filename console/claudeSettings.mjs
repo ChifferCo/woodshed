@@ -4,7 +4,8 @@
 // their sessions asks.
 //
 // Merged item by item: a session sends what it changed since the version it last had, and gets back the whole copy
-// whenever another session changed something in between.
+// whenever another session changed something in between. Servers sent by a computer are kept in a separate map in
+// the same object. The session API never returns that map, so importing a laptop's server cannot install it there.
 
 import logins from './public/logins.cjs';
 const { loginKey } = logins;
@@ -19,6 +20,29 @@ function settingsKey(login) {
 // The session checks each id against what it syncs; this keeps a path out of the shared copy that could reach outside
 // ~/.claude in the owner's other sessions.
 const ITEM_ID_RE = /^\.claude(?:\/[^/\\\0]+)+$|^\.claude\.json#mcpServers\/[^\0]+$/;
+const isMcpServerItem = (id) => id.startsWith('.claude.json#mcpServers/');
+
+/** Whether a credential field holds text other than variable references and an optional auth scheme. */
+export function hasLiteralCredential(value) {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  // Remove only complete references without a fallback value. Anything malformed or literal remains.
+  return value.replace(/\$\{[A-Za-z_][A-Za-z0-9_]*(:-)?\}/g, '').replace(/^\s*(Bearer|Basic|Token)\s+/i, '').trim() !== '';
+}
+
+/** An MCP service can use any header for auth. Only references and empty headers travel between computers. */
+export function hasLiteralMcpHeader(server) {
+  return Object.values(server?.headers ?? {}).some((value) => typeof value !== 'string' || hasLiteralCredential(value));
+}
+
+function laptopMcpProblem(value) {
+  let server;
+  try {
+    server = JSON.parse(value);
+  } catch {}
+  if (!server || typeof server !== 'object' || Array.isArray(server)) return 'expected an MCP server definition as a JSON object';
+  if (hasLiteralMcpHeader(server)) return 'an MCP server sends a literal HTTP header: use a variable reference';
+  return null;
+}
 
 function isItemId(id) {
   const filePart = id.split('#')[0];
@@ -61,33 +85,60 @@ export function createClaudeSettings({ store }) {
     if (held.has(login)) return held.get(login);
     const text = await store.getText(settingsKey(login));
     const saved = text ? JSON.parse(text) : null;
-    const copy = saved && isItemMap(saved.items) ? saved : { version: 0, items: {} };
+    const { version, items } = Number.isInteger(saved?.version) && isItemMap(saved.items) ? saved : { version: 0, items: {} };
+    const laptopMcp = isItemMap(saved?.laptopMcp) && Object.keys(saved.laptopMcp).every(isMcpServerItem) ? saved.laptopMcp : {};
+    const cliVersion = Number.isInteger(saved?.cliVersion) ? saved.cliVersion : version;
+    const copy = { version, items, laptopMcp, cliVersion };
     held.set(login, copy);
     return copy;
   }
 
   /**
    * @param {{login: string, sessionId: string, version: number|null, changed: Record<string, string>, removed: string[]}} args
-   * @returns {Promise<{version: number, items?: Record<string, string>}>}  items when the session's copy is behind
+   * @param {{fromLaptop?: boolean}} [opts]  set by the command line route after authenticating its caller
+   * @returns {Promise<{version: number, items?: Record<string, string>}>}  items when the caller's copy is behind
    */
-  function sync({ login, sessionId, version, changed, removed }) {
+  function sync({ login, sessionId, version, changed, removed }, { fromLaptop = false } = {}) {
     return inTurn(login, async () => {
       const copy = await load(login);
-      const current = version === copy.version;
-      const changes = Object.keys(changed).length + removed.length;
-      if (!changes) return current ? { version: copy.version } : { version: copy.version, items: copy.items };
-      const items = { ...copy.items, ...changed };
-      for (const id of removed) delete items[id];
-      const text = JSON.stringify({ version: copy.version + 1, items, updatedAt: new Date().toISOString(), updatedBy: sessionId });
+      const versionOf = (state) => fromLaptop ? state.cliVersion : state.version;
+      const current = version === versionOf(copy);
+      const answer = (state) => current ? { version: versionOf(state) } : {
+        version: versionOf(state), items: fromLaptop ? { ...state.items, ...state.laptopMcp } : state.items,
+      };
+      const changes = Object.entries(changed);
+      if (!changes.length && !removed.length) return answer(copy);
+      const items = { ...copy.items };
+      const laptopMcp = { ...copy.laptopMcp };
+      const laptopItem = (id) => fromLaptop && isMcpServerItem(id);
+      let sessionChanges = false;
+      for (const [id, value] of changes) {
+        if (laptopItem(id)) {
+          const problem = laptopMcpProblem(value);
+          if (problem) throw Object.assign(new Error(problem), { shown: true, status: 400 });
+          laptopMcp[id] = value;
+        } else {
+          items[id] = value;
+          sessionChanges = true;
+        }
+      }
+      for (const id of removed) {
+        if (laptopItem(id)) delete laptopMcp[id];
+        else {
+          delete items[id];
+          sessionChanges = true;
+        }
+      }
+      // A laptop-only edit does not make an empty session copy look initialized to a first session.
+      const next = { version: copy.version + Number(sessionChanges), items, laptopMcp, cliVersion: copy.cliVersion + 1 };
+      const text = JSON.stringify({ ...next, updatedAt: new Date().toISOString(), updatedBy: sessionId });
       if (Buffer.byteLength(text) > MAX_SETTINGS_BYTES) {
         throw Object.assign(new Error(`the shared Claude settings would be over ${MAX_SETTINGS_BYTES / 1024 / 1024} MB`), { shown: true });
       }
       await store.putText(settingsKey(login), text);
-      const next = { version: copy.version + 1, items };
       held.set(login, next);
-      console.log('claudeSettings: changed', { login, sessionId, version: next.version, changed: Object.keys(changed).length, removed: removed.length, wasCurrent: current });
-      // A session that was current has every item already: its own changes are the only new ones.
-      return current ? { version: next.version } : next;
+      console.log('claudeSettings: changed', { login, sessionId, version: versionOf(next), changed: changes.length, removed: removed.length, wasCurrent: current });
+      return answer(next);
     });
   }
 

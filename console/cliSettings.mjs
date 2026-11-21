@@ -14,8 +14,8 @@
 // and log lines. The shared copy's route is the session API's /claude-settings for a computer: a session's turn there
 // is checked against its session (tainted, its owner removed), a computer's against its token.
 //
-// MCP logins (`.claude/.credentials.json#mcpOAuth/...`) go between a person's sessions only: none is taken from a
-// computer, and none handed to one. Each is a sign-in made by hand in a session, which a laptop has its own of.
+// MCP logins stay with sessions. Servers supplied by a computer go into the settings copy's laptop-only map, which
+// the session API never returns. Laptops can still pull servers that came from private sessions.
 
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
 
@@ -83,7 +83,7 @@ export async function handleCliSettings({ req, res, url, cli, claudeSettings, re
   const from = `cli:${signedIn.id}`;
   if (req.method === 'GET') {
     // A turn with no changes and no version: the whole copy comes back.
-    const copy = await claudeSettings.sync({ login, sessionId: from, version: null, changed: {}, removed: [] });
+    const copy = await claudeSettings.sync({ login, sessionId: from, version: null, changed: {}, removed: [] }, { fromLaptop: true });
     return reply(res, 200, { version: copy.version, items: withoutLogins(copy.items) }), true;
   }
   if (req.method !== 'POST') return reply(res, 405, { error: 'method not allowed' }), true;
@@ -110,11 +110,11 @@ export async function handleCliSettings({ req, res, url, cli, claudeSettings, re
   }
   let answer;
   try {
-    answer = await claudeSettings.sync({ login, sessionId: from, ...body });
+    answer = await claudeSettings.sync({ login, sessionId: from, ...body }, { fromLaptop: true });
   } catch (err) {
     if (!err.shown) throw err;
     console.warn('cliSettings: refused', { login, token: signedIn.id, message: err.message });
-    return reply(res, 413, { error: err.message }), true;
+    return reply(res, err.status ?? 413, { error: err.message }), true;
   }
   console.log('cliSettings: pushed', { login, token: signedIn.id, changed: Object.keys(body.changed).length, version: answer.version });
   return reply(res, 200, answer.items ? { version: answer.version, items: withoutLogins(answer.items) } : { version: answer.version }), true;
