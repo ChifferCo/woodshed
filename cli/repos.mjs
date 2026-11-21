@@ -29,11 +29,12 @@ export async function repoCommand({ origin, args, rest, browser, help }, { stdou
   const login = `Run: woodshed login --console ${origin}`;
   if (!token) throw fail(`Not signed in to ${origin}. ${login}`, { code: EXIT.waiting, status: 'signed-out' });
   const route = remove ? `${PATH}/remove` : PATH;
+  const verifyChange = `Check whether the change took effect with woodshed repo list --console ${origin}.`;
   let out;
   try {
     out = await call(origin, route, list ? { token } : { method: 'POST', token, body: { repo, ...(named && { name }) } });
   } catch (err) {
-    if (!list && err.unreachable) throw fail(`${err.message}. Check whether the change took effect with woodshed repo list --console ${origin}.`);
+    if (!list && err.unreachable) throw fail(`${err.message}. ${verifyChange}`);
     throw err;
   }
   const body = out.body;
@@ -51,9 +52,9 @@ export async function repoCommand({ origin, args, rest, browser, help }, { stdou
     return EXIT.waiting;
   }
   if (out.status === 403 || out.status === 409) throw fail(message, { code: EXIT.refused, status: 'refused' });
-  if (out.status !== 200 || !body) throw fail(message);
+  if (out.status !== 200) throw fail(message);
   if (list) {
-    if (!Array.isArray(body.projects) || !(body.available === null || Array.isArray(body.available))) throw fail(`${origin} did not return a repo list`);
+    if (!Array.isArray(body?.projects) || !(body.available === null || Array.isArray(body.available))) throw fail(`${origin} did not return a repo list`);
     if (json) emit({ event: 'repo-list', console: origin, ...body });
     say(body.projects.length ? 'Connected repos' : 'No connected repos.');
     for (const project of body.projects) say(`  ${printable(project.repo)} (${printable(project.name)}) · ${appAccess(project)}`);
@@ -65,7 +66,7 @@ export async function repoCommand({ origin, args, rest, browser, help }, { stdou
       if (body.choicesIncomplete) say('Some GitHub App repos could not be listed.');
     }
   } else {
-    if (typeof body.repo !== 'string' || typeof body.name !== 'string') throw fail(`${origin} did not confirm the repo change`);
+    if (typeof body?.repo !== 'string' || typeof body.name !== 'string') throw fail(`${origin} did not confirm the repo change. ${verifyChange}`);
     if (json) emit({ event: add ? 'repo-added' : 'repo-removed', console: origin, repo: body.repo, name: body.name });
     say(`${add ? 'Added' : 'Removed'} ${printable(body.repo)} (${printable(body.name)}).`);
   }

@@ -9,7 +9,7 @@ import { main } from './woodshed.mjs';
 const origin = 'https://console.example';
 const install = 'https://github.com/apps/woodshed-example/installations/new';
 
-function cliFor(t, { status = 200, body, signedIn = true, isTerminal = true, current = origin } = {}) {
+function cliFor(t, { status = 200, body, signedIn = true, isTerminal = true, current = origin, cutOff = false } = {}) {
   const configHome = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-repo-cli-'));
   t.after(() => fs.rmSync(configHome, { recursive: true, force: true }));
   const dir = path.join(configHome, 'woodshed');
@@ -31,6 +31,7 @@ function cliFor(t, { status = 200, body, signedIn = true, isTerminal = true, cur
           requests.push({ url, method, body: requestBody && JSON.parse(requestBody) });
           assert.equal(headers.authorization, 'Bearer test-token');
           assert.equal(headers.origin, undefined);
+          if (cutOff) return new Response(new ReadableStream({ start: (stream) => stream.error(new Error('connection closed')) }), { status });
           return Response.json(body, { status });
         },
       });
@@ -107,6 +108,13 @@ test('repo usage, permission refusals, sign-in and failures have distinct exit c
     assert.equal(output.code, code);
     assert.equal(JSON.parse(output.out).status, label);
   }
+});
+
+test('an interrupted write response tells the caller how to verify whether the change happened', async (t) => {
+  const c = cliFor(t, { cutOff: true });
+  const { code, out } = await c.run('add', 'acme/web', '--json');
+  assert.equal(code, 1);
+  assert.equal(JSON.parse(out).error, `${origin} did not confirm the repo change. Check whether the change took effect with woodshed repo list --console ${origin}.`);
 });
 
 test('a tunnel with global flags before the command keeps stderr and exit 255 on a parse error', async () => {

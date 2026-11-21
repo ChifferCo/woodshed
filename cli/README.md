@@ -57,7 +57,7 @@ see the console's GitHub App inventory or add and remove repos.
 
 When GitHub App access is needed, `repo add` exits 2 with `status: "needs-github-app"` and the install or access link
 in `url` when available. It opens that link from a terminal unless `--no-browser` is set. Grant access on GitHub, then
-run the same add again. If a change times out, run `repo list` to see whether it went through.
+run the same add again. If the console's response to a change is lost, run `repo list` to see whether it went through.
 
 ## The tunnel into a session
 
