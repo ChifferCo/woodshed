@@ -781,4 +781,6 @@ test('--parent takes the next word as its terminal only when it reads as an hc a
   assert.deepEqual(parseSessionArgs('herdr', ['--parent=boss', 'aaaa0001'], fail), { parent: 'boss', id: 'aaaa0001' });
   assert.deepEqual(parseSessionArgs('herdr', ['aaaa0001', '--parent'], fail), { parent: true, id: 'aaaa0001' });
   assert.throws(() => parseSessionArgs('new', ['--parent=', 'go'], fail), /--parent= needs a terminal/);
+  assert.deepEqual(parseSessionArgs('herdr', ['--parent', 't1b', 'aaaa0001'], fail), { parent: 't1b', id: 'aaaa0001' });
+  assert.deepEqual(parseSessionArgs('new', ['--herdr', '--parent', `t${'0'.repeat(40)}`], fail), { herdr: true, parent: true, prompt: `t${'0'.repeat(40)}` }, 'past hc\'s 32 characters: the prompt\'s');
 });

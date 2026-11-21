@@ -96,6 +96,8 @@ const START_STEPS = [
 const LIVE = new Set(['queued', 'starting', 'running', 'stopping']);
 // What goes with --parent: hc's --no-notify, and its own default of ending with the parent, which a session does not take.
 const PARENT_FLAGS = ['no-notify', 'end-with-parent'];
+// An hc terminal address here (`t7`, `t1b`): at most hc's 32 characters, read in one pass.
+const looksLikeAddress = (word) => typeof word === 'string' && word.length <= 32 && /^t\d+(?:[a-z][a-z0-9]*)?$/.test(word);
 const ID_RE = /^[0-9a-f]{8}$/;
 
 // What a console says reaches a terminal: never a control character or a direction override, which could move the
@@ -701,7 +703,7 @@ export function parseSessionArgs(sub, words, fail) {
       if (inline !== undefined) {
         if (inline === '') throw fail(`--${name}= needs a terminal`);
         out[name] = inline;
-      } else if (/^t\d+[a-z0-9]*$/.test(words[i + 1] ?? '')) out[name] = words[++i];
+      } else if (looksLikeAddress(words[i + 1])) out[name] = words[++i];
       else out[name] = true;
     } else if (takes.values.includes(name)) {
       const value = inline ?? words[++i];
