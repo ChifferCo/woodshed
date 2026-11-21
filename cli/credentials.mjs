@@ -4,7 +4,7 @@
 // Keychain gets it through `security -i` on stdin, and secret-tool reads it from stdin.
 //
 // On Windows, a file sealed with DPAPI for this Windows account (Windows PowerShell 5.1, which ships with Windows, does
-// the sealing, with the token on its stdin), else a plain file under the person's profile. Either way its folder is
+// the sealing, with the token on its stdin), else a plain file, either only in <profile>\AppData\Local\woodshed. Its folder is
 // made this account's own and closed to every other account but Windows' own (SYSTEM and Administrators, as root on
 // macOS and Linux), and that is checked by SID once it is set. PowerShell is run from System32 by its full path, never
 // found on the PATH or in the current folder, and never through a shell.
@@ -216,12 +216,14 @@ function writeOwnFile(dir, where, data, { platform, ownFolder }) {
   fs.renameSync(temp, where);
 }
 
-// On Windows a new file takes its folder's ACL as it is made, not a mode given with it as on macOS and Linux: someone
-// able to replace a folder on the way to this one could put one of theirs in its place between the check and the write.
-// So the plain token is written on Windows only in the one folder whose way there is Windows' own and private,
-// <profile>\AppData\Local\woodshed, as spelled and as resolved with every link and junction followed. Anywhere else
-// (an XDG_CONFIG_HOME, a LOCALAPPDATA moved elsewhere), a token is kept sealed or not at all.
-// Read by the same rule as written: a plain file anywhere else could be one someone else put there, with their token.
+// On Windows a token, sealed or not, is kept and read only in the one folder whose way there is Windows' own and
+// private, <profile>\AppData\Local\woodshed, as spelled and as resolved with every link and junction followed.
+// - A new file takes its folder's ACL as it is made, not a mode given with it as on macOS and Linux: someone able to
+//   replace a folder on the way could put one of theirs in its place between the check and the write.
+// - What is read anywhere else could be someone else's: a plain token of theirs, or a blob they sealed for the whole
+//   computer (CRYPTPROTECT_LOCAL_MACHINE), which DPAPI opens for any account, whatever scope the unseal asks for, and
+//   whose entropy is no secret.
+// Anywhere else (a LOCALAPPDATA moved elsewhere), no token is kept at all.
 // @returns {string|null}  null for the default folder; else why not: `elsewhere`, or `led away` when it is spelled as
 //   the default but a link or junction on the way leads somewhere else. `make`: it is made once its way there is checked
 function notDefaultLocalFolder(dir, home, { make = false } = {}) {
@@ -244,14 +246,18 @@ function notDefaultLocalFolder(dir, home, { make = false } = {}) {
   }
 }
 
+/** Throws unless `dir` is the one folder a Windows token may be kept in, making it once its way there is checked. */
+function windowsOnlyDefault(dir, home) {
+  const why = notDefaultLocalFolder(dir, home, { make: true });
+  if (!why) return;
+  const only = path.join(home, 'AppData', 'Local', 'woodshed');
+  throw new Error(`${why === 'led away' ? `${dir} leads elsewhere through a link or junction` : `${dir} is not ${only}`}, and ${only} is the only place a token is kept on Windows: unset LOCALAPPDATA's override`);
+}
+
 function file(dir, platform, ownFolder, home) {
   const where = path.join(dir, 'credentials.json');
   const write = (data) => {
-    const why = platform === 'win32' ? notDefaultLocalFolder(dir, home, { make: true }) : null;
-    if (why) {
-      const only = path.join(home, 'AppData', 'Local', 'woodshed');
-      throw new Error(`${why === 'led away' ? `${dir} leads elsewhere through a link or junction` : `${dir} is not ${only}`}, and ${only} is the only place a token is kept unsealed on Windows: unset XDG_CONFIG_HOME and LOCALAPPDATA's override, or sign in where DPAPI can seal it`);
-    }
+    if (platform === 'win32') windowsOnlyDefault(dir, home);
     return writeOwnFile(dir, where, data, { platform, ownFolder });
   };
   return {
@@ -277,13 +283,16 @@ function file(dir, platform, ownFolder, home) {
   };
 }
 
-// Each console's token sealed with DPAPI, which only this Windows account can open, and only for the console it was
-// sealed for. The file holds only what was sealed, in a folder made this account's alone as the plain file's is, so
-// what it says beside it (cli.json) is this account's own too.
-function dpapi(dir, run, tools, ownFolder) {
+// Each console's token sealed with DPAPI for this Windows account, and only for the console it was sealed for. The
+// file holds only what was sealed, kept and read in the default folder alone as the plain file is, made this account's
+// as the plain file's is, so what it says beside it (cli.json) is this account's own too.
+function dpapi(dir, run, tools, ownFolder, home) {
   const where = path.join(dir, 'credentials-dpapi.json');
   const powershell = (script, input) => run(tools.powershell, powershellArgs(script), { input, env: powershellEnv() });
-  const write = (data) => writeOwnFile(dir, where, data, { platform: 'win32', ownFolder });
+  const write = (data) => {
+    windowsOnlyDefault(dir, home);
+    return writeOwnFile(dir, where, data, { platform: 'win32', ownFolder });
+  };
   return {
     kind: 'dpapi',
     label: `${where}, sealed for your Windows account (DPAPI)`,
@@ -298,11 +307,16 @@ function dpapi(dir, run, tools, ownFolder) {
     },
     read(origin) {
       checkArgs(origin);
+      if (notDefaultLocalFolder(dir, home)) return null;
       const sealed = readJson(where)[origin];
       if (typeof sealed !== 'string' || !SEALED_RE.test(sealed)) return null;
       const out = powershell(DPAPI_UNSEAL, `${origin}\n${sealed}\n`);
       const token = out.status === 0 ? out.stdout.trim() : '';
       return TOKEN_RE.test(token) ? token : null;
+    },
+    /** @returns {boolean}  a sealed token for `origin` is kept here, whether or not it can be opened now */
+    holds(origin) {
+      return !notDefaultLocalFolder(dir, home) && typeof readJson(where)[origin] === 'string';
     },
     remove(origin) {
       const data = readJson(where);
@@ -323,7 +337,7 @@ function dpapi(dir, run, tools, ownFolder) {
  */
 export function createCredentials({ platform = process.platform, run = runCommand, dir, has = (command) => hasCommand(command), tools = windowsTools(), home = os.homedir() }) {
   const ownFolder = (folder) => windowsOwnFolder(folder, run, tools);
-  const stores = { keychain: keychain(run), libsecret: libsecret(run), dpapi: dpapi(dir, run, tools, ownFolder), file: file(dir, platform, ownFolder, home) };
+  const stores = { keychain: keychain(run), libsecret: libsecret(run), dpapi: dpapi(dir, run, tools, ownFolder, home), file: file(dir, platform, ownFolder, home) };
   const order = [
     ...(platform === 'darwin' && has('security') ? ['keychain'] : []),
     ...(platform === 'linux' && has('secret-tool') ? ['libsecret'] : []),

@@ -229,22 +229,40 @@ test('a console that hands out something other than a command line token gets a 
 test('on Windows login keeps the token sealed under %LOCALAPPDATA%, and status and logout read it there', async (t) => {
   const c = await consoleFor(t);
   const win = fakeWindows();
-  // The folder main picks on Windows, with no XDG_CONFIG_HOME: LOCALAPPDATA's, not the roaming APPDATA's.
-  const env = { LOCALAPPDATA: c.dir, APPDATA: path.join(c.dir, 'roaming') };
-  const windows = { platform: 'win32', env, credentials: createCredentials({ platform: 'win32', run: win.run, dir: path.join(c.dir, 'woodshed'), has: () => true, tools: TOOLS }) };
+  // An unseal that fails, as DPAPI does over an SSH sign-in for a token sealed at the desktop.
+  let unsealing = true;
+  const run = (command, args, opts) => {
+    const script = Buffer.from(String(args.at(-1)), 'base64').toString('utf16le');
+    return !unsealing && script.includes('::Unprotect(') ? { status: 1, stdout: '', stderr: 'Key not valid for use in specified state.' } : win.run(command, args, opts);
+  };
+  // The folder main picks on Windows: LOCALAPPDATA's, not the roaming APPDATA's, and never XDG_CONFIG_HOME's.
+  const profile = fs.realpathSync(c.dir);
+  const local = path.join(profile, 'AppData', 'Local');
+  fs.mkdirSync(local, { recursive: true });
+  const env = { LOCALAPPDATA: local, APPDATA: path.join(profile, 'AppData', 'Roaming'), XDG_CONFIG_HOME: path.join(profile, 'xdg') };
+  const windows = { platform: 'win32', env, credentials: createCredentials({ platform: 'win32', run, dir: path.join(local, 'woodshed'), has: () => true, tools: TOOLS, home: profile }) };
   const signed = await c.run(['login', '--console', c.origin, '--json'], windows);
   assert.equal(signed.code, EXIT.done, signed.err);
   const done = signed.lines.at(-1);
   assert.deepEqual([done.event, done.login, done.store], ['signed-in', 'mia-dev', 'dpapi']);
-  assert.equal(done.credentialsFile, path.join(c.dir, 'woodshed', 'credentials-dpapi.json'));
-  assert.ok(fs.existsSync(path.join(c.dir, 'woodshed', 'cli.json')), 'cli.json under LOCALAPPDATA');
+  assert.equal(done.credentialsFile, path.join(local, 'woodshed', 'credentials-dpapi.json'));
+  assert.ok(fs.existsSync(path.join(local, 'woodshed', 'cli.json')), 'cli.json under LOCALAPPDATA');
   assert.equal(fs.existsSync(env.APPDATA), false, 'nothing under the roaming profile');
+  assert.equal(fs.existsSync(env.XDG_CONFIG_HOME), false, 'nor under XDG_CONFIG_HOME, a Unix convention');
   assert.ok(!fs.readFileSync(done.credentialsFile, 'utf8').includes('wsc_'));
   assert.ok(win.calls.every((call) => !call.args.join(' ').includes('wsc_')), 'no token in any command\'s arguments');
 
   const status = await c.run(['status', '--json'], windows);
   assert.equal(status.code, EXIT.done);
   assert.deepEqual([status.lines[0].signedIn, status.lines[0].login], [true, 'mia-dev']);
+
+  // Over SSH the sealed token cannot be opened: logout leaves it, so a sign-out where it opens still ends it.
+  unsealing = false;
+  const unread = await c.run(['logout', '--json'], windows);
+  assert.equal(unread.code, EXIT.refused);
+  assert.deepEqual([unread.lines[0].unreadable, unread.lines[0].endedAtConsole], [true, false]);
+  assert.equal(c.cli.list('mia-dev').length, 1, 'still live at the console');
+  unsealing = true;
   const out = await c.run(['logout', '--json'], windows);
   assert.deepEqual([out.lines[0].wasSignedIn, out.lines[0].endedAtConsole], [true, true]);
   assert.deepEqual(c.cli.list('mia-dev'), []);

@@ -96,8 +96,8 @@ test('nothing but a command line token, for a console address, reaches a store',
 
 test('on Windows the token is sealed with DPAPI by System32\'s PowerShell, given on stdin, never in its arguments', (t) => {
   const win = fakeWindows();
-  const dir = tempDir(t);
-  const creds = createCredentials({ platform: 'win32', run: win.run, dir, has: (c) => c === TOOLS.powershell, tools: TOOLS });
+  const { home, dir } = profileDir(t);
+  const creds = createCredentials({ platform: 'win32', run: win.run, dir, has: (c) => c === TOOLS.powershell, tools: TOOLS, home });
   const store = creds.save(ORIGIN, TOKEN);
   assert.equal(store.kind, 'dpapi');
   assert.equal(store.file, path.join(dir, 'credentials-dpapi.json'));
@@ -151,19 +151,19 @@ test('on Windows with DPAPI refused, as over an SSH key\'s sign-in, the token go
   // between the check and the write: nothing is written there unsealed.
   const shared = tempDir(t);
   const outside = createCredentials({ platform: 'win32', run: win.run, dir: shared, has: () => true, tools: TOOLS, home: path.join(shared, 'not-above-it') });
-  assert.throws(() => outside.save(ORIGIN, TOKEN), /is not .*AppData.Local.woodshed, and .* is the only place a token is kept unsealed on Windows/);
+  assert.throws(() => outside.save(ORIGIN, TOKEN), /is not .*AppData.Local.woodshed, and .* is the only place a token is kept on Windows/);
   assert.deepEqual(fs.readdirSync(shared), []);
   assert.deepEqual(fs.readdirSync(shared), [], 'not even its folder made');
   // Elsewhere under the profile (an XDG_CONFIG_HOME there): a folder on the way could be one shared with someone.
   const own = profileDir(t);
   const elsewhere = createCredentials({ platform: 'win32', run: win.run, dir: path.join(own.home, 'config', 'woodshed'), has: () => false, tools: TOOLS, home: own.home });
-  assert.throws(() => elsewhere.save(ORIGIN, TOKEN), /the only place a token is kept unsealed on Windows/);
+  assert.throws(() => elsewhere.save(ORIGIN, TOKEN), /the only place a token is kept on Windows/);
   // Spelled as the default, but a link (a junction, which needs no privilege on Windows) above it leads elsewhere.
   const profile = fs.realpathSync(tempDir(t));
   fs.mkdirSync(path.join(profile, 'AppData'));
   fs.symlinkSync(shared, path.join(profile, 'AppData', 'Local'), 'junction');
   const redirected = createCredentials({ platform: 'win32', run: win.run, dir: path.join(profile, 'AppData', 'Local', 'woodshed'), has: () => false, tools: TOOLS, home: profile });
-  assert.throws(() => redirected.save(ORIGIN, TOKEN), /leads elsewhere through a link or junction, and .* is the only place a token is kept unsealed on Windows/);
+  assert.throws(() => redirected.save(ORIGIN, TOKEN), /leads elsewhere through a link or junction, and .* is the only place a token is kept on Windows/);
   assert.deepEqual(fs.readdirSync(shared), [], 'nothing made where the junction leads, not even a folder');
 
   // Nor is a plain file read from anywhere but the default folder: one there could be someone else's, with their token.
@@ -172,8 +172,16 @@ test('on Windows with DPAPI refused, as over an SSH key\'s sign-in, the token go
   assert.equal(redirected.storeFor('file').read(ORIGIN), null);
   fs.writeFileSync(path.join(shared, 'credentials.json'), JSON.stringify({ [ORIGIN]: TOKEN }));
   assert.equal(outside.storeFor('file').read(ORIGIN), null);
-  const sealed = createCredentials({ platform: 'win32', run: fakeWindows().run, dir: shared, has: () => true, tools: TOOLS, home: path.join(shared, 'not-above-it') });
-  assert.equal(sealed.save(ORIGIN, TOKEN).kind, 'dpapi', 'sealed, it may be kept there: only this account can open it');
+
+  // Nor a sealed one: DPAPI opens a blob sealed for the whole computer for any account, so one planted there opens.
+  const sealing = fakeWindows();
+  const sealed = createCredentials({ platform: 'win32', run: sealing.run, dir: shared, has: () => true, tools: TOOLS, home: path.join(shared, 'not-above-it') });
+  assert.throws(() => sealed.save(ORIGIN, TOKEN), /the only place a token is kept on Windows/, 'not kept sealed there either');
+  const planted = sealing.run(TOOLS.powershell, powershellArgs('[Security.Cryptography.ProtectedData]::Protect('), { input: `${ORIGIN}\n${TOKEN}\n` }).stdout;
+  fs.writeFileSync(path.join(shared, 'credentials-dpapi.json'), JSON.stringify({ [ORIGIN]: planted }));
+  const before = sealing.calls.length;
+  assert.equal(sealed.storeFor('dpapi').read(ORIGIN), null, 'a sealed token there is not read');
+  assert.equal(sealing.calls.length, before, 'nor even opened');
 });
 
 test('on Windows a folder of another account\'s that this one cannot take gets no token, sealed or not', (t) => {

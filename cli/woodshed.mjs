@@ -104,10 +104,11 @@ export function consoleOrigin(typed) {
 }
 
 // On Windows, %LOCALAPPDATA%\woodshed: the local folder, not %APPDATA%, which a roaming profile copies to a server at
-// each sign-out, token and all.
+// each sign-out, token and all. XDG_CONFIG_HOME is a Unix convention, and not read there: a token is kept only in that
+// folder on Windows (credentials.mjs), and cli.json beside it.
 function configDir(env, platform) {
-  if (env.XDG_CONFIG_HOME) return path.join(env.XDG_CONFIG_HOME, 'woodshed');
   if (platform === 'win32') return path.join(env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'woodshed');
+  if (env.XDG_CONFIG_HOME) return path.join(env.XDG_CONFIG_HOME, 'woodshed');
   return path.join(os.homedir(), '.config', 'woodshed');
 }
 
@@ -316,6 +317,9 @@ export async function main(argv, deps = {}) {
       if (before.token && before.token !== token) {
         const out = await call(origin, '/api/cli/logout', { method: 'POST', token: before.token }).catch(() => null);
         earlierEnded = out?.status === 200 || out?.status === 401;
+      } else if (!before.token && before.store?.holds?.(origin)) {
+        // One kept here that could not be read (sealed for a desktop sign-in, read over SSH): nothing can end it here.
+        earlierEnded = false;
       }
       if (before.store && before.store.kind !== store.kind) before.store.remove(origin);
       const result = {
@@ -333,6 +337,13 @@ export async function main(argv, deps = {}) {
 
   async function logout(origin) {
     const { config, entry, store, token } = signedIn(origin);
+    if (!token && store?.holds?.(origin)) {
+      // Kept here but not readable now (sealed with DPAPI at a desktop sign-in, and this is an SSH one, which DPAPI
+      // cannot open): left as it is, so a sign-out where it can be read still ends it at the console.
+      if (json) emit({ event: 'signed-out', console: origin, wasSignedIn: true, endedAtConsole: false, unreadable: true });
+      say(`This computer's sign-in to ${origin} could not be read here (${store.label}), so it was left as it is. Sign out where you signed in, or revoke it on My settings, under Command line.`);
+      return EXIT.refused;
+    }
     let atConsole = null;
     if (token) {
       try {
