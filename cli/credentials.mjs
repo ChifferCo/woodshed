@@ -188,9 +188,9 @@ function writeOwnFile(dir, where, data, { platform, ownFolder }) {
   if (platform === 'win32') {
     // No file mode here, and no uid: the folder's ACL is what keeps others out.
     const folder = fs.lstatSync(dir);
-    if (!folder.isDirectory() || folder.isSymbolicLink()) throw new Error(`${dir} is not a folder: it must not be a link; or set XDG_CONFIG_HOME`);
+    if (!folder.isDirectory() || folder.isSymbolicLink()) throw new Error(`${dir} is not a folder: it must not be a link`);
     const why = ownFolder(dir);
-    if (why) throw new Error(`${dir} could not be made a folder only you can open: ${why}; or set XDG_CONFIG_HOME`);
+    if (why) throw new Error(`${dir} could not be made a folder only you can open: ${why}`);
   } else {
     // Ours but open to others (a umask of 002 makes that), it is closed first; anyone else's, or a link, is refused.
     let folder = fs.lstatSync(dir);
@@ -338,6 +338,7 @@ function dpapi(dir, run, tools, ownFolder, home) {
 export function createCredentials({ platform = process.platform, run = runCommand, dir, has = (command) => hasCommand(command), tools = windowsTools(), home = os.homedir() }) {
   const ownFolder = (folder) => windowsOwnFolder(folder, run, tools);
   const stores = { keychain: keychain(run), libsecret: libsecret(run), dpapi: dpapi(dir, run, tools, ownFolder, home), file: file(dir, platform, ownFolder, home) };
+  const ownKinds = { darwin: ['keychain', 'file'], linux: ['libsecret', 'file'], win32: ['dpapi', 'file'] }[platform] ?? ['file'];
   const order = [
     ...(platform === 'darwin' && has('security') ? ['keychain'] : []),
     ...(platform === 'linux' && has('secret-tool') ? ['libsecret'] : []),
@@ -345,7 +346,9 @@ export function createCredentials({ platform = process.platform, run = runComman
     'file',
   ];
   return {
-    storeFor: (kind) => stores[kind] ?? null,
+    // This platform's own stores alone, whatever cli.json names: one it does not use is never run (on Windows a bare
+    // `security` or `secret-tool` could be found in the current folder, and cli.json is no proof of who wrote it).
+    storeFor: (kind) => (Object.hasOwn(stores, kind) && ownKinds.includes(kind) ? stores[kind] : null),
     save(origin, token) {
       let refused = null;
       for (const kind of order) {

@@ -235,3 +235,18 @@ test('the file is written only in a folder of yours closed to others, never thro
   // Someone else's folder cannot be made here without root, so that refusal is the same check on `uid`, read above.
   assert.deepEqual(fs.readdirSync(real), []);
 });
+
+test('cli.json names only this platform\'s own stores: on Windows no keychain or secret-tool helper is ever run', (t) => {
+  const calls = [];
+  const run = (command, args) => { calls.push(command); return { status: 0, stdout: TOKEN, stderr: '' }; };
+  const { home, dir } = profileDir(t);
+  const windows = createCredentials({ platform: 'win32', run, dir, has: () => true, tools: TOOLS, home });
+  for (const kind of ['keychain', 'libsecret', 'constructor', '__proto__']) {
+    assert.equal(windows.storeFor(kind), null, `${kind} is not Windows'`);
+  }
+  assert.equal(windows.storeFor('dpapi').kind, 'dpapi');
+  assert.equal(windows.storeFor('file').kind, 'file');
+  assert.deepEqual(calls, [], 'nothing run');
+  assert.equal(createCredentials({ platform: 'darwin', run, dir: tempDir(t), has: () => true }).storeFor('dpapi'), null);
+  assert.equal(createCredentials({ platform: 'linux', run, dir: tempDir(t), has: () => true }).storeFor('keychain'), null);
+});

@@ -269,6 +269,23 @@ test('on Windows login keeps the token sealed under %LOCALAPPDATA%, and status a
   assert.deepEqual(JSON.parse(fs.readFileSync(done.credentialsFile, 'utf8')), {}, 'forgotten here too');
 });
 
+test('on Windows a cli.json naming another platform\'s store runs no helper, and status says not signed in', async (t) => {
+  const profile = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-win-')));
+  t.after(() => fs.rmSync(profile, { recursive: true, force: true }));
+  const local = path.join(profile, 'AppData', 'Local');
+  fs.mkdirSync(path.join(local, 'woodshed'), { recursive: true });
+  fs.writeFileSync(path.join(local, 'woodshed', 'cli.json'), JSON.stringify({ current: 'https://c.example', consoles: { 'https://c.example': { login: 'x', store: 'keychain' } } }));
+  const ran = [];
+  const run = (command) => { ran.push(command); return { status: 0, stdout: `wsc_${'ab'.repeat(32)}`, stderr: '' }; };
+  const code = await main(['status', '--json'], {
+    env: { LOCALAPPDATA: local }, stdout: { write() {} }, stderr: { write() {} }, platform: 'win32',
+    credentials: createCredentials({ platform: 'win32', run, dir: path.join(local, 'woodshed'), has: () => true, tools: TOOLS, home: profile }),
+    fetch: async () => { throw new Error('not reached'); },
+  });
+  assert.equal(code, EXIT.waiting);
+  assert.deepEqual(ran, [], 'no security, secret-tool or any other helper run');
+});
+
 test('a token that cannot be kept here is ended at the console, not left there for nobody', async (t) => {
   const c = await consoleFor(t);
   const refusing = { save: () => { throw new Error('C:\\shared\\woodshed could not be made a folder only you can open'); }, storeFor: () => null };
