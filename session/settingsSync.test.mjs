@@ -359,6 +359,31 @@ test('dotted and quoted keys in inline Codex tables keep credentials out of sync
   }
 });
 
+test('a local Codex credential shadows a shared server without changing the shared copy', async (t) => {
+  const c = fakeConsole();
+  const shared = '[mcp_servers.demo]\ncommand = "shared-server"\n';
+  const privateServer = '[mcp_servers.demo]\ncommand = "local-server"\nenv = { SERVICE_TOKEN = "dummy-value" }\n';
+  const source = session(await makeHome({ '.codex/config.toml': shared }), c.send('aaaaaaaa'));
+  const local = session(await makeHome({ '.codex/config.toml': privateServer }), c.send('bbbbbbbb'));
+  t.after(async () => {
+    await fs.rm(source.home, { recursive: true, force: true });
+    await fs.rm(local.home, { recursive: true, force: true });
+  });
+  await source.round();
+  await local.round({ live: false });
+  const held = await local.round();
+  assert.deepEqual([held.sent, held.removed], [0, 0]);
+  assert.equal(await read(local.home, '.codex/config.toml'), privateServer);
+
+  const model = 'model = "new-model"\n';
+  await fs.writeFile(path.join(local.home, '.codex/config.toml'), `${model}\n${privateServer}`);
+  assert.equal((await local.round()).sent, 1);
+  const next = await local.round();
+  assert.deepEqual([next.sent, next.removed], [0, 0]);
+  await source.round();
+  assert.equal(await read(source.home, '.codex/config.toml'), `${model}\n${shared}`);
+});
+
 test('a session never syncs through a link to its Codex sign-in or a linked settings directory', async (t) => {
   const c = fakeConsole();
   const auth = '{"access_token":"dummy-sign-in"}';

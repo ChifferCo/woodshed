@@ -399,12 +399,25 @@ const tableUnit = (statement) => (statement.table.length ? unitOf({ kind: 'heade
 export function sharedPart(text) {
   const statements = readToml(text);
   if (!statements) return text;
-  const own = ownUnits(statements);
+  return withoutUnits(statements, ownUnits(statements));
+}
+
+function withoutUnits(statements, own) {
   // A blank line under an own entry's table goes with it, and the end is one newline: what a write here adds and this
   // takes away again leaves the same text, so the sync never sees a change that is not one.
   // A comment holding a key's shape is not sent either.
   const kept = textOf(tidy(statements.filter((s) => !own.has(s.kind === 'blank' ? tableUnit(s) : unitOf(s)) && !(s.kind === 'blank' && credentialOf(s)))));
   return kept.trim() ? `${kept.replace(/\s+$/, '')}\n` : '';
+}
+
+/** How much of the shared config is visible beside this home's private entries, and what those entries hide. */
+export function sharedConfigView(shared, local) {
+  const own = ownUnits(readToml(local) ?? []);
+  const statements = readToml(shared) ?? [];
+  return {
+    visible: withoutUnits(statements, own),
+    hidden: statements.filter((s) => own.has(unitOf(s))),
+  };
 }
 
 /** The shared config.toml written here, with this side's own entries kept in place of any of the same names. */

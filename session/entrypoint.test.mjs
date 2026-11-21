@@ -901,11 +901,12 @@ test('a Codex session starts codex with the picked flags, and the rules go in co
 });
 
 // configureCodex as the entrypoint has it, in a codex home of the test's own, after a pull wrote `pulled` into it.
-function configureCodex({ pulled = {} } = {}) {
+function configureCodex({ pulled = {}, linkedInstructions = false } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-codex-'));
   const codexHome = path.join(tmp, 'codex');
   fs.mkdirSync(codexHome);
   for (const [name, text] of Object.entries(pulled)) fs.writeFileSync(path.join(codexHome, name), text);
+  if (linkedInstructions) fs.symlinkSync('auth.json', path.join(codexHome, 'AGENTS.md'));
   fs.writeFileSync(path.join(tmp, 'woodshed-rules.md'), '# Woodshed rules\n\nOpen a pull request.\n');
   const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { echo "ERROR: $*"; exit 1; }',
     fn('configureCodex').replaceAll('/tmp/', `${tmp}/`), 'configureCodex'].join('\n');
@@ -928,6 +929,11 @@ test('a Codex session trusts its checkout in the owner\'s own config.toml, and t
   assert.equal(owner.config, 'model = "gpt-5.5"\n\n[tui]\nnotifications = true\n\n[projects."/work/app"]\ntrust_level = "trusted"\n', 'the owner\'s settings stay, with the checkout trusted');
   assert.equal(owner.agents, 'Use pnpm.\n', 'the synced file is left as it is');
   assert.equal(owner.override, '# Woodshed rules\n\nOpen a pull request.\n\n\n# Your own instructions, from ~/.codex/AGENTS.md\n\nUse pnpm.\n', 'codex reads this in place of AGENTS.md: the rules, then theirs');
+});
+
+test('Codex startup does not copy a linked sign-in into the model instructions', () => {
+  const owner = configureCodex({ pulled: { 'auth.json': '{"access_token":"dummy-sign-in"}' }, linkedInstructions: true });
+  assert.equal(owner.override === '# Woodshed rules\n\nOpen a pull request.\n', true, 'only Woodshed rules reach the instructions');
 });
 
 // installSyncedPlugins with a stand-in claude that records each call, in a home of the test's own whose start pulled

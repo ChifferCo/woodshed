@@ -17,7 +17,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { isMain } from '../shared/isMain.mjs';
-import { CODEX_CONFIG, readToml, sharedPart, withOwnEntries } from '../shared/codexConfig.mjs';
+import { CODEX_CONFIG, readToml, sharedConfigView, sharedPart, withEntries, withOwnEntries } from '../shared/codexConfig.mjs';
 import { carriedSource } from '../shared/pluginSource.mjs';
 import { secretContent } from '../shared/secretLike.mjs';
 import { PLUGIN_ID_RE } from './missingPlugins.mjs';
@@ -200,7 +200,7 @@ export async function pluginItems(home, skipPath = pathGuard(home)) {
  * @param {{skipPath?: (path: string, directory?: boolean) => boolean}} [opts]  which local paths to leave alone
  * @returns {Promise<{items: Record<string, string>, unreadable: string[], oversized: string[], unparsed: string[], codexConfig?: string}>}
  *   `items` holds files as base64 and entries as JSON. `unreadable`, `oversized` and `unparsed` name files held this round.
- *   `codexConfig` is the original file as base64 for the CLI's plan, including entries that stay local.
+ *   `codexConfig` is the original file as base64, for the CLI's plan and for detecting shared entries it shadows.
  */
 export async function readSnapshot(home, { skipPath } = {}) {
   const items = {};
@@ -216,7 +216,7 @@ export async function readSnapshot(home, { skipPath } = {}) {
     if (!content) continue;
     if (content.length > MAX_ITEM_BYTES) oversized.push(rel);
     else if (rel === CODEX_CONFIG) {
-      if (skipPath) codexConfig = content.toString('base64');
+      codexConfig = content.toString('base64');
       const text = content.toString('utf8');
       if (!readToml(text)) {
         unparsed.push(rel);
@@ -422,12 +422,23 @@ export async function withRetries(call, { tries = START_TRIES, delayMs = START_R
  *   the console keeps no settings
  */
 export async function syncOnce({ home, state, live, send }) {
-  const { items: local, unreadable, oversized: tooBig, unparsed } = await readSnapshot(home);
+  const { items: local, unreadable, oversized: tooBig, unparsed, codexConfig } = await readSnapshot(home);
   const oversized = [...tooBig, ...unparsed];
   const known = state.version !== null;
   let { changed, removed } = known ? localChanges(state.synced, local, oversized) : { changed: {}, removed: [] };
   // An item behind a link is held locally. It has not been deleted from the shared copy.
   removed = removed.filter((id) => !linkOnPath(home, id));
+  if ((CODEX_CONFIG in changed || removed.includes(CODEX_CONFIG)) && codexConfig !== undefined && state.synced[CODEX_CONFIG]) {
+    const text = (value) => Buffer.from(value, 'base64').toString('utf8');
+    const { visible, hidden } = sharedConfigView(text(state.synced[CODEX_CONFIG]), text(codexConfig));
+    if (hidden.length) {
+      // Private entries can hide shared ones. Compare only what this home can see and leave the hidden copy intact.
+      const here = text(local[CODEX_CONFIG] ?? '');
+      removed = removed.filter((id) => id !== CODEX_CONFIG);
+      if (here === visible) delete changed[CODEX_CONFIG];
+      else changed[CODEX_CONFIG] = Buffer.from(withEntries(here, hidden)).toString('base64');
+    }
+  }
   // A JSON file read mid-write is left out of this round entirely: its entries are neither sent nor counted as gone.
   for (const file of unreadable) for (const id of Object.keys(changed)) if (parseEntryId(id)?.file === file) delete changed[id];
   // The shared copy's status line goes back as it was, and a difference in it alone is no change. With no shared copy

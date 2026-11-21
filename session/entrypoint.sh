@@ -991,8 +991,13 @@ installSyncedPlugins() {
 # reads, a ChatGPT login as it was saved. With none, session/bin/codex uses the console's proxy and the team key. The
 # rules go in codex's own AGENTS.override.md, which it reads at every start, so the terminal shows only the request.
 configureCodex() {
+  [ ! -L "$CODEX_HOME_DIR" ] || die "codex's home is a symlink"
   mkdir -p "$CODEX_HOME_DIR"
   chmod 700 "$CODEX_HOME_DIR"
+  local file
+  for file in auth.json config.toml AGENTS.override.md; do
+    [ ! -L "$CODEX_HOME_DIR/$file" ] || die "codex's $file is a symlink"
+  done
   if [ "${SESSION_KIND:-}" = private ] && [ -s "$OWN_CODEX_AUTH_FILE" ]; then
     if [[ "$(head -c 3 "$OWN_CODEX_AUTH_FILE")" == sk- ]]; then
       (umask 077 && jq -n --rawfile key "$OWN_CODEX_AUTH_FILE" '{OPENAI_API_KEY: $key}' > "$CODEX_HOME_DIR/auth.json")
@@ -1012,7 +1017,7 @@ configureCodex() {
   # AGENTS.md, which stays theirs as it is synced.
   {
     cat /tmp/woodshed-rules.md
-    if [ -s "$CODEX_HOME_DIR/AGENTS.md" ]; then
+    if [ -f "$CODEX_HOME_DIR/AGENTS.md" ] && [ ! -L "$CODEX_HOME_DIR/AGENTS.md" ] && [ -s "$CODEX_HOME_DIR/AGENTS.md" ]; then
       printf '\n\n# Your own instructions, from ~/.codex/AGENTS.md\n\n'
       cat "$CODEX_HOME_DIR/AGENTS.md"
     fi
