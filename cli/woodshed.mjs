@@ -103,8 +103,12 @@ export function consoleOrigin(typed) {
   return url.origin;
 }
 
-function configDir(env) {
-  return path.join(env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'woodshed');
+// On Windows, %LOCALAPPDATA%\woodshed: the local folder, not %APPDATA%, which a roaming profile copies to a server at
+// each sign-out, token and all.
+function configDir(env, platform) {
+  if (env.XDG_CONFIG_HOME) return path.join(env.XDG_CONFIG_HOME, 'woodshed');
+  if (platform === 'win32') return path.join(env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'woodshed');
+  return path.join(os.homedir(), '.config', 'woodshed');
 }
 
 // cli.json: the console used last, and for each console who is signed in and which store holds the token. Never a token.
@@ -126,11 +130,15 @@ function writeConfig(dir, config) {
 }
 
 // Only an address this command line built (approvalUrl), and never through a shell: cmd's `start` would read & and | in
-// it as commands of their own.
+// it as commands of their own. On Windows, rundll32 from System32 by its full path, never one in the current folder.
+export function browserCommand(url, platform, env = process.env) {
+  if (platform === 'darwin') return ['open', [url]];
+  if (platform === 'win32') return [path.win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'rundll32.exe'), ['url.dll,FileProtocolHandler', url]];
+  return ['xdg-open', [url]];
+}
+
 function openBrowser(url, platform) {
-  const [command, args] = platform === 'darwin' ? ['open', [url]]
-    : platform === 'win32' ? ['rundll32', ['url.dll,FileProtocolHandler', url]]
-      : ['xdg-open', [url]];
+  const [command, args] = browserCommand(url, platform);
   try {
     const child = spawn(command, args, { stdio: 'ignore', detached: true });
     child.on('error', () => {});
@@ -181,7 +189,7 @@ export async function main(argv, deps = {}) {
   const sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const platform = deps.platform ?? process.platform;
   const now = deps.now ?? Date.now;
-  const dir = configDir(env);
+  const dir = configDir(env, platform);
   const credentials = deps.credentials ?? createCredentials({ platform, dir });
   const open = deps.openBrowser ?? ((url) => openBrowser(url, platform));
   let json = argv.includes('--json');
@@ -249,8 +257,6 @@ export async function main(argv, deps = {}) {
   }
 
   async function login(origin, { browser }) {
-    // Before any code is asked for, so no sign-in is left at the console that nothing here could keep.
-    if (platform === 'win32') throw new CliError('woodshed login does not run on Windows yet: it has nowhere to keep the token safely', { code: EXIT.refused, status: 'refused' });
     const before = signedIn(origin);
     const started = await call(origin, '/api/cli/device', { method: 'POST', body: { name: deps.hostname ?? os.hostname() } });
     if (started.status !== 200 || !started.body?.deviceCode) {

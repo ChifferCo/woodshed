@@ -8,6 +8,7 @@ import path from 'node:path';
 import { createCliSignIn } from '../console/cliSignIn.mjs';
 import { createHandler } from '../console/server.mjs';
 import { createCredentials } from './credentials.mjs';
+import { fakeWindows, TOOLS } from './__fixtures__/fakeWindows.mjs';
 import { approvalUrl, consoleOrigin, DEFAULT_CONSOLE, EXIT, main, parseArgs } from './woodshed.mjs';
 
 function listen(server) {
@@ -53,13 +54,12 @@ async function consoleFor(t, { decision = 'approve', approves = true, people = n
   }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-cli-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const run = async (args) => {
+  const run = async (args, { platform = 'test', env = { XDG_CONFIG_HOME: dir }, credentials = createCredentials({ platform: 'test', dir: path.join(dir, 'woodshed') }) } = {}) => {
     let out = '';
     let err = '';
     const code = await main(args, {
-      env: { XDG_CONFIG_HOME: dir }, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
-      sleep: async (ms) => { clock += ms; }, now, hostname: 'mia-laptop', platform: 'test',
-      credentials: createCredentials({ platform: 'test', dir: path.join(dir, 'woodshed') }),
+      env, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
+      sleep: async (ms) => { clock += ms; }, now, hostname: 'mia-laptop', platform, credentials,
       openBrowser: (url) => { approve(url).catch((e) => { err += e.stack; }); },
     });
     // The browser's approval runs beside the polls: let it finish before the next command.
@@ -226,16 +226,29 @@ test('a console that hands out something other than a command line token gets a 
   assert.equal(fs.existsSync(path.join(dir, 'credentials.json')), false);
 });
 
-test('on Windows login refuses before it asks the console for a code', async () => {
-  let asked = false;
-  let err = '';
-  const code = await main(['login', '--console', 'https://c.example'], {
-    env: { XDG_CONFIG_HOME: os.tmpdir() }, stdout: { write() {} }, stderr: { write: (s) => { err += s; } }, platform: 'win32',
-    fetch: async () => { asked = true; throw new Error('not reached'); },
-  });
-  assert.equal(code, EXIT.refused);
-  assert.equal(asked, false);
-  assert.match(err, /does not run on Windows yet/);
+test('on Windows login keeps the token sealed under %LOCALAPPDATA%, and status and logout read it there', async (t) => {
+  const c = await consoleFor(t);
+  const win = fakeWindows();
+  // The folder main picks on Windows, with no XDG_CONFIG_HOME: LOCALAPPDATA's, not the roaming APPDATA's.
+  const env = { LOCALAPPDATA: c.dir, APPDATA: path.join(c.dir, 'roaming') };
+  const windows = { platform: 'win32', env, credentials: createCredentials({ platform: 'win32', run: win.run, dir: path.join(c.dir, 'woodshed'), has: () => true, tools: TOOLS }) };
+  const signed = await c.run(['login', '--console', c.origin, '--json'], windows);
+  assert.equal(signed.code, EXIT.done, signed.err);
+  const done = signed.lines.at(-1);
+  assert.deepEqual([done.event, done.login, done.store], ['signed-in', 'mia-dev', 'dpapi']);
+  assert.equal(done.credentialsFile, path.join(c.dir, 'woodshed', 'credentials-dpapi.json'));
+  assert.ok(fs.existsSync(path.join(c.dir, 'woodshed', 'cli.json')), 'cli.json under LOCALAPPDATA');
+  assert.equal(fs.existsSync(env.APPDATA), false, 'nothing under the roaming profile');
+  assert.ok(!fs.readFileSync(done.credentialsFile, 'utf8').includes('wsc_'));
+  assert.ok(win.calls.every((call) => !call.args.join(' ').includes('wsc_')), 'no token in any command\'s arguments');
+
+  const status = await c.run(['status', '--json'], windows);
+  assert.equal(status.code, EXIT.done);
+  assert.deepEqual([status.lines[0].signedIn, status.lines[0].login], [true, 'mia-dev']);
+  const out = await c.run(['logout', '--json'], windows);
+  assert.deepEqual([out.lines[0].wasSignedIn, out.lines[0].endedAtConsole], [true, true]);
+  assert.deepEqual(c.cli.list('mia-dev'), []);
+  assert.deepEqual(JSON.parse(fs.readFileSync(done.credentialsFile, 'utf8')), {}, 'forgotten here too');
 });
 
 test('login refused for too many sign-ins waiting says to try again later, in the minutes the console gives, and fails', async (t) => {

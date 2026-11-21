@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { createCredentials } from './credentials.mjs';
+import { aclHolders, createCredentials, powershellArgs, windowsTools } from './credentials.mjs';
+import { browserCommand } from './woodshed.mjs';
+import { fakeWindows, ME, TOOLS } from './__fixtures__/fakeWindows.mjs';
 
 const TOKEN = `wsc_${'ab'.repeat(32)}`;
 const ORIGIN = 'https://console.example';
@@ -83,11 +85,86 @@ test('nothing but a command line token, for a console address, reaches a store',
   assert.deepEqual(keyring.calls, []);
 });
 
-test('on Windows no token is written to a file, which has no mode to keep others out', (t) => {
+test('on Windows the token is sealed with DPAPI by System32\'s PowerShell, given on stdin, never in its arguments', (t) => {
+  const win = fakeWindows();
   const dir = tempDir(t);
-  const creds = createCredentials({ platform: 'win32', run: fakeKeyring().run, dir, has: () => false });
-  assert.throws(() => creds.save(ORIGIN, TOKEN), /cannot keep a token safely on Windows/);
+  const creds = createCredentials({ platform: 'win32', run: win.run, dir, has: (c) => c === TOOLS.powershell, tools: TOOLS });
+  const store = creds.save(ORIGIN, TOKEN);
+  assert.equal(store.kind, 'dpapi');
+  assert.equal(store.file, path.join(dir, 'credentials-dpapi.json'));
+  assert.match(store.label, /sealed for your Windows account \(DPAPI\)/);
+  assert.equal(store.read(ORIGIN), TOKEN);
+  assert.ok(!fs.readFileSync(store.file, 'utf8').includes(TOKEN), 'the file holds only what was sealed');
+  const shells = win.calls.filter((c) => c.command === TOOLS.powershell);
+  assert.ok(shells.length >= 2);
+  for (const call of win.calls) {
+    assert.ok(/^C:\\Windows\\System32\\/.test(call.command), `${call.command} is System32's, by its full path`);
+    assert.ok(!call.args.join(' ').includes(TOKEN), `${call.command} was not given the token in its arguments`);
+  }
+  assert.equal(shells[0].input, TOKEN, 'the token goes in on stdin');
+  for (const call of shells) {
+    assert.deepEqual(call.args.slice(0, 3), ['-NoLogo', '-NoProfile', '-NonInteractive']);
+    assert.ok(!Buffer.from(call.args.at(-1), 'base64').toString('utf16le').includes('wsc_'), 'the script is fixed text, with no token in it');
+  }
+  assert.deepEqual(win.calls.find((c) => c.command === TOOLS.icacls).args, [dir, '/inheritance:r', '/grant:r', `*${ME.sid}:(OI)(CI)F`], 'its folder made this account\'s alone too');
+
+  store.save('https://other.example', TOKEN);
+  store.remove(ORIGIN);
+  assert.equal(store.read(ORIGIN), null);
+  assert.equal(store.read('https://other.example'), TOKEN, 'each console keeps its own');
+});
+
+test('on Windows with DPAPI refused, as over an SSH key\'s sign-in, the token goes to a file in a folder only this account can open', (t) => {
+  const win = fakeWindows({ dpapi: false });
+  const dir = tempDir(t);
+  const creds = createCredentials({ platform: 'win32', run: win.run, dir, has: () => true, tools: TOOLS });
+  const store = creds.save(ORIGIN, TOKEN);
+  assert.equal(store.kind, 'file');
+  assert.equal(store.file, path.join(dir, 'credentials.json'));
+  assert.equal(store.read(ORIGIN), TOKEN);
+  assert.deepEqual(win.acls.get(dir), [ME.shown], 'icacls was asked to take off what the folder inherits and give this account alone full control');
+  assert.equal(fs.existsSync(path.join(dir, 'credentials-dpapi.json')), false);
+
+  const none = createCredentials({ platform: 'win32', run: win.run, dir: tempDir(t), has: () => false, tools: TOOLS });
+  assert.equal(none.save(ORIGIN, TOKEN).kind, 'file', 'no PowerShell at all: the file');
+});
+
+test('on Windows a folder others can still open gets no token, and says who', (t) => {
+  const dir = tempDir(t);
+  const win = fakeWindows({ dpapi: false, others: ['BUILTIN\\Users'] });
+  const creds = createCredentials({ platform: 'win32', run: win.run, dir, has: () => true, tools: TOOLS });
+  assert.throws(() => creds.save(ORIGIN, TOKEN), /could not be made a folder only you can open: others may still open it \(BUILTIN\\Users\)/);
   assert.equal(fs.existsSync(path.join(dir, 'credentials.json')), false);
+  assert.deepEqual(fs.readdirSync(dir), [], 'not even a temporary file');
+
+  const unsaid = (run) => createCredentials({ platform: 'win32', run, dir, has: () => false, tools: TOOLS });
+  assert.throws(() => unsaid(() => ({ status: null, stdout: '', stderr: 'ENOENT' })).save(ORIGIN, TOKEN), /whoami did not say which account/);
+  const refusing = (command, args) => (command === TOOLS.whoami ? fakeWindows().run(command, args) : { status: 5, stdout: '', stderr: 'Access is denied.\r\n' });
+  assert.throws(() => unsaid(refusing).save(ORIGIN, TOKEN), /icacls could not set who may open it \(Access is denied\.\)/);
+  assert.equal(fs.existsSync(path.join(dir, 'credentials.json')), false);
+});
+
+test('icacls\'s list is read only as the folder\'s own entries, or not at all', () => {
+  const dir = 'C:\\Users\\mia\\AppData\\Local\\woodshed';
+  const pad = ' '.repeat(dir.length + 1);
+  assert.deepEqual(aclHolders(`${dir} DESKTOP-1\\mia:(OI)(CI)(F)\r\n\r\nSuccessfully processed 1 files; Failed processing 0 files\r\n`, dir), ['DESKTOP-1\\mia']);
+  assert.deepEqual(aclHolders(`${dir} NT AUTHORITY\\SYSTEM:(OI)(CI)(F)\r\n${pad}DESKTOP-1\\mia:(OI)(CI)(F)\r\n\r\nSuccessfully processed 1 files\r\n`, dir), ['NT AUTHORITY\\SYSTEM', 'DESKTOP-1\\mia']);
+  assert.deepEqual(aclHolders(`${dir.toUpperCase()} DESKTOP-1\\mia:(F)\r\n`, dir), ['DESKTOP-1\\mia'], 'whatever the case icacls prints the path in');
+  assert.deepEqual(aclHolders(`C:\\elsewhere DESKTOP-1\\mia:(F)\r\n`, dir), [], 'another folder\'s');
+  assert.deepEqual(aclHolders(`${dir} something unexpected\r\n`, dir), [], 'a line that is not an entry');
+  assert.deepEqual(aclHolders('', dir), []);
+});
+
+test('Windows tools come from System32 by their full path, and the browser opens with no shell', () => {
+  assert.deepEqual(windowsTools({ SystemRoot: 'D:\\WINDOWS' }), {
+    powershell: 'D:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    icacls: 'D:\\WINDOWS\\System32\\icacls.exe',
+    whoami: 'D:\\WINDOWS\\System32\\whoami.exe',
+  });
+  assert.equal(windowsTools({}).powershell, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+  const url = 'https://console.example/cli?code=BCDF-GHJK&x=|calc';
+  assert.deepEqual(browserCommand(url, 'win32', { SystemRoot: 'C:\\Windows' }), ['C:\\Windows\\System32\\rundll32.exe', ['url.dll,FileProtocolHandler', url]]);
+  assert.deepEqual(powershellArgs('Write-Output 1').slice(0, 4), ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand']);
 });
 
 test('the file is written only in a folder of yours closed to others, never through a link', (t) => {
