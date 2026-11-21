@@ -2,7 +2,8 @@
 // console's own session routes, signed in with the command line's token (console/cliSessions.mjs lists the routes it
 // reaches). A session started here is a private one, as My Woodshed's New session starts.
 //
-//   woodshed session new [--repo R] [--branch B] [--agent claude|codex] [--model M] [--no-wait|--herdr] ["prompt"]
+//   woodshed session new [--repo R] [--branch B] [--agent claude|codex] [--model M] [--no-wait|--connect|--herdr] ["prompt"]
+//   woodshed session connect <id> [--shell]
 //   woodshed session herdr <id>
 //   woodshed session list [--all]
 //   woodshed session get <id>
@@ -15,10 +16,19 @@
 // Nothing here keeps a session awake: it pauses when idle and stops at its lifetime, as its limits say, unless its
 // person (or their agent) asks for more time with extend or limits. list and get say when each will.
 //
+// connect puts this terminal on one of your sessions' (terminal.mjs): its agent's, or with --shell the Terminal tab's
+// shell, resuming it first when it paused.
 // herdr makes one of your sessions a machine in Herdr's hc, `woodshed-<id>`, reached through `woodshed tunnel` (hc.mjs),
 // resuming it first when it paused; remove forgets that machine too.
 
-import { HC_MINIMUM, addMachine, agentOn, hcVersion, machineName, removeMachine } from './hc.mjs';
+import { HC_MINIMUM, addMachine, agentOn, hcVersion, machineName, removeMachine, shellQuote } from './hc.mjs';
+
+// A terminal whose connection dropped is opened again for this long, waiting a little longer each time.
+const RECONNECT_GIVE_UP_MS = 60_000;
+const RECONNECT_WAITS_MS = [500, 1000, 2000, 4000, 8000];
+// A connection that lasted less than this before it dropped counts as no connection: the minute goes on from the first
+// drop, so one that opens and drops at once again and again is not tried for ever.
+const RECONNECT_HELD_MS = 10_000;
 
 // How often a start's wait reads the list, and how long it keeps trying through a console it cannot reach.
 const POLL_MS = 2000;
@@ -35,7 +45,11 @@ Commands:
       --agent claude|codex   the agent it runs (default claude)
       --model <model>        the agent's model (default the agent's own)
       --no-wait              print the session and return once the console has it
+      --connect              once it runs, put this terminal on its agent's, as connect does
       --herdr                once it runs, add it to Herdr as herdr does
+  connect <id> [--shell]     put this terminal on one of your sessions' agent (the console's TUI tab), or with --shell
+                             its shell (the Terminal tab); a paused one is resumed first. Ctrl-\\ disconnects, and the
+                             session goes on
   herdr <id>                 make one of your sessions a machine in Herdr (hc ${HC_MINIMUM} or newer), woodshed-<id>,
                              reached through woodshed tunnel; a paused one is resumed first, and waited for
   list [--all]               your sessions and the shared ones you can see, with their state and when each
@@ -200,7 +214,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
     }
     if (out.status === 403) throw fail(printable(out.body?.error) ?? `${origin} refused that`, { code: EXIT.refused, status: 'refused' });
     if (out.status === 404 && !out.body?.error) throw fail(`${origin} answered 404: a console from before the command line could start sessions`);
-    if (out.status >= 400) throw fail(printable(out.body?.error) ?? `${origin} answered ${out.status}`);
+    if (out.status >= 400) throw Object.assign(fail(printable(out.body?.error) ?? `${origin} answered ${out.status}`), { http: out.status });
     if (!out.body || typeof out.body !== 'object') throw fail(`${origin} answered ${out.status} with no JSON: not a Woodshed console`);
     return out.body;
   }
@@ -340,7 +354,79 @@ export async function sessionCommand({ origin, rest }, ctx) {
     return code;
   }
 
+  // Before anything is started or resumed for it: a terminal to put on the session's, and nothing else read from stdout.
+  function terminalReady() {
+    if (json) throw fail('session connect puts this terminal on the session\'s: it has no --json', { code: EXIT.failed });
+    if (!ctx.tty) throw fail('session connect needs a terminal: for a command, use woodshed tunnel <id> -- <line>');
+  }
+
+  // This terminal on the session's until one side ends it. A connection that drops (a network, a laptop that slept, a
+  // console restarted) is opened again while the session runs: its terminal went on meanwhile, and is drawn again.
+  async function onTerminal(s, kind) {
+    const what = kind === 'shell' ? 'shell' : `${s.options?.agent === 'codex' ? 'codex' : 'claude'}'s terminal`;
+    const reconnect = `woodshed session connect ${s.id}${kind === 'shell' ? ' --shell' : ''} --console ${shellQuote(origin)}`;
+    stderr.write(`Connecting to ${s.id}'s ${what}. Ctrl-\\ disconnects; the session goes on.\n`);
+    let reconnectUntil = null;
+    let tries = 0;
+    let lastFailure;
+    const giveUp = () => fail(`Could not connect to ${s.id} again in ${RECONNECT_GIVE_UP_MS / 1000} s: ${lastFailure}. Run ${reconnect} to try again.`);
+    for (;;) {
+      let out;
+      if (reconnectUntil !== null) {
+        const remaining = reconnectUntil - now();
+        if (remaining <= 0) throw giveUp();
+        const backoff = RECONNECT_WAITS_MS[Math.min(tries, RECONNECT_WAITS_MS.length - 1)];
+        await sleep(Math.min(backoff, remaining));
+        if (now() >= reconnectUntil) throw giveUp();
+        tries += 1;
+        // The console may still be restarting behind its proxy. Check the session again before opening the terminal.
+        try {
+          const { s: latest } = await find(s.id);
+          if (latest.status !== 'running') {
+            throw fail(`Session ${s.id} is ${stateOf(latest).word} now. Run ${reconnect} to resume it and connect again.`);
+          }
+        } catch (err) {
+          if (!err.unreachable && ![502, 503, 504].includes(err.http)) throw err;
+          out = { status: 'unreachable', message: err.message };
+        }
+        if (!out && now() >= reconnectUntil) throw giveUp();
+      }
+      out ??= await ctx.terminal(s.id, kind);
+      // ttyd sends 1000 on a normal close and a different code on an error.
+      if (out.status === 'detached' || (out.status === 'closed' && out.code === 1000)) {
+        stderr.write(`\r\nConnection to ${s.id} closed.\n`);
+        return EXIT.done;
+      }
+      if (out.status === 'closed') {
+        stderr.write(`\r\nConnection to ${s.id} closed by the session's terminal with ${out.code ?? 'no code'}.\n`);
+        return EXIT.failed;
+      }
+      if (out.status === 'refused' && out.http === 401) {
+        throw fail(`The sign-in to ${origin} ended: ${out.message}. Run: woodshed login --console ${origin}`, { code: EXIT.waiting, status: 'signed-out' });
+      }
+      if (out.status === 'refused' && /production data/.test(out.message)) throw fail(`Session ${s.id}: ${out.message}`, { code: EXIT.refused, status: 'refused' });
+      const held = out.status === 'attached-then-cut' && (out.ms ?? 0) >= RECONNECT_HELD_MS;
+      if (out.status === 'attached-then-cut' && (held || reconnectUntil === null)) {
+        reconnectUntil = now() + RECONNECT_GIVE_UP_MS;
+        tries = 0;
+        stderr.write(`\r\nwoodshed: the connection to ${s.id} dropped (${out.message}); connecting again. Ctrl-C stops.\n`);
+      } else if (reconnectUntil === null) {
+        // Never connected: said as it is, not tried again.
+        throw fail(out.status === 'refused' ? `${origin} refused the terminal: ${out.message}` : out.message);
+      } else if (out.status === 'attached-then-cut') {
+        const remaining = reconnectUntil - now();
+        if (remaining > 0) stderr.write(`\r\nwoodshed: it dropped again at once (${out.message}); still trying, for up to ${Math.ceil(remaining / 1000)} s more.\n`);
+      }
+      lastFailure = out.message;
+    }
+  }
+
   if (sub === 'new') {
+    if (opts.connect && opts.herdr) throw fail('--connect and --herdr: pick one');
+    if (opts.connect) {
+      if (opts.wait === false) throw fail('--connect waits for the session to run: leave out --no-wait');
+      terminalReady();
+    }
     if (opts.herdr) {
       if (opts.wait === false) throw fail('--herdr waits for the session to run: leave out --no-wait');
       await hcReady();
@@ -358,8 +444,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
     say(`  ${shown.url}`);
     if (opts.wait === false) return EXIT.done;
     const started = await follow(shown.id);
-    if (!opts.herdr || (started !== EXIT.done && started !== EXIT.waiting)) return started;
+    if ((!opts.herdr && !opts.connect) || (started !== EXIT.done && started !== EXIT.waiting)) return started;
     const found = await find(shown.id);
+    if (opts.connect) return onTerminal(found.s, 'term');
     return connect(found.s, found.login);
   }
 
@@ -420,6 +507,18 @@ export async function sessionCommand({ origin, rest }, ctx) {
   if (sub === 'resume') {
     ownPrivate(s, login, 'resume');
     return resumeAndWait();
+  }
+
+  if (sub === 'connect') {
+    // The console opens a terminal only on your own private sessions, never one that has seen production data.
+    ownPrivate(s, login, 'connect to');
+    if (s.taintedAt) throw fail(`Session ${id} has seen production data: nothing opens a terminal on it from this computer.`, { code: EXIT.refused, status: 'refused' });
+    terminalReady();
+    const kind = opts.shell ? 'shell' : 'term';
+    if (s.status === 'running') return onTerminal(s, kind);
+    const resumed = await resumeAndWait();
+    if (resumed !== EXIT.done && resumed !== EXIT.waiting) return resumed;
+    return onTerminal((await find(id)).s, kind);
   }
 
   if (sub === 'herdr') {
@@ -523,7 +622,8 @@ export async function sessionCommand({ origin, rest }, ctx) {
  */
 export function parseSessionArgs(sub, words, fail) {
   const commands = {
-    new: { values: ['repo', 'branch', 'agent', 'model'], flags: ['no-wait', 'herdr'], words: 'prompt' },
+    new: { values: ['repo', 'branch', 'agent', 'model'], flags: ['no-wait', 'connect', 'herdr'], words: 'prompt' },
+    connect: { values: [], flags: ['shell'], words: 'id' },
     herdr: { values: [], flags: [], words: 'id' },
     list: { values: [], flags: ['all'], words: null },
     get: { values: [], flags: [], words: 'id' },
