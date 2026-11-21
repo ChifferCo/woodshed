@@ -54,6 +54,10 @@ export function normalAddress(address) {
 export function parseTrustedProxies(value) {
   const text = String(value ?? '').trim();
   const names = !text ? DEFAULT_TRUSTED : text.toLowerCase() === 'none' ? [] : text.split(',').map((s) => s.trim()).filter(Boolean);
+  // A list of separators alone would trust nobody without saying so: `none` is how that is said.
+  if (text && text.toLowerCase() !== 'none' && !names.length) {
+    throw new Error(`WOODSHED_TRUSTED_PROXIES is ${text}, which lists no address: list them comma-separated, or say none`);
+  }
   const list = new net.BlockList();
   for (const name of names) {
     const [address, bits, extra] = name.split('/');

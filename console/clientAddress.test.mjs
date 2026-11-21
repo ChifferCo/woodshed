@@ -40,6 +40,7 @@ test('WOODSHED_TRUSTED_PROXIES takes addresses and ranges, and refuses anything 
   const docker = parseTrustedProxies('172.18.0.0/16');
   assert.equal(clientAddress(req('172.18.0.3', '198.51.100.9'), docker), '198.51.100.9');
   assert.equal(clientAddress(req('127.0.0.1', '198.51.100.9'), docker), '127.0.0.1', 'a list replaces loopback, never adds to it');
+  assert.throws(() => parseTrustedProxies(' , ,'), /lists no address/, 'commas alone are not none');
   for (const bad of ['caddy', '10.0.0.0/', '10.0.0.0/33', '::1/129', '10.0.0.0/8/1', '10.0.0.0/x']) {
     assert.throws(() => parseTrustedProxies(bad), /WOODSHED_TRUSTED_PROXIES has/, bad);
   }
