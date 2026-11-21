@@ -386,7 +386,9 @@ test('decoded transcript credential headers refuse a move before push or upload'
   const listValue = JSON.stringify({ type: 'tool_result', headers: { Authorization: [`Bearer ${value}`] } });
   const pair = JSON.stringify({ type: 'tool_result', headers: [['Authorization', `Bearer ${value}`]] });
   const requestLog = JSON.stringify({ type: 'tool_result', headers: [{ name: 'Authorization', value: `Bearer ${value}` }] });
-  fs.appendFileSync(file, `${[raw, escaped, listValue, pair, requestLog].join('\n')}\n`);
+  const output = JSON.stringify({ type: 'tool_result', content: JSON.stringify({ headers: { Authorization: `Bearer ${value}` } }, null, 2) });
+  const wrapped = JSON.stringify({ type: 'tool_result', content: JSON.stringify({ stdout: output }) });
+  fs.appendFileSync(file, `${[raw, escaped, listValue, pair, requestLog, output, wrapped].join('\n')}\n`);
   fs.writeFileSync(path.join(l.repo.bare, 'hooks', 'pre-receive'), '#!/bin/sh\ntouch push-started\n', { mode: 0o755 });
 
   const out = await l.run(['herdr', 'move', '--space', 'api', '--to', 'new', '--restart', 'never', '--console', ORIGIN, '--json']);
@@ -397,6 +399,8 @@ test('decoded transcript credential headers refuse a move before push or upload'
     { address: 't1', line: 5, kind: 'a credential header' },
     { address: 't1', line: 6, kind: 'a credential header' },
     { address: 't1', line: 7, kind: 'a credential header' },
+    { address: 't1', line: 8, kind: 'a credential header' },
+    { address: 't1', line: 9, kind: 'a credential header' },
   ]);
   assert.ok(!(out.out + out.err).includes(value));
   assert.ok(!l.calls.some(([method]) => method === 'POST'));
@@ -413,6 +417,7 @@ test('credential headers in an untracked request log refuse the move before push
   const logs = [
     ['request.log', `GET /fixture\nAuthorization: Bearer ${value}\n${JSON.stringify(record)}\n`, [2, 3]],
     ['request.json', `${JSON.stringify(record, null, 2)}\n`, [null]],
+    ['tool-output.json', `${JSON.stringify({ stdout: JSON.stringify(record) }, null, 2)}\n`, [null]],
   ];
   for (const [file, content, lines] of logs) {
     const trace = path.join(l.repo.root, file);

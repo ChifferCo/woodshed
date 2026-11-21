@@ -147,24 +147,31 @@ const CREDENTIAL_HEADER_TEXT = new RegExp(`(?:^|[^\\w-])(?:${headerNames})[\\t ]
 const isCredentialHeader = (name) => typeof name === 'string' && CREDENTIAL_HEADERS.includes(name.trim().toLowerCase());
 const hasHeaderValue = (value) => (Array.isArray(value) ? value : [value]).some((part) => typeof part === 'string' && part.trim());
 
-function hasStructuredCredentialHeader(text) {
-  if (!/^\ufeff?[\t\r\n ]*(?:\{|\[|")/.test(text)) return false;
-  let record;
-  try { record = JSON.parse(text.replace(/^\ufeff/, '')); } catch { return false; }
-  const pending = [record];
+function credentialHeaderKind(text) {
+  const header = 'a credential header';
+  const pending = [text];
+  // Keep the existing per-record scan and bound extra decoding by both the input length and the blob scan limit.
+  let remaining = text.length + Math.min(text.length * 4, SCAN_BYTES);
   while (pending.length) {
     const item = pending.pop();
-    if (typeof item === 'string' && CREDENTIAL_HEADER_TEXT.test(item)) return true;
+    if (typeof item === 'string') {
+      if (CREDENTIAL_HEADER_TEXT.test(item)) return header;
+      if (!/^\ufeff?[\t\r\n ]*(?:\{|\[|")/.test(item)) continue;
+      remaining -= item.length;
+      if (remaining < 0) return 'embedded JSON exceeds the credential scan budget';
+      try { pending.push(JSON.parse(item.replace(/^\ufeff/, ''))); } catch {}
+      continue;
+    }
     if (!item || typeof item !== 'object') continue;
     // Structured request logs also record headers as [name, value] pairs and name/value objects.
-    if (Array.isArray(item) && item.length === 2 && isCredentialHeader(item[0]) && hasHeaderValue(item[1])) return true;
-    if (isCredentialHeader(item.name) && hasHeaderValue(item.value)) return true;
+    if (Array.isArray(item) && item.length === 2 && isCredentialHeader(item[0]) && hasHeaderValue(item[1])) return header;
+    if (isCredentialHeader(item.name) && hasHeaderValue(item.value)) return header;
     for (const [key, value] of Object.entries(item)) {
-      if (isCredentialHeader(key) && hasHeaderValue(value)) return true;
+      if (isCredentialHeader(key) && hasHeaderValue(value)) return header;
       pending.push(value);
     }
   }
-  return false;
+  return null;
 }
 
 // Find the URL delimiter first so scanning an arbitrary string never retries every possible scheme prefix.
@@ -214,10 +221,13 @@ export function secretsIn(text, before = '', { credentialHeaders = false } = {})
   const found = [];
   const source = String(text);
   const lines = source.split('\n');
+  let headerFinding = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (credentialHeaders && (CREDENTIAL_HEADER_TEXT.test(line) || hasStructuredCredentialHeader(line))) {
-      found.push({ line: i + 1, kind: 'a credential header' });
+    const kind = credentialHeaders ? credentialHeaderKind(line) : null;
+    if (kind) {
+      found.push({ line: i + 1, kind });
+      headerFinding = true;
     }
     for (const { user, end } of urlPasswords(line)) {
       if (before.includes(line.slice(user, end + 1))) continue;
@@ -231,9 +241,9 @@ export function secretsIn(text, before = '', { credentialHeaders = false } = {})
     }
   }
   // JSONL is checked by line above. Also check a complete document within the blob scan budget.
-  if (credentialHeaders && lines.length > 1 && source.length <= SCAN_BYTES
-      && !found.some(({ kind }) => kind === 'a credential header') && hasStructuredCredentialHeader(source)) {
-    found.push({ line: null, kind: 'a credential header' });
+  if (credentialHeaders && !headerFinding && lines.length > 1 && source.length <= SCAN_BYTES) {
+    const kind = credentialHeaderKind(source);
+    if (kind) found.push({ line: null, kind });
   }
   return found;
 }

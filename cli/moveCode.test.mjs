@@ -38,6 +38,16 @@ test('secrets are found by name and by content, said by kind and line, and an ex
   assert.deepEqual(secretsIn(`x ${aws} AKIA${'N'.repeat(16)}`, `old ${aws}`), [{ line: 1, kind: 'an AWS access key' }], 'a new one beside it is new');
 });
 
+test('embedded JSON inspection allows ordinary tool output and refuses when decoding exceeds its budget', () => {
+  let output = JSON.stringify({ headers: { Accept: 'application/json' }, note: 'x'.repeat(4096) });
+  output = JSON.stringify({ stdout: output });
+  assert.deepEqual(secretsIn(output, '', { credentialHeaders: true }), []);
+  for (let layer = 0; layer < 7; layer++) output = JSON.stringify({ stdout: output });
+  assert.deepEqual(secretsIn(output, '', { credentialHeaders: true }), [
+    { line: 1, kind: 'embedded JSON exceeds the credential scan budget' },
+  ]);
+});
+
 test('the work is frozen from a temporary index: untracked files in, ignored ones out, and the person\'s index, branch and files untouched', async (t) => {
   const { root, sh, git } = repoFor(t);
   fs.writeFileSync(path.join(root, 'README.md'), '# app, changed\n');
