@@ -431,14 +431,15 @@ Still specific to one repo, and not yet settings:
 
 ## Merge risk in a review session
 
-A Woodshed review session assigns High when the change introduces a plausible serious failure. The risk check names
-the failure, who or what it affects, and a verification step. Medium covers meaningful changes with contained or
-reversible consequences, or changes that need more than a quick check. Low covers narrow changes with limited
-consequences that are easy to verify. The base branch's `.woodshed/riskAreas.md` helps reviewers look for failures
-specific to the repo.
+This rubric applies to every repository reviewed in a Woodshed session. For High, the reviewer should identify a
+plausible serious failure introduced by the change, who or what it affects, and a verification step. Medium covers
+meaningful changes with contained or reversible consequences, or changes that need more than a quick check. Low
+covers narrow changes with limited consequences that are easy to verify. The base branch's `.woodshed/riskAreas.md`
+serves as guidance for finding repository-specific failures. The reviewer still evaluates each change against the
+rubric.
 
-The highest reported tier wins. When both reviewers rate the change High, the check prefers a report with a failure
-reason and a pre-merge check.
+The highest reported tier wins even if the reviewer omits the failure reason or verification step. When both reviewers
+rate the change High, the check prefers a report with both details.
 
 ## The review in another repo
 
@@ -466,7 +467,7 @@ jobs:
 - `rules`: the repo's rule files, separated by spaces (default `CLAUDE.md .woodshed/rules.md CONTRIBUTING.md`).
 - `instructions`: a file saying what this repo wants a review to look for, added to the prompt (default
   `.woodshed/review.md`; none is fine).
-- `risk-areas`: a file listing the changes this repo always counts as High merge risk (default
+- `risk-areas`: a file listing changes the reusable workflow always counts as High merge risk (default
   `.woodshed/riskAreas.md`; none is fine).
 - `allowed-bots`: bots whose pull requests are reviewed, such as the App an installation opens them as (default none,
   or the calling repo's `REVIEW_ALLOWED_BOTS` variable).
