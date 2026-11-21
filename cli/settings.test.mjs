@@ -101,7 +101,7 @@ function listen(server) {
 // laptop whose home is `home`.
 async function setUp(t, { home = laptopHome(t), claudeSettings: withSettings = true, canWrite = null } = {}) {
   const store = { state: {}, save() {} };
-  const cli = createCliSignIn({ store });
+  const cli = createCliSignIn({ store, canWrite });
   const homes = memoryHomes();
   const claudeSettings = withSettings ? createClaudeSettings({ store: homes }) : null;
   const projects = [{ name: 'app', repo: 'acme/app', default: true }, { name: 'infra', repo: 'acme/infra' }];
@@ -115,7 +115,7 @@ async function setUp(t, { home = laptopHome(t), claudeSettings: withSettings = t
     view: async () => ({ projects: [projects[0]], defaultProject: 'app' }),
     forStart: async (_login, name) => (name === 'app' ? projects[0] : null),
   };
-  const auth = { enabled: () => true, available: () => true, sessionFor: async () => null, ...(canWrite ? { canWrite } : {}) };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
   const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, cli, claudeSettings, repoSettings, projectAccess });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
@@ -651,7 +651,7 @@ test('pull leaves a local file over 1 MB as it is, rather than planning it as ne
   assert.match(plan.items.find((i) => i.name === '~/.claude/skills/big/SKILL.md').reason, /^yours is over 1 MB, and is left as it is/);
 });
 
-test('the console holds the settings routes to a browser sign-in: write access gone ends the token, and a page\'s call is refused', async (t) => {
+test('the settings routes take the token\'s one check: write access gone ends the token, and a page\'s call is refused', async (t) => {
   const c = await setUp(t, { canWrite: async () => true });
   const get = (headers = {}) => fetch(`${c.origin}/api/cli/settings`, { headers: { authorization: `Bearer ${c.token}`, ...headers } });
   assert.equal((await get()).status, 200);
