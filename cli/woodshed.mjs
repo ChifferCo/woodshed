@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-// The woodshed command line: signs in to a Woodshed console, says who is signed in, starts and manages sessions, and
-// opens a pipe into one's own running session. Later commands (settings) are added here. Plain Node 22, no
-// dependencies, as the rest of Woodshed (cli/README.md).
+// The woodshed command line: signs in to a Woodshed console, says who is signed in, starts and manages sessions, opens
+// a pipe into one's own running session, and reads and sets one's choices on My settings. Later commands are added
+// here. Plain Node 22, no dependencies, as the rest of Woodshed (cli/README.md).
 //
 //   woodshed login  [--console <url>] [--no-browser]   a code to approve in the browser, then a token kept in the keychain
 //   woodshed logout [--console <url>]                  ends that token at the console and forgets it here
 //   woodshed status [--console <url>]                  the console, its org, and who is signed in
 //   woodshed tunnel <id> -- <line>                     runs <line> in your session, piped to this terminal (tunnel.mjs)
 //   woodshed session new|list|get|stop|resume|remove|extend|limits   sessions (sessions.mjs)
+//   woodshed config list|get|set                       your choices on My settings, never a secret (config.mjs)
 //
 // Every command takes --json. Exit codes: 0 done, 2 waiting on a person (a sign-in or an approval), 3 refused, 1 any
 // other failure.
@@ -21,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { createCredentials } from './credentials.mjs';
 import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
+import { configCommand } from './config.mjs';
 
 export const VERSION = '0.1.0';
 export const DEFAULT_CONSOLE = 'https://console.woodshed.run';
@@ -38,6 +40,7 @@ Commands:
             run <line> in your running session, with this command's stdin, stdout and stderr; exits with its
             exit code, or 255 when the pipe could not open or broke
   session   start, list, stop, resume and remove sessions, and give them more time: woodshed session --help
+  config    your choices on My settings (terminal, reviews, default repo, …), never a secret: woodshed config --help
 
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};
@@ -59,7 +62,8 @@ class CliError extends Error {
 /**
  * @returns {{command: string|null, args: string[], rest: string[]|null, console: string|null, json: boolean,
  *            browser: boolean, help: boolean}}  `args` follow the command; `rest` is everything after `--`. For
- *            `session`, `args` also takes its own options (sessions.mjs reads them), and `rest` its prompt
+ *            `session` and `config`, `args` also takes their own words and options (sessions.mjs and config.mjs read them),
+ *            and `rest` a session's prompt or a config value
  */
 export function parseArgs(argv) {
   const out = { command: null, args: [], rest: null, console: null, json: false, browser: true, help: false };
@@ -75,7 +79,7 @@ export function parseArgs(argv) {
       if (!argv[i + 1]) throw new CliError('--console needs a URL');
       out.console = argv[++i];
     } else if (arg.startsWith('--console=')) out.console = arg.slice('--console='.length);
-    else if (out.command === 'session') out.args.push(arg);
+    else if (out.command === 'session' || out.command === 'config') out.args.push(arg);
     else if (arg.startsWith('-')) throw new CliError(`unknown option ${arg}\n\n${USAGE}`);
     else if (!out.command) out.command = arg;
     else if (out.command === 'tunnel') out.args.push(arg);
@@ -399,6 +403,7 @@ export async function main(argv, deps = {}) {
     const args = parseArgs(argv);
     json = args.json;
     if (args.command === 'session' && args.help) return await sessionCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
+    if (args.command === 'config' && args.help) return await configCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.help || !args.command || args.command === 'help') {
       stdout.write(`${USAGE}\n`);
       return args.command || args.help ? EXIT.done : EXIT.failed;
@@ -415,6 +420,12 @@ export async function main(argv, deps = {}) {
         call, token: signedIn(origin).token, stdout, stderr, say, emit, json, sleep, now, EXIT,
         fail: (message, opts) => new CliError(message, opts),
         confirm: deps.confirm ?? ((question) => confirmOnTerminal(question, stderr)),
+      });
+    }
+    if (args.command === 'config') {
+      // A value may follow `--`, so one that starts with - is never read as an option.
+      return await configCommand({ origin, rest: [...args.args, ...(args.rest ?? [])] }, {
+        call, token: signedIn(origin).token, stdout, say, emit, json, EXIT, fail: (message, opts) => new CliError(message, opts),
       });
     }
     throw new CliError(`unknown command ${args.command}\n\n${USAGE}`);

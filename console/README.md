@@ -1506,7 +1506,11 @@ starts a sign-in to hand someone the link of. The code lasts 10 minutes. The tok
 database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. Besides `/api/cli/*` and
 `/api/tunnel/exec/*` it signs in to `woodshed session`'s routes alone (`console/cliSessions.mjs`): `GET /api/sessions`, `GET /api/my/projects`,
 `POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume|remove` and `POST /api/sessions/<id>/stop|extend|limits`,
-each answered by the page's own code as the token's person, so it sees and changes exactly what they could on the page.
+and to `woodshed config`'s (`console/cliConfig.mjs`): `GET /api/cli/config`, the person's choices on My settings and
+never a secret, and `POST /api/my/terminal`, `/api/my/reviews`, `/api/my/codex-auth/reviews`,
+`/api/my/claude-token/shared`, `/api/my/projects/default` and `/api/my/github/identity`, which answer the token with
+that same view rather than the page's whole My settings answer. Each is answered by the page's own code as the token's
+person, so it sees and changes exactly what they could on the page.
 Every other route refuses it with 403, and so do those for a call with an Origin header (a page's). Those writes need no
 `x-woodshed` header or Origin, which only stand between another site and the browser's cookie; each logs
 `cliSessions: call` with the login, the token's id and the path, and a refusal `cliSessions: refused, not a route the
