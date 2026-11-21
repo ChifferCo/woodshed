@@ -144,8 +144,19 @@ const CREDENTIAL_HEADERS = ['authorization', 'proxy-authorization', 'cookie', 'x
 const headerNames = CREDENTIAL_HEADERS.join('|');
 export const CREDENTIAL_HEADER_ARGUMENT = new RegExp(`^(--header=|-H)?\\s*(?:${headerNames})\\s*:`, 'i');
 const CREDENTIAL_HEADER_TEXT = new RegExp(`(?:^|[^\\w-])(${headerNames})[\\t ]*:[\\t ]*(["'\\x60]?)([^"'\\x60,()}\\r\\n\\0]+)`, 'gi');
-const COOKIE_HEADER_START = /(^|[^\w-])cookie[\t ]*:/gi;
-const DIGEST_HEADER_TEXT = /(?:^|[^\w-])((?:proxy-)?authorization)[\t ]*:[\t ]*["'\x60]?(digest[\t ]+[^\r\n\0]+)/gi;
+// Keep each quoted curl header separate while allowing quotes inside plain HTTP field values.
+function headerTextPatterns(names, valueStart = '') {
+  const field = `(${names})[\\t ]*:`;
+  const start = `${field}[\\t ]*(${valueStart}`;
+  const double = `"${start}(?:\\\\[^\\r\\n\\0]|[^"\\\\\\r\\n\\0])*)`;
+  const single = `'${start}[^'\\r\\n\\0]*)`;
+  const inline = `(?:^|[\\t ])(?:-H[\\t ]*|--header(?:=|[\\t ]+))${field}(${valueStart}[^\\s"'\\0]*)`;
+  return {
+    arguments: new RegExp(`${double}|${single}|${inline}`, 'gi'),
+    text: new RegExp(`(?:^|[^"'\\w-])${start}[^\\r\\n\\0]*)`, 'gi'),
+  };
+}
+const RICH_HEADER_TEXT = [headerTextPatterns('cookie'), headerTextPatterns('(?:proxy-)?authorization', 'digest[\\t ]+')];
 const isCredentialHeader = (name) => typeof name === 'string' && CREDENTIAL_HEADERS.includes(name.trim().toLowerCase());
 const AUTH_SCHEME = /^(?:bearer|basic|token)[\t ]+/i;
 const DIGEST_SCHEME = /^digest[\t ]+/i;
@@ -205,21 +216,14 @@ function credentialHeaderKind(text, isNew) {
           // The string may contain plain text that starts like JSON.
         }
       }
-      for (const line of item.split(/[\r\n\0]/)) {
-        const cookies = [...line.matchAll(COOKIE_HEADER_START)];
-        for (const [index, match] of cookies.entries()) {
-          const [prefix, delimiter] = match;
-          let value = line.slice(match.index + prefix.length, cookies[index + 1]?.index);
-          // In curl and similar commands the quote wraps the header name as well as the value.
-          if (/^["'\x60]$/.test(delimiter)) {
-            const end = value.indexOf(delimiter);
-            if (end !== -1) value = value.slice(0, end);
-          }
-          if (hasValue('cookie', value)) return header;
+      for (const pattern of RICH_HEADER_TEXT) {
+        for (const [, doubleName, double, singleName, single, inlineName, inline] of item.matchAll(pattern.arguments)) {
+          const value = double === undefined ? single ?? inline : double.replace(/\\"/g, '"');
+          if (hasValue(doubleName ?? singleName ?? inlineName, value)) return header;
         }
-      }
-      for (const [, name, value] of item.matchAll(DIGEST_HEADER_TEXT)) {
-        if (hasValue(name, value)) return header;
+        for (const [, name, value] of item.matchAll(pattern.text)) {
+          if (hasValue(name, value)) return header;
+        }
       }
       for (const match of item.matchAll(CREDENTIAL_HEADER_TEXT)) {
         const [whole, name, quote, value] = match;

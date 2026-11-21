@@ -63,6 +63,7 @@ test('credential headers distinguish literals from references and placeholders',
     { line: 1, kind: 'a credential header' },
   ]);
   assert.deepEqual(secretsIn('Cookie: theme=${THEME}; session=abc==', '', options), [{ line: 1, kind: 'a credential header' }]);
+  assert.deepEqual(secretsIn('Cookie: session=cookie:inert-fixture', '', options), [{ line: 1, kind: 'a credential header' }]);
 });
 
 test('embedded JSON inspection allows ordinary tool output and refuses when decoding exceeds its budget', () => {
