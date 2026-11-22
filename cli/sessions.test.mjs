@@ -1532,6 +1532,12 @@ test('session share shows who can open the app, switches members, makes a link o
   assert.equal(event.link.expiresAt, c.now() + 168 * 3_600_000);
   assert.equal(event.link.by, 'mia-dev');
 
+  const home = await c.run(['session', 'share', 'aaaa0001', '--link', '--hours', '1', '--path', '/']);
+  assert.equal(home.code, EXIT.done, home.err);
+  assert.doesNotMatch(home.out, /does not take a page/, 'the home page is where it lands anyway');
+  const homeId = /Link ([0-9a-f]{8}) /.exec(home.out)[1];
+  assert.equal((await c.run(['session', 'share', 'aaaa0001', '--revoke', homeId])).code, EXIT.done);
+
   const listed = await c.run(['session', 'share', 'aaaa0001']);
   assert.match(listed.out, /Members of this console: on, anyone signed in to the console can open it\n/);
   assert.match(listed.out, new RegExp(` {2}Link ${linkId}: made by @mia-dev 2026-11-20 10:00 UTC, ends 2026-11-21 10:00 UTC\\n`));

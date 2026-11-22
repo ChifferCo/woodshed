@@ -1410,6 +1410,8 @@ export function parseSessionArgs(sub, words, fail) {
       if (!SHARE_HOURS.includes(hours) || !/^\d+$/.test(out.hours ?? '24')) throw fail(`--hours must be 1, 24 or 168 (an hour, a day or a week, as the page's Share the app offers), not ${out.hours}`);
       out.hours = hours;
     }
+    // The app's home is where a link lands anyway: no path to ask for.
+    if (out.path === '/') delete out.path;
     if (out.path !== undefined && (!out.path.startsWith('/') || /^\/[/\\]/.test(out.path) || out.path.length > 500)) throw fail(`--path needs a page of the app, starting with one /, such as /landing-a${out.path.startsWith('-') ? `, not ${out.path}` : ''}`);
   }
   if (sub === 'watch') {
