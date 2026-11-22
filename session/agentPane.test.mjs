@@ -163,8 +163,13 @@ test('hc\'s word on the agent is its terminal\'s status, and the shell under it 
   assert.equal(await hcPane(quiet).agent(), null, 'nothing reported: the agent\'s own reader stands alone');
 });
 
-test('the session\'s pane is tmux\'s unless the entrypoint said Herdr', async () => {
+test('the session\'s pane is tmux\'s unless the entrypoint said Herdr', async (t) => {
   const { run, calls } = fakeRun();
+  // Unset, as the entrypoint leaves it in a session that is not Herdr's: not this run's own, which a Herdr session sets.
+  const own = process.env.WOODSHED_TERMINAL;
+  delete process.env.WOODSHED_TERMINAL;
+  t.after(() => { if (own !== undefined) process.env.WOODSHED_TERMINAL = own; });
+  assert.equal(agentPane(run).terminal, 'tmux');
   assert.equal(agentPane(run, { terminal: undefined }).terminal, 'tmux');
   assert.equal(agentPane(run, { terminal: 'tmux' }).terminal, 'tmux');
   const pane = agentPane(run, { terminal: 'herdr', bin: 'hc' });

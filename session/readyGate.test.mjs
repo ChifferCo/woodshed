@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
 import { appStartedIn, brokenFileRefusal, marksReady, refusal } from './readyGate.mjs';
 import { fixtureApp, fixtureCheckout, fixtureProject, fixtureProjectFiles } from '../shared/projectFixture.mjs';
 
@@ -94,7 +95,7 @@ test('run as the hook, it blocks with exit code 2 and its reason on stderr, and 
   const run = (command) => spawnSync('node', [script], {
     input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd: repo }),
     // Without the session's DEFAULT_BRANCH, which would name a branch the fixture repo (on master) does not have.
-    env: { ...process.env, HOME: home, DEFAULT_BRANCH: '' },
+    env: { ...isolatedEnv(), HOME: home, DEFAULT_BRANCH: '' },
     encoding: 'utf8',
   });
 
@@ -156,7 +157,7 @@ test('run as the hook on a project of several apps, it reads each app\'s own log
   fs.writeFileSync(path.join(repo, 'admin', 'users.tsx'), 'x');
   const run = () => spawnSync('node', [script], {
     input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'gh pr create -t x' }, cwd: repo }),
-    env: { ...process.env, HOME: home, DEFAULT_BRANCH: '' },
+    env: { ...isolatedEnv(), HOME: home, DEFAULT_BRANCH: '' },
     encoding: 'utf8',
   });
   fs.mkdirSync(path.join(home, 'logs'));
@@ -186,7 +187,7 @@ test('a branch that breaks its own project file is refused though the installati
   const home = scratch('readyGate-broken-home-');
   const run = () => spawnSync('node', [script], {
     input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'gh pr create -t x -F b.md' }, cwd: repo }),
-    env: { ...process.env, HOME: home, DEFAULT_BRANCH: 'main', WOODSHED_PROJECT_FILES_DIR: files },
+    env: { ...isolatedEnv(), HOME: home, DEFAULT_BRANCH: 'main', WOODSHED_PROJECT_FILES_DIR: files },
     encoding: 'utf8',
   });
   fs.mkdirSync(path.join(repo, '.woodshed'));

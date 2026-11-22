@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedEnv } from '../../test/isolatedEnv.mjs';
 import { loadProject } from '../../shared/project.mjs';
 import { fixtureCheckout, fixtureProject } from '../../shared/projectFixture.mjs';
 import { createDbAdminRunner } from './dbAdminRunner.mjs';
@@ -198,7 +199,7 @@ test('the box\'s script renders in a container, pulls before it swaps, and leave
   const log = path.join(root, 'docker.log');
   fakeDocker(bin, log);
   fs.mkdirSync(path.join(root, 'var/lib/woodshed/console'), { recursive: true });
-  const run = (spec, opts) => spawnSync('bash', ['-c', servicesScript(root, opts)], { input: spec, encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+  const run = (spec, opts) => spawnSync('bash', ['-c', servicesScript(root, opts)], { input: spec, encoding: 'utf8', env: { ...isolatedEnv(), PATH: `${bin}:${process.env.PATH}` } });
 
   const first = run(specOf(checkout([PDF])));
   assert.equal(first.status, 0, first.stderr);
@@ -224,7 +225,7 @@ test('the box\'s script renders in a container, pulls before it swaps, and leave
 
   // Containers that will not start put back the ones before, with their URLs.
   fs.writeFileSync(log, '');
-  const failing = spawnSync('bash', ['-c', servicesScript(root)], { input: specOf(checkout([PDF, MAIL])), encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAIL_UP_WITH: 'mail' } });
+  const failing = spawnSync('bash', ['-c', servicesScript(root)], { input: specOf(checkout([PDF, MAIL])), encoding: 'utf8', env: { ...isolatedEnv(), PATH: `${bin}:${process.env.PATH}`, FAIL_UP_WITH: 'mail' } });
   assert.equal(failing.status, 1);
   assert.match(failing.stderr, /the new services did not start; starting the ones before/);
   assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(dir, 'compose.json'), 'utf8')).services), ['pdf']);
@@ -247,7 +248,7 @@ test('the box\'s script renders in a container, pulls before it swaps, and leave
 
 test('the deploy runs `spec` in its checkout, with the repo told from the origin', () => {
   const dir = checkout([PDF]);
-  const spec = execFileSync('node', [path.join(import.meta.dirname, 'services.mjs'), 'spec'], { cwd: dir, encoding: 'utf8', env: { ...process.env, GITHUB_REPOSITORY: '', REPO_DIR: '' } }).trim();
+  const spec = execFileSync('node', [path.join(import.meta.dirname, 'services.mjs'), 'spec'], { cwd: dir, encoding: 'utf8', env: { ...isolatedEnv(), GITHUB_REPOSITORY: '', REPO_DIR: '' } }).trim();
   assert.equal(decode(spec).repo, 'acme/app');
   assert.equal(decode(spec).services[0].name, 'pdf');
 });

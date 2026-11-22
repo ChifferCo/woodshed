@@ -14,6 +14,16 @@
 //   woodshed session prune
 //   woodshed session extend <id>
 //   woodshed session limits <id> [--idle-hours <n>|default] [--lifetime-hours <n>|default]
+//   woodshed session watch [--kind review,qa,...] [--everyone] [--every <seconds>] [--herdr]
+//
+// list, get and watch name each session's kind: your own private one, a shared one, a review or QA run the console
+// started on a pull request (pullRequests.review or .qa with runner: woodshed), or a question from Slack. A review's
+// or QA's pull request is named, and `inMine` is the console's rail's Mine (console/public/common.js, inMine).
+// watch follows the console's list and prints one event per session that starts, runs, is done with its turn, needs its
+// person, pauses, stops, finishes or fails (watch.mjs), for a Herdr mod or a script to turn into notifications. A session
+// of yours that is a machine in Herdr is said to be unreachable when it pauses or stops, until `session herdr` brings it
+// back. --herdr runs the watch in a terminal of hc's own that reports each session as an OSC 7501 record, so Herdr tells
+// of them as of its own agents without any session being opened as a machine.
 //
 // Nothing here keeps a session awake: it pauses when idle and stops at its lifetime, as its limits say, unless its
 // person (or their agent) asks for more time with extend or limits. list and get say when each will.
@@ -30,7 +40,16 @@
 // from that terminal), so an agent there can `hc wait --children` on it: the session, started or resumed with
 // herdrParent, waits for it rather than make its own.
 
-import { HC_MINIMUM, addMachine, agentOn, hcVersion, leftoverMachines, machineName, nameAgentPlace, parentTerminal, removeMachine, shellQuote, startAgentTerminal } from './hc.mjs';
+import {
+  HC_MINIMUM, WATCH_SPACE, WATCH_TERMINAL, addMachine, agentOn, hcVersion, leftoverMachines, machineName, nameAgentPlace, parentTerminal, removeMachine,
+  shellQuote, startAgentTerminal, startWatcher, tunnelMachines,
+} from './hc.mjs';
+import { changes, eventDetail, herdrClear, herdrRecord, parseEvery, parseKinds, unreachableText } from './watch.mjs';
+
+// Set in the environment of the watch --herdr starts in hc: that copy reports, rather than starting another.
+export const WATCH_IN_HERDR = 'WOODSHED_WATCH_IN_HERDR';
+// How long an ended session's record stays on the watch's terminal in Herdr.
+const RECORD_KEEP_MS = 3_600_000;
 
 // A terminal whose connection dropped is opened again for this long, waiting a little longer each time.
 const RECONNECT_GIVE_UP_MS = 60_000;
@@ -70,9 +89,10 @@ Commands:
       --no-notify            (and --no-notify, --end-with-parent as there). A running session's terminal is there
       --end-with-parent      already, with no parent, and hc gives a terminal its parent only as it starts: only one
                              still waiting for its terminal (started with --parent) takes one
-  list [--all]               your sessions and the shared ones you can see, with their state and when each
-                             pauses or stops by itself; --all also lists those that ended
-  get <id>                   one session: its state, branch, pull request, its app, and when it pauses or stops
+  list [--all]               your sessions and the shared ones you can see, with their state, kind (private,
+                             shared, a review or QA of a pull request, ask) and when each pauses or stops by
+                             itself; --all also lists those that ended
+  get <id>                   one session: its state, kind, branch, pull request, its app, and when it pauses or stops
   app <id> [start|stop]      whether a running session's app is up, and its link to open in a browser; start starts
                              it (one to three minutes) and waits until it is up, stop stops it
       --app <name>           start this one of the project's apps, where it has several
@@ -89,6 +109,14 @@ Commands:
       --lifetime-hours <n>   stop this many hours after it started; default goes back to yours
                              A running session is never kept awake by a terminal or a tunnel: extend or limits
                              is how you, or your agent, ask for more time.
+  watch [options]            follow the console and print one line per session that starts, runs, is done with its
+                             turn, needs you, pauses, stops, finishes or fails, until stopped (Ctrl-C); with --json
+                             one event per line. Opens no session: a machine in Herdr is only said to be unreachable
+      --kind <kinds>         only these, separated by commas: private, shared, review, qa, ask (default all)
+      --everyone             every session you can see, not only Mine (yours, and those you started or have)
+      --every <seconds>      how often it asks the console (default 15, at least 5)
+      --herdr                run it in Herdr instead, in hc terminal ${WATCH_TERMINAL}, which reports each session's
+                             state as Herdr's own agents report theirs (OSC 7501), and return
 
 Exit codes: 0 done, 2 waiting on a person (sign in, a session that needs you, a confirmation), 3 refused, 1 anything else.`;
 
@@ -211,6 +239,20 @@ export function pullOf(url, chip) {
   };
 }
 
+/**
+ * The pull request a session is on, as the console's chip reads it: the last one it opened, or for a review, a QA run or
+ * a session from a pull request's label, the one it was started on (pullRequestOf). The chip is the opened one's, so
+ * the started-on one has its number and link alone when the session opened another.
+ * @returns {ReturnType<typeof pullOf>}
+ */
+function pullRequestChip(s) {
+  const own = pullOf(s.prUrl, s.pr);
+  if (s.kind !== 'pr') return own;
+  const on = pullRequestOf(s);
+  if (!on || own?.number === on.number) return own ?? (on && pullOf(on.url, null));
+  return pullOf(on.url, null);
+}
+
 /** `#123 open · approved · checks 3 passing`, a pull request's line as the chips would say it. */
 export function pullText(p) {
   const bits = [`#${p.number}`, p.state ?? 'not read yet'];
@@ -225,6 +267,47 @@ function ended(s) {
   if (LIVE.has(s.status)) return false;
   if (s.owner) return false;
   return !s.kept || s.kind === 'ask';
+}
+
+/**
+ * What a session is, as the console's page tells them apart: a review or QA run it started on a pull request
+ * (console/public/common.js, isPullCheck; the console's own sessions.mjs reads its `review` or `qa`), a question from
+ * Slack, a private session, or a shared one.
+ * @returns {'review'|'qa'|'ask'|'private'|'shared'}
+ */
+export function kindOf(s) {
+  if (s.trigger === 'review' || (s.review && typeof s.review === 'object')) return 'review';
+  if (s.trigger === 'qa' || (s.qa && typeof s.qa === 'object')) return 'qa';
+  if (s.kind === 'ask') return 'ask';
+  return s.owner ? 'private' : 'shared';
+}
+
+const PULL_URL_RE = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d+)$/;
+
+/**
+ * The pull request a session is on: the one a review or QA run, or a session from a pull request's label, was started
+ * for, else the last one it opened.
+ * @returns {{number: number, url: string}|null}
+ */
+export function pullRequestOf(s) {
+  const repo = typeof s.repo === 'string' && /^[\w.-]+\/[\w.-]+$/.test(s.repo) ? s.repo : null;
+  if (s.kind === 'pr' && Number.isSafeInteger(s.number) && s.number > 0 && repo) return { number: s.number, url: `https://github.com/${repo}/pull/${s.number}` };
+  const opened = typeof s.prUrl === 'string' ? PULL_URL_RE.exec(s.prUrl) : null;
+  return opened ? { number: Number(opened[1]), url: opened[0] } : null;
+}
+
+const sameLogin = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
+
+/** @returns {boolean}  on the rail's Mine: your own private session, or a shared one you started or have */
+export function inMine(s, login) {
+  if (s.owner) return sameLogin(s.owner, login);
+  return sameLogin(s.assignee, login) || sameLogin(s.startedBy, login);
+}
+
+/** A review's or QA's verdict, once it reported: the review's APPROVE, REQUEST_CHANGES or COMMENT, QA's check conclusion. */
+function verdictOf(s, kind) {
+  const run = kind === 'review' ? s.review : kind === 'qa' ? s.qa : null;
+  return run && typeof run === 'object' ? printable(run.conclusion, 40) : null;
 }
 
 /**
@@ -287,16 +370,24 @@ export function appText(x) {
 export function summary(s, { origin, login, appsOn = null }) {
   const { key, word } = stateOf(s);
   const hours = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
+  const kind = kindOf(s);
   return {
     id: s.id,
     title: printable(s.title),
     status: printable(s.status, 30),
     state: key,
     stateWord: word,
+    kind,
+    // Your own private session: what resume, remove, connect and herdr act on.
     mine: Boolean(s.owner) && s.owner === login,
+    // What the console's rail lists under Mine: also the shared sessions, reviews and QA runs you started or have.
+    inMine: inMine(s, login),
     shared: !s.owner,
     owner: printable(s.owner, 60),
     assignee: printable(s.assignee, 60),
+    stoppedBy: printable(s.stoppedBy, 60),
+    startedBy: printable(s.startedBy, 60),
+    verdict: verdictOf(s, kind),
     project: printable(s.project, 60),
     repo: printable(s.repo, 100),
     branch: printable(s.branch, 200),
@@ -329,10 +420,25 @@ export function summary(s, { origin, login, appsOn = null }) {
     // always, an app domain with sign-in off), null from a console that does not say.
     appSignIn: appUrlOf(s, { origin, appsOn }) ? (appsOn.ports ? false : appsOn.signIn) : null,
     // Its pull request as the console's chip reads it, every one it opened, and the command that reviews it here.
-    pullRequest: pullOf(s.prUrl, s.pr),
+    pullRequest: pullRequestChip(s),
     pullRequests: (Array.isArray(s.prs) ? s.prs : []).map((p) => pullOf(p?.url, p?.pr)).filter(Boolean),
     reviewCommand: reviewable(s, login) ? `woodshed review ${s.id}` : null,
   };
+}
+
+/** @returns {string}  `review #123` for a review or QA run, else the session's kind */
+export function kindText(x) {
+  const run = x.kind === 'review' || x.kind === 'qa';
+  return run && x.pullRequest ? `${x.kind} #${x.pullRequest.number}` : x.kind;
+}
+
+/** @returns {string}  whose a session is, in a word: a review or QA run is whoever it was started for */
+export function whoseText(x, login) {
+  if (x.kind === 'review' || x.kind === 'qa') return x.inMine ? 'you' : x.startedBy ? `@${x.startedBy}` : '-';
+  if (x.mine) return 'mine';
+  if (!x.shared) return `@${x.owner}`;
+  if (!x.assignee) return 'shared';
+  return sameLogin(x.assignee, login) ? 'you' : `@${x.assignee}`;
 }
 
 /** @returns {string}  `in 42m, idle` for a session's pause, or an empty string for none */
@@ -697,7 +803,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
     let pullsError = null;
     try {
       const body = await ask('/api/my/pulls');
-      const has = new Set(shown.flatMap((x) => [x.pullRequest, ...x.pullRequests]).filter(Boolean).map((p) => `${p.repo.toLowerCase()}#${p.number}`));
+      // A review's or QA's pullRequest is the one it was started on, which it did not open: that stays in the group.
+      const opened = (x) => [x.kind === 'review' || x.kind === 'qa' ? null : x.pullRequest, ...x.pullRequests];
+      const has = new Set(shown.flatMap(opened).filter(Boolean).map((p) => `${p.repo.toLowerCase()}#${p.number}`));
       pulls = (Array.isArray(body.pulls) ? body.pulls : [])
         .filter((p) => p?.why === 'yours' && Number.isInteger(p.number) && typeof p.repo === 'string' && !has.has(`${p.repo.toLowerCase()}#${p.number}`))
         .map((p) => ({ ...pullOf(`https://github.com/${p.repo}/pull/${p.number}`, { title: p.title, state: p.draft ? 'draft' : 'open', checks: p.checks }), project: printable(p.project, 60), branch: printable(p.branch, 200) }))
@@ -715,8 +823,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
     }
     if (!shown.length) say(opts.all ? 'No sessions.' : 'No sessions. --all also lists those that ended.');
     else {
-      const whose = (x) => (x.mine ? 'mine' : x.shared ? (x.assignee ? (x.assignee === login ? 'you' : `@${x.assignee}`) : 'shared') : `@${x.owner}`);
-      const rows = [['ID', 'STATE', 'WHOSE', 'PAUSES', 'PROJECT', 'TITLE'], ...shown.map((x) => [x.id, x.stateWord, whose(x), pauseText(x.pause, now()) || '-', x.project ?? '', x.title ?? ''])];
+      const rows = [['ID', 'STATE', 'KIND', 'WHOSE', 'PAUSES', 'PROJECT', 'TITLE'], ...shown.map((x) => [x.id, x.stateWord, kindText(x), whoseText(x, login), pauseText(x.pause, now()) || '-', x.project ?? '', x.title ?? ''])];
       const widths = rows[0].map((_, i) => Math.max(...rows.map((r) => r[i].length)));
       const indent = ' '.repeat(widths[0] + 2);
       rows.forEach((row, i) => {
@@ -776,6 +883,119 @@ export async function sessionCommand({ origin, rest }, ctx) {
     for (const name of forgot) say(`Forgot ${name} in Herdr: its session is no longer on ${origin}.`);
     for (const f of failed) stderr.write(`woodshed: ${f.error}\n`);
     return failed.length ? EXIT.failed : EXIT.done;
+  }
+
+  if (sub === 'watch') return watch();
+
+  // The watch's own flags again, for the copy of it --herdr starts in hc.
+  function watchFlags() {
+    return [
+      ...(opts.kinds ? ['--kind', [...opts.kinds].join(',')] : []),
+      ...(opts.everyone ? ['--everyone'] : []),
+      ...(opts.every !== undefined ? ['--every', String(opts.everyMs / 1000)] : []),
+    ];
+  }
+
+  // Follows the console's list until stopped, and says each session that starts, runs, is done with its turn, needs its
+  // person, pauses, stops, finishes or fails (watch.mjs). The first read only learns what is there. A console it cannot
+  // reach (a laptop asleep, a redeploy) is asked again at the same pace for as long as it runs, and what changed meanwhile
+  // is told when it answers again. Only a sign-in that ended, or a refusal, stops it. A console away at the first read is
+  // said (unreachable, then reachable) before the first read's `watching`.
+  // With --herdr it runs in a terminal of hc's own (WATCH_TERMINAL), started here, and reports each session there as an
+  // OSC 7501 record, so the Herdr app tells of them as of its own agents, with no session opened as a machine.
+  async function watch() {
+    const inHerdr = Boolean(opts.herdr) && ctx.env?.[WATCH_IN_HERDR] === '1';
+    if (opts.herdr && !inHerdr) {
+      await hcReady();
+      let started;
+      try {
+        started = await startWatcher(ctx.hc, ctx.watcherArgv([...watchFlags(), '--herdr']));
+      } catch (err) {
+        if (!err.hc) throw err;
+        throw fail(printable(err.message, 500));
+      }
+      if (json) emit({ event: 'herdr', action: started.action, terminal: WATCH_TERMINAL, address: started.address });
+      say(started.action === 'kept'
+        ? `Herdr already has ${WATCH_TERMINAL} watching: it goes on as it was started. To start it again with these options: hc kill ${WATCH_TERMINAL}, then run this again.`
+        : `Watching in Herdr: hc terminal ${WATCH_TERMINAL}, in the app's ${WATCH_SPACE} space. It reports each session's state there as Herdr's own agents report theirs. Stop it with: hc kill ${WATCH_TERMINAL}`);
+      return EXIT.done;
+    }
+    const wanted = (s, login) => (!opts.kinds || opts.kinds.has(kindOf(s))) && (opts.everyone || inMine(s, login));
+    const stamp = () => new Date(now()).toISOString();
+    // Herdr's hc, when it is here: a session of yours that is a machine there is said to be unreachable when it pauses or
+    // stops. Its machines are read only then.
+    const hcHere = ctx.platform !== 'win32' && ctx.hc ? await hcVersion(ctx.hc).then((v) => v.ok, () => false) : false;
+    const machineOf = async (x) => {
+      if (!hcHere || !x.mine) return null;
+      try {
+        return (await tunnelMachines(ctx.hc, { origin })).get(x.id) ?? null;
+      } catch (err) {
+        if (!err.hc) throw err;
+        return null;
+      }
+    };
+    // Each session's record on this terminal, with when it ended: an ended one's is kept a while, then cleared.
+    const records = new Map();
+    let phases = null;
+    let awaySince = null;
+    for (;;) {
+      if (ctx.signal?.aborted) return EXIT.done;
+      let got;
+      try {
+        got = await list();
+      } catch (err) {
+        // Any 5xx is the console's own trouble, and passes: a watch meant to run for hours outlives it.
+        if (!err.unreachable && !(err.http >= 500)) throw err;
+        if (awaySince === null) {
+          awaySince = now();
+          if (json) emit({ event: 'unreachable', at: stamp(), error: printable(err.message, 300) });
+          else stderr.write(`woodshed: ${err.message}; asking again every ${opts.everyMs / 1000} s\n`);
+        }
+        await sleep(opts.everyMs);
+        continue;
+      }
+      if (awaySince !== null) {
+        if (json) emit({ event: 'reachable', at: stamp(), awaySeconds: Math.round((now() - awaySince) / 1000) });
+        else stderr.write(`woodshed: ${origin} answers again\n`);
+        awaySince = null;
+      }
+      // Every session's phase is kept, so one that comes into Mine later (assigned to you) is not told as new.
+      const { phases: next, events } = changes(phases, got.sessions, { kindOf });
+      if (!phases) {
+        const watched = got.sessions.filter((s) => wanted(s, got.login)).length;
+        const what = opts.kinds ? [...opts.kinds].join(', ') : 'all';
+        if (json) emit({ event: 'watching', at: stamp(), console: origin, login: got.login, kinds: opts.kinds ? [...opts.kinds] : null, everyone: Boolean(opts.everyone), everySeconds: opts.everyMs / 1000, sessions: watched, herdr: inHerdr });
+        else say(`Watching ${opts.everyone ? 'every session you can see' : 'your sessions (Mine)'} on ${origin}, kinds: ${what}, every ${opts.everyMs / 1000} s${inHerdr ? ', for Herdr' : ''}. Ctrl-C stops.`);
+      }
+      phases = next;
+      for (const e of events) {
+        if (!wanted(e.session, got.login)) continue;
+        const x = summary(e.session, { origin, login: got.login, appsOn });
+        const machine = e.event === 'paused' || e.event === 'stopped' ? await machineOf(x) : null;
+        if (inHerdr) {
+          ctx.stdout.write(herdrRecord(e, x, { machine }));
+          records.set(x.id, ['paused', 'stopped', 'finished', 'failed'].includes(e.event) ? now() : null);
+        }
+        if (json) {
+          emit({ event: e.event, at: stamp(), ...(e.why ? { why: e.why } : {}), session: x, ...(machine ? { machine: { name: machine, unreachable: true, bringBack: `woodshed session herdr ${x.id}` } } : {}) });
+          continue;
+        }
+        const detail = eventDetail(e, x);
+        say([stamp().slice(11, 19), x.id, `${e.event}${detail ? ` (${detail})` : ''}`, kindText(x), x.title ?? '', x.url].join('  '));
+        if (machine) say(`          ${unreachableText(machine, x.id)}`);
+      }
+      if (inHerdr) {
+        // Gone from the list or from what is watched, or ended an hour ago: its record goes from the terminal.
+        const listed = new Map(got.sessions.map((s) => [s.id, s]));
+        for (const [id, endedAt] of records) {
+          const s = listed.get(id);
+          if (s && wanted(s, got.login) && (endedAt === null || now() - endedAt < RECORD_KEEP_MS)) continue;
+          ctx.stdout.write(herdrClear(id));
+          records.delete(id);
+        }
+      }
+      await sleep(opts.everyMs);
+    }
   }
 
   const id = opts.id;
@@ -936,13 +1156,20 @@ export async function sessionCommand({ origin, rest }, ctx) {
     const rows = [
       ['Session', `${x.id}${x.title ? `  ${x.title}` : ''}`],
       ['State', `${x.stateWord} (${x.status})`],
-      ['Whose', x.mine ? 'yours' : x.shared ? `shared${x.assignee ? `, @${x.assignee} has it` : ', nobody has it'}` : `@${x.owner}`],
+      ['Kind', {
+        private: 'private', shared: 'shared', ask: 'a question from Slack',
+        review: `a review of pull request #${x.pullRequest?.number ?? '?'}, started by the console`,
+        qa: `QA of pull request #${x.pullRequest?.number ?? '?'}, started by the console`,
+      }[x.kind]],
+      ['Whose', x.kind === 'review' || x.kind === 'qa' ? (x.startedBy ? `for @${x.startedBy}${x.inMine ? ' (you)' : ''}` : '')
+        : x.mine ? 'yours' : x.shared ? `shared${x.assignee ? `, @${x.assignee} has it` : ', nobody has it'}` : `@${x.owner}`],
       ['Project', [x.project, x.branch && `branch ${x.branch}`].filter(Boolean).join(', ')],
       ['Agent', [x.agent, x.model].filter(Boolean).join(', ')],
       ['Pauses', x.pause ? `${pauseText(x.pause, now())} (${x.pause.at.slice(0, 16).replace('T', ' ')} UTC)` : LIVE.has(x.status) ? 'not yet: it is busy, or starting' : 'not running'],
       ['Runs on', x.runsOn ? `${hoursText(x.runsOn.idleHours)} idle, ${hoursText(x.runsOn.lifetimeHours)} lifetime${x.ownLimits ? ' (its own)' : ''}` : ''],
-      ['Pull req.', x.prUrl ?? ''],
+      ['Pull req.', x.pullRequest?.url ?? x.prUrl ?? ''],
       ['App', appText(x)],
+      ['Verdict', x.verdict ?? ''],
       ['Stopped', x.status === 'running' ? '' : [x.stopReason, x.error].filter(Boolean).join(': ')],
       ['Open', x.url],
     ];
@@ -1028,6 +1255,7 @@ export function parseSessionArgs(sub, words, fail) {
     resume: { values: [], flags: ['no-wait'], words: 'id' },
     remove: { values: [], flags: ['yes'], words: 'id' },
     prune: { values: [], flags: [], words: null },
+    watch: { values: ['kind', 'every'], flags: ['everyone', 'herdr'], words: null },
   };
   // Its own keys only: `constructor` or `toString` is no command.
   const takes = Object.hasOwn(commands, sub) ? commands[sub] : null;
@@ -1068,6 +1296,10 @@ export function parseSessionArgs(sub, words, fail) {
   if (out.agent !== undefined && !['claude', 'codex'].includes(out.agent)) throw fail('--agent must be claude or codex');
   // An app's name, never the next option taken for one (`--app --no-wait`).
   if (out.app !== undefined && !APP_NAME_RE.test(out.app)) throw fail(`--app needs an app's name: lowercase letters, digits and dashes, as the project file names them${out.app.startsWith('-') ? `, not ${out.app}` : ''}`);
+  if (sub === 'watch') {
+    out.kinds = parseKinds(out.kind, fail);
+    out.everyMs = parseEvery(out.every, fail);
+  }
   if (takes.words === 'prompt') out.prompt = positional.join(' ');
   else if (takes.words === 'id-action') {
     // session app <id> [start|stop]

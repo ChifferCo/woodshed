@@ -9,7 +9,7 @@
 
 import {
   analysisLines, chatLines, chatStarters, clean, cut, diffRows, discussionLines, fileLines, fileListLines, fileOrder, headerLines,
-  plainText, qaLines, qaVisible, reviewTitle, tabBar, tabsOf, toAnsi, width, wrapSegments, wrapText,
+  plainText, qaLines, qaVisible, reviewTitle, stripAnsi, tabBar, tabsOf, toAnsi, width, wrapSegments, wrapText,
 } from './reviewView.mjs';
 
 const STATUS_POLL_MS = 2000;
@@ -178,9 +178,10 @@ function editorLines(ed, prompt, columns, most = 4) {
 /**
  * @param {{status: object, diff: object, session: string}} initial  the status and diff reviewOpen.mjs read first
  */
-export function initialState({ status, diff, session }) {
+export function initialState({ status, diff, session, pulls = [] }) {
   return {
-    session, status, diff,
+    // `pulls`: the session's pull requests as the console lists them ({number, url}), for the header's link.
+    session, status, diff, pulls,
     tab: 'analysis',
     scroll: {},
     fileIndex: 0,
@@ -345,7 +346,7 @@ function scrollKey(state) {
 
 /**
  * Runs the review on this terminal until the person quits.
- * @param {{api: (method: string, path: string, body?: object) => Promise<object>, initial: {status: object, diff: object, session: string},
+ * @param {{api: (method: string, path: string, body?: object) => Promise<object>, initial: {status: object, diff: object, session: string, pulls?: object[]},
  *          stdin: object, stdout: object, color?: boolean, now?: () => number,
  *          timers?: {set: typeof setTimeout, clear: typeof clearTimeout}}} args
  *   `api` takes a path after /reviews/claude-<id> and answers the JSON, or throws an Error with `status` and `code`;
@@ -862,7 +863,7 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
       state.sheet = {
         kind: 'help', title: 'Keys',
         lines: [
-          '1 Overview  2 Q&A  3 Discussion  4 Files changed  5 Chat; Tab and Shift-Tab move between them.',
+          '1-5 open the numbered tabs. In a text box, a number is text. Tab and Shift-Tab cycle.',
           '↑ ↓ j k scroll (on Files changed, move the line), PgUp PgDn Space b by a page, g G the top and the end.',
           '4 Files changed lists every file in the analysis\'s reading order: ↑ ↓ choose one, Enter opens its diff, Esc goes back to the list; in a diff, n p move to the next and previous file.',
           'i on Files changed starts a chat about the file (in its diff, about the line), with its path in the box.',
@@ -1184,7 +1185,7 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
 
 /** The screen as plain text, for a test. */
 export function screenText(state, size) {
-  return frame(state, { ...size, color: false }).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
+  return frame(state, { ...size, color: false }).map(stripAnsi);
 }
 
 export { plainText };

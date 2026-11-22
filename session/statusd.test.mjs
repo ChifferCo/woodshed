@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
 import { AGENT_PANE_FORMAT, sendNotAfter, sendWithinMs, stillThePull, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps, typeableText } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
@@ -192,7 +193,7 @@ test('statusd forwards the Redis, Postgres, Mongo and editor paths with the toke
   await fs.writeFile(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ env: { REDIS_URL: 'redis://127.0.0.1:6379' }, editor: true }));
   const child = spawn(process.execPath, [fileURLToPath(new URL('./statusd.mjs', import.meta.url))], {
     env: {
-      ...process.env, SESSION_TOKEN: 'sess', STATUSD_PORT: String(port), REPO_DIR: repo, REDIS_VIEWER_PORT: String(viewerPort),
+      ...isolatedEnv(), SESSION_TOKEN: 'sess', STATUSD_PORT: String(port), REPO_DIR: repo, REDIS_VIEWER_PORT: String(viewerPort),
       PG_VIEWER_PORT: String(viewerPort), MONGO_VIEWER_PORT: String(viewerPort), MONGO_COPY_VIEWER_PORT: String(viewerPort),
       CODE_EDITOR_PORT: String(viewerPort),
     },
@@ -265,7 +266,7 @@ async function statusdWithApp(t, { app = true, project = {}, env = {} } = {}) {
   await git('commit', '-q', '--allow-empty', '-m', 'init');
   const port = await freePort();
   const child = spawn(process.execPath, [fileURLToPath(new URL('./statusd.mjs', import.meta.url))], {
-    env: { ...process.env, SESSION_TOKEN: 'sess', STATUSD_PORT: String(port), REPO_DIR: repo, APP_PORT: String(await freePort()), APP_API_PORT: String(await freePort()), ...env },
+    env: { ...isolatedEnv(), SESSION_TOKEN: 'sess', STATUSD_PORT: String(port), REPO_DIR: repo, APP_PORT: String(await freePort()), APP_API_PORT: String(await freePort()), ...env },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   t.after(() => child.kill());
@@ -726,7 +727,7 @@ test('handleUpgrade passes the editor\'s websocket through with the statusd toke
 test('Sign in for Remote Control types /woodshed:remote-control into claude, or woodshed-login at the Terminal tab without the command', async (t) => {
   // A tmux server of the test's own, never the session's: claude's pane and the Terminal tab's keep what is typed.
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-login-'));
-  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmuxEnv = { ...isolatedEnv(), TMUX: '', TMUX_TMPDIR: dir };
   const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
   t.after(async () => {
     await tmux('kill-server').catch(() => {});
@@ -769,7 +770,7 @@ test('Sign in for Remote Control types /woodshed:remote-control into claude, or 
 
 test('POST /interrupt sends Esc to the agent\'s pane, which ends its turn, with the token only', async (t) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-interrupt-'));
-  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmuxEnv = { ...isolatedEnv(), TMUX: '', TMUX_TMPDIR: dir };
   const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
   t.after(async () => {
     await tmux('kill-server').catch(() => {});
@@ -807,7 +808,7 @@ test('parseAnswerBody takes a question\'s picks or an approval\'s decision, and 
 // and types as in a session: what it picked is written to a file once the picker closes.
 async function pickerPane(t, spec) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-answer-'));
-  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmuxEnv = { ...isolatedEnv(), TMUX: '', TMUX_TMPDIR: dir };
   const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
   t.after(async () => {
     await tmux('kill-server').catch(() => {});
@@ -944,7 +945,7 @@ const CLAUDE_IDLE = `\n\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m\n❯\u00a0\x1b[
 
 async function promptPane(t, state, { screen = CLAUDE_IDLE, menuOnInput = false, env = {}, asClaude = false, inShell = false } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-held-'));
-  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmuxEnv = { ...isolatedEnv(), TMUX: '', TMUX_TMPDIR: dir };
   const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
   t.after(async () => {
     await tmux('kill-server').catch(() => {});

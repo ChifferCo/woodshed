@@ -8,6 +8,10 @@ and where to look when something breaks.
 Woodshed has no dependencies and no build step. Clone it and run `node --test`. For a change to the console's pages,
 `node console/bin/devConsole.mjs` runs the console with made-up sessions, so you can check the page in a browser.
 
+A test that starts a program gives it `isolatedEnv()` (`test/isolatedEnv.mjs`), never `process.env`: run in a Woodshed
+session whose agent is in Herdr, the suite would otherwise drive that agent's own hc terminal. `test/hcIsolation.test.mjs`
+fails on a test that copies `process.env` another way.
+
 ## Pull requests
 
 Pull requests are welcome, from anyone. For a large change, open an issue first so we can agree on the approach.

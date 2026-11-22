@@ -30,6 +30,7 @@
     "cli/setup.mjs",
     "cli/terminal.mjs",
     "cli/tunnel.mjs",
+    "cli/watch.mjs",
     "cli/woodshed.mjs",
     "cli/README.md",
     "console/claudeSettings.mjs",
