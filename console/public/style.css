@@ -264,6 +264,9 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 /* Extend, in a session's last 15 minutes before it pauses or stops: the bar's amber, the one warning on it. */
 .pbtn.pextend { color: var(--bar-amber); border-color: var(--bar-amber-line); }
 .pbtn.pextend:hover { color: var(--bar-amber); background: var(--bar-amber-well); }
+/* Share, beside the app's button: Shared in the bar's slate, outlined, while others can open the app. Never orange. */
+.pbtn.pshare.is-shared { color: var(--bar-slate); border-color: var(--bar-well-line); }
+.pbtn.pshare.is-shared:hover { color: var(--bar-ink); }
 .pphone-meta .ptimer { font-family: var(--mono); color: var(--bar-amber); }
 .pane-bar .btn { min-height: 24px; padding: 0 8px; font-size: 11.5px; font-family: "Red Hat Display", system-ui, sans-serif; }
 .pane-bar .btn-plain { border: 1px solid var(--bar-well-line); background: transparent; color: var(--bar-ink); }
@@ -275,13 +278,13 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 @container panebar (max-width: 1080px) { .pane-bar .pmeter:not(.is-warn):not(.is-hot) { display: none; } }
 @container panebar (max-width: 960px) { .pane-bar .pinvite { display: none; } }
 .pane-bar > .ptitle { min-width: min(9em, 22cqi); }
-/* Narrower still, Details, Open and the PR chip fold into the phone's ⋯, which holds them all (Open PR ↗), at the bar's
+/* Narrower still, Details, Open, Share and the PR chip fold into the phone's ⋯, which holds them all (Open PR ↗), at the bar's
    right end, and the gaps and tabs tighten. */
 @container panebar (max-width: 780px) {
   .pane-bar { gap: 4px 6px; }
   .pane-bar .ptab { padding: 2px 8px; }
   .pane-bar > .ptitle { min-width: min(7em, 18cqi); }
-  .pane-bar .pdetails, .pane-bar .popen, .pane-bar > .prchip { display: none; }
+  .pane-bar .pdetails, .pane-bar .popen, .pane-bar .pshare, .pane-bar > .prchip { display: none; }
   .pane-bar .pmore { display: grid; place-items: center; order: 1; width: 28px; height: 24px; margin: 0; padding: 0; font: inherit; font-size: 14px; color: var(--bar-ink); background: none; border: 1px solid var(--bar-well-line); border-radius: 4px; cursor: pointer; }
 }
 /* Narrower than that (a small window with the rail open), the name and its status take a row of their own over the tabs

@@ -9,8 +9,10 @@
 
 import {
   analysisLines, chatLines, chatStarters, clean, cut, diffRows, discussionLines, fileLines, fileListLines, fileOrder, headerLines,
-  plainText, qaLines, qaVisible, reviewTitle, stripAnsi, tabBar, tabsOf, toAnsi, width, wrapSegments, wrapText,
+  githubPullUrl, plainText, pullRequestUrl, qaLines, qaVisible, reviewTitle, stripAnsi, tabBar, tabsOf, toAnsi, width,
+  wrapSegments, wrapText,
 } from './reviewView.mjs';
+import { canOpenBrowser, openBrowser } from './browser.mjs';
 
 const STATUS_POLL_MS = 2000;
 const ANSWER_POLL_MS = 1500;
@@ -236,6 +238,7 @@ export function footerKeys(state) {
   if (state.tab === 'qa' && state.qa.data && state.qa.data.status !== 'running') keys.push(['i', state.qa.data.items?.length ? 'ask about it' : 'ask'], ['A', 'ask again']);
   if (state.tab === 'qa' && !state.qa.data && state.qa.started && !state.qa.loading) keys.push(['A', 'ask the questions']);
   if (state.status.livePr) keys.push(['s', 'submit review'], ['m', 'merge'], ['t', 'rename']);
+  if (headerPullUrl(state)) keys.push(['o', 'open PR on GitHub']);
   const st = state.status.status;
   if (st !== 'running' && st !== 'queued' && (st !== 'ready' || state.offerReanalysis)) keys.push(['a', st === 'ready' ? 'read it again' : st === 'unknown' ? 'run analysis' : 'retry analysis']);
   keys.push(['r', 're-review'], ['d', 'discard'], ['?', 'help'], ['q', 'quit']);
@@ -264,6 +267,12 @@ function footerLines(keys, columns) {
     used += width(segs[i][1]);
   }
   return lines.slice(-3);
+}
+
+/** The pull request's page the header's number links to (the o key opens it), else null. */
+export function headerPullUrl(state) {
+  const n = state.status?.meta?.number ?? state.status?.livePr?.number;
+  return n ? pullRequestUrl(state, n) : null;
 }
 
 /** The body of the tab on screen, and for Files changed which diff row each line draws. */
@@ -348,12 +357,17 @@ function scrollKey(state) {
  * Runs the review on this terminal until the person quits.
  * @param {{api: (method: string, path: string, body?: object) => Promise<object>, initial: {status: object, diff: object, session: string, pulls?: object[]},
  *          stdin: object, stdout: object, color?: boolean, now?: () => number,
- *          timers?: {set: typeof setTimeout, clear: typeof clearTimeout}}} args
+ *          timers?: {set: typeof setTimeout, clear: typeof clearTimeout},
+ *          openUrl?: (url: string, failed: (why: string) => void) => void, canOpen?: () => boolean}} args
  *   `api` takes a path after /reviews/claude-<id> and answers the JSON, or throws an Error with `status` and `code`;
- *   one with `ended` set is a sign-in that ended, which ends the review
+ *   one with `ended` set is a sign-in that ended, which ends the review. `openUrl` opens a pull request's page
+ *   (browser.mjs, never a shell), and `canOpen` says whether a browser could open here at all.
  * @returns {Promise<{code: 'quit'|'ended', message?: string}>}
  */
-export function runReviewTui({ api, initial, stdin, stdout, color = true, now = Date.now, timers = { set: setTimeout, clear: clearTimeout } }) {
+export function runReviewTui({
+  api, initial, stdin, stdout, color = true, now = Date.now, timers = { set: setTimeout, clear: clearTimeout },
+  openUrl = (url, failed) => openBrowser(url, { failed }), canOpen = () => canOpenBrowser(process.platform, process.env),
+}) {
   const state = initialState(initial);
   const pending = new Set();
   let finished = null;
@@ -873,6 +887,7 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
           'Enter on Chat asks the session\'s agent about the change.',
           '2 Q&A: ↑ ↓ choose a question, Enter or → opens it (one at a time, with its follow-ups), ← closes it; i asks a follow-up on it (on the last row, a question of your own), A all of them again.',
           's submits your review (comment, approve or request changes) with your draft comments. m merges, t renames.',
+          'o opens the pull request (its underlined number in the header) on GitHub in your browser. Over SSH, or with no display, the status line shows its address instead. In Herdr, Ctrl-click on the number opens it too.',
           'r re-reviews: pulls the branch, takes the diff again and reads it again. a runs the analysis. d discards it.',
           'Writes to GitHub go as you, from your own My Woodshed session, once you have connected GitHub on My settings.',
           'q quits; the session and the review go on.',
@@ -1076,6 +1091,16 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
       if (sheet.editor && editKey(sheet.editor, key)) return draw();
       return undefined;
     }
+    // The o key: a pull request's page on github.com only, opened without a shell, or its address in the status line
+    // where no browser could open (over SSH, with no display) or the opener failed.
+    function openPullRequest(url) {
+      const ok = githubPullUrl(url);
+      if (!ok) return flash('Not opened: only a pull request\'s page on github.com opens from here.', true);
+      if (!canOpen()) return flash(`No browser to open here. The pull request: ${ok}`);
+      flash(`Opening ${ok} in your browser.`);
+      openUrl(ok, (why) => flash(`Not opened (${clean(why)}). The pull request: ${ok}`, true));
+      return undefined;
+    }
     function onKey(key) {
       if (key === 'ctrl-c') return finish({ code: 'quit' });
       if (key === 'ctrl-l') {
@@ -1121,9 +1146,13 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
           if (diff) return moveCursor(Infinity);
           state.scroll[scrollKey(state)] = Number.MAX_SAFE_INTEGER;
           return draw();
-        case 'right': case 'o':
+        case 'o': {
+          const url = headerPullUrl(state);
+          return url ? openPullRequest(url) : flash('This review has no pull request to open on GitHub.');
+        }
+        case 'right':
           if (qaTab) return qaToggle();
-          return list ? openFile(true) : diff && key === 'right' ? moveFile(1) : undefined;
+          return list ? openFile(true) : diff ? moveFile(1) : undefined;
         case 'n': case ']': return diff ? moveFile(1) : list ? moveFile(1) : undefined;
         case 'left': case 'p': case '[':
           if (qaTab && key === 'left') return qaToggle(true);

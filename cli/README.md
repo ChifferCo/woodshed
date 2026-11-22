@@ -201,7 +201,14 @@ would land there, so open that session by its id instead. A paused one is resume
   read of whether it may: approved, checks passing, the head this review read; into the merge queue where the base
   has one), `t` rename the pull request. `r` Re-review (pulls the branch, takes the diff again and reads it again; with
   nothing new, `a` reads the same commit again), `a` runs or retries the analysis, `d` discards the analysis and the
-  conversation. `?` lists the keys; `q` quits, and the session and the review go on.
+  conversation. `o` opens the pull request (its underlined number in the header) on GitHub in your browser. `?` lists
+  the keys; `q` quits, and the session and the review go on.
+
+The pull request opens only from its own address, and only a pull request's page on `https://github.com`, with the
+platform's opener (`open` on macOS, `xdg-open` on Linux, `rundll32`'s `FileProtocolHandler` on Windows, which opens it as
+`start` does without `cmd.exe`) given the address as its argument, never through a shell (`cli/browser.mjs`). Over SSH, or
+on Linux with no display, nothing is opened: the status line shows the address instead, as it does when the opener
+fails. The number is a terminal hyperlink too: in Herdr, Ctrl-click on it opens it.
 
 The footer names the keys for what is on screen. It draws in the terminal's own colours (bold, dim, reverse and the
 eight basic colours, foreground only), so it reads on a light terminal as on a dark one; `NO_COLOR` keeps bold, dim and
@@ -314,6 +321,15 @@ not a public link and the page's Share the app shares it; false on one nobody si
 have no Share the app, and an app domain with sign-in off), where it opens for whoever reaches the console; null from a
 console that does not say. `app`, `appUrl`, `appLink` and `appSignIn` are null while the session is not running, or on
 a console that serves no session apps.
+
+The link opens whatever answers on the app's frontend port in the session, not only what the project file's `start`
+runs. To show something the app does not serve (static pages in a folder, a docs site), have the session serve it on
+that port, with the app stopped when it holds the port, or start another of the project's apps that serves it (`--app
+NAME`); a server started through `woodshed tunnel` needs `setsid … &` to outlive it. Serve a copy of only the files
+meant to be seen (no dotfiles, no symlinks): everyone the link reaches, a share's viewers too, sees what that port
+serves. The link then opens it, and
+`session app` says `running`, or `api-down` when the app's backend is on another port that is not answering. To keep
+it, add it to the project file as an app of its own (`apps`, docs/reference.md, "The project file").
 
 `session app <id> start` waits until both the app's frontend and backend answer, and says when its start failed or
 it is not up in 5 minutes: its start log is `/tmp/woodshed-app.log` in the session (`woodshed tunnel <id> -- tail -n

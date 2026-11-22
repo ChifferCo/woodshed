@@ -1510,8 +1510,10 @@ with them beside `WOODSHED_REQUIRE_SIGN_IN`, a hosting proxy, a host past loopba
 
 ### Sharing the app
 
-A My Woodshed session's app is its owner's alone, as the session is. **Share the app…** in the session's ⋯ menu lets
-the owner open it to more people. Only the app: the terminal, Review, the Redis and database viewers, Start/Stop and
+A My Woodshed session's app is its owner's alone, as the session is. **Share**, beside the app's button in the
+session's pane bar (**Share the app…** in its ⋯ on a phone or a narrow window, and in the palette's actions for it),
+lets the owner open it to more people. While members or a live link can open the app the button reads **Shared**, its
+title saying who. Only the app: the terminal, Review, the Redis and database viewers, Start/Stop and
 the share controls themselves stay owner-only (`canOpenApp` in `server.mjs` adds to `canOpen` for the app's name and
 nothing else, and the proxy hands the app's path only the session's status port and token). The owner chooses the
 audience each time, and either can be turned off:
