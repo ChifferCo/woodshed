@@ -218,6 +218,17 @@ const sessions = [
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true, editor: true,
     app: 'frontend-down', appServers: { frontend: false, backend: true, frontendPort: 5173, backendPort: 8080 },
   }),
+  // A project with two apps whose second one's frontend is down, for `woodshed session app`'s restart hint, which names
+  // it with --app; and one whose app is still stopping, which a start is not taken during.
+  session('add0a990', null, 'Admin app frontend down', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true,
+    app: 'frontend-down', appName: 'admin', apps: [{ name: 'web', label: 'Web' }, { name: 'admin', label: 'Admin' }],
+    appServers: { frontend: false, backend: true, frontendPort: 5173, backendPort: 8080 },
+  }),
+  session('0ff0a990', null, 'App still stopping', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true,
+    app: 'stopping', appServers: { frontend: true, backend: true, frontendPort: 5173, backendPort: 8080 },
+  }),
   // The same with its app up, for the sheet's Open app ↗. The app's name goes nowhere here.
   session('f00dd00e', null, 'Phone open app', {
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true, editor: true,
