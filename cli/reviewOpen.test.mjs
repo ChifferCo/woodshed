@@ -278,7 +278,7 @@ test('the review on a terminal: every frame fits 80 columns, and a comment, a ve
   const lastFrame = () => term.screen().split('\x1b[H').at(-1).replace(/\x1b\[[0-9;]*m/g, '').replace(/\u00a0/g, ' ');
   // A failure part way leaves no review running, whose timers would keep the test from ending.
   t.after(() => term.type('q'));
-  await until(() => /Overview +│ +Q&A +│ +Discussion +│ +Files changed +│ +Chat /.test(lastFrame()), 'the first frame: the tabs by name, with no counts');
+  await until(() => / 1 Overview │ 2 Q&A │ 3 Discussion │ 4 Files changed │ 5 Chat /.test(lastFrame()), 'the first frame: the tabs by number and name, with no counts');
   assert.equal(term.stdin.raw, true);
   assert.match(term.screen(), /\x1b\[\?1049h/, 'an alternate screen');
   const said = (method, section) => c.seen.filter((s) => s.method === method && s.section === section);
