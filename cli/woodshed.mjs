@@ -26,9 +26,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { openBrowser } from './browser.mjs';
 import { createCredentials } from './credentials.mjs';
 import { reviewCommand } from './review.mjs';
 import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
@@ -208,24 +208,6 @@ export function selfCommand({ execPath = process.execPath, argv1 = process.argv[
   return { node: onPath ?? execPath, script: linked ?? script };
 }
 
-// Open a checked web address without a shell. On Windows, use the full System32 path to rundll32.
-export function browserCommand(url, platform, env = process.env) {
-  if (platform === 'darwin') return ['open', [url]];
-  if (platform === 'win32') return [path.win32.join(env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows', 'System32', 'rundll32.exe'), ['url.dll,FileProtocolHandler', url]];
-  return ['xdg-open', [url]];
-}
-
-function openBrowser(url, platform) {
-  const [command, args] = browserCommand(url, platform);
-  try {
-    const child = spawn(command, args, { stdio: 'ignore', detached: true });
-    child.on('error', () => {});
-    child.unref();
-  } catch {
-    // No browser to open: the address is printed anyway.
-  }
-}
-
 // A yes or no from the person at the terminal, asked on stderr so --json's stdout stays one object per line. Null
 // where nobody can answer: no terminal on stdin.
 async function confirmOnTerminal(question, stderr) {
@@ -271,7 +253,7 @@ export async function main(argv, deps = {}) {
   const dir = configDir(env, platform);
   const credentials = deps.credentials ?? createCredentials({ platform, dir });
   const pendingSignIns = () => deps.pendingCredentials ?? createCredentials({ platform, dir, pending: true });
-  const open = deps.openBrowser ?? ((url) => openBrowser(url, platform));
+  const open = deps.openBrowser ?? ((url) => openBrowser(url, { platform }));
   // Herdr's hc, as the person's shell finds it, on the core their environment names (HC_SESSION and the XDG folders).
   const hc = deps.hc ?? hcRunner({ bin: env.WOODSHED_HC_BIN || 'hc', env });
   let json = argv.includes('--json');

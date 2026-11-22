@@ -302,7 +302,8 @@ pull request with no session of theirs exits 1 and says how to start one on it.
 
 What to tell them it does, briefly: Overview first (the analysis); `2` Q&A, where questions open one at a time and
 `i` asks a follow-up on the chosen one; `4` Files changed, every file with what it does, `Enter` to open one, `i` to chat about it,
-`c` to comment on a line; `5` Chat with the session's agent; `s` submit a verdict, `m` merge, `t` rename; `?` the keys.
+`c` to comment on a line; `5` Chat with the session's agent; `s` submit a verdict, `m` merge, `t` rename; `o` opens
+the pull request on GitHub (in Herdr, Ctrl-click on its underlined number does too); `?` the keys.
 For a pull request with no session of theirs, offer to start one on it first
 (`woodshed session new --repo <owner/name> --branch <number>`, which starts as a review of it), then `woodshed review`.
 

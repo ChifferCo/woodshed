@@ -201,7 +201,14 @@ would land there, so open that session by its id instead. A paused one is resume
   read of whether it may: approved, checks passing, the head this review read; into the merge queue where the base
   has one), `t` rename the pull request. `r` Re-review (pulls the branch, takes the diff again and reads it again; with
   nothing new, `a` reads the same commit again), `a` runs or retries the analysis, `d` discards the analysis and the
-  conversation. `?` lists the keys; `q` quits, and the session and the review go on.
+  conversation. `o` opens the pull request (its underlined number in the header) on GitHub in your browser. `?` lists
+  the keys; `q` quits, and the session and the review go on.
+
+The pull request opens only from its own address, and only a pull request's page on `https://github.com`, with the
+platform's opener (`open` on macOS, `xdg-open` on Linux, `rundll32`'s `FileProtocolHandler` on Windows, which opens it as
+`start` does without `cmd.exe`) given the address as its argument, never through a shell (`cli/browser.mjs`). Over SSH, or
+on Linux with no display, nothing is opened: the status line shows the address instead, as it does when the opener
+fails. The number is a terminal hyperlink too: in Herdr, Ctrl-click on it opens it.
 
 The footer names the keys for what is on screen. It draws in the terminal's own colours (bold, dim, reverse and the
 eight basic colours, foreground only), so it reads on a light terminal as on a dark one; `NO_COLOR` keeps bold, dim and
