@@ -499,6 +499,13 @@ test('session app starts a running session\'s app and waits until it is up, and 
   assert.equal(stopped.code, EXIT.done, stopped.err);
   assert.deepEqual(c.calls.at(-1), ['stopApp', { id: 'aaaa0001' }]);
   assert.equal((await c.run(['session', 'app', 'aaaa0001', 'stop', '--app', 'web'])).code, EXIT.failed, '--app is for start');
+  const before = c.calls.length;
+  const noAction = await c.run(['session', 'app', 'aaaa0001', '--app', 'admin']);
+  assert.equal(noAction.code, EXIT.failed, 'not ignored with no action');
+  assert.match(noAction.err, /--app picks the app to start/);
+  assert.equal((await c.run(['session', 'app', 'aaaa0001', '--no-wait'])).code, EXIT.failed, '--no-wait is for start');
+  assert.equal((await c.run(['session', 'app', 'aaaa0001', 'stop', '--no-wait'])).code, EXIT.failed);
+  assert.equal(c.calls.length, before, 'nothing asked of the session');
 });
 
 test('session app says why it cannot start the app, and gives up on one that does not come up', async (t) => {

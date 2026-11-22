@@ -836,6 +836,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
   }
 
   if (sub === 'app') {
+    // Both are start's alone: with no action, or with stop, they would be ignored without a word.
+    if (opts.app !== undefined && opts.action !== 'start') throw fail('--app picks the app to start: use it with start');
+    if (opts.wait === false && opts.action !== 'start') throw fail('--no-wait is for start: stop and the state never wait');
     const x = summary(s, { origin, login, appsOn });
     if (s.kind === 'ask') throw fail(`Session ${id} answers a question from Slack: it has no app.`, { code: EXIT.refused, status: 'refused' });
     if (!appsOn?.domain) throw fail(`${origin} serves no session apps: a session's app opens only on a console with an app domain or app ports.`, { code: EXIT.refused, status: 'refused' });
@@ -851,7 +854,6 @@ export async function sessionCommand({ origin, rest }, ctx) {
     if (opts.action === 'start' && x.app === 'none') {
       throw fail(`Session ${id}'s project file names no app yet. Set up app on ${x.url} has its agent write one.`, { code: EXIT.waiting, status: 'no-app' });
     }
-    if (opts.app !== undefined && opts.action !== 'start') throw fail('--app picks the app to start: use it with start');
     // statusd takes no start while the stop script runs: it answers as asked and starts nothing.
     const stillStopping = `Session ${id}'s app is still stopping, so it was not started. Try again in a few seconds, once \`woodshed session app ${id}\` says it is not running.`;
     if (opts.action === 'start' && x.app === 'stopping') throw fail(stillStopping, { code: EXIT.failed, status: 'stopping' });
