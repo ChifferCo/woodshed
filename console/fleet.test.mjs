@@ -111,7 +111,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, qaRecordings, now: () => clock,
-    pings, pullRequests: async () => gates, ...(reviewGates !== undefined ? { reviewGates: async () => reviewGates } : {}), projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, reviewAgents, ...(consoleLinks ? { consoleLinks } : {}),
+    pings, pullRequests: async () => gates, ...(reviewGates !== undefined ? { reviewGates: typeof reviewGates === 'function' ? reviewGates : async () => reviewGates } : {}), projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, reviewAgents, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
       isAssignable: (login) => assignables.some((e) => e.toLowerCase() === String(login).toLowerCase()),
@@ -2833,6 +2833,18 @@ test('a coding session is told the review\'s tag, which its checkout\'s project 
   assert.equal(tagged.calls.started.at(-1).env.WOODSHED_REVIEW_TAG, '[woodshed-review]');
   await tagged.fleet.createSession({ kind: 'pr', number: 10, title: 'Review', startedBy: 'joel', trigger: 'review', branch: 'a/d', review: { base: 'main', sha: 'b'.repeat(40), heading: '## R', author: null, check: null, commentId: null, agents: ['claude'] } });
   assert.equal(tagged.calls.started.at(-1).env.WOODSHED_REVIEW_TAG, undefined, 'the review session itself pushes nothing');
+  const warned = [];
+  const realWarn = console.warn;
+  console.warn = (...args) => warned.push(args[0]);
+  try {
+    const unread = setup({ gates: null, reviewGates: async () => { throw new Error('the project file could not be read: HTTP 502'); } });
+    await unread.fleet.createSession({ kind: 'issue', number: 7, title: 'i', startedBy: 'joel', trigger: 'label', prompt: 'p' });
+    assert.equal(unread.calls.started.length, 1, 'the session starts all the same');
+    assert.equal(unread.calls.started[0].env.WOODSHED_REVIEW_TAG, undefined);
+    assert.ok(warned.includes('fleet: review tag not read, the session starts with none'));
+  } finally {
+    console.warn = realWarn;
+  }
   const everyCommit = setup({ gates: { review: { runner: 'woodshed', heading: '## R', rerun: null }, suites: [], qa: null, mergeRisk: null } });
   await everyCommit.fleet.createSession({ kind: 'issue', number: 7, title: 'i', startedBy: 'joel', trigger: 'label', prompt: 'p' });
   assert.equal(everyCommit.calls.started.at(-1).env.WOODSHED_REVIEW_TAG, undefined);

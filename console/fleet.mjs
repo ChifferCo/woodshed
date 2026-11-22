@@ -577,10 +577,14 @@ export function createFleet({
       console.log('fleet: a session that may use production', { id: session.id, owner: session.owner, ownDatabases: Boolean(session.ownDatabases) });
     }
     // The tag that asks for the repo's review, which a coding session's rules tell its agent to put on its commits: the
-    // project file's, or the console's for a repo whose file names none, which the file in the checkout cannot say
-    // (keptReview.mjs). None for every-commit review, review off, or a file that could not be read.
+    // project file's, or every repo's default where the file names none, which the file in the checkout cannot say
+    // (defaultReview.mjs). None for every-commit review, a review run elsewhere, or a file that could not be read, which
+    // starts the session all the same.
     if (!isAsk(session) && !isQa(session) && !isReview(session)) {
-      const review = (await reviewGates(projectFor(config, session).name).catch(() => null))?.review ?? null;
+      const review = (await reviewGates(projectFor(config, session).name).catch((err) => {
+        console.warn('fleet: review tag not read, the session starts with none', { id: session.id, message: firstLine(err) });
+        return null;
+      }))?.review ?? null;
       update(session, { reviewTag: review?.rerun ?? null });
     }
     let started;
