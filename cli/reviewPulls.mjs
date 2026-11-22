@@ -77,8 +77,11 @@ export async function reviewPullsCommand({ origin, sub, words }, deps) {
       .map((p) => ({ number: p.number, title: printable(p.title, 200) ?? '', draft: p.draft === true, updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : null, url: pullUrl(p.number) }));
     const remote = readiness.status === 200 ? readiness.body?.defaultBranch ?? null : null;
     const review = { on: remote?.review?.runner === 'woodshed' && remote?.runsHere !== false, rerun: printable(remote?.review?.rerun, 100) ?? null, known: Boolean(remote && !remote.error) };
-    if (json) emit({ event: 'pulls', repo, project: project.name, review, pulls: mine });
+    // The console keeps a repo's last list when GitHub did not answer, and says so: the list may be out of date.
+    const stale = pulls.body.stale === true;
+    if (json) emit({ event: 'pulls', repo, project: project.name, review, pulls: mine, ...(stale ? { stale } : {}) });
     say(`Review on ${repo}: ${!review.known ? 'not known' : review.on ? `on${review.rerun ? `, on commits tagged ${review.rerun}` : ', on each commit'}` : 'off'}.`);
+    if (stale) say('GitHub did not answer just now: this list may be out of date.');
     if (!mine.length) say(`You have no open pull requests on ${repo}.`);
     for (const p of mine) say(`  #${p.number}${p.draft ? ' (draft)' : ''}  ${p.title}  ${p.url}`);
     if (mine.some((p) => !p.draft) && review.on) say(`Review them now: woodshed review start ${mine.filter((p) => !p.draft).map((p) => p.number).join(' ')} --repo ${repo}`);

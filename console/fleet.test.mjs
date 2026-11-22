@@ -2863,6 +2863,10 @@ test('a review asked for again after one stopped with no verdict starts anew, an
   assert.equal(both.fleet.sessions().length, 1);
   assert.deepEqual([a.outcome, b.outcome, b.status], ['started', 'refused', 409]);
   assert.match(b.reason, /being started already/);
+  const tagged = reviewSetup();
+  tagged.github.commitMessage = async () => 'Fix it [woodshed-review]';
+  await Promise.all([tagged.fleet.reviewOnDemand({ project, number: 7, login: 'joel' }), tagged.fleet.reviewOnTag({ number: 7 })]);
+  assert.equal(tagged.fleet.sessions().length, 1, 'a tagged commit and an ask at once start one review');
 });
 
 test('a review runs whom its author chose, and says so on the pull request', async () => {

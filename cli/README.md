@@ -50,7 +50,7 @@ Setup's aim is your first automated code reviews: Claude Code and Codex reviewin
 `woodshed setup` on a terminal, or give your coding agent the repo:
 
 ```sh
-woodshed setup --yes --repo acme/app --repo-dir ~/code/app
+woodshed setup --yes --repo acme/app --repo-dir ~/code/app --reviews default
 ```
 
 Use `--console <url>` for your own console and `--no-browser` to print links without opening them. When setup exits 2,
@@ -77,7 +77,8 @@ It goes in this order:
    names one repo of several. With `--yes` and no `--review-prs`, the 5 updated last (enough to see reviews work on your own code without spending
    your plan on old branches, and `--review-prs all` takes every one). Without `--yes` or a terminal, setup exits 2
    listing them, for `--review-prs`. A draft is left until it is ready, and a head commit reviewed already is not
-   reviewed again. With no open pull requests, it says a review starts on your next one.
+   reviewed again. With no open pull requests, it says a review starts on your next one. With `--reviews none` it
+   starts none.
 5. **Optional: the agent terminal**, Herdr or tmux, for new private sessions. On a terminal Enter keeps the saved
    choice; `--terminal herdr` or `--terminal tmux` sets it.
 6. **Optional: a first coding session**, only with `--prompt`, or a prompt typed in when asked. Without one, setup
@@ -195,7 +196,10 @@ woodshed review pulls --repo acme/app            # your open pull requests there
 woodshed review start 12 15 --repo acme/app      # the console's review of each, now; prints each review's link
 ```
 
-Without `--repo`, the repo is the GitHub origin of the checkout at `--dir`, or here. A pull request is its number,
+Without `--repo`, the repo is the GitHub origin of the checkout at `--dir`, or here. `pulls` lists what GitHub's search
+finds you wrote: at most 10 of your open pull requests across the console's repos, the updated last first, and not one
+a session of yours opened (its author is the console's App). `start` takes those by number all the same. When GitHub
+did not answer, the console's last list is shown and `pulls` says it may be out of date (`stale` in `--json`). A pull request is its number,
 `#number` or URL. `start` calls `POST /api/my/pulls/<number>/review` (console/README.md, "A review asked for by hand"),
 which starts the same review session a tagged commit would, as you: on your own Claude token and Codex sign-in where
 the console has no team keys, and as your reviewer choice on My settings says. It answers with that review's link when

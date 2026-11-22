@@ -19,7 +19,7 @@ const git = (dir, ...args) => execFileSync('git', ['-C', dir, ...args], { stdio:
 
 // A console with the command line's sign-in and a reviewer App in `state.reviewer` ('none', 'made' or 'installed'),
 // whose default branch's project file is `state.gates`; a checkout of acme/game; and bob signed in on this computer.
-async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin = 'https://github.com/acme/game.git' } = {}) {
+async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin = 'https://github.com/acme/game.git', projectAccess = null } = {}) {
   const state = { reviewer: 'installed', gates: null, runsOn: null, gatesError: null, pulls: [], asked: [], reviews: {} };
   const reviewer = {
     login: () => (state.reviewer === 'none' ? null : 'acme-reviewer[bot]'),
@@ -38,7 +38,7 @@ async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin
   const config = { host: '127.0.0.1', publicUrl: origin, extraHosts: [], repo: 'acme/game', label: 'woodshed', consoleName: 'Acme', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
   const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
   handle = createHandler({
-    config, auth, cli,
+    config, auth, cli, projectAccess,
     // woodshed review start's: what the fleet answers for each number (reviewOnDemand), and the pull requests GitHub lists.
     fleet: {
       sessions: () => [], find: () => null,
@@ -350,4 +350,21 @@ test('review start asks the console to review each pull request now, and names i
   assert.equal(waiting.code, EXIT.waiting);
   assert.match(waiting.out, /#6: not started: review is not on for acme\/game/);
   await assert.rejects(s.run(['review', 'start']).then((r) => { if (r.code) throw new Error(r.err); }), /needs a pull request/);
+});
+
+test('the review route refuses a project the person cannot start on, before the fleet is asked', async (t) => {
+  const game = { name: 'game', repo: 'acme/game', default: true };
+  const s = await setup(t, { projectAccess: {
+    forStart: async (login, name) => (name === undefined || name === 'game' ? game : null),
+    view: async () => ({ projects: [{ name: 'game', repo: 'acme/game' }], defaultProject: 'game', saved: false }),
+    startable: async () => [game],
+  } });
+  const run = await s.run(['review', 'start', '12', '--json']);
+  assert.equal(run.code, EXIT.done, run.err + run.out);
+  assert.deepEqual(s.state.asked, [{ project: 'game', number: 12, login: 'bob' }]);
+  const refusedCall = s.sent.at(-1);
+  const answer = await fetch(`${s.origin}/api/my/pulls/12/review`, { method: 'POST', headers: { authorization: refusedCall.headers.authorization, 'content-type': 'application/json' }, body: JSON.stringify({ project: 'nope' }) });
+  assert.equal(answer.status, 403);
+  assert.match((await answer.json()).error, /you cannot start sessions on a project named nope/);
+  assert.equal(s.state.asked.length, 1, 'the fleet was not asked');
 });

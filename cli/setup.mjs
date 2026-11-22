@@ -274,6 +274,8 @@ export async function setupCommand(args, ctx) {
 
   const canConfig = has('config');
 
+  // The reviewer choice saved by the step below, when it ran: `none` means no review of their pull requests starts.
+  let reviewChoice = null;
   if (opts['--skip-reviews']) {
     report('reviews', 'skipped', 'You chose to skip review setup.');
   } else {
@@ -331,6 +333,7 @@ export async function setupCommand(args, ctx) {
         const set = await call('config set reviews', 'config', 'set', 'reviews', value);
         if (set.code !== EXIT.done) return childError('review-choice', set, 'Could not save your reviewer choice.');
       }
+      reviewChoice = value;
       report('review-choice', 'done', `Your reviewer choice is ${value}.`, { choice: value });
     }
   }
@@ -340,6 +343,8 @@ export async function setupCommand(args, ctx) {
   const reviewLinks = [];
   if (opts['--skip-reviews'] || opts['--review-prs']?.trim().toLowerCase() === 'none') {
     report('pr-reviews', 'skipped', opts['--skip-reviews'] ? 'You chose to skip reviews.' : 'You chose to review none of your pull requests now.');
+  } else if (reviewChoice === 'none') {
+    report('pr-reviews', 'skipped', 'Your reviewer choice is none, so no review of your pull requests starts. Choose another with --reviews to have them reviewed.');
   } else if (!/\bpulls\|start\b/.test(help.stdout)) {
     report('pr-reviews', 'skipped', 'This CLI cannot start reviews yet: update it, then run woodshed review start <pull request>.');
   } else if (!selected.length) {
@@ -351,13 +356,14 @@ export async function setupCommand(args, ctx) {
       if (listed.code !== EXIT.done || !Array.isArray(found?.pulls)) return childError('pr-reviews', listed, `Could not list your open pull requests on ${repo}.`, { repo });
       const pulls = found.pulls.filter((p) => Number.isSafeInteger(p?.number));
       const rerun = printable(found.review?.rerun);
+      const staleText = found.stale === true ? ' GitHub did not answer just now, so this list may be out of date: run setup again to check.' : '';
       if (found.review?.on !== true) {
         report('pr-reviews', 'skipped', `Review is not on for ${repo} yet, so no review can start on your pull requests. Once it is: ${command('review', 'start', '<number>', '--repo', repo)}.`, { repo });
         continue;
       }
       const next = `a review will start on your next one${rerun ? ` whose commit message has ${rerun}` : ''}`;
       if (!pulls.length) {
-        report('pr-reviews', 'done', `You have no open pull requests on ${repo}: ${next}.`, { repo, reviews: [] });
+        report('pr-reviews', 'done', `You have no open pull requests on ${repo}: ${next}.${staleText}`, { repo, reviews: [] });
         continue;
       }
       const ready = pulls.filter((p) => p.draft !== true);
@@ -378,11 +384,12 @@ export async function setupCommand(args, ctx) {
         if (!REVIEW_PRS_RE.test(which)) return stop('pr-reviews', EXIT.waiting, `Answer all, none, or pull request numbers, or rerun setup with --review-prs. Yours: ${shown}.`, { repo });
       }
       if (!which && opts['--yes']) {
-        which = ready.slice(0, REVIEW_PRS_DEFAULT).map((p) => p.number).join(',');
+        which = ready.length ? ready.slice(0, REVIEW_PRS_DEFAULT).map((p) => p.number).join(',') : 'all';
         if (ready.length > REVIEW_PRS_DEFAULT) why = ` The ${REVIEW_PRS_DEFAULT} updated last; --review-prs all reviews every one.`;
       }
       if (!which) {
-        return stop('pr-reviews', EXIT.waiting, `Choose which of your open pull requests on ${repo} to review now with --review-prs all, none, or their numbers. Yours: ${shown}.`, { repo, pulls });
+        const form = selected.length > 1 ? `, or ${repo}#<number> for this repo alone` : '';
+        return stop('pr-reviews', EXIT.waiting, `Choose which of your open pull requests on ${repo} to review now with --review-prs all, none, or their numbers${form}. Yours: ${shown}.`, { repo, pulls });
       }
       const { numbers, drafts } = picksFor(which, repo, pulls);
       const draftText = drafts.length ? ` ${drafts.map((n) => `#${n}`).join(', ')} ${drafts.length === 1 ? 'is a draft' : 'are drafts'}: reviewed once ready for review.` : '';
@@ -403,7 +410,7 @@ export async function setupCommand(args, ctx) {
       const linkText = links.map((link) => `#${link.number} ${link.url ?? link.pullUrl}${already[link.outcome] ?? ''}`).join(', ');
       const refusedText = refused.length ? ` Not started: ${refused.join('; ')}.` : '';
       if (!links.length) return stop('pr-reviews', started.code || EXIT.failed, `No review started on ${repo}.${refusedText}`, { repo });
-      report('pr-reviews', 'done', `Reviews on ${repo}: ${linkText}. Each posts its verdict on the pull request; after that, ${next}.${why}${draftText}${refusedText}`, { repo, reviews: links });
+      report('pr-reviews', 'done', `Reviews on ${repo}: ${linkText}. Each posts its verdict on the pull request; after that, ${next}.${why}${draftText}${refusedText}${staleText}`, { repo, reviews: links });
     }
   }
 

@@ -2255,7 +2255,7 @@ export function createFleet({
    */
   async function reviewOnDemand({ project, number, login }) {
     const key = `${project.name}#${number}`;
-    if (askingReview.has(key)) {
+    if (askingReview.has(key) || startingReview.has(key)) {
       console.log('fleet: review asked for, refused', { number, login, reason: 'already being asked for', ...projectField(project) });
       return { outcome: 'refused', status: 409, reason: `a review of #${number} is being started already: try again in a moment` };
     }
@@ -2295,13 +2295,16 @@ export function createFleet({
       console.log('fleet: review asked for', { number, login, outcome, id: done.id, ...projectField(project) });
       return { outcome, sessionId: done.id };
     }
-    const started = await startReview({ project, gates, number, login, owner, pull });
+    const started = await startReview({ project, gates, number, login, owner, pull, asked: true });
     if (started.outcome !== 'started') return refused(409, started.reason);
     console.log('fleet: review asked for', { number, login, outcome: 'started', id: started.sessionId, ...projectField(project) });
     return started;
   }
 
+  // Pull requests whose review is being asked for by hand (reviewOnDemand) or started (startReview), by project and
+  // number: a tagged commit's start and an ask that overlap start one session, not two.
   const askingReview = new Set();
+  const startingReview = new Set();
 
   // The review runs as a session (pullRequests.review.runner: woodshed) instead of the Actions workflow: the
   // `[woodshed-review]` tag on the head commit starts it, session/review.sh runs the review, and the console submits
@@ -2323,7 +2326,21 @@ export function createFleet({
     return { ...gates, review: null };
   }
 
-  async function startReview({ project, gates, number, login, owner = null, pull: known = null }) {
+  async function startReview(args) {
+    const key = `${args.project.name}#${args.number}`;
+    if (startingReview.has(key) || (!args.asked && askingReview.has(key))) {
+      console.log('fleet: review not started', { number: args.number, login: args.login, reason: 'a review of it is being started already', ...projectField(args.project) });
+      return { outcome: 'ignored', reason: 'a review of it is being started already' };
+    }
+    startingReview.add(key);
+    try {
+      return await startReviewNow(args);
+    } finally {
+      startingReview.delete(key);
+    }
+  }
+
+  async function startReviewNow({ project, gates, number, login, owner = null, pull: known = null }) {
     const { review, mergeRisk } = gates;
     const gh = githubOf(project);
     const ignored = (reason) => {

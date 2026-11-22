@@ -1123,7 +1123,8 @@ review session a tagged commit does (`startReview`), on the pull request's head 
 review in a session, 403 a pull request whose author (or, for one a session opened, that session's starter) is
 someone else, since the review runs on the author's sign-ins and choice, 409 one closed or a draft, and 409 with
 `startReview`'s own reason (a review running on an older commit, the author chose no review), and 409 while another ask
-for the same pull request is still starting. A head commit a review session is reviewing, or gave its verdict on,
+for the same pull request, or a tagged commit's review of it, is still starting (one guard for both, so they start
+one session). A head commit a review session is reviewing, or gave its verdict on,
 answers 200 with that session instead of starting another; one whose review failed or stopped with no verdict may be
 asked again. A new one answers 201 (`fleet: review asked for` with the `outcome` and its `id`).
 

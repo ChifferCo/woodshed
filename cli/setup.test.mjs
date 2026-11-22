@@ -473,3 +473,27 @@ test('a choice of numbers reaches only the repo that lists them, and owner/name#
   assert.deepEqual(named.starts, [['review', 'start', '9', '--repo', lib]], 'not acme/app\'s #9');
   assert.match(named.events.find((e) => e.step === 'pr-reviews' && e.repo === repo).message, /None of the pull requests you chose is one of your open ones on acme\/app/);
 });
+
+test('setup starts no review when the reviewer choice is none, nor asks under --yes when every pull request is a draft', async () => {
+  const none = await fake({ commands: ['config', 'review pulls|start'], answers: {
+    'config list': result(0, { config: { reviews: 'default' } }),
+    'config set': result(0, { event: 'set', key: 'reviews', value: 'none' }),
+  } }).invoke('--yes', '--repo', repo, '--reviews', 'none', '--no-session');
+  assert.equal(none.code, EXIT.done);
+  assert.match(none.events.find((e) => e.step === 'pr-reviews').message, /reviewer choice is none/);
+  assert.ok(!none.calls.some(([group, sub]) => group === 'review' && sub === 'pulls'));
+  const drafts = await fake({ commands: ['review pulls|start'], answers: { 'review pulls': pullsOn([pull(8, { draft: true })]) } })
+    .invoke('--yes', '--repo', repo, '--no-session');
+  assert.equal(drafts.code, EXIT.done);
+  assert.match(drafts.events.find((e) => e.step === 'pr-reviews').message, /are drafts: each is reviewed once it is ready/);
+});
+
+test('with several repos, setup asks for repo-qualified numbers, and says when the list may be out of date', async () => {
+  const { invoke } = fake({ commands: ['review pulls|start'], answers: { 'review pulls': result(0, { event: 'pulls', repo, review: { on: true, rerun: null, known: true }, pulls: [pull(9)], stale: true }) } });
+  const after = await invoke('--repo', repo, '--repo', 'acme/lib', '--no-session');
+  assert.equal(after.code, EXIT.waiting);
+  assert.match(after.events.at(-1).message, /or acme\/app#<number> for this repo alone/);
+  const none = await fake({ commands: ['review pulls|start'], answers: { 'review pulls': result(0, { event: 'pulls', repo, review: { on: true, rerun: null, known: true }, pulls: [], stale: true }) } })
+    .invoke('--yes', '--repo', repo, '--no-session');
+  assert.match(none.events.find((e) => e.step === 'pr-reviews').message, /may be out of date: run setup again/);
+});
