@@ -319,6 +319,16 @@ test('a Re-review starts a new Q&A for the new diff, once, with its analysis', a
   assert.equal(startReviewQaIfNone({ ctx, sessionName: session }), false);
   await until(() => (readQa(session)?.status === 'ready' ? readQa(session) : null));
   assert.equal(starts.length, 2);
+
+  // A qa.json that cannot be read (a folder in its place) does not turn a take that worked into a failed one.
+  const qaFile = path.join(process.env.WOODSHED_REVIEWS, session, 'qa.json');
+  fs.rmSync(qaFile, { force: true });
+  fs.mkdirSync(qaFile);
+  fs.writeFileSync(path.join(qaFile, 'x'), '');
+  fs.writeFileSync(path.join(wt, 'c.txt'), 'c\n');
+  const broken = await take();
+  assert.equal(broken.status, 200, JSON.stringify(broken.body));
+  fs.rmSync(qaFile, { recursive: true, force: true });
   await removeReviewSession({ ctx, sessionName: session });
 });
 

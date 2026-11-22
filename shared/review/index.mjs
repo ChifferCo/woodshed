@@ -1492,7 +1492,7 @@ async function takeWorktreeReview(res, ctx, session) {
   qaAsks.delete(session);
   beginAnalysis({ ctx, session, review: made.review });
   // The Q&A alongside it, for this diff: what the reader opens the tab to find should be written by then.
-  startQa({ ctx, session, review: made.review, first: true });
+  startQaAfterTake({ ctx, session, review: made.review });
 
   log('review.worktree_started', { reqId, session, cancelled, files: made.review.meta.changedFiles });
   return json(res, 200, {
@@ -1543,7 +1543,7 @@ async function takeRefreshReview(res, ctx, session) {
   qaRuns.delete(session);
   qaAsks.delete(session);
   beginAnalysis({ ctx, session, review: done.review });
-  startQa({ ctx, session, review: done.review, first: true });
+  startQaAfterTake({ ctx, session, review: done.review });
 
   log('review.refresh_started', {
     reqId, session, cancelled, headSha: done.headSha?.slice(0, 8), files: done.review?.meta?.changedFiles,
@@ -2382,6 +2382,18 @@ function handleQaStart(res, ctx, session, forDiff, first = false) {
   const started = startQa({ ctx, session, review, first });
   if (started.refused) return json(res, 409, { ok: false, code: 'retaking', error: 'a Q&A of the previous diff is still stopping: ask again in a moment' });
   return json(res, 200, started.kept ? { ok: true, status: started.status, kept: true } : { ok: true, status: 'running' });
+}
+
+/**
+ * The take's own Q&A, best effort: by now the new diff is saved and its analysis started, so a Q&A that cannot start
+ * (qa.json unreadable, say) is logged rather than answered as a failed take. The tab's Ask then says why.
+ */
+function startQaAfterTake({ ctx, session, review }) {
+  try {
+    startQa({ ctx, session, review, first: true });
+  } catch (err) {
+    ctx.log('review.qa_not_started_after_take', { reqId: ctx.reqId, session, error: err?.message });
+  }
 }
 
 /**
