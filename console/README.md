@@ -1009,6 +1009,19 @@ when it carries `Authorization: Bearer wsc_…`, as it does `/api/cli/*`. A host
 `installedOn(repo)`; without it, whether it is installed is `null`. It logs `reviewReadiness: reviewer App
 installation not read` when GitHub did not answer.
 
+**On by default.** Every repo the console has is reviewed in a session, with nothing to turn on or commit: where the
+project file the console reads names no `pullRequests.review` (or there is no file), the console runs by
+`console/defaultReview.mjs`'s review, `runner: woodshed` on a commit whose message has `[woodshed-review]`, added by
+`reviewGatesOf` in `installation.mjs` (the fleet's `reviewGates`). It only starts reviews: what a pull request waits for,
+its Slack post and QA, stays the file's alone, so a repo whose file names no review posts once out of draft and green,
+as before, whatever a default review said. `woodshed review start` (`reviewOnDemand`) runs by it too. The file's own
+`review`, on any runner, wins; it is where a team reviews every commit, uses another tag, or adds QA (`woodshed review
+enable`). The default is the review alone: `suites`, `qa`, `mergeRisk` and `runsOn` stay the file's. Each coding session
+is told the tag in `WOODSHED_REVIEW_TAG` (fleet.mjs, decided at each start), which its rules use when its checkout's file
+names none, so the pull requests sessions open carry it. Someone who wants no review of their own pull requests picks
+none on My settings ("Who reviews"). `GET /api/review-readiness`
+says what runs in `review` (`{runner, rerun, from}`, `from` being `project file` or `default`).
+
 At each verdict the console finds the reviewer App's installation on the repo, mints a token narrowed to pull requests,
 and submits the review at the reviewed commit. It logs `fleet: review verdict submitted` with `as: 'reviewer App'`, or
 `as: 'console App'` when no reviewer App was made, in which case GitHub refuses an approval of the App's own pull
@@ -1525,8 +1538,10 @@ with them beside `WOODSHED_REQUIRE_SIGN_IN`, a hosting proxy, a host past loopba
 
 ### Sharing the app
 
-A My Woodshed session's app is its owner's alone, as the session is. **Share the app…** in the session's ⋯ menu lets
-the owner open it to more people. Only the app: the terminal, Review, the Redis and database viewers, Start/Stop and
+A My Woodshed session's app is its owner's alone, as the session is. **Share**, beside the app's button in the
+session's pane bar (**Share the app…** in its ⋯ on a phone or a narrow window, and in the palette's actions for it),
+lets the owner open it to more people. While members or a live link can open the app the button reads **Shared**, its
+title saying who. Only the app: the terminal, Review, the Redis and database viewers, Start/Stop and
 the share controls themselves stay owner-only (`canOpenApp` in `server.mjs` adds to `canOpen` for the app's name and
 nothing else, and the proxy hands the app's path only the session's status port and token). The owner chooses the
 audience each time, and either can be turned off:
@@ -1537,7 +1552,15 @@ audience each time, and either can be turned off:
   an expiry (1 hour to 7 days) and gets `https://<id>.woodshed.example.com/__woodshed/share?t=<token>`, shown once.
   Opening it trades the token for a `__Host-woodshed_view` cookie for that one app and redirects to `/`, so the token
   leaves the address bar. The cookie holds the same token and every request checks it again, so **Revoke**, the expiry
-  and the session stopping end access at once, websockets included. A session has at most ten links.
+  and the session stopping end access at once, websockets included. A session has at most ten links. The owner may
+  name a page of the app for a link to land on (`{"path": "/landing-a"}`, which adds `&next=/landing-a`): after the
+  trade it redirects there rather than to `/`. `shareNext` in `appShares.mjs` keeps it to a path on the app's own
+  name, never another site's (`//host`, `/\host`, a scheme) nor the console's `/__woodshed/` paths, and a `next` added
+  by hand that is not one lands on `/`.
+
+The command line does the same with `woodshed session app <id> share` (cli/README.md, "Sharing a session's app"): the four
+routes take its token through `cliSessions.mjs`'s gate and answer as the page's, by the same code, owner and private
+session only, refused once it has seen production data.
 
 `state.json` keeps `appShares` (the switch, and for each link its id, a SHA-256 of the secret, who made it and when it
 ends), never a token. A session that is no longer active loses all its shares at the console's next tick, so a

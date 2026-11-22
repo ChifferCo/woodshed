@@ -38,6 +38,7 @@ test('ready: a project of the asker\'s, the reviewer App made and installed, the
     repo: 'acme/game', project: 'game', consoleApp: { login: 'acme-woodshed[bot]', name: null },
     reviewerApp: { made: true, login: 'acme-reviewer[bot]', installed: true, installUrl: 'https://github.com/apps/acme-reviewer/installations/new' },
     defaultBranch: { review: { runner: 'woodshed', rerun: '[woodshed-review]', heading: '## R', author: 'acme-reviewer[bot]', commentAuthor: 'acme-woodshed[bot]' }, qa: null, runsOn: null, runsHere: true, error: null },
+    review: { runner: 'woodshed', rerun: '[woodshed-review]', from: 'project file' },
     missing: [],
   });
 });
@@ -55,6 +56,9 @@ test('each missing step names who takes it and how', async () => {
   assert.match(made.missing[0].step, /installs the reviewer App \(acme-reviewer\[bot\]\) on acme\/game: https:\/\/github\.com\/apps\/acme-reviewer\/installations\/new/);
   const unread = await readinessFor('made', { gates: new Error('the project file could not be read: HTTP 502') }).check('acme/game', { projects: PROJECTS });
   assert.equal(unread.defaultBranch.error, 'the project file could not be read: HTTP 502');
+  assert.equal(unread.review, null, 'unknown while the file is not read');
+  const byDefault = await readinessFor('installed').check('acme/game', { projects: PROJECTS });
+  assert.deepEqual([byDefault.defaultBranch.review, byDefault.review], [null, { runner: 'woodshed', rerun: '[woodshed-review]', from: 'default' }], 'a file that names no review, or none: every repo\'s default');
 });
 
 test('a repo the asker may not start on is told nothing of, and GitHub is not asked', async () => {

@@ -77,18 +77,18 @@ async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin
     fs.mkdirSync(path.join(home, 'woodshed'), { recursive: true });
   }
   const sent = [];
-  const run = async (args) => {
+  const run = async (args, { cwd = repo } = {}) => {
     let out = '';
     let err = '';
     const code = await main([...args, ...(signedIn ? [] : ['--console', origin])], {
       env: { XDG_CONFIG_HOME: home }, stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
-      platform: 'test', credentials, cwd: repo,
+      platform: 'test', credentials, cwd,
       fetch: async (url, init) => { sent.push({ url: String(url), headers: init.headers }); return fetch(url, init); },
     });
     return { code, out, err, lines: out.trim().split('\n').filter(Boolean).map((l) => (l.startsWith('{') ? JSON.parse(l) : l)) };
   };
   const file = () => (fs.existsSync(path.join(repo, '.woodshed', 'project.yaml')) ? fs.readFileSync(path.join(repo, '.woodshed', 'project.yaml'), 'utf8') : null);
-  return { origin, run, repo, state, file, sent, cli };
+  return { origin, run, repo, state, file, sent, cli, tmp };
 }
 
 test('enable writes the review into the project file, checks it, and with nothing missing says to commit it', async (t) => {
@@ -114,7 +114,7 @@ test('review status and enable use installed Git when run from a checkout contai
   try {
     process.chdir(s.repo);
     const status = await s.run(['review', 'status', '--json']);
-    assert.equal(status.code, EXIT.waiting);
+    assert.equal(status.code, EXIT.done, 'on by default');
     assert.equal(status.lines[0].repo, 'acme/game');
     const enabled = await s.run(['review', 'enable', '--json']);
     assert.equal(enabled.code, EXIT.done);
@@ -220,24 +220,34 @@ test('not signed in: the file is written, and the console is not asked: 2', asyn
   assert.deepEqual(s.sent, []);
 });
 
-test('status: off, then in the checkout only, then on', async (t) => {
+test('status: on by default with no project file, needing no checkout; the file\'s own review, when it names one', async (t) => {
   const s = await setup(t);
-  const off = await s.run(['review', 'status']);
-  assert.equal(off.code, EXIT.waiting);
-  assert.match(off.out, /This checkout: {3}review off/);
-  assert.match(off.out, /Next: woodshed review enable/);
+  const byDefault = await s.run(['review', 'status', '--repo', 'acme/game'], { cwd: s.tmp });
+  assert.equal(byDefault.code, EXIT.done, byDefault.out);
+  assert.match(byDefault.out, /Runs: {12}review in a Woodshed session, on commits tagged \[woodshed-review\], default, for every repo/);
+  assert.match(byDefault.out, /Review is on: put \[woodshed-review\] in a commit's message, and the console reviews the pull request at that commit\./);
+  assert.ok(!/This checkout/.test(byDefault.out), 'no checkout was read');
+  const json = await s.run(['review', 'status', '--json']);
+  assert.deepEqual([json.lines[0].on, json.lines[0].review], [true, { runner: 'woodshed', rerun: '[woodshed-review]', from: 'default' }]);
 
-  await s.run(['review', 'enable']);
-  const local = await s.run(['review', 'status', '--json']);
-  assert.equal(local.code, EXIT.waiting);
-  assert.equal(local.lines[0].on, false);
-  assert.equal(local.lines[0].checkout.review.runner, 'woodshed');
+  s.state.reviewer = 'made';
+  const notInstalled = await s.run(['review', 'status', '--repo', 'acme/game'], { cwd: s.tmp });
+  assert.equal(notInstalled.code, EXIT.waiting);
+  assert.match(notInstalled.out, /installs the reviewer App/);
+  s.state.reviewer = 'installed';
 
-  s.state.gates = { review: { runner: 'woodshed', heading: '## R', rerun: '[woodshed-review]' }, qa: null };
-  const on = await s.run(['review', 'status']);
-  assert.equal(on.code, EXIT.done, on.out);
-  assert.match(on.out, /Default branch: {2}review in a Woodshed session, on commits tagged \[woodshed-review\]/);
-  assert.match(on.out, /Review is on\./);
+  s.state.gates = { review: { runner: 'woodshed', heading: '## R', rerun: null }, qa: null };
+  const own = await s.run(['review', 'status']);
+  assert.equal(own.code, EXIT.done, own.out);
+  assert.match(own.out, /Project file: {4}review in a Woodshed session, on each commit/);
+  assert.match(own.out, /Runs: {12}review in a Woodshed session, on each commit, the repo's project file/);
+
+  s.state.gates = { review: { runner: 'actions', heading: '## R', rerun: null, author: 'claude[bot]' }, qa: null };
+  const actions = await s.run(['review', 'status']);
+  assert.equal(actions.code, EXIT.waiting);
+  assert.match(actions.out, /Review runs in GitHub Actions, by the repo's project file/);
+  const bad = await s.run(['review', 'status', '--repo', 'nope']);
+  assert.match(bad.err, /--repo must be a GitHub repo as owner\/name/);
 });
 
 test('a runsOn or logins in the file that are not this console\'s are warned of', async (t) => {
@@ -384,5 +394,5 @@ test('a repo is reviewed by default: off only where its project file runs the re
   assert.equal(reviewOf({ defaultBranch: { ...branch, runsOn: 'other[bot]', runsHere: false }, review: { runner: 'woodshed', rerun: '[woodshed-review]', from: 'default' } }, 'acme/game').why,
     'acme/game\'s pullRequests.runsOn names another console (other[bot]), which runs its reviews');
   assert.equal(reviewOf({ defaultBranch: { ...branch, error: 'not read' }, review: null }, 'acme/game').known, false, 'a file not read says nothing');
-  assert.equal(reviewOf({ defaultBranch: branch }, 'acme/game').why, 'acme/game\'s project file names no review, and this console runs no default one', 'a console from before the default');
+  assert.equal(reviewOf({ defaultBranch: branch }, 'acme/game').why, 'acme/game\'s project file names no review, and this console is from before every repo was reviewed by default', 'a console from before the default');
 });

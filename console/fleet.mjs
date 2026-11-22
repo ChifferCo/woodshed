@@ -5,6 +5,7 @@
 // closed for a few days. Everything it talks to is passed in, so the tests can
 // run it against fakes.
 
+import { withDefaultReview } from './defaultReview.mjs';
 import { DEFAULT_CONSOLE_NAME } from './config.mjs';
 import { DEFAULT_RETENTION, spanText } from './consoleSettings.mjs';
 import { labelTriggers, commandTriggers, rememberSeen } from './github.mjs';
@@ -260,6 +261,9 @@ export function failedComment({ session, publicUrl, linkQuery = null, consoleNam
  *   `pullWebhooksFlowing`: pull request webhooks are arriving, so a waiting pull request is read only when one comes,
  *   or every `config.fallbackPollMs` (pullWebhooks.mjs)
  *   `pullRequests`: the repo's project file's gates for a pull request, from the default branch (projectFile.mjs)
+ *   `reviewGates`: the same, with every repo's default review where the file names none (defaultReview.mjs), as it is
+ *   without it: what starts a review, on the tag or asked for (reviewOnDemand), and the tag a session is told. Only that: the Slack post and QA wait for the file's own review
+ *   alone, so a repo that names none posts as before, whether or not a default review ran
  *   `projectBlocker(project)`: why no session that gets databases can start on that project, a blocker, or null
  *   (databaseGate.mjs)
  *   `repoTriggers`: each repo's label and its switches for labels and /woodshed comments (repoTriggers.mjs); without
@@ -268,7 +272,7 @@ export function failedComment({ session, publicUrl, linkQuery = null, consoleNam
 export function createFleet({
   config, store, launcher, github, statusd = callStatusd, now = Date.now, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, qaRecordings = null, members = null, pings = null,
-  pullWebhooksFlowing = () => false, pullRequests = async () => null, projectBlocker = async () => null, githubFor = null,
+  pullWebhooksFlowing = () => false, pullRequests = async () => null, reviewGates = async (name) => withDefaultReview(await pullRequests(name)), projectBlocker = async () => null, githubFor = null,
   consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null, repoTriggers = null, reviewAgents = null,
   mcpServers = null, appShares = null, egress = null,
 }) {
@@ -386,6 +390,8 @@ export function createFleet({
       env.BRANCH = session.branch;
     }
     if (session.prompt) env.PROMPT = session.prompt;
+    // The review's tag, for the session's rules when its checkout's project file names none (entrypoint.sh, writeRules).
+    if (session.reviewTag) env.WOODSHED_REVIEW_TAG = session.reviewTag;
     // Claude opens with nothing to do: the person came to read the review, which the session starts itself.
     if (session.reviewOnly) env.REVIEW_ONLY = '1';
     // Its agent's terminal comes from its person's Herdr, as a child of theirs (`woodshed session new --herdr --parent`):
@@ -569,6 +575,17 @@ export function createFleet({
     if (session.owner && !session.mayUseProduction && mcpServers?.forSession(session, projectFor(config, session).repo ?? null).some((s) => s.production)) {
       update(session, { mayUseProduction: true, ...(databases?.available ? { ownDatabases: true } : {}) });
       console.log('fleet: a session that may use production', { id: session.id, owner: session.owner, ownDatabases: Boolean(session.ownDatabases) });
+    }
+    // The tag that asks for the repo's review, which a coding session's rules tell its agent to put on its commits: the
+    // project file's, or every repo's default where the file names none, which the file in the checkout cannot say
+    // (defaultReview.mjs). None for every-commit review, a review run elsewhere, or a file that could not be read, which
+    // starts the session all the same.
+    if (!isAsk(session) && !isQa(session) && !isReview(session)) {
+      const review = (await reviewGates(projectFor(config, session).name).catch((err) => {
+        console.warn('fleet: review tag not read, the session starts with none', { id: session.id, message: firstLine(err) });
+        return null;
+      }))?.review ?? null;
+      update(session, { reviewTag: review?.rerun ?? null });
     }
     let started;
     try {
@@ -2228,7 +2245,7 @@ export function createFleet({
    */
   async function reviewOnTag({ number, project: projectName = null }) {
     const project = projectOfEvent(projectName);
-    const gates = project ? await pullRequests(project.name) : null;
+    const gates = project ? await reviewGates(project.name) : null;
     const review = gates?.review;
     if (!review || review.runner !== 'woodshed') return { unrecorded: true };
     const gh = githubOf(project);
@@ -2272,11 +2289,10 @@ export function createFleet({
       console.log('fleet: review asked for, refused', { number, login, reason, ...projectField(project) });
       return { outcome: 'refused', status, reason };
     };
-    // The review the fleet runs by: the project file's, or every repo's default where it names none (installation.mjs's
-    // gatesOf, defaultReview.mjs). Refused only where the file itself chooses another runner, or runsOn another console.
-    const gates = await pullRequests(project.name);
+    // The review the fleet runs by: the project file's, or every repo's default where it names none (reviewGates,
+    // defaultReview.mjs). Refused only where the file itself chooses another runner, or runsOn another console.
+    const gates = await reviewGates(project.name);
     const runner = gates?.review?.runner ?? null;
-    if (!runner) return refused(409, `${project.repo}'s project file names no review, and this console runs no default one`);
     if (runner !== 'woodshed') {
       return refused(409, `${project.repo}'s project file runs its review in ${runner === 'actions' ? 'GitHub Actions' : runner}, not in this console: its pullRequests.review chooses that runner`);
     }

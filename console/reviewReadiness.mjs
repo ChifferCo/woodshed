@@ -1,12 +1,17 @@
 // Whether a repo's pull requests can be reviewed in a Woodshed session (pullRequests.review.runner: woodshed), as far
 // as the console's side goes: the repo is one of its projects, the reviewer App is made, and it is installed on the
-// repo (README.md, "The reviewer App"). What the project file says on the default branch comes with it. Read-only: it
-// changes nothing, and names each missing step with who takes it. `woodshed review enable` and `status` ask it, after
-// writing the review into the checkout's project file; the console's own page can too.
+// repo (README.md, "The reviewer App"). What the project file the console reads says comes with it (its default
+// branch's, or the installation's for a repo with none), and the review that runs: the file's, or every repo's default,
+// on [woodshed-review], where the file names none (defaultReview.mjs). Read-only: it changes nothing, and names each
+// missing step with who takes it. `woodshed review enable` and `status`, and `woodshed setup`, ask it; the console's own
+// page can too.
 //
 //   GET /api/review-readiness?repo=<owner/name>
 //     ->  {repo, project, consoleApp: {login}, reviewerApp: {made, login, installed, installUrl},
-//          defaultBranch: {review, qa, runsOn, error}, missing: [{key, step, by}]}
+//          defaultBranch: {review, qa, runsOn, runsHere, error}, review: {runner, rerun, from}|null,
+//          missing: [{key, step, by}]}
+//
+// `review` is what the review runs by: `from: 'project file'` or `'default'`; null while the file could not be read.
 //
 // It answers about a repo the asker may start sessions on, and about no other: for any other repo it says only that
 // the console does not have it for them, and asks GitHub nothing more. The command line's token (wsc_, cliSignIn.mjs)
@@ -18,6 +23,7 @@
 // Ready means: the repo is the asker's to start on, the reviewer App is made and known to be installed on it, and the
 // default branch's runsOn, when it names one, names this console as the fleet reads it (fleet.mjs, runsElsewhere).
 
+import { DEFAULT_REVIEW } from './defaultReview.mjs';
 import { allProjects } from './projects.mjs';
 
 export const REVIEW_READINESS_PATH = '/api/review-readiness';
@@ -38,8 +44,8 @@ export function runsOnHere(runsOn, { login, name = null }) {
  *          pullRequestsOf: (projectName: string) => Promise<object|null>,
  *          canWrite?: ((login: string|null, project: object) => Promise<boolean>)|null}} deps
  *   `reviewer` is the console's reviewer App, its own or a host's, null where it can have none; `ownReviewer` says
- *   whether it is the console's own, which an admin makes on /setup/github; `pullRequestsOf` the project file's gates on
- *   the default branch, with the Apps' logins filled in (reviewLogins.mjs); `runsOnName` this console's name among its
+ *   whether it is the console's own, which an admin makes on /setup/github; `pullRequestsOf` the project file's gates,
+ *   without the default review, with the Apps' logins filled in (reviewLogins.mjs); `runsOnName` this console's name among its
  *   App's (config.runsOnName); `canWrite` asks GitHub whether a person may write to a project's repo, null where
  *   sign-in asks nothing (no sign-in, or a hosting proxy that says who is in)
  */
@@ -63,7 +69,7 @@ export function createReviewReadiness({ publicUrl, reviewer, ownReviewer, appLog
     const missing = [];
     if (!project) {
       missing.push({ key: 'repo', by: 'admin', step: `An admin of the console adds ${repo} on Console settings, Repos (${publicUrl}/settings), and you need write access to it.` });
-      return { repo, project: null, consoleApp: null, reviewerApp: null, defaultBranch: null, missing };
+      return { repo, project: null, consoleApp: null, reviewerApp: null, defaultBranch: null, review: null, missing };
     }
     const consoleLogin = await appLogin().catch(() => null);
     const made = Boolean(reviewer?.configured());
@@ -118,11 +124,16 @@ export function createReviewReadiness({ publicUrl, reviewer, ownReviewer, appLog
     } catch (err) {
       defaultBranch = { review: null, qa: null, runsOn: null, runsHere: null, error: firstLine(err) };
     }
+    // What the fleet runs the review by (withDefaultReview): unknown while the file could not be read.
+    const fileReview = defaultBranch.review;
+    const review = defaultBranch.error ? null : fileReview
+      ? { runner: fileReview.runner, rerun: fileReview.rerun ?? null, from: 'project file' }
+      : { runner: DEFAULT_REVIEW.runner, rerun: DEFAULT_REVIEW.rerun, from: 'default' };
     return {
       repo: project.repo, project: project.name,
       consoleApp: { login: consoleLogin, name: runsOnName },
       reviewerApp: { made, login: made ? reviewer.login() : null, installed, installUrl },
-      defaultBranch, missing,
+      defaultBranch, review, missing,
     };
   }
 

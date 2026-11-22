@@ -72,6 +72,7 @@ import { createConsoleUpgrade, createHandler } from './server.mjs';
 import { createReviewReadiness } from './reviewReadiness.mjs';
 import { createReviewerApp } from './reviewerApp.mjs';
 import { withAppLogins } from './reviewLogins.mjs';
+import { withDefaultReview } from './defaultReview.mjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 
 // A caller that delivers GitHub's webhooks itself (dispatchWebhook) tells the fleet they arrive this often, as the local
@@ -420,12 +421,18 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const ownReviewer = hostApp ? null : createReviewerApp({ store, secrets, config });
   const reviewerApp = hostApp ? hostApp.reviewer ?? null : ownReviewer;
   if (hostApp) console.log('console: GitHub App from the host', { login: hostApp.login() ?? null, reviewer: Boolean(hostApp.reviewer) });
-  // A project's pull request gates on its default branch, with the Apps' logins the file leaves out (reviewLogins.mjs).
-  const gatesOf = async (name) => withAppLogins(await readerOf(name).pullRequests(), { reviewerLogin: reviewerApp?.login() ?? null, ownLogin: await appIdentity.login() });
+  const logins = async () => ({ reviewerLogin: reviewerApp?.login() ?? null, ownLogin: await appIdentity.login() });
+  // A project's pull request gates from its project file, with the Apps' logins the file leaves out (reviewLogins.mjs).
+  const fileGatesOf = async (name) => withAppLogins(await readerOf(name).pullRequests(), await logins());
+  // A pull request's gates (the Slack post, QA's wait) are the file's alone, as before: the default review only starts a
+  // review on the tag and gives sessions the tag (defaultReview.mjs), since it may have no reviewer App to approve with.
+  const gatesOf = fileGatesOf;
+  // What starts a review, by the tag or on demand, and the tag sessions are told: the file's, with every repo's default.
+  const reviewGatesOf = async (name) => withAppLogins(withDefaultReview(await readerOf(name).pullRequests()), await logins());
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, qaRecordings, pullWebhooksFlowing: pullWebhooks.flowing,
-    pullRequests: gatesOf,
+    pullRequests: gatesOf, reviewGates: reviewGatesOf,
     projectBlocker: databaseGate.blocker, githubFor,
     consoleLinks: (name) => readerOf(name).consoleLinks(), ...(newId ? { newId } : {}),
     // The App that posts a QA session's check, so the brief trusts it.
@@ -553,7 +560,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
     cli,
     // Whether a repo's review can run in a session, for `woodshed review`: none with no GitHub App to run it.
     reviewReadiness: config.githubApp || hostApp ? createReviewReadiness({
-      publicUrl: config.publicUrl, reviewer: reviewerApp, ownReviewer: !hostApp, appLogin: () => appIdentity.login(), pullRequestsOf: gatesOf,
+      publicUrl: config.publicUrl, reviewer: reviewerApp, ownReviewer: !hostApp, appLogin: () => appIdentity.login(),
+      pullRequestsOf: fileGatesOf,
       runsOnName: config.runsOnName ?? null,
       // A token's person must still write to the repo, as sign-in asks of a browser's (auth.mjs). With no sign-in, or
       // behind a hosting proxy, nobody's access is asked there either.

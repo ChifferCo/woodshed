@@ -50,7 +50,7 @@ Setup's aim is your first automated code reviews: Claude Code and Codex reviewin
 `woodshed setup` on a terminal, or give your coding agent the repo:
 
 ```sh
-woodshed setup --yes --repo acme/app --repo-dir ~/code/app --reviews default
+woodshed setup --yes --repo acme/app --reviews default
 ```
 
 Use `--console <url>` for your own console and `--no-browser` to print links without opening them. When setup exits 2,
@@ -67,9 +67,11 @@ It goes in this order:
    whose token you paste under Claude; `codex login`, then all of `~/.codex/auth.json` (or an OpenAI API key) under
    Codex. Setup never handles a token itself. Use only one? Pass `--agent claude` or `--agent codex`, or answer so on a
    terminal, and setup does not ask for the other.
-3. **Review on the repo.** For each repo, setup uses the current checkout when its GitHub origin matches, or a checkout
-   supplied by `--repo-dir`, and prepares the project file change for a pull request. `--reviews` sets your own
-   reviewer choice (`default` is the most the console can run: both, once both are connected).
+3. **Review on the repo.** Every repo is reviewed by default, on a commit whose message has `[woodshed-review]`
+   (sessions add it for you), with no checkout, project file or pull request: for each repo setup runs `woodshed review
+   status --repo <repo>`, stops with the link when the console's reviewer App still has to be made or installed, and
+   otherwise tells you the tag. `--reviews` sets your own reviewer choice (`default` is the most the console can run:
+   both, once both are connected).
 4. **Reviews of your open pull requests**, the step setup is for: it lists your open pull requests on each repo
    (`woodshed review pulls`) and starts the console's review on them now (`woodshed review start`), then gives each
    review's link. On a terminal it asks which, Enter for all (closing the input, Ctrl-D, starts none). `--review-prs
@@ -119,7 +121,7 @@ Keep a source explicit even when only one is supported. Keep session management 
 | `woodshed repo add <owner/name> [--name N]` | Adds a repo as in Console settings. Use `--name` on consoles that let you choose a project name. | 0 added, 2 GitHub App access or sign-in needed, 3 refused, 1 failed |
 | `woodshed repo remove <owner/name>` | Removes a repo and its Woodshed settings as in Console settings. | 0 removed, 2 sign in, 3 refused, 1 failed |
 | `woodshed review <id>\|<pull request>` | Reviews one of your sessions' change on this terminal, as the console's Review tab: [below](#reviewing-a-session-on-this-terminal). | 0 quit, 2 the sign-in ended, 3 a shared session or one that has seen production data, 1 anything else |
-| `woodshed review enable\|status` | In a checkout: reviews the repo's pull requests in Woodshed sessions, by its project file, and says what the console still needs. Below. | 0 done, 2 an admin's step, a sign-in or a merge still to come, 1 a project file that does not read or check |
+| `woodshed review status\|enable` | Whether a repo's pull requests are reviewed in Woodshed sessions (on by default, on `[woodshed-review]`) and what the console still needs; `enable` writes the review into the project file, for QA, every commit or another tag. Below. | 0 done, 2 an admin's step, a sign-in or a merge still to come, 1 a project file that does not read or check |
 | `woodshed review pulls\|start` | Lists your open pull requests on a repo, and has the console review them now: [below](#reviewing-your-open-pull-requests-now). | 0 done, 2 a sign-in, 3 a pull request or repo not yours, or a repo whose project file runs its review elsewhere, 1 anything else |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 | `woodshed config list\|get\|set` | Reads or sets [your choices on My settings](#your-choices-on-my-settings). | as below |
@@ -156,8 +158,14 @@ run the same add again. If the console's response to a change is lost, run `repo
 
 ## Review
 
-`woodshed review enable`, run in a checkout of a repo the console has, turns on Woodshed's review for it the way a
-connected repo has it: in a review session the console starts on each pull request, whose verdict the console posts as
+Every repo the console has is reviewed by default: put `[woodshed-review]` in a commit's message on a pull request, and
+the console reviews it at that commit, with nothing to turn on or commit. Woodshed's sessions add the tag to the commits
+they push. `woodshed review status --repo owner/name` (or, in a checkout, `woodshed review status`) says whether review
+is on, what it runs by (`default`, or the repo's project file, which wins when it names a review) and what the console
+still needs, such as its reviewer App.
+
+`woodshed review enable`, run in a checkout of a repo the console has, writes Woodshed's review into its project file,
+for QA in a session too (`--qa`), every commit, or another tag: in a review session the console starts on each pull request, whose verdict the console posts as
 its reviewer App (console/README.md, "The reviewer App"). It needs no GitHub workflow, Actions secret or Anthropic key,
 and writes none: `scripts/enable-review.sh` is for a repo with no Woodshed console.
 
@@ -166,7 +174,7 @@ woodshed review enable                 # pullRequests.review with runner: woodsh
 woodshed review enable --qa            # QA too, in a session, when the woodshed-qa label goes on a pull request
 woodshed review enable --every-commit  # each new commit, with no tag (--rerun <tag> for another tag)
 woodshed review enable --dry-run       # what it would change, nothing written
-woodshed review status                 # the checkout's file, the default branch's, and the console's reviewer App
+woodshed review status [--repo R]      # what runs (default or the project file), and the console's reviewer App
 ```
 
 `enable` edits `.woodshed/project.yaml` (made with `version: 1` when there is none): it adds or changes those lines and
@@ -185,7 +193,7 @@ open a pull request: the review starts once that is merged, since the console re
 when the file's `runsOn` names another console, or names an `author` or `commentAuthor` that is not this console's.
 `enable` exits `1` when the console could not be asked or did not answer (an origin not on GitHub, a console with no
 GitHub App or from before the route): the file is written, but nothing says the review can run. `status` exits `0`
-once the default branch says it, the console runs its reviews (the default branch's `runsOn`, if any, names it, App and
+once a review runs in a session, by the default or the default branch's file, the console runs its reviews (the default branch's `runsOn`, if any, names it, App and
 name, as its fleet reads it) and its reviewer App is known to be installed; else `2` with what comes next.
 
 ### Reviewing your open pull requests now
@@ -252,7 +260,14 @@ would land there, so open that session by its id instead. A paused one is resume
   read of whether it may: approved, checks passing, the head this review read; into the merge queue where the base
   has one), `t` rename the pull request. `r` Re-review (pulls the branch, takes the diff again and reads it again; with
   nothing new, `a` reads the same commit again), `a` runs or retries the analysis, `d` discards the analysis and the
-  conversation. `?` lists the keys; `q` quits, and the session and the review go on.
+  conversation. `o` opens the pull request (its underlined number in the header) on GitHub in your browser. `?` lists
+  the keys; `q` quits, and the session and the review go on.
+
+The pull request opens only from its own address, and only a pull request's page on `https://github.com`, with the
+platform's opener (`open` on macOS, `xdg-open` on Linux, `rundll32`'s `FileProtocolHandler` on Windows, which opens it as
+`start` does without `cmd.exe`) given the address as its argument, never through a shell (`cli/browser.mjs`). Over SSH, or
+on Linux with no display, nothing is opened: the status line shows the address instead, as it does when the opener
+fails. The number is a terminal hyperlink too: in Herdr, Ctrl-click on it opens it.
 
 The footer names the keys for what is on screen. It draws in the terminal's own colours (bold, dim, reverse and the
 eight basic colours, foreground only), so it reads on a light terminal as on a dark one; `NO_COLOR` keeps bold, dim and
@@ -309,6 +324,7 @@ before the line ends (Ctrl-C, a cut network) hangs up everything the line starte
 | `session list [--all]` | Your sessions and the shared ones you can see, as the console's page shows them to you: id, state (the page's words), kind (below), whose, when it pauses or stops by itself, project and title. Under each, every pull request it opened, as the console's chips read it (`#123 open · approved · checks 3 passing`; `not read yet` before the console has read it), and `review it: woodshed review <id>` under your own sessions'. Then your own open pull requests on the console's repos that no listed session opened (My Woodshed's Pull requests group). Ended shared sessions only with `--all`; a review or QA run has ended once it stops, since nothing of it is kept to resume. With `hc` here, it also names the `woodshed-<id>` machines in Herdr whose session is no longer on the console (`herdrLeftovers` in `--json`), and says to run `prune`. | 0 |
 | `session get <id>` | One session: state, kind, whose, branch, agent, pull request, a review's or QA's verdict, its app, when it pauses or stops, and the hours it runs on. | 0, 1 none you can see |
 | `session app <id> [start [--app NAME] [--no-wait]\|stop]` | A running session's app, as the page's Open app, Start app and Stop app: whether it is up and the link that opens it. `start` starts it (or `NAME`, one of the project's apps) and waits up to 5 minutes for it to come up; `stop` stops it. Below. | 0 up, asked or stopping, 2 the project file names no app (Set up app on the page), 1 not up in time, its start failed, or the app was still stopping, 3 not running, a question from Slack, a console that serves no session apps, the session refused, or `stop` with no stop command in the project file |
+| `session app <id> share [--members on\|off \| --link [--hours 1\|24\|168] [--path /page] \| --revoke <link id>]` | Who besides you can open your private session's app, as the page's Share the app: the Members of this console switch and the live links, each with its id, who made it and when it ends (never a link's secret). `--members` turns the switch on or off; `--link` makes a link anyone can open, for an hour, a day (the default) or a week, landing on `--path` when given, and prints it once; `--revoke` ends one link. Below. | 0, 3 a shared session, one not running (for `--link` or `--members on`), one that has seen production data, ten links already, or a console that serves no apps or lends them ports, 1 an expiry the page does not offer, an unknown link, or anything else, 2 the sign-in ended |
 | `session watch [--kind K,…] [--everyone] [--every S] [--herdr]` | Follows the console and prints one line per session that starts, runs, is done with its turn, needs you, pauses, stops, finishes or fails, until stopped; `--herdr` runs it in a Herdr terminal of its own instead, and returns: [below](#watching-sessions). | runs until Ctrl-C (`--herdr`: 0 started or already running); 2 the sign-in ended, 3 refused, or `--herdr` with no `hc` 0.1.21 or newer |
 | `session stop <id>` | Stops it, and waits until the console has stopped it, a running one's work checkpointed on the way (up to 3 minutes: past that it says to check with `get`). One that paused or failed by itself is marked stopped by you, as the page's Stop does, so it no longer waits on you. | 0, 1 not answered in time |
 | `session resume <id> [--no-wait]` | Starts one of your stopped sessions again, its conversation and all, and waits as `new` does. | as `new`; 3 a shared session (resume it on the console) |
@@ -365,6 +381,15 @@ have no Share the app, and an app domain with sign-in off), where it opens for w
 console that does not say. `app`, `appUrl`, `appLink` and `appSignIn` are null while the session is not running, or on
 a console that serves no session apps.
 
+The link opens whatever answers on the app's frontend port in the session, not only what the project file's `start`
+runs. To show something the app does not serve (static pages in a folder, a docs site), have the session serve it on
+that port, with the app stopped when it holds the port, or start another of the project's apps that serves it (`--app
+NAME`); a server started through `woodshed tunnel` needs `setsid … &` to outlive it. Serve a copy of only the files
+meant to be seen (no dotfiles, no symlinks): everyone the link reaches, a share's viewers too, sees what that port
+serves. The link then opens it, and
+`session app` says `running`, or `api-down` when the app's backend is on another port that is not answering. To keep
+it, add it to the project file as an app of its own (`apps`, docs/reference.md, "The project file").
+
 `session app <id> start` waits until both the app's frontend and backend answer, and says when its start failed or
 it is not up in 5 minutes: its start log is `/tmp/woodshed-app.log` in the session (`woodshed tunnel <id> -- tail -n
 50 /tmp/woodshed-app.log`). A start while the app is still stopping (right after `stop`) is not taken by the session,
@@ -376,6 +401,25 @@ suggests to start an app again name it with `--app` when it is one of several an
 no app exits 2: Set up app, which asks the session's agent to write one, is on the console's page only. With
 `--json`, `app` prints `{"event":"app","session":{…}}`, and `start` an `app-starting` event, then `app-running` or
 `app-not-up` with the session; `stop` an `app-stopping`.
+
+### Sharing a session's app
+
+`session app <id> share` does what Share the app does (the Share button beside the session's app button, or its ⋯ menu) (console/README.md, "Sharing the app"), for
+your own running My Woodshed session: only the app, never its terminal, Review, databases or Start/Stop. Prefer
+`--members on`, which opens it to everyone signed in to the console and is taken back with `--members off`. For
+someone with no account, `--link` makes a link anyone can open, and prints it once: it is a secret, and lets whoever has
+it use the app as the session's signed-in user, changing its data, until it expires, `--revoke <link id>` ends it, or
+the session pauses or stops. `--hours` takes the page's choices, 1, 24 (the default) or 168, and refuses any other.
+`--path /landing-a` makes the link land on that page of the app once it is opened (the console's `next`, a path on the
+app's own name; a console from before it makes the link without, and the command says to go to the page after opening
+it). Sharing ends when the session pauses or stops, and a resumed session starts private again: `session limits <id>`
+keeps it up longer. Shared sessions, a session that has seen production data (except `--members off` and
+`--revoke`), and a console with app ports, which nobody signs in to and whose page has no Share the app, are refused
+with 3. On a console with an app domain and no sign-in, it shares as the page does, and says the app link already opens
+for whoever reaches the console. With `--json`, the listing prints `{"event":"share","id","share":{"appUrl","members","links":[{"id","by","createdAt","expiresAt"}]}}`,
+`--members` a `members` event and `--revoke` a `revoked` event with the same `share`, and `--link` a `link` event with
+`link`, `url`, `path` (null when the console did not take one) and `share`. Its options are share's alone: with `start`,
+`stop` or no action they exit 1 rather than be ignored, as `--app` and `--no-wait` do with share.
 
 ## Watching sessions
 

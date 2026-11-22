@@ -1146,7 +1146,7 @@
       { group: 'Session', label: 'Open the agent\'s TUI', run: open('tui') },
       s.status === 'running' && s.hasShell && { group: 'Session', label: 'Open the terminal', run: open('terminal') },
       s.status === 'running' && s.hasShell && W.isPrivate(s) && !s.taintedAt && W.agentOf(s) === 'claude' && { group: 'Session', label: 'Sign in for Remote Control', run: () => claudeLogin(s) },
-      s.status === 'running' && data.appDomain && !data.appPorts && W.isPrivate(s) && !s.taintedAt && { group: 'App', label: 'Share the app…', run: () => W.shareApp(s) },
+      canShareApp(s) && { group: 'App', label: 'Share the app…', run: () => W.shareApp(s, { onChange: render }) },
       s.branch && { group: 'Session', label: 'Open the review', run: open('review') },
       { group: 'Session', label: 'Rename it', run: () => rename(s) },
       s.status === 'running' && W.canExtend(s, data) && { group: 'Session', label: 'Extend it by an hour', run: async () => { await W.extendSession(s); refresh(); } },
@@ -1206,12 +1206,36 @@
         note: 'Start the app in this session: one to three minutes', working: true, run: app('start'),
       },
       data.appDomain && (up || s.app === 'starting' || s.app === 'frontend-down') && { group: 'App', label: 'Stop app', note: 'Stop the app\'s backend and frontend', working: true, run: app('stop') },
-      data.appDomain && !data.appPorts && W.isPrivate(s) && !s.taintedAt && { group: 'App', label: 'Share the app…', note: 'Let members, or anyone with a link, open the app', run: () => W.shareApp(s) },
+      canShareApp(s) && {
+        group: 'App', label: 'Share the app…', run: () => W.shareApp(s, { onChange: render }),
+        note: W.appSharedWords(W.appShared(s, render)) ? `Shared with ${W.appSharedWords(W.appShared(s, render))}: change who can open the app` : 'Let members, or anyone with a link, open the app',
+      },
       ...openActions(s),
       !PAGE_TABS.has(tab) && narrow.matches && {
         label: keyBarShown ? 'Hide the key bar' : 'Show the key bar', note: 'esc, the arrows, tab and ^C above the terminal', run: toggleKeyBar,
       },
     ].filter(Boolean);
+  }
+
+  // Only a running My Woodshed session's app is shared, by its owner, and never one that has seen production data. A
+  // console that lends each app a port of its own has no app names to share (appPorts.mjs).
+  function canShareApp(s) {
+    return s.status === 'running' && Boolean(data.appDomain) && !data.appPorts && W.isPrivate(s) && !s.taintedAt;
+  }
+
+  // Share, beside the app's button: Shared once members or a live link open the app, saying who in its title.
+  function shareButton(s) {
+    if (!canShareApp(s)) return null;
+    const who = W.appSharedWords(W.appShared(s, render));
+    return h('button', {
+      type: 'button', class: `pbtn pshare${who ? ' is-shared' : ''}`,
+      title: who ? `Shared with ${who}. Change who can open the app` : 'Let the console\'s members, or anyone with a link, open the app. Only the app: the rest stays yours',
+      onclick: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        W.shareApp(s, { onChange: render });
+      },
+    }, who ? 'Shared' : 'Share');
   }
 
   // Remote Control needs a login of its own, which woodshed-login makes. claude's /woodshed:remote-control runs it in the
@@ -1542,6 +1566,7 @@
           key: 'open', label: 'Open ▾', className: 'popen', title: 'Its checkout in VS Code, or its databases and Redis in a viewer, each in a new tab', open: () => ({ items: openActions(s) }),
         }),
         s.status === 'running' && W.canExtend(s, data) && extendButton(s, { bar: true }),
+        shareButton(s),
         s.kind !== 'ask' && W.appButton(s, { appDomain: data.appDomain, onDone: refresh, onChange: render, small: true }),
         (s.status === 'queued' || s.status === 'starting' || s.status === 'running') && stopBarButton(s),
         W.isResumable(s) && W.resumeSharedButton(s, { small: true, onDone: refresh })));
