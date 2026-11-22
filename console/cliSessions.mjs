@@ -17,6 +17,11 @@
 //                                           session's owner's and a shared one's assignee's alone, as on the page
 //   POST /api/sessions/<id>/app/start|stop  woodshed session app: Start app and Stop app, for whoever may on the page.
 //                                           Not Set up app, which types into the session's agent
+//   GET  /api/sessions/<id>/app-share       woodshed session app <id> share: who besides its owner may open a My Woodshed
+//   POST /api/sessions/<id>/app-share/members, /links, /links/<link>/revoke   session's app, and its links, changed
+//                                           as the page's Share the app does: the owner's alone, a private session's
+//                                           alone, and never shared once it has seen production data (server.mjs,
+//                                           appShareAction, the page's own check)
 //   GET  /api/review-readiness?repo=        woodshed review enable and status: whether a repo of theirs can be
 //                                           reviewed in a session, and what is missing (reviewReadiness.mjs)
 //   GET  /api/cli/config, and a few My settings writes   woodshed config: their choices, never a secret (cliConfig.mjs)
@@ -45,6 +50,8 @@ const ROUTES = [
   ['POST', /^\/api\/my\/sessions\/[0-9a-f]{8}\/(resume|remove)$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/(stop|extend|limits)$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/app\/(start|stop)$/],
+  ['GET', /^\/api\/sessions\/[0-9a-f]{8}\/app-share$/],
+  ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/app-share\/(members|links|links\/[0-9a-f]{8}\/revoke)$/],
   ['GET', /^\/api\/review-readiness$/],
   ...CONFIG_ROUTES,
 ];

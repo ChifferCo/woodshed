@@ -1539,7 +1539,15 @@ audience each time, and either can be turned off:
   an expiry (1 hour to 7 days) and gets `https://<id>.woodshed.example.com/__woodshed/share?t=<token>`, shown once.
   Opening it trades the token for a `__Host-woodshed_view` cookie for that one app and redirects to `/`, so the token
   leaves the address bar. The cookie holds the same token and every request checks it again, so **Revoke**, the expiry
-  and the session stopping end access at once, websockets included. A session has at most ten links.
+  and the session stopping end access at once, websockets included. A session has at most ten links. The owner may
+  name a page of the app for a link to land on (`{"path": "/landing-a"}`, which adds `&next=/landing-a`): after the
+  trade it redirects there rather than to `/`. `shareNext` in `appShares.mjs` keeps it to a path on the app's own
+  name, never another site's (`//host`, `/\host`, a scheme) nor the console's `/__woodshed/` paths, and a `next` added
+  by hand that is not one lands on `/`.
+
+The command line does the same with `woodshed session app <id> share` (cli/README.md, "Sharing a session's app"): the four
+routes take its token through `cliSessions.mjs`'s gate and answer as the page's, by the same code, owner and private
+session only, refused once it has seen production data.
 
 `state.json` keeps `appShares` (the switch, and for each link its id, a SHA-256 of the secret, who made it and when it
 ends), never a token. A session that is no longer active loses all its shares at the console's next tick, so a
