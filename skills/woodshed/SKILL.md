@@ -387,11 +387,13 @@ and no symlinks, never the checkout or a source folder as it is.
   Chat tab on the session's console page (`url`) or `woodshed session connect <id>` to ask it themselves.
 - **Or serve it yourself through the tunnel**, for one of their own sessions, the same way. Read the port with
   `woodshed tunnel <id> -- node /opt/woodshed/shared/project.mjs get app` (`frontendPort`); with several apps, `get
-  apps` prints one per line, and the one whose `name` is `session.appName` is the port. Copy the pages to a folder of
-  their own, then start a server that outlives the tunnel with `setsid`, as closing the tunnel hangs up what it started:
+  apps` prints one per line, and the one whose `name` is `session.appName` is the port. The line below copies only the
+  pages' plain files, no dotfiles or symlinks, into a new folder (never refilling one a server serves), stops the
+  preview it started before, and starts one that outlives the tunnel with `setsid`, as closing the tunnel hangs up what
+  it started:
 
   ```sh
-  woodshed tunnel <id> -- 'rm -rf /tmp/preview && cp -R site /tmp/preview && find /tmp/preview \( -type l -o -name ".*" \) -prune -exec rm -rf {} + && setsid python3 -m http.server <frontendPort> --bind 127.0.0.1 -d /tmp/preview >/tmp/preview.log 2>&1 </dev/null &'
+  woodshed tunnel <id> -- 'd=$(mktemp -d /tmp/preview.XXXXXX) && (cd site && find . -name ".*" ! -name . -prune -o -type f -exec cp --parents {} "$d" \;) && { kill $(cat /tmp/preview.pid 2>/dev/null) 2>/dev/null; sleep 1; setsid python3 -m http.server <frontendPort> --bind 127.0.0.1 -d "$d" >/tmp/preview.log 2>&1 </dev/null & echo $! >/tmp/preview.pid; }'
   ```
 
 Then `woodshed session app <id>` says `running` (or `api-down` when the project's app has a backend of its own that is
