@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
 import { claudeProjectDir } from './moveAgents.mjs';
 import { parseMoveArgs } from './move.mjs';
 import { EXIT, main } from './woodshed.mjs';
@@ -135,7 +136,7 @@ function laptop(t, { window = true, sessions = [], conversation = true, agentSta
     let out = '';
     let err = '';
     const code = await main(args, {
-      env: { ...process.env, XDG_CONFIG_HOME: config, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: path.join(home, '.codex'), ...env },
+      env: { ...isolatedEnv(), XDG_CONFIG_HOME: config, HOME: home, CLAUDE_CONFIG_DIR: claudeDir, CODEX_HOME: path.join(home, '.codex'), ...env },
       stdout: { write: (s) => { out += s; } }, stderr: { write: (s) => { err += s; } },
       credentials: { storeFor: () => ({ kind: 'file', label: 'a file', read: () => TOKEN, remove() {} }), save() {} },
       fetch: fetchFn, sleep: async (ms) => { clock += ms; }, now: () => clock, platform: 'test', hostname: 'mia-laptop',

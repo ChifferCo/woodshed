@@ -8,9 +8,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
 import { commitRows, createWoodshedUpdate, shownRemote } from './woodshedUpdate.mjs';
 
-const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: 'Octo Cat', GIT_AUTHOR_EMAIL: 'o@example.invalid', GIT_COMMITTER_NAME: 'Octo Cat', GIT_COMMITTER_EMAIL: 'o@example.invalid' };
+const GIT_ENV = { ...isolatedEnv(), GIT_AUTHOR_NAME: 'Octo Cat', GIT_AUTHOR_EMAIL: 'o@example.invalid', GIT_COMMITTER_NAME: 'Octo Cat', GIT_COMMITTER_EMAIL: 'o@example.invalid' };
 const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { env: GIT_ENV }).toString().trim();
 
 /** An upstream, a working copy that pushes to it, and a shallow clone `behind` commits behind, with `files` changed. */

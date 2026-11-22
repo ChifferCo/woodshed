@@ -256,7 +256,7 @@ before the line ends (Ctrl-C, a cut network) hangs up everything the line starte
 | `session herdr <id> [--parent[=T]]` | Makes one of your sessions a machine in Herdr, `woodshed-<id>`, so it shows in the app's sidebar beside this computer: below. A paused or stopped one is resumed first, and waited for as `resume` does; with `--parent`, resumed waiting for its agent's terminal from here. | 0 connected, 2 connected and the session needs you, 1 its start failed, `hc` could not add it, or `--parent` and its agent's terminal was already there, 3 no `hc`, one older than 0.1.21, a shared session, one that has seen production data, or `--parent` outside a Herdr terminal |
 | `session list [--all]` | Your sessions and the shared ones you can see, as the console's page shows them to you: id, state (the page's words), kind (below), whose, when it pauses or stops by itself, project and title. Under each, every pull request it opened, as the console's chips read it (`#123 open · approved · checks 3 passing`; `not read yet` before the console has read it), and `review it: woodshed review <id>` under your own sessions'. Then your own open pull requests on the console's repos that no listed session opened (My Woodshed's Pull requests group). Ended shared sessions only with `--all`; a review or QA run has ended once it stops, since nothing of it is kept to resume. With `hc` here, it also names the `woodshed-<id>` machines in Herdr whose session is no longer on the console (`herdrLeftovers` in `--json`), and says to run `prune`. | 0 |
 | `session get <id>` | One session: state, kind, whose, branch, agent, pull request, a review's or QA's verdict, when it pauses or stops, and the hours it runs on. | 0, 1 none you can see |
-| `session watch [--kind K,…] [--everyone] [--every S]` | Follows the console and prints one line per session that starts, is done with its turn, needs you, finishes or fails, until stopped: [below](#watching-sessions). | runs until Ctrl-C; 2 the sign-in ended, 3 refused |
+| `session watch [--kind K,…] [--everyone] [--every S] [--herdr]` | Follows the console and prints one line per session that starts, runs, is done with its turn, needs you, pauses, stops, finishes or fails, until stopped; `--herdr` runs it in a Herdr terminal of its own instead, and returns: [below](#watching-sessions). | runs until Ctrl-C (`--herdr`: 0 started or already running); 2 the sign-in ended, 3 refused, or `--herdr` with no `hc` 0.1.21 or newer |
 | `session stop <id>` | Stops it, and waits until the console has stopped it, a running one's work checkpointed on the way (up to 3 minutes: past that it says to check with `get`). One that paused or failed by itself is marked stopped by you, as the page's Stop does, so it no longer waits on you. | 0, 1 not answered in time |
 | `session resume <id> [--no-wait]` | Starts one of your stopped sessions again, its conversation and all, and waits as `new` does. | as `new`; 3 a shared session (resume it on the console) |
 | `session remove <id> [--yes]` | Takes one of your sessions off the list with its saved conversation, stopping it first, and forgets its `woodshed-<id>` machine in Herdr when there is one. It asks first on a terminal; with no terminal it needs `--yes`. | 0, 2 not confirmed, 3 a shared session |
@@ -300,39 +300,82 @@ and `remove`'s `removed` event has `machine`: `{"name","removed"}`, or null with
 
 ## Watching sessions
 
-`session watch` tells you, or a program, when a session starts, is done with its turn, needs you, finishes or fails,
-without opening it: no tunnel, no terminal, no machine in Herdr. It reads the console's session list (`GET
+`session watch` tells you, or a program, when a session starts, runs, is done with its turn, needs you, pauses, stops,
+finishes or fails, without opening it: no tunnel, no terminal, no machine in Herdr. It reads the console's session list (`GET
 /api/sessions`, the one `list` reads) every 15 s (`--every`, 5 to 600) and prints what changed since the last read:
 
 ```sh
 woodshed session watch --kind review,qa          # your reviews and QA runs: those on your Mine
 woodshed session watch --everyone --json         # every session you can see, one event per line
+woodshed session watch --herdr                   # yours, told in Herdr: below
 ```
 
 ```
 Watching your sessions (Mine) on https://console.example.com, kinds: review, qa, every 15 s. Ctrl-C stops.
 10:42:15  7e7e0010  started  review #145  Review: Fix the login bug  https://console.example.com/s/7e7e0010
 10:49:30  7e7e0010  finished (REQUEST_CHANGES)  review #145  Review: Fix the login bug  https://console.example.com/s/7e7e0010
+11:02:00  aaaa0001  paused (idle)  private  Fix the login redirect  https://console.example.com/s/aaaa0001
+          woodshed-aaaa0001 in Herdr is unreachable until it runs again: woodshed session herdr aaaa0001 brings it back
 ```
 
 - **Which:** by default those the console's rail lists under Mine (`inMine`); `--everyone` every session you can see.
   `--kind` keeps only `private`, `shared`, `review`, `qa` or `ask`, separated by commas.
-- **Events:** `started` (it runs, from in line or starting, or from stopped when resumed), `done` (its agent is done
-  with its turn, or exited, and waits for a message), `needs-you` (it asks you something), `finished` (it stopped,
-  paused, finished or merged) and `failed`. A review or QA run works by itself, so its turns are not told: it says
-  `started`, `needs-you` if it asks, then `finished` with its `verdict`, or `failed`. Its time is UTC.
+- **Events:**
+
+  | Event | When | `why` |
+  | --- | --- | --- |
+  | `starting` | In line or starting: a new session, or one resumed | |
+  | `started` | It runs, from in line, starting, or stopped (resumed between two reads) | |
+  | `done` | Its agent is done with its turn, or exited, and waits for a message | |
+  | `needs-you` | It asks you something | |
+  | `paused` | It stopped by itself after its idle hours (`resume` picks it up) | `idle` |
+  | `stopped` | At its lifetime, by a person (`session.stoppedBy`), deleted, or otherwise | `lifetime`, `person`, `deleted`, `other` |
+  | `finished` | A review or QA run reported (its `verdict`), its pull request merged or closed, or it was posted to Slack | `reported`, `merged`, `closed`, `posted` |
+  | `failed` | It failed, or did not start in time (`session.error`) | |
+
+  A review or QA run works by itself, so its turns are not told: it says `starting`, `started`, `needs-you` if it
+  asks, then `finished` with its `verdict`, or `failed`. Its time is UTC.
+- **A machine in Herdr:** when one of your sessions that `session herdr` made a machine pauses or stops, its line says
+  that `woodshed-<id>` is unreachable until it runs again, and that `woodshed session herdr <id>` brings it back (it
+  resumes the session and adds its machine again: `resume` alone leaves it unreachable). In `--json` the event has
+  `machine`: `{"name","unreachable":true,"bringBack"}`. Only machines whose saved line is this command line's tunnel to
+  that session on this console count, as for `prune`; with no `hc` here, nothing is said of one.
 - **The first read** only learns what is there: a watch tells what happens from when it starts, never what was already
   running.
-- **With `--json`**, the first line is `{"event":"watching","console","login","kinds","everyone","everySeconds","sessions"}`,
+- **With `--json`**, the first line is `{"event":"watching","console","login","kinds","everyone","everySeconds","sessions","herdr"}`,
   unless the console cannot be reached at the start: then `unreachable` and `reachable` (below) come before it
-  (`kinds` null for all, `sessions` how many it watches), then one `{"event","at","session":{…}}` per change, the
-  session as `get --json` gives it.
+  (`kinds` null for all, `sessions` how many it watches), then one `{"event","at","why"?,"session":{…},"machine"?}` per
+  change, the session as `get --json` gives it.
 - **A console it cannot reach** (a laptop asleep, a redeploy) is asked again at the same pace for as long as it runs:
   `{"event":"unreachable","at","error"}` once, then `{"event":"reachable","at","awaySeconds"}` when it answers, and the
   events of what changed meanwhile. Any 5xx answer counts as away too. Only a sign-in that ended (exit 2, `{"event":"error","status":"signed-out"}`) or a
   refusal (3) stops it.
 
 ### Notifications in Herdr, or anywhere
+
+`session watch --herdr` keeps your Herdr told of your sessions without adding any of them as a machine. It checks for
+`hc` (0.1.21 or newer, as `session herdr` does), then starts the same watch, with the same `--kind`, `--everyone` and
+`--every`, in a terminal of `hc`'s own and returns:
+
+```sh
+hc run --bg --json --name woodshed-watch --no-parent --label herdr.space=woodshed --label herdr.tab=woodshed-watch -- \
+  /usr/bin/env WOODSHED_WATCH_IN_HERDR=1 [XDG_CONFIG_HOME=…] <node> <this cli/woodshed.mjs> session watch --console <console> … --herdr
+```
+
+- **It runs on** with no parent, so closing the terminal you ran it from leaves it; `hc kill woodshed-watch` stops it.
+  Run again while it runs, it is left as it was (`{"event":"herdr","action":"kept"}`; `started` with its `address` the
+  first time). The words are run as they are, never through a shell, by the same absolute paths as a machine's `--via`
+  line, so it finds this sign-in.
+- **In its terminal**, each event is an OSC 7501 record, hc's own report of an agent's state, one per session (`id=<session>`), which
+  `hc get woodshed-watch` lists under `records` and the Herdr app reads as it does its own agents':
+  `starting` and `started` are `working`, `done`, `paused`, `stopped` and `finished` are `done`, `needs-you` is
+  `blocked` with `kind=question`, and `failed` is `error`. Its `title` is the session's, and its `msg` says what
+  happened (`aaaa0001 paused (idle)`), the session's link when it needs you or failed, and for a machine in Herdr that
+  it is unreachable until `woodshed session herdr <id>` brings it back. hc takes a record's `title` and `msg` only in
+  base64, which is how they are written. A session's record is cleared (`state=clear`) an hour after it ended, or once
+  it is no longer on the list or watched. The terminal shows the watch's lines too.
+- **The first read** tells nothing, as above: a session already waiting on you when the watch starts gets a record at
+  its next change.
 
 A Herdr app mod gets `notify({title, body, level, icon, timeout})` and can run a command. One that runs `woodshed
 session watch --kind review,qa --json` (in a herdr-core terminal of its own, as the Woodshed mod runs `session new`)

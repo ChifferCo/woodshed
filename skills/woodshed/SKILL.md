@@ -111,7 +111,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed session herdr <id> [--parent[=T] …]` | Makes a session a machine in Herdr and shows its Herdr agent in a space named after the session, in a tab named after its agent (never over names the person gave; run it again to pick up a later title). Resumes a paused session first, and re-adds the machine, which a plain `resume` leaves unreachable: run it after every `resume` inside Herdr. With `--parent`, a paused one is resumed waiting for its agent's terminal from this one | 0 connected, 2 needs the person, 1 failed, or `--parent` on a session whose agent's terminal was already there, 3 no `hc` 0.1.21 or newer, shared, saw production, or `--parent` outside a Herdr terminal | main |
 | `woodshed session list [--all]` | Their sessions and the shared ones they see, with state, kind (`private`, `shared`, `review`, `qa`, `ask`) and when each pauses; each session's pull request (state, verdict, checks), `review it: woodshed review <id>` under those they can review, and their own open pull requests with no session; in `--json` also a review's or QA's `verdict` once it reported, and whether the console's Mine lists it (`inMine`); names Herdr machines of sessions no longer on the console | 0 | main |
 | `woodshed session get <id>` | One session: state, kind, branch, pull request, a review's or QA's verdict, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
-| `woodshed session watch [--kind K,…] [--everyone] [--every S] [--json]` | Follows the console until stopped and prints one event per session that starts, is done with its turn, needs the person, finishes (a review's or QA's with its verdict) or fails; Mine by default | runs until stopped; 2 sign-in ended, 3 refused | main |
+| `woodshed session watch [--kind K,…] [--everyone] [--every S] [--herdr] [--json]` | Follows the console until stopped and prints one event per session that starts, runs, is done with its turn, needs the person, pauses (idle), stops (lifetime, a person), finishes (a review's or QA's with its verdict) or fails, and says when a session's Herdr machine is unreachable; Mine by default. `--herdr` starts it in hc terminal `woodshed-watch` instead, reporting to Herdr, and returns | runs until stopped (`--herdr`: 0 started or kept); 2 sign-in ended, 3 refused or no `hc` | main |
 | `woodshed session stop <id>` | Stops it, checkpointing a running one's work on the way (waits up to 3 minutes) | 0, 1 not answered in time | main |
 | `woodshed session resume <id> [--no-wait]` | Starts one of their stopped sessions again, conversation and all; inside Herdr, follow it with `session herdr <id>` | as `new`; 3 a shared session | main |
 | `woodshed session remove <id> [--yes]` | Takes it off the list with its saved conversation, and forgets its Herdr machine | 0, 2 not confirmed, 3 a shared session | main |
@@ -209,9 +209,27 @@ woodshed session watch --kind review,qa --json
 ```
 
 It runs until stopped, so start it only when asked, in the background or a terminal of its own, and never wait on it
-in the foreground. Its first line is `{"event":"watching",…}` (after `unreachable` and `reachable` when the console was
-away at the start), then one `{"event":"started"|"done"|"needs-you"|
-"finished"|"failed","at","session":{…}}` per change. `--everyone` watches every session they can see, not only Mine.
+in the foreground. Its first line is `{"event":"watching",…}` (after `unreachable` and
+`reachable` when the console was away at the start), then one `{"event":"starting"|"started"|"done"|
+"needs-you"|"paused"|"stopped"|"finished"|"failed","at","why"?,"session":{…},"machine"?}` per change. `why` says how
+it ended: `paused` is `idle`, `stopped` is `lifetime`, `person`, `deleted` or `other`. `--everyone` watches every
+session they can see, not only Mine.
+
+### Keep Herdr told of every session
+
+When the person wants Herdr to tell them as their sessions start, run, need them, pause, stop or fail, without adding
+each as a machine:
+
+```sh
+woodshed session watch --herdr --json        # starts hc terminal woodshed-watch, and returns
+```
+
+It needs `hc` 0.1.21 or newer (exit 3 otherwise: the person installs or updates it). It returns at once with
+`{"event":"herdr","action":"started"|"kept"}`: `kept` means one already runs, as it was started; to change its options,
+the person runs `hc kill woodshed-watch` first. That terminal reports each session as an OSC 7501 record, which the
+Herdr app reads as it does its agents' states. When a session that is a machine in Herdr (`session herdr`) pauses or
+stops, the event's `machine` (and the record's message) says `woodshed-<id>` is unreachable until `woodshed session
+herdr <id>` brings it back: offer that command, rather than `resume` alone, when the person wants it back in Herdr.
 
 ### Start a session as your child in Herdr, and wait on it
 

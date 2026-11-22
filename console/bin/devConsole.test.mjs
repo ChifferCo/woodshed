@@ -4,6 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
+import { isolatedEnv } from '../../test/isolatedEnv.mjs';
 
 const SCRIPT = path.join(import.meta.dirname, 'devConsole.mjs');
 
@@ -31,7 +32,7 @@ async function startsAndServes(t, env) {
   assert.ok((sessions.sessions ?? sessions).length > 0);
 }
 
-const SHELL = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('WOODSHED_')));
+const SHELL = Object.fromEntries(Object.entries(isolatedEnv()).filter(([key]) => !key.startsWith('WOODSHED_')));
 
 // CLAUDE.md proves console changes with it, so it must start with nothing set in the shell.
 test('the dev console starts with no console settings and serves its sessions', (t) => startsAndServes(t, SHELL));
@@ -88,7 +89,7 @@ function get(port, { host, method = 'GET', path: urlPath = '/api/sessions', head
 function startSessionApp(t, extraEnv) {
   return freePort().then((port) => {
     const env = {
-      ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('WOODSHED_') && key !== 'SESSION_APP_DOMAIN')),
+      ...Object.fromEntries(Object.entries(isolatedEnv()).filter(([key]) => !key.startsWith('WOODSHED_') && key !== 'SESSION_APP_DOMAIN')),
       DEV_CONSOLE_SESSION_APP: '1', SESSION_ID: 'abcd1234', ...extraEnv,
     };
     const child = spawn(process.execPath, [SCRIPT, String(port)], { env, stdio: ['ignore', 'ignore', 'pipe'] });
@@ -163,7 +164,7 @@ function upgradeStatus(port, host) {
 }
 
 test('DEV_CONSOLE_SESSION_APP=1 without a session id does not start', () => {
-  const env = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('WOODSHED_') && key !== 'SESSION_ID')), DEV_CONSOLE_SESSION_APP: '1' };
+  const env = { ...Object.fromEntries(Object.entries(isolatedEnv()).filter(([key]) => !key.startsWith('WOODSHED_') && key !== 'SESSION_ID')), DEV_CONSOLE_SESSION_APP: '1' };
   const run = spawnSync(process.execPath, [SCRIPT, '0'], { env, encoding: 'utf8', timeout: 10_000 });
   assert.equal(run.status, 1);
   assert.match(run.stderr, /needs the session's SESSION_ID/);

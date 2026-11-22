@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { PassThrough, Readable, Writable } from 'node:stream';
 
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
 import { createCliSignIn } from './cliSignIn.mjs';
 import { createExecPipe, ownerOnly } from './execPipe.mjs';
 import { handleExecUpgrade } from '../session/execPipe.mjs';
@@ -31,7 +32,7 @@ async function statusdFor(t, { tainted = () => false } = {}) {
   const server = http.createServer((req, res) => res.writeHead(404).end());
   server.on('upgrade', (req, socket, head) => handleExecUpgrade(req, socket, head, {
     isAuthorized: (header) => header === `Bearer ${SESSION_TOKEN}`, cwd, tainted,
-    env: { ...process.env, SESSION_TOKEN, TERMINAL_TOKEN: 't'.repeat(40), WOODSHED_SEEN: 'yes' },
+    env: { ...isolatedEnv(), SESSION_TOKEN, TERMINAL_TOKEN: 't'.repeat(40), WOODSHED_SEEN: 'yes' },
   }));
   const port = await listen(server);
   t.after(() => {

@@ -24,6 +24,7 @@ const T0 = Date.parse('2026-11-20T10:00:00Z');
 export function fakeHc({ version = '0.1.21', missing = false, agent = true, addFails = null, waiting = false, taken = false, local = { boss: 't9' }, hasParent = null } = {}) {
   const machines = new Map();
   const labels = new Map();
+  const terminals = new Map();
   const calls = [];
   const runs = [];
   let made = false;
@@ -50,6 +51,13 @@ export function fakeHc({ version = '0.1.21', missing = false, agent = true, addF
     if (first === 'file' && second === 'read') {
       if (!waiting || made) return err('not_found', `no file ${args.at(-1)}`, 3);
       return ok({ text: `${JSON.stringify({ terminal: 'claude', cwd: '/work/app', waitSeconds: 300 })}\n` });
+    }
+    // A terminal here, as session watch --herdr starts its own: no --on.
+    if (first === 'run' && !args.includes('--on')) {
+      const name = args[args.indexOf('--name') + 1];
+      if (terminals.has(name)) return err('name_taken', `a live terminal is already named "${name}"`);
+      terminals.set(name, args);
+      return ok({ address: `t${terminals.size + 8}`, name, state: 'live' });
     }
     if (first === 'run') {
       runs.push({ args, env: opts.env ?? null });
@@ -79,7 +87,7 @@ export function fakeHc({ version = '0.1.21', missing = false, agent = true, addF
     }
     return err('usage', `unexpected ${args.join(' ')}`);
   };
-  return { run, calls, runs, machines, labels, added: () => calls.filter((a) => a[0] === 'machine' && a[1] === 'add') };
+  return { run, calls, runs, machines, labels, terminals, added: () => calls.filter((a) => a[0] === 'machine' && a[1] === 'add') };
 }
 
 // The Herdr app's window, as `herdr-app ls` and `do space.rename|tab.rename` answer: it shows a machine's terminal in the
@@ -925,12 +933,14 @@ test('session list shows review and QA runs only to those the console\'s page sh
 });
 
 // A watch over a fleet whose sessions move between its reads: `moves[n]` is applied before the read after the n-th wait.
-async function watching(t, { extra = PULL_RUNS, moves = [], args = [] }) {
+async function watching(t, { extra = PULL_RUNS, moves = [], args = [], hc = undefined, env = undefined, before = null }) {
   const controller = new AbortController();
   let waits = 0;
   let c;
   c = await consoleFor(t, {
     extra,
+    ...(hc ? { hc } : {}),
+    ...(env ? { env } : {}),
     signal: controller.signal,
     onSleep: async () => {
       // Only the watch's own waits count: a sign-in's happen before it.
@@ -940,6 +950,7 @@ async function watching(t, { extra = PULL_RUNS, moves = [], args = [] }) {
       else await move(c.sessions, c);
     },
   });
+  await before?.(c);
   c.watchingNow = true;
   const out = await c.run(['session', 'watch', ...args]);
   return { ...out, c };
@@ -977,6 +988,7 @@ test('session watch says when a review or QA run starts, needs you, finishes wit
     'the first read tells nothing of what was already there: on Mine, only the review of mia-dev\'s pull request');
   // In the order they happened; those of one read in the list's order.
   assert.deepEqual(events.map((e) => [e.event, e.session.id]), [
+    ['starting', 'b0b00020'],
     ['needs-you', '9a9a0012'],
     ['started', 'b0b00020'],
     ['finished', 'b0b00020'],
@@ -1028,6 +1040,116 @@ test('session watch rides out a console it cannot reach, and stops when the sign
   const ended = await watching(t, { args: ['--json'], moves: [(s, c) => { c.cli.revokeAll('mia-dev', 'My settings'); }, () => {}] });
   assert.equal(ended.code, EXIT.waiting);
   assert.deepEqual(ended.lines.map((l) => [l.event, l.status ?? null]), [['watching', null], ['error', 'signed-out']]);
+});
+
+// A session of mia-dev's that `session herdr` made a machine: its saved line is this command line's tunnel to it.
+function herdrMachine(c, id) {
+  const via = viaCommand({ node: '/usr/local/bin/node', script: '/home/mia/woodshed/cli/woodshed.mjs', origin: c.origin, session: id });
+  c.hc.machines.set(`woodshed-${id}`, { name: `woodshed-${id}`, target: via, via: true, temporary: false, state: 'connected' });
+}
+
+test('session watch tells your private sessions starting, running, pausing when idle, stopping at their lifetime, and failing', async (t) => {
+  const out = await watching(t, {
+    extra: [],
+    args: ['--kind', 'private', '--json'],
+    before: (c) => herdrMachine(c, 'aaaa0001'),
+    moves: [
+      // The one that is a machine in Herdr pauses when idle; the paused one is resumed.
+      (s) => { Object.assign(at(s, 'aaaa0001'), { status: 'stopped', state: null, stopReason: 'idle for 2 h' }); Object.assign(at(s, 'bbbb0002'), { status: 'queued', stopReason: null }); },
+      (s) => { Object.assign(at(s, 'bbbb0002'), { status: 'starting' }); },
+      (s) => { Object.assign(at(s, 'bbbb0002'), { status: 'running', state: 'working' }); },
+      (s) => { Object.assign(at(s, 'bbbb0002'), { state: 'done' }); },
+      // It stops at its lifetime; a new one fails to start; octocat's own is never seen.
+      (s) => {
+        Object.assign(at(s, 'bbbb0002'), { status: 'stopped', state: null, stopReason: 'ran for 6 h' });
+        s.push({ ...at(s, 'aaaa0001'), id: 'dddd0009', title: 'New one', status: 'queued', stopReason: null });
+        Object.assign(at(s, 'eeee0005'), { status: 'stopped', stopReason: 'idle for 2 h' });
+      },
+      (s) => { Object.assign(at(s, 'dddd0009'), { status: 'failed', error: 'AWS has no room' }); },
+      // The one you stop yourself.
+      (s) => { Object.assign(at(s, 'aaaa0001'), { status: 'queued', stopReason: null }); },
+      (s) => { Object.assign(at(s, 'aaaa0001'), { status: 'stopped', stoppedBy: 'mia-dev', stopReason: 'stopped by @mia-dev' }); },
+    ],
+  });
+  assert.equal(out.code, EXIT.done, out.err);
+  const [first, ...events] = out.lines;
+  assert.equal(first.sessions, 2, 'your two private sessions, not octocat\'s');
+  assert.deepEqual(events.map((e) => [e.session.id, e.event, e.why ?? null]), [
+    ['bbbb0002', 'starting', null],
+    ['aaaa0001', 'paused', 'idle'],
+    ['bbbb0002', 'started', null],
+    ['bbbb0002', 'done', null],
+    ['dddd0009', 'starting', null],
+    ['bbbb0002', 'stopped', 'lifetime'],
+    ['dddd0009', 'failed', null],
+    ['aaaa0001', 'starting', null],
+    ['aaaa0001', 'stopped', 'person'],
+  ]);
+  assert.deepEqual(events[1].machine, { name: 'woodshed-aaaa0001', unreachable: true, bringBack: 'woodshed session herdr aaaa0001' },
+    'its machine in Herdr is unreachable until session herdr brings it back');
+  assert.equal(events[5].machine, undefined, 'one that is no machine in Herdr says nothing of one');
+  assert.equal(events.at(-1).session.stoppedBy, 'mia-dev');
+  assert.equal(events[6].session.error, 'AWS has no room');
+});
+
+test('session watch prints a pause, and says a machine in Herdr is unreachable until session herdr brings it back', async (t) => {
+  const out = await watching(t, {
+    extra: [],
+    before: (c) => herdrMachine(c, 'aaaa0001'),
+    moves: [(s) => { Object.assign(at(s, 'aaaa0001'), { status: 'stopped', state: null, stopReason: 'idle for 2 h' }); }],
+  });
+  assert.equal(out.code, EXIT.done, out.err);
+  const lines = out.out.trim().split('\n');
+  assert.match(lines[1], /^10:00:\d\d {2}aaaa0001 {2}paused \(idle\) {2}private {2}Fix the login bug {2}http:\/\/localhost:\d+\/s\/aaaa0001$/);
+  assert.equal(lines[2], '          woodshed-aaaa0001 in Herdr is unreachable until it runs again: woodshed session herdr aaaa0001 brings it back');
+});
+
+test('session watch --herdr starts the watch in a terminal of hc\'s own, once', async (t) => {
+  const c = await consoleFor(t);
+  const out = await c.run(['session', 'watch', '--herdr', '--kind', 'private,review', '--every', '30', '--json']);
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.deepEqual(out.lines, [{ event: 'herdr', action: 'started', terminal: 'woodshed-watch', address: 't9' }]);
+  const run = c.hc.calls.find((a) => a[0] === 'run');
+  assert.deepEqual(run.slice(0, run.indexOf('--') + 1), ['run', '--bg', '--json', '--name', 'woodshed-watch', '--no-parent',
+    '--label', 'herdr.space=woodshed', '--label', 'herdr.tab=woodshed-watch', '--']);
+  assert.deepEqual(run.slice(run.indexOf('--') + 1), ['/usr/bin/env', 'WOODSHED_WATCH_IN_HERDR=1', `XDG_CONFIG_HOME=${c.dir}`,
+    '/usr/local/bin/node', '/home/mia/woodshed/cli/woodshed.mjs', 'session', 'watch', '--console', c.origin,
+    '--kind', 'private,review', '--every', '30', '--herdr'], 'the same watch, on this console and sign-in, as words hc runs with no shell');
+  const again = await c.run(['session', 'watch', '--herdr']);
+  assert.equal(again.code, EXIT.done);
+  assert.match(again.out, /Herdr already has woodshed-watch watching: .*hc kill woodshed-watch/);
+  assert.equal(c.hc.calls.filter((a) => a[0] === 'run').length, 2, 'asked once more, and hc kept the one it had');
+});
+
+test('session watch --herdr needs hc, as session herdr does', async (t) => {
+  const c = await consoleFor(t, { hc: fakeHc({ missing: true }) });
+  const out = await c.run(['session', 'watch', '--herdr']);
+  assert.equal(out.code, EXIT.refused);
+  assert.match(out.err, /needs its hc, 0\.1\.21 or newer, and there is no hc on your PATH/);
+});
+
+test('session watch in its Herdr terminal reports each session as an OSC 7501 record, and clears one gone', async (t) => {
+  const out = await watching(t, {
+    extra: [],
+    args: ['--herdr'],
+    env: { WOODSHED_WATCH_IN_HERDR: '1' },
+    before: (c) => herdrMachine(c, 'aaaa0001'),
+    moves: [
+      (s) => { Object.assign(at(s, 'aaaa0001'), { state: 'needs-you' }); },
+      (s) => { Object.assign(at(s, 'aaaa0001'), { status: 'stopped', state: null, stopReason: 'ran for 12 h' }); },
+      (s) => { s.splice(s.findIndex((x) => x.id === 'aaaa0001'), 1); },
+    ],
+  });
+  assert.equal(out.code, EXIT.done, out.err);
+  // eslint-disable-next-line no-control-regex
+  const records = [...out.out.matchAll(/\x1b\]7501;([^\x07]*)\x07/g)].map((m) => Object.fromEntries(m[1].split(':').map((p) => {
+    const [k, v] = p.split(/=(.*)/s);
+    return [k, ['msg', 'title'].includes(k) ? Buffer.from(v, 'base64').toString() : v];
+  })));
+  assert.deepEqual(records.map((r) => [r.id, r.state, r.kind ?? null]), [['aaaa0001', 'blocked', 'question'], ['aaaa0001', 'done', null], ['aaaa0001', 'clear', null]]);
+  assert.equal(records[1].msg, 'aaaa0001 stopped (at its lifetime). woodshed-aaaa0001 in Herdr is unreachable until it runs again: woodshed session herdr aaaa0001 brings it back');
+  assert.equal(records[0].title, 'Fix the login bug');
+  assert.match(out.out, /^Watching your sessions \(Mine\) on .*, for Herdr\. Ctrl-C stops\.$/m, 'its terminal shows the lines too');
 });
 
 test('session watch refuses kinds and paces it does not know', async (t) => {
