@@ -2873,6 +2873,19 @@ test('a review asked for again after one stopped with no verdict starts anew, an
   tagged.github.commitMessage = async () => 'Fix it [woodshed-review]';
   await Promise.all([tagged.fleet.reviewOnDemand({ project, number: 7, login: 'joel' }), tagged.fleet.reviewOnTag({ number: 7 })]);
   assert.equal(tagged.fleet.sessions().length, 1, 'a tagged commit and an ask at once start one review');
+
+  // An ask that starts nothing (not the author's) does not drop a tagged commit's review that lands meanwhile.
+  const outsider = reviewSetup();
+  outsider.github.commitMessage = async () => 'Fix it [woodshed-review]';
+  const [refused, tagStart] = await Promise.all([outsider.fleet.reviewOnDemand({ project, number: 7, login: 'mia' }), outsider.fleet.reviewOnTag({ number: 7 })]);
+  assert.deepEqual([refused.status, tagStart.outcome], [403, 'started']);
+
+  // A verdict GitHub did not take is no review of that head: asking again starts one.
+  const unposted = reviewSetup();
+  const firstAsk = await unposted.fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
+  const s1 = unposted.fleet.sessions().find((x) => x.id === firstAsk.sessionId);
+  Object.assign(s1, { status: 'stopped', review: { ...s1.review, conclusion: 'APPROVE', posted: false } });
+  assert.equal((await unposted.fleet.reviewOnDemand({ project, number: 7, login: 'joel' })).outcome, 'started');
 });
 
 test('a review runs whom its author chose, and says so on the pull request', async () => {

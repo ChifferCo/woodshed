@@ -109,10 +109,13 @@ export async function reviewPullsCommand({ origin, sub, words }, deps) {
 
   // start: each in turn, so one refused does not keep the others from starting.
   let code = EXIT.done;
-  for (const word of opts.pulls) {
+  // Every URL's repo is checked before any review starts: a mistake in the list starts none of it.
+  const numbers = opts.pulls.map((word) => {
     const m = PULL_RE.exec(word);
     if (m[2] && m[2].toLowerCase() !== repo.toLowerCase()) throw fail(`${word} is on ${m[2]}, not ${repo}: give --repo ${m[2]}`);
-    const number = Number(m[1] ?? m[3]);
+    return Number(m[1] ?? m[3]);
+  });
+  for (const number of numbers) {
     const out = await ask(`/api/my/pulls/${number}/review`, { method: 'POST', body: { project: project.name } });
     const id = /^[0-9a-f]{8}$/.test(out.body?.sessionId ?? '') ? out.body.sessionId : null;
     if ((out.status === 200 || out.status === 201) && id) {

@@ -450,7 +450,7 @@ test('closing the input at the review prompt starts no review', async () => {
   assert.match(after.events.find((event) => event.step === 'pr-reviews').message, /^No answer, so no review started on acme\/app/);
 });
 
-test('a choice of numbers reaches only the repo that lists them, and owner/name#N names one repo of several', async () => {
+test('with several repos, each pull request names its repo, and reaches that repo alone', async () => {
   const lib = 'acme/lib';
   const pullsBy = { [repo]: [pull(9), pull(7)], [lib]: [pull(9, { url: `https://github.com/${lib}/pull/9` }), pull(4)] };
   const run = async (which) => {
@@ -475,8 +475,12 @@ test('a choice of numbers reaches only the repo that lists them, and owner/name#
     return { code, events, starts: calls.filter(([g, sub]) => g === 'review' && sub === 'start') };
   };
   const bare = await run('7,4');
-  assert.equal(bare.code, EXIT.done);
-  assert.deepEqual(bare.starts, [['review', 'start', '7', '--repo', repo], ['review', 'start', '4', '--repo', lib]]);
+  assert.equal(bare.code, EXIT.waiting);
+  assert.deepEqual(bare.starts, [], 'a bare number could be yours on both repos: none starts');
+  assert.match(bare.events.at(-1).message, /With several repos, name each pull request's repo in --review-prs, as acme\/app#7/);
+  const both = await run(`${repo}#7,${lib}#4`);
+  assert.equal(both.code, EXIT.done);
+  assert.deepEqual(both.starts, [['review', 'start', '7', '--repo', repo], ['review', 'start', '4', '--repo', lib]]);
   const named = await run(`${lib}#9`);
   assert.equal(named.code, EXIT.done);
   assert.deepEqual(named.starts, [['review', 'start', '9', '--repo', lib]], 'not acme/app\'s #9');
@@ -505,4 +509,20 @@ test('with several repos, setup asks for repo-qualified numbers, and says when t
   const none = await fake({ commands: ['review pulls|start'], answers: { 'review pulls': result(0, { event: 'pulls', repo, review: { on: true, rerun: null, known: true }, pulls: [], stale: true }) } })
     .invoke('--yes', '--repo', repo, '--no-session');
   assert.match(none.events.find((e) => e.step === 'pr-reviews').message, /may be out of date: run setup again/);
+});
+
+test('the first session runs Claude Code when both are connected, and answering codex for a missing Codex asks only for it', async () => {
+  const { invoke } = fake({ tty: true, input: ['codex', ''], answers: {
+    status: result(0, { ...ready, sessionSignIns: { claude: true, codex: true } }),
+    'session list': result(0, { sessions: [] }),
+    'session new': result(0, { event: 'running', session: { id: '12345678', url: `${origin}/s/12345678` } }),
+  } });
+  const after = await invoke('--repo', repo, '--skip-reviews', '--prompt', 'Fix it.');
+  assert.equal(after.code, EXIT.done);
+  assert.deepEqual(after.calls.at(-1).slice(-4), ['--agent', 'claude', '--', 'Fix it.'], 'both connected: nothing to ask, so the default stays');
+  const only = await fake({ tty: true, input: ['codex'], answers: {
+    status: result(0, { ...ready, sessionSignIns: { claude: true, codex: false } }),
+  } }).invoke('--repo', repo, '--skip-reviews', '--prompt', 'Fix it.');
+  assert.equal(only.code, EXIT.waiting, 'Codex is still to connect');
+  assert.match(only.events.at(-1).message, /--agent codex/);
 });

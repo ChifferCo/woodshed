@@ -351,6 +351,11 @@ test('review start asks the console to review each pull request now, and names i
   assert.equal(elsewhere.code, EXIT.refused, 'the file chose another runner: nothing for the person to wait on');
   assert.match(elsewhere.out, /#6: not started: acme\/game's project file runs its review in GitHub Actions/);
   await assert.rejects(s.run(['review', 'start']).then((r) => { if (r.code) throw new Error(r.err); }), /needs a pull request/);
+  const asked = s.state.asked.length;
+  const mixed = await s.run(['review', 'start', '5', 'https://github.com/acme/other/pull/4']);
+  assert.notEqual(mixed.code, EXIT.done);
+  assert.match(mixed.err, /is on acme\/other, not acme\/game/);
+  assert.equal(s.state.asked.length, asked, 'a URL on another repo stops the list before any review starts');
 });
 
 test('the review route refuses a project the person cannot start on, before the fleet is asked', async (t) => {

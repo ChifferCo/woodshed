@@ -19,8 +19,8 @@ export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--
   --agent <name>         claude or codex, when you use only one: else setup asks for both, and your pull requests
                          get reviews from both
   --reviews <choice>     personal reviewer choice: none, claude, codex, both, default
-  --review-prs <which>   the open pull requests of yours to review now: all, none, or numbers separated by commas,
-                         each only on the repos that list it (owner/name#12 for one repo of several)
+  --review-prs <which>   the open pull requests of yours to review now: all, none, or numbers separated by commas
+                         (with several repos, each as owner/name#12)
                          (with --yes and no --review-prs: the ${REVIEW_PRS_DEFAULT} updated last)
   --skip-reviews         skip the project file, your reviewer choice and reviews of your pull requests
   --terminal <name>      optional: agent terminal for new private sessions, herdr or tmux
@@ -270,7 +270,8 @@ export async function setupCommand(args, ctx) {
     const names = wanted.map((name) => AGENT_NAMES[name]).join(' and ');
     report('agent', 'done', `${names} ${wanted.length === 2 ? 'are' : 'is'} connected: your pull requests get reviews from ${wanted.length === 2 ? 'both' : names}.`, { agent: wanted[0], wanted });
   }
-  const agent = opts['--agent'] ?? (signIns?.codex && !signIns?.claude ? 'codex' : 'claude');
+  // The session's agent: the one they use when they said only one, else Claude Code unless only Codex is connected.
+  const agent = wanted.length === 1 ? wanted[0] : (signIns?.codex && !signIns?.claude ? 'codex' : 'claude');
 
   const canConfig = has('config');
 
@@ -350,6 +351,11 @@ export async function setupCommand(args, ctx) {
   } else if (!selected.length) {
     report('pr-reviews', 'skipped', `No repo chosen. To review a pull request of yours: ${command('review', 'start', '<number>', '--repo', 'owner/name')}.`);
   } else {
+    // With several repos, a bare number could be a pull request of yours on more than one: each must name its repo.
+    const bare = (opts['--review-prs'] ?? '').split(',').map((w) => w.trim()).filter((w) => /^#?\d+$/.test(w));
+    if (selected.length > 1 && bare.length) {
+      return stop('pr-reviews', EXIT.waiting, `With several repos, name each pull request's repo in --review-prs, as ${selected[0]}#${bare[0].replace(/^#/, '')}: ${bare.join(', ')} could be yours on more than one of ${selected.join(', ')}.`);
+    }
     for (const repo of selected) {
       const listed = await call('review pulls', 'review', 'pulls', '--repo', repo);
       const found = listed.events.find((event) => event.event === 'pulls');

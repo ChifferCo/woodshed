@@ -2248,8 +2248,8 @@ export function createFleet({
    * session a tagged commit starts (reviewOnTag), on the pull request's head as it is now, tag or not. Only the author
    * may ask, since it runs on their own sign-ins and their choice on My settings, and only where the project's review
    * runs in a session. A head a review session gave its verdict on, or is reviewing, answers with that session; one whose
-   * review failed or was stopped with no verdict may be asked again. One ask at a time for each pull request, so two at
-   * once cannot both start a session.
+   * review failed, was stopped with no verdict, or whose verdict GitHub did not take may be asked again. One ask at a
+   * time for each pull request, and one start (startReview), so two at once cannot both start a session.
    * @param {{project: object, number: number, login: string}} args
    * @returns {Promise<{outcome: 'started'|'running'|'reviewed', sessionId: string}|{outcome: 'refused', status: number, reason: string}>}
    */
@@ -2296,7 +2296,7 @@ export function createFleet({
     if (pull.state !== 'open') return refused(409, `#${number} is not open`);
     if (pull.draft) return refused(409, `#${number} is a draft: mark it ready for review first`);
     const done = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.sha === pull.head.sha
-      && (ACTIVE_STATUSES.has(s.status) || s.review.conclusion)).at(-1);
+      && (ACTIVE_STATUSES.has(s.status) || (s.review.conclusion && s.review.posted !== false))).at(-1);
     if (done) {
       const outcome = ACTIVE_STATUSES.has(done.status) ? 'running' : 'reviewed';
       console.log('fleet: review asked for', { number, login, outcome, id: done.id, ...projectField(project) });
@@ -2335,7 +2335,9 @@ export function createFleet({
 
   async function startReview(args) {
     const key = `${args.project.name}#${args.number}`;
-    if (startingReview.has(key) || (!args.asked && askingReview.has(key))) {
+    // A tagged commit's start goes on while an ask only reads GitHub, and is never dropped for one: whichever reaches
+    // here second finds the other's session (`already running`) or waits out this guard's few reads.
+    if (startingReview.has(key)) {
       console.log('fleet: review not started', { number: args.number, login: args.login, reason: 'a review of it is being started already', ...projectField(args.project) });
       return { outcome: 'ignored', reason: 'a review of it is being started already' };
     }
@@ -2475,7 +2477,8 @@ export function createFleet({
       await postReviewComment(session, gh, reviewDoneComment({ conclusion, tier: mergeRisk?.tier ?? null }));
     }
     const held = hold && ours ? { sha, heading, summary, inlineComments, resolved } : null;
-    update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd, held } });
+    // `posted`: GitHub took the verdict (or the console holds it for QA), which an ask for the same head stands on.
+    update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd, held, posted: Boolean(ours) } });
     console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours, held: Boolean(held) });
     stop(session, conclusion ? `Review finished: ${conclusion}` : 'Review finished without a verdict')
       .catch((err) => console.warn('fleet: stopping a finished review session failed', { id: session.id, message: firstLine(err) }));

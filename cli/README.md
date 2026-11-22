@@ -73,8 +73,8 @@ It goes in this order:
 4. **Reviews of your open pull requests**, the step setup is for: it lists your open pull requests on each repo
    (`woodshed review pulls`) and starts the console's review on them now (`woodshed review start`), then gives each
    review's link. On a terminal it asks which, Enter for all (closing the input, Ctrl-D, starts none). `--review-prs
-   all`, `none` or numbers (`12,15`) say which: a number reaches only a repo that lists it as yours, and `owner/name#12`
-   names one repo of several. With `--yes` and no `--review-prs`, the 5 updated last (enough to see reviews work on your own code without spending
+   all`, `none` or numbers (`12,15`) say which: with several repos, each names its repo, as `owner/name#12` (a bare number
+   is refused there, since it could be yours on more than one); a number reaches only a repo that lists it as yours. With `--yes` and no `--review-prs`, the 5 updated last (enough to see reviews work on your own code without spending
    your plan on old branches, and `--review-prs all` takes every one). Without `--yes` or a terminal, setup exits 2
    listing them, for `--review-prs`. A draft is left until it is ready, and a head commit reviewed already is not
    reviewed again. With no open pull requests, it says a review starts on your next one whose last commit's subject

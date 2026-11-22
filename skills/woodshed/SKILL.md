@@ -34,7 +34,7 @@ browser.
 - **Reviews of their open pull requests (`pr-reviews`), the main step.** Setup lists their open pull requests on the
   repo and starts the console's review on them, then gives each review's link (`reviews` in the entry). With `--json`
   and no `--yes`, it exits 2 listing them: ask the person which, then rerun with `--review-prs all`, `none`, or numbers
-  (`12,15`; `owner/name#12` when several repos are chosen). With `--yes` and no `--review-prs` it reviews the 5 updated last.
+  (`12,15`; with several repos each must be `owner/name#12`). With `--yes` and no `--review-prs` it reviews the 5 updated last.
   With `--reviews none` it starts none. With none open, it says a review starts
   on their next one whose last commit's subject ends with the review's tag (`[woodshed-review]` by default): a session
   adds it to its pushes, and on their own computer they add it themselves. Only a repo whose project file runs its
