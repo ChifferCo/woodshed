@@ -2243,6 +2243,76 @@ export function createFleet({
     return startReview({ project, gates, number, login: owner.login, owner, pull });
   }
 
+  /**
+   * A review its author asks for (`woodshed review start`, POST /api/my/pulls/<number>/review): the same review
+   * session a tagged commit starts (reviewOnTag), on the pull request's head as it is now, tag or not. Only the author
+   * may ask, since it runs on their own sign-ins and their choice on My settings, and only where the project's review
+   * runs in a session. A head a review session gave its verdict on, or is reviewing, answers with that session; one whose
+   * review failed, was stopped with no verdict, or whose verdict GitHub did not take may be asked again. One ask at a
+   * time for each pull request, and one start (startReview), so two at once cannot both start a session.
+   * @param {{project: object, number: number, login: string}} args
+   * @returns {Promise<{outcome: 'started'|'running'|'reviewed', sessionId: string}|{outcome: 'refused', status: number, reason: string}>}
+   */
+  async function reviewOnDemand({ project, number, login }) {
+    const key = `${project.name}#${number}`;
+    if (askingReview.has(key) || startingReview.has(key)) {
+      console.log('fleet: review asked for, refused', { number, login, reason: 'already being asked for', ...projectField(project) });
+      return { outcome: 'refused', status: 409, reason: `a review of #${number} is being started already: try again in a moment` };
+    }
+    askingReview.add(key);
+    try {
+      return await askReview({ project, number, login });
+    } finally {
+      askingReview.delete(key);
+    }
+  }
+
+  async function askReview({ project, number, login }) {
+    const refused = (status, reason) => {
+      console.log('fleet: review asked for, refused', { number, login, reason, ...projectField(project) });
+      return { outcome: 'refused', status, reason };
+    };
+    // The review the fleet runs by: the project file's, or every repo's default where it names none (installation.mjs's
+    // gatesOf, defaultReview.mjs). Refused only where the file itself chooses another runner, or runsOn another console.
+    const gates = await pullRequests(project.name);
+    const runner = gates?.review?.runner ?? null;
+    if (!runner) return refused(409, `${project.repo}'s project file names no review, and this console runs no default one`);
+    if (runner !== 'woodshed') {
+      return refused(409, `${project.repo}'s project file runs its review in ${runner === 'actions' ? 'GitHub Actions' : runner}, not in this console: its pullRequests.review chooses that runner`);
+    }
+    const gh = githubOf(project);
+    let pull;
+    try {
+      pull = await gh.pull(number);
+    } catch (err) {
+      return refused(/\b404\b|Not Found/.test(firstLine(err)) ? 404 : 502, `pull request #${number} on ${project.repo} was not read: ${firstLine(err)}`);
+    }
+    if (!pull?.head?.sha) return refused(404, `no pull request #${number} on ${project.repo}`);
+    const owner = pullOwner(project, pull, number);
+    if (owner.login !== login) return refused(403, `#${number} is not your pull request: only its author asks for its review, which runs on their sign-ins`);
+    if (runsElsewhere(gates, project, number, 'review', owner)) {
+      return refused(409, `${project.repo}'s pullRequests.runsOn names another console (${gates.runsOn}), which runs its reviews`);
+    }
+    if (pull.state !== 'open') return refused(409, `#${number} is not open`);
+    if (pull.draft) return refused(409, `#${number} is a draft: mark it ready for review first`);
+    const done = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.sha === pull.head.sha
+      && (ACTIVE_STATUSES.has(s.status) || (s.review.conclusion && s.review.posted !== false))).at(-1);
+    if (done) {
+      const outcome = ACTIVE_STATUSES.has(done.status) ? 'running' : 'reviewed';
+      console.log('fleet: review asked for', { number, login, outcome, id: done.id, ...projectField(project) });
+      return { outcome, sessionId: done.id };
+    }
+    const started = await startReview({ project, gates, number, login, owner, pull, asked: true });
+    if (started.outcome !== 'started') return refused(409, started.reason);
+    console.log('fleet: review asked for', { number, login, outcome: 'started', id: started.sessionId, ...projectField(project) });
+    return started;
+  }
+
+  // Pull requests whose review is being asked for by hand (reviewOnDemand) or started (startReview), by project and
+  // number: a tagged commit's start and an ask that overlap start one session, not two.
+  const askingReview = new Set();
+  const startingReview = new Set();
+
   // The review runs as a session (pullRequests.review.runner: woodshed) instead of the Actions workflow: the
   // `[woodshed-review]` tag on the head commit starts it, session/review.sh runs the review, and the console submits
   // the verdict and the Merge risk check here (reviewFinished), as its own App. One review session per commit.
@@ -2263,7 +2333,23 @@ export function createFleet({
     return { ...gates, review: null };
   }
 
-  async function startReview({ project, gates, number, login, owner = null, pull: known = null }) {
+  async function startReview(args) {
+    const key = `${args.project.name}#${args.number}`;
+    // A tagged commit's start goes on while an ask only reads GitHub, and is never dropped for one: whichever reaches
+    // here second finds the other's session (`already running`) or waits out this guard's few reads.
+    if (startingReview.has(key)) {
+      console.log('fleet: review not started', { number: args.number, login: args.login, reason: 'a review of it is being started already', ...projectField(args.project) });
+      return { outcome: 'ignored', reason: 'a review of it is being started already' };
+    }
+    startingReview.add(key);
+    try {
+      return await startReviewNow(args);
+    } finally {
+      startingReview.delete(key);
+    }
+  }
+
+  async function startReviewNow({ project, gates, number, login, owner = null, pull: known = null }) {
     const { review, mergeRisk } = gates;
     const gh = githubOf(project);
     const ignored = (reason) => {
@@ -2391,7 +2477,8 @@ export function createFleet({
       await postReviewComment(session, gh, reviewDoneComment({ conclusion, tier: mergeRisk?.tier ?? null }));
     }
     const held = hold && ours ? { sha, heading, summary, inlineComments, resolved } : null;
-    update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd, held } });
+    // `posted`: GitHub took the verdict (or the console holds it for QA), which an ask for the same head stands on.
+    update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd, held, posted: Boolean(ours) } });
     console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours, held: Boolean(held) });
     stop(session, conclusion ? `Review finished: ${conclusion}` : 'Review finished without a verdict')
       .catch((err) => console.warn('fleet: stopping a finished review session failed', { id: session.id, message: firstLine(err) }));
@@ -2797,7 +2884,7 @@ export function createFleet({
 
   return {
     createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
-    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
+    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),
   };

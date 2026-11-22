@@ -15,6 +15,7 @@
 //                                                     pauses, stops, finishes or fails, for Herdr or a script (watch.mjs)
 //   woodshed move --from herdr [--terminal T|--tab T|--space S] --to <id>|new   terminals moved into a session (move.mjs)
 //   woodshed review enable|status                      review this checkout's pull requests in Woodshed sessions (review.mjs)
+//   woodshed review pulls|start                        your own open pull requests, reviewed now (reviewPulls.mjs)
 //   woodshed review <id>|<pull request>                review a session's change on this terminal (reviewOpen.mjs)
 //   woodshed config list|get|set                       your choices on My settings, never a secret (config.mjs)
 //   woodshed settings plan|push|pull [...]             Claude and Codex settings, plugins, dotfiles and ignored files
@@ -55,7 +56,7 @@ const OWN_ARGS = new Set(['session', 'move', 'config', 'repo', 'settings', 'setu
 const USAGE = `Usage: woodshed <command> [--console <url>] [--json]
 
 Commands:
-  setup     get signed in, choose repos and reviews, and start your first session
+  setup     get signed in, connect Claude Code and Codex, and have your open pull requests reviewed
   login     sign in to a Woodshed console: approve the code it shows in your browser; --no-wait returns before approval
   logout    sign out of the console, here and at the console
   status    the console, its org, who is signed in, and the hc found here (Herdr's, for session herdr)
@@ -69,7 +70,8 @@ Commands:
   review <id>
             review one of your sessions' change on this terminal: the analysis, the diff and its comments, the
             conversation, and comment, verdict, rename and merge. A pull request number or URL finds its session
-  review    enable|status: review this checkout's pull requests in Woodshed sessions: woodshed review --help
+  review    enable|status: review this checkout's pull requests in Woodshed sessions; pulls|start: review your
+            open pull requests now: woodshed review --help
   config    your choices on My settings (terminal, reviews, default repo, …), never a secret: woodshed config --help
   settings  plan|push|pull [--only <what>,...] [--own-files <checkout>] [--replace]
             sync your Claude and Codex settings, plugins, dotfiles and ignored checkout files with private

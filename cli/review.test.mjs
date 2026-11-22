@@ -13,14 +13,15 @@ import { parseProject } from '../shared/project.mjs';
 import { parseYaml } from '../shared/yamlLite.mjs';
 import { createCredentials } from './credentials.mjs';
 import { readinessFindings } from './review.mjs';
+import { reviewOf } from './reviewPulls.mjs';
 import { EXIT, main } from './woodshed.mjs';
 
 const git = (dir, ...args) => execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
 
 // A console with the command line's sign-in and a reviewer App in `state.reviewer` ('none', 'made' or 'installed'),
 // whose default branch's project file is `state.gates`; a checkout of acme/game; and bob signed in on this computer.
-async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin = 'https://github.com/acme/game.git' } = {}) {
-  const state = { reviewer: 'installed', gates: null, runsOn: null, gatesError: null };
+async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin = 'https://github.com/acme/game.git', projectAccess = null } = {}) {
+  const state = { reviewer: 'installed', gates: null, runsOn: null, gatesError: null, pulls: [], asked: [], reviews: {} };
   const reviewer = {
     login: () => (state.reviewer === 'none' ? null : 'acme-reviewer[bot]'),
     configured: () => state.reviewer !== 'none',
@@ -38,7 +39,16 @@ async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin
   const config = { host: '127.0.0.1', publicUrl: origin, extraHosts: [], repo: 'acme/game', label: 'woodshed', consoleName: 'Acme', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
   const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
   handle = createHandler({
-    config, fleet: { sessions: () => [], find: () => null }, auth, cli,
+    config, auth, cli, projectAccess,
+    // woodshed review start's: what the fleet answers for each number (reviewOnDemand), and the pull requests GitHub lists.
+    fleet: {
+      sessions: () => [], find: () => null,
+      reviewOnDemand: async ({ project, number, login }) => {
+        state.asked.push({ project: project.name, number, login });
+        return state.reviews[number] ?? { outcome: 'started', sessionId: String(number).padStart(8, '0') };
+      },
+    },
+    github: { openPullsFor: async () => state.pulls },
     reviewReadiness: createReviewReadiness({
       publicUrl: origin, reviewer, ownReviewer: true, appLogin: async () => 'acme-woodshed[bot]', pullRequestsOf: async () => { if (state.gatesError) throw new Error(state.gatesError); return state.gates; },
       canWrite: async (login) => { if (state.writeError) throw new Error(state.writeError); return login === 'bob'; },
@@ -300,4 +310,79 @@ test('status is 1, not 2, when the console answered with a failure', async (t) =
   assert.match(run.out, /Console: not asked: .* answered 502: the console could not tell: GitHub did not answer/);
   const enable = await s.run(['review', 'enable']);
   assert.equal(enable.code, EXIT.failed);
+});
+
+test('review pulls lists your open pull requests on the repo, and how the repo is reviewed', async (t) => {
+  const s = await setup(t);
+  s.state.gates = { review: { runner: 'woodshed', rerun: '[woodshed-review]', heading: 'Code review' } };
+  s.state.pulls = [
+    { number: 12, title: 'Fix the redirect', branch: 'fix', why: 'yours', draft: false, updatedAt: '2026-11-20T10:00:00Z' },
+    { number: 11, title: 'WIP', branch: 'wip', why: 'yours', draft: true, updatedAt: '2026-11-19T10:00:00Z' },
+    { number: 10, title: 'Someone else\'s', branch: 'x', why: 'review', draft: false, updatedAt: '2026-11-18T10:00:00Z' },
+  ];
+  const run = await s.run(['review', 'pulls', '--json']);
+  assert.equal(run.code, EXIT.done, run.err + run.out);
+  const [listed] = run.lines;
+  assert.deepEqual(listed.review, { on: true, from: 'project file', rerun: '[woodshed-review]', known: true, why: null });
+  assert.deepEqual(listed.pulls.map((p) => [p.number, p.draft, p.url]), [[12, false, 'https://github.com/acme/game/pull/12'], [11, true, 'https://github.com/acme/game/pull/11']]);
+  const text = await s.run(['review', 'pulls']);
+  assert.match(text.out, /Review on acme\/game: on, on commits whose subject ends with \[woodshed-review\]\./);
+  assert.match(text.out, /Review them now: woodshed review start 12 --repo acme\/game/);
+  for (const call of s.sent) assert.ok(!('origin' in call.headers));
+});
+
+test('review start asks the console to review each pull request now, and names its link', async (t) => {
+  const s = await setup(t);
+  s.state.reviews[9] = { outcome: 'refused', status: 409, reason: '#9 is a draft: mark it ready for review first' };
+  s.state.reviews[8] = { outcome: 'reviewed', sessionId: 'abcdef08' };
+  const run = await s.run(['review', 'start', '12', '#9', 'https://github.com/acme/game/pull/8', '--json']);
+  assert.equal(run.code, EXIT.refused, run.err + run.out);
+  assert.deepEqual(s.state.asked, [12, 9, 8].map((number) => ({ project: 'game', number, login: 'bob' })));
+  assert.deepEqual(run.lines.map((l) => [l.number, l.outcome, l.session?.url ?? l.error]), [
+    [12, 'started', `${s.origin}/s/00000012`],
+    [9, 'refused', '#9 is a draft: mark it ready for review first'],
+    [8, 'reviewed', `${s.origin}/s/abcdef08`],
+  ]);
+  const off = await s.run(['review', 'start', '7', '--repo', 'acme/other']);
+  assert.equal(off.code, EXIT.refused);
+  assert.match(off.err, /acme\/other is not one of .* repos you can start sessions on\. Yours: acme\/game/);
+  s.state.reviews[6] = { outcome: 'refused', status: 409, reason: 'acme/game\'s project file runs its review in GitHub Actions, not in this console: its pullRequests.review chooses that runner' };
+  const elsewhere = await s.run(['review', 'start', '6']);
+  assert.equal(elsewhere.code, EXIT.refused, 'the file chose another runner: nothing for the person to wait on');
+  assert.match(elsewhere.out, /#6: not started: acme\/game's project file runs its review in GitHub Actions/);
+  await assert.rejects(s.run(['review', 'start']).then((r) => { if (r.code) throw new Error(r.err); }), /needs a pull request/);
+  const asked = s.state.asked.length;
+  const mixed = await s.run(['review', 'start', '5', 'https://github.com/acme/other/pull/4']);
+  assert.notEqual(mixed.code, EXIT.done);
+  assert.match(mixed.err, /is on acme\/other, not acme\/game/);
+  assert.equal(s.state.asked.length, asked, 'a URL on another repo stops the list before any review starts');
+});
+
+test('the review route refuses a project the person cannot start on, before the fleet is asked', async (t) => {
+  const game = { name: 'game', repo: 'acme/game', default: true };
+  const s = await setup(t, { projectAccess: {
+    forStart: async (login, name) => (name === undefined || name === 'game' ? game : null),
+    view: async () => ({ projects: [{ name: 'game', repo: 'acme/game' }], defaultProject: 'game', saved: false }),
+    startable: async () => [game],
+  } });
+  const run = await s.run(['review', 'start', '12', '--json']);
+  assert.equal(run.code, EXIT.done, run.err + run.out);
+  assert.deepEqual(s.state.asked, [{ project: 'game', number: 12, login: 'bob' }]);
+  const refusedCall = s.sent.at(-1);
+  const answer = await fetch(`${s.origin}/api/my/pulls/12/review`, { method: 'POST', headers: { authorization: refusedCall.headers.authorization, 'content-type': 'application/json' }, body: JSON.stringify({ project: 'nope' }) });
+  assert.equal(answer.status, 403);
+  assert.match((await answer.json()).error, /you cannot start sessions on a project named nope/);
+  assert.equal(s.state.asked.length, 1, 'the fleet was not asked');
+});
+
+test('a repo is reviewed by default: off only where its project file runs the review elsewhere', () => {
+  const branch = { review: null, qa: null, runsOn: null, runsHere: true, error: null };
+  assert.deepEqual(reviewOf({ defaultBranch: branch, review: { runner: 'woodshed', rerun: '[woodshed-review]', from: 'default' } }, 'acme/game'),
+    { on: true, from: 'default', rerun: '[woodshed-review]', known: true, why: null });
+  assert.deepEqual(reviewOf({ defaultBranch: { ...branch, review: { runner: 'actions' } }, review: { runner: 'actions', rerun: null, from: 'project file' } }, 'acme/game'),
+    { on: false, from: 'project file', rerun: null, known: true, why: 'acme/game\'s project file runs its review in GitHub Actions, not in this console' });
+  assert.equal(reviewOf({ defaultBranch: { ...branch, runsOn: 'other[bot]', runsHere: false }, review: { runner: 'woodshed', rerun: '[woodshed-review]', from: 'default' } }, 'acme/game').why,
+    'acme/game\'s pullRequests.runsOn names another console (other[bot]), which runs its reviews');
+  assert.equal(reviewOf({ defaultBranch: { ...branch, error: 'not read' }, review: null }, 'acme/game').known, false, 'a file not read says nothing');
+  assert.equal(reviewOf({ defaultBranch: branch }, 'acme/game').why, 'acme/game\'s project file names no review, and this console runs no default one', 'a console from before the default');
 });
