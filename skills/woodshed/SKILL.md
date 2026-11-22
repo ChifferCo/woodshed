@@ -1,6 +1,6 @@
 ---
 name: woodshed
-description: "Use the `woodshed` command line to set up Woodshed for the person, sign in, start a cloud session and follow it, list, stop, resume or remove sessions, give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, change their My settings choices (terminal, reviews, default repo), turn on Woodshed's review for a repo, and point them at reviewing a session's change on their own terminal. Use when the person asks to set up Woodshed, start or check a session, run something in one, keep one from pausing, sync their Claude settings, change a My settings choice, turn on Woodshed's review for a repo, or review, approve or merge what a session did or its pull request."
+description: "Use the `woodshed` command line to set up Woodshed for the person, sign in, start a cloud session and follow it, list, watch, stop, resume or remove sessions (reviews and QA runs on their pull requests among them), give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, change their My settings choices (terminal, reviews, default repo), turn on Woodshed's review for a repo, and point them at reviewing a session's change on their own terminal. Use when the person asks to set up Woodshed, start or check a session, be told when one starts or finishes, run something in one, keep one from pausing, sync their Claude settings, change a My settings choice, turn on Woodshed's review for a repo, or review, approve or merge what a session did or its pull request."
 ---
 
 # Work with Woodshed from the command line
@@ -109,8 +109,9 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--no-wait\|--connect\|--herdr [--parent[=T] [--no-notify] [--end-with-parent]]] ["prompt"]` | Starts a private session and waits, step by step, until it runs; `--connect` then puts the terminal on its agent's, `--herdr` adds it to Herdr as below (by default when you run inside Herdr with `hc` ok), and `--parent` with it makes the session's agent a child of this Herdr terminal (section 5) | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on, no `hc`, or `--parent` outside a Herdr terminal | main |
 | `woodshed session connect <id> [--shell]` | Puts the person's own terminal on the session's agent, or its shell; resumes a paused one first. Interactive: suggest it to them, and use `tunnel` yourself | 0 disconnected, 1 could not open, 2 sign-in ended, 3 shared or saw production | main |
 | `woodshed session herdr <id> [--parent[=T] …]` | Makes a session a machine in Herdr and shows its Herdr agent in a space named after the session, in a tab named after its agent (never over names the person gave; run it again to pick up a later title). Resumes a paused session first, and re-adds the machine, which a plain `resume` leaves unreachable: run it after every `resume` inside Herdr. With `--parent`, a paused one is resumed waiting for its agent's terminal from this one | 0 connected, 2 needs the person, 1 failed, or `--parent` on a session whose agent's terminal was already there, 3 no `hc` 0.1.21 or newer, shared, saw production, or `--parent` outside a Herdr terminal | main |
-| `woodshed session list [--all]` | Their sessions and the shared ones they see, with state and when each pauses; each session's pull request (state, verdict, checks), `review it: woodshed review <id>` under those they can review, and their own open pull requests with no session; names Herdr machines of sessions no longer on the console | 0 | main |
-| `woodshed session get <id>` | One session: state, branch, pull request, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
+| `woodshed session list [--all]` | Their sessions and the shared ones they see, with state, kind (`private`, `shared`, `review`, `qa`, `ask`) and when each pauses; each session's pull request (state, verdict, checks), `review it: woodshed review <id>` under those they can review, and their own open pull requests with no session; in `--json` also a review's or QA's `verdict` once it reported, and whether the console's Mine lists it (`inMine`); names Herdr machines of sessions no longer on the console | 0 | main |
+| `woodshed session get <id>` | One session: state, kind, branch, pull request, a review's or QA's verdict, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
+| `woodshed session watch [--kind K,…] [--everyone] [--every S] [--json]` | Follows the console until stopped and prints one event per session that starts, is done with its turn, needs the person, finishes (a review's or QA's with its verdict) or fails; Mine by default | runs until stopped; 2 sign-in ended, 3 refused | main |
 | `woodshed session stop <id>` | Stops it, checkpointing a running one's work on the way (waits up to 3 minutes) | 0, 1 not answered in time | main |
 | `woodshed session resume <id> [--no-wait]` | Starts one of their stopped sessions again, conversation and all; inside Herdr, follow it with `session herdr <id>` | as `new`; 3 a shared session | main |
 | `woodshed session remove <id> [--yes]` | Takes it off the list with its saved conversation, and forgets its Herdr machine | 0, 2 not confirmed, 3 a shared session | main |
@@ -191,6 +192,26 @@ Herdr machine whose tunnel says the session is not running is fixed the same way
 space after the session's title, which the console sets a few seconds after the start: run it again later to pick the
 title up. When `session list` names Herdr machines of sessions no longer on the console, offer `woodshed session prune`.
 `hc.ok: false`, or no `HC_TERMINAL_ID`: leave Herdr out unless the person asks.
+
+### Reviews and QA runs on their pull requests
+
+The console starts a review (`Review: …`) or QA run (`QA: …`) on a pull request by itself, when the repo's project
+file has `pullRequests.review` or `.qa` with `runner: woodshed`. `session list --json` gives each `"kind":"review"` or
+`"qa"`, `pullRequest` (`number`, `url`), `startedBy`, and `verdict` once it reported (`APPROVE`, `REQUEST_CHANGES`,
+`COMMENT`, or QA's conclusion). `inMine: true` is one on the person's Mine on the console: their own pull request's.
+A finished one has ended, so it is listed only with `--all`. These run by themselves and are nobody's to resume,
+connect to or add to Herdr: to say how one went, read `session get <id> --json`.
+
+To be told as they start and finish, the person (or a Herdr mod) runs a watch, which never opens a session:
+
+```sh
+woodshed session watch --kind review,qa --json
+```
+
+It runs until stopped, so start it only when asked, in the background or a terminal of its own, and never wait on it
+in the foreground. Its first line is `{"event":"watching",…}` (after `unreachable` and `reachable` when the console was
+away at the start), then one `{"event":"started"|"done"|"needs-you"|
+"finished"|"failed","at","session":{…}}` per change. `--everyone` watches every session they can see, not only Mine.
 
 ### Start a session as your child in Herdr, and wait on it
 

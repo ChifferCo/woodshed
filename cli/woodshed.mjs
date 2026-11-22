@@ -11,6 +11,8 @@
 //   woodshed session connect <id> [--shell]            this terminal on your session's agent, or its shell (terminal.mjs)
 //   woodshed session new|list|get|herdr|stop|resume|remove|extend|limits   sessions (sessions.mjs); herdr makes one
 //                                                     a machine in Herdr's hc (hc.mjs)
+//   woodshed session watch [--kind K,...] [--everyone]  one event per session that starts, needs you, finishes or
+//                                                     fails, for a Herdr mod or a script to notify with (watch.mjs)
 //   woodshed move --from herdr [--terminal T|--tab T|--space S] --to <id>|new   terminals moved into a session (move.mjs)
 //   woodshed review enable|status                      review this checkout's pull requests in Woodshed sessions (review.mjs)
 //   woodshed review <id>|<pull request>                review a session's change on this terminal (reviewOpen.mjs)
@@ -61,8 +63,8 @@ Commands:
   tunnel <id> -- <line>
             run <line> in your running session, with this command's stdin, stdout and stderr; exits with its
             exit code, or 255 when the pipe could not open or broke
-  session   start, list, connect to, add to Herdr, stop, resume and remove sessions, and give them more time:
-            woodshed session --help
+  session   start, list, watch, connect to, add to Herdr, stop, resume and remove sessions, and give them more
+            time: woodshed session --help
   move      move work into a session from a supported source: woodshed move --help
   review <id>
             review one of your sessions' change on this terminal: the analysis, the diff and its comments, the
@@ -571,6 +573,8 @@ export async function main(argv, deps = {}) {
       return await command({ origin, rest }, {
         call, ...(moving ? { getToken: () => signedIn(origin).token } : { token: signedIn(origin).token }),
         stdout, stderr, say, emit, json, sleep, now, EXIT, platform, hc,
+        // session watch's end, for a program that runs it: the command line stops it with Ctrl-C.
+        signal: deps.signal,
         // The line hc keeps for a session's machine: this command line's tunnel into it, on this console.
         // A relative config folder is made absolute: hc's core runs the line from a folder of its own.
         // This terminal on the session's, once: closed, detached, refused, unreachable, or cut once it was open.

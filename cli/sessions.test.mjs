@@ -122,7 +122,7 @@ const iso = (ms) => new Date(ms).toISOString();
 // A console's real handler and command line sign-in over a made-up fleet: mia-dev's sessions, octocat's, and shared
 // ones. A session the fleet starts or resumes takes the next of `script`'s steps each time the list is read, as a start
 // moves while the command line waits. The command line is signed in as mia-dev before each test.
-async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app', writers = null, stopTimesOut = false, hc = fakeHc(), app = fakeApp(null, { missing: true }), relativeConfig = false, tty = true, terminal = null, env = {} } = {}) {
+async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app', writers = null, stopTimesOut = false, hc = fakeHc(), app = fakeApp(null, { missing: true }), relativeConfig = false, tty = true, terminal = null, extra = [], onSleep = null, signal = undefined, githubSessions = null, env = {} } = {}) {
   let clock = T0;
   const now = () => clock;
   const store = { state: {}, save() {} };
@@ -138,6 +138,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
     { ...base, id: '1a1a0007', owner: null, title: 'In review', status: 'running', state: 'done', slackWaiting: true, assignee: 'mia-dev', kept: true },
     { ...base, id: '1b1b0008', owner: null, title: 'Merged one', status: 'stopped', kept: true, prClosedAt: iso(T0), prMerged: true },
     { ...base, id: '1c1c0009', owner: null, title: 'Odd fields', status: 'weird\x1b[2J', assignee: 'x\x1b]0;pwned\x07', kept: true },
+    ...extra.map((s) => ({ ...base, ...s })),
   ];
   const calls = [];
   const moving = new Map();
@@ -200,7 +201,9 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
   };
   const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
   const config = { host: '127.0.0.1', publicUrl: 'http://pending', extraHosts: [], repo: 'acme/app', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
-  const handle = createHandler({ config, fleet, auth, cli, userSettings, projectAccess });
+  // Who may see shared sessions, as People's Sessions from GitHub says; with none, everyone may.
+  const members = githubSessions ? { hasGithubSessions: (login) => githubSessions.has(login), isMember: () => true, isAssignable: () => false, assignables: () => [], view: () => ({ members: [{ login: 'mia-dev' }, { login: 'octocat' }] }) } : undefined;
+  const handle = createHandler({ config, fleet, auth, cli, userSettings, projectAccess, ...(members ? { members } : {}) });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
@@ -218,7 +221,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
     const code = await main(args, {
       env: { XDG_CONFIG_HOME: relativeConfig ? path.relative(process.cwd(), dir) : dir, ...env }, stdout: { write: (s) => { out += s; }, isTTY: tty },
       stdin: { isTTY: tty }, stderr: { write: (s) => { err += s; } }, terminal: terminal?.run,
-      sleep: async (ms) => { clock += ms; }, now, hostname: 'mia-laptop', platform: 'test', credentials, confirm: async () => answer,
+      sleep: async (ms) => { clock += ms; await onSleep?.(ms); }, now, signal, hostname: 'mia-laptop', platform: 'test', credentials, confirm: async () => answer,
       hc: hc.run, app: app.run, self: { node: '/usr/local/bin/node', script: '/home/mia/woodshed/cli/woodshed.mjs' },
       // A stop the console takes longer to answer than the command line waits.
       fetch: (url, init) => {
@@ -316,16 +319,16 @@ test('session list shows your sessions and the shared ones, their state, and whe
   const text = await c.run(['session', 'list']);
   assert.equal(text.code, EXIT.done, text.err);
   const lines = text.out.trim().split('\n');
-  assert.match(lines[0], /^ID +STATE +WHOSE +PAUSES +PROJECT +TITLE$/);
-  assert.match(text.out, /aaaa0001 +working +mine +in 42m, idle +app +Fix the login bug/);
-  assert.match(text.out, /bbbb0002 +paused +mine +- +app +Paused one/);
-  assert.match(text.out, /cccc0003 +needs you +@octocat +in 42m, idle +app +Shared  ]0;pwned work/, 'no escape code reaches the terminal');
+  assert.match(lines[0], /^ID +STATE +KIND +WHOSE +PAUSES +PROJECT +TITLE$/);
+  assert.match(text.out, /aaaa0001 +working +private +mine +in 42m, idle +app +Fix the login bug/);
+  assert.match(text.out, /bbbb0002 +paused +private +mine +- +app +Paused one/);
+  assert.match(text.out, /cccc0003 +needs you +shared +@octocat +in 42m, idle +app +Shared  ]0;pwned work/, 'no escape code reaches the terminal');
   assert.doesNotMatch(text.out, /\x1b|\x07/);
-  assert.match(text.out, /1a1a0007 +in review +you /, 'the page\'s words, and yours');
+  assert.match(text.out, /1a1a0007 +in review +shared +you /, 'the page\'s words, and yours');
   assert.match(text.out, /1b1b0008 +merged /);
-  assert.match(text.out, /1c1c0009 +paused +@x ]0;pwned /, 'an assignee a console made up reaches the terminal printable');
+  assert.match(text.out, /1c1c0009 +paused +shared +@x ]0;pwned /, 'an assignee a console made up reaches the terminal printable');
   const odd = await c.run(['session', 'get', '1c1c0009']);
-  assert.match(odd.out, /State: +paused \(weird \[2J\)\nWhose: +shared, @x ]0;pwned  has it\n/);
+  assert.match(odd.out, /State: +paused \(weird \[2J\)\nKind: +shared\nWhose: +shared, @x ]0;pwned  has it\n/);
   assert.doesNotMatch(odd.out, /\x1b|\x07/);
   assert.doesNotMatch(text.out, /eeee0005/, 'another person\'s private session is not listed');
   assert.doesNotMatch(text.out, /ffff0006/, 'one that ended, only with --all');
@@ -868,6 +871,174 @@ test('session connect does not start another retry at the reconnect deadline', a
   assert.equal(c.now() - droppedAt, 60_000, 'the last wait ends at the deadline');
   assert.equal(c.listFailures.length, 10, 'no status check starts at the deadline');
   assert.equal(terminal.calls.length, 1);
+});
+
+// Review and QA runs the console started on pull requests (pullRequests.review and .qa with runner: woodshed): shared,
+// with nobody assigned, started as the pull request's author or the QA label's.
+const PULL_RUNS = [
+  { id: '7e7e0010', owner: null, kind: 'pr', number: 145, trigger: 'review', startedBy: 'mia-dev', title: 'Review: Fix the login bug', status: 'running', state: 'working', review: { base: 'main', sha: 'f00d145' } },
+  { id: '7f7f0011', owner: null, kind: 'pr', number: 144, trigger: 'review', startedBy: 'octocat', title: 'Review: Pin a session', status: 'stopped', stopReason: 'Review finished: APPROVE', review: { base: 'main', sha: 'f00d144', conclusion: 'APPROVE', reported: true } },
+  { id: '9a9a0012', owner: null, kind: 'pr', number: 146, trigger: 'qa', startedBy: 'octocat', title: 'QA: Make the App optional', status: 'running', state: 'working', qa: { base: 'main', sha: 'beef146' } },
+  { id: 'a5a50013', owner: null, kind: 'ask', number: null, trigger: 'slack', startedBy: 'octocat', title: 'How do labels work?', status: 'running', state: 'done' },
+];
+
+test('session list, get and --json name review and QA runs, and the pull request each is for', async (t) => {
+  const c = await consoleFor(t, { extra: PULL_RUNS });
+  const text = await c.run(['session', 'list']);
+  assert.equal(text.code, EXIT.done, text.err);
+  assert.match(text.out, /7e7e0010 +working +review #145 +you +in 42m, idle +app +Review: Fix the login bug/, 'a review of your pull request is yours');
+  assert.match(text.out, /9a9a0012 +working +qa #146 +@octocat +in 42m, idle +app +QA: Make the App optional/);
+  assert.match(text.out, /a5a50013 +done +ask +shared /, 'a question from Slack is not a plain shared session');
+  assert.doesNotMatch(text.out, /7f7f0011/, 'a finished review is not kept, so it has ended: --all lists it');
+  assert.match((await c.run(['session', 'list', '--all'])).out, /7f7f0011 +stopped +review #144 +@octocat /);
+
+  const [{ sessions }] = (await c.run(['session', 'list', '--all', '--json'])).lines;
+  const byId = Object.fromEntries(sessions.map((s) => [s.id, s]));
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(byId).map(([id, s]) => [id, s.kind])),
+    { aaaa0001: 'private', bbbb0002: 'private', cccc0003: 'shared', ffff0006: 'shared', '1a1a0007': 'shared', '1b1b0008': 'shared', '1c1c0009': 'shared', '7e7e0010': 'review', '7f7f0011': 'review', '9a9a0012': 'qa', a5a50013: 'ask' },
+  );
+  assert.deepEqual(byId['7e7e0010'].pullRequest, { number: 145, repo: 'acme/app', url: 'https://github.com/acme/app/pull/145', title: null, state: null, review: null, checks: null },
+    'the pull request it was started on, in the chip\'s shape, unread');
+  assert.deepEqual([byId['7e7e0010'].mine, byId['7e7e0010'].inMine, byId['7e7e0010'].shared, byId['7e7e0010'].startedBy], [false, true, true, 'mia-dev'],
+    'not a private session of yours, and on your Mine as the page has it');
+  assert.equal(byId['9a9a0012'].inMine, false);
+  assert.equal(byId['7f7f0011'].verdict, 'APPROVE');
+  assert.equal(byId['7e7e0010'].verdict, null, 'no verdict before it reports');
+  assert.equal(byId['1a1a0007'].inMine, true, 'a shared session assigned to you is on Mine');
+  assert.equal(byId.cccc0003.inMine, false);
+  assert.equal(byId.aaaa0001.pullRequest, null);
+
+  const one = await c.run(['session', 'get', '7f7f0011']);
+  assert.equal(one.code, EXIT.done);
+  assert.match(one.out, /Kind: +a review of pull request #144, started by the console\nWhose: +for @octocat\n/);
+  assert.match(one.out, /Pull req\.: +https:\/\/github\.com\/acme\/app\/pull\/144\nVerdict: +APPROVE\nStopped: +Review finished: APPROVE\n/);
+  assert.match((await c.run(['session', 'get', '9a9a0012'])).out, /Kind: +QA of pull request #146, started by the console\n/);
+  assert.equal((await c.run(['session', 'get', '9a9a0012', '--json'])).lines[0].session.kind, 'qa');
+});
+
+test('session list shows review and QA runs only to those the console\'s page shows them to', async (t) => {
+  // Shared sessions, reviews and QA among them, are for members with Sessions from GitHub on People.
+  const c = await consoleFor(t, { extra: PULL_RUNS, githubSessions: new Set(['octocat']) });
+  const [{ sessions }] = (await c.run(['session', 'list', '--all', '--json'])).lines;
+  assert.deepEqual(sessions.map((s) => s.id).sort(), ['aaaa0001', 'bbbb0002'], 'only their own private sessions');
+});
+
+// A watch over a fleet whose sessions move between its reads: `moves[n]` is applied before the read after the n-th wait.
+async function watching(t, { extra = PULL_RUNS, moves = [], args = [] }) {
+  const controller = new AbortController();
+  let waits = 0;
+  let c;
+  c = await consoleFor(t, {
+    extra,
+    signal: controller.signal,
+    onSleep: async () => {
+      // Only the watch's own waits count: a sign-in's happen before it.
+      if (!c?.watchingNow) return;
+      const move = moves[waits++];
+      if (move === undefined) controller.abort();
+      else await move(c.sessions, c);
+    },
+  });
+  c.watchingNow = true;
+  const out = await c.run(['session', 'watch', ...args]);
+  return { ...out, c };
+}
+
+const at = (sessions, id) => sessions.find((s) => s.id === id);
+
+test('session watch says when a review or QA run starts, needs you, finishes with its verdict, or fails', async (t) => {
+  const reviewOf = (number, id, startedBy = 'mia-dev') => ({ id, owner: null, kind: 'pr', number, trigger: 'review', startedBy, title: `Review: #${number}`, status: 'queued', review: { base: 'main', sha: 'abc' } });
+  const out = await watching(t, {
+    args: ['--kind', 'review,qa', '--json'],
+    moves: [
+      // A new review is in line, then runs; QA's needs the person.
+      (s) => { s.push({ ...s[0], ...reviewOf(150, 'b0b00020'), options: { agent: 'claude' } }); at(s, '9a9a0012').startedBy = 'mia-dev'; at(s, '9a9a0012').state = 'needs-you'; },
+      (s) => { Object.assign(at(s, 'b0b00020'), { status: 'starting' }); },
+      (s) => { Object.assign(at(s, 'b0b00020'), { status: 'running', state: 'working' }); },
+      // Its turn done: a review runs by itself, so that is not told.
+      (s) => { Object.assign(at(s, 'b0b00020'), { state: 'done' }); },
+      // It reports, and stops: told once it has stopped, with its verdict.
+      (s) => { Object.assign(at(s, 'b0b00020'), { status: 'stopping', review: { ...at(s, 'b0b00020').review, conclusion: 'REQUEST_CHANGES', reported: true } }); },
+      (s) => { Object.assign(at(s, 'b0b00020'), { status: 'stopped', stopReason: 'Review finished: REQUEST_CHANGES' }); },
+      // The one already running finishes; QA fails; a plain session of yours is done with its turn, which --kind leaves out.
+      (s) => {
+        Object.assign(at(s, '7e7e0010'), { status: 'stopped', stopReason: 'Review finished: APPROVE', review: { ...at(s, '7e7e0010').review, conclusion: 'APPROVE', reported: true } });
+        Object.assign(at(s, '9a9a0012'), { status: 'failed', error: 'the session\'s databases were not ready' });
+        Object.assign(at(s, 'aaaa0001'), { state: 'done' });
+      },
+      // Someone else's review, not on Mine.
+      (s) => { s.push({ ...s[0], ...reviewOf(151, 'b1b10021', 'octocat'), status: 'running', state: 'working', options: { agent: 'claude' } }); },
+    ],
+  });
+  assert.equal(out.code, EXIT.done, out.err);
+  const [first, ...events] = out.lines;
+  assert.deepEqual([first.event, first.kinds, first.everyone, first.everySeconds, first.sessions, first.login], ['watching', ['review', 'qa'], false, 15, 1, 'mia-dev'],
+    'the first read tells nothing of what was already there: on Mine, only the review of mia-dev\'s pull request');
+  // In the order they happened; those of one read in the list's order.
+  assert.deepEqual(events.map((e) => [e.event, e.session.id]), [
+    ['needs-you', '9a9a0012'],
+    ['started', 'b0b00020'],
+    ['finished', 'b0b00020'],
+    ['failed', '9a9a0012'],
+    ['finished', '7e7e0010'],
+  ]);
+  const finished = events.find((e) => e.event === 'finished');
+  assert.deepEqual([finished.session.kind, finished.session.verdict, finished.session.pullRequest.number, finished.session.url], ['review', 'REQUEST_CHANGES', 150, `${out.c.origin}/s/b0b00020`]);
+  assert.equal(events.find((e) => e.event === 'failed').session.error, 'the session\'s databases were not ready');
+  assert.ok(events.every((e) => !Number.isNaN(Date.parse(e.at))));
+  assert.ok(!out.out.includes('statusd-secret'));
+});
+
+test('session watch --everyone tells others\' runs too, says done for a session with a person, and prints lines', async (t) => {
+  const out = await watching(t, {
+    args: ['--everyone', '--every', '30'],
+    moves: [
+      (s) => { Object.assign(at(s, '9a9a0012'), { status: 'stopped', qa: { ...at(s, '9a9a0012').qa, conclusion: 'success' } }); Object.assign(at(s, 'aaaa0001'), { state: 'done' }); },
+      (s) => { Object.assign(at(s, 'aaaa0001'), { state: 'working' }); },
+      (s) => { Object.assign(at(s, 'aaaa0001'), { state: 'needs-you' }); Object.assign(at(s, 'bbbb0002'), { status: 'running', state: 'working', stopReason: null }); },
+      // Another person's private session is never seen, whatever it does.
+      (s) => { Object.assign(at(s, 'eeee0005'), { state: 'needs-you' }); },
+    ],
+  });
+  assert.equal(out.code, EXIT.done, out.err);
+  const lines = out.out.trim().split('\n');
+  assert.match(lines[0], /^Watching every session you can see on http:\/\/localhost:\d+, kinds: all, every 30 s\. Ctrl-C stops\.$/);
+  assert.match(lines[1], /^10:00:35 {2}9a9a0012 {2}finished \(success\) {2}qa #146 {2}QA: Make the App optional {2}http:\/\/localhost:\d+\/s\/9a9a0012$/);
+  assert.match(lines[2], /^10:00:35 {2}aaaa0001 {2}done {2}private {2}Fix the login bug /);
+  assert.match(lines[3], /^10:01:35 {2}bbbb0002 {2}started {2}private {2}Paused one /, 'a resumed session starts again');
+  assert.match(lines[4], /^10:01:35 {2}aaaa0001 {2}needs-you {2}private /);
+  assert.equal(lines.length, 5);
+  assert.doesNotMatch(out.out, /eeee0005/);
+});
+
+test('session watch rides out a console it cannot reach, and stops when the sign-in ends', async (t) => {
+  const out = await watching(t, {
+    args: ['--json'],
+    moves: [
+      (s, c) => { c.listFailures.push(500, null); Object.assign(at(s, 'aaaa0001'), { state: 'needs-you' }); },
+      () => {},
+      () => {},
+    ],
+  });
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.deepEqual(out.lines.map((l) => l.event), ['watching', 'unreachable', 'reachable', 'needs-you'], 'a 500 is the console away too: told once each way, and what changed meanwhile after');
+
+  // Revoked on My settings: the watch says so and ends, waiting on the person to sign in again.
+  const ended = await watching(t, { args: ['--json'], moves: [(s, c) => { c.cli.revokeAll('mia-dev', 'My settings'); }, () => {}] });
+  assert.equal(ended.code, EXIT.waiting);
+  assert.deepEqual(ended.lines.map((l) => [l.event, l.status ?? null]), [['watching', null], ['error', 'signed-out']]);
+});
+
+test('session watch refuses kinds and paces it does not know', async (t) => {
+  const c = await consoleFor(t);
+  const kind = await c.run(['session', 'watch', '--kind', 'review,bogus']);
+  assert.equal(kind.code, EXIT.failed);
+  assert.match(kind.err, /--kind takes private, shared, review, qa, ask, separated by commas: not bogus/);
+  const fast = await c.run(['session', 'watch', '--every', '1']);
+  assert.equal(fast.code, EXIT.failed);
+  assert.match(fast.err, /--every is a number of seconds, from 5 to 600/);
+  assert.equal((await c.run(['session', 'watch', 'extra'])).code, EXIT.failed);
 });
 
 // Run from a Herdr terminal here, t4, as a local agent runs the command line.
