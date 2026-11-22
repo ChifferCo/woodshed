@@ -7,8 +7,8 @@
 // It only starts reviews: the fleet's `reviewGates` (installation.mjs) add it for the review on the tag and for the tag
 // sessions are told (WOODSHED_REVIEW_TAG, fleet.mjs), since their checkout's file cannot say it, so the pull requests
 // they open carry it. What a pull request waits for, its Slack post and QA, stays the file's alone: a repo whose file
-// names no review posts once green, as before, whatever a default review said. A console with no reviewer App, whose
-// verdicts would not count, starts no default review at all. QA, suites, mergeRisk and runsOn are the file's.
+// names no review posts once green, as before, whatever a default review said. `woodshed review start` (fleet.mjs,
+// reviewOnDemand) runs by it too. QA, suites, mergeRisk and runsOn are the file's.
 
 export const DEFAULT_RERUN = '[woodshed-review]';
 

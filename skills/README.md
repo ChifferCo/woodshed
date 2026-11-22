@@ -1,7 +1,7 @@
 # Skills for your own agents
 
 `woodshed/` teaches Claude Code and Codex the `woodshed` command line (cli/README.md): signing in, starting and
-following sessions, giving one more time, running a command in one, and carrying Claude settings. It works for you, as you: it never reads the CLI's token, and anything waiting on you (a sign-in, an
+following sessions, showing what one built through its app link, giving one more time, running a command in one, and carrying Claude settings. It works for you, as you: it never reads the CLI's token, and anything waiting on you (a sign-in, an
 approval, a session that needs you) it hands back with the link and stops.
 
 These are for the computer you run `woodshed` on. The skills in `.claude/skills/` are a different set: they are for

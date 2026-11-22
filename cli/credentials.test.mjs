@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createCredentials, OWN_FOLDER, powershellArgs, windowsTools } from './credentials.mjs';
-import { browserCommand } from './woodshed.mjs';
+import { browserCommand } from './browser.mjs';
 import { fakeWindows, TOOLS } from './__fixtures__/fakeWindows.mjs';
 
 const TOKEN = `wsc_${'ab'.repeat(32)}`;

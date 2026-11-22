@@ -2806,6 +2806,15 @@ test('a repo whose project file names no review is reviewed in a session on [woo
   assert.deepEqual([session.trigger, session.review.heading, session.review.check], ['review', '## Woodshed review', null]);
 });
 
+test('a review asked for by hand on a repo whose project file names no review runs by the default', async () => {
+  const { fleet, github } = reviewSetup({ gates: null });
+  github.pull = async () => ({ ...REVIEW_PULL, user: { login: 'joel' } });
+  const project = { name: 'r', repo: 'o/r', default: true };
+  const started = await fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
+  assert.equal(started.outcome, 'started', JSON.stringify(started));
+  assert.equal(fleet.sessions()[0].review.heading, '## Woodshed review');
+});
+
 test('the default review holds back no Slack post: a repo whose file names no review posts once out of draft and green, as before', async () => {
   const { fleet, github, slack, statuses, session } = await sessionWithPull({ createdAt: '2026-10-21T10:05:00Z', gates: null, reviewGates: withDefaultReview(null) });
   const pull = github.pull;
@@ -2840,6 +2849,84 @@ test('the review tag on the head starts a review session, once for the commit, o
   const actions = setup({ gates: { ...REVIEW_GATES, review: { ...REVIEW_GATES.review, runner: 'actions' } } });
   actions.github.pull = async () => REVIEW_PULL;
   assert.deepEqual(await actions.fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'the actions runner stays in CI');
+});
+
+test('a review its author asks for starts on the head now, tag or not, and only on their own open pull request', async () => {
+  const project = { name: 'r', repo: 'o/r', default: true };
+  const { fleet, github } = reviewSetup();
+  github.commitMessage = async () => 'No tag here';
+  const started = await fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
+  assert.equal(started.outcome, 'started');
+  const [session] = fleet.sessions();
+  assert.deepEqual([session.id, session.trigger, session.review.sha], [started.sessionId, 'review', 'a'.repeat(40)]);
+  assert.deepEqual(await fleet.reviewOnDemand({ project, number: 7, login: 'joel' }), { outcome: 'running', sessionId: session.id }, 'its head is being reviewed');
+  assert.equal(fleet.sessions().length, 1);
+
+  const someoneElse = await fleet.reviewOnDemand({ project, number: 7, login: 'mia' });
+  assert.deepEqual([someoneElse.outcome, someoneElse.status], ['refused', 403]);
+  assert.match(someoneElse.reason, /not your pull request/);
+
+  const draft = reviewSetup();
+  draft.github.pull = async () => ({ ...REVIEW_PULL, draft: true });
+  assert.deepEqual(await draft.fleet.reviewOnDemand({ project, number: 7, login: 'joel' }), { outcome: 'refused', status: 409, reason: '#7 is a draft: mark it ready for review first' });
+
+  const missing = reviewSetup();
+  missing.github.pull = async () => { throw new Error('gh: Not Found (HTTP 404)'); };
+  assert.equal((await missing.fleet.reviewOnDemand({ project, number: 7, login: 'joel' })).status, 404);
+
+  const actions = setup({ gates: { ...REVIEW_GATES, review: { ...REVIEW_GATES.review, runner: 'actions' } } });
+  actions.github.pull = async () => REVIEW_PULL;
+  const off = await actions.fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
+  assert.deepEqual([off.outcome, off.status], ['refused', 409]);
+  assert.equal(off.reason, 'o/r\'s project file runs its review in GitHub Actions, not in this console: its pullRequests.review chooses that runner');
+
+  const elsewhere = setup({ gates: { ...REVIEW_GATES, runsOn: 'other-console[bot]' }, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
+  elsewhere.github.pull = async () => REVIEW_PULL;
+  const ran = await elsewhere.fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
+  assert.deepEqual([ran.status, ran.reason], [409, 'o/r\'s pullRequests.runsOn names another console (other-console[bot]), which runs its reviews']);
+  assert.equal(elsewhere.fleet.sessions().length, 0);
+  assert.equal(actions.fleet.sessions().length, 0);
+
+  const none = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: [], choice: 'none', why: null }) } });
+  const chose = await none.fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
+  assert.deepEqual(chose, { outcome: 'refused', status: 409, reason: 'the author chose no code review' });
+});
+
+test('a review asked for again after one stopped with no verdict starts anew, and two asks at once start one', async () => {
+  const project = { name: 'r', repo: 'o/r', default: true };
+  const { fleet } = reviewSetup();
+  const first = await fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
+  const [session] = fleet.sessions();
+  Object.assign(session, { status: 'failed' });
+  const again = await fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
+  assert.equal(again.outcome, 'started', 'a failed review gave no verdict, so it may be asked again');
+  assert.notEqual(again.sessionId, first.sessionId);
+  const second = fleet.sessions().find((s) => s.id === again.sessionId);
+  Object.assign(second, { status: 'stopped', review: { ...second.review, conclusion: 'APPROVE' } });
+  assert.deepEqual(await fleet.reviewOnDemand({ project, number: 7, login: 'joel' }), { outcome: 'reviewed', sessionId: second.id });
+
+  const both = reviewSetup();
+  const [a, b] = await Promise.all([1, 2].map(() => both.fleet.reviewOnDemand({ project, number: 7, login: 'joel' })));
+  assert.equal(both.fleet.sessions().length, 1);
+  assert.deepEqual([a.outcome, b.outcome, b.status], ['started', 'refused', 409]);
+  assert.match(b.reason, /being started already/);
+  const tagged = reviewSetup();
+  tagged.github.commitMessage = async () => 'Fix it [woodshed-review]';
+  await Promise.all([tagged.fleet.reviewOnDemand({ project, number: 7, login: 'joel' }), tagged.fleet.reviewOnTag({ number: 7 })]);
+  assert.equal(tagged.fleet.sessions().length, 1, 'a tagged commit and an ask at once start one review');
+
+  // An ask that starts nothing (not the author's) does not drop a tagged commit's review that lands meanwhile.
+  const outsider = reviewSetup();
+  outsider.github.commitMessage = async () => 'Fix it [woodshed-review]';
+  const [refused, tagStart] = await Promise.all([outsider.fleet.reviewOnDemand({ project, number: 7, login: 'mia' }), outsider.fleet.reviewOnTag({ number: 7 })]);
+  assert.deepEqual([refused.status, tagStart.outcome], [403, 'started']);
+
+  // A verdict GitHub did not take is no review of that head: asking again starts one.
+  const unposted = reviewSetup();
+  const firstAsk = await unposted.fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
+  const s1 = unposted.fleet.sessions().find((x) => x.id === firstAsk.sessionId);
+  Object.assign(s1, { status: 'stopped', review: { ...s1.review, conclusion: 'APPROVE', posted: false } });
+  assert.equal((await unposted.fleet.reviewOnDemand({ project, number: 7, login: 'joel' })).outcome, 'started');
 });
 
 test('a review runs whom its author chose, and says so on the pull request', async () => {

@@ -1014,8 +1014,7 @@ project file the console reads names no `pullRequests.review` (or there is no fi
 `console/defaultReview.mjs`'s review, `runner: woodshed` on a commit whose message has `[woodshed-review]`, added by
 `reviewGatesOf` in `installation.mjs` (the fleet's `reviewGates`). It only starts reviews: what a pull request waits for,
 its Slack post and QA, stays the file's alone, so a repo whose file names no review posts once out of draft and green,
-as before, whatever a default review said. A console with no reviewer App starts no default review, since its
-verdicts would not count, and tells sessions no tag: readiness lists the reviewer App as missing. The file's own
+as before, whatever a default review said. `woodshed review start` (`reviewOnDemand`) runs by it too. The file's own
 `review`, on any runner, wins; it is where a team reviews every commit, uses another tag, or adds QA (`woodshed review
 enable`). The default is the review alone: `suites`, `qa`, `mergeRisk` and `runsOn` stay the file's. Each coding session
 is told the tag in `WOODSHED_REVIEW_TAG` (fleet.mjs, decided at each start), which its rules use when its checkout's file
@@ -1127,6 +1126,21 @@ The console logs:
 In the session's pane: `Codex reviews on the author's ChatGPT login, which the console adds to its calls` or `on a key
 the console adds to its calls`, then `Codex ended (exit=…)`, and `Codex took longer than … minutes and was stopped`
 when it did. Codex's own log is at `.review/logs/codex.jsonl`.
+
+**A review asked for by hand.** `woodshed review start` (cli/README.md, "Reviewing your open pull requests now", and
+`woodshed setup`'s last review step) calls `POST /api/my/pulls/<number>/review` with the project's name, which the
+command line's token reaches (cliSessions.mjs). The project must be one the person may start sessions on, which asks
+GitHub for their write access to its repo (projectAccess.mjs), and the fleet's `reviewOnDemand` then starts the same
+review session a tagged commit does (`startReview`), on the pull request's head as it is, tag or not. It runs by the
+review the fleet's gates carry: the project file's, or every repo's default where the file names none. It refuses
+(`fleet: review asked for, refused` with the `reason`): 409 where the project file itself chooses another runner for
+its review (`runs its review in GitHub Actions`), or its `pullRequests.runsOn` names another console, 403 a pull request whose author (or, for one a session opened, that session's starter) is
+someone else, since the review runs on the author's sign-ins and choice, 409 one closed or a draft, and 409 with
+`startReview`'s own reason (a review running on an older commit, the author chose no review), and 409 while another ask
+for the same pull request, or a tagged commit's review of it, is still starting (one guard for both, so they start
+one session). A head commit a review session is reviewing, or gave its verdict on,
+answers 200 with that session instead of starting another; one whose review failed, stopped with no verdict, or whose
+verdict GitHub did not take (`review.posted` false) may be asked again. A new one answers 201 (`fleet: review asked for` with the `outcome` and its `id`).
 
 ### The approval waits for QA
 
@@ -1524,8 +1538,10 @@ with them beside `WOODSHED_REQUIRE_SIGN_IN`, a hosting proxy, a host past loopba
 
 ### Sharing the app
 
-A My Woodshed session's app is its owner's alone, as the session is. **Share the app…** in the session's ⋯ menu lets
-the owner open it to more people. Only the app: the terminal, Review, the Redis and database viewers, Start/Stop and
+A My Woodshed session's app is its owner's alone, as the session is. **Share**, beside the app's button in the
+session's pane bar (**Share the app…** in its ⋯ on a phone or a narrow window, and in the palette's actions for it),
+lets the owner open it to more people. While members or a live link can open the app the button reads **Shared**, its
+title saying who. Only the app: the terminal, Review, the Redis and database viewers, Start/Stop and
 the share controls themselves stay owner-only (`canOpenApp` in `server.mjs` adds to `canOpen` for the app's name and
 nothing else, and the proxy hands the app's path only the session's status port and token). The owner chooses the
 audience each time, and either can be turned off:

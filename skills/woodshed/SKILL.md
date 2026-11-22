@@ -1,6 +1,6 @@
 ---
 name: woodshed
-description: "Use the `woodshed` command line to set up Woodshed for the person, sign in, start a cloud session and follow it, list, watch, stop, resume or remove sessions (reviews and QA runs on their pull requests among them), show the person a session's running app (its link, and starting or stopping it), give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, change their My settings choices (terminal, reviews, default repo), turn on Woodshed's review for a repo, and point them at reviewing a session's change on their own terminal. Use when the person asks to set up Woodshed, start or check a session, be told when one starts or finishes, see, try or open what a session built (its app or preview), run something in one, keep one from pausing, sync their Claude settings, change a My settings choice, turn on Woodshed's review for a repo, or review, approve or merge what a session did or its pull request."
+description: "Use the `woodshed` command line to set up Woodshed, sign in, start a session and follow it, list, watch, stop, resume or remove sessions (reviews and QA runs among them), show the person what a session built through its app link (starting the app, or having its agent serve it), give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, change their My settings choices (terminal, reviews, default repo), turn on Woodshed's review for a repo, and point them at reviewing a session's change on their own terminal. Use when the person asks to set up Woodshed, start or check a session, be told when one starts or finishes, to show me, preview, open the pages of, see in the browser or try what a session built, run something in one, keep one from pausing, sync their Claude settings, change a My settings choice, turn on Woodshed's review for a repo, or review, approve or merge what a session did or its pull request."
 ---
 
 # Work with Woodshed from the command line
@@ -11,22 +11,44 @@ token the CLI keeps to itself. You run it for them; you never hold their credent
 
 ## Start here with `woodshed setup`
 
-If they ask to get started, check `woodshed --help` for `setup`. Use the choices they gave you:
+Setup's aim is the person's first automated code reviews: Claude Code and Codex reviewing their pull requests on their
+repo. If they ask to get started, check `woodshed --help` for `setup`. Use the choices they gave you:
 
 ```sh
-woodshed setup --yes --json --repo acme/app --reviews default --prompt "Fix the login redirect"
+woodshed setup --yes --json --repo acme/app --reviews default
 ```
 
-Pass the person's console with `--console <url>` when they use their own. Repeat `--repo` for multiple repos, in order
-with the first for their session. Each checklist entry has a `step`, `status`, and `message`. On exit 2, show them the
-message and any `url` or `userCode` and stop. Run setup again after they complete that step. They approve the CLI sign-in,
-install any GitHub Apps, and connect Claude or Codex on My settings in their browser. Setup checks each repo's review
-and says its tag (`tag` in `--json`, `[woodshed-review]` unless the repo's project file names another): tell the person
-that putting that tag in a commit's message on a pull request gets it reviewed, and that sessions add it for them. Use `--skip-reviews` or
-`--no-session` when the person chooses to skip those steps.
-When `woodshed status` shows a compatible `hc` and the person hasn't chosen a terminal, ask whether they want Herdr
-for new private sessions. Check `woodshed setup --help` for `--terminal` before passing `--terminal herdr` or
-`--terminal tmux`. On older builds, point the person to Agent terminal on My settings.
+Pass the person's console with `--console <url>` when they use their own. Repeat `--repo` for multiple repos. Each
+checklist entry has a `step`, `status`, and `message`. On exit 2, show them the message and any `url` or `userCode` and
+stop. Run setup again after they complete that step. They approve the CLI sign-in and install any GitHub Apps in their
+browser.
+
+- **Agents (`step: agent`).** Setup asks for both Claude Code and Codex: with both connected, their pull requests get
+  reviews from both. While one is missing it exits 2 with My settings' link, and the message says what they run for it
+  (`claude setup-token` for Claude; `codex login`, then `~/.codex/auth.json` or an OpenAI API key, for Codex). They
+  paste it on My settings themselves: never ask for, read, or pass a token. If they say they use only one, rerun with
+  `--agent claude` or `--agent codex`, and setup does not ask for the other.
+- **Review on the repo (`repo-review`, `review-choice`).** Every repo is reviewed by default, with no checkout, project
+  file or pull request. Setup checks it per repo, exits 2 with the link when the console's reviewer App still has to be
+  made or installed (an admin's step), and otherwise says the tag (`tag` in `--json`, `[woodshed-review]` unless the
+  repo's project file names another): tell the person that putting it in a commit's message on a pull request gets it
+  reviewed, and that sessions add it for them. `--reviews` is their own reviewer choice; `default` runs the most the
+  console can, both once both are connected.
+- **Reviews of their open pull requests (`pr-reviews`), the main step.** Setup lists their open pull requests on the
+  repo and starts the console's review on them, then gives each review's link (`reviews` in the entry). With `--json`
+  and no `--yes`, it exits 2 listing them: ask the person which, then rerun with `--review-prs all`, `none`, or numbers
+  (`12,15`; with several repos each must be `owner/name#12`). With `--yes` and no `--review-prs` it reviews the 5 updated last.
+  With `--reviews none` it starts none. With none open, it says a review starts
+  on their next one whose last commit's subject ends with the review's tag (`[woodshed-review]` by default): a session
+  adds it to its pushes, and on their own computer they add it themselves. Only a repo whose project file runs its
+  review elsewhere (GitHub Actions, or another console by `runsOn`) gets none, and setup says so. Tell them the links when it ends: the final `reviews` entry repeats them.
+- **Optional, after that: the agent terminal and a first coding session.** When `woodshed status` shows a compatible
+  `hc` and the person hasn't chosen a terminal, ask whether they want Herdr for new private sessions, and pass
+  `--terminal herdr` or `--terminal tmux` (check `woodshed setup --help` for it first; on older builds, point them to
+  Agent terminal on My settings). Pass `--prompt "<task>"` only when they want a session now; without it setup finishes
+  and says how to start one.
+
+Use `--skip-reviews` or `--no-session` when the person chooses to skip those steps.
 
 ## 1. Check what this CLI has
 
@@ -74,6 +96,12 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 - **Being connected does not keep a session awake.** A session pauses after its idle hours with nothing to do (its own
   agent not working) and stops at its lifetime, whatever tunnels or terminals are open. If you need it longer,
   ask for the time (section 5).
+- **Show what a session built through its app link, never from this computer.** When the person asks to see, show,
+  preview or open what a session built (show me, open the pages, see it in the browser), give them the session's app
+  link (section 5, "See and try a session's app"), started or served by the session first. Do not fetch its branch and
+  serve it here on `localhost`, open files from a local checkout, or send raw GitHub file links: that is not what the
+  session runs, with its databases and env, and it is not a link they can open from a phone or share. Opening the app
+  link in their browser is fine when they ask you to.
 - **Herdr's `hc` is the person's to install or update.** `session herdr` exits 3 and says so when it is missing or
   older than it needs: tell them, and do not run an installer or `hc update` for them.
 - **Stopping and removing are the person's call.** `session stop` ends the work in progress (a running one's
@@ -100,7 +128,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 
 | Command | Does | Exits | Arrives in |
 | --- | --- | --- | --- |
-| `woodshed setup [--yes] [--repo R] [--terminal herdr\|tmux] [--reviews CHOICE] [--prompt TEXT]` | Guides sign-in, repo and review setup, and the first session | 0 done, 2 needs the person, 3 refused, 1 failed | main |
+| `woodshed setup [--yes] [--repo R] [--agent claude\|codex] [--reviews CHOICE] [--review-prs all\|none\|N,N] [--terminal herdr\|tmux] [--prompt TEXT]` | Guides sign-in, repos, connecting Claude Code and Codex, and reviews of their open pull requests; then, optionally, the terminal and a first session | 0 done, 2 needs the person, 3 refused, 1 failed | main |
 | `woodshed login [--no-browser]` | Prints a code and opens the console's `/cli` page; waits up to 10 minutes for the person to approve | 0 signed in, 2 code expired, 3 denied | main |
 | `woodshed logout` | Ends this computer's sign-in | 0 | main |
 | `woodshed status` | The console, its org, who is signed in, and the Herdr `hc` here with its version | 0, 2 not signed in | main |
@@ -126,6 +154,8 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | main |
 | `woodshed review enable [--qa] [--rerun <tag>\|--every-commit] [--dry-run]` | In a checkout: writes `pullRequests.review` with `runner: woodshed` (and with `--qa`, QA in a session) into `.woodshed/project.yaml`, checks it, and asks the console what is missing | 0 ready to commit, 2 an admin's step or a sign-in, 1 the file does not read or check, or the console could not confirm | main |
 | `woodshed review status [--repo R]` | Whether review is on (by default, on `[woodshed-review]`, or by the repo's project file) and what the console still needs; `--repo` needs no checkout | 0 on, 2 not yet, 1 the console could not tell | main |
+| `woodshed review pulls [--repo R]` | Their open pull requests on the repo (else the checkout's), and how it is reviewed: on by default, by the project file's review or the console's default, with its tag | 0, 2 sign-in ended, 3 a repo they cannot start on | main |
+| `woodshed review start <pull request>... [--repo R]` | The console's review of each of their own open pull requests, now, tag or not; prints each review's link, or the one already reviewing its head | 0 started, 3 not theirs, a draft, or a repo whose project file runs its review elsewhere, 1 failed | main |
 | `woodshed review <id>\|<pull request>` | A full-screen review of one of their own sessions' change on their terminal, as the Review tab shows it: the analysis, Q&A, chat with the session's agent, the diff with comments, Re-review, and comment, verdict, rename, merge as them. Interactive: suggest it to them. `--json` (or no terminal) prints the analysis and the diff's summary once, for you | 0, 2 sign-in ended, 3 shared or saw production, 1 failed | main |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in their running session, in its checkout | the line's code, 255 the pipe failed | main |
 | `woodshed config list` | Their choices on My settings: `terminal`, `reviews`, `codex-reviews`, `claude-token-shared`, `default-repo`, `github-name`, `github-email` | 0 | main |
@@ -304,7 +334,8 @@ pull request with no session of theirs exits 1 and says how to start one on it.
 
 What to tell them it does, briefly: Overview first (the analysis); `2` Q&A, where questions open one at a time and
 `i` asks a follow-up on the chosen one; `4` Files changed, every file with what it does, `Enter` to open one, `i` to chat about it,
-`c` to comment on a line; `5` Chat with the session's agent; `s` submit a verdict, `m` merge, `t` rename; `?` the keys.
+`c` to comment on a line; `5` Chat with the session's agent; `s` submit a verdict, `m` merge, `t` rename; `o` opens
+the pull request on GitHub (in Herdr, Ctrl-click on its underlined number does too); `?` the keys.
 For a pull request with no session of theirs, offer to start one on it first
 (`woodshed session new --repo <owner/name> --branch <number>`, which starts as a review of it), then `woodshed review`.
 
@@ -323,11 +354,13 @@ tell which conversation belongs to a terminal, use `hc label <t> claude.session=
 
 ### See and try a session's app
 
-Each session runs the repo's own app (the project file's `app`), with its own databases, at a link of its own. People
-often do not know they can open it, so say so when it helps them: when a session starts, when its agent says it has
-finished a change they can see, when they ask how to try or check what it built, or when they ask for a preview or a
-staging link. Check `woodshed session --help` lists `app` first (section 1); on an older CLI, give them the session's
-console page (`url`), whose Open app opens it.
+Each session runs the repo's own app (the project file's `app`), with its own databases, at a link of its own. This
+link is how the person sees what a session built: whenever they ask to see, show, preview or open it ("show me the
+pages", "let me see it in the browser"), and for a preview or a staging link. People often do not know they can open
+it, so say so when it helps them too: when a session starts, when its agent says it has finished a change they can
+see, or when they ask how to try or check what it built. Never stand in for it with this computer's copy (section 3).
+Check `woodshed session --help` lists `app` first (section 1); on an older CLI, give them the session's console page
+(`url`), whose Open app opens it.
 
 ```sh
 woodshed session get <id> --json      # session.app and session.appUrl
@@ -359,6 +392,43 @@ With several apps (`session.apps`), `--app <name>` starts that one; with another
 `stop` first and the command waits through the switch. One with no `stop` in the project file is left running beside
 it: say so if they ask why it still answers. `woodshed session app <id> stop` stops it, only when they ask; exit 3 saying
 there is no stop command means the project file has no `app.stop`, so nothing was stopped: tell them.
+
+#### When what they want to see is not what the app serves
+
+The app link opens whatever answers on the app's frontend port in the session. When the thing to see is not what the
+project file's app serves (static pages in a folder, a docs site, another service in the repo), Start app alone will
+not show it: have the session serve it on that port, then give them the app link as above.
+
+Whatever answers on that port reaches everyone the link reaches: with `session.appSignIn` false, whoever reaches the
+console, and any Share the app link the owner made. So before serving, check that audience is right for what will show,
+and serve only the files meant to be seen: a copy of the built pages with no dotfiles (a `.env.local` Woodshed writes)
+and no symlinks, never the checkout or a source folder as it is.
+
+- **Another app of the project file serves it**: `woodshed session app <id> start --app <name>` (`session.apps` lists
+  them), and give the link it prints.
+- **Otherwise, ask the session's agent** to serve a clean copy of it on the app's frontend port in the session, with
+  the project's app stopped first (`woodshed session app <id> stop`, when the person agrees: it stops what the session
+  runs). The link follows the app the session runs, `session.appName`: the port is that app's, and while it still
+  answers the link shows it, not the copy. Its agent knows the ports and the checkout. Reach it in Herdr with `hc send
+  woodshed-<id>/claude "<ask>"` (after `woodshed session herdr <id>`, between its turns), else point the person at the
+  Chat tab on the session's console page (`url`) or `woodshed session connect <id>` to ask it themselves.
+- **Or serve it yourself through the tunnel**, for one of their own sessions, the same way. Read the port with
+  `woodshed tunnel <id> -- node /opt/woodshed/shared/project.mjs get app` (`frontendPort`); with several apps, `get
+  apps` prints one per line, and the one whose `name` is `session.appName` is the port. The line below copies only the
+  pages' plain files, no dotfiles or symlinks, into a new folder (never refilling one a server serves), stops the
+  preview it started before, and starts one that outlives the tunnel with `setsid`, as closing the tunnel hangs up what
+  it started:
+
+  ```sh
+  woodshed tunnel <id> -- 'd=$(mktemp -d /tmp/preview.XXXXXX) && (cd site && find . -name ".*" ! -name . -prune -o -type f -exec cp --parents {} "$d" \;) && { kill $(cat /tmp/preview.pid 2>/dev/null) 2>/dev/null; sleep 1; setsid python3 -m http.server <frontendPort> --bind 127.0.0.1 -d "$d" >/tmp/preview.log 2>&1 </dev/null & echo $! >/tmp/preview.pid; }'
+  ```
+
+Then `woodshed session app <id>` says `running` (or `api-down` when the project's app has a backend of its own that is
+not running: the pages still open), and the link shows it. A project file with no app (`none`) has no port for the link
+to reach: Set up app first, as above. If the person will want this again in later sessions, suggest
+adding it to the repo's `.woodshed/project.yaml` as a named app (`apps`, each with a `name`, so `--app <name>` and
+Start app ▾ start it), in an ordinary pull request: the `write-project-file` skill in Woodshed's repository
+(`.claude/skills/write-project-file/`), and its `project.reference.yaml`, say how.
 
 ### Change a choice on My settings
 

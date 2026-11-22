@@ -27,6 +27,7 @@ import { currentName, envValue, isSettingName } from '../../shared/envNames.mjs'
 import { startDevAppsSession } from './devAppsSession.mjs';
 import { startDevChatSession } from './devChatSession.mjs';
 import { writeDevGh } from './devGh.mjs';
+import { enableReview } from '../../cli/projectReview.mjs';
 import { startDevReview } from './devReviewSession.mjs';
 import { startDevTerminal } from './devTerminalSession.mjs';
 import { makeDevClone } from './devWoodshedClone.mjs';
@@ -439,8 +440,21 @@ const RESTART_EXIT_CODE = 75;
 const repoSettingsDev = process.env.DEV_CONSOLE_REPO_SETTINGS === '1' ? devRepoSettings(stateDir) : null;
 // New session's Work on list reads made-up open pull requests from this gh (devGh.mjs).
 // With a made-up reviewer App, the default branch's project file has no review yet, for `woodshed review` to turn on.
+// DEV_CONSOLE_REVIEW_ON=1: example-org/example-repo's default branch runs its review in a session, and @local has three
+// open pull requests there, for `woodshed review pulls|start` and `woodshed setup`'s reviews (with
+// DEV_CONSOLE_REVIEWER=installed for the review's readiness). A review started on one fails at launch: no session
+// image runs here.
+// DEV_CONSOLE_REVIEW_ON=default: the same, with a project file that names no review, which the console reviews by its
+// default (console/defaultReview.mjs).
+const reviewOn = ['1', 'default'].includes(process.env.DEV_CONSOLE_REVIEW_ON);
+// As `woodshed review enable` writes it (cli/projectReview.mjs).
+const REVIEW_ON_FILE = enableReview(null, {}).text;
 const devGhDir = writeDevGh(path.join(stateDir, 'dev-gh'), {
-  projectFiles: { ...(reviewerDev ? { 'example-org/example-repo': 'version: 1\n' } : {}), ...repoSettingsDev?.projectFiles },
+  projectFiles: {
+    ...(reviewerDev ? { 'example-org/example-repo': 'version: 1\n' } : {}), ...repoSettingsDev?.projectFiles,
+    ...(reviewOn ? { 'example-org/example-repo': process.env.DEV_CONSOLE_REVIEW_ON === 'default' ? 'version: 1\n' : REVIEW_ON_FILE } : {}),
+  },
+  mine: reviewOn ? { repo: 'example-org/example-repo', login: 'local' } : null,
 });
 
 // A local secret store, as the local provider keeps one.

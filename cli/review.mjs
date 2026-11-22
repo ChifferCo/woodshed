@@ -10,6 +10,8 @@
 //   woodshed review enable [--qa] [--rerun <tag>|--every-commit] [--dry-run] [--dir <path>]
 //   woodshed review status [--repo <owner/name>] [--dir <path>]
 //
+//   woodshed review pulls|start ...             your own open pull requests, reviewed by the console now (reviewPulls.mjs)
+//
 // Exit codes, as every command's: 0 done (enable: the file says it and the console is ready, so commit it; status: on),
 // 2 waiting on a person (something only an admin can do, a sign-in, or the change not yet on the default branch),
 // 3 refused, 1 anything else (a project file that does not read, or a check that fails).
@@ -23,6 +25,7 @@ import { checkSummary, checkoutEntry } from '../shared/projectCheck.mjs';
 import { parseYaml } from '../shared/yamlLite.mjs';
 import { enableReview } from './projectReview.mjs';
 import { reviewOpenCommand } from './reviewOpen.mjs';
+import { reviewPullsCommand } from './reviewPulls.mjs';
 
 export const REVIEW_USAGE = `Usage: woodshed review <session id | pull request> [--console <url>] [--json]
        woodshed review <command> [--console <url>] [--json]
@@ -48,10 +51,18 @@ Commands:
       --dry-run          say what would change, and write nothing
       --dir <path>       the checkout (default: the one this is run in)
 
+Commands on your own open pull requests, for the repo given by --repo owner/name, else this checkout's origin:
+  pulls                  list them, and how the repo is reviewed: on by default, with the tag that starts a review
+  start <pull request>...
+                         review each now (its number, #number or URL): the console starts the same review session a
+                         tagged commit would, on your own Claude token and Codex sign-in where it has no team keys, and
+                         prints its link. A head commit reviewed already answers with that review
+
 Nothing here writes a GitHub workflow or an Actions secret: the review runs in the console's sessions, which need neither.
 
 Exit codes: 0 done (or quit), 2 waiting on a person (an admin's step, a sign-in, or the change to merge), 3 refused (a
-session that is not your own, or one that has seen production data), 1 anything else.`;
+session or pull request that is not your own, a repo whose project file runs its review elsewhere, or a session that
+has seen production data), 1 anything else.`;
 
 const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 // eslint-disable-next-line no-control-regex
@@ -125,6 +136,7 @@ export async function reviewCommand({ origin, rest }, deps) {
     return sub ? EXIT.done : EXIT.failed;
   }
   const { call, token, say, emit, json, fail } = deps;
+  if (sub === 'pulls' || sub === 'start') return reviewPullsCommand({ origin, sub, words }, deps);
   if (sub !== 'enable' && sub !== 'status') return reviewOpenCommand({ origin, words: rest }, deps);
 
   function options(allowed) {

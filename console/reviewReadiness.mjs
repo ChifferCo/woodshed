@@ -126,10 +126,9 @@ export function createReviewReadiness({ publicUrl, reviewer, ownReviewer, appLog
     }
     // What the fleet runs the review by (withDefaultReview): unknown while the file could not be read.
     const fileReview = defaultBranch.review;
-    // The default runs only with a reviewer App made (installation.mjs, reviewGatesOf); without one, `missing` says so.
     const review = defaultBranch.error ? null : fileReview
       ? { runner: fileReview.runner, rerun: fileReview.rerun ?? null, from: 'project file' }
-      : made ? { runner: DEFAULT_REVIEW.runner, rerun: DEFAULT_REVIEW.rerun, from: 'default' } : null;
+      : { runner: DEFAULT_REVIEW.runner, rerun: DEFAULT_REVIEW.rerun, from: 'default' };
     return {
       repo: project.repo, project: project.name,
       consoleApp: { login: consoleLogin, name: runsOnName },

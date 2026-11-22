@@ -12,6 +12,7 @@
     "node": ">=22"
   },
   "files": [
+    "cli/browser.mjs",
     "cli/config.mjs",
     "cli/credentials.mjs",
     "cli/hc.mjs",
@@ -23,6 +24,7 @@
     "cli/repos.mjs",
     "cli/review.mjs",
     "cli/reviewOpen.mjs",
+    "cli/reviewPulls.mjs",
     "cli/reviewTui.mjs",
     "cli/reviewView.mjs",
     "cli/sessions.mjs",
