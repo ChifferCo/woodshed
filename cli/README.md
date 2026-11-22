@@ -211,10 +211,13 @@ control character in it.
 The page's rules hold: a write to GitHub goes as you, from your own session, once you connected GitHub on My settings
 before it started; otherwise the session hides the pull request and refuses the write (`session/reviewShed/policy.mjs`).
 With `--json`, or with no terminal, it prints the analysis and the diff's summary once and exits: one
-`{"event":"review","review":{…}}` with `title`, `pullRequest` (its `url` is the header's link, or null), `analysis`
-(`status`, `overview`, `decisions`, `architecture`) and `diff` (`files`, `additions`, `deletions`, and `groups` in
-reading order); the text has the pull request's address after its number. Neither has an escape code in it. Opening a
-review with no analysis yet starts it, as opening the tab does.
+`{"event":"review","review":{…}}` with `title`, `pullRequest`, `analysis` (`status`, `overview`, `decisions`,
+`architecture`) and `diff` (`files`, `additions`, `deletions`, and `groups` in reading order). `pullRequest` is the
+live pull request the review may write to, with its `url` checked as the header's link is (null when it does not
+pass), and the text has that address after its number; a review that hides the pull request (the person has not
+connected GitHub) has `pullRequest: null` and no address, though the header still links a pull request review's
+number from what was read at launch. Neither has an escape code in it. Opening a review with no analysis yet starts it,
+as opening the tab does.
 
 **How:** the page's own calls, `/reviews/claude-<id>/...`, with this computer's token (console/README.md, "A review
 from the command line"). Only your own sessions, never one that has seen production data, never the page itself.
