@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createKeyReader, editKey, frame, initialState, mergeHint, parseKeys } from './reviewTui.mjs';
-import { clean, diagramLines, qaLines, qaVisible, fileOrder, markdownLines, plainText, tabBar, toAnsi, width, wrapSegments } from './reviewView.mjs';
+import { createKeyReader, editKey, frame, initialState, mergeHint, parseKeys, screenText } from './reviewTui.mjs';
+import { clean, diagramLines, headerLines, linkUrl, qaLines, qaVisible, fileOrder, markdownLines, plainText, pullRequestUrl, stripAnsi, tabBar, toAnsi, width, wrapSegments } from './reviewView.mjs';
 
 test('raw stdin reads as keys: arrows, a paste with its newlines, and an escape sequence it does not know is skipped whole', () => {
   assert.deepEqual(parseKeys('\x1b[A\x1b[B\x1bOC\x1b[5~\x1b[Z\t\r\x7f\x03q'), ['up', 'down', 'right', 'pageup', 'shift-tab', 'tab', 'enter', 'backspace', 'ctrl-c', 'q']);
@@ -329,4 +329,73 @@ test('the help, on a terminal of 40 by 14, shows whole what the number keys do',
   await tui.until(() => tui.frame().includes('Keys'), 'the help');
   const text = tui.frame().join(' ').replace(/ +/g, ' ');
   assert.match(text, /1-5 open the numbered tabs\. In a text box, a number is text\. Tab and Shift-Tab cycle\./);
+});
+
+// The header's pull request number as a terminal hyperlink (OSC 8), as the page's #311 is a link.
+const PR_URL = 'https://github.com/acme/app/pull/311';
+const link = (url, text) => `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
+const linkedStatus = (livePr = {}, meta = {}) => ({
+  kind: 'worktree', headSha: 'cc8e8860aaaa', status: 'ready', session: 'claude-e58a87e8',
+  meta: { title: 'T', headRefName: 'feat/review-tui-tab-numbers', baseRefName: 'main', headRefOid: 'cc8e8860aaaa', additions: 142, deletions: 14, ...meta },
+  livePr: { number: 311, url: PR_URL, title: 'Number the tabs', state: 'open', review: 'approved', checks: { pass: 7, fail: 0, pending: 0, total: 7 }, ...livePr },
+});
+
+test('the header\'s pull request number links to the pull request, on the fact line or in the title', () => {
+  const facts = frame(initialState({ status: linkedStatus(), diff: { files: [] }, session: 'e58a87e8' }), { columns: 120, rows: 24 });
+  assert.ok(facts.some((l) => l.includes(link(PR_URL, '#311'))), facts.join('\n'));
+  assert.match(stripAnsi(facts[1]), /feat\/review-tui-tab-numbers → main #311 Open ✓ approved ✓ 7 checks passing cc8e8860/);
+  // A pull request review carries the number in its title, linked to the address read at launch.
+  const titled = frame(initialState({ status: { ...linkedStatus({ url: null }, { number: 311, url: PR_URL }), kind: 'pr' }, diff: { files: [] }, session: 'e58a87e8' }), { columns: 80, rows: 24 });
+  assert.ok(titled[0].includes(link(PR_URL, '#311')), titled[0]);
+  assert.equal(stripAnsi(titled[0]), 'Review: Number the tabs #311');
+  // With no address in the review, the session's own pull request with that number, as the console lists it.
+  const listed = initialState({ status: linkedStatus({ url: null }), diff: { files: [] }, session: 'e58a87e8', pulls: [{ number: 311, url: PR_URL }, { number: 12, url: 'https://github.com/acme/app/pull/12' }] });
+  assert.equal(pullRequestUrl(listed, 311), PR_URL);
+  assert.ok(frame(listed, { columns: 80, rows: 24 }).some((l) => l.includes(link(PR_URL, '#311'))));
+  assert.equal(pullRequestUrl({ status: linkedStatus({ url: null }), pulls: [{ number: 311, url: PR_URL }, { number: 311, url: 'https://github.com/acme/web/pull/311' }] }, 311), null, 'two repos\' #311: neither');
+});
+
+test('the link takes no columns: the header is as wide with it as without, at 40 and 80 columns', () => {
+  for (const columns of [40, 80]) {
+    const withLink = headerLines(initialState({ status: linkedStatus(), diff: { files: [] }, session: 'e58a87e8' }), columns);
+    const without = headerLines(initialState({ status: linkedStatus({ url: null }), diff: { files: [] }, session: 'e58a87e8' }), columns);
+    assert.deepEqual(withLink.map(plainText), without.map(plainText), `${columns}: the same words on the same lines`);
+    const drawn = withLink.map((l) => toAnsi(l, { columns }));
+    assert.ok(drawn.some((l) => l.includes(link(PR_URL, '#311'))), `${columns}: linked`);
+    assert.deepEqual(drawn.map((l) => width(stripAnsi(l))), without.map((l) => width(stripAnsi(toAnsi(l, { columns })))), `${columns}: the same widths`);
+    for (const l of drawn) assert.ok(width(stripAnsi(l)) <= columns, l);
+    const lines = frame(initialState({ status: linkedStatus(), diff: { files: [] }, session: 'e58a87e8' }), { columns, rows: 24 });
+    for (const l of lines) assert.ok(width(stripAnsi(l)) <= columns, `${columns}: ${l}`);
+  }
+});
+
+test('a link cut by the line\'s end is cut whole: the sequence is never split, and always closed', () => {
+  const opens = (s) => s.split('\x1b]8;;https').length - 1;
+  const closes = (s) => s.split('\x1b]8;;\x1b\\').length - 1;
+  for (let columns = 1; columns <= 12; columns += 1) {
+    const out = toAnsi([['dim', 'main  '], ['bold', '#311', PR_URL], [null, '  Open']], { columns });
+    assert.ok(width(stripAnsi(out)) <= columns, `${columns}: ${out}`);
+    assert.equal(opens(out), closes(out), `${columns}: every link closed: ${JSON.stringify(out)}`);
+    if (columns <= 6) assert.equal(opens(out), 0, `${columns}: no room, no link`);
+    else assert.ok(out.includes(`\x1b]8;;${PR_URL}\x1b\\`), `${columns}: the whole address, or none`);
+  }
+  assert.equal(toAnsi([['bold', '#311', PR_URL]], { columns: 3 }), `\x1b[1m${link(PR_URL, '#3…')}\x1b[0m`);
+  // A word longer than the line, cut by the wrapping: each piece its own closed link.
+  const wrapped = wrapSegments([['bold', '#3110000000000', PR_URL]], 6).map((l) => toAnsi(l, { columns: 6 }));
+  assert.ok(wrapped.length > 1 && wrapped.every((l) => opens(l) === 1 && closes(l) === 1), wrapped.join('|'));
+});
+
+test('only an https address with nothing but printable characters in it is linked, and plain text has no link', () => {
+  for (const bad of ['http://github.com/acme/app/pull/311', 'javascript:alert(1)', 'https://github.com/acme/app/pull/311\x1b\\x', 'https://github.com/acme/app/pull/311\x07',
+    'https://github.com/acme/app/pull/311\u009c', 'https://github.com/a b/pull/311', 'https://me:pw@github.com/acme/app/pull/311', 'file:///etc/passwd', '', null, 42]) {
+    assert.equal(linkUrl(bad), null, JSON.stringify(bad));
+    const lines = frame(initialState({ status: linkedStatus({ url: bad }), diff: { files: [] }, session: 'e58a87e8' }), { columns: 80, rows: 24 });
+    assert.ok(lines.every((l) => !l.includes('\x1b]8')), `${JSON.stringify(bad)} is not linked`);
+    assert.ok(lines.some((l) => stripAnsi(l).includes('#311')), 'the number is still drawn');
+  }
+  assert.equal(linkUrl(PR_URL), PR_URL);
+  assert.equal(pullRequestUrl({ status: linkedStatus({ url: 'https://github.com/acme/app/pull/312' }) }, 311), null, 'an address for another pull request is not this one\'s link');
+  assert.equal(pullRequestUrl({ status: linkedStatus({ url: 'https://evil.example/' }) }, 311), null);
+  // The screen as text, as a pipe or a test reads it, has no link in it.
+  assert.ok(screenText(initialState({ status: linkedStatus(), diff: { files: [] }, session: 'e58a87e8' }), { columns: 80, rows: 24 }).every((l) => !/\x1b/.test(l)));
 });

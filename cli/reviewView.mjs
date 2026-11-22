@@ -8,7 +8,8 @@
 // escape codes. Only the terminal's own palette is used (bold, dim, reverse and the eight basic colours, foreground
 // only), so it reads on a light terminal as on a dark one; NO_COLOR keeps bold, dim and reverse and drops colour.
 // Every piece of text from the session (titles, code, answers) goes through `clean`, so none of it can move the
-// cursor or retitle the window.
+// cursor or retitle the window. A segment may carry a third element, a link (only the header's pull request number
+// does): `toAnsi` draws it as a terminal hyperlink (OSC 8) that takes no columns, once `linkUrl` passed it.
 
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
@@ -51,30 +52,64 @@ export function cut(text, most) {
   return `${out}…`;
 }
 
+// An address in a hyperlink is printable ASCII only (no control character, space or escape that could end the
+// sequence early), https, with no user name or password in it.
+const LINK_RE = /^[\x21-\x7e]{1,2000}$/;
+
+/** `url` when it may go into a terminal hyperlink, else null. */
+export function linkUrl(url) {
+  if (typeof url !== 'string' || !LINK_RE.test(url)) return null;
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'https:' || !u.hostname || u.username || u.password) return null;
+  return url;
+}
+
+/** `text` as a terminal hyperlink to `url` (OSC 8): terminals that do not know it draw `text` alone. */
+export function hyperlink(url, text) {
+  return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
+}
+
+/** The text a terminal shows of a line `toAnsi` made: no SGR code and no hyperlink's address. */
+export function stripAnsi(text) {
+  // eslint-disable-next-line no-control-regex
+  return String(text).replace(/\x1b\]8;[^\x1b\x07]*(?:\x1b\\|\x07)/g, '').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+}
+
 const STYLES = {
   bold: '1', dim: '2', under: '4', rev: '7',
   red: '31', green: '32', yellow: '33', blue: '34', magenta: '35', cyan: '36',
 };
 const COLOURS = new Set(['red', 'green', 'yellow', 'blue', 'magenta', 'cyan']);
 
-/** One line's segments as text with escape codes, cut to `columns`. `fill` reverses the whole width (a cursor). */
+/**
+ * One line's segments as text with escape codes, cut to `columns`. `fill` reverses the whole width (a cursor). A
+ * segment's link is measured as its text alone, and is cut with it: the sequence is opened and closed around what is
+ * drawn, never split.
+ */
 export function toAnsi(line, { columns, color = true, fill = null } = {}) {
   let out = '';
   let used = 0;
-  // Neighbours in one style are drawn as one run: wrapping splits a sentence into words.
+  // Neighbours in one style (and one link) are drawn as one run: wrapping splits a sentence into words.
   const runs = [];
-  for (const [style, text] of line) {
+  for (const [style, text, link] of line) {
     const last = runs[runs.length - 1];
-    if (last && (last[0] ?? '') === (style ?? '')) last[1] += text;
-    else runs.push([style, text]);
+    if (last && (last[0] ?? '') === (style ?? '') && (last[2] ?? null) === (link ?? null)) last[1] += text;
+    else runs.push([style, text, link ?? null]);
   }
-  for (const [style, raw] of runs) {
+  for (const [style, raw, link] of runs) {
     if (used >= columns) break;
     const text = cut(raw, columns - used);
     const room = width(text);
     const codes = String(style ?? '').split(' ').filter((s) => STYLES[s] && (color || !COLOURS.has(s))).map((s) => STYLES[s]);
     if (fill) codes.push(STYLES.rev);
-    out += codes.length ? `\x1b[${codes.join(';')}m${text}\x1b[0m` : text;
+    const url = link && linkUrl(link);
+    const shown = url && text ? hyperlink(url, text) : text;
+    out += codes.length ? `\x1b[${codes.join(';')}m${shown}\x1b[0m` : shown;
     used += room;
   }
   if (fill && used < columns) out += `\x1b[7m${' '.repeat(columns - used)}\x1b[0m`;
@@ -104,7 +139,8 @@ export function wrapSegments(segments, columns, { first = '', rest = first, firs
     used = width(rest);
     lead = used;
   };
-  for (const [style, text] of segments) {
+  for (const [style, text, link] of segments) {
+    const seg = (piece) => (link ? [style, piece, link] : [style, piece]);
     for (const part of String(text).split('\n').flatMap((p, i) => (i ? ['\n', p] : [p]))) {
       if (part === '\n') {
         push();
@@ -124,7 +160,7 @@ export function wrapSegments(segments, columns, { first = '', rest = first, firs
         while (rest2) {
           const w = width(rest2);
           if (used + w <= columns) {
-            line.push([style, rest2]);
+            line.push(seg(rest2));
             used += w;
             break;
           }
@@ -144,7 +180,7 @@ export function wrapSegments(segments, columns, { first = '', rest = first, firs
             n += cw;
           }
           if (!piece) piece = [...rest2][0];
-          line.push([style, piece]);
+          line.push(seg(piece));
           rest2 = rest2.slice(piece.length);
           push();
         }
@@ -272,6 +308,28 @@ export function prFacts(pr) {
   return segs;
 }
 
+/**
+ * The address of pull request `number`, as the review has it (the live pull request's, else what was read at launch),
+ * else the one of the session's pull requests with that number; null when none passes `linkUrl` or names that pull
+ * request (a path that ends /pull/<number>).
+ */
+export function pullRequestUrl(state, number) {
+  const n = Number(number);
+  if (!Number.isInteger(n) || n <= 0) return null;
+  const s = state?.status ?? {};
+  const pulls = (Array.isArray(state?.pulls) ? state.pulls : []).filter((p) => Number(p?.number) === n);
+  const found = [
+    Number(s.livePr?.number) === n ? s.livePr.url : null,
+    Number(s.meta?.number) === n ? s.meta.url : null,
+    pulls.length === 1 ? pulls[0].url : null,
+  ];
+  for (const url of found) {
+    const ok = linkUrl(url);
+    if (ok && new RegExp(`^/[^/]+/[^/]+/pull/${n}/?$`).test(new URL(ok).pathname)) return ok;
+  }
+  return null;
+}
+
 /** The title the page puts in its heading: the pull request's own, else what the shed made up for the branch. */
 export function reviewTitle(status) {
   if (status?.livePr?.title) return clean(status.livePr.title);
@@ -295,13 +353,15 @@ export function headerLines(state, columns, nowMs = Date.now()) {
   const s = state.status;
   const meta = s.meta ?? {};
   const lines = [];
-  const number = meta.number ? ` #${meta.number}` : '';
-  lines.push(...wrapSegments([['bold', reviewTitle(s)], ['dim', number]], columns, { first: 'Review: ', firstStyle: 'dim', rest: '  ' }));
+  // The pull request's number links to it on GitHub, where the terminal makes links clickable, as the page's does.
+  const title = [['bold', reviewTitle(s)]];
+  if (meta.number) title.push(['dim', ' '], ['dim', `#${meta.number}`, pullRequestUrl(state, meta.number)]);
+  lines.push(...wrapSegments(title, columns, { first: 'Review: ', firstStyle: 'dim', rest: '  ' }));
   const facts = [];
   if (meta.author?.login) facts.push([null, clean(meta.author.login)], [null, '  ']);
   if (meta.headRefName) facts.push(['cyan', clean(meta.headRefName)], ['dim', ' → '], ['cyan', clean(meta.baseRefName ?? s.baseRef ?? '')], [null, '  ']);
   if (s.livePr) {
-    if (!meta.number) facts.push(['bold', `#${s.livePr.number}`], [null, ' ']);
+    if (!meta.number) facts.push(['bold', `#${s.livePr.number}`, pullRequestUrl(state, s.livePr.number)], [null, ' ']);
     facts.push(...prFacts(s.livePr), [null, '  ']);
   }
   const sha = String(meta.headRefOid ?? s.headSha ?? '').slice(0, 8);
