@@ -63,8 +63,8 @@ Commands:
   tunnel <id> -- <line>
             run <line> in your running session, with this command's stdin, stdout and stderr; exits with its
             exit code, or 255 when the pipe could not open or broke
-  session   start, list, watch, connect to, add to Herdr, stop, resume and remove sessions, and give them more
-            time: woodshed session --help
+  session   start, list, watch, connect to, add to Herdr, stop, resume and remove sessions, open their apps, and
+            give them more time: woodshed session --help
   move      move work into a session from a supported source: woodshed move --help
   review <id>
             review one of your sessions' change on this terminal: the analysis, the diff and its comments, the

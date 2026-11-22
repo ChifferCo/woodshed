@@ -2746,13 +2746,15 @@ export function createFleet({
 
   // The session's statusd runs the project file's `app.start`; the next status check says when the app is up, or down.
   // `app` picks one of several by name; without it statusd starts the default, as an image from before several apps
-  // starts its one app whatever it is sent.
-  async function startApp(session, { app = null } = {}) {
+  // starts its one app whatever it is sent. `said` gets whether statusd took the start: it takes none while a stop
+  // script runs, and says so with `started: false`; a switch to another app it queues behind the stop is taken.
+  async function startApp(session, { app = null, said = {} } = {}) {
     if (session.status !== 'running' || !session.endpoint) throw Object.assign(new Error('the session is not running'), { notRunning: true });
     if (app !== null && !session.apps?.some((a) => a.name === app)) {
       throw Object.assign(new Error(session.apps ? `the project has no app named ${app}` : 'this session\'s image starts its one app only'), { refused: true });
     }
     const result = await statusd(session, 'POST', '/app/start', ...(app === null ? [] : [{ body: { app } }]));
+    if (typeof result?.started === 'boolean') said.started = result.started;
     update(session, { app: APP_STATES.has(result?.app) ? result.app : 'starting', ...(app !== null && { appName: app }) });
     console.log('fleet: app start asked', { id: session.id, started: Boolean(result?.started), app: session.app, appName: session.appName ?? null });
     return session;
@@ -2783,9 +2785,11 @@ export function createFleet({
     return { session, where };
   }
 
-  async function stopApp(session) {
+  // `said` gets whether statusd ran a stop: none when the app has no stop command, or one already runs.
+  async function stopApp(session, { said = {} } = {}) {
     if (session.status !== 'running' || !session.endpoint) throw Object.assign(new Error('the session is not running'), { notRunning: true });
     const result = await statusd(session, 'POST', '/app/stop');
+    if (typeof result?.stopping === 'boolean') said.stopping = result.stopping;
     update(session, { app: APP_STATES.has(result?.app) ? result.app : 'stopping' });
     console.log('fleet: app stop asked', { id: session.id, stopping: Boolean(result?.stopping), app: session.app });
     return session;

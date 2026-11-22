@@ -22,6 +22,8 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   // When ECS began pulling each task's image, by ref.
   const pulls = {};
   const statuses = {};
+  // What statusd answers on another route, by path, when a test gives one.
+  const answers = {};
   // A promise start waits on before it answers, as run-task and the wait for an address do.
   const fail = { send: false, start: false, startWaits: null, find: false, findWaits: null, taskStates: false };
   const launcher = {
@@ -94,6 +96,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
       // says safeSend or agentOnlySend false. A test may hold the answer back (a promise): it is awaited first.
       return Promise.resolve(statuses[session.id]).then((status) => ({ safeSend: true, agentOnlySend: true, ...status }));
     }
+    if (answers[path]) return answers[path];
     return { ok: true, committed: false, head: 'abc' };
   }
   const store = { state: { sessions: [], github: null }, save() {} };
@@ -132,7 +135,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
       return statusd(session, method, path, opts);
     },
   });
-  return { fleet, calls, github, alive, pulls, statuses, store, fail, launcher, advance: (ms) => { clock += ms; } };
+  return { fleet, calls, github, alive, pulls, statuses, answers, store, fail, launcher, advance: (ms) => { clock += ms; } };
 }
 
 // A project that is not ready (databaseGate.mjs) starts no session that would get databases, and the reason, with its
@@ -820,6 +823,26 @@ test('Start app names one of several apps to statusd, and none for one app or an
   await fleet.startApp(session, { app: 'admin' });
   assert.deepEqual(calls.statusd.filter((c) => c.path === '/app/start').map((c) => c.body), [undefined, { app: 'admin' }]);
   assert.equal(session.appName, 'admin', 'the pick shows before the next status check');
+});
+
+test('Start and Stop app say whether statusd took them, for the command line', async () => {
+  const { fleet, statuses, answers } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'done', app: 'running' };
+  await fleet.tick();
+  answers['/app/start'] = { started: false, app: 'stopping' };
+  const skipped = {};
+  await fleet.startApp(session, { said: skipped });
+  assert.deepEqual(skipped, { started: false }, 'a start while the stop script runs');
+  answers['/app/stop'] = { stopping: false, app: 'running' };
+  const noStop = {};
+  await fleet.stopApp(session, { said: noStop });
+  assert.deepEqual([noStop, session.app], [{ stopping: false }, 'running'], 'no stop command');
+  delete answers['/app/stop'];
+  const older = {};
+  await fleet.stopApp(session, { said: older });
+  assert.deepEqual(older, {}, 'a statusd that does not say leaves it unsaid');
 });
 
 test('Set up app types the setup request into claude, only for a running session whose project has no app', async () => {
