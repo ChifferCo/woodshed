@@ -4,7 +4,10 @@
 //
 //   GET  /api/sessions                      woodshed session list, and the wait on a start: what that person sees
 //   GET  /api/my/projects                   the repos that person may start on, for --repo
-//   GET  /api/my/pulls                      woodshed session list: their open pull requests, My Woodshed's group
+//   GET  /api/my/pulls                      woodshed session list and review pulls: their open pull requests
+//   POST /api/my/pulls/<number>/review      woodshed review start: the console's review of their own open pull
+//                                           request, on a project they may start on (write access asked of GitHub),
+//                                           refused where the repo's review does not run in a session
 //   POST /api/my/sessions                   woodshed session new: a private session of theirs
 //   POST /api/my/sessions/<id>/resume       woodshed session resume: one of their private sessions
 //   POST /api/my/sessions/<id>/remove       woodshed session remove: one of their private sessions
@@ -37,6 +40,7 @@ const ROUTES = [
   ['GET', /^\/api\/sessions$/],
   ['GET', /^\/api\/my\/projects$/],
   ['GET', /^\/api\/my\/pulls$/],
+  ['POST', /^\/api\/my\/pulls\/[1-9][0-9]{0,8}\/review$/],
   ['POST', /^\/api\/my\/sessions$/],
   ['POST', /^\/api\/my\/sessions\/[0-9a-f]{8}\/(resume|remove)$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/(stop|extend|limits)$/],
