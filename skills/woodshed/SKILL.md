@@ -1,6 +1,6 @@
 ---
 name: woodshed
-description: "Use the `woodshed` command line to set up Woodshed for the person, sign in, start a cloud session and follow it, list, watch, stop, resume or remove sessions (reviews and QA runs on their pull requests among them), give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, change their My settings choices (terminal, reviews, default repo), turn on Woodshed's review for a repo, and point them at reviewing a session's change on their own terminal. Use when the person asks to set up Woodshed, start or check a session, be told when one starts or finishes, run something in one, keep one from pausing, sync their Claude settings, change a My settings choice, turn on Woodshed's review for a repo, or review, approve or merge what a session did or its pull request."
+description: "Use the `woodshed` command line to set up Woodshed for the person, sign in, start a cloud session and follow it, list, watch, stop, resume or remove sessions (reviews and QA runs on their pull requests among them), show the person a session's running app (its link, and starting or stopping it), give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, change their My settings choices (terminal, reviews, default repo), turn on Woodshed's review for a repo, and point them at reviewing a session's change on their own terminal. Use when the person asks to set up Woodshed, start or check a session, be told when one starts or finishes, see, try or open what a session built (its app or preview), run something in one, keep one from pausing, sync their Claude settings, change a My settings choice, turn on Woodshed's review for a repo, or review, approve or merge what a session did or its pull request."
 ---
 
 # Work with Woodshed from the command line
@@ -110,7 +110,8 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed session connect <id> [--shell]` | Puts the person's own terminal on the session's agent, or its shell; resumes a paused one first. Interactive: suggest it to them, and use `tunnel` yourself | 0 disconnected, 1 could not open, 2 sign-in ended, 3 shared or saw production | main |
 | `woodshed session herdr <id> [--parent[=T] …]` | Makes a session a machine in Herdr and shows its Herdr agent in a space named after the session, in a tab named after its agent (never over names the person gave; run it again to pick up a later title). Resumes a paused session first, and re-adds the machine, which a plain `resume` leaves unreachable: run it after every `resume` inside Herdr. With `--parent`, a paused one is resumed waiting for its agent's terminal from this one | 0 connected, 2 needs the person, 1 failed, or `--parent` on a session whose agent's terminal was already there, 3 no `hc` 0.1.21 or newer, shared, saw production, or `--parent` outside a Herdr terminal | main |
 | `woodshed session list [--all]` | Their sessions and the shared ones they see, with state, kind (`private`, `shared`, `review`, `qa`, `ask`) and when each pauses; each session's pull request (state, verdict, checks), `review it: woodshed review <id>` under those they can review, and their own open pull requests with no session; in `--json` also a review's or QA's `verdict` once it reported, and whether the console's Mine lists it (`inMine`); names Herdr machines of sessions no longer on the console | 0 | main |
-| `woodshed session get <id>` | One session: state, kind, branch, pull request, a review's or QA's verdict, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
+| `woodshed session get <id>` | One session: state, kind, branch, pull request, a review's or QA's verdict, its app and the app's link, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
+| `woodshed session app <id> [start [--app NAME] [--no-wait]\|stop]` | A running session's app: whether it is up and its link; `start` starts it and waits up to 5 minutes until it is up, `stop` stops it | 0 up or asked, 2 no app in the project file, 1 not up in time, failed, or still stopping, 3 not running, `stop` with no stop command, or no session apps on this console | main |
 | `woodshed session watch [--kind K,…] [--everyone] [--every S] [--herdr] [--json]` | Follows the console until stopped and prints one event per session that starts, runs, is done with its turn, needs the person, pauses (idle), stops (lifetime, a person), finishes (a review's or QA's with its verdict) or fails, and says when a session's Herdr machine is unreachable; Mine by default. `--herdr` starts it in hc terminal `woodshed-watch` instead, reporting to Herdr, and returns | runs until stopped (`--herdr`: 0 started or kept); 2 sign-in ended, 3 refused or no `hc` | main |
 | `woodshed session stop <id>` | Stops it, checkpointing a running one's work on the way (waits up to 3 minutes) | 0, 1 not answered in time | main |
 | `woodshed session resume <id> [--no-wait]` | Starts one of their stopped sessions again, conversation and all; inside Herdr, follow it with `session herdr <id>` | as `new`; 3 a shared session | main |
@@ -171,8 +172,10 @@ woodshed session new --repo acme/app --branch 123 --json "Fix the login redirect
 branch or pull request, where a session with none starts as a review of it. Without `--repo`, the repo New session
 opens on for them. Each start step is a `{"event":"step",…}` line, and the last line is `running`, `needs-you`,
 `failed` or `stopped` with the session, whose `url` is its page on the console. On `needs-you` (exit 2), give the
-person that `url` and stop. Once it has done its work and opened a pull request (`session get <id> --json` has
-`pullRequest`), tell them they can review it on their terminal with `woodshed review <id>`. With `--no-wait` the command returns as soon as the console has the session: follow it with
+person that `url` and stop. On `running`, also tell them the session runs their repo's app, which they can open and try
+in their browser: "See and try a session's app", below. Once it has done its work and opened a pull request
+(`session get <id> --json` has `pullRequest`), tell them they can review it on their terminal with `woodshed review
+<id>`. With `--no-wait` the command returns as soon as the console has the session: follow it with
 `session get <id> --json`.
 
 A prompt that starts with `-` goes after `--`: `woodshed session new -- "-v is broken"`.
@@ -316,10 +319,44 @@ tell which conversation belongs to a terminal, use `hc label <t> claude.session=
 `hc label <t> codex.session=<id>` for Codex. The session uses its own databases. Ignored files (`.env`) stay local.
 `settings push --own-files` gives their sessions their own.
 
-### See a session's app
+### See and try a session's app
 
-The command line has no command for this. Give the person the session's console page (`url` in `session get --json`),
-whose Open app opens it.
+Each session runs the repo's own app (the project file's `app`), with its own databases, at a link of its own. People
+often do not know they can open it, so say so when it helps them: when a session starts, when its agent says it has
+finished a change they can see, when they ask how to try or check what it built, or when they ask for a preview or a
+staging link. Check `woodshed session --help` lists `app` first (section 1); on an older CLI, give them the session's
+console page (`url`), whose Open app opens it.
+
+```sh
+woodshed session get <id> --json      # session.app and session.appUrl
+woodshed session app <id> start --json  # when it is not up: starts it, waits until it is (one to three minutes)
+```
+
+`session.app` is the app's state, and `session.appUrl` the link. Then:
+
+- `running`: give them `appUrl`. When `session.appSignIn` is true, it opens in the browser they are signed in to the
+  console with: it is not a public link, so it will not open for someone else, and sharing it is the page's Share the
+  app, on the session's ⋯ menu (`url`). When it is false, nobody signs in to the console: the link opens for whoever
+  reaches the console, so say neither (with `appLink` `port` there is no Share the app either). When it is null, the
+  console does not say: give the link alone.
+- `stopped`, `failed` or `frontend-down`: run the start command `woodshed session app <id>` prints (it adds `--app
+  <name>` for an app that is not the project's default, so the one that went down is the one started), then give them
+  the link it prints. Ask first only when starting it would get in the way of what the session is doing. Exit 1 means
+  it did not come up: say so, and where its log is (`woodshed tunnel <id> -- tail -n 50 /tmp/woodshed-app.log`, their
+  own sessions only). Exit 1 saying it is still stopping means a stop had not finished: wait a few seconds, check
+  `woodshed session app <id>` says it is not running, and start it again.
+- `stopping`: wait a few seconds before starting it: a start while it stops is not taken.
+- `starting`: it is on its way. `woodshed session app <id>` says again in a minute, or give them the link now.
+- `api-down`: the page loads, but its API calls fail: give the link, and say so.
+- `none` (exit 2 from `start`): the project file names no app yet. Set up app on the session's console page (`url`)
+  has its agent write one: tell them, and stop.
+- `app` null, or exit 3: the session is not running (offer `woodshed session resume <id>` for one of theirs), or this
+  console serves no session apps.
+
+With several apps (`session.apps`), `--app <name>` starts that one; with another running, the session runs that app's
+`stop` first and the command waits through the switch. One with no `stop` in the project file is left running beside
+it: say so if they ask why it still answers. `woodshed session app <id> stop` stops it, only when they ask; exit 3 saying
+there is no stop command means the project file has no `app.stop`, so nothing was stopped: tell them.
 
 ### Change a choice on My settings
 

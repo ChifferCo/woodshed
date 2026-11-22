@@ -163,7 +163,8 @@ test('Start app says why it could not start: not running, an image without it, o
 test('Start app passes the app picked to the fleet, none without a body, and refuses one that is not a name', async (t) => {
   const session = { id: '0a1b2c3d', status: 'running' };
   const asked = [];
-  const fleet = { sessions: () => [session], find: () => session, startApp: async (s, opts) => { asked.push(opts); return s; } };
+  // As the fleet's: `said` gets whether statusd took the start, which the answer passes on.
+  const fleet = { sessions: () => [session], find: () => session, startApp: async (s, { app, said }) => { asked.push(app); said.started = app !== 'admin'; return s; } };
   const config = { host: '127.0.0.1', publicUrl: 'http://localhost', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
   const handle = createHandler({ config, fleet });
   const server = http.createServer((req, res) => { handle(req, res); });
@@ -173,17 +174,18 @@ test('Start app passes the app picked to the fleet, none without a body, and ref
   const post = (body) => new Promise((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/api/sessions/0a1b2c3d/app/start',
       headers: { host: `localhost:${port}`, origin: `http://localhost:${port}`, 'x-woodshed': '1', 'content-type': 'application/json' } }, (res) => {
-      res.resume();
-      res.on('end', () => resolve(res.statusCode));
+      let text = '';
+      res.on('data', (chunk) => { text += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, started: res.statusCode === 200 ? JSON.parse(text).started : undefined }));
     });
     req.on('error', reject);
     req.end(body);
   });
-  assert.equal(await post(), 200, 'a page from before several apps sends nothing');
-  assert.equal(await post(JSON.stringify({ app: 'admin' })), 200);
-  assert.equal(await post(JSON.stringify({ app: ['admin'] })), 400);
-  assert.equal(await post('{not json'), 400);
-  assert.deepEqual(asked, [{ app: null }, { app: 'admin' }]);
+  assert.deepEqual(await post(), { status: 200, started: true }, 'a page from before several apps sends nothing');
+  assert.deepEqual(await post(JSON.stringify({ app: 'admin' })), { status: 200, started: false }, 'a start the session did not take says so');
+  assert.equal((await post(JSON.stringify({ app: ['admin'] }))).status, 400);
+  assert.equal((await post('{not json')).status, 400);
+  assert.deepEqual(asked, [null, 'admin']);
 });
 
 test('Set up app answers whether claude got the request, and why it was refused', async (t) => {

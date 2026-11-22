@@ -255,7 +255,8 @@ before the line ends (Ctrl-C, a cut network) hangs up everything the line starte
 | `session connect <id> [--shell]` | Puts this terminal on one of your sessions' agent, as its TUI tab shows it (claude or codex, in tmux or Herdr), or with `--shell` on its shell, the Terminal tab's. A paused or stopped one is resumed first. Below. | 0 disconnected (Ctrl-\\) or the session's terminal closed normally, 2 the sign-in ended, 1 could not open or reconnect, or the session's terminal closed it on an error, 3 a shared session, or one that has seen production data |
 | `session herdr <id> [--parent[=T]]` | Makes one of your sessions a machine in Herdr, `woodshed-<id>`, so it shows in the app's sidebar beside this computer: below. A paused or stopped one is resumed first, and waited for as `resume` does; with `--parent`, resumed waiting for its agent's terminal from here. | 0 connected, 2 connected and the session needs you, 1 its start failed, `hc` could not add it, or `--parent` and its agent's terminal was already there, 3 no `hc`, one older than 0.1.21, a shared session, one that has seen production data, or `--parent` outside a Herdr terminal |
 | `session list [--all]` | Your sessions and the shared ones you can see, as the console's page shows them to you: id, state (the page's words), kind (below), whose, when it pauses or stops by itself, project and title. Under each, every pull request it opened, as the console's chips read it (`#123 open · approved · checks 3 passing`; `not read yet` before the console has read it), and `review it: woodshed review <id>` under your own sessions'. Then your own open pull requests on the console's repos that no listed session opened (My Woodshed's Pull requests group). Ended shared sessions only with `--all`; a review or QA run has ended once it stops, since nothing of it is kept to resume. With `hc` here, it also names the `woodshed-<id>` machines in Herdr whose session is no longer on the console (`herdrLeftovers` in `--json`), and says to run `prune`. | 0 |
-| `session get <id>` | One session: state, kind, whose, branch, agent, pull request, a review's or QA's verdict, when it pauses or stops, and the hours it runs on. | 0, 1 none you can see |
+| `session get <id>` | One session: state, kind, whose, branch, agent, pull request, a review's or QA's verdict, its app, when it pauses or stops, and the hours it runs on. | 0, 1 none you can see |
+| `session app <id> [start [--app NAME] [--no-wait]\|stop]` | A running session's app, as the page's Open app, Start app and Stop app: whether it is up and the link that opens it. `start` starts it (or `NAME`, one of the project's apps) and waits up to 5 minutes for it to come up; `stop` stops it. Below. | 0 up, asked or stopping, 2 the project file names no app (Set up app on the page), 1 not up in time, its start failed, or the app was still stopping, 3 not running, a question from Slack, a console that serves no session apps, the session refused, or `stop` with no stop command in the project file |
 | `session watch [--kind K,…] [--everyone] [--every S] [--herdr]` | Follows the console and prints one line per session that starts, runs, is done with its turn, needs you, pauses, stops, finishes or fails, until stopped; `--herdr` runs it in a Herdr terminal of its own instead, and returns: [below](#watching-sessions). | runs until Ctrl-C (`--herdr`: 0 started or already running); 2 the sign-in ended, 3 refused, or `--herdr` with no `hc` 0.1.21 or newer |
 | `session stop <id>` | Stops it, and waits until the console has stopped it, a running one's work checkpointed on the way (up to 3 minutes: past that it says to check with `get`). One that paused or failed by itself is marked stopped by you, as the page's Stop does, so it no longer waits on you. | 0, 1 not answered in time |
 | `session resume <id> [--no-wait]` | Starts one of your stopped sessions again, its conversation and all, and waits as `new` does. | as `new`; 3 a shared session (resume it on the console) |
@@ -297,6 +298,32 @@ page's rule: someone else's private session never, and shared ones, reviews and 
 gives you Sessions from GitHub.
 `herdr` (and `new --herdr` after its `running`) ends with `{"event":"connected","session":{…},"machine":{"name","action","state"},"agent":{"inHerdr","address"}}`,
 and `remove`'s `removed` event has `machine`: `{"name","removed"}`, or null with no `hc` here.
+
+### A session's app
+
+A session runs its repo's app (the project file's `app`) once Start app, or `session app <id> start`, starts it, or its
+agent does. `get`, `app`, and a start that reaches `running` say how it is: in `--json`, the session's `app` is the
+page's state (`running`, `api-down`, `frontend-down`, `starting`, `stopping`, `failed`, `stopped`, or `none` when the
+project file names no app), `appName` and `apps` which of several apps it is, and `appUrl` where it opens. That is the
+link the page's Open app opens: `<id>.<app domain>` on the console's scheme and port, or with app ports the port the
+console lent it, or the console's `/auth/app`, which lends one. `appLink` says which: `domain` or `port`. `appSignIn`
+says whether the link needs a browser signed in to the console: true on a console that requires sign-in, where it is
+not a public link and the page's Share the app shares it; false on one nobody signs in to (always with app ports, which
+have no Share the app, and an app domain with sign-in off), where it opens for whoever reaches the console; null from a
+console that does not say. `app`, `appUrl`, `appLink` and `appSignIn` are null while the session is not running, or on
+a console that serves no session apps.
+
+`session app <id> start` waits until both the app's frontend and backend answer, and says when its start failed or
+it is not up in 5 minutes: its start log is `/tmp/woodshed-app.log` in the session (`woodshed tunnel <id> -- tail -n
+50 /tmp/woodshed-app.log`). A start while the app is still stopping (right after `stop`) is not taken by the session,
+so it exits 1 at once, saying to try again once `session app <id>` says it is not running. A start of another of the
+project's apps while one runs is a switch: the session runs the running app's `stop` first, then starts the new one,
+and the command says so and waits for it. A running app with no `stop` in the project file is left running beside the
+new one. `stop` on an app whose project file has no `stop` stops nothing: it exits 3 and says so. The commands it
+suggests to start an app again name it with `--app` when it is one of several and not the default. A project file with
+no app exits 2: Set up app, which asks the session's agent to write one, is on the console's page only. With
+`--json`, `app` prints `{"event":"app","session":{…}}`, and `start` an `app-starting` event, then `app-running` or
+`app-not-up` with the session; `stop` an `app-stopping`.
 
 ## Watching sessions
 

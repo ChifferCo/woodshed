@@ -77,6 +77,7 @@ test('the command line allows only the session, config and review routes', () =>
     ['GET', '/api/sessions'], ['GET', '/api/my/projects'], ['POST', '/api/my/sessions'],
     ['POST', '/api/my/sessions/0a1b2c3d/resume'], ['POST', '/api/my/sessions/0a1b2c3d/remove'], ['POST', '/api/sessions/0a1b2c3d/stop'],
     ['POST', '/api/sessions/0a1b2c3d/extend'], ['POST', '/api/sessions/0a1b2c3d/limits'], ['GET', '/api/review-readiness'],
+    ['POST', '/api/sessions/0a1b2c3d/app/start'], ['POST', '/api/sessions/0a1b2c3d/app/stop'],
     // woodshed config's: the choices on My settings, never a secret.
     ['GET', '/api/cli/config'], ['POST', '/api/my/terminal'], ['POST', '/api/my/reviews'], ['POST', '/api/my/codex-auth/reviews'],
     ['POST', '/api/my/claude-token/shared'], ['POST', '/api/my/projects/default'], ['POST', '/api/my/github/identity'],
@@ -87,6 +88,8 @@ test('the command line allows only the session, config and review routes', () =>
     ['POST', '/api/sessions/0a1b2c3d/resume'], ['GET', '/api/sessions/0a1b2c3d/transcript'], ['POST', '/api/sessions/0a1b2c3d/pin'], ['POST', '/api/sessions/0a1b2c3d/assign'], ['DELETE', '/api/sessions'], ['GET', '/api/sessions/'],
     ['POST', '/api/my/sessions/0a1b2c3d/resume/x'], ['GET', '/term/0a1b2c3d/'], ['POST', '/api/my/cli-tokens/0123456789abcdef/revoke'],
     ['POST', '/api/review-readiness'], ['GET', '/api/setup/github/reviewer'],
+    // Set up app types into the session's agent, as send does: the page's alone.
+    ['POST', '/api/sessions/0a1b2c3d/app/setup'], ['POST', '/api/sessions/0a1b2c3d/app/start/x'],
     // The secrets beside them on My settings, and the rest of the page.
     ['POST', '/api/my/claude-token/remove'], ['POST', '/api/my/codex-auth'], ['POST', '/api/my/codex-auth/remove'], ['POST', '/api/my/files/tmux-conf'],
     ['GET', '/api/my/files/tmux-conf'], ['POST', '/api/my/repos/app/env/api'], ['GET', '/api/my/repos/app/env/api'], ['POST', '/api/my/github/disconnect'],

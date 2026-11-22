@@ -1569,7 +1569,8 @@ database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. B
 `/api/cli/settings` for shared Claude settings and own files) and
 `/api/tunnel/exec/*` the token signs in to the routes listed in `console/cliSessions.mjs`. For `woodshed session` these
 are `GET /api/sessions`, `GET /api/my/projects`,
-`POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume|remove` and `POST /api/sessions/<id>/stop|extend|limits`,
+`POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume|remove`, `POST /api/sessions/<id>/stop|extend|limits` and
+`POST /api/sessions/<id>/app/start|stop` (Start app and Stop app; Set up app stays the page's),
 while `woodshed review` uses `GET /api/review-readiness` ("The reviewer App"). For `woodshed config`
 (`console/cliConfig.mjs`), `GET /api/cli/config` returns the person's choices on My settings and
 never a secret, and `POST /api/my/terminal`, `/api/my/reviews`, `/api/my/codex-auth/reviews`,
