@@ -13,13 +13,16 @@
 //   woodshed session prune
 //   woodshed session extend <id>
 //   woodshed session limits <id> [--idle-hours <n>|default] [--lifetime-hours <n>|default]
-//   woodshed session watch [--kind review,qa,...] [--everyone] [--every <seconds>]
+//   woodshed session watch [--kind review,qa,...] [--everyone] [--every <seconds>] [--herdr]
 //
 // list, get and watch name each session's kind: your own private one, a shared one, a review or QA run the console
 // started on a pull request (pullRequests.review or .qa with runner: woodshed), or a question from Slack. A review's
 // or QA's pull request is named, and `inMine` is the console's rail's Mine (console/public/common.js, inMine).
-// watch follows the console's list and prints one event per session that starts, is done with its turn, needs its
-// person, finishes or fails (watch.mjs), for a Herdr mod or a script to turn into notifications.
+// watch follows the console's list and prints one event per session that starts, runs, is done with its turn, needs its
+// person, pauses, stops, finishes or fails (watch.mjs), for a Herdr mod or a script to turn into notifications. A session
+// of yours that is a machine in Herdr is said to be unreachable when it pauses or stops, until `session herdr` brings it
+// back. --herdr runs the watch in a terminal of hc's own that reports each session as an OSC 7501 record, so Herdr tells
+// of them as of its own agents without any session being opened as a machine.
 //
 // Nothing here keeps a session awake: it pauses when idle and stops at its lifetime, as its limits say, unless its
 // person (or their agent) asks for more time with extend or limits. list and get say when each will.
@@ -30,8 +33,16 @@
 // resuming it first when it paused; remove forgets that machine too. A session removed elsewhere (the console's page, or
 // the console cleaning it up) leaves its machine behind, unreachable: list says so, and prune forgets those.
 
-import { HC_MINIMUM, addMachine, agentOn, hcVersion, leftoverMachines, machineName, nameAgentPlace, removeMachine, shellQuote } from './hc.mjs';
-import { changes, parseEvery, parseKinds } from './watch.mjs';
+import {
+  HC_MINIMUM, WATCH_SPACE, WATCH_TERMINAL, addMachine, agentOn, hcVersion, leftoverMachines, machineName, nameAgentPlace, removeMachine, shellQuote,
+  startWatcher, tunnelMachines,
+} from './hc.mjs';
+import { changes, eventDetail, herdrClear, herdrRecord, parseEvery, parseKinds, unreachableText } from './watch.mjs';
+
+// Set in the environment of the watch --herdr starts in hc: that copy reports, rather than starting another.
+export const WATCH_IN_HERDR = 'WOODSHED_WATCH_IN_HERDR';
+// How long an ended session's record stays on the watch's terminal in Herdr.
+const RECORD_KEEP_MS = 3_600_000;
 
 // A terminal whose connection dropped is opened again for this long, waiting a little longer each time.
 const RECONNECT_GIVE_UP_MS = 60_000;
@@ -78,11 +89,14 @@ Commands:
       --lifetime-hours <n>   stop this many hours after it started; default goes back to yours
                              A running session is never kept awake by a terminal or a tunnel: extend or limits
                              is how you, or your agent, ask for more time.
-  watch [options]            follow the console and print one line per session that starts, is done with its turn,
-                             needs you, finishes or fails, until stopped (Ctrl-C); with --json one event per line
+  watch [options]            follow the console and print one line per session that starts, runs, is done with its
+                             turn, needs you, pauses, stops, finishes or fails, until stopped (Ctrl-C); with --json
+                             one event per line. Opens no session: a machine in Herdr is only said to be unreachable
       --kind <kinds>         only these, separated by commas: private, shared, review, qa, ask (default all)
       --everyone             every session you can see, not only Mine (yours, and those you started or have)
       --every <seconds>      how often it asks the console (default 15, at least 5)
+      --herdr                run it in Herdr instead, in hc terminal ${WATCH_TERMINAL}, which reports each session's
+                             state as Herdr's own agents report theirs (OSC 7501), and return
 
 Exit codes: 0 done, 2 waiting on a person (sign in, a session that needs you, a confirmation), 3 refused, 1 anything else.`;
 
@@ -209,6 +223,7 @@ export function summary(s, { origin, login }) {
     shared: !s.owner,
     owner: printable(s.owner, 60),
     assignee: printable(s.assignee, 60),
+    stoppedBy: printable(s.stoppedBy, 60),
     startedBy: printable(s.startedBy, 60),
     pullRequest: pullRequestOf(s),
     verdict: verdictOf(s, kind),
@@ -617,13 +632,54 @@ export async function sessionCommand({ origin, rest }, ctx) {
 
   if (sub === 'watch') return watch();
 
-  // Follows the console's list until stopped, and says each session that starts, is done with its turn, needs its
-  // person, finishes or fails (watch.mjs). The first read only learns what is there. A console it cannot reach (a
-  // laptop asleep, a redeploy) is asked again at the same pace for as long as it runs, and what changed meanwhile is
-  // told when it answers again. Only a sign-in that ended, or a refusal, stops it.
+  // The watch's own flags again, for the copy of it --herdr starts in hc.
+  function watchFlags() {
+    return [
+      ...(opts.kinds ? ['--kind', [...opts.kinds].join(',')] : []),
+      ...(opts.everyone ? ['--everyone'] : []),
+      ...(opts.every !== undefined ? ['--every', String(opts.everyMs / 1000)] : []),
+    ];
+  }
+
+  // Follows the console's list until stopped, and says each session that starts, runs, is done with its turn, needs its
+  // person, pauses, stops, finishes or fails (watch.mjs). The first read only learns what is there. A console it cannot
+  // reach (a laptop asleep, a redeploy) is asked again at the same pace for as long as it runs, and what changed meanwhile
+  // is told when it answers again. Only a sign-in that ended, or a refusal, stops it.
+  // With --herdr it runs in a terminal of hc's own (WATCH_TERMINAL), started here, and reports each session there as an
+  // OSC 7501 record, so the Herdr app tells of them as of its own agents, with no session opened as a machine.
   async function watch() {
+    const inHerdr = Boolean(opts.herdr) && ctx.env?.[WATCH_IN_HERDR] === '1';
+    if (opts.herdr && !inHerdr) {
+      await hcReady();
+      let started;
+      try {
+        started = await startWatcher(ctx.hc, ctx.watcherArgv([...watchFlags(), '--herdr']));
+      } catch (err) {
+        if (!err.hc) throw err;
+        throw fail(printable(err.message, 500));
+      }
+      if (json) emit({ event: 'herdr', action: started.action, terminal: WATCH_TERMINAL, address: started.address });
+      say(started.action === 'kept'
+        ? `Herdr already has ${WATCH_TERMINAL} watching: it goes on as it was started. To start it again with these options: hc kill ${WATCH_TERMINAL}, then run this again.`
+        : `Watching in Herdr: hc terminal ${WATCH_TERMINAL}, in the app's ${WATCH_SPACE} space. It reports each session's state there as Herdr's own agents report theirs. Stop it with: hc kill ${WATCH_TERMINAL}`);
+      return EXIT.done;
+    }
     const wanted = (s, login) => (!opts.kinds || opts.kinds.has(kindOf(s))) && (opts.everyone || inMine(s, login));
     const stamp = () => new Date(now()).toISOString();
+    // Herdr's hc, when it is here: a session of yours that is a machine there is said to be unreachable when it pauses or
+    // stops. Its machines are read only then.
+    const hcHere = ctx.platform !== 'win32' && ctx.hc ? await hcVersion(ctx.hc).then((v) => v.ok, () => false) : false;
+    const machineOf = async (x) => {
+      if (!hcHere || !x.mine) return null;
+      try {
+        return (await tunnelMachines(ctx.hc, { origin })).get(x.id) ?? null;
+      } catch (err) {
+        if (!err.hc) throw err;
+        return null;
+      }
+    };
+    // Each session's record on this terminal, with when it ended: an ended one's is kept a while, then cleared.
+    const records = new Map();
     let phases = null;
     let awaySince = null;
     for (;;) {
@@ -651,19 +707,35 @@ export async function sessionCommand({ origin, rest }, ctx) {
       if (!phases) {
         const watched = got.sessions.filter((s) => wanted(s, got.login)).length;
         const what = opts.kinds ? [...opts.kinds].join(', ') : 'all';
-        if (json) emit({ event: 'watching', at: stamp(), console: origin, login: got.login, kinds: opts.kinds ? [...opts.kinds] : null, everyone: Boolean(opts.everyone), everySeconds: opts.everyMs / 1000, sessions: watched });
-        else say(`Watching ${opts.everyone ? 'every session you can see' : 'your sessions (Mine)'} on ${origin}, kinds: ${what}, every ${opts.everyMs / 1000} s. Ctrl-C stops.`);
+        if (json) emit({ event: 'watching', at: stamp(), console: origin, login: got.login, kinds: opts.kinds ? [...opts.kinds] : null, everyone: Boolean(opts.everyone), everySeconds: opts.everyMs / 1000, sessions: watched, herdr: inHerdr });
+        else say(`Watching ${opts.everyone ? 'every session you can see' : 'your sessions (Mine)'} on ${origin}, kinds: ${what}, every ${opts.everyMs / 1000} s${inHerdr ? ', for Herdr' : ''}. Ctrl-C stops.`);
       }
       phases = next;
-      for (const { event, session } of events) {
-        if (!wanted(session, got.login)) continue;
-        const x = summary(session, { origin, login: got.login });
+      for (const e of events) {
+        if (!wanted(e.session, got.login)) continue;
+        const x = summary(e.session, { origin, login: got.login });
+        const machine = e.event === 'paused' || e.event === 'stopped' ? await machineOf(x) : null;
+        if (inHerdr) {
+          ctx.stdout.write(herdrRecord(e, x, { machine }));
+          records.set(x.id, ['paused', 'stopped', 'finished', 'failed'].includes(e.event) ? now() : null);
+        }
         if (json) {
-          emit({ event, at: stamp(), session: x });
+          emit({ event: e.event, at: stamp(), ...(e.why ? { why: e.why } : {}), session: x, ...(machine ? { machine: { name: machine, unreachable: true, bringBack: `woodshed session herdr ${x.id}` } } : {}) });
           continue;
         }
-        const why = event === 'finished' ? (x.verdict ?? x.stateWord) : event === 'failed' ? (x.error ?? x.stopReason) : null;
-        say([stamp().slice(11, 19), x.id, `${event}${why ? ` (${why})` : ''}`, kindText(x), x.title ?? '', x.url].join('  '));
+        const detail = eventDetail(e, x);
+        say([stamp().slice(11, 19), x.id, `${e.event}${detail ? ` (${detail})` : ''}`, kindText(x), x.title ?? '', x.url].join('  '));
+        if (machine) say(`          ${unreachableText(machine, x.id)}`);
+      }
+      if (inHerdr) {
+        // Gone from the list or from what is watched, or ended an hour ago: its record goes from the terminal.
+        const listed = new Map(got.sessions.map((s) => [s.id, s]));
+        for (const [id, endedAt] of records) {
+          const s = listed.get(id);
+          if (s && wanted(s, got.login) && (endedAt === null || now() - endedAt < RECORD_KEEP_MS)) continue;
+          ctx.stdout.write(herdrClear(id));
+          records.delete(id);
+        }
       }
       await sleep(opts.everyMs);
     }
@@ -841,7 +913,7 @@ export function parseSessionArgs(sub, words, fail) {
     resume: { values: [], flags: ['no-wait'], words: 'id' },
     remove: { values: [], flags: ['yes'], words: 'id' },
     prune: { values: [], flags: [], words: null },
-    watch: { values: ['kind', 'every'], flags: ['everyone'], words: null },
+    watch: { values: ['kind', 'every'], flags: ['everyone', 'herdr'], words: null },
   };
   // Its own keys only: `constructor` or `toString` is no command.
   const takes = Object.hasOwn(commands, sub) ? commands[sub] : null;

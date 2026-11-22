@@ -42,6 +42,18 @@ export function viaCommand({ node, script, origin, session, configHome = null })
   return [...(configHome ? [`XDG_CONFIG_HOME=${shellQuote(configHome)}`] : []), ...words].join(' ');
 }
 
+/**
+ * What hc runs for `session watch --herdr`: this command line's watch, by absolute paths as `--via` names them, through
+ * `/usr/bin/env` so its environment says it is the copy that reports (sessions.mjs, WATCH_IN_HERDR), and names the config
+ * folder when one was set. Never a shell line: hc runs it as these words.
+ * @param {{node: string, script: string, origin: string, flags: string[], configHome?: string|null}} args
+ * @returns {string[]}
+ */
+export function watcherArgv({ node, script, origin, flags, configHome = null }) {
+  return ['/usr/bin/env', 'WOODSHED_WATCH_IN_HERDR=1', ...(configHome ? [`XDG_CONFIG_HOME=${configHome}`] : []),
+    node, script, 'session', 'watch', '--console', origin, ...flags];
+}
+
 /** @returns {number}  below 0 when a is older than b */
 export function compareVersions(a, b) {
   const parts = (v) => String(v).split('.').map((n) => Number.parseInt(n, 10) || 0);
@@ -177,6 +189,41 @@ export async function leftoverMachines(run, { origin, exists }) {
     out.push({ name: m.name, session, state: typeof m.state === 'string' ? m.state : null });
   }
   return out;
+}
+
+/**
+ * The sessions on that console that are machines in Herdr, added by this command line: `woodshed-<id>` whose saved line
+ * is its tunnel to that session. What `session watch` checks when a session pauses or stops, to say its machine is
+ * unreachable until `session herdr` brings it back.
+ * @returns {Promise<Map<string, string>>}  each session's machine name, by session id
+ */
+export async function tunnelMachines(run, { origin }) {
+  const out = new Map();
+  for (const m of await machines(run)) {
+    const session = /^woodshed-([0-9a-f]{8})$/.exec(m.name)?.[1];
+    if (session && isTunnelTo(m, { origin, session })) out.set(session, m.name);
+  }
+  return out;
+}
+
+// The hc terminal `session watch --herdr` runs in, reporting each session as an OSC 7501 record, and where the Herdr app
+// shows it.
+export const WATCH_TERMINAL = 'woodshed-watch';
+export const WATCH_SPACE = 'woodshed';
+
+/**
+ * Starts the watch in a terminal of hc's own, with no parent, so it runs on once this command returns, in a space the
+ * Herdr app shows. One already running under that name is left as it is.
+ * @param {string[]} argv  the command line's own, from the program on
+ * @returns {Promise<{action: 'started'|'kept', address: string|null}>}
+ */
+export async function startWatcher(run, argv) {
+  const out = await run(['run', '--bg', '--json', '--name', WATCH_TERMINAL, '--no-parent',
+    '--label', `herdr.space=${WATCH_SPACE}`, '--label', `herdr.tab=${WATCH_TERMINAL}`, '--', ...argv]);
+  if (out.code === 0) return { action: 'started', address: parsed(out.stdout)?.address ?? null };
+  const { kind, message } = hcError(out);
+  if (kind === 'name_taken') return { action: 'kept', address: null };
+  throw Object.assign(new Error(`hc could not start ${WATCH_TERMINAL}: ${message}`), { hc: true, kind });
 }
 
 // Labels on the agent's terminal holding the names this command line last gave its space and tab, so a later run can

@@ -11,8 +11,8 @@
 //   woodshed session connect <id> [--shell]            this terminal on your session's agent, or its shell (terminal.mjs)
 //   woodshed session new|list|get|herdr|stop|resume|remove|extend|limits   sessions (sessions.mjs); herdr makes one
 //                                                     a machine in Herdr's hc (hc.mjs)
-//   woodshed session watch [--kind K,...] [--everyone]  one event per session that starts, needs you, finishes or
-//                                                     fails, for a Herdr mod or a script to notify with (watch.mjs)
+//   woodshed session watch [--kind K,...] [--everyone] [--herdr]  one event per session that starts, runs, needs you,
+//                                                     pauses, stops, finishes or fails, for Herdr or a script (watch.mjs)
 //   woodshed move --from herdr [--terminal T|--tab T|--space S] --to <id>|new   terminals moved into a session (move.mjs)
 //   woodshed review enable|status                      review this checkout's pull requests in Woodshed sessions (review.mjs)
 //   woodshed config list|get|set                       your choices on My settings, never a secret (config.mjs)
@@ -34,7 +34,7 @@ import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
 import { repoCommand } from './repos.mjs';
 import { configCommand } from './config.mjs';
-import { hcRunner, hcVersion, viaCommand } from './hc.mjs';
+import { hcRunner, hcVersion, viaCommand, watcherArgv } from './hc.mjs';
 import { moveCommand } from './move.mjs';
 import { programRunner } from './moveLayout.mjs';
 import { gitRunner } from './moveCode.mjs';
@@ -585,6 +585,8 @@ export async function main(argv, deps = {}) {
           return out.status === 'cut' ? { status: 'attached-then-cut', message: out.message, ms: now() - openedAt } : out;
         }),
         via: (session) => viaCommand({ ...(deps.self ?? selfCommand({ env })), origin, session, configHome: env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : null }),
+        // session watch --herdr's copy in hc, by the same absolute paths and console, told by its environment to report.
+        watcherArgv: (flags) => watcherArgv({ ...(deps.self ?? selfCommand({ env })), origin, flags, configHome: env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : null }),
         fail: (message, opts) => new CliError(message, opts),
         confirm: deps.confirm ?? ((question) => confirmOnTerminal(question, stderr)),
         // move's own: the Herdr app, git, and `session connect` to call.
