@@ -1,19 +1,16 @@
 // The guided path uses the installed CLI's commands, so each step follows the same checks as running it directly.
 
 import { execFile } from 'node:child_process';
-import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { CONFIG_KEYS, CONFIG_UNAVAILABLE } from './config.mjs';
 import { ORIGIN_RE } from './credentials.mjs';
-import { repoOf } from '../shared/repoOf.mjs';
 
 export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--no-browser] [options]
 
   --yes                  use the supplied options without asking questions
   --repo <owner/name>    choose a repository (repeatable, first is used for the session)
-  --repo-dir <path>      local checkout for review enable (repeatable, keyed by GitHub origin)
   --reviews <choice>     personal reviewer choice: none, claude, codex, both, default
-  --skip-reviews         skip both the project file and your reviewer choice
+  --skip-reviews         skip both turning on each repo's review and your reviewer choice
   --agent <name>         claude or codex (defaults to one already signed in)
   --terminal <name>      agent terminal for new private sessions: herdr or tmux
   --prompt <text>        what the first session should work on
@@ -27,21 +24,20 @@ const TERMINAL_CHOICES = CONFIG_KEYS.terminal.values;
 const key = (repo) => repo.toLowerCase();
 
 function options(args, fail) {
-  const out = { repos: [], dirs: [] };
+  const out = { repos: [] };
   for (let i = 0; i < args.length; i++) {
     const [name, inline] = args[i].split(/=(.*)/s);
     if (['--yes', '--skip-reviews', '--no-session'].includes(name) && inline === undefined) {
       out[name] = true;
       continue;
     }
-    if (!['--repo', '--repo-dir', '--reviews', '--agent', '--terminal', '--prompt'].includes(name)) throw fail(`Unknown setup option ${name}. Run woodshed setup --help.`);
+    if (!['--repo', '--reviews', '--agent', '--terminal', '--prompt'].includes(name)) throw fail(`Unknown setup option ${name}. Run woodshed setup --help.`);
     const value = inline ?? args[++i];
     if (!value?.trim() || (inline === undefined && value.startsWith('--'))) throw fail(`${name} needs a value.`);
     if (name === '--repo') {
       if (!REPO.test(value)) throw fail('--repo needs a GitHub repo as owner/name.');
       out.repos.push(value);
-    } else if (name === '--repo-dir') out.dirs.push(value);
-    else out[name] = value;
+    } else out[name] = value;
   }
   if (out['--reviews'] && !REVIEW_CHOICES.includes(out['--reviews'])) throw fail(`--reviews must be one of ${REVIEW_CHOICES.join(', ')}.`);
   if (out['--agent'] && !['claude', 'codex'].includes(out['--agent'])) throw fail('--agent must be claude or codex.');
@@ -51,8 +47,7 @@ function options(args, fail) {
   return out;
 }
 
-// Resolve paths explicitly before invoking a child in a checkout. A relative XDG_CONFIG_HOME or PATH would otherwise
-// be searched from the checkout, so run each command here and pass the review command its own --dir.
+// Each step runs the installed CLI here, with this process's environment.
 export function runCli({ node, script }, args, env) {
   return new Promise((resolve, reject) => {
     execFile(node, [script, ...args], { env, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
@@ -98,16 +93,6 @@ export async function setupCommand(args, ctx) {
   const { EXIT, emit, say, fail, open, env } = ctx;
   if (args.rest !== null) throw fail('Use --prompt to give setup a session prompt.');
   const opts = options(args.args, fail);
-  const cwd = ctx.cwd ?? process.cwd();
-  const dirs = new Map();
-  for (const dir of opts.dirs) {
-    const full = path.resolve(cwd, dir);
-    const repo = (ctx.repoOf ?? repoOf)(full);
-    if (!repo) throw fail(`No GitHub origin found in ${printable(dir)}. Give --repo-dir a checkout of the repo.`);
-    if (!dirs.has(key(repo))) dirs.set(key(repo), full);
-  }
-  const here = (ctx.repoOf ?? repoOf)(cwd);
-  if (here && !dirs.has(key(here))) dirs.set(key(here), cwd);
   const choose = !opts['--yes'] && (ctx.tty ?? process.stdin.isTTY)
     ? (ctx.ask ?? ((question) => askTerminal(question, ctx.stderr)))
     : null;
@@ -240,42 +225,35 @@ export async function setupCommand(args, ctx) {
   if (opts['--skip-reviews']) {
     report('reviews', 'skipped', 'You chose to skip review setup.');
   } else {
-    const levels = 'A repo’s .woodshed/project.yaml enables reviews through a pull request. Your reviewer choice controls who reviews your pull requests.';
+    // The console keeps each repo's review on (woodshed review enable --repo), with no checkout and no pull request.
+    const levels = 'The console keeps each repo’s review on, with no commit. Your reviewer choice controls who reviews your pull requests.';
     const canReview = has('review');
-    if (!canReview) report('repo-review', 'skipped', `${levels} This CLI has no review command yet. In a checkout, use: ${command('review', 'enable')}.`);
-    else if (!selected.length) report('repo-review', 'skipped', `${levels} Run in the repo’s checkout: ${command('review', 'enable')}.`);
+    if (!canReview) report('repo-review', 'skipped', `${levels} This CLI has no review command yet. Use: ${command('review', 'enable', '--repo', 'owner/name')}.`);
+    else if (!selected.length) report('repo-review', 'skipped', `${levels} Use: ${command('review', 'enable', '--repo', 'owner/name')}.`);
     else {
       for (const repo of selected) {
-        const dir = dirs.get(key(repo));
-        if (!dir) {
-          report('repo-review', 'skipped', `${levels} No checkout supplied for ${repo}. Run in its checkout: ${command('review', 'enable')}.`, { repo });
-          continue;
-        }
-        const state = await call('review status', 'review', 'status', '--dir', dir);
-        if (state.code === EXIT.done && state.last?.on === true) {
-          report('repo-review', 'done', `${levels} Review is enabled for ${repo}.`, { repo });
-          continue;
-        }
-        if (state.code !== EXIT.waiting) return childError('repo-review', state, printable(state.last?.checkout?.error) || 'Could not check whether review is enabled.', { repo });
-        const review = await call('review enable', 'review', 'enable', '--dir', dir);
+        const review = await call('review enable', 'review', 'enable', '--repo', repo);
         const info = review.events.find((event) => event.event === 'enable');
+        if (info?.unsupported) {
+          report('repo-review', 'skipped', `${levels} This console is from before it could keep a repo’s review on: in a checkout of ${repo}, run ${command('review', 'enable', '--commit')} and open a pull request for .woodshed/project.yaml.`, { repo });
+          continue;
+        }
         if (review.code === EXIT.waiting && Array.isArray(info?.missing) && info.missing.length) {
           const url = linkTo(info.console?.reviewerApp?.installUrl, origin, true);
           const steps = info.missing.map((item) => printable(item?.step)).filter(Boolean);
           return stop('repo-review', EXIT.waiting, `${levels} ${steps.join(' ')} Then run setup again.`, { repo, ...(url ? { url } : {}) });
         }
+        // Kept on, but the repo's own project file reviews another way, and wins: a pull request changes that.
+        if (review.code === EXIT.waiting && info) {
+          const warnings = Array.isArray(info.warnings) ? info.warnings.map(printable).filter(Boolean) : [];
+          return stop('repo-review', EXIT.waiting, `${levels} For ${repo}: ${warnings.join(' ') || printable(info.unasked) || 'review is not on yet.'} Then run setup again.`, { repo });
+        }
         if (review.code !== EXIT.done || !info) {
-          const reason = Array.isArray(info?.problems) ? info.problems.map(printable).join(' ') : printable(info?.unasked);
-          return childError('repo-review', review, reason || `Could not enable review for ${repo}.`, { repo });
+          const reason = printable(info?.console?.defaultBranch?.error) || printable(info?.unasked);
+          return childError('repo-review', review, reason || `Could not turn on review for ${repo}.`, { repo });
         }
-        const defaultError = printable(info.console?.defaultBranch?.error);
-        if (defaultError) return stop('repo-review', EXIT.failed, `Could not check the default branch of ${repo}. ${defaultError}`, { repo });
-        if (info.written || info.console?.defaultBranch?.review?.runner !== 'woodshed') {
-          const url = `https://github.com/${repo}/pulls`;
-          report('repo-review', 'done', `${levels} Prepared the checkout for ${repo}. Open a pull request for .woodshed/project.yaml.`, { repo, url });
-          continue;
-        }
-        report('repo-review', 'done', `${levels} Review is enabled for ${repo}.`, { repo });
+        const from = info.console?.review?.from;
+        report('repo-review', 'done', `${levels} Review is on for ${repo}${from && from !== 'console' ? ', by its project file' : ''}.`, { repo });
       }
     }
     if (!canConfig) {

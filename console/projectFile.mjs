@@ -60,10 +60,10 @@ export function createProjectReader({ github, installationFile = () => null, now
         found: project !== null, from, envFiles: project?.envFiles?.length ?? 0, pullRequests: Boolean(project?.pullRequests),
         databases: project?.databases?.map((d) => d.engine) ?? [], ...(repoFileError && { repoFileError }),
       });
-      return { project, error: null };
+      return { project, from, error: null };
     } catch (err) {
       console.warn('projectFile: not readable', { message: String(err?.message ?? err).split('\n')[0] });
-      return { project: null, error: err };
+      return { project: null, from: null, error: err };
     }
   }
 
@@ -91,6 +91,14 @@ export function createProjectReader({ github, installationFile = () => null, now
       const { project, error } = await read();
       if (error) throw new Error(`the project file could not be read: ${String(error.message ?? error).split('\n')[0]}`);
       return project?.pullRequests ?? null;
+    },
+    /**
+     * @returns {Promise<'default branch'|'installation'|'none'|null>}  which file the console reads for the repo: its
+     *   default branch's, the installation's for it, or none; null when it could not be read
+     */
+    async source() {
+      const { from, error } = await read();
+      return error ? null : from;
     },
     /**
      * What Repo settings shows of the repo's own layer (repoSettings.mjs): each env file with its key, defaults and overrides,

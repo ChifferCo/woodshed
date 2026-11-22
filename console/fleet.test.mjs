@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sharedHomeName } from './homes.mjs';
+import { createKeptReviews, withKeptReview } from './keptReview.mjs';
 
 import { commentConsoleUrl, createFleet, failedComment, failureReason, refusalComment, resumeComment, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
 
@@ -2796,6 +2797,17 @@ function reviewSetup(options = {}) {
   t.github.pull = async () => REVIEW_PULL;
   return t;
 }
+
+test('a review the console keeps, for a repo whose project file names none, starts a review session on the tag', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const kept = createKeptReviews({ store: { state: {}, save() {} } });
+  await kept.set('o/r', { on: true, by: 'bob' });
+  const { fleet } = reviewSetup({ gates: withKeptReview(null, await kept.of('o/r')) });
+  const started = await fleet.reviewOnTag({ number: 7 });
+  assert.equal(started.outcome, 'started');
+  const [session] = fleet.sessions();
+  assert.deepEqual([session.trigger, session.review.heading, session.review.check], ['review', '## Woodshed review', null]);
+});
 
 test('the review tag on the head starts a review session, once for the commit, only when the runner is woodshed', async () => {
   const { fleet } = reviewSetup();

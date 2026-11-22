@@ -72,6 +72,7 @@ import { createConsoleUpgrade, createHandler } from './server.mjs';
 import { createReviewReadiness } from './reviewReadiness.mjs';
 import { createReviewerApp } from './reviewerApp.mjs';
 import { withAppLogins } from './reviewLogins.mjs';
+import { createKeptReviews, gatesWithKeptReview } from './keptReview.mjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 
 // A caller that delivers GitHub's webhooks itself (dispatchWebhook) tells the fleet they arrive this often, as the local
@@ -296,10 +297,13 @@ function mcpAccess({ loaded: given, secrets, launcher }) {
  *   `cliDevices` (cliSignIn.mjs, createCliDevices) is the command line's waiting room for sign-ins, for a program that
  *   gives several installations behind one address the same one: the token is made by the installation it is approved
  *   on, and `cli.owns(headers)` says whose a request's token is (README.md "Embedding the console").
+ *   `reviewKeeping` is where the program keeps a repo's review turned on with no commit to the repo (`woodshed review
+ *   enable`), `{get(repo), set(repo, value, {by})}`, in place of the console's state (keptReview.mjs, README.md
+ *   "Embedding the console").
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null, mcpServers: mcpServersHook = null, cliDevices = undefined }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null, mcpServers: mcpServersHook = null, cliDevices = undefined, reviewKeeping = null }) {
   checkMembersHook(memberList, trusted);
   if (mcpServersHook && ['list', 'save', 'remove'].some((f) => typeof mcpServersHook[f] !== 'function')) throw new Error('mcpServers needs list, save and remove');
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
@@ -420,8 +424,15 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const ownReviewer = hostApp ? null : createReviewerApp({ store, secrets, config });
   const reviewerApp = hostApp ? hostApp.reviewer ?? null : ownReviewer;
   if (hostApp) console.log('console: GitHub App from the host', { login: hostApp.login() ?? null, reviewer: Boolean(hostApp.reviewer) });
-  // A project's pull request gates on its default branch, with the Apps' logins the file leaves out (reviewLogins.mjs).
-  const gatesOf = async (name) => withAppLogins(await readerOf(name).pullRequests(), { reviewerLogin: reviewerApp?.login() ?? null, ownLogin: await appIdentity.login() });
+  // A repo's review kept on by the console (or the program's store) with no commit to the repo (keptReview.mjs).
+  const keptReviews = createKeptReviews({ store, host: reviewKeeping });
+  const repoNamed = (name) => ((name && projectNamed(config, name)) || defaultProject(config)).repo;
+  const logins = async () => ({ reviewerLogin: reviewerApp?.login() ?? null, ownLogin: await appIdentity.login() });
+  // A project's pull request gates from its project file, with the Apps' logins the file leaves out (reviewLogins.mjs).
+  const fileGatesOf = async (name) => withAppLogins(await readerOf(name).pullRequests(), await logins());
+  // What the fleet runs them by: the file's, with the kept review where the file names none.
+  const withKept = gatesWithKeptReview({ pullRequestsOf: (name) => readerOf(name).pullRequests(), keptOf: (name) => keptReviews.of(repoNamed(name)) });
+  const gatesOf = async (name) => withAppLogins(await withKept(name), await logins());
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, qaRecordings, pullWebhooksFlowing: pullWebhooks.flowing,
@@ -553,7 +564,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
     cli,
     // Whether a repo's review can run in a session, for `woodshed review`: none with no GitHub App to run it.
     reviewReadiness: config.githubApp || hostApp ? createReviewReadiness({
-      publicUrl: config.publicUrl, reviewer: reviewerApp, ownReviewer: !hostApp, appLogin: () => appIdentity.login(), pullRequestsOf: gatesOf,
+      publicUrl: config.publicUrl, reviewer: reviewerApp, ownReviewer: !hostApp, appLogin: () => appIdentity.login(),
+      pullRequestsOf: fileGatesOf, sourceOf: (name) => readerOf(name).source(), keptReviews,
       runsOnName: config.runsOnName ?? null,
       // A token's person must still write to the repo, as sign-in asks of a browser's (auth.mjs). With no sign-in, or
       // behind a hosting proxy, nobody's access is asked there either.

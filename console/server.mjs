@@ -213,7 +213,7 @@ import { handleDesktopSignIn } from './desktopSignIn.mjs';
 import { handleCliApi, handleCliPage } from './cliSignIn.mjs';
 import { CLI_REPOS_PATH, handleCliRepos } from './cliRepos.mjs';
 import { carriesCliToken, handleCliCall } from './cliSessions.mjs';
-import { REVIEW_READINESS_PATH, reviewReadinessReply } from './reviewReadiness.mjs';
+import { KEPT_REVIEW_PATH, REVIEW_READINESS_PATH, keptReviewReply, reviewReadinessReply } from './reviewReadiness.mjs';
 import { answerWithView, CLI_CONFIG_PATH, configView, isConfigWrite } from './cliConfig.mjs';
 import { handleCliSettings } from './cliSettings.mjs';
 import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
@@ -2340,6 +2340,7 @@ export function createHandler({
     if (SETUP_WRITE_RE.test(pathname)) return githubSetupWrite(req, res, pathname, login);
     if (pathname === `${REVIEWER_SETUP_PATH}/manifest`) return reviewerSetupWrite(req, res);
     if (pathname === '/api/my/uploads') return stageUpload(req, res, login);
+    if (pathname === KEPT_REVIEW_PATH) return keptReviewReply({ req, res, login, readiness: reviewReadiness, config, readJson, reply });
     const cliRevoke = MY_CLI_REVOKE_RE.exec(pathname);
     if (cliRevoke) {
       if (!cli) return reply(res, 404, { error: 'this console has no command line sign-in' });

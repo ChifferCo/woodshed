@@ -118,35 +118,50 @@ test('the agent sign-in handoff keeps interactive repo choices in order', async 
   assert.match(after.events.at(-1).message, /rerun setup with --repo acme\/lib --repo acme\/app/);
 });
 
-test('setup checks review in each checkout and tells the person where to open the project file PR', async () => {
-  const lib = path.resolve('some checkout');
-  const { invoke } = fake({ commands: ['review'], here: repo, checkouts: { [lib]: 'Acme/Lib' }, answers: {
-    'review status': result(2, { on: false }),
-    'review enable': result(0, { event: 'enable', written: true, console: { defaultBranch: { review: null } }, missing: [] }),
+test('setup turns review on for each repo in the console, with no checkout and no pull request', async () => {
+  const { invoke } = fake({ commands: ['review'], answers: {
+    'review enable': result(0, { event: 'enable', where: 'console', on: true, changed: true, console: { review: { runner: 'woodshed', rerun: '[woodshed-review]', from: 'console' } }, missing: [] }),
   } });
-  const after = await invoke('--yes', '--repo', 'acme/lib', '--repo', repo, '--repo-dir', lib, '--no-session');
+  const after = await invoke('--yes', '--repo', 'acme/lib', '--repo', repo, '--no-session');
   assert.equal(after.code, 0);
-  const checkouts = [lib, path.resolve('fake-checkout')];
-  assert.deepEqual(after.calls.slice(-4), checkouts.flatMap((dir) => [['review', 'status', '--dir', dir], ['review', 'enable', '--dir', dir]]));
+  assert.deepEqual(after.calls.slice(-2), [['review', 'enable', '--repo', 'acme/lib'], ['review', 'enable', '--repo', repo]]);
   const reviews = after.events.filter((entry) => entry.step === 'repo-review');
-  assert.deepEqual(reviews.map((entry) => entry.url), ['https://github.com/acme/lib/pulls', `https://github.com/${repo}/pulls`]);
-  assert.match(reviews[0].message, /Open a pull request for \.woodshed\/project.yaml/);
+  assert.deepEqual(reviews.map((entry) => [entry.status, entry.repo, entry.url]), [['done', 'acme/lib', undefined], ['done', repo, undefined]]);
+  assert.match(reviews[0].message, /The console keeps each repo’s review on, with no commit\. .* Review is on for acme\/lib\.$/);
+  await assert.rejects(invoke('--yes', '--repo-dir', 'x'), /Unknown setup option --repo-dir/, 'no checkout is needed any more');
 });
 
-test('setup prints the review command for a repo with no checkout', async () => {
+test('setup says when the repo\'s own project file reviews another way, and when the console is too old to keep it', async () => {
+  const fileWins = fake({ commands: ['review'], answers: {
+    'review enable': result(2, { event: 'enable', where: 'console', missing: [], warnings: ['the repo\'s project file reviews in GitHub Actions, which wins over the one the console keeps.'] }),
+  } });
+  const stopped = await fileWins.invoke('--yes', '--repo', repo, '--no-session');
+  assert.equal(stopped.code, 2);
+  assert.match(stopped.events.at(-1).message, /For acme\/app: the repo's project file reviews in GitHub Actions, which wins/);
+
+  const old = fake({ commands: ['review'], answers: {
+    'review enable': result(1, { event: 'enable', where: 'console', unsupported: true, unasked: 'from before' }, { event: 'error', error: 'x' }),
+  } });
+  const skipped = await old.invoke('--yes', '--repo', repo, '--no-session');
+  assert.equal(skipped.code, 0);
+  const step = skipped.events.find((entry) => entry.step === 'repo-review');
+  assert.equal(step.status, 'skipped');
+  assert.match(step.message, /run woodshed review enable --commit --console "https:\/\/console\.example" and open a pull request/);
+});
+
+test('setup prints the review command when no repo was chosen', async () => {
   const { invoke } = fake({ commands: ['review'] });
-  const after = await invoke('--yes', '--repo', repo, '--no-session');
+  const after = await invoke('--yes', '--no-session');
   assert.equal(after.code, 0);
   const skipped = after.events.find((entry) => entry.step === 'repo-review');
   assert.equal(skipped.status, 'skipped');
-  assert.match(skipped.message, /woodshed review enable --console "https:\/\/console.example"/);
+  assert.match(skipped.message, /woodshed review enable --repo owner\/name --console "https:\/\/console.example"/);
   assert.deepEqual(after.calls, [['status'], ['--help']]);
 });
 
 test('setup passes through reviewer App readiness and its install link', async () => {
   const url = 'https://github.com/apps/acme-reviewer/installations/new';
-  const { invoke } = fake({ commands: ['review'], here: repo, answers: {
-    'review status': result(2, { on: false }),
+  const { invoke } = fake({ commands: ['review'], answers: {
     'review enable': result(2, { event: 'enable', missing: [{ key: 'reviewer-installed', step: 'An owner installs the reviewer App.' }],
       console: { reviewerApp: { installed: false, installUrl: url } } }),
   } });
@@ -158,21 +173,20 @@ test('setup passes through reviewer App readiness and its install link', async (
 
 test('setup skips already enabled reviews, applies a changed personal choice and starts the session with hc', async () => {
   const url = `${origin}/s/12345678`;
-  const lib = path.resolve('other-checkout');
-  const { invoke } = fake({ commands: ['repo', 'review', 'config'], here: repo, checkouts: { [lib]: 'acme/lib' }, answers: {
+  const { invoke } = fake({ commands: ['repo', 'review', 'config'], answers: {
     'repo list': result(0, { projects: [{ repo }, { repo: 'acme/lib' }], available: [] }),
-    'review status': result(0, { on: true }),
+    'review enable': result(0, { event: 'enable', where: 'console', changed: false, console: { review: { runner: 'woodshed', from: 'default branch' } }, missing: [] }),
     'config get': result(0, { key: 'terminal', value: 'herdr' }),
     'config list': result(0, { config: { reviews: 'default' } }),
     'config set': result(0, { event: 'set', key: 'reviews', value: 'both' }),
     'session list': result(0, { sessions: [] }),
     'session new': result(0, { event: 'connected', session: { id: '12345678', url } }),
   } });
-  const after = await invoke('--yes', '--repo', repo, '--repo', 'acme/lib', '--repo-dir', lib, '--reviews', 'both', '--prompt=-v is broken');
+  const after = await invoke('--yes', '--repo', repo, '--repo', 'acme/lib', '--reviews', 'both', '--prompt=-v is broken');
   assert.equal(after.code, 0);
   assert.deepEqual(after.calls.slice(3), [
     ['config', 'get', 'terminal'],
-    ['review', 'status', '--dir', path.resolve('fake-checkout')], ['review', 'status', '--dir', lib],
+    ['review', 'enable', '--repo', repo], ['review', 'enable', '--repo', 'acme/lib'],
     ['config', 'list'], ['config', 'set', 'reviews', 'both'], ['session', 'list'],
     ['session', 'new', '--herdr', '--repo', repo, '--agent', 'claude', '--', '-v is broken'],
   ]);

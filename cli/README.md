@@ -49,7 +49,7 @@ the tarball and its SHA-256 on woodshed.run. The site's installer checks that di
 Run `woodshed setup` on a terminal, or give your coding agent the repo and the first task:
 
 ```sh
-woodshed setup --yes --repo acme/app --repo-dir ~/code/app --reviews default --prompt "Fix the login redirect"
+woodshed setup --yes --repo acme/app --reviews default --prompt "Fix the login redirect"
 ```
 
 Use `--console <url>` for your own console and `--no-browser` to print links without opening them. When setup exits 2,
@@ -61,9 +61,10 @@ Setup asks whether new private sessions should run their agents in Herdr or tmux
 Use `--terminal herdr` or `--terminal tmux` to set it explicitly. A run with `--yes` keeps the saved choice unless you
 pass `--terminal`.
 
-Use `--prompt=--help` for a prompt that looks like an option. Repeat `--repo` to choose several repos. The first is for the session. For each repo, setup uses the current checkout
-when its GitHub origin matches, or a checkout supplied by `--repo-dir`. Repo review setup prepares the project file
-change for a pull request. `--reviews` sets your own reviewer choice. Use `--skip-reviews` to skip both, or
+Use `--prompt=--help` for a prompt that looks like an option. Repeat `--repo` to choose several repos. The first is for the session. For each repo, setup turns
+Woodshed's review on with `woodshed review enable --repo <repo>`: the console keeps it on, with no checkout and no pull
+request, and it stops at any step only an admin can take (the reviewer App made or installed). A repo whose own
+project file reviews another way says so, since that file wins. `--reviews` sets your own reviewer choice. Use `--skip-reviews` to skip both, or
 `--no-session` to finish without starting an environment. When the terminal choice is Herdr and setup finds a compatible
 `hc` on macOS or Linux, it uses `session new --herdr` to show the agent in a space on the session's machine.
 On Windows it starts a regular session and prints the link. If a private session already exists for the first repo,
@@ -94,7 +95,7 @@ Keep a source explicit even when only one is supported. Keep session management 
 | `woodshed repo add <owner/name> [--name N]` | Adds a repo as in Console settings. Use `--name` on consoles that let you choose a project name. | 0 added, 2 GitHub App access or sign-in needed, 3 refused, 1 failed |
 | `woodshed repo remove <owner/name>` | Removes a repo and its Woodshed settings as in Console settings. | 0 removed, 2 sign in, 3 refused, 1 failed |
 | `woodshed review <id>\|<pull request>` | Reviews one of your sessions' change on this terminal, as the console's Review tab: [below](#reviewing-a-session-on-this-terminal). | 0 quit, 2 the sign-in ended, 3 a shared session or one that has seen production data, 1 anything else |
-| `woodshed review enable\|status` | In a checkout: reviews the repo's pull requests in Woodshed sessions, by its project file, and says what the console still needs. Below. | 0 done, 2 an admin's step, a sign-in or a merge still to come, 1 a project file that does not read or check |
+| `woodshed review enable\|disable\|status` | Reviews a repo's pull requests in Woodshed sessions, kept on by the console with no commit (or with `--commit`, by its project file), and says what the console still needs. Below. | 0 done, 2 an admin's step, a sign-in or a merge still to come, 1 a console that could not be asked, or a project file that does not read or check |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 | `woodshed config list\|get\|set` | Reads or sets [your choices on My settings](#your-choices-on-my-settings). | as below |
 | `woodshed settings plan\|push\|pull` | Sync [Claude and Codex settings, plugins, dotfiles and ignored checkout files](#settings) with private sessions. Claude MCP definitions pushed from computers stay between computers. | as below |
@@ -130,37 +131,54 @@ run the same add again. If the console's response to a change is lost, run `repo
 
 ## Review
 
-`woodshed review enable`, run in a checkout of a repo the console has, turns on Woodshed's review for it the way a
-connected repo has it: in a review session the console starts on each pull request, whose verdict the console posts as
-its reviewer App (console/README.md, "The reviewer App"). It needs no GitHub workflow, Actions secret or Anthropic key,
-and writes none: `scripts/enable-review.sh` is for a repo with no Woodshed console.
+`woodshed review enable` turns on Woodshed's review for a repo the console has: in a review session the console starts
+on each pull request, whose verdict the console posts as its reviewer App (console/README.md, "The reviewer App"). By
+default the console keeps it on for the repo, with no commit: reviews start from then on, with no pull request to
+merge, and no checkout is needed. It needs no GitHub workflow, Actions secret or Anthropic key, and writes none:
+`scripts/enable-review.sh` is for a repo with no Woodshed console.
 
 ```sh
-woodshed review enable                 # pullRequests.review with runner: woodshed, on commits tagged [woodshed-review]
-woodshed review enable --qa            # QA too, in a session, when the woodshed-qa label goes on a pull request
-woodshed review enable --every-commit  # each new commit, with no tag (--rerun <tag> for another tag)
-woodshed review enable --dry-run       # what it would change, nothing written
-woodshed review status                 # the checkout's file, the default branch's, and the console's reviewer App
+woodshed review enable                    # this checkout's repo, on commits tagged [woodshed-review]
+woodshed review enable --repo acme/game   # any repo the console has, from anywhere
+woodshed review enable --every-commit     # each new commit, with no tag (--rerun <tag> for another tag)
+woodshed review enable --dry-run          # what it would change, nothing changed
+woodshed review disable                   # turn off the review the console keeps
+woodshed review status [--repo acme/game] # where review is on from, and the console's reviewer App
 ```
 
-`enable` edits `.woodshed/project.yaml` (made with `version: 1` when there is none): it adds or changes those lines and
-nothing else, keeping every other line, comment and the order, and reads the result back to prove the rest of the
-project reads the same (`cli/projectReview.mjs`). It writes no `author` or `commentAuthor`: with the session runner the
-console fills in its reviewer App's and its own App's logins, so renaming either needs no change. Moving from the
-Actions runner takes out the review's `workflow`, `author` and `commentAuthor` (and QA's `author`), which were the
-workflow's; the workflow file itself is left for you to delete. It then runs `project check`'s checks on the result,
-and writes nothing when they find a problem (exit 1).
+`enable` and `disable` name the repo with `--repo`, else by the origin of the checkout they are run in (or `--dir`),
+and call `POST /api/kept-review` with this computer's token, as you: the console turns it on only for a repo you may
+start sessions on and still write to on GitHub. The repo's own project file wins: when its `pullRequests.review` names
+a review, on any runner, that is the review, and the kept one counts only where the file names none or there is no
+file. `enable` says so when the file reviews another way (exit `2`: change the file in a pull request), and
+`disable` says when the file still names one. The kept review is the review alone: QA, test suites, the merge risk
+check and `runsOn` stay the file's, so `--qa` needs `--commit`.
 
-Then it asks the console what is missing on its side, with this computer's token, through one read-only route,
-`GET /api/review-readiness?repo=<owner/name>`: whether the repo is one you may start sessions on there, whether the
-reviewer App is made, and whether it is installed on the repo. Each missing step is printed with who takes it, and the
-command exits `2`, the file written all the same. With nothing missing it exits `0` and says to commit the file and
-open a pull request: the review starts once that is merged, since the console reads the default branch's file. It warns
-when the file's `runsOn` names another console, or names an `author` or `commentAuthor` that is not this console's.
-`enable` exits `1` when the console could not be asked or did not answer (an origin not on GitHub, a console with no
-GitHub App or from before the route): the file is written, but nothing says the review can run. `status` exits `0`
-once the default branch says it, the console runs its reviews (the default branch's `runsOn`, if any, names it, App and
-name, as its fleet reads it) and its reviewer App is known to be installed; else `2` with what comes next.
+Each prints what the console still needs, from the same answer as `GET /api/review-readiness?repo=<owner/name>`:
+whether the repo is one you may start sessions on there, whether the reviewer App is made and installed on it, and the
+default branch's `runsOn`. Each missing step is printed with who takes it, and the command exits `2`. With nothing
+missing `enable` exits `0`: review is on. It exits `1` when the console could not be asked, or is from before it could
+keep a review (it says to use `--commit`), or could not read the repo's project file, which holds its reviews until it
+can.
+
+`enable --commit` writes it into the checkout's `.woodshed/project.yaml` instead (made with `version: 1` when there is
+none), for a pull request; `--qa` adds QA in a session too, when the `woodshed-qa` label goes on a pull request. It adds
+or changes those lines and nothing else, keeping every other line, comment and the order, and reads the result back to
+prove the rest of the project reads the same (`cli/projectReview.mjs`). It writes no `author` or `commentAuthor`: with
+the session runner the console fills in its reviewer App's and its own App's logins, so renaming either needs no
+change. Moving from the Actions runner takes out the review's `workflow`, `author` and `commentAuthor` (and QA's
+`author`), which were the workflow's; the workflow file itself is left for you to delete. It then runs `project
+check`'s checks on the result, and writes nothing when they find a problem (exit 1). With nothing missing on the
+console it exits `0` and says to commit the file and open a pull request: that review starts once it is merged. It
+warns when the file's `runsOn` names another console, or names an `author` or `commentAuthor` that is not this
+console's, and exits `1` when the console could not be asked (the file is written, but nothing says the review can
+run).
+
+`status` says what the review runs by (`from` in `--json`: `default branch` or `installation` for a project file,
+`console` for the kept one), the kept one with who turned it on and when, and the checkout's own file when run in one.
+It exits `0` once a review in a session runs by either, the console runs its reviews (the default branch's `runsOn`,
+if any, names it, App and name, as its fleet reads it) and its reviewer App is known to be installed; else `2` with
+what comes next.
 
 ## Reviewing a session on this terminal
 

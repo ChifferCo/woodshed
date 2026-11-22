@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 
 import { createCliSignIn } from './cliSignIn.mjs';
+import { createKeptReviews } from './keptReview.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
 import { createReviewReadiness } from './reviewReadiness.mjs';
 import { createHandler } from './server.mjs';
@@ -22,9 +23,9 @@ function reviewerIn(which, calls = []) {
 
 const PROJECTS = [{ name: 'game', repo: 'acme/game' }];
 
-function readinessFor(which, { gates = null, own = true, calls = [], canWrite = null, runsOnName = null } = {}) {
+function readinessFor(which, { gates = null, own = true, calls = [], canWrite = null, runsOnName = null, keptReviews = null, from = 'default branch' } = {}) {
   return createReviewReadiness({
-    canWrite, runsOnName,
+    canWrite, runsOnName, keptReviews, sourceOf: async () => from,
     publicUrl: 'https://console.example', reviewer: which === null ? null : reviewerIn(which, calls), ownReviewer: own,
     appLogin: async () => 'acme-woodshed[bot]',
     pullRequestsOf: async (name) => { if (gates instanceof Error) throw gates; assert.equal(name, 'game'); return gates; },
@@ -37,7 +38,8 @@ test('ready: a project of the asker\'s, the reviewer App made and installed, the
   assert.deepEqual(answer, {
     repo: 'acme/game', project: 'game', consoleApp: { login: 'acme-woodshed[bot]', name: null },
     reviewerApp: { made: true, login: 'acme-reviewer[bot]', installed: true, installUrl: 'https://github.com/apps/acme-reviewer/installations/new' },
-    defaultBranch: { review: { runner: 'woodshed', rerun: '[woodshed-review]', heading: '## R', author: 'acme-reviewer[bot]', commentAuthor: 'acme-woodshed[bot]' }, qa: null, runsOn: null, runsHere: true, error: null },
+    defaultBranch: { review: { runner: 'woodshed', rerun: '[woodshed-review]', heading: '## R', author: 'acme-reviewer[bot]', commentAuthor: 'acme-woodshed[bot]' }, qa: null, runsOn: null, runsHere: true, from: 'default branch', error: null },
+    kept: null, review: { runner: 'woodshed', rerun: '[woodshed-review]', from: 'default branch' },
     missing: [],
   });
 });
@@ -86,7 +88,8 @@ async function serve(t, { readiness, projects, githubFor = () => null }) {
     return cli.poll(deviceCode);
   };
   const get = (p, headers = {}) => fetch(`${origin}${p}`, { headers, redirect: 'manual' });
-  return { origin, get, tokenFor, projectAccess, cli };
+  const post = (p, body, headers = {}) => fetch(`${origin}${p}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), redirect: 'manual' });
+  return { origin, get, post, tokenFor, projectAccess, cli };
 }
 
 test('GET /api/review-readiness answers a cookie or the command line\'s token, as that person, and nothing else', async (t) => {
@@ -172,4 +175,72 @@ test('readiness recognizes a new write grant while the session picker still has 
   assert.equal(answer.status, 200);
   assert.deepEqual((await answer.json()).missing, []);
   assert.deepEqual(asked, Array.from({ length: 3 }, () => ['bob', 'acme/game']));
+});
+
+// The kept review: on and off with no commit, for a repo the asker writes to.
+
+test('the kept review is what runs where the file names none; the file\'s own wins', async () => {
+  const store = { state: {}, save() {} };
+  const keptReviews = createKeptReviews({ store });
+  const none = readinessFor('installed', { keptReviews, from: 'none' });
+  const on = await none.keep('Acme/Game', { projects: PROJECTS, login: 'bob', on: true });
+  assert.equal(on.changed, true);
+  assert.deepEqual([on.kept.rerun, on.kept.by, on.review], ['[woodshed-review]', 'bob', { runner: 'woodshed', rerun: '[woodshed-review]', from: 'console' }]);
+  assert.equal(on.defaultBranch.from, 'none');
+  assert.deepEqual(Object.keys(store.state.keptReviews), ['acme/game'], 'by repo, in lower case');
+  assert.equal((await none.keep('acme/game', { projects: PROJECTS, login: 'bob', on: true })).changed, false, 'already so');
+  assert.equal((await none.keep('acme/game', { projects: PROJECTS, login: 'bob', on: true, rerun: null })).kept.rerun, null, 'every commit');
+
+  const fileReview = { runner: 'actions', heading: '## R', rerun: null, author: 'claude[bot]', commentAuthor: null };
+  const withFile = readinessFor('installed', { keptReviews, gates: { review: fileReview, qa: null } });
+  const answer = await withFile.check('acme/game', { projects: PROJECTS });
+  assert.deepEqual([answer.review, answer.kept.rerun], [{ runner: 'actions', rerun: null, from: 'default branch' }, null]);
+  const unread = await readinessFor('installed', { keptReviews, gates: new Error('HTTP 502') }).check('acme/game', { projects: PROJECTS });
+  assert.equal(unread.review, null, 'unknown while the file is not read');
+
+  const off = await none.keep('acme/game', { projects: PROJECTS, login: 'bob', on: false });
+  assert.deepEqual([off.changed, off.kept, off.review], [true, null, null]);
+  assert.deepEqual(store.state.keptReviews, {});
+  assert.equal((await none.keep('acme/game', { projects: PROJECTS, login: 'bob', on: false })).changed, false);
+});
+
+test('POST /api/kept-review: a token or the page\'s write, held to write access; another repo is told nothing and left alone', async (t) => {
+  const store = { state: {}, save() {} };
+  const keptReviews = createKeptReviews({ store });
+  let writes = true;
+  const canWrite = async (login) => writes && login === 'bob';
+  const s = await serve(t, { readiness: readinessFor('installed', { canWrite, keptReviews, from: 'none' }) });
+  const bob = { authorization: `Bearer ${s.tokenFor('bob').token}` };
+  const on = await s.post('/api/kept-review', { repo: 'acme/game', on: true, rerun: '[review]' }, bob);
+  assert.equal(on.status, 200);
+  const body = await on.json();
+  assert.deepEqual([body.changed, body.review, body.missing], [true, { runner: 'woodshed', rerun: '[review]', from: 'console' }, []]);
+  assert.equal(store.state.keptReviews['acme/game'].by, 'bob');
+
+  const eve = { authorization: `Bearer ${s.tokenFor('eve').token}` };
+  const refused = await (await s.post('/api/kept-review', { repo: 'acme/game', on: false }, eve)).json();
+  assert.deepEqual([refused.project, refused.changed, refused.missing.map((m) => m.key)], [null, false, ['repo']]);
+  assert.ok(store.state.keptReviews['acme/game'], 'eve does not write to the repo: nothing changed');
+  writes = false;
+  assert.equal((await (await s.post('/api/kept-review', { repo: 'acme/game', on: false }, bob)).json()).changed, false, 'write access asked each time');
+  writes = true;
+  const other = await (await s.post('/api/kept-review', { repo: 'acme/other', on: true }, bob)).json();
+  assert.deepEqual([other.project, other.changed], [null, false]);
+  assert.equal(store.state.keptReviews['acme/other'], undefined);
+
+  for (const bad of [{ repo: 'nope', on: true }, { repo: 'acme/game' }, { repo: 'acme/game', on: true, rerun: 'a\nb' }, { repo: 'acme/game', on: true, rerun: 7 }]) {
+    assert.equal((await s.post('/api/kept-review', bad, bob)).status, 400, JSON.stringify(bad));
+  }
+  assert.equal((await s.post('/api/kept-review', { repo: 'acme/game', on: false }, { ...bob, origin: s.origin })).status, 403, 'a page\'s call with the token');
+  assert.equal((await s.post('/api/kept-review', { repo: 'acme/game', on: false }, { cookie: 'woodshed_session=bob' })).status, 403, 'the page\'s write needs x-woodshed');
+  const page = await s.post('/api/kept-review', { repo: 'acme/game', on: false }, { cookie: 'woodshed_session=bob', 'x-woodshed': '1', origin: s.origin });
+  assert.equal(page.status, 200);
+  assert.deepEqual(store.state.keptReviews, {});
+});
+
+test('a console that keeps no review answers 404 to the POST', async (t) => {
+  const s = await serve(t, { readiness: readinessFor('installed') });
+  const { token } = s.tokenFor('bob');
+  const answer = await s.post('/api/kept-review', { repo: 'acme/game', on: true }, { authorization: `Bearer ${token}` });
+  assert.equal(answer.status, 404);
 });

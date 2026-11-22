@@ -1009,6 +1009,23 @@ when it carries `Authorization: Bearer wsc_…`, as it does `/api/cli/*`. A host
 `installedOn(repo)`; without it, whether it is installed is `null`. It logs `reviewReadiness: reviewer App
 installation not read` when GitHub did not answer.
 
+**Turned on with no commit.** `POST /api/kept-review {repo, on, rerun?}` (`reviewReadiness.mjs`, `keptReview.mjs`)
+turns a repo's review in a session on or off in the console's own keeping, so it runs from that moment, with no pull
+request to merge: `woodshed review enable` and `disable` (cli/README.md, "Review") call it by default. It is held to
+what the GET is: a repo the asker may start sessions on, write access asked of GitHub on each call, and from the
+command line's token or a page's write (`x-woodshed`, same origin) alone; any other repo changes nothing and is told
+nothing. `rerun` is the tag a commit's message carries to be reviewed (left out, `[woodshed-review]`; null, every
+commit). It answers as the GET does, with `changed`. The fleet runs a repo's pull requests by its project file's gates
+with the kept review filled in where the file names no `review` or there is no file (`withKeptReview`, read by
+`gatesOf` in `installation.mjs`, so the review on the tag, QA's wait and the Slack post all see it): the file's own
+`review`, on any runner, wins, and the kept one is the review alone (QA, `suites`, `mergeRisk` and `runsOn` stay the
+file's). The GET says which it runs by in `review.from` (`default branch`, `installation` or `console`), the kept one
+in `kept` (`{rerun, by, at, error}`, or null), and which file it read in `defaultBranch.from` (`default branch`,
+`installation` or `none`). A console of its own keeps it in `state.json` under `keptReviews`, by repo in lower case; a
+program that embeds the console keeps it in its own store (`reviewKeeping`, "Embedding the console"). The console logs
+`keptReview: turned on` or `turned off` with the repo, who and the tag, `reviewReadiness: kept review set` with
+`changed`, and `reviewReadiness: kept review not set` with the error when it failed (answered 502).
+
 At each verdict the console finds the reviewer App's installation on the repo, mints a token narrowed to pull requests,
 and submits the review at the reviewed commit. It logs `fleet: review verdict submitted` with `as: 'reviewer App'`, or
 `as: 'console App'` when no reviewer App was made, in which case GitHub refuses an approval of the App's own pull
@@ -1571,7 +1588,7 @@ database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. B
 are `GET /api/sessions`, `GET /api/my/projects`,
 `POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume|remove`, `POST /api/sessions/<id>/stop|extend|limits` and
 `POST /api/sessions/<id>/app/start|stop` (Start app and Stop app; Set up app stays the page's),
-while `woodshed review` uses `GET /api/review-readiness` ("The reviewer App"). For `woodshed config`
+while `woodshed review` uses `GET /api/review-readiness` and `POST /api/kept-review` ("The reviewer App"). For `woodshed config`
 (`console/cliConfig.mjs`), `GET /api/cli/config` returns the person's choices on My settings and
 never a secret, and `POST /api/my/terminal`, `/api/my/reviews`, `/api/my/codex-auth/reviews`,
 `/api/my/claude-token/shared`, `/api/my/projects/default` and `/api/my/github/identity`, which answer the token with
@@ -1982,6 +1999,15 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   settings and Console settings and at each start (an answer is kept 10 seconds), and shows and refuses with it as
   with its own (above, "Databases"); a link that is neither https nor a path, or a step with no text, is dropped. A
   hook that throws blocks nothing: core logs `console: project readiness not read` and runs its own check.
+- `reviewKeeping: {get(repo), set(repo, value, {by})}`: where the program keeps a repo's review turned on with no
+  commit (`woodshed review enable`, above under "The reviewer App"), in place of core's `state.json`. `get` answers the
+  value `set` was last given for that repo (`owner/name`, as the console's project names it), or null; `set` keeps it,
+  or with `value` null removes it, and resolves once kept. `value` is `{review: {runner: 'woodshed', rerun}, by, at}`:
+  `rerun` the tag a commit's message carries (null for every commit), `by` the login that set it, `at` an ISO time.
+  Keep it per installation (a team's repo is not another team's). Core asks `get` again a minute after its last
+  answer, and keeps that answer while a later `get` throws (`keptReview: the program's store not read`); with none yet
+  a throw holds the repo's pull requests as an unread project file does. A `set` that throws is answered 502. Without
+  the hook core keeps it in its state, which a program that builds a new store for each start loses.
 - `hostApp: {login(), reviewer?}`: the App whose GitHub access the program lends (`githubBroker`), which the console
   cannot ask GitHub about itself. `login()` answers its `<slug>[bot]` (or null while unknown), asked each time, so the
   console trusts its comments, the QA label it adds (`qa.autoLabel`) and a review session's PR comment as that App's.
