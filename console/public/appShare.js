@@ -10,11 +10,16 @@
   // it again after a minute, since a link runs out and the command line can share too.
   const READ_AGAIN_MS = 60_000;
   const known = new Map();
+  // Each answer kept here or read for the bar takes the next number: a read answered after a newer answer is dropped.
+  let answers = 0;
 
-  function remember(id, view) {
-    const before = JSON.stringify(known.get(id)?.view ?? null);
-    known.set(id, { view, at: Date.now() });
-    return before !== JSON.stringify(view);
+  // Only who may open the app and when each link ends: never a new link's URL, which stays in its dialog.
+  function remember(id, view, n = ++answers) {
+    const was = known.get(id);
+    if (was?.n > n) return false;
+    const kept = { members: Boolean(view.members), links: (view.links ?? []).map((l) => ({ id: l.id, expiresAt: l.expiresAt })) };
+    known.set(id, { view: kept, at: Date.now(), n });
+    return JSON.stringify(was?.view ?? null) !== JSON.stringify(kept);
   }
 
   /**
@@ -26,10 +31,15 @@
   function appShared(s, onChange) {
     const entry = known.get(s.id);
     if (!entry || (!entry.reading && Date.now() - entry.at > READ_AGAIN_MS)) {
+      const n = ++answers;
       known.set(s.id, { ...entry, at: entry?.at ?? 0, reading: true });
       W.getJson(`/api/sessions/${s.id}/app-share`).then((view) => {
-        if (remember(s.id, view)) onChange?.();
-      }, () => known.set(s.id, { view: entry?.view ?? null, at: Date.now() }));
+        if (remember(s.id, view, n)) onChange?.();
+      }, () => {
+        // Not read: what was known stays, read again in a minute, unless a newer answer came meanwhile.
+        const now = known.get(s.id);
+        if (!(now?.n > n)) known.set(s.id, { view: now?.view ?? null, at: Date.now(), n });
+      });
     }
     const view = entry?.view;
     if (!view) return null;
@@ -140,9 +150,10 @@
     document.body.append(dialog);
     render();
     dialog.showModal();
+    const first = ++answers;
     W.getJson(base).then((answer) => {
       state = answer;
-      if (remember(s.id, answer)) onChange?.();
+      if (remember(s.id, answer, first)) onChange?.();
       render();
     }, (err) => {
       error.textContent = err.message;

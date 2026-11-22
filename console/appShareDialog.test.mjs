@@ -141,3 +141,23 @@ test('a link that ran out no longer counts as shared', () => {
   assert.equal(W.appSharedWords({ members: true, links: 0 }), 'the console\'s members');
   assert.equal(W.appSharedWords({ members: false, links: 2 }), '2 links');
 });
+
+test('a read the bar started is dropped when the dialog changed the share meanwhile', async () => {
+  const { W, body } = load();
+  const s = { id: 'aaaa1111' };
+  let release;
+  const getJson = W.getJson;
+  // The bar's read is held until after the dialog has made a link.
+  W.getJson = (path) => new Promise((resolve) => { release = () => resolve(getJson(path).then((v) => ({ ...v, links: [] }))); });
+  assert.equal(W.appShared(s), null);
+  const held = release;
+  W.getJson = getJson;
+  W.shareApp(s);
+  await settle();
+  makeLink(dialogOf(body));
+  await settle();
+  assert.equal(W.appSharedWords(W.appShared(s)), '1 link');
+  held();
+  await settle();
+  assert.equal(W.appSharedWords(W.appShared(s)), '1 link', 'the older read did not put Share back');
+});
