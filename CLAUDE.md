@@ -524,6 +524,14 @@ URL on top of each env file's Repo settings values
   Herdr did not send the message` with `why` (`prompt-open`, a question, approval or menu on screen, with `kind`;
   `blocked`; `status_mismatch`, not idle; `not-at-prompt`). Shared sessions, questions, reviews and QA runs use tmux
   whatever the pick.
+- **`woodshed session new --herdr --parent` left the session's agent with no parent, or its agent sat unstarted for
+  minutes.** The console logs `fleet: session created` (or `resuming a private session`) with `herdrParent`, and the
+  session's log `Herdr started` with `made by: its parent`, then `Agent's terminal made by its parent` with the
+  `parent`, or after 5 minutes `WARNING: no parent made the agent's terminal` (the command line never made it: it was
+  stopped, or not in a Herdr terminal) and the session made its own. Meanwhile statusd logs `capture-pane failed`: the
+  terminal is not there yet. The command line exits 1 saying the terminal was already there when the session did not
+  wait (a running one, an image from before it, or a wait run out): hc cannot give a running terminal a parent.
+  `hc get woodshed-<id>/claude --json` on the laptop shows `parent` and `die_with_parent`.
 - **The app inside a session will not start or log in.** That is about the repo's own app, and its installation
   says what to check: `.woodshed/install/README.md` in the repo. The env files get the databases through the project
   file's env file overrides, from each engine's variables (`PGHOST`, `PGPASSWORD`, `MONGODB_URI`; docs/reference.md, "Databases"):
@@ -1074,6 +1082,10 @@ image from the worktree and pass its tag. For another kind of session, copy it: 
 the stand-in session API serves.
 `providers/aws/bin/qaInImage.mjs <image> <pull request number>` is that copy for a QA session: it keeps the report
 instead of writing the pull request's comment and check.
+`providers/aws/bin/herdrParentInImage.mjs <image> [entrypoint.sh]` is the copy for a private session started with
+`woodshed session new --herdr --parent`: it runs the whole start under ECS's init (`--init`) and waits for the agent's
+terminal, which a terminal in this computer's Herdr makes once the machine is added with `--via 'docker exec -i
+woodshed-herdr-parent-in-image sh -c'` (cli/hc.mjs, `startAgentTerminal`).
 
 ## Checking a console page change in a browser
 
@@ -1123,6 +1135,9 @@ avatar menu shows over the installation's `WOODSHED_ACTIONS_WORKFLOWS` (Run infr
 (`scripts/devReviewerConsole.mjs`), for `woodshed review enable` and `status` from a checkout of
 `example-org/example-repo`: no reviewer App, one not installed there, or one installed. Its default branch's project
 file, from the stand-in `gh`, has no review.
+`DEV_CONSOLE_REVIEW_PR=1` makes `/s/beadfeed` @local's own My Woodshed session whose branch has a made-up open pull
+request, #26701, answered by a stand-in `gh` (`console/bin/devReviewGh.mjs`), for `woodshed review beadfeed` and the
+review's comment, verdict, rename and merge (cli/README.md, "Reviewing a session on this terminal").
 `DEV_CONSOLE_WEBHOOKS=1` names a webhook receiver (which never listens, since polling is off), so the Console
 settings page shows its GitHub webhooks switch (Slack's needs a console that answers Slack questions).
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on

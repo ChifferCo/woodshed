@@ -1129,6 +1129,28 @@ test('Remove My Woodshed stops the owner\'s private sessions, then takes them al
   assert.equal(fleet.find(mia.id).status, 'starting', 'a teammate\'s session is untouched');
 });
 
+test('a session started or resumed for a parent in its person\'s Herdr is told to wait for its terminal, that run alone', async () => {
+  const { fleet, calls, statuses } = setup();
+  const envOf = (session) => calls.started.filter((c) => c.env.SESSION_ID === session.id).at(-1).env;
+  const child = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', herdrParent: true });
+  assert.equal(envOf(child).WOODSHED_HERDR_PARENT, '1', 'the entrypoint leaves the agent\'s terminal to the person\'s Herdr');
+  const plain = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  assert.equal(envOf(plain).WOODSHED_HERDR_PARENT, undefined);
+  const shared = await fleet.createSession({ kind: 'task', number: null, title: 's', startedBy: 'joel', trigger: 'console', prompt: 'p', herdrParent: true });
+  assert.equal(envOf(shared).WOODSHED_HERDR_PARENT, undefined, 'a shared session never waits on someone\'s laptop');
+
+  statuses[child.id] = { state: 'working' };
+  await fleet.tick();
+  await fleet.stop(child, 'stopped from the console', { by: 'joel' });
+  await fleet.resumePrivate({ owner: 'joel', id: child.id });
+  assert.equal(envOf(child).WOODSHED_HERDR_PARENT, undefined, 'Resume on the page makes its own terminal, as any session');
+  statuses[child.id] = { state: 'working' };
+  await fleet.tick();
+  await fleet.stop(child, 'stopped from the console', { by: 'joel' });
+  await fleet.resumePrivate({ owner: 'joel', id: child.id, herdrParent: true });
+  assert.equal(envOf(child).WOODSHED_HERDR_PARENT, '1', 'woodshed session herdr --parent resumes it waiting');
+});
+
 test('Resume starts a private session whose start failed again, with the conversation it had before', async () => {
   const { fleet, calls, statuses, alive } = setup();
   const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });

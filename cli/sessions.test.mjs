@@ -9,7 +9,7 @@ import { createCliSignIn } from '../console/cliSignIn.mjs';
 import { createHandler } from '../console/server.mjs';
 import { createCredentials } from './credentials.mjs';
 import { viaCommand } from './hc.mjs';
-import { pauseText, stateOf } from './sessions.mjs';
+import { parseSessionArgs, pauseText, stateOf } from './sessions.mjs';
 import { EXIT, main } from './woodshed.mjs';
 
 function listen(server) {
@@ -19,13 +19,17 @@ function listen(server) {
 const T0 = Date.parse('2026-11-20T10:00:00Z');
 
 // hc as `session herdr` drives it: its machines, and whether a machine has the agent's terminal. Each call is kept.
-export function fakeHc({ version = '0.1.21', missing = false, agent = true, addFails = null } = {}) {
+// `waiting`: the session waits for its agent's terminal from here (started with --parent), until a run makes it, or
+// `taken`: the session made it itself as that run was on its way. `local`: this computer's terminals, by name.
+export function fakeHc({ version = '0.1.21', missing = false, agent = true, addFails = null, waiting = false, taken = false, local = { boss: 't9' }, hasParent = null } = {}) {
   const machines = new Map();
   const labels = new Map();
   const calls = [];
+  const runs = [];
+  let made = false;
   const ok = (answer) => ({ code: 0, stdout: `${JSON.stringify(answer)}\n`, stderr: '' });
   const err = (kind, message, code = 1) => ({ code, stdout: `${JSON.stringify({ error: { kind, message } })}\n`, stderr: '' });
-  const run = async (args) => {
+  const run = async (args, opts = {}) => {
     calls.push(args);
     if (missing) return { code: null, stdout: '', stderr: '', missing: true };
     const [first, second] = args;
@@ -43,11 +47,29 @@ export function fakeHc({ version = '0.1.21', missing = false, agent = true, addF
       machines.set(name, { name, target: args[args.indexOf('--via') + 1], via: true, temporary: args.includes('--temp'), state: 'connected' });
       return ok({ name, target: machines.get(name).target, via: true });
     }
+    if (first === 'file' && second === 'read') {
+      if (!waiting || made) return err('not_found', `no file ${args.at(-1)}`, 3);
+      return ok({ text: `${JSON.stringify({ terminal: 'claude', cwd: '/work/app', waitSeconds: 300 })}\n` });
+    }
+    if (first === 'run') {
+      runs.push({ args, env: opts.env ?? null });
+      const machine = args[args.indexOf('--on') + 1];
+      if (taken) return err('name_taken', 'a live terminal is already named "claude"');
+      made = true;
+      return ok({ address: `${machine}/t1`, name: 'claude', parent: opts.env?.HC_TERMINAL_ID ?? null, state: 'live' });
+    }
+    if (first === 'get' && !args.at(-1).includes('/')) {
+      const name = args.at(-1);
+      if (Object.values(local).includes(name)) return ok({ address: name, state: 'live' });
+      return Object.hasOwn(local, name) ? ok({ address: local[name], name, state: 'live' }) : err('not_found', `no terminal "${name}"`, 3);
+    }
     if (first === 'get') {
       const [machine, terminal] = args.at(-1).split('/');
       if (!machines.has(machine)) return err('machine_unknown', `no machine "${machine}"`);
       const address = `${machine}/t1`;
-      return agent ? ok({ address, name: terminal, cwd: '/work/app', state: 'live', labels: labels.get(address) ?? {} }) : err('not_found', `no terminal "${terminal}"`, 3);
+      // The agent's terminal's parent as the session's core names it: the one this run gave it, or `hasParent`.
+      const parent = made ? 'core1/t4' : hasParent;
+      return agent ? ok({ address, name: terminal, cwd: '/work/app', state: 'live', labels: labels.get(address) ?? {}, parent }) : err('not_found', `no terminal "${terminal}"`, 3);
     }
     if (first === 'label') {
       const [, , address, ...pairs] = args;
@@ -57,7 +79,7 @@ export function fakeHc({ version = '0.1.21', missing = false, agent = true, addF
     }
     return err('usage', `unexpected ${args.join(' ')}`);
   };
-  return { run, calls, machines, labels, added: () => calls.filter((a) => a[0] === 'machine' && a[1] === 'add') };
+  return { run, calls, runs, machines, labels, added: () => calls.filter((a) => a[0] === 'machine' && a[1] === 'add') };
 }
 
 // The Herdr app's window, as `herdr-app ls` and `do space.rename|tab.rename` answer: it shows a machine's terminal in the
@@ -100,7 +122,7 @@ const iso = (ms) => new Date(ms).toISOString();
 // A console's real handler and command line sign-in over a made-up fleet: mia-dev's sessions, octocat's, and shared
 // ones. A session the fleet starts or resumes takes the next of `script`'s steps each time the list is read, as a start
 // moves while the command line waits. The command line is signed in as mia-dev before each test.
-async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app', writers = null, stopTimesOut = false, hc = fakeHc(), app = fakeApp(null, { missing: true }), relativeConfig = false, tty = true, terminal = null, extra = [], onSleep = null, signal = undefined, githubSessions = null } = {}) {
+async function consoleFor(t, { script = [], refuse = null, claudeToken = true, savedDefault = 'app', writers = null, stopTimesOut = false, hc = fakeHc(), app = fakeApp(null, { missing: true }), relativeConfig = false, tty = true, terminal = null, extra = [], onSleep = null, signal = undefined, githubSessions = null, env = {} } = {}) {
   let clock = T0;
   const now = () => clock;
   const store = { state: {}, save() {} };
@@ -139,8 +161,8 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       moving.set(s.id, script.map((step) => ({ ...step })));
       return s;
     },
-    resumePrivate: async ({ owner, id }) => {
-      calls.push(['resume', { owner, id }]);
+    resumePrivate: async ({ owner, id, herdrParent }) => {
+      calls.push(['resume', { owner, id, ...(herdrParent ? { herdrParent } : {}) }]);
       const s = sessions.find((x) => x.id === id && x.owner === owner);
       Object.assign(s, { status: 'queued', stopReason: null, startedAt: null, startSteps: null });
       moving.set(id, script.map((step) => ({ ...step })));
@@ -172,7 +194,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       s.limits = values;
     },
   };
-  const userSettings = { view: () => ({ claudeToken: { set: claudeToken } }), refresh: async () => {}, limitsFor: () => ({ idleMs: 2 * 3_600_000, lifetimeMs: 12 * 3_600_000 }) };
+  const userSettings = { view: () => ({ claudeToken: { set: claudeToken }, codexAuth: { set: true } }), refresh: async () => {}, limitsFor: () => ({ idleMs: 2 * 3_600_000, lifetimeMs: 12 * 3_600_000 }) };
   const projectAccess = {
     view: async () => ({ projects: [{ name: 'app', repo: 'acme/app' }, { name: 'tools', repo: 'acme/tools' }], defaultProject: savedDefault, saved: savedDefault !== 'app' }),
     forStart: async (login, name) => (name === undefined ? { name: 'app', repo: 'acme/app' } : ['app', 'tools'].includes(name) ? { name, repo: `acme/${name}` } : null),
@@ -197,7 +219,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
     let out = '';
     let err = '';
     const code = await main(args, {
-      env: { XDG_CONFIG_HOME: relativeConfig ? path.relative(process.cwd(), dir) : dir }, stdout: { write: (s) => { out += s; }, isTTY: tty },
+      env: { XDG_CONFIG_HOME: relativeConfig ? path.relative(process.cwd(), dir) : dir, ...env }, stdout: { write: (s) => { out += s; }, isTTY: tty },
       stdin: { isTTY: tty }, stderr: { write: (s) => { err += s; } }, terminal: terminal?.run,
       sleep: async (ms) => { clock += ms; await onSleep?.(ms); }, now, signal, hostname: 'mia-laptop', platform: 'test', credentials, confirm: async () => answer,
       hc: hc.run, app: app.run, self: { node: '/usr/local/bin/node', script: '/home/mia/woodshed/cli/woodshed.mjs' },
@@ -876,7 +898,8 @@ test('session list, get and --json name review and QA runs, and the pull request
     Object.fromEntries(Object.entries(byId).map(([id, s]) => [id, s.kind])),
     { aaaa0001: 'private', bbbb0002: 'private', cccc0003: 'shared', ffff0006: 'shared', '1a1a0007': 'shared', '1b1b0008': 'shared', '1c1c0009': 'shared', '7e7e0010': 'review', '7f7f0011': 'review', '9a9a0012': 'qa', a5a50013: 'ask' },
   );
-  assert.deepEqual(byId['7e7e0010'].pullRequest, { number: 145, url: 'https://github.com/acme/app/pull/145' });
+  assert.deepEqual(byId['7e7e0010'].pullRequest, { number: 145, repo: 'acme/app', url: 'https://github.com/acme/app/pull/145', title: null, state: null, review: null, checks: null },
+    'the pull request it was started on, in the chip\'s shape, unread');
   assert.deepEqual([byId['7e7e0010'].mine, byId['7e7e0010'].inMine, byId['7e7e0010'].shared, byId['7e7e0010'].startedBy], [false, true, true, 'mia-dev'],
     'not a private session of yours, and on your Mine as the page has it');
   assert.equal(byId['9a9a0012'].inMine, false);
@@ -1016,4 +1039,119 @@ test('session watch refuses kinds and paces it does not know', async (t) => {
   assert.equal(fast.code, EXIT.failed);
   assert.match(fast.err, /--every is a number of seconds, from 5 to 600/);
   assert.equal((await c.run(['session', 'watch', 'extra'])).code, EXIT.failed);
+});
+
+// Run from a Herdr terminal here, t4, as a local agent runs the command line.
+const IN_HERDR = { HC_TERMINAL_ID: 't4' };
+
+test('session new --herdr --parent makes its agent\'s terminal from here, a child of this terminal that outlives it', async (t) => {
+  const hc = fakeHc({ waiting: true });
+  const c = await consoleFor(t, { hc, env: IN_HERDR, script: [...START, { status: 'running', state: 'starting' }] });
+  const out = await c.run(['session', 'new', '--herdr', '--parent', '--json', 'fix the login bug']);
+  assert.equal(out.code, EXIT.done, out.err);
+  const [, args] = c.calls.find(([kind]) => kind === 'start');
+  assert.equal(args.herdrParent, true, 'the console is told the session waits for its terminal');
+  assert.equal(args.prompt, 'fix the login bug');
+  // The terminal the entrypoint makes with no parent: a kept shell named claude, in the checkout the session named.
+  assert.deepEqual(hc.runs, [{ args: ['run', '--json', '--bg', '--on', 'woodshed-dddd0004', '--keep', '--name', 'claude', '--cwd', '/work/app', '--outlive-parent'], env: { HC_TERMINAL_ID: 't4' } }]);
+  assert.ok(hc.calls.findIndex((a) => a[0] === 'machine' && a[1] === 'add') < hc.calls.findIndex((a) => a[0] === 'run'), 'once the machine is there');
+  const connected = out.lines.at(-1);
+  assert.equal(connected.event, 'connected');
+  assert.deepEqual(connected.parent, { made: true, terminal: 't4', address: 'woodshed-dddd0004/t1', outlives: true, notify: true, reportsStatus: true });
+
+  const text = await consoleFor(t, { hc: fakeHc({ waiting: true }), env: IN_HERDR, script: [...START, { status: 'running', state: 'starting' }] });
+  const said = await text.run(['session', 'new', '--herdr', '--parent', 'go']);
+  assert.equal(said.code, EXIT.done, said.err);
+  assert.match(said.out, /Its agent's terminal woodshed-dddd0004\/t1 is a child of t4 here, and outlives it: hc wait --children any wakes t4 when it ends a turn, blocks, errors or exits\.\n/);
+});
+
+test('--parent names another terminal here, and --no-notify and --end-with-parent pass to hc', async (t) => {
+  const hc = fakeHc({ waiting: true });
+  const c = await consoleFor(t, { hc, env: IN_HERDR, script: [...START, { status: 'running', state: 'starting' }] });
+  const out = await c.run(['session', 'new', '--herdr', '--parent=boss', '--no-notify', '--end-with-parent', '--json', 'go']);
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.deepEqual(hc.runs[0].args.slice(-1), ['--no-notify'], 'no --outlive-parent: it ends with its parent, hc\'s default');
+  assert.deepEqual(hc.runs[0].env, { HC_TERMINAL_ID: 't9' }, 'boss, by its address here');
+  assert.deepEqual(out.lines.at(-1).parent, { made: true, terminal: 't9', address: 'woodshed-dddd0004/t1', outlives: false, notify: false, reportsStatus: true });
+});
+
+test('--parent is refused before anything starts outside a Herdr terminal, for a terminal not here, or without --herdr', async (t) => {
+  const outside = await consoleFor(t, { hc: fakeHc({ waiting: true }) });
+  const noTerminal = await outside.run(['session', 'new', '--herdr', '--parent', '--json', 'go']);
+  assert.equal(noTerminal.code, EXIT.refused);
+  assert.equal(noTerminal.lines.at(-1).status, 'no-parent');
+  assert.match(noTerminal.lines.at(-1).error, /needs this command line to run in a Herdr terminal \(HC_TERMINAL_ID is not set\)/);
+  assert.ok(!outside.calls.length, 'nothing started');
+
+  const c = await consoleFor(t, { hc: fakeHc({ waiting: true }), env: IN_HERDR });
+  const remote = await c.run(['session', 'new', '--herdr', '--parent=woodshed-aaaa0001/t1', 'go']);
+  assert.equal(remote.code, EXIT.refused);
+  assert.match(remote.err, /--parent names a terminal on this computer, and woodshed-aaaa0001\/t1 is on a machine/);
+  const unknown = await c.run(['session', 'new', '--herdr', '--parent=nope', 'go']);
+  assert.equal(unknown.code, EXIT.refused);
+  assert.match(unknown.err, /hc found no terminal nope here/);
+  assert.match((await c.run(['session', 'new', '--parent', 'go'])).err, /--parent makes the agent's terminal in Herdr: add --herdr/);
+  assert.match((await c.run(['session', 'new', '--herdr', '--no-notify', 'go'])).err, /--no-notify goes with --parent/);
+  assert.match((await c.run(['session', 'herdr', 'aaaa0001', '--end-with-parent'])).err, /--end-with-parent goes with --parent/);
+  assert.ok(!c.calls.length, 'nothing started');
+});
+
+test('session herdr --parent resumes a paused session waiting for its terminal, and cannot give a running one a parent', async (t) => {
+  const hc = fakeHc({ waiting: true });
+  const c = await consoleFor(t, { hc, env: IN_HERDR, script: [...START, { status: 'running', state: 'starting' }] });
+  const out = await c.run(['session', 'herdr', 'bbbb0002', '--parent', '--json']);
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.deepEqual(c.calls.find(([kind]) => kind === 'resume'), ['resume', { owner: 'mia-dev', id: 'bbbb0002', herdrParent: true }]);
+  assert.equal(out.lines.at(-1).parent.made, true);
+  assert.equal(hc.runs[0].args[4], 'woodshed-bbbb0002');
+
+  // Running, its terminal there with no parent: the machine is added all the same, and the exit says the parent was not.
+  const running = await consoleFor(t, { env: IN_HERDR });
+  const late = await running.run(['session', 'herdr', 'aaaa0001', '--parent', '--json']);
+  assert.equal(late.code, EXIT.failed);
+  assert.equal(running.hc.added().length, 1);
+  assert.deepEqual(late.lines.find((l) => l.event === 'connected').parent, { made: false, why: 'not-waiting', there: true, has: null });
+  assert.match(late.lines.at(-1).error, /Could not make t4 the parent of its agent's terminal: it was already there, with no parent, and hc gives a terminal its parent only as it starts\. Run woodshed session new --herdr --parent/);
+  assert.equal(running.hc.runs.length, 0, 'no second terminal, and the running agent is left as it is');
+  assert.ok(!running.calls.length, 'not resumed or restarted');
+
+  // Its wait ran out as this was on its way: the session made the terminal itself.
+  const raced = await consoleFor(t, { hc: fakeHc({ waiting: true, taken: true }), env: IN_HERDR });
+  const lost = await raced.run(['session', 'herdr', 'aaaa0001', '--parent']);
+  assert.equal(lost.code, EXIT.failed);
+  assert.match(lost.err, /Could not make t4 the parent of its agent's terminal: it was made while this was on its way, with no parent/);
+
+  // Already a child, of an earlier run's terminal: said as it is, never as having none.
+  const earlier = await consoleFor(t, { hc: fakeHc({ hasParent: 'core1/t2' }), env: IN_HERDR });
+  const again = await earlier.run(['session', 'herdr', 'aaaa0001', '--parent', '--json']);
+  assert.equal(again.code, EXIT.failed);
+  assert.deepEqual(again.lines.find((l) => l.event === 'connected').parent, { made: false, why: 'not-waiting', there: true, has: 'core1/t2' });
+  assert.match(again.lines.at(-1).error, /it was already there, a child of core1\/t2, and hc gives/);
+
+  // Its agent in tmux (its owner's Agent terminal, a session that never waited): no Herdr terminal at all, said so.
+  const tmux = await consoleFor(t, { hc: fakeHc({ agent: false }), env: IN_HERDR });
+  const inTmux = await tmux.run(['session', 'herdr', 'aaaa0001', '--parent', '--json']);
+  assert.equal(inTmux.code, EXIT.failed);
+  assert.deepEqual(inTmux.lines.find((l) => l.event === 'connected').parent, { made: false, why: 'not-waiting', there: false, has: null });
+  assert.match(inTmux.lines.at(-1).error, /Could not make t4 the parent of its agent's terminal: the session did not wait for one, and its agent runs in tmux, not Herdr\./);
+});
+
+test('--parent takes the next word as its terminal only when it reads as an hc address', () => {
+  const fail = (m) => new Error(m);
+  assert.deepEqual(parseSessionArgs('new', ['--herdr', '--parent', 't4', 'fix', 'it'], fail), { herdr: true, parent: 't4', prompt: 'fix it' });
+  assert.deepEqual(parseSessionArgs('new', ['--herdr', '--parent', 'fix', 'it'], fail), { herdr: true, parent: true, prompt: 'fix it' });
+  assert.deepEqual(parseSessionArgs('herdr', ['--parent=boss', 'aaaa0001'], fail), { parent: 'boss', id: 'aaaa0001' });
+  assert.deepEqual(parseSessionArgs('herdr', ['aaaa0001', '--parent'], fail), { parent: true, id: 'aaaa0001' });
+  assert.throws(() => parseSessionArgs('new', ['--parent=', 'go'], fail), /--parent= needs a terminal/);
+  assert.deepEqual(parseSessionArgs('herdr', ['--parent', 't1b', 'aaaa0001'], fail), { parent: 't1b', id: 'aaaa0001' });
+  assert.deepEqual(parseSessionArgs('new', ['--herdr', '--parent', `t${'0'.repeat(40)}`], fail), { herdr: true, parent: true, prompt: `t${'0'.repeat(40)}` }, 'past hc\'s 32 characters: the prompt\'s');
+});
+
+test('a codex child wakes its parent only by exiting: the pinned codex tells Herdr nothing of its turns', async (t) => {
+  const c = await consoleFor(t, { hc: fakeHc({ waiting: true }), env: IN_HERDR, script: [...START, { status: 'running', state: 'starting' }] });
+  const out = await c.run(['session', 'new', '--agent', 'codex', '--herdr', '--parent', 'go']);
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.match(out.out, /is a child of t4 here, and outlives it: hc wait --children any wakes t4 only when it exits: codex tells Herdr nothing of its turns\.\n/);
+  const json = await consoleFor(t, { hc: fakeHc({ waiting: true }), env: IN_HERDR, script: [...START, { status: 'running', state: 'starting' }] });
+  assert.equal((await json.run(['session', 'new', '--agent', 'codex', '--herdr', '--parent', '--json', 'go'])).lines.at(-1).parent.reportsStatus, false);
 });

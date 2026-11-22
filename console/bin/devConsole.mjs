@@ -56,7 +56,15 @@ const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-console-'))
 
 const now = new Date().toISOString();
 const REVIEW_ID = 'beadfeed';
-const review = await startDevReview({ id: REVIEW_ID, branch: `woodshed/${REVIEW_ID}` });
+// DEV_CONSOLE_REVIEW_PR=1 makes /s/beadfeed @local's own My Woodshed session, whose branch has a made-up open pull
+// request, #26701, answered by a stand-in gh (devReviewGh.mjs): for `woodshed review beadfeed`, which opens your own
+// sessions only, and for the review's writes (comment, verdict, rename, merge), which a shared session's review refuses.
+const reviewPr = process.env.DEV_CONSOLE_REVIEW_PR === '1'
+  ? { number: 26701, title: 'Retry webhook deliveries with backoff', login: 'local', slug: 'example-org/example-repo' } : null;
+// The PATH before the review's stand-in gh goes first on it: everything else here, the console's own gh among it,
+// keeps the PATH it had.
+const basePath = process.env.PATH;
+const review = await startDevReview({ id: REVIEW_ID, branch: `woodshed/${REVIEW_ID}`, pr: reviewPr });
 const APPS_ID = 'abbaabba';
 // Each made-up session's statusd and ttyd take a token made for this run: they listen on loopback alone, and a token
 // written in this repository would let anything on the machine type into them.
@@ -71,12 +79,12 @@ const TERMINAL_ID = 'c0ffee11';
 const liveTerminal = await startDevTerminal({ id: TERMINAL_ID, terminalToken: `x${TERMINAL_ID}` });
 const CODEX_CHAT_ID = 'c0de5e55';
 const CLAUDE_CHAT_ID = 'c1a0de00';
-const codexChat = await startDevChatSession({ id: CODEX_CHAT_ID, ...tokensOf(CODEX_CHAT_ID), agent: 'codex', nextPath: [twoApps.binDir, process.env.PATH].join(path.delimiter) });
-const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, ...tokensOf(CLAUDE_CHAT_ID), agent: 'claude', nextPath: [codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) });
+const codexChat = await startDevChatSession({ id: CODEX_CHAT_ID, ...tokensOf(CODEX_CHAT_ID), agent: 'codex', nextPath: [twoApps.binDir, basePath].join(path.delimiter) });
+const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, ...tokensOf(CLAUDE_CHAT_ID), agent: 'claude', nextPath: [codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
 // A private session just started while another runs: its Claude home, restored from its owner's, holds an earlier
 // session's conversation, and its own claude has written nothing yet. Its Chat is empty until it is sent a message.
 const NEW_CHAT_ID = 'c1a0de02';
-const newChat = await startDevChatSession({ id: NEW_CHAT_ID, ...tokensOf(NEW_CHAT_ID), agent: 'claude', restoredHome: true, nextPath: [claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) });
+const newChat = await startDevChatSession({ id: NEW_CHAT_ID, ...tokensOf(NEW_CHAT_ID), agent: 'claude', restoredHome: true, nextPath: [claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
 // A real agent runs on this machine's credentials, so it is never served behind the session's app name: Open app and
 // app shares reach that console, which has no sign-in. Run it on a port of its own instead, which only this machine
 // reaches: DEV_CONSOLE_REAL_CLAUDE=1 node console/bin/devConsole.mjs 7700.
@@ -88,14 +96,14 @@ const realAllowed = wantsReal && !sessionApp;
 const REAL_ID = 'c1a0dea1';
 const realClaude = realAllowed && process.env.DEV_CONSOLE_REAL_CLAUDE === '1'
   ? await startDevChatSession({ id: REAL_ID, ...tokensOf(REAL_ID), agent: 'claude', real: true,
-    nextPath: [newChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) })
+    nextPath: [newChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) })
   : null;
 if (realAllowed && process.env.DEV_CONSOLE_REAL_CLAUDE === '1' && !realClaude) console.warn('dev console: no real claude, it needs claude, ttyd and tmux on the PATH');
 // DEV_CONSOLE_REAL_CODEX=1: /s/c0dea1ed runs the real codex the same way, on this machine's Codex sign-in.
 const REAL_CODEX_ID = 'c0dea1ed';
 const realCodex = realAllowed && process.env.DEV_CONSOLE_REAL_CODEX === '1'
   ? await startDevChatSession({ id: REAL_CODEX_ID, ...tokensOf(REAL_CODEX_ID), agent: 'codex', real: true,
-    nextPath: [realClaude?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) })
+    nextPath: [realClaude?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) })
   : null;
 function session(id, number, title, extra = {}) {
   return {
@@ -244,6 +252,7 @@ const sessions = [
   session(REVIEW_ID, 26701, 'Retry webhook deliveries with backoff', {
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
     endpoint: { host: '127.0.0.1', statusPort: review.port, termPort: review.port },
+    ...(reviewPr ? { kind: 'task', trigger: 'my-woodshed', owner: 'local', assignee: null, prUrl: `https://github.com/${reviewPr.slug}/pull/${reviewPr.number}` } : {}),
   }),
   // Running on a project that declares two apps, with the real statusd behind it: Start app ▾ lists them.
   session(APPS_ID, 26702, 'A project with two apps', {
@@ -458,7 +467,7 @@ function startConsole() {
   child = spawn(process.execPath, [server], {
     stdio: 'inherit',
     env: {
-      ...inherited, PATH: [devGhDir, realCodex?.binDir, realClaude?.binDir, newChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
+      ...inherited, PATH: [devGhDir, realCodex?.binDir, realClaude?.binDir, newChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
       WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev',
       // DEV_CONSOLE_APP_PORTS (such as 7701-7703) puts session apps on ports of localhost instead, as a console reached
       // through Tailscale's serve has them (appPorts.mjs).
