@@ -10,7 +10,7 @@
 // Every piece of text from the session (titles, code, answers) goes through `clean`, so none of it can move the
 // cursor or retitle the window. A segment may carry a third element, a link (only the header's pull request number
 // does, underlined so it reads as one): `toAnsi` draws it as a terminal hyperlink (OSC 8) that takes no columns, once
-// `linkUrl` passed it, and says which columns it took, for a click on them (reviewTui.mjs).
+// `linkUrl` passed it.
 
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
@@ -71,7 +71,7 @@ export function linkUrl(url) {
 }
 
 /**
- * `url` when the review may open it in a browser itself (the o key, a click): a pull request's page on github.com,
+ * `url` when the review may open it in a browser itself (the o key): a pull request's page on github.com,
  * as `linkUrl` passed it. Anything else is left to the terminal, or not opened.
  */
 export function githubPullUrl(url) {
@@ -102,10 +102,9 @@ const COLOURS = new Set(['red', 'green', 'yellow', 'blue', 'magenta', 'cyan']);
 /**
  * One line's segments as text with escape codes, cut to `columns`. `fill` reverses the whole width (a cursor). A
  * segment's link is measured as its text alone, and is cut with it: the sequence is opened and closed around what is
- * drawn, never split. Each link drawn is pushed onto `links` as {from, to, url}: the columns it takes, from 0, `to`
- * past its last.
+ * drawn, never split.
  */
-export function toAnsi(line, { columns, color = true, fill = null, links = null } = {}) {
+export function toAnsi(line, { columns, color = true, fill = null } = {}) {
   let out = '';
   let used = 0;
   // Neighbours in one style (and one link) are drawn as one run: wrapping splits a sentence into words.
@@ -123,7 +122,6 @@ export function toAnsi(line, { columns, color = true, fill = null, links = null 
     if (fill) codes.push(STYLES.rev);
     const url = link && linkUrl(link);
     const shown = url && text ? hyperlink(url, text) : text;
-    if (url && text && links) links.push({ from: used, to: used + room, url });
     out += codes.length ? `\x1b[${codes.join(';')}m${shown}\x1b[0m` : shown;
     used += room;
   }
@@ -370,7 +368,7 @@ export function headerLines(state, columns, nowMs = Date.now()) {
   const lines = [];
   // The pull request's number links to it on GitHub, where the terminal makes links clickable, as the page's does.
   const title = [['bold', reviewTitle(s)]];
-  // Underlined where it is a link, as the description's links are: a click on it, or o, opens it.
+  // Underlined where it is a link, as the description's links are: o opens it.
   const titleUrl = meta.number ? pullRequestUrl(state, meta.number) : null;
   if (meta.number) title.push(['dim', ' '], [titleUrl ? 'dim under' : 'dim', `#${meta.number}`, titleUrl]);
   lines.push(...wrapSegments(title, columns, { first: 'Review: ', firstStyle: 'dim', rest: '  ' }));
