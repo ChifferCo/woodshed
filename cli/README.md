@@ -172,7 +172,11 @@ would land there, so open that session by its id instead. A paused one is resume
 
 - **The header**: the title (the pull request's own once there is one), its branch, the pull request's state, verdict
   and checks, the commit, `+`/`−`, what was read (the working tree as of when, or the pull request at which commit),
-  and the analysis's state while it runs or when it failed.
+  and the analysis's state while it runs or when it failed. The pull request's number (`#311`) is a link to it on
+  GitHub, as on the page: a terminal hyperlink (OSC 8), which Herdr, Ghostty, iTerm2, kitty, WezTerm and recent VS
+  Code terminals open on a click (most with Cmd or Ctrl held) and others draw as plain text. Its address is the one the
+  review has for that number (else the session's pull request with it, as the console lists it), and only an https
+  one with no control character or space in it, whose path ends `/pull/<number>`, is linked.
 - **The tab bar**, each tab after its number: `1 Overview │ 2 Q&A │ 3 Discussion │ 4 Files changed │ 5 Chat`, on one
   line at 80 columns. The number opens the tab (`Tab` and `Shift-Tab` move to the next and the one before); a tab keeps
   its number when there is no Discussion. While you type in a box (the chat, a question, a comment, a sheet's comment
@@ -208,8 +212,12 @@ The page's rules hold: a write to GitHub goes as you, from your own session, onc
 before it started; otherwise the session hides the pull request and refuses the write (`session/reviewShed/policy.mjs`).
 With `--json`, or with no terminal, it prints the analysis and the diff's summary once and exits: one
 `{"event":"review","review":{…}}` with `title`, `pullRequest`, `analysis` (`status`, `overview`, `decisions`,
-`architecture`) and `diff` (`files`, `additions`, `deletions`, and `groups` in reading order). Opening a review with no
-analysis yet starts it, as opening the tab does.
+`architecture`) and `diff` (`files`, `additions`, `deletions`, and `groups` in reading order). `pullRequest` is the
+live pull request the review may write to, with its `url` checked as the header's link is (null when it does not
+pass), and the text has that address after its number; a review that hides the pull request (the person has not
+connected GitHub) has `pullRequest: null` and no address, though the header still links a pull request review's
+number from what was read at launch. Neither has an escape code in it. Opening a review with no analysis yet starts it,
+as opening the tab does.
 
 **How:** the page's own calls, `/reviews/claude-<id>/...`, with this computer's token (console/README.md, "A review
 from the command line"). Only your own sessions, never one that has seen production data, never the page itself.
@@ -334,12 +342,13 @@ Watching your sessions (Mine) on https://console.example.com, kinds: review, qa,
   that session on this console count, as for `prune`; with no `hc` here, nothing is said of one.
 - **The first read** only learns what is there: a watch tells what happens from when it starts, never what was already
   running.
-- **With `--json`**, the first line is `{"event":"watching","console","login","kinds","everyone","everySeconds","sessions","herdr"}`
+- **With `--json`**, the first line is `{"event":"watching","console","login","kinds","everyone","everySeconds","sessions","herdr"}`,
+  unless the console cannot be reached at the start: then `unreachable` and `reachable` (below) come before it
   (`kinds` null for all, `sessions` how many it watches), then one `{"event","at","why"?,"session":{…},"machine"?}` per
   change, the session as `get --json` gives it.
 - **A console it cannot reach** (a laptop asleep, a redeploy) is asked again at the same pace for as long as it runs:
   `{"event":"unreachable","at","error"}` once, then `{"event":"reachable","at","awaySeconds"}` when it answers, and the
-  events of what changed meanwhile. Only a sign-in that ended (exit 2, `{"event":"error","status":"signed-out"}`) or a
+  events of what changed meanwhile. Any 5xx answer counts as away too. Only a sign-in that ended (exit 2, `{"event":"error","status":"signed-out"}`) or a
   refusal (3) stops it.
 
 ### Notifications in Herdr, or anywhere
