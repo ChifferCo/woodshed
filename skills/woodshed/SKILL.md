@@ -1,6 +1,6 @@
 ---
 name: woodshed
-description: "Use the `woodshed` command line to set up Woodshed for the person, sign in, start a cloud session and follow it, list, watch, stop, resume or remove sessions (reviews and QA runs on their pull requests among them), show the person a session's running app (its link, and starting or stopping it), give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, change their My settings choices (terminal, reviews, default repo), turn on Woodshed's review for a repo, and point them at reviewing a session's change on their own terminal. Use when the person asks to set up Woodshed, start or check a session, be told when one starts or finishes, see, try or open what a session built (its app or preview), run something in one, keep one from pausing, sync their Claude settings, change a My settings choice, turn on Woodshed's review for a repo, or review, approve or merge what a session did or its pull request."
+description: "Use the `woodshed` command line to set up Woodshed, sign in, start a session and follow it, list, watch, stop, resume or remove sessions (reviews and QA runs among them), show the person what a session built through its app link (starting the app, or having its agent serve it), give one more time before a long task, run a command in a session, carry Claude settings to and from private sessions, change their My settings choices (terminal, reviews, default repo), turn on Woodshed's review for a repo, and point them at reviewing a session's change on their own terminal. Use when the person asks to set up Woodshed, start or check a session, be told when one starts or finishes, to show me, preview, open the pages of, see in the browser or try what a session built, run something in one, keep one from pausing, sync their Claude settings, change a My settings choice, turn on Woodshed's review for a repo, or review, approve or merge what a session did or its pull request."
 ---
 
 # Work with Woodshed from the command line
@@ -73,6 +73,12 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 - **Being connected does not keep a session awake.** A session pauses after its idle hours with nothing to do (its own
   agent not working) and stops at its lifetime, whatever tunnels or terminals are open. If you need it longer,
   ask for the time (section 5).
+- **Show what a session built through its app link, never from this computer.** When the person asks to see, show,
+  preview or open what a session built (show me, open the pages, see it in the browser), give them the session's app
+  link (section 5, "See and try a session's app"), started or served by the session first. Do not fetch its branch and
+  serve it here on `localhost`, open files from a local checkout, or send raw GitHub file links: that is not what the
+  session runs, with its databases and env, and it is not a link they can open from a phone or share. Opening the app
+  link in their browser is fine when they ask you to.
 - **Herdr's `hc` is the person's to install or update.** `session herdr` exits 3 and says so when it is missing or
   older than it needs: tell them, and do not run an installer or `hc update` for them.
 - **Stopping and removing are the person's call.** `session stop` ends the work in progress (a running one's
@@ -322,11 +328,13 @@ tell which conversation belongs to a terminal, use `hc label <t> claude.session=
 
 ### See and try a session's app
 
-Each session runs the repo's own app (the project file's `app`), with its own databases, at a link of its own. People
-often do not know they can open it, so say so when it helps them: when a session starts, when its agent says it has
-finished a change they can see, when they ask how to try or check what it built, or when they ask for a preview or a
-staging link. Check `woodshed session --help` lists `app` first (section 1); on an older CLI, give them the session's
-console page (`url`), whose Open app opens it.
+Each session runs the repo's own app (the project file's `app`), with its own databases, at a link of its own. This
+link is how the person sees what a session built: whenever they ask to see, show, preview or open it ("show me the
+pages", "let me see it in the browser"), and for a preview or a staging link. People often do not know they can open
+it, so say so when it helps them too: when a session starts, when its agent says it has finished a change they can
+see, or when they ask how to try or check what it built. Never stand in for it with this computer's copy (section 3).
+Check `woodshed session --help` lists `app` first (section 1); on an older CLI, give them the session's console page
+(`url`), whose Open app opens it.
 
 ```sh
 woodshed session get <id> --json      # session.app and session.appUrl
@@ -358,6 +366,43 @@ With several apps (`session.apps`), `--app <name>` starts that one; with another
 `stop` first and the command waits through the switch. One with no `stop` in the project file is left running beside
 it: say so if they ask why it still answers. `woodshed session app <id> stop` stops it, only when they ask; exit 3 saying
 there is no stop command means the project file has no `app.stop`, so nothing was stopped: tell them.
+
+#### When what they want to see is not what the app serves
+
+The app link opens whatever answers on the app's frontend port in the session. When the thing to see is not what the
+project file's app serves (static pages in a folder, a docs site, another service in the repo), Start app alone will
+not show it: have the session serve it on that port, then give them the app link as above.
+
+Whatever answers on that port reaches everyone the link reaches: with `session.appSignIn` false, whoever reaches the
+console, and any Share the app link the owner made. So before serving, check that audience is right for what will show,
+and serve only the files meant to be seen: a copy of the built pages with no dotfiles (a `.env.local` Woodshed writes)
+and no symlinks, never the checkout or a source folder as it is.
+
+- **Another app of the project file serves it**: `woodshed session app <id> start --app <name>` (`session.apps` lists
+  them), and give the link it prints.
+- **Otherwise, ask the session's agent** to serve a clean copy of it on the app's frontend port in the session, with
+  the project's app stopped first (`woodshed session app <id> stop`, when the person agrees: it stops what the session
+  runs). The link follows the app the session runs, `session.appName`: the port is that app's, and while it still
+  answers the link shows it, not the copy. Its agent knows the ports and the checkout. Reach it in Herdr with `hc send
+  woodshed-<id>/claude "<ask>"` (after `woodshed session herdr <id>`, between its turns), else point the person at the
+  Chat tab on the session's console page (`url`) or `woodshed session connect <id>` to ask it themselves.
+- **Or serve it yourself through the tunnel**, for one of their own sessions, the same way. Read the port with
+  `woodshed tunnel <id> -- node /opt/woodshed/shared/project.mjs get app` (`frontendPort`); with several apps, `get
+  apps` prints one per line, and the one whose `name` is `session.appName` is the port. The line below copies only the
+  pages' plain files, no dotfiles or symlinks, into a new folder (never refilling one a server serves), stops the
+  preview it started before, and starts one that outlives the tunnel with `setsid`, as closing the tunnel hangs up what
+  it started:
+
+  ```sh
+  woodshed tunnel <id> -- 'd=$(mktemp -d /tmp/preview.XXXXXX) && (cd site && find . -name ".*" ! -name . -prune -o -type f -exec cp --parents {} "$d" \;) && { kill $(cat /tmp/preview.pid 2>/dev/null) 2>/dev/null; sleep 1; setsid python3 -m http.server <frontendPort> --bind 127.0.0.1 -d "$d" >/tmp/preview.log 2>&1 </dev/null & echo $! >/tmp/preview.pid; }'
+  ```
+
+Then `woodshed session app <id>` says `running` (or `api-down` when the project's app has a backend of its own that is
+not running: the pages still open), and the link shows it. A project file with no app (`none`) has no port for the link
+to reach: Set up app first, as above. If the person will want this again in later sessions, suggest
+adding it to the repo's `.woodshed/project.yaml` as a named app (`apps`, each with a `name`, so `--app <name>` and
+Start app ▾ start it), in an ordinary pull request: the `write-project-file` skill in Woodshed's repository
+(`.claude/skills/write-project-file/`), and its `project.reference.yaml`, say how.
 
 ### Change a choice on My settings
 
