@@ -902,6 +902,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
     // Up once its frontend and backend both answer. Between the start script's end and its servers listening it can
     // read as stopped or half up for a moment, so only a failed start ends the wait early.
     const until = now() + APP_START_DEADLINE_MS;
+    const isOther = (y) => Boolean(target && y.apps?.length > 1 && y.appName && y.appName !== target);
     let last = asked;
     for (;;) {
       await sleep(POLL_MS);
@@ -909,7 +910,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
       const latest = got.sessions.find((y) => y.id === id);
       if (!latest || latest.status !== 'running') throw fail(`Session ${id} stopped while its app was starting.`);
       last = summary(latest, { origin, login: got.login, appsOn });
-      if (last.app === 'running') {
+      // Up only as the app asked for: with several, another one's servers still answering (one with no stop command,
+      // left beside it) is not this one up.
+      if (last.app === 'running' && !isOther(last)) {
         if (json) emit({ event: 'app-running', session: last });
         say(`Its app is up: ${last.appUrl}`);
         return EXIT.done;
@@ -917,7 +920,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
       if (last.app === 'failed' || now() >= until) break;
     }
     if (json) emit({ event: 'app-not-up', session: last });
-    say(last.app === 'failed' ? `Its app: ${appText(last)}` : `Its app is not up after ${APP_START_DEADLINE_MS / 60_000} minutes: ${appText(last) || 'it says nothing yet'}. Its start log is /tmp/woodshed-app.log in the session.`);
+    say(last.app === 'failed' ? `Its app: ${appText(last)}`
+      : last.app === 'running' && isOther(last) ? `${target} is not up after ${APP_START_DEADLINE_MS / 60_000} minutes: the session says ${last.appName} is the one running. Its start log is /tmp/woodshed-app.log in the session.`
+      : `Its app is not up after ${APP_START_DEADLINE_MS / 60_000} minutes: ${appText(last) || 'it says nothing yet'}. Its start log is /tmp/woodshed-app.log in the session.`);
     return EXIT.failed;
   }
 

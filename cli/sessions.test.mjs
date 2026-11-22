@@ -586,6 +586,19 @@ test('a switch to another app, queued behind the running one\'s stop, is waited 
   assert.match(back.out, /^Switching session aaaa0001's app \(web\)/m);
 });
 
+test('with several apps, another one still running is not the one asked for up', async (t) => {
+  // admin's start fails before it listens, and statusd still reads web's servers, which had no stop command.
+  const c = await consoleFor(t, { appDomain: 'apps.example.test', appScript: [{ app: 'running', appName: 'web' }] });
+  const s = c.sessions.find((x) => x.id === 'aaaa0001');
+  Object.assign(s, { app: 'stopped', appName: 'web', apps: [{ name: 'web', label: 'Web' }, { name: 'admin', label: 'Admin' }] });
+  const t0 = c.now();
+  const other = await c.run(['session', 'app', 'aaaa0001', 'start', '--app', 'admin', '--json']);
+  assert.equal(other.code, EXIT.failed, other.err);
+  assert.ok(!other.lines.some((l) => l.event === 'app-running'), 'never says admin is up');
+  assert.ok(c.now() - t0 >= 300_000, 'it waited for admin');
+  assert.equal(other.lines.at(-1).event, 'app-not-up');
+});
+
 test('restart hints name the app that went down when it is not the default, and the link says where it opens', () => {
   const x = { id: 'aaaa0001', apps: ['web', 'admin'], appUrl: 'https://aaaa0001.apps.example.test/', url: 'https://c.example.test/s/aaaa0001' };
   assert.equal(startCommand({ ...x, appName: 'web' }), 'woodshed session app aaaa0001 start', 'the default needs no --app');
