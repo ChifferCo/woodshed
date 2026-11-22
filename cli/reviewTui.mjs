@@ -482,6 +482,8 @@ export function runReviewTui({
     }
     function onContinue() {
       if (finished) return;
+      // Once only, though a SIGCONT may come with no stop before it (a stray kill -CONT).
+      proc.off('SIGTSTP', onStop);
       proc.on('SIGTSTP', onStop);
       takeTerminal();
       draw();

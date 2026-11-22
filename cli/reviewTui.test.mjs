@@ -622,6 +622,8 @@ test('clicks are reported while the review runs, and given back on a quit, a sig
     assert.equal(count(tui.written(), OFF), 2);
     assert.deepEqual(tui.killed.at(-1), [4242, 'SIGTSTP']);
     tui.proc.emit('SIGCONT');
+    tui.proc.emit('SIGCONT');
+    assert.equal(tui.proc.listenerCount('SIGTSTP'), 1, 'a SIGCONT with no stop before it adds no second listener');
     tui.type('q');
     assert.deepEqual(await tui.done, { code: 'quit' });
     assert.equal(count(tui.written(), OFF), 3, 'off on a quit');
