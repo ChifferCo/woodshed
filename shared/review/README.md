@@ -399,8 +399,11 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
   job's id is its askId; it has its own breadcrumb kind so an orphaned chat
   cannot clear the analysis's.
 
-- **The Q&A is two voices, and the newcomer cannot read the code.** `POST /reviews/<session>/qa` (the page sends it
-  the first time the Q&A tab opens) runs rounds of `claude -p`: a newcomer, whose whole system prompt is a junior
+- **The Q&A is two voices, and the newcomer cannot read the code.** The shed starts it when the review opens, with the
+  analysis (`startReviewQaIfNone`, which session/reviewShed/host.mjs calls on the page's or the terminal's first status
+  read in the container), and when a take or Re-review starts a new diff's analysis; `POST /reviews/<session>/qa?first=1`,
+  which the page and the terminal send when the Q&A tab opens, joins or keeps that run, so a commit gets one. It runs
+  rounds of `claude -p`: a newcomer, whose whole system prompt is a junior
   developer new to the codebase who knows none of its jargon (`--system-prompt`, `--tools ''`), asks up to six
   questions from the title, description, file list and overview; an answerer with the explain's containment (Read,
   Grep and Glob) answers them all in one run, quoting real code where it helps. Unlike every other run here, the

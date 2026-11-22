@@ -188,6 +188,41 @@ test('opening Q&A starts it on the diff on screen, as the page does, and shows i
   await tui.until(() => tui.frame().includes('  Things.'), 'its answer, open');
 });
 
+test('a Q&A the shed started when the review opened is shown as it goes, and the tab never asks for another', async (t) => {
+  let reads = 0;
+  const tui = await tuiOver(t, baseRoutes({
+    'GET /qa': () => {
+      reads += 1;
+      const items = [{ id: 'q1', parent: null, question: 'What changes?', ...(reads > 2 ? { answer: 'Things.' } : {}) }];
+      return { ok: true, qa: reads > 2 ? { status: 'ready', forDiff: T, items } : { status: 'running', phase: 'answering', depth: 1, forDiff: T, items } };
+    },
+    'POST /qa': () => ({ ok: true, status: 'running' }),
+  }));
+  // Read at launch, off the tab: the run is already going.
+  await tui.until(() => reads >= 1, 'the first read');
+  tui.type('2');
+  await tui.until(() => tui.frame().includes('▸ What changes?'), 'the question, once it is answered');
+  assert.equal(tui.said('POST /qa').length, 0, 'opening the tab joins the run the review started');
+});
+
+test('after a Re-review the new diff\'s Q&A, which the shed started with its analysis, is read without being asked for', async (t) => {
+  const T2 = '2026-11-20T11:00:00.000Z';
+  let at = T;
+  const tui = await tuiOver(t, baseRoutes({
+    'GET ': () => ({ ok: true, kind: 'worktree', status: 'running', createdAt: at, headSha: 'aaaa', meta: { title: 'T', headRefName: 'b', baseRefName: 'main', dirtyFiles: 0 }, livePr: null, review: null }),
+    'GET /diff': () => ({ ok: true, createdAt: at, files: [{ path: 'one.mjs', additions: 1, deletions: 0, hunks: [] }] }),
+    // Finished before the Re-review, so nothing is polling it: only a read after the Re-review finds the new one.
+    'GET /qa': () => ({ ok: true, qa: { status: 'ready', phase: null, forDiff: at, items: [{ id: 'q1', parent: null, question: at === T2 ? 'What is new?' : 'What was there?', answer: 'This.' }] } }),
+    'POST /qa': () => ({ ok: true, status: 'running' }),
+    'POST ': () => { at = T2; return { ok: true }; },
+  }));
+  tui.type('2');
+  await tui.until(() => tui.frame().includes('▸ What was there?'), 'the first diff\'s Q&A');
+  tui.type('r');
+  await tui.until(() => tui.frame().includes('▸ What is new?'), 'the new diff\'s Q&A');
+  assert.equal(tui.said('POST /qa').length, 0, 'nothing asked for: the shed started it');
+});
+
 test('Re-review takes the diff again and draws the new one, and says so when nothing moved', async (t) => {
   let files = [{ path: 'one.mjs', additions: 1, deletions: 0, hunks: [] }];
   let unchanged = false;

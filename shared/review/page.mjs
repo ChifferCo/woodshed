@@ -3031,8 +3031,10 @@ ${DARK_PALETTE}
         if (had && !view.data) view.started = true;
         view.showCosts = !!got.showCosts;
         view.error = null;
-        // Nothing asked yet: opening the tab is the ask, as opening the review
-        // is for the analysis. Once per view, so a failure is not retried in a loop.
+        // Nothing asked yet: the shed starts the Q&A when the review opens, so
+        // this finds it going. Where it did not (one opened before that, or
+        // another host), opening the tab is the ask. Once per view, so a
+        // failure is not retried in a loop.
         if (!view.data && start && !view.started && !view.otherDiff) {
           view.started = true;
           var asked = await api('POST', qaStartUrl() + '&first=1');
@@ -3081,8 +3083,9 @@ ${DARK_PALETTE}
     }
 
     // Discard and Re-review empty the Q&A on the server (it describes the diff
-    // they replace), so the page forgets its copy too. Not asked again on its
-    // own: a reader who just discarded did not ask for a new paid run.
+    // they replace), so the page forgets its copy too. Never asked for from
+    // here: a reader who just discarded did not ask for a new paid run, and a
+    // Re-review's new Q&A is the shed's to start, with the new analysis.
     function resetQa() {
       clearTimeout(qaView.timer);
       qaView = freshQaView(true);
@@ -3855,7 +3858,9 @@ ${DARK_PALETTE}
             // Re-read in place rather than reloading the document. A reload
             // throws away the conversation, the scroll and which files were
             // open, to arrive at the same page with a newer diff in it.
-            loadReview(state.session).catch(function (err) {
+            // Then the Q&A the shed started for the new diff with its analysis:
+            // after the review, whose diff is the one that Q&A names.
+            loadReview(state.session).then(function readNewQa() { loadQa(false); }).catch(function (err) {
               showError(err && err.message ? err.message : 'could not re-read the review');
             });
           })

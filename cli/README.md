@@ -183,7 +183,7 @@ would land there, so open that session by its id instead. A paused one is resume
   or title), a number is text.
 - **1 Overview**: the pull request's description, the overview, the decisions and the architecture, its diagram as a
   list of what connects to what, marked added, removed or changed. **2 Q&A**: the questions someone new to the code
-  would ask, each answered from the code, started on opening the tab as the page does. They are folded, as on the
+  would ask, each answered from the code, started when the review opens (as on the page; the tab shows it as it goes). They are folded, as on the
   page: `↑`/`↓` choose one, `Enter` opens it (one at a time, with its follow-ups folded under it) and `←` closes it;
   `i` asks where the cursor is: a follow-up under the chosen question, or on the last row, `＋ Ask a question of
   your own`, a new one at the end. A question waits for its answer where it was asked, with the cursor on it. `A` asks
@@ -217,7 +217,8 @@ live pull request the review may write to, with its `url` checked as the header'
 pass), and the text has that address after its number; a review that hides the pull request (the person has not
 connected GitHub) has `pullRequest: null` and no address, though the header still links a pull request review's
 number from what was read at launch. Neither has an escape code in it. Opening a review with no analysis yet starts it,
-as opening the tab does.
+as opening the tab does. Opening it starts the Q&A too, whatever the analysis's state, unless its commit already has
+one: the first open of the review in its session, and each Re-review, start one.
 
 **How:** the page's own calls, `/reviews/claude-<id>/...`, with this computer's token (console/README.md, "A review
 from the command line"). Only your own sessions, never one that has seen production data, never the page itself.
