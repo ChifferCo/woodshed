@@ -209,7 +209,7 @@ before it started; otherwise the session hides the pull request and refuses the 
 With `--json`, or with no terminal, it prints the analysis and the diff's summary once and exits: one
 `{"event":"review","review":{…}}` with `title`, `pullRequest`, `analysis` (`status`, `overview`, `decisions`,
 `architecture`) and `diff` (`files`, `additions`, `deletions`, and `groups` in reading order). Opening a review with no
-analysis yet starts it, as opening the tab does.
+analysis yet starts it, as opening the tab does, and its Q&A with it.
 
 **How:** the page's own calls, `/reviews/claude-<id>/...`, with this computer's token (console/README.md, "A review
 from the command line"). Only your own sessions, never one that has seen production data, never the page itself.
