@@ -351,6 +351,8 @@ export function statusStrip(s) {
 
 // --- tabs ---------------------------------------------------------------------------
 
+const NBSP = '\u00a0';
+
 export const TABS = [
   { key: 'analysis', label: 'Overview', n: '1' },
   { key: 'qa', label: 'Q&A', n: '2' },
@@ -364,16 +366,33 @@ export function tabsOf(state) {
   return TABS.filter((t) => t.key !== 'discussion' || state.status?.livePr);
 }
 
-/** The tabs, by name alone: the number keys that reach them are in the footer, and nothing on a tab is a count. */
+/**
+ * The tabs, each after the number key that reaches it (`1 Overview │ 2 Q&A │ …`), and nothing on a tab is a count. A
+ * tab keeps its number when Discussion is not there, so 4 is always Files changed. The bar wraps between tabs only, and
+ * a line never starts with a separator; at 80 columns it is one line, a count of draft comments with it.
+ */
 export function tabBar(state, columns) {
-  const segs = [];
-  for (const t of tabsOf(state)) {
-    if (segs.length) segs.push(['dim', ' │ ']);
-    // No-break spaces: a tab's name is never split over two lines, and the selected one's padding is kept.
-    segs.push([state.tab === t.key ? 'rev bold' : null, `\u00a0${t.label.replace(/ /g, '\u00a0')}\u00a0`]);
-  }
-  if (state.status?.livePr && state.draft?.comments?.length) segs.push([null, '  '], ['yellow', `${state.draft.comments.length}\u00a0draft${state.draft.comments.length === 1 ? '' : 's'}`]);
-  return wrapSegments(segs, columns);
+  const units = tabsOf(state).map((t) => {
+    // No-break spaces: the selected tab's padding is kept in its reversed block.
+    const name = `${t.label.replace(/ /g, NBSP)}${NBSP}`;
+    return state.tab === t.key ? [['rev bold', `${NBSP}${t.n}${NBSP}${name}`]] : [[null, NBSP], ['dim', t.n], [null, `${NBSP}${name}`]];
+  });
+  const drafts = state.status?.livePr ? state.draft?.comments?.length ?? 0 : 0;
+  if (drafts) units.push([['yellow', `${drafts}${NBSP}draft${drafts === 1 ? '' : 's'}`]]);
+  const span = (segs) => segs.reduce((n, [, text]) => n + width(text), 0);
+  const lines = [[]];
+  let used = 0;
+  units.forEach((unit, i) => {
+    const gap = i === 0 ? [] : drafts && i === units.length - 1 ? [[null, '  ']] : [['dim', '│']];
+    if (used && used + span(gap) + span(unit) > columns) {
+      lines.push([]);
+      used = 0;
+    }
+    const put = used ? [...gap, ...unit] : unit;
+    lines[lines.length - 1].push(...put);
+    used += span(put);
+  });
+  return lines;
 }
 
 // --- Overview -------------------------------------------------------------------------

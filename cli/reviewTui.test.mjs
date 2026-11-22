@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createKeyReader, editKey, frame, initialState, mergeHint, parseKeys } from './reviewTui.mjs';
-import { clean, diagramLines, qaLines, qaVisible, fileOrder, markdownLines, plainText, toAnsi, width, wrapSegments } from './reviewView.mjs';
+import { clean, diagramLines, qaLines, qaVisible, fileOrder, markdownLines, plainText, tabBar, toAnsi, width, wrapSegments } from './reviewView.mjs';
 
 test('raw stdin reads as keys: arrows, a paste with its newlines, and an escape sequence it does not know is skipped whole', () => {
   assert.deepEqual(parseKeys('\x1b[A\x1b[B\x1bOC\x1b[5~\x1b[Z\t\r\x7f\x03q'), ['up', 'down', 'right', 'pageup', 'shift-tab', 'tab', 'enter', 'backspace', 'ctrl-c', 'q']);
@@ -111,7 +111,7 @@ test('the Q&A is folded: only the open question shows its answer and its follow-
 
 // The TUI on a made-up terminal over a scripted shed: `routes` answers each call by `METHOD path`, and every call is kept.
 // Its timers run at once, so polls that wait seconds in a terminal take milliseconds here.
-async function tuiOver(t, routes) {
+async function tuiOver(t, routes, { columns = 80, rows = 24 } = {}) {
   const { EventEmitter } = await import('node:events');
   const { runReviewTui } = await import('./reviewTui.mjs');
   const calls = [];
@@ -124,7 +124,7 @@ async function tuiOver(t, routes) {
   };
   const stdin = Object.assign(new EventEmitter(), { isTTY: true, setRawMode() {}, resume() {}, pause() {} });
   let screen = '';
-  const stdout = Object.assign(new EventEmitter(), { columns: 80, rows: 24, write: (s) => { screen += s; return true; } });
+  const stdout = Object.assign(new EventEmitter(), { columns, rows, write: (s) => { screen += s; return true; } });
   const status = routes.get('GET ')();
   const diff = routes.get('GET /diff')();
   const done = runReviewTui({ api, initial: { status, diff, session: 'aaaa0001' }, stdin, stdout, color: false,
@@ -259,4 +259,109 @@ test('Discard asks first, and only y throws the analysis and the conversation aw
   tui.type('y');
   await tui.until(() => tui.said('POST /discard').length === 1, 'the discard');
   await tui.until(() => tui.frame().some((l) => l.includes('Discarded. a reads it again.')), 'said');
+});
+
+test('the tab bar numbers each tab by the key that opens it, on one line at 80 columns, and wraps only between tabs', () => {
+  const bar = (state, columns) => tabBar(state, columns).map((l) => plainText(l).replace(/ /g, ' '));
+  const withPr = { tab: 'analysis', status: { livePr: { number: 7 } }, draft: { comments: Array.from({ length: 12 }, () => ({})) } };
+  assert.deepEqual(bar(withPr, 80), [' 1 Overview │ 2 Q&A │ 3 Discussion │ 4 Files changed │ 5 Chat   12 drafts']);
+  // Without a pull request there is no Discussion, and every other tab keeps its number: 4 is always Files changed.
+  assert.deepEqual(bar({ tab: 'files', status: {}, draft: { comments: [] } }, 80), [' 1 Overview │ 2 Q&A │ 4 Files changed │ 5 Chat ']);
+  // The selected tab is one reversed block, its number in it; another tab's number is dim beside its name.
+  const selected = toAnsi(tabBar({ ...withPr, tab: 'files' }, 80)[0], { columns: 80, color: true });
+  assert.match(selected, /\x1b\[[0-9;]*7[0-9;]*m 4 Files changed \x1b\[0?m/);
+  assert.match(selected, /\x1b\[2m1\x1b\[0?m Overview/);
+  for (let columns = 40; columns <= 80; columns += 1) {
+    const lines = bar(withPr, columns);
+    for (const line of lines) {
+      assert.ok(width(line) <= columns, `${columns}: ${line}`);
+      assert.ok(!line.startsWith('│'), `${columns}: a line starts with a separator: ${line}`);
+    }
+    for (const name of ['1 Overview', '2 Q&A', '3 Discussion', '4 Files changed', '5 Chat', '12 drafts']) {
+      assert.ok(lines.some((l) => l.includes(name)), `${columns}: ${name} whole on one line`);
+    }
+  }
+  assert.equal(bar(withPr, 40).length, 2);
+});
+
+const QA_READY = { status: 'ready', forDiff: T, items: [{ id: 'q1', parent: null, question: 'What changes?', answer: 'Things.' }] };
+
+test('1 to 5 open the tab with that number, and Tab still moves between them', async (t) => {
+  const tui = await tuiOver(t, baseRoutes({ 'GET /qa': () => ({ ok: true, qa: QA_READY }) }));
+  const on = {
+    1: (f) => f.includes('It changes things.'),
+    2: (f) => f.includes('▸ What changes?'),
+    3: (f) => f.includes('Nobody has said anything about the change as a whole yet.'),
+    4: (f) => f.includes('▸ one.mjs +1 −0'),
+    5: (f) => f.some((l) => l.startsWith('A conversation about the change as a whole')),
+  };
+  await tui.until(() => on[1](tui.frame()), 'Overview first');
+  assert.ok(tui.frame().some((l) => l.startsWith(' 1 Overview │ 2 Q&A │ 3 Discussion │ 4 Files changed │ 5 Chat')), 'the numbered tab bar');
+  for (const n of ['4', '1', '5', '3', '2', '1']) {
+    tui.type(n);
+    await tui.until(() => on[n](tui.frame()), `${n} opens its tab`);
+  }
+  tui.type('\t');
+  await tui.until(() => on[2](tui.frame()), 'Tab, the next tab');
+  tui.type('\x1b[Z');
+  await tui.until(() => on[1](tui.frame()), 'Shift-Tab, the one before');
+  assert.equal(tui.said('POST /qa').length, 0, 'a Q&A already written for this diff is read, not asked again');
+});
+
+test('a number typed into a box is text, and switches no tab', async (t) => {
+  const tui = await tuiOver(t, baseRoutes({ 'GET /qa': () => ({ ok: true, qa: QA_READY }) }));
+  const has = (text) => tui.frame().some((l) => l.includes(text));
+  await tui.until(() => has('It changes things.'), 'the first frame');
+  // Chat's box.
+  tui.type('5');
+  tui.type('\r');
+  await tui.until(() => has('Ask:'), 'the chat box');
+  tui.type('3');
+  await tui.until(() => has('Ask: 3'), 'the 3, typed');
+  assert.ok(!has('Nobody has said anything'), 'not Discussion');
+  tui.type('\x1b');
+  // Q&A's box, on the row that asks a question of your own.
+  tui.type('2');
+  await tui.until(() => has('▸ What changes?'), 'Q&A');
+  tui.type('G');
+  tui.type('i');
+  await tui.until(() => has('Your question:'), 'the Q&A box');
+  tui.type('4');
+  await tui.until(() => has('Your question: 4'), 'the 4, typed');
+  assert.ok(!has('▸ one.mjs'), 'not Files changed');
+  tui.type('\x1b');
+  // The comment composer, on a line of an open diff.
+  tui.type('4');
+  await tui.until(() => has('▸ one.mjs +1 −0'), 'Files changed');
+  tui.type('\r');
+  tui.type('c');
+  await tui.until(() => has('Comment on one.mjs:1:'), 'the comment box');
+  tui.type('1');
+  await tui.until(() => has('Comment on one.mjs:1: 1'), 'the 1, typed');
+  assert.ok(!has('It changes things.'), 'not Overview');
+  tui.type('\x1b');
+  // The submit sheet's comment, and the rename sheet's title.
+  tui.type('s');
+  await tui.until(() => has('Comment:'), 'the submit sheet');
+  tui.type('2');
+  await tui.until(() => has('Comment: 2'), 'the 2, typed');
+  assert.ok(has('Submit review on #7'), 'the sheet stays');
+  tui.type('\x1b');
+  tui.type('t');
+  await tui.until(() => has('Title: T'), 'the rename sheet');
+  tui.type('5');
+  await tui.until(() => has('Title: T5'), 'the 5, typed');
+  tui.type('\x1b');
+  await tui.until(() => !has('Title:'), 'the sheet closed');
+  const sent = ['POST /chat', 'POST /qa/ask', 'POST /comments', 'POST /submit', 'PATCH /title'].flatMap((k) => tui.said(k));
+  assert.deepEqual(sent, [], 'nothing sent');
+});
+
+test('the help, on a terminal of 40 by 14, shows whole what the number keys do', async (t) => {
+  const tui = await tuiOver(t, baseRoutes(), { columns: 40, rows: 14 });
+  await tui.until(() => tui.frame().some((l) => l.includes('1 Overview')), 'the first frame');
+  tui.type('?');
+  await tui.until(() => tui.frame().includes('Keys'), 'the help');
+  const text = tui.frame().join(' ').replace(/ +/g, ' ');
+  assert.match(text, /1-5 open the numbered tabs\. In a text box, a number is text\. Tab and Shift-Tab cycle\./);
 });
