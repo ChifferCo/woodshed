@@ -21,8 +21,8 @@ Pass the person's console with `--console <url>` when they use their own. Repeat
 with the first for their session. Each checklist entry has a `step`, `status`, and `message`. On exit 2, show them the
 message and any `url` or `userCode` and stop. Run setup again after they complete that step. They approve the CLI sign-in,
 install any GitHub Apps, and connect Claude or Codex on My settings in their browser. Setup turns each repo's review on
-in the console, with no checkout and no pull request; when the repo's own project file reviews another way, it says so
-and stops. Use `--skip-reviews` or
+in the console, with no checkout and no pull request; when the repo's own project file reviews another way (GitHub
+Actions), it says so and goes on, since that review is on already. Use `--skip-reviews` or
 `--no-session` when the person chooses to skip those steps.
 When `woodshed status` shows a compatible `hc` and the person hasn't chosen a terminal, ask whether they want Herdr
 for new private sessions. Check `woodshed setup --help` for `--terminal` before passing `--terminal herdr` or

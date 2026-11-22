@@ -136,6 +136,10 @@ test('setup says when the repo\'s own project file reviews another way, and when
     'review enable': result(2, { event: 'enable', where: 'console', missing: [], console: { review: { runner: 'actions', rerun: null, from: 'default branch' } }, warnings: ['the repo\'s project file reviews in GitHub Actions, which wins over the one the console keeps.'] }),
   } });
   const goesOn = await fileWins.invoke('--yes', '--repo', repo, '--no-session');
+  const noReviewer = fake({ commands: ['review'], answers: {
+    'review enable': result(2, { event: 'enable', console: { review: { runner: 'actions', from: 'default branch' } }, missing: [{ key: 'reviewer-app', step: 'An admin makes the reviewer App.' }] }),
+  } });
+  assert.equal((await noReviewer.invoke('--yes', '--repo', repo, '--no-session')).code, 0, 'an Actions review needs no reviewer App of the console\'s');
   assert.equal(goesOn.code, 0, 'its review is on already, in Actions: setup goes on, and a rerun does not stop there');
   const step = goesOn.events.find((entry) => entry.step === 'repo-review');
   assert.equal(step.status, 'done');

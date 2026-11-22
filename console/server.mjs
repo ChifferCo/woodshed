@@ -733,7 +733,7 @@ export function createHandler({
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
-  cli = null, reviewReadiness = null,
+  cli = null, reviewReadiness = null, keptReviews = null,
 }) {
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
   const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
@@ -2175,7 +2175,12 @@ export function createHandler({
   async function removeRepo(name, by) {
     // Clear the repo's values first, so a failed delete can be retried. A repo that Remove would refuse keeps them.
     if (addedProjects.view().some((p) => p.name === name && p.removable && !p.sessions)) await repoSettings?.forget(name);
+    const repo = allProjects(config).find((p) => p.name === name)?.repo ?? null;
     await addedProjects.remove({ name, by });
+    // Its review kept on goes with it: adding the repo back starts with none (keptReview.mjs).
+    if (repo && keptReviews) {
+      await keptReviews.set(repo, { on: false, by }).catch((err) => console.warn('keptReview: not taken off with its repo', { repo, message: String(err?.message ?? err).split('\n')[0] }));
+    }
     projectColors?.forget({ name });
     repoTriggers?.forget(name);
     slack?.setProjectChannel({ project: name, channel: '', by });

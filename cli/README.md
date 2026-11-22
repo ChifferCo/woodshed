@@ -64,7 +64,7 @@ pass `--terminal`.
 Use `--prompt=--help` for a prompt that looks like an option. Repeat `--repo` to choose several repos. The first is for the session. For each repo, setup turns
 Woodshed's review on with `woodshed review enable --repo <repo>`: the console keeps it on, with no checkout and no pull
 request, and it stops at any step only an admin can take (the reviewer App made or installed). A repo whose own
-project file reviews another way says so, since that file wins. `--reviews` sets your own reviewer choice. Use `--skip-reviews` to skip both, or
+project file reviews another way (GitHub Actions) says so and goes on, since that file wins and its review is on. `--reviews` sets your own reviewer choice. Use `--skip-reviews` to skip both, or
 `--no-session` to finish without starting an environment. When the terminal choice is Herdr and setup finds a compatible
 `hc` on macOS or Linux, it uses `session new --herdr` to show the agent in a space on the session's machine.
 On Windows it starts a regular session and prints the link. If a private session already exists for the first repo,

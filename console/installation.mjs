@@ -548,7 +548,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
     prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
-    databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,
+    databaseGate, addedProjects, projectColors, repoSettings, repoTriggers, keptReviews,
     workflowLinks: () => projectReader.workflowLinks(),
     // Behind a hosting proxy nobody's write access is asked: the host says who is in.
     projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) }),
@@ -568,9 +568,18 @@ export async function createInstallation({ config: loaded, store, provider, trus
       publicUrl: config.publicUrl, reviewer: reviewerApp, ownReviewer: !hostApp, appLogin: () => appIdentity.login(),
       pullRequestsOf: fileGatesOf, sourceOf: (name) => readerOf(name).source(), keptReviews,
       // Behind a hosting proxy GitHub is not asked who writes (canWrite is null), so the host says who may change it:
-      // its own check, else an owner on its People list. Nobody, with neither.
+      // its own check, else an owner on its People list as read now. Nobody, with neither.
       mayChange: reviewKeeping?.mayChange ? async (login, project) => Boolean(await reviewKeeping.mayChange(login, project.repo))
-        : trusted ? async (login) => Boolean(login && members?.isAdmin?.(login)) : null,
+        : trusted ? async (login) => {
+          // A fresh read of the program's list, never the cached role: a demoted owner, or a list that cannot be read, may not.
+          if (!login || !members?.hosted) return false;
+          try {
+            return (await members.currentRole(login)) === 'owner';
+          } catch (err) {
+            console.warn('reviewReadiness: the program\'s list not read, the change refused', { login, message: String(err?.message ?? err).split('\n')[0] });
+            return false;
+          }
+        } : null,
       runsOnName: config.runsOnName ?? null,
       // A token's person must still write to the repo, as sign-in asks of a browser's (auth.mjs). With no sign-in, or
       // behind a hosting proxy, nobody's access is asked there either.

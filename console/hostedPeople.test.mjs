@@ -427,17 +427,17 @@ test('behind a hosting proxy only an owner, or whom the program\'s reviewKeeping
   t.mock.method(console, 'error', () => {});
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-kept-'));
   t.after(() => fs.rmSync(stateDir, { recursive: true, force: true }));
-  const build = async (extra = {}) => {
+  const build = async (extra = {}, program = fakeProgram()) => {
     const store = { state: {}, save() {} };
     const inst = await createInstallation({
       config: { ...CONFIG, stateDir, sessionEnv: {}, sessionApi: {}, pollGitHub: false }, store, provider: { name: 'test', launcher: {} },
-      trusted: createTrustedIdentity({ secret: SECRET }), members: fakeProgram(), hostApp: { login: () => 'host-woodshed[bot]' }, ...extra,
+      trusted: createTrustedIdentity({ secret: SECRET }), members: program, hostApp: { login: () => 'host-woodshed[bot]' }, ...extra,
     });
     const server = http.createServer((req, res) => { inst.handle(req, res); });
     const port = await listen(server);
     t.after(() => server.close());
     const post = (body, headers) => send(port, { method: 'POST', path: '/api/kept-review', headers: { ...WRITE, ...headers }, body });
-    return { store, post };
+    return { store, post, program };
   };
   const own = await build();
   const member = await own.post({ repo: 'o/r', on: true }, MEMBER());
@@ -448,6 +448,13 @@ test('behind a hosting proxy only an owner, or whom the program\'s reviewKeeping
   assert.equal(owner.status, 200);
   assert.equal(owner.body.changed, true);
   assert.equal(own.store.state.keptReviews['o/r'].by, 'ana-owner');
+  // The owner role was just read, and so cached: a demotion right after still refuses, since the list is read again.
+  own.program.people.find((p) => p.login === 'ana-owner').role = 'member';
+  assert.equal((await own.post({ repo: 'o/r', on: false }, OWNER())).status, 403, 'demoted since the last read');
+  own.program.people.find((p) => p.login === 'ana-owner').role = 'owner';
+  own.program.list = async () => { throw new Error('the program is down'); };
+  assert.equal((await own.post({ repo: 'o/r', on: false }, OWNER())).status, 403, 'a list that cannot be read refuses');
+  assert.ok(own.store.state.keptReviews['o/r'], 'still kept after both refusals');
 
   const asked = [];
   const kept = new Map();

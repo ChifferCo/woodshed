@@ -101,7 +101,11 @@ export function createReviewReadiness({ publicUrl, reviewer, ownReviewer, appLog
         console.log('reviewReadiness: kept review refused, not someone who may change it', { login, repo: project.repo });
         throw Object.assign(new Error(`only an owner of this console may turn ${project.repo}'s review on or off here`), { refused: true });
       }
-      const before = await keptReviews.of(project.repo).catch(() => undefined);
+      const before = await keptReviews.of(project.repo).catch((err) => {
+        // Not knowing what is kept, a bare enable would replace a team's tag with the default: only an asked-for change goes on.
+        if (on && rerun === undefined) throw err;
+        return undefined;
+      });
       // No tag asked for keeps the one already kept, so enabling again never undoes a team's choice.
       const tag = rerun !== undefined ? rerun : before ? before.review.rerun : KEPT_RERUN;
       const same = on ? before?.review.rerun === tag : before === null;

@@ -238,18 +238,18 @@ export async function setupCommand(args, ctx) {
           report('repo-review', 'skipped', `${levels} This console is from before it could keep a repo’s review on: in a checkout of ${repo}, run ${command('review', 'enable', '--commit')} and open a pull request for .woodshed/project.yaml.`, { repo });
           continue;
         }
+        // The repo's own project file reviews another way (GitHub Actions), and wins: its review is on already, and only
+        // a pull request changes it, so setup goes on.
+        const runner = info?.console?.review?.runner;
+        if (runner && runner !== 'woodshed' && review.code !== EXIT.refused) {
+          const warnings = Array.isArray(info.warnings) ? info.warnings.map(printable).filter(Boolean) : [];
+          report('repo-review', 'done', `${levels} ${repo}'s own project file reviews ${runner === 'actions' ? 'in GitHub Actions' : 'its own way'}, which it keeps. ${warnings.join(' ')}`.trim(), { repo });
+          continue;
+        }
         if (review.code === EXIT.waiting && Array.isArray(info?.missing) && info.missing.length) {
           const url = linkTo(info.console?.reviewerApp?.installUrl, origin, true);
           const steps = info.missing.map((item) => printable(item?.step)).filter(Boolean);
           return stop('repo-review', EXIT.waiting, `${levels} ${steps.join(' ')} Then run setup again.`, { repo, ...(url ? { url } : {}) });
-        }
-        // The repo's own project file reviews another way (GitHub Actions), and wins: its review is on already, and only
-        // a pull request changes it, so setup goes on.
-        const runner = info?.console?.review?.runner;
-        if (review.code === EXIT.waiting && runner && runner !== 'woodshed') {
-          const warnings = Array.isArray(info.warnings) ? info.warnings.map(printable).filter(Boolean) : [];
-          report('repo-review', 'done', `${levels} ${repo}'s own project file reviews ${runner === 'actions' ? 'in GitHub Actions' : 'its own way'}, which it keeps. ${warnings.join(' ')}`.trim(), { repo });
-          continue;
         }
         if (review.code !== EXIT.done || !info) {
           const reason = printable(info?.console?.defaultBranch?.error) || printable(info?.unasked);

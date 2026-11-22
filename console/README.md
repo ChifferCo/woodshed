@@ -1015,10 +1015,12 @@ request to merge: `woodshed review enable` and `disable` (cli/README.md, "Review
 what the GET is: a repo the asker may start sessions on, write access asked of GitHub on each call, and from the
 command line's token or a page's write (`x-woodshed`, same origin) alone; any other repo changes nothing and is told
 nothing. Behind a hosting proxy, where nobody's GitHub write access is asked, only someone the program's
-`reviewKeeping.mayChange` allows, or else an owner on its People list, changes it; anyone else is answered 403
-(`reviewReadiness: kept review refused, not someone who may change it`). `rerun` is the tag a commit's message carries
+`reviewKeeping.mayChange` allows, or else an owner on its People list as read again for the call (a list that cannot be
+read refuses: `reviewReadiness: the program's list not read, the change refused`), changes it; anyone else is answered
+403 (`reviewReadiness: kept review refused, not someone who may change it`). Removing the repo on Console settings
+takes its kept review off too (`keptReview: turned off`), so adding it back starts with none. `rerun` is the tag a commit's message carries
 to be reviewed (null, every commit; left out, the tag already kept, else `[woodshed-review]`, so enabling again never
-undoes a team's choice). It answers as the GET does, with `changed`. The fleet runs a repo's pull requests by its project file's gates
+undoes a team's choice; a bare enable while what is kept cannot be read is answered 502, rather than replace it). It answers as the GET does, with `changed`. The fleet runs a repo's pull requests by its project file's gates
 with the kept review filled in where the file names no `review` or there is no file (`withKeptReview`, read by
 `gatesOf` in `installation.mjs`, so the review on the tag, QA's wait and the Slack post all see it): the file's own
 `review`, on any runner, wins, and the kept one is the review alone (QA, `suites`, `mergeRisk` and `runsOn` stay the

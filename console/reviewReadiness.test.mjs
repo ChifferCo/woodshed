@@ -251,6 +251,9 @@ test('a tag left out keeps the one already kept; mayChange refuses before anythi
     pullRequestsOf: async () => null, keptReviews, mayChange: async (login, project) => { assert.equal(project.repo, 'acme/game'); return allowed; },
   });
   await assert.rejects(hosted.keep('acme/game', { projects: PROJECTS, login: 'sam', on: false }), (err) => err.refused && /only an owner of this console/.test(err.message));
+  const unread = { of: async () => { throw new Error('store down'); }, set: async () => assert.fail('nothing changes while the kept tag is unknown') };
+  const blind = readinessFor('installed', { keptReviews: unread, from: 'none' });
+  await assert.rejects(blind.keep('acme/game', { projects: PROJECTS, login: 'bob', on: true }), /store down/, 'a bare enable does not replace a tag it could not read');
   assert.ok(store.state.keptReviews['acme/game'], 'still kept');
   allowed = true;
   assert.equal((await hosted.keep('acme/game', { projects: PROJECTS, login: 'sam', on: false })).changed, true);
