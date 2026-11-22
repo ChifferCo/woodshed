@@ -470,6 +470,7 @@
       h('button', { type: 'button', class: 'btn btn-plain btn-sm', onclick: edit }, 'Rename'));
     const el = h('div', { class: 'rename-offer', role: 'dialog', 'aria-label': 'Rename this session' },
       body,
+      lifetimePick(s),
       h('button', { type: 'button', class: 'rename-offer-close', 'aria-label': 'Close', title: 'Keep this name', onclick: (e) => { e.stopPropagation(); closeRenameOffer(); } }, '\u00d7'),
       h('span', { class: 'rename-offer-timer', 'aria-hidden': 'true', style: `animation-duration: ${RENAME_OFFER_MS}ms` }));
     el.addEventListener('pointerdown', keep);
@@ -482,6 +483,43 @@
     document.body.append(el);
     offer = { id: s.id, el, name, kept: false, editing: false, timer: setTimeout(closeRenameOffer, RENAME_OFFER_MS) };
     placeRenameOffer();
+  }
+
+  // The offer's other question, while the session is new: how long it runs before it stops by itself (its own
+  // `lifetimeHours`, as Pause and stop… sets it). Offered to whoever may change it (W.ownsLimits); the first option is
+  // what it runs on otherwise, and a pick is saved at once.
+  const LIFETIME_PICKS = [1, 2, 4, 8, 12, 24];
+  function lifetimePick(s) {
+    if (s.kind === 'ask' || !data || !W.ownsLimits(s, data)) return null;
+    const fallback = (s.owner && data.myLifetimeHours) || data.lifetimeHours;
+    const own = s.limits?.lifetimeHours ?? null;
+    const hoursShort = (n) => `${n} h`;
+    const picks = [...new Set([...LIFETIME_PICKS, ...(own ? [own] : [])])].sort((a, b) => a - b);
+    const select = h('select', { class: 'field rename-offer-ttl-pick', 'aria-label': 'Stop it after' },
+      h('option', { value: '' }, fallback ? `${hoursShort(fallback)} (usual)` : 'Usual'),
+      ...picks.map((n) => h('option', { value: String(n) }, hoursShort(n))));
+    select.value = own ? String(own) : '';
+    let saved = select.value;
+    select.addEventListener('change', async () => {
+      const lifetimeHours = select.value ? Number(select.value) : null;
+      select.disabled = true;
+      try {
+        // The session's own idle pause stays as it is: a key left out would go back to the usual.
+        await W.postJson(`/api/sessions/${s.id}/limits`, { idleHours: currentSession?.limits?.idleHours ?? s.limits?.idleHours ?? null, lifetimeHours });
+        saved = select.value;
+        W.shell.toast(`Stops after ${hoursText(lifetimeHours ?? fallback)} of running`);
+        refresh();
+      } catch (err) {
+        select.value = saved;
+        W.shell.toast(`Not saved: ${err.message}`, { ms: 6000 });
+      }
+      select.disabled = false;
+    });
+    return h('label', { class: 'rename-offer-ttl', title: 'How long it runs before it stops by itself. It tries to push its work first, and Resume picks it up.' },
+      h('span', null, 'Stops after'), select);
+  }
+  function hoursText(n) {
+    return `${n} ${n === 1 ? 'hour' : 'hours'}`;
   }
 
   const STAR = 'M5 1.1 L5.99 3.94 L8.99 4 L6.6 5.82 L7.47 8.7 L5 6.98 L2.53 8.7 L3.4 5.82 L1.01 4 L4.01 3.94 Z';
