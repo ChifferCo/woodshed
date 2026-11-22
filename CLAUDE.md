@@ -1135,6 +1135,11 @@ avatar menu shows over the installation's `WOODSHED_ACTIONS_WORKFLOWS` (Run infr
 (`scripts/devReviewerConsole.mjs`), for `woodshed review enable` and `status` from a checkout of
 `example-org/example-repo`: no reviewer App, one not installed there, or one installed. Its default branch's project
 file, from the stand-in `gh`, has no review.
+`DEV_CONSOLE_REVIEW_ON=1` (with `DEV_CONSOLE_REVIEWER=installed`, and `DEV_CONSOLE_REPO_SETTINGS=1` for a secret store
+that keeps a made-up Claude token and Codex key) turns review on in `example-org/example-repo`'s default branch, and
+gives @local three open pull requests there from the stand-in `gh`, for `woodshed review pulls|start` and `woodshed
+setup`'s reviews. A review started on one queues and never runs: no session image runs here. @local needs Sessions from
+GitHub on People (on for everyone on a hosted console) for a review to use their own sign-ins.
 `DEV_CONSOLE_REVIEW_PR=1` makes `/s/beadfeed` @local's own My Woodshed session whose branch has a made-up open pull
 request, #26701, answered by a stand-in `gh` (`console/bin/devReviewGh.mjs`), for `woodshed review beadfeed` and the
 review's comment, verdict, rename and merge (cli/README.md, "Reviewing a session on this terminal").
