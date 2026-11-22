@@ -2810,6 +2810,41 @@ test('the review tag on the head starts a review session, once for the commit, o
   assert.deepEqual(await actions.fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'the actions runner stays in CI');
 });
 
+test('a review its author asks for starts on the head now, tag or not, and only on their own open pull request', async () => {
+  const project = { name: 'r', repo: 'o/r', default: true };
+  const { fleet, github } = reviewSetup();
+  github.commitMessage = async () => 'No tag here';
+  const started = await fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
+  assert.equal(started.outcome, 'started');
+  const [session] = fleet.sessions();
+  assert.deepEqual([session.id, session.trigger, session.review.sha], [started.sessionId, 'review', 'a'.repeat(40)]);
+  assert.deepEqual(await fleet.reviewOnDemand({ project, number: 7, login: 'joel' }), { outcome: 'running', sessionId: session.id }, 'its head is being reviewed');
+  assert.equal(fleet.sessions().length, 1);
+
+  const someoneElse = await fleet.reviewOnDemand({ project, number: 7, login: 'mia' });
+  assert.deepEqual([someoneElse.outcome, someoneElse.status], ['refused', 403]);
+  assert.match(someoneElse.reason, /not your pull request/);
+
+  const draft = reviewSetup();
+  draft.github.pull = async () => ({ ...REVIEW_PULL, draft: true });
+  assert.deepEqual(await draft.fleet.reviewOnDemand({ project, number: 7, login: 'joel' }), { outcome: 'refused', status: 409, reason: '#7 is a draft: mark it ready for review first' });
+
+  const missing = reviewSetup();
+  missing.github.pull = async () => { throw new Error('gh: Not Found (HTTP 404)'); };
+  assert.equal((await missing.fleet.reviewOnDemand({ project, number: 7, login: 'joel' })).status, 404);
+
+  const actions = setup({ gates: { ...REVIEW_GATES, review: { ...REVIEW_GATES.review, runner: 'actions' } } });
+  actions.github.pull = async () => REVIEW_PULL;
+  const off = await actions.fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
+  assert.deepEqual([off.outcome, off.status], ['refused', 409]);
+  assert.match(off.reason, /^review is not on for o\/r/);
+  assert.equal(actions.fleet.sessions().length, 0);
+
+  const none = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: [], choice: 'none', why: null }) } });
+  const chose = await none.fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
+  assert.deepEqual(chose, { outcome: 'refused', status: 409, reason: 'the author chose no code review' });
+});
+
 test('a review runs whom its author chose, and says so on the pull request', async () => {
   const both = { forReview: async () => ({ agents: ['claude', 'codex'], why: null }) };
   const { fleet, calls } = reviewSetup({ reviewAgents: both });

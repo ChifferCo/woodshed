@@ -2243,6 +2243,47 @@ export function createFleet({
     return startReview({ project, gates, number, login: owner.login, owner, pull });
   }
 
+  /**
+   * A review its author asks for (`woodshed review start`, POST /api/my/pulls/<number>/review): the same review
+   * session a tagged commit starts (reviewOnTag), on the pull request's head as it is now, tag or not. Only the author
+   * may ask, since it runs on their own sign-ins and their choice on My settings, and only where the project's review
+   * runs in a session. A head a review session already reviewed, or is reviewing, answers with that session.
+   * @param {{project: object, number: number, login: string}} args
+   * @returns {Promise<{outcome: 'started'|'running'|'reviewed', sessionId: string}|{outcome: 'refused', status: number, reason: string}>}
+   */
+  async function reviewOnDemand({ project, number, login }) {
+    const refused = (status, reason) => {
+      console.log('fleet: review asked for, refused', { number, login, reason, ...projectField(project) });
+      return { outcome: 'refused', status, reason };
+    };
+    const gates = await pullRequests(project.name);
+    if (gates?.review?.runner !== 'woodshed') {
+      return refused(409, `review is not on for ${project.repo}: its default branch's .woodshed/project.yaml has no pullRequests.review with runner: woodshed`);
+    }
+    const gh = githubOf(project);
+    let pull;
+    try {
+      pull = await gh.pull(number);
+    } catch (err) {
+      return refused(/\b404\b|Not Found/.test(firstLine(err)) ? 404 : 502, `pull request #${number} on ${project.repo} was not read: ${firstLine(err)}`);
+    }
+    if (!pull?.head?.sha) return refused(404, `no pull request #${number} on ${project.repo}`);
+    const owner = pullOwner(project, pull, number);
+    if (owner.login !== login) return refused(403, `#${number} is not your pull request: only its author asks for its review, which runs on their sign-ins`);
+    if (pull.state !== 'open') return refused(409, `#${number} is not open`);
+    if (pull.draft) return refused(409, `#${number} is a draft: mark it ready for review first`);
+    const done = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.sha === pull.head.sha).at(-1);
+    if (done) {
+      const outcome = ACTIVE_STATUSES.has(done.status) ? 'running' : 'reviewed';
+      console.log('fleet: review asked for', { number, login, outcome, id: done.id, ...projectField(project) });
+      return { outcome, sessionId: done.id };
+    }
+    const started = await startReview({ project, gates, number, login, owner, pull });
+    if (started.outcome !== 'started') return refused(409, started.reason);
+    console.log('fleet: review asked for', { number, login, outcome: 'started', id: started.sessionId, ...projectField(project) });
+    return started;
+  }
+
   // The review runs as a session (pullRequests.review.runner: woodshed) instead of the Actions workflow: the
   // `[woodshed-review]` tag on the head commit starts it, session/review.sh runs the review, and the console submits
   // the verdict and the Merge risk check here (reviewFinished), as its own App. One review session per commit.
@@ -2797,7 +2838,7 @@ export function createFleet({
 
   return {
     createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
-    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
+    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),
   };

@@ -20,7 +20,7 @@ const git = (dir, ...args) => execFileSync('git', ['-C', dir, ...args], { stdio:
 // A console with the command line's sign-in and a reviewer App in `state.reviewer` ('none', 'made' or 'installed'),
 // whose default branch's project file is `state.gates`; a checkout of acme/game; and bob signed in on this computer.
 async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin = 'https://github.com/acme/game.git' } = {}) {
-  const state = { reviewer: 'installed', gates: null, runsOn: null, gatesError: null };
+  const state = { reviewer: 'installed', gates: null, runsOn: null, gatesError: null, pulls: [], asked: [], reviews: {} };
   const reviewer = {
     login: () => (state.reviewer === 'none' ? null : 'acme-reviewer[bot]'),
     configured: () => state.reviewer !== 'none',
@@ -38,7 +38,16 @@ async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin
   const config = { host: '127.0.0.1', publicUrl: origin, extraHosts: [], repo: 'acme/game', label: 'woodshed', consoleName: 'Acme', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
   const auth = { enabled: () => true, available: () => true, sessionFor: async () => null };
   handle = createHandler({
-    config, fleet: { sessions: () => [], find: () => null }, auth, cli,
+    config, auth, cli,
+    // woodshed review start's: what the fleet answers for each number (reviewOnDemand), and the pull requests GitHub lists.
+    fleet: {
+      sessions: () => [], find: () => null,
+      reviewOnDemand: async ({ project, number, login }) => {
+        state.asked.push({ project: project.name, number, login });
+        return state.reviews[number] ?? { outcome: 'started', sessionId: String(number).padStart(8, '0') };
+      },
+    },
+    github: { openPullsFor: async () => state.pulls },
     reviewReadiness: createReviewReadiness({
       publicUrl: origin, reviewer, ownReviewer: true, appLogin: async () => 'acme-woodshed[bot]', pullRequestsOf: async () => { if (state.gatesError) throw new Error(state.gatesError); return state.gates; },
       canWrite: async (login) => { if (state.writeError) throw new Error(state.writeError); return login === 'bob'; },
@@ -300,4 +309,45 @@ test('status is 1, not 2, when the console answered with a failure', async (t) =
   assert.match(run.out, /Console: not asked: .* answered 502: the console could not tell: GitHub did not answer/);
   const enable = await s.run(['review', 'enable']);
   assert.equal(enable.code, EXIT.failed);
+});
+
+test('review pulls lists your open pull requests on the repo, and whether its review is on', async (t) => {
+  const s = await setup(t);
+  s.state.gates = { review: { runner: 'woodshed', rerun: '[woodshed-review]', heading: 'Code review' } };
+  s.state.pulls = [
+    { number: 12, title: 'Fix the redirect', branch: 'fix', why: 'yours', draft: false, updatedAt: '2026-11-20T10:00:00Z' },
+    { number: 11, title: 'WIP', branch: 'wip', why: 'yours', draft: true, updatedAt: '2026-11-19T10:00:00Z' },
+    { number: 10, title: 'Someone else\'s', branch: 'x', why: 'review', draft: false, updatedAt: '2026-11-18T10:00:00Z' },
+  ];
+  const run = await s.run(['review', 'pulls', '--json']);
+  assert.equal(run.code, EXIT.done, run.err + run.out);
+  const [listed] = run.lines;
+  assert.deepEqual(listed.review, { on: true, rerun: '[woodshed-review]', known: true });
+  assert.deepEqual(listed.pulls.map((p) => [p.number, p.draft, p.url]), [[12, false, 'https://github.com/acme/game/pull/12'], [11, true, 'https://github.com/acme/game/pull/11']]);
+  const text = await s.run(['review', 'pulls']);
+  assert.match(text.out, /Review on acme\/game: on, on commits tagged \[woodshed-review\]\./);
+  assert.match(text.out, /Review them now: woodshed review start 12 --repo acme\/game/);
+  for (const call of s.sent) assert.ok(!('origin' in call.headers));
+});
+
+test('review start asks the console to review each pull request now, and names its link', async (t) => {
+  const s = await setup(t);
+  s.state.reviews[9] = { outcome: 'refused', status: 409, reason: '#9 is a draft: mark it ready for review first' };
+  s.state.reviews[8] = { outcome: 'reviewed', sessionId: 'abcdef08' };
+  const run = await s.run(['review', 'start', '12', '#9', 'https://github.com/acme/game/pull/8', '--json']);
+  assert.equal(run.code, EXIT.refused, run.err + run.out);
+  assert.deepEqual(s.state.asked, [12, 9, 8].map((number) => ({ project: 'game', number, login: 'bob' })));
+  assert.deepEqual(run.lines.map((l) => [l.number, l.outcome, l.session?.url ?? l.error]), [
+    [12, 'started', `${s.origin}/s/00000012`],
+    [9, 'refused', '#9 is a draft: mark it ready for review first'],
+    [8, 'reviewed', `${s.origin}/s/abcdef08`],
+  ]);
+  const off = await s.run(['review', 'start', '7', '--repo', 'acme/other']);
+  assert.equal(off.code, EXIT.refused);
+  assert.match(off.err, /acme\/other is not one of .* repos you can start sessions on\. Yours: acme\/game/);
+  s.state.reviews[6] = { outcome: 'refused', status: 409, reason: 'review is not on for acme/game: its default branch\'s .woodshed/project.yaml has no pullRequests.review with runner: woodshed' };
+  const waiting = await s.run(['review', 'start', '6']);
+  assert.equal(waiting.code, EXIT.waiting);
+  assert.match(waiting.out, /#6: not started: review is not on for acme\/game/);
+  await assert.rejects(s.run(['review', 'start']).then((r) => { if (r.code) throw new Error(r.err); }), /needs a pull request/);
 });

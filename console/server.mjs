@@ -28,6 +28,8 @@
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
 //   POST /api/my/remove          {"confirm": "<your login>"}  Remove My Woodshed: stops your sessions, deletes your settings
 //   GET  /api/my/pulls           your open pull requests on every repo you may start on, and those waiting on your review, for the rail
+//   POST /api/my/pulls/<number>/review {"project": "<name>"}   the console's review of your own open pull request, now
+//                                (fleet.mjs reviewOnDemand): 201 started, 200 already running or done on its head commit
 //   GET  /api/my/files/<key>     tmux-conf: the image's tmux.conf, and your own lines added after it; gitconfig, inputrc,
 //                                bash-aliases: your own lines for those (shared/dotfiles.mjs)
 //   POST /api/my/files/<key> {"text": "..."}   your own lines, for your next sessions; empty clears them
@@ -325,6 +327,7 @@ const PULLS_FRESH_MS = 60_000;
 const MY_FILE_RE = /^\/api\/my\/files\/([a-z-]+)(\/reset)?$/;
 const MY_GITHUB_RE = /^\/api\/my\/github\/(identity|disconnect)$/;
 const MY_SESSION_ACTION_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/(resume|remove)$/;
+const MY_PULL_REVIEW_RE = /^\/api\/my\/pulls\/([1-9][0-9]{0,8})\/review$/;
 const MY_TUNNEL_RE = /^\/api\/my\/tunnel-token(\/remove)?$/;
 const MY_CLI_REVOKE_RE = /^\/api\/my\/cli-tokens\/([0-9a-f]{16})\/revoke$/;
 const MY_RESTORE_RE = /^\/api\/my\/databases\/restore\/(apply|discard)$/;
@@ -2118,6 +2121,25 @@ export function createHandler({
     return { available, own, best, choice: userSettings?.reviewAgents(login) ?? null };
   }
 
+  // `woodshed review start`: the console's review of one of the person's own open pull requests, now (fleet.mjs,
+  // reviewOnDemand). The project is one they may start sessions on, which asks GitHub for their write access to its repo.
+  async function myPullReviewWrite(req, res, number, login) {
+    if (!login) return reply(res, 409, { error: 'a review asked for by hand needs GitHub sign-in, which this console does not have' });
+    if (!fleet.reviewOnDemand) return reply(res, 404, { error: 'this console cannot start a review by hand' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    if (body?.project != null && typeof body.project !== 'string') return reply(res, 400, { error: 'project must be a project\'s name' });
+    const project = projectAccess ? await projectAccess.forStart(login, body?.project) : defaultProject(config);
+    if (!project) return reply(res, 403, { error: `you cannot start sessions on a project named ${String(body?.project ?? '').slice(0, 40)}: it is not one of this console's, or you have no write access to its repo` });
+    const result = await fleet.reviewOnDemand({ project, number, login });
+    if (result.outcome === 'refused') return reply(res, result.status, { error: result.reason });
+    return reply(res, result.outcome === 'started' ? 201 : 200, { outcome: result.outcome, sessionId: result.sessionId, project: project.name, repo: project.repo, number });
+  }
+
   async function myReviewsWrite(req, res, login) {
     if (!login) return reply(res, 409, { error: 'My Woodshed needs GitHub sign-in, which this console does not have' });
     if (!userSettings) return reply(res, 409, { error: 'this console has no secret store, so My settings cannot be saved' });
@@ -2357,6 +2379,8 @@ export function createHandler({
     const slackWrite = SLACK_SETUP_WRITE_RE.exec(pathname);
     if (slackWrite) return slackSetupWrite(req, res, slackWrite[1] ?? null, login);
     if (pathname === '/api/my/reviews') return myReviewsWrite(req, res, login);
+    const pullReview = MY_PULL_REVIEW_RE.exec(pathname);
+    if (pullReview) return myPullReviewWrite(req, res, Number(pullReview[1]), login);
     if (pathname === '/api/my/terminal') return myTerminalWrite(req, res, login);
     if (pathname === MY_SESSION_VIEW_PATH) return mySessionViewWrite(req, res, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH || pathname === PROJECT_TRIGGERS_PATH) return consoleSettingsWrite(req, res, pathname, login);

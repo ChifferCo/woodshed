@@ -7,16 +7,23 @@ import { CONFIG_KEYS, CONFIG_UNAVAILABLE } from './config.mjs';
 import { ORIGIN_RE } from './credentials.mjs';
 import { repoOf } from '../shared/repoOf.mjs';
 
+// With --yes, setup reviews this many of the person's open pull requests, the ones updated last: enough to see reviews
+// work on their own code, without spending their plan on a long tail of old branches.
+export const REVIEW_PRS_DEFAULT = 5;
+
 export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--no-browser] [options]
 
   --yes                  use the supplied options without asking questions
   --repo <owner/name>    choose a repository (repeatable, first is used for the session)
   --repo-dir <path>      local checkout for review enable (repeatable, keyed by GitHub origin)
+  --agent <name>         claude or codex, when you use only one: else setup asks for both, and your pull requests
+                         get reviews from both
   --reviews <choice>     personal reviewer choice: none, claude, codex, both, default
-  --skip-reviews         skip both the project file and your reviewer choice
-  --agent <name>         claude or codex (defaults to one already signed in)
-  --terminal <name>      agent terminal for new private sessions: herdr or tmux
-  --prompt <text>        what the first session should work on
+  --review-prs <which>   the open pull requests of yours to review now: all, none, or numbers separated by commas
+                         (with --yes and no --review-prs: the ${REVIEW_PRS_DEFAULT} updated last)
+  --skip-reviews         skip the project file, your reviewer choice and reviews of your pull requests
+  --terminal <name>      optional: agent terminal for new private sessions, herdr or tmux
+  --prompt <text>        optional: start a first coding session on this
   --no-session           finish without starting a session
 
 When you need to do something, setup prints what is needed and exits 2. Run it again with the same options after that.`;
@@ -24,6 +31,13 @@ When you need to do something, setup prints what is needed and exits 2. Run it a
 const REPO = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\/(?!\.{1,2}$)[\w.-]+$/i;
 const REVIEW_CHOICES = ['none', 'claude', 'codex', 'both', 'default'];
 const TERMINAL_CHOICES = CONFIG_KEYS.terminal.values;
+const AGENT_NAMES = { claude: 'Claude Code', codex: 'Codex' };
+// What My settings takes for each (console/public/mySettings.js): setup never handles a token itself.
+const AGENT_HOW = {
+  claude: 'For Claude Code, run claude setup-token and paste the token it prints under Claude',
+  codex: 'For Codex, run codex login, then paste all of ~/.codex/auth.json (or an OpenAI API key, sk-…) under Codex',
+};
+const REVIEW_PRS_RE = /^(?:all|none|#?[1-9][0-9]{0,8}(?:\s*,\s*#?[1-9][0-9]{0,8})*)$/i;
 const key = (repo) => repo.toLowerCase();
 
 function options(args, fail) {
@@ -34,7 +48,7 @@ function options(args, fail) {
       out[name] = true;
       continue;
     }
-    if (!['--repo', '--repo-dir', '--reviews', '--agent', '--terminal', '--prompt'].includes(name)) throw fail(`Unknown setup option ${name}. Run woodshed setup --help.`);
+    if (!['--repo', '--repo-dir', '--reviews', '--review-prs', '--agent', '--terminal', '--prompt'].includes(name)) throw fail(`Unknown setup option ${name}. Run woodshed setup --help.`);
     const value = inline ?? args[++i];
     if (!value?.trim() || (inline === undefined && value.startsWith('--'))) throw fail(`${name} needs a value.`);
     if (name === '--repo') {
@@ -47,6 +61,8 @@ function options(args, fail) {
   if (out['--agent'] && !['claude', 'codex'].includes(out['--agent'])) throw fail('--agent must be claude or codex.');
   if (out['--terminal'] && !TERMINAL_CHOICES.includes(out['--terminal'])) throw fail('--terminal must be herdr or tmux.');
   if (out['--skip-reviews'] && out['--reviews']) throw fail('Choose either --reviews or --skip-reviews.');
+  if (out['--review-prs'] && !REVIEW_PRS_RE.test(out['--review-prs'].trim())) throw fail('--review-prs must be all, none, or pull request numbers separated by commas.');
+  if (out['--skip-reviews'] && out['--review-prs']) throw fail('Choose either --review-prs or --skip-reviews.');
   if (out['--no-session'] && out['--prompt']) throw fail('Choose either --prompt or --no-session.');
   return out;
 }
@@ -161,7 +177,10 @@ export async function setupCommand(args, ctx) {
   const has = (name) => new RegExp(`^ {2}${name}\\b`, 'm').test(help.stdout);
 
   let selected = opts.repos;
-  const resume = () => selected.length ? `rerun setup with ${selected.map((name) => `--repo ${name}`).join(' ')}` : 'run setup again';
+  const resume = (...more) => {
+    const flags = [...selected.map((name) => `--repo ${name}`), ...more].join(' ');
+    return flags ? `rerun setup with ${flags}` : 'run setup again';
+  };
   if (!has('repo')) {
     report('repos', 'skipped', 'This CLI has no repo command yet. Choose repos in the console or use a CLI with repo list and repo add.', { url: `${origin}/console-settings` });
   } else {
@@ -199,43 +218,40 @@ export async function setupCommand(args, ctx) {
     report('repos', 'done', `Selected ${selected.join(', ')}. Repos: ${show}.`, { selected });
   }
 
+  // Reviews from Claude Code and Codex are what setup gives first: on a console with no team keys they run on the pull
+  // request's author's own Claude token and Codex sign-in (console/reviewAgents.mjs), so setup asks for both, unless the
+  // person says they use only one.
   const signIns = me.sessionSignIns;
-  const agent = opts['--agent'] ?? (signIns?.codex && !signIns?.claude ? 'codex' : 'claude');
+  let wanted = opts['--agent'] ? [opts['--agent']] : ['claude', 'codex'];
   if (!signIns) {
-    report('agent', 'skipped', 'This console does not report agent sign-ins. You can check on My settings.', { url: `${origin}/settings` });
-  } else if (signIns[agent] !== true) {
-    const url = `${origin}/settings`;
-    if (args.browser) open(url);
-    return stop('agent', EXIT.waiting, `Connect ${opts['--agent'] ?? 'Claude or Codex'} on My settings, then ${resume()}.`, { url });
+    report('agent', 'skipped', 'This console does not report agent sign-ins. Connect Claude Code and Codex on My settings.', { url: `${origin}/settings` });
   } else {
-    report('agent', 'done', `${agent === 'claude' ? 'Claude' : 'Codex'} is connected for sessions.`, { agent });
+    let missing = wanted.filter((name) => signIns[name] !== true);
+    if (missing.length && !opts['--agent'] && choose) {
+      const have = wanted.filter((name) => signIns[name] === true).map((name) => AGENT_NAMES[name]);
+      const intro = `Connect Claude Code and Codex: with both connected, your pull requests get reviews from both.${have.length ? ` ${have[0]} is connected.` : ''}`;
+      if (args.json) ctx.stderr.write(`${intro}\n`);
+      else say(intro);
+      const answer = (await choose('Use both? Press Enter for both, or type claude or codex if you use only one. ') ?? '').toLowerCase();
+      if (answer === 'claude' || answer === 'codex') wanted = [answer];
+      else if (answer && answer !== 'both') return stop('agent', EXIT.waiting, 'Answer both, claude or codex, or rerun setup with --agent claude or --agent codex.');
+      missing = wanted.filter((name) => signIns[name] !== true);
+    }
+    if (missing.length) {
+      const url = `${origin}/settings`;
+      if (args.browser) open(url);
+      const both = wanted.length === 2;
+      const why = both ? ': with both connected, your pull requests get reviews from both' : '';
+      const onlyOne = both ? ' Use only one? Rerun setup with --agent claude or --agent codex.' : '';
+      const again = resume(...(!both && !opts['--agent'] ? [`--agent ${wanted[0]}`] : []));
+      return stop('agent', EXIT.waiting, `Connect ${missing.map((name) => AGENT_NAMES[name]).join(' and ')} on My settings${why}. ${missing.map((name) => AGENT_HOW[name]).join('. ')}.${onlyOne} Then ${again}.`, { url, wanted, missing });
+    }
+    const names = wanted.map((name) => AGENT_NAMES[name]).join(' and ');
+    report('agent', 'done', `${names} ${wanted.length === 2 ? 'are' : 'is'} connected: your pull requests get reviews from ${wanted.length === 2 ? 'both' : names}.`, { agent: wanted[0], wanted });
   }
+  const agent = opts['--agent'] ?? (signIns?.codex && !signIns?.claude ? 'codex' : 'claude');
 
   const canConfig = has('config');
-  const canAttach = me.hc?.ok === true && ctx.platform !== 'win32';
-  let terminal = opts['--terminal'];
-  const checkTerminal = canConfig && (choose || terminal || (canAttach && !opts['--no-session']));
-  const currentTerminal = checkTerminal ? await call('config get terminal', 'config', 'get', 'terminal') : null;
-  if (!canConfig || currentTerminal?.error?.status === CONFIG_UNAVAILABLE) {
-    const reason = canConfig ? 'This console has no CLI settings endpoint.' : 'This CLI has no config command.';
-    const fields = { url: `${origin}/settings` };
-    if (terminal) return stop('terminal', EXIT.waiting, `${reason} Choose ${terminal} on My settings, then rerun setup without --terminal.`, fields);
-    report('terminal', 'skipped', `${reason} Set your agent terminal on My settings.`, fields);
-  } else if (currentTerminal) {
-    const prior = currentTerminal.last?.value;
-    if (currentTerminal.code !== EXIT.done || !TERMINAL_CHOICES.includes(prior)) return childError('terminal', currentTerminal, 'Could not read your agent terminal preference.');
-    if (!terminal && choose) {
-      const answer = await choose(`Use Herdr or tmux for agents in new private sessions? Enter keeps ${prior}. `);
-      terminal = answer === '' ? prior : answer?.toLowerCase();
-      if (!TERMINAL_CHOICES.includes(terminal)) return stop('terminal', EXIT.waiting, `Choose --terminal herdr or --terminal tmux. Current choice is ${prior}.`);
-    }
-    terminal ??= prior;
-    if (terminal !== prior) {
-      const set = await call('config set terminal', 'config', 'set', 'terminal', terminal);
-      if (set.code !== EXIT.done) return childError('terminal', set, 'Could not save your agent terminal preference.');
-    }
-    report('terminal', 'done', `New private sessions will run their agents in ${terminal === 'herdr' ? 'Herdr' : 'tmux'}.`, { terminal });
-  }
 
   if (opts['--skip-reviews']) {
     report('reviews', 'skipped', 'You chose to skip review setup.');
@@ -298,52 +314,150 @@ export async function setupCommand(args, ctx) {
     }
   }
 
-  if (opts['--no-session']) {
-    report('session', 'skipped', 'You chose to finish without starting a session.');
-    return EXIT.done;
-  }
-  const repo = selected[0];
-  const list = await call('session list', 'session', 'list');
-  if (list.code !== EXIT.done || !Array.isArray(list.last?.sessions)) return childError('session', list, 'Could not list sessions.');
-  // Setup is for a first environment. A retained or starting private session on this repo already fills that role.
-  // An explicitly failed or deleted one doesn't.
-  const existing = list.last.sessions.find((session) => session.mine === true && !['failed', 'deleted'].includes(session.stateWord) && session.state !== 'failed'
-    && (!repo || (typeof session.repo === 'string' && key(repo) === key(session.repo))));
-  if (existing) {
-    // A saved default is the console's project name. The session list identifies repos by GitHub owner/name.
-    if (!repo) return stop('session', EXIT.waiting, 'Rerun setup with --repo owner/name to check for an existing session on the repo you want.');
-    const url = linkTo(existing.url, origin);
-    if (existing.state === 'needs-you') return stop('session', EXIT.waiting, 'Your session needs your attention.', { url });
-    const more = opts['--prompt'] ? ' To start another session with your prompt, use woodshed session new.' : '';
-    report('session', 'done', `You already have a session on ${repo}.${more}`, { url });
-    return EXIT.done;
+  // The console's review of the person's open pull requests on each repo, now: what setup is for. The terminal and a
+  // first coding session after it are optional.
+  const reviewLinks = [];
+  if (opts['--skip-reviews'] || opts['--review-prs']?.trim().toLowerCase() === 'none') {
+    report('pr-reviews', 'skipped', opts['--skip-reviews'] ? 'You chose to skip reviews.' : 'You chose to review none of your pull requests now.');
+  } else if (!/\bpulls\|start\b/.test(help.stdout)) {
+    report('pr-reviews', 'skipped', 'This CLI cannot start reviews yet: update it, then run woodshed review start <pull request>.');
+  } else if (!selected.length) {
+    report('pr-reviews', 'skipped', `No repo chosen. To review a pull request of yours: ${command('review', 'start', '<number>', '--repo', 'owner/name')}.`);
+  } else {
+    for (const repo of selected) {
+      const listed = await call('review pulls', 'review', 'pulls', '--repo', repo);
+      const found = listed.events.find((event) => event.event === 'pulls');
+      if (listed.code !== EXIT.done || !Array.isArray(found?.pulls)) return childError('pr-reviews', listed, `Could not list your open pull requests on ${repo}.`, { repo });
+      const pulls = found.pulls.filter((p) => Number.isSafeInteger(p?.number));
+      const rerun = printable(found.review?.rerun);
+      if (found.review?.on !== true) {
+        report('pr-reviews', 'skipped', `Review is not on for ${repo} yet, so no review can start on your pull requests. Once it is: ${command('review', 'start', '<number>', '--repo', repo)}.`, { repo });
+        continue;
+      }
+      const next = `a review will start on your next one${rerun ? ` whose commit message has ${rerun}` : ''}`;
+      if (!pulls.length) {
+        report('pr-reviews', 'done', `You have no open pull requests on ${repo}: ${next}.`, { repo, reviews: [] });
+        continue;
+      }
+      const ready = pulls.filter((p) => p.draft !== true);
+      const shown = pulls.map((p) => `#${p.number}${p.draft ? ' (draft)' : ''} ${printable(p.title)}`).join('; ');
+      let which = opts['--review-prs']?.trim().toLowerCase();
+      let why = '';
+      if (!which && choose) {
+        const lines = [`Your open pull requests on ${repo}:`, ...pulls.map((p) => `  #${p.number}${p.draft ? ' (draft: reviewed once it is ready)' : ''}  ${printable(p.title)}`)];
+        if (args.json) ctx.stderr.write(`${lines.join('\n')}\n`);
+        else lines.forEach((line) => say(line));
+        const answer = await choose('Review which now? Press Enter for all of them, or give numbers separated by commas, or none. ');
+        which = answer === '' || answer === null ? 'all' : answer.trim().toLowerCase();
+        if (!REVIEW_PRS_RE.test(which)) return stop('pr-reviews', EXIT.waiting, `Answer all, none, or pull request numbers, or rerun setup with --review-prs. Yours: ${shown}.`, { repo });
+      }
+      if (!which && opts['--yes']) {
+        which = ready.slice(0, REVIEW_PRS_DEFAULT).map((p) => p.number).join(',');
+        if (ready.length > REVIEW_PRS_DEFAULT) why = ` The ${REVIEW_PRS_DEFAULT} updated last; --review-prs all reviews every one.`;
+      }
+      if (!which) {
+        return stop('pr-reviews', EXIT.waiting, `Choose which of your open pull requests on ${repo} to review now with --review-prs all, none, or their numbers. Yours: ${shown}.`, { repo, pulls });
+      }
+      const numbers = which === 'all' ? ready.map((p) => p.number) : which === 'none' ? [] : which.split(',').map((n) => Number(n.trim().replace(/^#/, '')));
+      if (!numbers.length) {
+        report('pr-reviews', 'skipped', which === 'none' ? `You chose to review none of your pull requests on ${repo} now.` : `Your open pull requests on ${repo} are drafts: each is reviewed once it is ready for review.`, { repo });
+        continue;
+      }
+      const started = await call('review start', 'review', 'start', ...numbers.map(String), '--repo', repo);
+      const reviews = started.events.filter((event) => event.event === 'review' && Number.isSafeInteger(event.number));
+      if (!reviews.length) return childError('pr-reviews', started, `Could not start reviews on ${repo}.`, { repo });
+      const links = reviews.filter((r) => r.outcome !== 'refused').map((r) => ({ number: r.number, url: linkTo(r.session?.url, origin), pullUrl: linkTo(r.pullUrl, origin, true) }));
+      const refused = reviews.filter((r) => r.outcome === 'refused').map((r) => `#${r.number}: ${printable(r.error)}`);
+      reviewLinks.push(...links.map((link) => ({ repo, ...link })));
+      const linkText = links.map((link) => `#${link.number} ${link.url ?? link.pullUrl}`).join(', ');
+      const refusedText = refused.length ? ` Not started: ${refused.join('; ')}.` : '';
+      if (!links.length) return stop('pr-reviews', started.code || EXIT.failed, `No review started on ${repo}.${refusedText}`, { repo });
+      report('pr-reviews', 'done', `Reviews started on ${repo}: ${linkText}. Each posts its verdict on the pull request; after that, ${next}.${why}${refusedText}`, { repo, reviews: links });
+    }
   }
 
-  const useHc = canAttach && (terminal === 'herdr' || !canConfig);
-  const newSession = ['session', 'new', ...(useHc ? ['--herdr'] : [])];
-  let prompt = opts['--prompt'];
-  if (!prompt && choose) {
-    prompt = await choose(`Start a session with ${newSession.join(' ')}? Enter a prompt, or press Enter to skip. `);
-    if (prompt === '') {
+  const canAttach = me.hc?.ok === true && ctx.platform !== 'win32';
+  let terminal = opts['--terminal'];
+  const checkTerminal = canConfig && (choose || terminal || (canAttach && !opts['--no-session']));
+  const currentTerminal = checkTerminal ? await call('config get terminal', 'config', 'get', 'terminal') : null;
+  if (!canConfig || currentTerminal?.error?.status === CONFIG_UNAVAILABLE) {
+    const reason = canConfig ? 'This console has no CLI settings endpoint.' : 'This CLI has no config command.';
+    const fields = { url: `${origin}/settings` };
+    if (terminal) return stop('terminal', EXIT.waiting, `${reason} Choose ${terminal} on My settings, then rerun setup without --terminal.`, fields);
+    report('terminal', 'skipped', `${reason} Set your agent terminal on My settings.`, fields);
+  } else if (currentTerminal) {
+    const prior = currentTerminal.last?.value;
+    if (currentTerminal.code !== EXIT.done || !TERMINAL_CHOICES.includes(prior)) return childError('terminal', currentTerminal, 'Could not read your agent terminal preference.');
+    if (!terminal && choose) {
+      const answer = await choose(`Use Herdr or tmux for agents in new private sessions? Enter keeps ${prior}. `);
+      terminal = answer === '' || answer === null ? prior : answer.toLowerCase();
+      if (!TERMINAL_CHOICES.includes(terminal)) return stop('terminal', EXIT.waiting, `Choose --terminal herdr or --terminal tmux. Current choice is ${prior}.`);
+    }
+    terminal ??= prior;
+    if (terminal !== prior) {
+      const set = await call('config set terminal', 'config', 'set', 'terminal', terminal);
+      if (set.code !== EXIT.done) return childError('terminal', set, 'Could not save your agent terminal preference.');
+    }
+    report('terminal', 'done', `New private sessions will run their agents in ${terminal === 'herdr' ? 'Herdr' : 'tmux'}.`, { terminal });
+  }
+
+  const code = await firstSession();
+  // Setup ends with the reviews it started, the main thing it set up, when a session's lines came after them.
+  if (code === EXIT.done && reviewLinks.length) {
+    report('reviews', 'done', `Your reviews: ${reviewLinks.map((link) => `${link.repo}#${link.number} ${link.url ?? link.pullUrl}`).join(', ')}.`, { reviews: reviewLinks });
+  }
+  return code;
+
+  // Optional: a first coding session, only when asked for (--prompt, or a prompt typed in).
+  async function firstSession() {
+    if (opts['--no-session']) {
       report('session', 'skipped', 'You chose to finish without starting a session.');
       return EXIT.done;
     }
+    const useHc = canAttach && (terminal === 'herdr' || !canConfig);
+    const newSession = ['session', 'new', ...(useHc ? ['--herdr'] : [])];
+    if (!opts['--prompt'] && !choose) {
+      report('session', 'skipped', `A first coding session is optional. Start one with ${command(...newSession, '--', '"<what to work on>"')}, or rerun setup with --prompt.`);
+      return EXIT.done;
+    }
+    const repo = selected[0];
+    const list = await call('session list', 'session', 'list');
+    if (list.code !== EXIT.done || !Array.isArray(list.last?.sessions)) return childError('session', list, 'Could not list sessions.');
+    // Setup is for a first environment. A retained or starting private session on this repo already fills that role.
+    // An explicitly failed or deleted one doesn't.
+    const existing = list.last.sessions.find((session) => session.mine === true && !['failed', 'deleted'].includes(session.stateWord) && session.state !== 'failed'
+      && (!repo || (typeof session.repo === 'string' && key(repo) === key(session.repo))));
+    if (existing) {
+      // A saved default is the console's project name. The session list identifies repos by GitHub owner/name.
+      if (!repo) return stop('session', EXIT.waiting, 'Rerun setup with --repo owner/name to check for an existing session on the repo you want.');
+      const url = linkTo(existing.url, origin);
+      if (existing.state === 'needs-you') return stop('session', EXIT.waiting, 'Your session needs your attention.', { url });
+      const more = opts['--prompt'] ? ' To start another session with your prompt, use woodshed session new.' : '';
+      report('session', 'done', `You already have a session on ${repo}.${more}`, { url });
+      return EXIT.done;
+    }
+
+    let prompt = opts['--prompt'];
+    if (!prompt && choose) {
+      prompt = await choose(`Optional: start a coding session with ${newSession.join(' ')}? Enter a prompt, or press Enter to skip. `);
+      if (!prompt) {
+        report('session', 'skipped', 'You chose to finish without starting a session.');
+        return EXIT.done;
+      }
+    }
+    const started = await call('session new', ...newSession, ...(repo ? ['--repo', repo] : []), '--agent', agent, '--', prompt);
+    const session = started.events.findLast((event) => event.session)?.session;
+    const url = linkTo(session?.url, origin);
+    const placementError = printable(started.events.findLast((event) => event.event === 'connected')?.agent?.placementError);
+    if (placementError) report('herdr', 'skipped', `The machine connected, but its agent could not be placed in a Herdr space. ${placementError}`, { url });
+    if (useHc && started.error && /^[a-f0-9]{8}$/.test(session?.id)
+        && started.events.some((event) => ['running', 'needs-you'].includes(event.event))) {
+      const retry = command('session', 'herdr', session.id);
+      return stop('session', started.code, `Session ${session.id} started. ${printable(started.error.error)} Reconnect with ${retry}.`, { url, retry });
+    }
+    if (started.code === EXIT.waiting && url) return stop('session', EXIT.waiting, 'Your session needs your attention.', { url });
+    if (started.code !== EXIT.done || !session) return childError('session', started, printable(session?.error) || 'Could not start a session.', { url });
+    report('session', 'done', 'Your first session is running.', { url });
+    return EXIT.done;
   }
-  if (!prompt) {
-    return stop('session', EXIT.waiting, `Give --prompt to start your first environment with ${command(...newSession)}, or use --no-session.`);
-  }
-  const started = await call('session new', ...newSession, ...(repo ? ['--repo', repo] : []), '--agent', agent, '--', prompt);
-  const session = started.events.findLast((event) => event.session)?.session;
-  const url = linkTo(session?.url, origin);
-  const placementError = printable(started.events.findLast((event) => event.event === 'connected')?.agent?.placementError);
-  if (placementError) report('herdr', 'skipped', `The machine connected, but its agent could not be placed in a Herdr space. ${placementError}`, { url });
-  if (useHc && started.error && /^[a-f0-9]{8}$/.test(session?.id)
-      && started.events.some((event) => ['running', 'needs-you'].includes(event.event))) {
-    const retry = command('session', 'herdr', session.id);
-    return stop('session', started.code, `Session ${session.id} started. ${printable(started.error.error)} Reconnect with ${retry}.`, { url, retry });
-  }
-  if (started.code === EXIT.waiting && url) return stop('session', EXIT.waiting, 'Your session needs your attention.', { url });
-  if (started.code !== EXIT.done || !session) return childError('session', started, printable(session?.error) || 'Could not start a session.', { url });
-  report('session', 'done', 'Your first session is running.', { url });
-  return EXIT.done;
 }

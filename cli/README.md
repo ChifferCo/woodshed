@@ -46,32 +46,53 @@ the tarball and its SHA-256 on woodshed.run. The site's installer checks that di
 
 ## Start here with `woodshed setup`
 
-Run `woodshed setup` on a terminal, or give your coding agent the repo and the first task:
+Setup's aim is your first automated code reviews: Claude Code and Codex reviewing your pull requests on your repo. Run
+`woodshed setup` on a terminal, or give your coding agent the repo:
 
 ```sh
-woodshed setup --yes --repo acme/app --repo-dir ~/code/app --reviews default --prompt "Fix the login redirect"
+woodshed setup --yes --repo acme/app --repo-dir ~/code/app
 ```
 
 Use `--console <url>` for your own console and `--no-browser` to print links without opening them. When setup exits 2,
 follow the link or supply the choice it asks for, then run it again with the same options. A new CLI sign-in starts
-in your browser and setup collects the approval the next time you run it. Connect Claude or Codex for sessions on
-My settings.
+in your browser and setup collects the approval the next time you run it.
 
-Setup asks whether new private sessions should run their agents in Herdr or tmux. Enter keeps the saved choice.
-Use `--terminal herdr` or `--terminal tmux` to set it explicitly. A run with `--yes` keeps the saved choice unless you
-pass `--terminal`.
+It goes in this order:
 
-Use `--prompt=--help` for a prompt that looks like an option. Repeat `--repo` to choose several repos. The first is for the session. For each repo, setup uses the current checkout
-when its GitHub origin matches, or a checkout supplied by `--repo-dir`. Repo review setup prepares the project file
-change for a pull request. `--reviews` sets your own reviewer choice. Use `--skip-reviews` to skip both, or
-`--no-session` to finish without starting an environment. When the terminal choice is Herdr and setup finds a compatible
-`hc` on macOS or Linux, it uses `session new --herdr` to show the agent in a space on the session's machine.
-On Windows it starts a regular session and prints the link. If a private session already exists for the first repo,
-setup gives you its link.
+1. **Sign in**, then **repos**: repeat `--repo` to choose several; the first is for a session.
+2. **Claude Code and Codex.** Setup asks for both: with both connected, your pull requests get reviews from both. On a
+   console with no team keys (a new org on console.woodshed.run), reviews run on the pull request author's own saved
+   Claude token and Codex sign-in, each used for reviews from the moment it is saved (console/reviewAgents.mjs). While
+   one is missing, setup exits 2 with the My settings link and what to run for it: `claude setup-token` for Claude,
+   whose token you paste under Claude; `codex login`, then all of `~/.codex/auth.json` (or an OpenAI API key) under
+   Codex. Setup never handles a token itself. Use only one? Pass `--agent claude` or `--agent codex`, or answer so on a
+   terminal, and setup does not ask for the other.
+3. **Review on the repo.** For each repo, setup uses the current checkout when its GitHub origin matches, or a checkout
+   supplied by `--repo-dir`, and prepares the project file change for a pull request. `--reviews` sets your own
+   reviewer choice (`default` is the most the console can run: both, once both are connected).
+4. **Reviews of your open pull requests**, the step setup is for: it lists your open pull requests on each repo
+   (`woodshed review pulls`) and starts the console's review on them now (`woodshed review start`), then gives each
+   review's link. On a terminal it asks which, Enter for all. With `--yes`, `--review-prs all`, `none` or numbers
+   (`12,15`) say which; without it, the 5 updated last (enough to see reviews work on your own code without spending
+   your plan on old branches, and `--review-prs all` takes every one). Without `--yes` or a terminal, setup exits 2
+   listing them, for `--review-prs`. A draft is left until it is ready, and a head commit reviewed already is not
+   reviewed again. With no open pull requests, it says a review starts on your next one.
+5. **Optional: the agent terminal**, Herdr or tmux, for new private sessions. On a terminal Enter keeps the saved
+   choice; `--terminal herdr` or `--terminal tmux` sets it.
+6. **Optional: a first coding session**, only with `--prompt`, or a prompt typed in when asked. Without one, setup
+   finishes and says how to start one. When the terminal choice is Herdr and setup finds a compatible `hc` on macOS or
+   Linux, it uses `session new --herdr` to show the agent in a space on the session's machine. On Windows it starts a
+   regular session and prints the link. If a private session already exists for the first repo, setup gives you its
+   link. Setup then ends with the reviews' links again.
+
+Use `--prompt=--help` for a prompt that looks like an option. `--skip-reviews` skips steps 3 and 4, and `--no-session`
+step 6.
 
 `--yes` and runs without a terminal never prompt. `--json` prints one checklist entry per line with
-`event: "setup"`, `step`, `status`, `message`, and a `url` when relevant. When this CLI lacks a repo, review,
-or config command, setup skips that step and says where to do it.
+`event: "setup"`, `step` (`login`, `repos`, `agent`, `repo-review`, `review-choice`, `pr-reviews`, `terminal`,
+`session`, `reviews`), `status`, `message`, and a `url` when relevant; `pr-reviews` and `reviews` carry `reviews`, each
+with its `number`, `url` and `pullUrl`. When this CLI lacks a repo, review, or config command, setup skips that step and
+says where to do it.
 
 ### Command organization
 
@@ -85,7 +106,7 @@ Keep a source explicit even when only one is supported. Keep session management 
 
 | Command | What it does | Exits |
 | --- | --- | --- |
-| `woodshed setup` | Guides sign-in, repo and review setup, and the first private session. | 0 done, 2 needs you, 3 refused, 1 failed |
+| `woodshed setup` | Guides sign-in, repos, Claude Code and Codex, and reviews of your open pull requests; a terminal choice and a first session are optional. | 0 done, 2 needs you, 3 refused, 1 failed |
 | `woodshed login` | Asks the console for a code, prints it, and opens the console's `/cli` page in your browser. Check the page shows the same code and press **Sign in the CLI**. The token it gets is kept as below. Signing in again on the same computer ends its earlier sign-in. | 0 signed in, 2 the code expired with nobody approving it, 3 denied, 1 too many sign-ins waiting (below) |
 | `woodshed logout` | Ends the token at the console and forgets it here. | 0 |
 | `woodshed status` | The console's name and address, its org (the GitHub account its repos are on), who is signed in, and the Herdr `hc` found here with its version (`hc` in `--json`: `installed`, `version`, `minimum`, `ok`), for `session herdr`. | 0 signed in, 2 not signed in or the sign-in ended |
@@ -95,6 +116,7 @@ Keep a source explicit even when only one is supported. Keep session management 
 | `woodshed repo remove <owner/name>` | Removes a repo and its Woodshed settings as in Console settings. | 0 removed, 2 sign in, 3 refused, 1 failed |
 | `woodshed review <id>\|<pull request>` | Reviews one of your sessions' change on this terminal, as the console's Review tab: [below](#reviewing-a-session-on-this-terminal). | 0 quit, 2 the sign-in ended, 3 a shared session or one that has seen production data, 1 anything else |
 | `woodshed review enable\|status` | In a checkout: reviews the repo's pull requests in Woodshed sessions, by its project file, and says what the console still needs. Below. | 0 done, 2 an admin's step, a sign-in or a merge still to come, 1 a project file that does not read or check |
+| `woodshed review pulls\|start` | Lists your open pull requests on a repo, and has the console review them now: [below](#reviewing-your-open-pull-requests-now). | 0 done, 2 review not on for the repo or a sign-in, 3 a pull request or repo not yours, 1 anything else |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 | `woodshed config list\|get\|set` | Reads or sets [your choices on My settings](#your-choices-on-my-settings). | as below |
 | `woodshed settings plan\|push\|pull` | Sync [Claude and Codex settings, plugins, dotfiles and ignored checkout files](#settings) with private sessions. Claude MCP definitions pushed from computers stay between computers. | as below |
@@ -161,6 +183,26 @@ when the file's `runsOn` names another console, or names an `author` or `comment
 GitHub App or from before the route): the file is written, but nothing says the review can run. `status` exits `0`
 once the default branch says it, the console runs its reviews (the default branch's `runsOn`, if any, names it, App and
 name, as its fleet reads it) and its reviewer App is known to be installed; else `2` with what comes next.
+
+### Reviewing your open pull requests now
+
+Once review is on for a repo, the console starts a review on a pull request when its head commit carries the review's
+tag (or on each commit, with `--every-commit`). To have your open pull requests reviewed now, tag or not:
+
+```sh
+woodshed review pulls --repo acme/app            # your open pull requests there, and whether its review is on
+woodshed review start 12 15 --repo acme/app      # the console's review of each, now; prints each review's link
+```
+
+Without `--repo`, the repo is the GitHub origin of the checkout at `--dir`, or here. A pull request is its number,
+`#number` or URL. `start` calls `POST /api/my/pulls/<number>/review` (console/README.md, "A review asked for by hand"),
+which starts the same review session a tagged commit would, as you: on your own Claude token and Codex sign-in where
+the console has no team keys, and as your reviewer choice on My settings says. It answers with that review's link when
+the head commit is being reviewed, or was, already. It refuses a pull request that is not yours (exit 3), a draft
+(exit 3), and a repo whose default branch's project file does not run its review in a session (exit 2: turn it on with
+`woodshed review enable` first). One refused does not keep the others from starting. `--json` prints a
+`{"event":"review","number":…,"outcome":"started"|"running"|"reviewed"|"refused",…}` line for each, with its
+`session.url`, or its `error`.
 
 ## Reviewing a session on this terminal
 
@@ -534,6 +576,7 @@ Besides its own `/api/cli/*`, the tunnel's `/api/tunnel/exec/<id>`, the terminal
 no others (`console/cliSessions.mjs`), each as its person:
 
 - `GET /api/sessions`, `GET /api/my/projects`, `GET /api/my/pulls`
+- `POST /api/my/pulls/<number>/review`: `woodshed review start`, on a pull request of your own
 - `POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume`, `POST /api/my/sessions/<id>/remove`
 - `POST /api/sessions/<id>/stop`, `POST /api/sessions/<id>/extend`, `POST /api/sessions/<id>/limits`
 - `GET /api/cli/config`, and `woodshed config`'s writes: `POST /api/my/terminal`, `/api/my/reviews`,

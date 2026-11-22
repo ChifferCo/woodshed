@@ -1114,6 +1114,18 @@ In the session's pane: `Codex reviews on the author's ChatGPT login, which the c
 the console adds to its calls`, then `Codex ended (exit=…)`, and `Codex took longer than … minutes and was stopped`
 when it did. Codex's own log is at `.review/logs/codex.jsonl`.
 
+**A review asked for by hand.** `woodshed review start` (cli/README.md, "Reviewing your open pull requests now", and
+`woodshed setup`'s last review step) calls `POST /api/my/pulls/<number>/review` with the project's name, which the
+command line's token reaches (cliSessions.mjs). The project must be one the person may start sessions on, which asks
+GitHub for their write access to its repo (projectAccess.mjs), and the fleet's `reviewOnDemand` then starts the same
+review session a tagged commit does (`startReview`), on the pull request's head as it is, tag or not. It refuses
+(`fleet: review asked for, refused` with the `reason`): 409 where the default branch's project file does not run the
+review in a session, 403 a pull request whose author (or, for one a session opened, that session's starter) is
+someone else, since the review runs on the author's sign-ins and choice, 409 one closed or a draft, and 409 with
+`startReview`'s own reason (a review running on an older commit, the author chose no review). A head commit a review
+session is reviewing, or reviewed, answers 200 with that session instead of starting another; a new one answers 201
+(`fleet: review asked for` with the `outcome` and its `id`).
+
 ### The approval waits for QA
 
 When QA runs here (`pullRequests.qa.runner: woodshed`) and the pull request carries the QA label, the review's APPROVE
