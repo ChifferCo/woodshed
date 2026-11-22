@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sharedHomeName } from './homes.mjs';
-import { createKeptReviews, withKeptReview } from './keptReview.mjs';
+import { withDefaultReview } from './defaultReview.mjs';
 
 import { commentConsoleUrl, createFleet, failedComment, failureReason, refusalComment, resumeComment, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
 
@@ -2798,15 +2798,23 @@ function reviewSetup(options = {}) {
   return t;
 }
 
-test('a review the console keeps, for a repo whose project file names none, starts a review session on the tag', async (t) => {
-  t.mock.method(console, 'log', () => {});
-  const kept = createKeptReviews({ store: { state: {}, save() {} } });
-  await kept.set('o/r', { on: true, by: 'bob' });
-  const { fleet } = reviewSetup({ gates: withKeptReview(null, await kept.of('o/r')) });
+test('a repo whose project file names no review is reviewed in a session on [woodshed-review], by default', async () => {
+  const { fleet } = reviewSetup({ gates: withDefaultReview(null) });
   const started = await fleet.reviewOnTag({ number: 7 });
   assert.equal(started.outcome, 'started');
   const [session] = fleet.sessions();
   assert.deepEqual([session.trigger, session.review.heading, session.review.check], ['review', '## Woodshed review', null]);
+});
+
+test('a coding session is told the review\'s tag, which its checkout\'s project file may not name; a review, QA or every-commit review is not', async () => {
+  const tagged = setup({ gates: withDefaultReview(null) });
+  await tagged.fleet.createSession({ kind: 'issue', number: 7, title: 'i', startedBy: 'joel', trigger: 'label', prompt: 'p' });
+  assert.equal(tagged.calls.started.at(-1).env.WOODSHED_REVIEW_TAG, '[woodshed-review]');
+  await tagged.fleet.createSession({ kind: 'pr', number: 10, title: 'Review', startedBy: 'joel', trigger: 'review', branch: 'a/d', review: { base: 'main', sha: 'b'.repeat(40), heading: '## R', author: null, check: null, commentId: null, agents: ['claude'] } });
+  assert.equal(tagged.calls.started.at(-1).env.WOODSHED_REVIEW_TAG, undefined, 'the review session itself pushes nothing');
+  const everyCommit = setup({ gates: { review: { runner: 'woodshed', heading: '## R', rerun: null }, suites: [], qa: null, mergeRisk: null } });
+  await everyCommit.fleet.createSession({ kind: 'issue', number: 7, title: 'i', startedBy: 'joel', trigger: 'label', prompt: 'p' });
+  assert.equal(everyCommit.calls.started.at(-1).env.WOODSHED_REVIEW_TAG, undefined);
 });
 
 test('the review tag on the head starts a review session, once for the commit, only when the runner is woodshed', async () => {

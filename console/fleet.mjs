@@ -386,6 +386,8 @@ export function createFleet({
       env.BRANCH = session.branch;
     }
     if (session.prompt) env.PROMPT = session.prompt;
+    // The review's tag, for the session's rules when its checkout's project file names none (entrypoint.sh, writeRules).
+    if (session.reviewTag) env.WOODSHED_REVIEW_TAG = session.reviewTag;
     // Claude opens with nothing to do: the person came to read the review, which the session starts itself.
     if (session.reviewOnly) env.REVIEW_ONLY = '1';
     // Its agent's terminal comes from its person's Herdr, as a child of theirs (`woodshed session new --herdr --parent`):
@@ -569,6 +571,13 @@ export function createFleet({
     if (session.owner && !session.mayUseProduction && mcpServers?.forSession(session, projectFor(config, session).repo ?? null).some((s) => s.production)) {
       update(session, { mayUseProduction: true, ...(databases?.available ? { ownDatabases: true } : {}) });
       console.log('fleet: a session that may use production', { id: session.id, owner: session.owner, ownDatabases: Boolean(session.ownDatabases) });
+    }
+    // The tag that asks for the repo's review, which a coding session's rules tell its agent to put on its commits: the
+    // project file's, or the console's for a repo whose file names none, which the file in the checkout cannot say
+    // (keptReview.mjs). None for every-commit review, review off, or a file that could not be read.
+    if (!isAsk(session) && !isQa(session) && !isReview(session)) {
+      const review = (await pullRequests(projectFor(config, session).name).catch(() => null))?.review ?? null;
+      update(session, { reviewTag: review?.rerun ?? null });
     }
     let started;
     try {

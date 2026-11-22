@@ -43,9 +43,7 @@ test('the packed CLI installs offline and runs settings, config, repo and review
   const repo = path.join(home, 'repo');
   run('git', ['init', '--quiet', repo]);
   run('git', ['-C', repo, 'remote', 'add', 'origin', 'https://github.com/example-org/example-repo.git']);
-  const kept = JSON.parse(run(cli, ['review', 'enable', '--dir', repo, '--dry-run', '--json'], 2));
-  assert.deepEqual([kept.repo, kept.where, kept.changed], ['example-org/example-repo', 'console', false]);
-  const review = JSON.parse(run(cli, ['review', 'enable', '--commit', '--dir', repo, '--dry-run', '--json'], 2));
+  const review = JSON.parse(run(cli, ['review', 'enable', '--dir', repo, '--dry-run', '--json'], 2));
   assert.equal(review.repo, 'example-org/example-repo');
   assert.equal(review.written, false);
   assert.equal(fs.existsSync(path.join(repo, '.woodshed', 'project.yaml')), false);

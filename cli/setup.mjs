@@ -225,38 +225,36 @@ export async function setupCommand(args, ctx) {
   if (opts['--skip-reviews']) {
     report('reviews', 'skipped', 'You chose to skip review setup.');
   } else {
-    // The console keeps each repo's review on (woodshed review enable --repo), with no checkout and no pull request.
-    const levels = 'The console keeps each repo’s review on, with no commit. Your reviewer choice controls who reviews your pull requests.';
+    // Every repo is reviewed by default, on a tag in a commit's message (console/defaultReview.mjs): this checks the
+    // console can run it, and says the tag. No checkout and no pull request.
+    const levels = 'Your reviewer choice controls who reviews your pull requests.';
     const canReview = has('review');
-    if (!canReview) report('repo-review', 'skipped', `${levels} This CLI has no review command yet. Use: ${command('review', 'enable', '--repo', 'owner/name')}.`);
-    else if (!selected.length) report('repo-review', 'skipped', `${levels} Use: ${command('review', 'enable', '--repo', 'owner/name')}.`);
+    if (!canReview) report('repo-review', 'skipped', `This CLI has no review command yet. ${levels}`);
+    else if (!selected.length) report('repo-review', 'skipped', `Woodshed reviews a pull request at a commit whose message has [woodshed-review]: ${command('review', 'status', '--repo', 'owner/name')} says whether it can for a repo. ${levels}`);
     else {
       for (const repo of selected) {
-        const review = await call('review enable', 'review', 'enable', '--repo', repo);
-        const info = review.events.find((event) => event.event === 'enable');
-        if (info?.unsupported) {
-          report('repo-review', 'skipped', `${levels} This console is from before it could keep a repo’s review on: in a checkout of ${repo}, run ${command('review', 'enable', '--commit')} and open a pull request for .woodshed/project.yaml.`, { repo });
+        const state = await call('review status', 'review', 'status', '--repo', repo);
+        const info = state.last;
+        const review = info?.review ?? null;
+        if (state.code === EXIT.done && info?.on === true) {
+          const how = review?.rerun
+            ? `put ${printable(review.rerun)} in a commit’s message on a pull request, and Woodshed reviews it at that commit (your sessions add it for you)`
+            : 'Woodshed reviews each new commit of a pull request';
+          report('repo-review', 'done', `Review is on for ${repo}: ${how}. ${levels}`, { repo, ...(review?.rerun ? { tag: review.rerun } : {}) });
           continue;
         }
-        // The repo's own project file reviews another way (GitHub Actions), and wins: its review is on already, and only
-        // a pull request changes it, so setup goes on.
-        const runner = info?.console?.review?.runner;
-        if (runner && runner !== 'woodshed' && review.code !== EXIT.refused) {
-          const warnings = Array.isArray(info.warnings) ? info.warnings.map(printable).filter(Boolean) : [];
-          report('repo-review', 'done', `${levels} ${repo}'s own project file reviews ${runner === 'actions' ? 'in GitHub Actions' : 'its own way'}, which it keeps. ${warnings.join(' ')}`.trim(), { repo });
+        // The repo's own project file reviews in GitHub Actions: on already, as the repo chose.
+        if (review?.runner && review.runner !== 'woodshed' && state.code === EXIT.waiting) {
+          report('repo-review', 'done', `${repo}’s project file reviews its pull requests in GitHub Actions. ${levels}`, { repo });
           continue;
         }
-        if (review.code === EXIT.waiting && Array.isArray(info?.missing) && info.missing.length) {
+        if (state.code === EXIT.waiting && Array.isArray(info?.missing) && info.missing.length) {
           const url = linkTo(info.console?.reviewerApp?.installUrl, origin, true);
           const steps = info.missing.map((item) => printable(item?.step)).filter(Boolean);
-          return stop('repo-review', EXIT.waiting, `${levels} ${steps.join(' ')} Then run setup again.`, { repo, ...(url ? { url } : {}) });
+          return stop('repo-review', EXIT.waiting, `For Woodshed to review ${repo}’s pull requests: ${steps.join(' ')} Then run setup again.`, { repo, ...(url ? { url } : {}) });
         }
-        if (review.code !== EXIT.done || !info) {
-          const reason = printable(info?.console?.defaultBranch?.error) || printable(info?.unasked);
-          return childError('repo-review', review, reason || `Could not turn on review for ${repo}.`, { repo });
-        }
-        const from = info.console?.review?.from;
-        report('repo-review', 'done', `${levels} Review is on for ${repo}${from && from !== 'console' ? ', by its project file' : ''}.`, { repo });
+        const reason = printable(info?.console?.defaultBranch?.error) || printable(info?.unasked);
+        return childError('repo-review', state, reason || `Could not check review for ${repo}.`, { repo });
       }
     }
     if (!canConfig) {

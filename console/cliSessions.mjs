@@ -16,8 +16,6 @@
 //                                           Not Set up app, which types into the session's agent
 //   GET  /api/review-readiness?repo=        woodshed review enable and status: whether a repo of theirs can be
 //                                           reviewed in a session, and what is missing (reviewReadiness.mjs)
-//   POST /api/kept-review                   woodshed review enable and disable: its review on or off in the console's
-//                                           keeping, with no commit, for a repo they write to (reviewReadiness.mjs)
 //   GET  /api/cli/config, and a few My settings writes   woodshed config: their choices, never a secret (cliConfig.mjs)
 //
 // A review's calls, /reviews/claude-<id>/..., take the token too, for `woodshed review <id>`, through the review proxy's
@@ -44,7 +42,6 @@ const ROUTES = [
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/(stop|extend|limits)$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/app\/(start|stop)$/],
   ['GET', /^\/api\/review-readiness$/],
-  ['POST', /^\/api\/kept-review$/],
   ...CONFIG_ROUTES,
 ];
 

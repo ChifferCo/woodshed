@@ -7,7 +7,6 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createCliSignIn } from '../console/cliSignIn.mjs';
-import { createKeptReviews } from '../console/keptReview.mjs';
 import { createReviewReadiness } from '../console/reviewReadiness.mjs';
 import { createHandler } from '../console/server.mjs';
 import { parseProject } from '../shared/project.mjs';
@@ -20,8 +19,7 @@ const git = (dir, ...args) => execFileSync('git', ['-C', dir, ...args], { stdio:
 
 // A console with the command line's sign-in and a reviewer App in `state.reviewer` ('none', 'made' or 'installed'),
 // whose default branch's project file is `state.gates`; a checkout of acme/game; and bob signed in on this computer.
-// `keeps: false` is a console from before the kept review.
-async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin = 'https://github.com/acme/game.git', keeps = true } = {}) {
+async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin = 'https://github.com/acme/game.git' } = {}) {
   const state = { reviewer: 'installed', gates: null, runsOn: null, gatesError: null };
   const reviewer = {
     login: () => (state.reviewer === 'none' ? null : 'acme-reviewer[bot]'),
@@ -32,7 +30,6 @@ async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin
   };
   const store = { state: {}, save() {} };
   const cli = createCliSignIn({ store });
-  const keptReviews = keeps ? createKeptReviews({ store }) : null;
   let handle = null;
   const server = http.createServer((req, res) => { handle(req, res); });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -44,9 +41,7 @@ async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin
     config, fleet: { sessions: () => [], find: () => null }, auth, cli,
     reviewReadiness: createReviewReadiness({
       publicUrl: origin, reviewer, ownReviewer: true, appLogin: async () => 'acme-woodshed[bot]', pullRequestsOf: async () => { if (state.gatesError) throw new Error(state.gatesError); return state.gates; },
-      sourceOf: async () => (state.gatesError ? null : state.from ?? (state.gates ? 'default branch' : 'none')), keptReviews,
       canWrite: async (login) => { if (state.writeError) throw new Error(state.writeError); return login === 'bob'; },
-      mayChange: async () => state.mayChange ?? true,
     }),
   });
 
@@ -83,12 +78,12 @@ async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin
     return { code, out, err, lines: out.trim().split('\n').filter(Boolean).map((l) => (l.startsWith('{') ? JSON.parse(l) : l)) };
   };
   const file = () => (fs.existsSync(path.join(repo, '.woodshed', 'project.yaml')) ? fs.readFileSync(path.join(repo, '.woodshed', 'project.yaml'), 'utf8') : null);
-  return { origin, run, repo, state, file, sent, cli, store, tmp };
+  return { origin, run, repo, state, file, sent, cli, tmp };
 }
 
 test('enable writes the review into the project file, checks it, and with nothing missing says to commit it', async (t) => {
   const s = await setup(t, { projectFile: 'version: 1\n# Ours.\neditor: true\n' });
-  const run = await s.run(['review', 'enable', '--commit']);
+  const run = await s.run(['review', 'enable']);
   assert.equal(run.code, EXIT.done, run.err + run.out);
   const review = parseProject(parseYaml(s.file())).pullRequests.review;
   assert.deepEqual([review.runner, review.rerun, review.author, review.commentAuthor], ['woodshed', '[woodshed-review]', null, null]);
@@ -109,9 +104,9 @@ test('review status and enable use installed Git when run from a checkout contai
   try {
     process.chdir(s.repo);
     const status = await s.run(['review', 'status', '--json']);
-    assert.equal(status.code, EXIT.waiting);
+    assert.equal(status.code, EXIT.done, 'on by default');
     assert.equal(status.lines[0].repo, 'acme/game');
-    const enabled = await s.run(['review', 'enable', '--commit', '--json']);
+    const enabled = await s.run(['review', 'enable', '--json']);
     assert.equal(enabled.code, EXIT.done);
     assert.equal(enabled.lines[0].written, true);
   } finally {
@@ -133,8 +128,8 @@ test('review leaves linked project files and directories alone', async (t) => {
     } else {
       fs.symlinkSync(outside, folder, 'junction');
     }
-    for (const words of [['status'], ['enable', '--commit']]) {
-      const result = await s.run(['review', ...words, '--json']);
+    for (const sub of ['status', 'enable']) {
+      const result = await s.run(['review', sub, '--json']);
       assert.equal(result.code, EXIT.failed);
       assert.match(result.lines[0].error, /project\.yaml.*symlink/);
     }
@@ -145,7 +140,7 @@ test('review leaves linked project files and directories alone', async (t) => {
 test('what only an admin can do is printed as its step, with exit 2; the file is written anyway', async (t) => {
   const s = await setup(t);
   s.state.reviewer = 'none';
-  const none = await s.run(['review', 'enable', '--commit', '--json']);
+  const none = await s.run(['review', 'enable', '--json']);
   assert.equal(none.code, EXIT.waiting);
   const [result] = none.lines;
   assert.equal(result.written, true);
@@ -154,7 +149,7 @@ test('what only an admin can do is printed as its step, with exit 2; the file is
   assert.ok(s.file().includes('runner: woodshed'));
 
   s.state.reviewer = 'made';
-  const made = await s.run(['review', 'enable', '--commit']);
+  const made = await s.run(['review', 'enable']);
   assert.equal(made.code, EXIT.waiting);
   assert.match(made.out, /\.woodshed\/project\.yaml already has the review in a Woodshed session\./);
   assert.match(made.out, /Still to do:\n {2}- An owner of acme\/game's account installs the reviewer App \(acme-reviewer\[bot\]\) on acme\/game: https:\/\/github\.com\/apps\/acme-reviewer\/installations\/new\. \(an admin\)/);
@@ -162,7 +157,7 @@ test('what only an admin can do is printed as its step, with exit 2; the file is
 
 test('--qa adds QA in a session, and warns when there is no app for it to start', async (t) => {
   const s = await setup(t);
-  const run = await s.run(['review', 'enable', '--commit', '--qa', '--every-commit']);
+  const run = await s.run(['review', 'enable', '--qa', '--every-commit']);
   assert.equal(run.code, EXIT.done, run.out);
   const gates = parseProject(parseYaml(s.file())).pullRequests;
   assert.deepEqual([gates.qa.runner, gates.qa.label, gates.qa.check, gates.review.rerun], ['woodshed', 'woodshed-qa', 'QA', null]);
@@ -172,13 +167,13 @@ test('--qa adds QA in a session, and warns when there is no app for it to start'
 
 test('--dry-run writes nothing; a file that does not read is left alone with 1', async (t) => {
   const s = await setup(t, { projectFile: 'version: 1\n' });
-  const dry = await s.run(['review', 'enable', '--commit', '--dry-run']);
+  const dry = await s.run(['review', 'enable', '--dry-run']);
   assert.equal(dry.code, EXIT.done);
   assert.match(dry.out, /Would change \.woodshed\/project\.yaml:/);
   assert.equal(s.file(), 'version: 1\n');
 
   const bad = await setup(t, { projectFile: 'version: 1\npullRequest: {}\n' });
-  const run = await bad.run(['review', 'enable', '--commit']);
+  const run = await bad.run(['review', 'enable']);
   assert.equal(run.code, EXIT.failed);
   assert.match(run.err, /does not read as a project file, so it was not changed: .*pullRequest/);
   assert.equal(bad.file(), 'version: 1\npullRequest: {}\n');
@@ -187,12 +182,12 @@ test('--dry-run writes nothing; a file that does not read is left alone with 1',
 test('an omitted review option value cannot consume --dry-run', async (t) => {
   const s = await setup(t);
   for (const option of ['--rerun', '--dir']) {
-    const missing = await s.run(['review', 'enable', '--commit', option, '--dry-run']);
+    const missing = await s.run(['review', 'enable', option, '--dry-run']);
     assert.equal(missing.code, EXIT.failed);
     assert.ok(missing.err.includes(`${option} needs a value`));
     assert.equal(s.file(), null);
   }
-  const dry = await s.run(['review', 'enable', '--commit', '--rerun=--tag', '--dry-run']);
+  const dry = await s.run(['review', 'enable', '--rerun=--tag', '--dry-run']);
   assert.equal(dry.code, EXIT.done);
   assert.match(dry.out, /rerun: --tag/);
   assert.equal(s.file(), null);
@@ -200,7 +195,7 @@ test('an omitted review option value cannot consume --dry-run', async (t) => {
 
 test('project check\'s problems stop the write', async (t) => {
   const s = await setup(t, { projectFile: 'version: 1\nrules: docs/missing.md\n' });
-  const run = await s.run(['review', 'enable', '--commit']);
+  const run = await s.run(['review', 'enable']);
   assert.equal(run.code, EXIT.failed);
   assert.match(run.out, /project check found problems, so nothing was written:\n {2}\.woodshed\/project\.yaml: /);
   assert.equal(s.file(), 'version: 1\nrules: docs/missing.md\n');
@@ -208,31 +203,41 @@ test('project check\'s problems stop the write', async (t) => {
 
 test('not signed in: the file is written, and the console is not asked: 2', async (t) => {
   const s = await setup(t, { signedIn: false });
-  const run = await s.run(['review', 'enable', '--commit']);
+  const run = await s.run(['review', 'enable']);
   assert.equal(run.code, EXIT.waiting);
   assert.match(run.out, /Console: not asked: not signed in to .*: run woodshed login/);
   assert.ok(s.file().includes('runner: woodshed'));
   assert.deepEqual(s.sent, []);
 });
 
-test('status: off, then in the checkout only, then on', async (t) => {
+test('status: on by default with no project file, needing no checkout; the file\'s own review, when it names one', async (t) => {
   const s = await setup(t);
-  const off = await s.run(['review', 'status']);
-  assert.equal(off.code, EXIT.waiting);
-  assert.match(off.out, /This checkout: {3}review off/);
-  assert.match(off.out, /Next: woodshed review enable/);
+  const byDefault = await s.run(['review', 'status', '--repo', 'acme/game'], { cwd: s.tmp });
+  assert.equal(byDefault.code, EXIT.done, byDefault.out);
+  assert.match(byDefault.out, /Runs: {12}review in a Woodshed session, on commits tagged \[woodshed-review\], default, for every repo/);
+  assert.match(byDefault.out, /Review is on: put \[woodshed-review\] in a commit's message, and the console reviews the pull request at that commit\./);
+  assert.ok(!/This checkout/.test(byDefault.out), 'no checkout was read');
+  const json = await s.run(['review', 'status', '--json']);
+  assert.deepEqual([json.lines[0].on, json.lines[0].review], [true, { runner: 'woodshed', rerun: '[woodshed-review]', from: 'default' }]);
 
-  await s.run(['review', 'enable', '--commit']);
-  const local = await s.run(['review', 'status', '--json']);
-  assert.equal(local.code, EXIT.waiting);
-  assert.equal(local.lines[0].on, false);
-  assert.equal(local.lines[0].checkout.review.runner, 'woodshed');
+  s.state.reviewer = 'made';
+  const notInstalled = await s.run(['review', 'status', '--repo', 'acme/game'], { cwd: s.tmp });
+  assert.equal(notInstalled.code, EXIT.waiting);
+  assert.match(notInstalled.out, /installs the reviewer App/);
+  s.state.reviewer = 'installed';
 
-  s.state.gates = { review: { runner: 'woodshed', heading: '## R', rerun: '[woodshed-review]' }, qa: null };
-  const on = await s.run(['review', 'status']);
-  assert.equal(on.code, EXIT.done, on.out);
-  assert.match(on.out, /Default branch: {2}review in a Woodshed session, on commits tagged \[woodshed-review\]/);
-  assert.match(on.out, /Review is on\./);
+  s.state.gates = { review: { runner: 'woodshed', heading: '## R', rerun: null }, qa: null };
+  const own = await s.run(['review', 'status']);
+  assert.equal(own.code, EXIT.done, own.out);
+  assert.match(own.out, /Project file: {4}review in a Woodshed session, on each commit/);
+  assert.match(own.out, /Runs: {12}review in a Woodshed session, on each commit, the repo's project file/);
+
+  s.state.gates = { review: { runner: 'actions', heading: '## R', rerun: null, author: 'claude[bot]' }, qa: null };
+  const actions = await s.run(['review', 'status']);
+  assert.equal(actions.code, EXIT.waiting);
+  assert.match(actions.out, /Review runs in GitHub Actions, by the repo's project file/);
+  const bad = await s.run(['review', 'status', '--repo', 'nope']);
+  assert.match(bad.err, /--repo must be a GitHub repo as owner\/name/);
 });
 
 test('a runsOn or logins in the file that are not this console\'s are warned of', async (t) => {
@@ -249,21 +254,21 @@ test('a runsOn or logins in the file that are not this console\'s are warned of'
 
 test('outside a checkout, or a checkout not on GitHub', async (t) => {
   const s = await setup(t, { origin: 'https://gitlab.com/acme/game.git' });
-  const run = await s.run(['review', 'enable', '--commit']);
+  const run = await s.run(['review', 'enable']);
   assert.equal(run.code, EXIT.failed, 'written, but no console said it can run it');
   assert.match(run.out, /Console: not asked: this checkout's origin is not on GitHub/);
   assert.match(run.out, /is written, but the console did not say it can run the review/);
   const outside = await s.run(['review', 'status', '--dir', os.tmpdir()]);
   assert.equal(outside.code, EXIT.failed);
   assert.match(outside.err, /is not in a git checkout/);
-  const unknown = await s.run(['review', 'enable', '--commit', '--wat']);
+  const unknown = await s.run(['review', 'enable', '--wat']);
   assert.equal(unknown.code, EXIT.failed);
   assert.match(unknown.err, /unknown option --wat/);
 });
 
 test('status is on only with the installation known and runsOn naming this console; a console that cannot answer is 1', async (t) => {
   const s = await setup(t);
-  await s.run(['review', 'enable', '--commit']);
+  await s.run(['review', 'enable']);
   s.state.gates = { review: { runner: 'woodshed', heading: '## R', rerun: '[woodshed-review]' }, qa: null, runsOn: null };
   assert.equal((await s.run(['review', 'status'])).code, EXIT.done);
 
@@ -283,14 +288,14 @@ test('status is on only with the installation known and runsOn naming this conso
 
   const noApp = await setup(t);
   noApp.state.reviewer = 'installed';
-  const run = await noApp.run(['review', 'enable', '--commit', '--console', 'http://localhost:1']);
+  const run = await noApp.run(['review', 'enable', '--console', 'http://localhost:1']);
   assert.equal(run.code, EXIT.waiting, 'not signed in to that console');
 });
 
 test('a default branch\'s project file the console could not read leaves enable unconfirmed: 1', async (t) => {
   const s = await setup(t);
   s.state.gatesError = 'the project file could not be read: HTTP 502';
-  const run = await s.run(['review', 'enable', '--commit']);
+  const run = await s.run(['review', 'enable']);
   assert.equal(run.code, EXIT.failed);
   assert.match(run.out, /the default branch's \.woodshed\/project\.yaml was not read: the project file could not be read: HTTP 502/);
   assert.ok(s.file().includes('runner: woodshed'), 'the edit is kept');
@@ -303,133 +308,6 @@ test('status is 1, not 2, when the console answered with a failure', async (t) =
   const run = await s.run(['review', 'status']);
   assert.equal(run.code, EXIT.failed);
   assert.match(run.out, /Console: not asked: .* answered 502: the console could not tell: GitHub did not answer/);
-  const enable = await s.run(['review', 'enable', '--commit']);
+  const enable = await s.run(['review', 'enable']);
   assert.equal(enable.code, EXIT.failed);
-});
-
-// The default: the console keeps the review on, with no commit and no checkout.
-
-test('enable with --repo needs no checkout: the console keeps it on, at once, and nothing is written', async (t) => {
-  const s = await setup(t);
-  const run = await s.run(['review', 'enable', '--repo', 'acme/game'], { cwd: s.tmp });
-  assert.equal(run.code, EXIT.done, run.err + run.out);
-  assert.match(run.out, /Turned on the review the console keeps for acme\/game, in a Woodshed session, on commits tagged \[woodshed-review\]: no commit needed\./);
-  assert.match(run.out, /Review is on, kept on by the console, with no commit: the console reviews each pull request whose head commit's message has \[woodshed-review\]\./);
-  assert.equal(s.file(), null, 'no project file written');
-  assert.deepEqual(Object.keys(s.store.state.keptReviews), ['acme/game']);
-  assert.deepEqual([s.store.state.keptReviews['acme/game'].review, s.store.state.keptReviews['acme/game'].by], [{ runner: 'woodshed', rerun: '[woodshed-review]' }, 'bob']);
-  assert.deepEqual(s.sent.map((c) => [c.url.replace(s.origin, ''), c.headers.origin]), [['/api/kept-review', undefined]]);
-
-  const again = await s.run(['review', 'enable', '--json'], { cwd: s.repo });
-  assert.equal(again.code, EXIT.done, 'the checkout\'s origin names the repo');
-  assert.deepEqual([again.lines[0].event, again.lines[0].where, again.lines[0].changed, again.lines[0].console.review], ['enable', 'console', false, { runner: 'woodshed', rerun: '[woodshed-review]', from: 'console' }]);
-
-  const status = await s.run(['review', 'status', '--repo', 'acme/game'], { cwd: s.tmp });
-  assert.equal(status.code, EXIT.done, status.out);
-  assert.match(status.out, /Default branch: {2}no \.woodshed\/project\.yaml/);
-  assert.match(status.out, /Console keeps: {3}review on, by @bob \(.+\), in a Woodshed session, on commits tagged \[woodshed-review\]/);
-  assert.match(status.out, /Runs: {12}review in a Woodshed session, on commits tagged \[woodshed-review\], kept on by the console, with no commit/);
-  assert.match(status.out, /Review is on\./);
-  assert.ok(!/This checkout/.test(status.out), 'no checkout was read');
-});
-
-test('disable turns the kept review off; --every-commit and a tag are kept as asked', async (t) => {
-  const s = await setup(t);
-  await s.run(['review', 'enable', '--every-commit']);
-  assert.equal(s.store.state.keptReviews['acme/game'].review.rerun, null);
-  const tagged = await s.run(['review', 'enable', '--rerun', '[review me]', '--json']);
-  assert.equal(tagged.lines[0].changed, true);
-  assert.equal(s.store.state.keptReviews['acme/game'].review.rerun, '[review me]');
-
-  const off = await s.run(['review', 'disable', '--json']);
-  assert.equal(off.code, EXIT.done, off.out);
-  assert.deepEqual([off.lines[0].event, off.lines[0].on, off.lines[0].changed, off.lines[0].console.review], ['disable', false, true, null]);
-  assert.deepEqual(s.store.state.keptReviews, {});
-  const status = await s.run(['review', 'status']);
-  assert.equal(status.code, EXIT.waiting);
-  assert.match(status.out, /Console keeps: {3}review off/);
-  assert.match(status.out, /Next: woodshed review enable\./);
-  const again = await s.run(['review', 'disable']);
-  assert.match(again.out, /The review the console keeps was already off\./);
-});
-
-test('--dry-run asks and changes nothing', async (t) => {
-  const s = await setup(t);
-  const dry = await s.run(['review', 'enable', '--dry-run']);
-  assert.equal(dry.code, EXIT.done);
-  assert.match(dry.out, /Would turn the review the console keeps on, in a Woodshed session, on commits tagged \[woodshed-review\]\. Nothing changed \(--dry-run\)\./);
-  assert.equal(s.store.state.keptReviews, undefined);
-  assert.deepEqual(s.sent.map((c) => new URL(c.url).pathname), ['/api/review-readiness']);
-});
-
-test('the project file\'s own review wins, and is said to', async (t) => {
-  const s = await setup(t);
-  s.state.gates = { review: { runner: 'actions', heading: '## R', rerun: null, author: 'claude[bot]' }, qa: null };
-  const run = await s.run(['review', 'enable']);
-  assert.equal(run.code, EXIT.waiting, 'kept, but the file\'s Actions review is what runs');
-  assert.ok(s.store.state.keptReviews['acme/game']);
-  assert.match(run.out, /Warning: the repo's project file reviews in GitHub Actions, which wins over the one the console keeps/);
-  const status = await s.run(['review', 'status']);
-  assert.equal(status.code, EXIT.waiting);
-  assert.match(status.out, /Runs: {12}review in GitHub Actions, from the default branch's \.woodshed\/project\.yaml/);
-
-  s.state.gates = { review: { runner: 'woodshed', heading: '## R', rerun: null }, qa: null };
-  const own = await s.run(['review', 'enable']);
-  assert.equal(own.code, EXIT.done);
-  assert.match(own.out, /Review is on, from the default branch's \.woodshed\/project\.yaml: the console reviews each pull request on each new commit\./);
-  const off = await s.run(['review', 'disable']);
-  assert.match(off.out, /Review is still on, from the default branch's/);
-});
-
-test('a repo the console does not have for them is not kept; --qa and --repo are --commit\'s and not', async (t) => {
-  const s = await setup(t);
-  const other = await s.run(['review', 'enable', '--repo', 'acme/other']);
-  assert.equal(other.code, EXIT.waiting);
-  assert.match(other.out, /An admin of the console adds acme\/other/);
-  assert.equal(s.store.state.keptReviews, undefined);
-  const qa = await s.run(['review', 'enable', '--qa']);
-  assert.equal(qa.code, EXIT.failed);
-  assert.match(qa.err, /--qa needs the repo's \.woodshed\/project\.yaml.*add --commit/);
-  const both = await s.run(['review', 'enable', '--commit', '--repo', 'acme/game']);
-  assert.equal(both.code, EXIT.failed);
-  assert.match(both.err, /--commit writes the checkout's/);
-  const noRepo = await s.run(['review', 'enable'], { cwd: s.tmp });
-  assert.equal(noRepo.code, EXIT.failed);
-  assert.match(noRepo.err, /give the repo with --repo owner\/name/);
-  const bad = await s.run(['review', 'enable', '--repo', 'not a repo']);
-  assert.match(bad.err, /--repo must be a GitHub repo as owner\/name/);
-});
-
-test('a console from before the kept review says to use --commit: 1', async (t) => {
-  const s = await setup(t, { keeps: false });
-  const run = await s.run(['review', 'enable', '--json']);
-  assert.equal(run.code, EXIT.failed);
-  assert.equal(run.lines[0].unsupported, true);
-  assert.match(run.lines[0].unasked, /from before the console could keep a repo's review on: run woodshed review enable --commit/);
-});
-
-test('enable again with no tag keeps the tag already kept; disable is done once off, whatever an admin still has to do', async (t) => {
-  const s = await setup(t);
-  await s.run(['review', 'enable', '--every-commit']);
-  const again = await s.run(['review', 'enable', '--json']);
-  assert.equal(again.code, EXIT.done);
-  assert.deepEqual([again.lines[0].changed, again.lines[0].rerun], [false, null], 'a rerun of setup does not undo every-commit');
-  assert.equal(s.store.state.keptReviews['acme/game'].review.rerun, null);
-
-  s.state.reviewer = 'none';
-  const off = await s.run(['review', 'disable']);
-  assert.equal(off.code, EXIT.done, off.out);
-  assert.match(off.out, /Still to do:/);
-  assert.match(off.out, /Review is off\./);
-  assert.deepEqual(s.store.state.keptReviews, {});
-});
-
-test('a console that says the person may not change it refuses: 3, and nothing is kept', async (t) => {
-  const s = await setup(t);
-  s.state.mayChange = false;
-  const run = await s.run(['review', 'enable', '--json']);
-  assert.equal(run.code, EXIT.refused);
-  assert.equal(run.lines[0].refused, true);
-  assert.match(run.lines[0].unasked, /refused: only an owner of this console may turn acme\/game's review on or off here/);
-  assert.equal(s.store.state.keptReviews, undefined);
 });

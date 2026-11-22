@@ -213,7 +213,7 @@ import { handleDesktopSignIn } from './desktopSignIn.mjs';
 import { handleCliApi, handleCliPage } from './cliSignIn.mjs';
 import { CLI_REPOS_PATH, handleCliRepos } from './cliRepos.mjs';
 import { carriesCliToken, handleCliCall } from './cliSessions.mjs';
-import { KEPT_REVIEW_PATH, REVIEW_READINESS_PATH, keptReviewReply, reviewReadinessReply } from './reviewReadiness.mjs';
+import { REVIEW_READINESS_PATH, reviewReadinessReply } from './reviewReadiness.mjs';
 import { answerWithView, CLI_CONFIG_PATH, configView, isConfigWrite } from './cliConfig.mjs';
 import { handleCliSettings } from './cliSettings.mjs';
 import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
@@ -733,7 +733,7 @@ export function createHandler({
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
-  cli = null, reviewReadiness = null, keptReviews = null,
+  cli = null, reviewReadiness = null,
 }) {
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
   const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
@@ -2175,12 +2175,7 @@ export function createHandler({
   async function removeRepo(name, by) {
     // Clear the repo's values first, so a failed delete can be retried. A repo that Remove would refuse keeps them.
     if (addedProjects.view().some((p) => p.name === name && p.removable && !p.sessions)) await repoSettings?.forget(name);
-    const repo = allProjects(config).find((p) => p.name === name)?.repo ?? null;
     await addedProjects.remove({ name, by });
-    // Its review kept on goes with it: adding the repo back starts with none (keptReview.mjs).
-    if (repo && keptReviews) {
-      await keptReviews.set(repo, { on: false, by }).catch((err) => console.warn('keptReview: not taken off with its repo', { repo, message: String(err?.message ?? err).split('\n')[0] }));
-    }
     projectColors?.forget({ name });
     repoTriggers?.forget(name);
     slack?.setProjectChannel({ project: name, channel: '', by });
@@ -2345,7 +2340,6 @@ export function createHandler({
     if (SETUP_WRITE_RE.test(pathname)) return githubSetupWrite(req, res, pathname, login);
     if (pathname === `${REVIEWER_SETUP_PATH}/manifest`) return reviewerSetupWrite(req, res);
     if (pathname === '/api/my/uploads') return stageUpload(req, res, login);
-    if (pathname === KEPT_REVIEW_PATH) return keptReviewReply({ req, res, login, readiness: reviewReadiness, config, readJson, reply });
     const cliRevoke = MY_CLI_REVOKE_RE.exec(pathname);
     if (cliRevoke) {
       if (!cli) return reply(res, 404, { error: 'this console has no command line sign-in' });

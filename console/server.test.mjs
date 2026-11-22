@@ -1414,9 +1414,7 @@ test('Console settings: a repo is added and removed on the page, with its sessio
       forgotten.push(name);
     },
   };
-  const keptOff = [];
-  const keptReviews = { set: async (repo, change) => { keptOff.push([repo, change.on]); return null; } };
-  const handle = createHandler({ config, fleet: { sessions: () => [] }, consoleSettings: createConsoleSettings({ store, config }), addedProjects, repoSettings, keptReviews });
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, consoleSettings: createConsoleSettings({ store, config }), addedProjects, repoSettings });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
@@ -1448,7 +1446,6 @@ test('Console settings: a repo is added and removed on the page, with its sessio
   assert.equal(removed.status, 200);
   assert.deepEqual(removed.body.projects.map((p) => p.name), ['r']);
   assert.deepEqual(forgotten, ['api'], 'its repo settings go with it');
-  assert.deepEqual(keptOff, [['o/api', false]], 'and its review kept on, so adding it back starts with none');
 });
 
 test('Console settings: Add a repo\'s list is the App\'s repos less the projects, null with no App, and a 502 when GitHub did not answer', async (t) => {

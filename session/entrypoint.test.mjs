@@ -35,7 +35,7 @@ fs.writeFileSync(path.join(REPO, '.woodshed/rules.md'), `- ${PROJECT_RULE}\n`);
 // The notes' title and the blank line after it, which a shared session's inline copy drops.
 fs.writeFileSync(path.join(REPO, '.woodshed/setup.md'), `Environment notes:\n\n- ${PROJECT_NOTE}\n`);
 
-function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDir = REPO, defaultBranch = 'main', sessionUrl = null, hostDocker = null, appDomain = null }) {
+function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDir = REPO, defaultBranch = 'main', sessionUrl = null, hostDocker = null, appDomain = null, reviewTag = null }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-prompt-'));
   const script = [
     'set -euo pipefail',
@@ -56,7 +56,7 @@ function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDi
   try {
     const out = execFileSync('bash', ['-c', script], {
       encoding: 'utf8',
-      env: { PATH: process.env.PATH, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}), ...(sessionUrl ? { SESSION_URL: sessionUrl } : {}), ...(hostDocker !== null ? { WOODSHED_SESSION_DOCKER: hostDocker, SESSION_ID: '0a1b2c3d' } : {}), ...(appDomain !== null ? { SESSION_APP_DOMAIN: appDomain, SESSION_ID: '0a1b2c3d' } : {}) },
+      env: { PATH: process.env.PATH, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}), ...(sessionUrl ? { SESSION_URL: sessionUrl } : {}), ...(hostDocker !== null ? { WOODSHED_SESSION_DOCKER: hostDocker, SESSION_ID: '0a1b2c3d' } : {}), ...(appDomain !== null ? { SESSION_APP_DOMAIN: appDomain, SESSION_ID: '0a1b2c3d' } : {}), ...(reviewTag !== null ? { WOODSHED_REVIEW_TAG: reviewTag } : {}) },
     });
     return {
       out,
@@ -199,9 +199,18 @@ test('a project with a review tag tells its sessions to end each push\'s last co
       assert.doesNotMatch(tagged.rules, /\{\{/);
       assert.match(tagged.out, /review tag: \[run-review\]/);
     }
+    // The console's tag fills in only where the file names none (console/defaultReview.mjs).
+    assert.ok(writePrompt({ attachments: false, repoDir: repo, reviewTag: '[woodshed-review]' }).rules.includes('` [run-review]`'), 'the file\'s own wins');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
+  // No project file at all: the console's tag, so the pull requests the session opens are reviewed.
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-bare-tag-'));
+  after(() => fs.rmSync(bare, { recursive: true, force: true }));
+  fixtureCheckout(bare);
+  const byDefault = writePrompt({ attachments: false, repoDir: bare, reviewTag: '[woodshed-review]' });
+  assert.ok(byDefault.rules.includes('end the subject of the last commit of each push with ` [woodshed-review]`'));
+  assert.match(byDefault.out, /review tag: \[woodshed-review\]/);
 });
 
 test('a project file with consoleLinks: false keeps the session\'s link out of its pull requests, on any repo', () => {

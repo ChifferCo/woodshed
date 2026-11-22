@@ -76,7 +76,8 @@ test('every variable the fleet sets for each kind of session reaches an ECS task
   const mcpServers = createMcpServers({ store: { state: {} }, settings: mcpSettings({ WOODSHED_PROD_MCP_URL: 'https://prod-mcp.test', WOODSHED_PROD_MCP_PEOPLE: '*', WOODSHED_PROD_MCP_REPOS: '*' }, 'https://console.test'), lockdown: () => ({ available: true }) });
   launcher.guardsEgress = true;
   const store = { state: { sessions: [], github: null }, save() {} };
-  const fleet = createFleet({ config, store, launcher, github: {}, databases, statusd: async () => ({}), mcpServers, egress: { sessionUrl: 'http://10.42.1.10:7693' } });
+  const { withDefaultReview } = await import('../../console/defaultReview.mjs');
+  const fleet = createFleet({ config, store, launcher, github: {}, databases, statusd: async () => ({}), mcpServers, egress: { sessionUrl: 'http://10.42.1.10:7693' }, pullRequests: async () => withDefaultReview(null) });
   await fleet.createSession({ kind: 'ask', number: null, title: 'q', startedBy: 'slack:U1', trigger: 'slack', prompt: 'why?', slack: { channel: 'C1', threadTs: '1.1', user: 'U1', name: 'Ana' } });
   await fleet.createSession({ kind: 'issue', number: 7, title: 'i', startedBy: 'joel', trigger: 'label', prompt: 'p', options: { model: 'opus', effort: 'high', permissionMode: 'plan' } });
   await fleet.createSession({ kind: 'pr', number: 8, title: 'r', startedBy: 'joel', trigger: 'console', branch: 'a/b', reviewOnly: true });
@@ -91,7 +92,7 @@ test('every variable the fleet sets for each kind of session reaches an ECS task
   await fleet.resumePrivate({ owner: 'joel', id: tainted.id });
   assert.equal(started.length, 9);
   const set = new Set(started.flatMap((env) => Object.keys(env)));
-  for (const name of ['WOODSHED_PROD_MCP', 'WOODSHED_MCP_SERVERS', 'WOODSHED_TAINTED', 'WOODSHED_EGRESS_PROXY', 'SESSION_MODE', 'ASKED_BY', 'ISSUE', 'PR', 'MODEL', 'REVIEW_ONLY', 'SESSION_KIND', 'ATTACHMENTS', 'AGENT', 'PROJECT_REPO', 'SESSION_APP_DOMAIN', 'QA_BASE', 'REVIEW_BASE', 'REVIEW_AUTHOR', 'REVIEW_AGENTS', 'REVIEW_CODEX_AUTH', 'REVIEW_CODEX_ACCOUNT', 'WOODSHED_HERDR_PARENT']) {
+  for (const name of ['WOODSHED_PROD_MCP', 'WOODSHED_MCP_SERVERS', 'WOODSHED_TAINTED', 'WOODSHED_EGRESS_PROXY', 'SESSION_MODE', 'ASKED_BY', 'ISSUE', 'PR', 'MODEL', 'REVIEW_ONLY', 'SESSION_KIND', 'ATTACHMENTS', 'AGENT', 'PROJECT_REPO', 'SESSION_APP_DOMAIN', 'QA_BASE', 'REVIEW_BASE', 'REVIEW_AUTHOR', 'REVIEW_AGENTS', 'REVIEW_CODEX_AUTH', 'REVIEW_CODEX_ACCOUNT', 'WOODSHED_HERDR_PARENT', 'WOODSHED_REVIEW_TAG']) {
     assert.ok(set.has(name), `the sessions above set ${name}`);
   }
   for (const env of started) {
