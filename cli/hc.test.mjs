@@ -6,7 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { addMachine, agentOn, compareVersions, hcRunner, hcVersion, isTunnelTo, removeMachine, shellQuote, viaCommand } from './hc.mjs';
+import {
+  addMachine, agentOn, compareVersions, hcRunner, hcVersion, isTunnelTo, removeMachine, shellQuote, startWatcher, tunnelMachines, viaCommand, watcherArgv,
+} from './hc.mjs';
 import { selfCommand } from './woodshed.mjs';
 
 function scratch(t) {
@@ -124,4 +126,35 @@ test('the agent\'s terminal with no labels at all is placed in a space and tab; 
   };
   await agentOn(own, 'woodshed-aaaa0001', { place: true });
   assert.ok(!placed.some((a) => a[0] === 'label'), 'a terminal the person placed stays where it is');
+});
+
+test('the sessions that are machines in Herdr are those whose saved line is this command line\'s tunnel, on that console', async () => {
+  const origin = 'https://console.example';
+  const line = (session, o = origin) => viaCommand({ node: '/n', script: '/s', origin: o, session });
+  const machines = [
+    { name: 'woodshed-aaaa0001', via: true, target: line('aaaa0001') },
+    { name: 'woodshed-bbbb0002', via: true, target: line('bbbb0002', 'https://other.example') },
+    { name: 'woodshed-cccc0003', via: true, target: 'ssh box' },
+    { name: 'laptop', via: true, target: line('dddd0004') },
+  ];
+  const run = async () => ({ code: 0, stdout: JSON.stringify({ machines }), stderr: '' });
+  assert.deepEqual([...await tunnelMachines(run, { origin })], [['aaaa0001', 'woodshed-aaaa0001']]);
+  await assert.rejects(tunnelMachines(async () => ({ code: 1, stdout: '', stderr: 'no core' }), { origin }), /hc machine ls failed: no core/);
+});
+
+test('the watch\'s terminal in hc runs this command line as words, and one already running is kept', async () => {
+  assert.deepEqual(watcherArgv({ node: '/n o/node', script: '/s', origin: 'https://c.example', flags: ['--herdr'], configHome: '/h/.config' }),
+    ['/usr/bin/env', 'WOODSHED_WATCH_IN_HERDR=1', 'XDG_CONFIG_HOME=/h/.config', '/n o/node', '/s', 'session', 'watch', '--console', 'https://c.example', '--herdr']);
+  assert.deepEqual(watcherArgv({ node: '/n', script: '/s', origin: 'https://c.example', flags: [] }).slice(0, 3), ['/usr/bin/env', 'WOODSHED_WATCH_IN_HERDR=1', '/n']);
+  const calls = [];
+  const answers = [
+    { code: 0, stdout: '{"address":"t4","name":"woodshed-watch"}', stderr: '' },
+    { code: 1, stdout: '{"error":{"kind":"name_taken","message":"a live terminal is already named \\"woodshed-watch\\""}}', stderr: '' },
+    { code: 1, stdout: '{"error":{"kind":"usage","message":"no core"}}', stderr: '' },
+  ];
+  const run = async (args) => { calls.push(args); return answers.shift(); };
+  assert.deepEqual(await startWatcher(run, ['/n', '/s']), { action: 'started', address: 't4' });
+  assert.deepEqual(calls[0].slice(-3), ['--', '/n', '/s']);
+  assert.deepEqual(await startWatcher(run, ['/n', '/s']), { action: 'kept', address: null });
+  await assert.rejects(startWatcher(run, ['/n', '/s']), (err) => err.hc && /hc could not start woodshed-watch: no core/.test(err.message));
 });

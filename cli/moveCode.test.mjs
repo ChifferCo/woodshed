@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
 import { checkoutOf, deleteBranch, freeze, githubRepo, gitRunner, pushBranch, secretName, secretsIn, survey } from './moveCode.mjs';
 import { repoFor } from './moveFixtures.mjs';
 
@@ -141,7 +142,7 @@ test('nothing changed freezes as HEAD itself, a secret is found in a new file an
 test('a folder outside a checkout, or a checkout with no GitHub remote, is said plainly', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-move-nogit-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const git = gitRunner({ env: { ...process.env, ...GIT_ENV, GIT_CEILING_DIRECTORIES: path.dirname(dir) } });
+  const git = gitRunner({ env: { ...isolatedEnv(), ...GIT_ENV, GIT_CEILING_DIRECTORIES: path.dirname(dir) } });
   assert.match((await checkoutOf(git, dir)).error, /is not in a git checkout/);
   execFileSync('git', ['init', '-q'], { cwd: dir });
   assert.match((await checkoutOf(git, dir)).error, /has no remote/);

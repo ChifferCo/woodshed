@@ -11,6 +11,8 @@
 //   woodshed session connect <id> [--shell]            this terminal on your session's agent, or its shell (terminal.mjs)
 //   woodshed session new|list|get|herdr|stop|resume|remove|extend|limits   sessions (sessions.mjs); herdr makes one
 //                                                     a machine in Herdr's hc (hc.mjs)
+//   woodshed session watch [--kind K,...] [--everyone] [--herdr]  one event per session that starts, runs, needs you,
+//                                                     pauses, stops, finishes or fails, for Herdr or a script (watch.mjs)
 //   woodshed move --from herdr [--terminal T|--tab T|--space S] --to <id>|new   terminals moved into a session (move.mjs)
 //   woodshed review enable|status                      review this checkout's pull requests in Woodshed sessions (review.mjs)
 //   woodshed review <id>|<pull request>                review a session's change on this terminal (reviewOpen.mjs)
@@ -33,7 +35,7 @@ import { runTunnel, TUNNEL_FAILED } from './tunnel.mjs';
 import { sessionCommand } from './sessions.mjs';
 import { repoCommand } from './repos.mjs';
 import { configCommand } from './config.mjs';
-import { hcRunner, hcVersion, viaCommand } from './hc.mjs';
+import { hcRunner, hcVersion, viaCommand, watcherArgv } from './hc.mjs';
 import { moveCommand } from './move.mjs';
 import { programRunner } from './moveLayout.mjs';
 import { gitRunner } from './moveCode.mjs';
@@ -61,8 +63,8 @@ Commands:
   tunnel <id> -- <line>
             run <line> in your running session, with this command's stdin, stdout and stderr; exits with its
             exit code, or 255 when the pipe could not open or broke
-  session   start, list, connect to, add to Herdr, stop, resume and remove sessions, and give them more time:
-            woodshed session --help
+  session   start, list, watch, connect to, add to Herdr, stop, resume and remove sessions, and give them more
+            time: woodshed session --help
   move      move work into a session from a supported source: woodshed move --help
   review <id>
             review one of your sessions' change on this terminal: the analysis, the diff and its comments, the
@@ -571,6 +573,8 @@ export async function main(argv, deps = {}) {
       return await command({ origin, rest }, {
         call, ...(moving ? { getToken: () => signedIn(origin).token } : { token: signedIn(origin).token }),
         stdout, stderr, say, emit, json, sleep, now, EXIT, platform, hc,
+        // session watch's end, for a program that runs it: the command line stops it with Ctrl-C.
+        signal: deps.signal,
         // The line hc keeps for a session's machine: this command line's tunnel into it, on this console.
         // A relative config folder is made absolute: hc's core runs the line from a folder of its own.
         // This terminal on the session's, once: closed, detached, refused, unreachable, or cut once it was open.
@@ -585,6 +589,8 @@ export async function main(argv, deps = {}) {
           return out.status === 'cut' ? { status: 'attached-then-cut', message: out.message, ms: now() - openedAt } : out;
         }),
         via: (session) => viaCommand({ ...(deps.self ?? selfCommand({ env })), origin, session, configHome: env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : null }),
+        // session watch --herdr's copy in hc, by the same absolute paths and console, told by its environment to report.
+        watcherArgv: (flags) => watcherArgv({ ...(deps.self ?? selfCommand({ env })), origin, flags, configHome: env.XDG_CONFIG_HOME ? path.resolve(env.XDG_CONFIG_HOME) : null }),
         fail: (message, opts) => new CliError(message, opts),
         confirm: deps.confirm ?? ((question) => confirmOnTerminal(question, stderr)),
         // move's own: the Herdr app, git, and `session connect` to call.

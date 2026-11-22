@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isolatedEnv } from './isolatedEnv.mjs';
 
 // skills/woodshed/SKILL.md teaches agents the `woodshed` command line, and its table says which change each command
 // arrives in: "main", or the pull request that adds it. An agent trusts it, so it must say what this checkout's CLI does:
@@ -17,7 +18,7 @@ const [, front, body] = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/) ?? [];
 
 function help(...words) {
   try {
-    return execFileSync(process.execPath, [CLI, ...words, '--help'], { encoding: 'utf8', env: { ...process.env, WOODSHED_CONSOLE: '' } });
+    return execFileSync(process.execPath, [CLI, ...words, '--help'], { encoding: 'utf8', env: { ...isolatedEnv(), WOODSHED_CONSOLE: '' } });
   } catch (err) {
     return `${err.stdout ?? ''}${err.stderr ?? ''}`;
   }
