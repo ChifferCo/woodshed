@@ -117,6 +117,8 @@ const PARENT_FLAGS = ['no-notify', 'end-with-parent'];
 // An hc terminal address here (`t7`, `t1b`): at most hc's 32 characters, read in one pass.
 const looksLikeAddress = (word) => typeof word === 'string' && word.length <= 32 && /^t\d+(?:[a-z][a-z0-9]*)?$/.test(word);
 const ID_RE = /^[0-9a-f]{8}$/;
+// An app's name in the project file (shared/project.mjs, APP_NAME).
+const APP_NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
 // What a console says reaches a terminal: never a control character or a direction override, which could move the
 // cursor, retitle the window or make one id read as another. Other text, accents and all, is kept.
@@ -234,10 +236,18 @@ function ended(s) {
  * @returns {string|null}  none while the session is not running, has no app, or the console serves no session apps
  */
 export function appUrlOf(s, { origin, appsOn }) {
-  if (!appsOn?.domain || s.status !== 'running' || s.kind === 'ask' || !APP_STATES.has(s.app) || s.app === 'none') return null;
+  if (!servesApps(appsOn) || s.status !== 'running' || s.kind === 'ask' || !APP_STATES.has(s.app) || s.app === 'none') return null;
   if (appsOn.ports) return typeof s.appUrl === 'string' && /^https?:\/\//.test(s.appUrl) ? printable(s.appUrl, 300) : `${origin}/auth/app?id=${s.id}&next=/`;
   const { protocol, port } = new URL(origin);
   return `${protocol}//${s.id}.${appsOn.domain}${port ? `:${port}` : ''}/`;
+}
+
+/**
+ * Whether the console serves session apps: an app domain, or app ports, whose links are the console's own name and
+ * lent ports, so need no DNS name (a console at http://[::1]:7690 has app ports and no domain the CLI can build on).
+ */
+function servesApps(appsOn) {
+  return Boolean(appsOn?.domain || appsOn?.ports);
 }
 
 /** @returns {{domain: string|null, ports: boolean}}  what the console's list says of session apps */
@@ -307,7 +317,7 @@ export function summary(s, { origin, login, appsOn = null }) {
     extendedUntil: printable(s.extendedUntil, 40),
     // Its app, while it runs on a console that serves session apps: its state, which of the project's apps it is, and
     // the link that opens it (appLink says for whom). null when there is nothing to open.
-    app: appsOn?.domain && s.status === 'running' && s.kind !== 'ask' && APP_STATES.has(s.app) ? s.app : null,
+    app: servesApps(appsOn) && s.status === 'running' && s.kind !== 'ask' && APP_STATES.has(s.app) ? s.app : null,
     appName: printable(s.appName, 60),
     apps: Array.isArray(s.apps) ? s.apps.map((a) => printable(a?.name, 60)).filter(Boolean) : null,
     appUrl: appUrlOf(s, { origin, appsOn }),
@@ -841,7 +851,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
     if (opts.wait === false && opts.action !== 'start') throw fail('--no-wait is for start: stop and the state never wait');
     const x = summary(s, { origin, login, appsOn });
     if (s.kind === 'ask') throw fail(`Session ${id} answers a question from Slack: it has no app.`, { code: EXIT.refused, status: 'refused' });
-    if (!appsOn?.domain) throw fail(`${origin} serves no session apps: a session's app opens only on a console with an app domain or app ports.`, { code: EXIT.refused, status: 'refused' });
+    if (!servesApps(appsOn)) throw fail(`${origin} serves no session apps: a session's app opens only on a console with an app domain or app ports.`, { code: EXIT.refused, status: 'refused' });
     if (s.status !== 'running') {
       const resume = s.owner && s.owner === login ? `: woodshed session resume ${id} first` : '';
       throw fail(`Session ${id} is ${stateOf(s).word}. Its app runs only while it does${resume}.`, { code: EXIT.refused, status: 'not-running' });
@@ -1051,6 +1061,8 @@ export function parseSessionArgs(sub, words, fail) {
   for (const flag of PARENT_FLAGS) if (out[flag] && !out.parent) throw fail(`--${flag} goes with --parent`);
   if (sub === 'limits' && out['idle-hours'] === undefined && out['lifetime-hours'] === undefined) throw fail('session limits needs --idle-hours or --lifetime-hours (a number, or default)');
   if (out.agent !== undefined && !['claude', 'codex'].includes(out.agent)) throw fail('--agent must be claude or codex');
+  // An app's name, never the next option taken for one (`--app --no-wait`).
+  if (out.app !== undefined && !APP_NAME_RE.test(out.app)) throw fail(`--app needs an app's name: lowercase letters, digits and dashes, as the project file names them${out.app.startsWith('-') ? `, not ${out.app}` : ''}`);
   if (takes.words === 'prompt') out.prompt = positional.join(' ');
   else if (takes.words === 'id-action') {
     // session app <id> [start|stop]

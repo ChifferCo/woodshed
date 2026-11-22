@@ -505,6 +505,9 @@ test('session app starts a running session\'s app and waits until it is up, and 
   assert.match(noAction.err, /--app picks the app to start/);
   assert.equal((await c.run(['session', 'app', 'aaaa0001', '--no-wait'])).code, EXIT.failed, '--no-wait is for start');
   assert.equal((await c.run(['session', 'app', 'aaaa0001', 'stop', '--no-wait'])).code, EXIT.failed);
+  const swallowed = await c.run(['session', 'app', 'aaaa0001', 'start', '--app', '--no-wait']);
+  assert.equal(swallowed.code, EXIT.failed);
+  assert.match(swallowed.err, /--app needs an app's name.*not --no-wait/);
   assert.equal(c.calls.length, before, 'nothing asked of the session');
 });
 
@@ -600,6 +603,10 @@ test('with app ports the app opens on the port the console lent it, or through t
   assert.equal(appUrlOf(s, { origin, appsOn }), 'http://mac.tail1.ts.net:7701/');
   assert.equal(summary(s, { origin, login: null, appsOn }).appLink, 'port', 'opens for anyone who reaches the console, with no Share the app');
   assert.equal(summary(s, { origin, login: null, appsOn }).appSignIn, false, 'nobody signs in to a console with app ports');
+  const loopback = { domain: null, ports: true, signIn: false };
+  assert.equal(appUrlOf(s, { origin: 'http://[::1]:7690', appsOn: loopback }), 'http://mac.tail1.ts.net:7701/', 'app ports need no DNS name');
+  assert.equal(summary(s, { origin: 'http://[::1]:7690', login: null, appsOn: loopback }).app, 'running');
+  assert.equal(appUrlOf(s, { origin, appsOn: { domain: null, ports: false } }), null, 'no domain and no ports: no session apps');
   const onDomain = { id: 'aaaa0001', status: 'running', app: 'running' };
   const domainOn = (signIn) => summary(onDomain, { origin: 'https://c.example.test', login: null, appsOn: { domain: 'apps.example.test', ports: false, signIn } });
   assert.deepEqual([domainOn(true).appSignIn, domainOn(false).appSignIn, domainOn(null).appSignIn], [true, false, null], 'as the console says, or null from one that does not');
