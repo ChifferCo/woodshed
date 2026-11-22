@@ -34,7 +34,8 @@ export function shareNext(value) {
   // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u001f\u007f]/.test(value)) return null;
   const path = safeNext(value);
-  if (path === '/' && value !== '/') return null;
+  // Measured again once encoded: a short path of other scripts grows, and the claim reads the encoded one.
+  if ((path === '/' && value !== '/') || path.length > MAX_NEXT) return null;
   return path.startsWith('/__woodshed/') || path === '/__woodshed' ? null : path;
 }
 

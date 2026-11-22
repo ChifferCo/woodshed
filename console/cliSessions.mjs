@@ -14,7 +14,7 @@
 //                                           session's owner's and a shared one's assignee's alone, as on the page
 //   POST /api/sessions/<id>/app/start|stop  woodshed session app: Start app and Stop app, for whoever may on the page.
 //                                           Not Set up app, which types into the session's agent
-//   GET  /api/sessions/<id>/app-share       woodshed session share: who besides its owner may open a My Woodshed
+//   GET  /api/sessions/<id>/app-share       woodshed session app <id> share: who besides its owner may open a My Woodshed
 //   POST /api/sessions/<id>/app-share/members, /links, /links/<link>/revoke   session's app, and its links, changed
 //                                           as the page's Share the app does: the owner's alone, a private session's
 //                                           alone, and never shared once it has seen production data (server.mjs,

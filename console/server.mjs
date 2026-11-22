@@ -182,7 +182,7 @@
 //   POST /api/sessions/<id>/app-share/links    {"hours": 24, "path"?: "/landing"}  a link anyone can open, with its
 //        expiry and, if asked, the app's page it lands on; the token is shown once
 //   POST /api/sessions/<id>/app-share/links/<linkId>/revoke   ends one link
-//        These four take the command line's token too, for woodshed session share (cliSessions.mjs)
+//        These four take the command line's token too, for woodshed session app <id> share (cliSessions.mjs)
 //   GET  https://<id>.<app domain>/__woodshed/share?t=<token>[&next=<path>]   claims a link: a cookie for that one app,
 //        until the link ends, then the app's `next` page (shareNext in appShares.mjs: a path on the app, or /)
 //   *    https://<id>.<app domain>/__woodshed/code/...   the session's VS Code, through its statusd, websockets too:

@@ -1530,7 +1530,7 @@ audience each time, and either can be turned off:
   name, never another site's (`//host`, `/\host`, a scheme) nor the console's `/__woodshed/` paths, and a `next` added
   by hand that is not one lands on `/`.
 
-The command line does the same with `woodshed session share` (cli/README.md, "Sharing a session's app"): the four
+The command line does the same with `woodshed session app <id> share` (cli/README.md, "Sharing a session's app"): the four
 routes take its token through `cliSessions.mjs`'s gate and answer as the page's, by the same code, owner and private
 session only, refused once it has seen production data.
 

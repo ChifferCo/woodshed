@@ -305,4 +305,5 @@ test('a link lands on the page its owner named, and never off the app', async (t
   assert.doesNotMatch(plain.url, /next=/, 'no path, no next');
   assert.equal(plain.path, null);
   assert.equal((await c.consoleCall('octocat', '/api/sessions/0a1b2c3d/app-share/links', { method: 'POST', body: { hours: 1, path: '//evil.example' } })).status, 400);
+  assert.equal((await c.consoleCall('octocat', '/api/sessions/0a1b2c3d/app-share/links', { method: 'POST', body: { hours: 1, path: `/${'é'.repeat(150)}` } })).status, 400, 'too long once encoded, refused when made rather than dropped when opened');
 });
