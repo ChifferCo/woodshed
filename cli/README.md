@@ -151,7 +151,10 @@ and call `POST /api/kept-review` with this computer's token, as you: the console
 start sessions on and still write to on GitHub. The repo's own project file wins: when its `pullRequests.review` names
 a review, on any runner, that is the review, and the kept one counts only where the file names none or there is no
 file. `enable` says so when the file reviews another way (exit `2`: change the file in a pull request), and
-`disable` says when the file still names one. The kept review is the review alone: QA, test suites, the merge risk
+`disable` says when the file still names one. With no `--rerun` or `--every-commit`, `enable` keeps the tag already
+kept (so running it, or setup, again never undoes a team's choice); `disable` exits `0` once the console keeps none,
+whatever an admin still has to do for reviews to run. A console behind a hosting proxy may let only its owners change
+it: anyone else is refused (exit `3`). The kept review is the review alone: QA, test suites, the merge risk
 check and `runsOn` stay the file's, so `--qa` needs `--commit`.
 
 Each prints what the console still needs, from the same answer as `GET /api/review-readiness?repo=<owner/name>`:

@@ -420,3 +420,44 @@ test('a note from the program is listed beside the person, as text cut to its le
   const dropped = warned.mock.calls.filter((call) => call.arguments[0] === 'members: entries of the program\'s list left out');
   assert.equal(dropped.length, 0, 'a bad note drops no entry');
 });
+
+test('behind a hosting proxy only an owner, or whom the program\'s reviewKeeping.mayChange names, turns a repo\'s kept review on or off', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  t.mock.method(console, 'error', () => {});
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-kept-'));
+  t.after(() => fs.rmSync(stateDir, { recursive: true, force: true }));
+  const build = async (extra = {}) => {
+    const store = { state: {}, save() {} };
+    const inst = await createInstallation({
+      config: { ...CONFIG, stateDir, sessionEnv: {}, sessionApi: {}, pollGitHub: false }, store, provider: { name: 'test', launcher: {} },
+      trusted: createTrustedIdentity({ secret: SECRET }), members: fakeProgram(), hostApp: { login: () => 'host-woodshed[bot]' }, ...extra,
+    });
+    const server = http.createServer((req, res) => { inst.handle(req, res); });
+    const port = await listen(server);
+    t.after(() => server.close());
+    const post = (body, headers) => send(port, { method: 'POST', path: '/api/kept-review', headers: { ...WRITE, ...headers }, body });
+    return { store, post };
+  };
+  const own = await build();
+  const member = await own.post({ repo: 'o/r', on: true }, MEMBER());
+  assert.equal(member.status, 403, 'a member: GitHub is not asked behind the proxy, so write access says nothing');
+  assert.match(member.body.error, /only an owner of this console/);
+  assert.equal(own.store.state.keptReviews, undefined);
+  const owner = await own.post({ repo: 'o/r', on: true }, OWNER());
+  assert.equal(owner.status, 200);
+  assert.equal(owner.body.changed, true);
+  assert.equal(own.store.state.keptReviews['o/r'].by, 'ana-owner');
+
+  const asked = [];
+  const kept = new Map();
+  const program = await build({ reviewKeeping: {
+    get: async (repo) => kept.get(repo) ?? null, set: async (repo, value) => { kept.set(repo, value); },
+    mayChange: async (login, repo) => { asked.push([login, repo]); return login === 'sam-member'; },
+  } });
+  assert.equal((await program.post({ repo: 'o/r', on: true }, MEMBER())).status, 200, 'the program\'s own check decides');
+  assert.equal((await program.post({ repo: 'o/r', on: false }, OWNER())).status, 403);
+  assert.deepEqual(asked, [['sam-member', 'o/r'], ['ana-owner', 'o/r']]);
+  assert.equal(kept.get('o/r').review.runner, 'woodshed', 'kept in the program\'s store, and not taken off by the refused call');
+  await assert.rejects(createInstallation({ config: {}, store: { state: {} }, provider: {}, reviewKeeping: { get() {}, set() {}, mayChange: 'yes' } }), /mayChange must be a function/);
+});

@@ -124,9 +124,9 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed settings plan [--pull] [--only …] [--own-files <checkout>]` | Lists what push (or pull) would do with each item; sends and writes nothing | 0 | main |
 | `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude and Codex settings, skills, plugins, a few dotfiles and ignored checkout files. Imported Claude MCP definitions sync between computers. | 0, 2 not listed before or not confirmed | main |
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | main |
-| `woodshed review enable [--repo R] [--rerun <tag>\|--every-commit] [--dry-run]` | Turns review in a session on for the repo (`--repo`, or this checkout's origin): the console keeps it, with no commit and no checkout, and says what is missing | 0 on, 2 an admin's step, a sign-in, or the repo's own project file reviews another way, 1 the console could not be asked or is too old (use `--commit`) | main |
+| `woodshed review enable [--repo R] [--rerun <tag>\|--every-commit] [--dry-run]` | Turns review in a session on for the repo (`--repo`, or this checkout's origin): the console keeps it, with no commit and no checkout, and says what is missing | 0 on, 2 an admin's step, a sign-in, or the repo's own project file reviews another way, 3 refused (a hosted console's owners only), 1 the console could not be asked or is too old (use `--commit`) | main |
 | `woodshed review enable --commit [--qa] [--rerun <tag>\|--every-commit] [--dry-run]` | In a checkout: writes `pullRequests.review` with `runner: woodshed` (and with `--qa`, QA in a session) into `.woodshed/project.yaml` instead, for a pull request | 0 ready to commit, 2 an admin's step or a sign-in, 1 the file does not read or check, or the console could not confirm | main |
-| `woodshed review disable [--repo R]` | Turns off the review the console keeps for the repo; one in its project file stays | 0, 2 a sign-in or not their repo, 1 the console could not be asked | main |
+| `woodshed review disable [--repo R]` | Turns off the review the console keeps for the repo; one in its project file stays | 0 off, 2 a sign-in or not their repo, 3 refused, 1 the console could not be asked | main |
 | `woodshed review status [--repo R]` | Whether review is on and where from: the repo's project file, or kept by the console; with the checkout's own file when run in one | 0 on, 2 not yet, 1 the console could not tell | main |
 | `woodshed review <id>\|<pull request>` | A full-screen review of one of their own sessions' change on their terminal, as the Review tab shows it: the analysis, Q&A, chat with the session's agent, the diff with comments, Re-review, and comment, verdict, rename, merge as them. Interactive: suggest it to them. `--json` (or no terminal) prints the analysis and the diff's summary once, for you | 0, 2 sign-in ended, 3 shared or saw production, 1 failed | main |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in their running session, in its checkout | the line's code, 255 the pipe failed | main |
@@ -421,7 +421,8 @@ printed (the reviewer App not made, or not installed on the repo, or `runsOn` na
 and stop. Those are an admin's, on the console or on GitHub. Exit 2 with a warning that the repo's project file reviews
 another way (GitHub Actions) means that file wins: changing it is a pull request the person decides on. Exit 1: the
 console could not be asked or could not read the repo's project file; it says which. A console from before it says to
-use `--commit`.
+use `--commit`. Exit 3: the console refused (on a hosted console, only its owners may change it): tell the person to ask
+an owner. Running `enable` again without `--rerun` or `--every-commit` keeps the tag the repo already has.
 
 `woodshed review enable --commit` (with `--qa` for QA in a session too) writes `pullRequests.review` with
 `runner: woodshed` into the checkout's `.woodshed/project.yaml` instead, on a branch: use it only when the person wants

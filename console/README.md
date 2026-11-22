@@ -1014,8 +1014,11 @@ turns a repo's review in a session on or off in the console's own keeping, so it
 request to merge: `woodshed review enable` and `disable` (cli/README.md, "Review") call it by default. It is held to
 what the GET is: a repo the asker may start sessions on, write access asked of GitHub on each call, and from the
 command line's token or a page's write (`x-woodshed`, same origin) alone; any other repo changes nothing and is told
-nothing. `rerun` is the tag a commit's message carries to be reviewed (left out, `[woodshed-review]`; null, every
-commit). It answers as the GET does, with `changed`. The fleet runs a repo's pull requests by its project file's gates
+nothing. Behind a hosting proxy, where nobody's GitHub write access is asked, only someone the program's
+`reviewKeeping.mayChange` allows, or else an owner on its People list, changes it; anyone else is answered 403
+(`reviewReadiness: kept review refused, not someone who may change it`). `rerun` is the tag a commit's message carries
+to be reviewed (null, every commit; left out, the tag already kept, else `[woodshed-review]`, so enabling again never
+undoes a team's choice). It answers as the GET does, with `changed`. The fleet runs a repo's pull requests by its project file's gates
 with the kept review filled in where the file names no `review` or there is no file (`withKeptReview`, read by
 `gatesOf` in `installation.mjs`, so the review on the tag, QA's wait and the Slack post all see it): the file's own
 `review`, on any runner, wins, and the kept one is the review alone (QA, `suites`, `mergeRisk` and `runsOn` stay the
@@ -1999,7 +2002,7 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   settings and Console settings and at each start (an answer is kept 10 seconds), and shows and refuses with it as
   with its own (above, "Databases"); a link that is neither https nor a path, or a step with no text, is dropped. A
   hook that throws blocks nothing: core logs `console: project readiness not read` and runs its own check.
-- `reviewKeeping: {get(repo), set(repo, value, {by})}`: where the program keeps a repo's review turned on with no
+- `reviewKeeping: {get(repo), set(repo, value, {by}), mayChange?(login, repo)}`: where the program keeps a repo's review turned on with no
   commit (`woodshed review enable`, above under "The reviewer App"), in place of core's `state.json`. `get` answers the
   value `set` was last given for that repo (`owner/name`, as the console's project names it), or null; `set` keeps it,
   or with `value` null removes it, and resolves once kept. `value` is `{review: {runner: 'woodshed', rerun}, by, at}`:
@@ -2007,7 +2010,9 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   Keep it per installation (a team's repo is not another team's). Core asks `get` again a minute after its last
   answer, and keeps that answer while a later `get` throws (`keptReview: the program's store not read`); with none yet
   a throw holds the repo's pull requests as an unread project file does. A `set` that throws is answered 502. Without
-  the hook core keeps it in its state, which a program that builds a new store for each start loses.
+  the hook core keeps it in its state, which a program that builds a new store for each start loses. `mayChange`
+  answers whether that person may turn it on or off (async, true or false): behind a hosting proxy GitHub is never asked
+  who writes to a repo, so without it only an owner on the program's People list may, and with neither nobody may.
 - `hostApp: {login(), reviewer?}`: the App whose GitHub access the program lends (`githubBroker`), which the console
   cannot ask GitHub about itself. `login()` answers its `<slug>[bot]` (or null while unknown), asked each time, so the
   console trusts its comments, the QA label it adds (`qa.autoLabel`) and a review session's PR comment as that App's.

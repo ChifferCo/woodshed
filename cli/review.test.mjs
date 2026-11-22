@@ -46,6 +46,7 @@ async function setup(t, { projectFile = null, signedIn = true, origin: gitOrigin
       publicUrl: origin, reviewer, ownReviewer: true, appLogin: async () => 'acme-woodshed[bot]', pullRequestsOf: async () => { if (state.gatesError) throw new Error(state.gatesError); return state.gates; },
       sourceOf: async () => (state.gatesError ? null : state.from ?? (state.gates ? 'default branch' : 'none')), keptReviews,
       canWrite: async (login) => { if (state.writeError) throw new Error(state.writeError); return login === 'bob'; },
+      mayChange: async () => state.mayChange ?? true,
     }),
   });
 
@@ -405,4 +406,30 @@ test('a console from before the kept review says to use --commit: 1', async (t) 
   assert.equal(run.code, EXIT.failed);
   assert.equal(run.lines[0].unsupported, true);
   assert.match(run.lines[0].unasked, /from before the console could keep a repo's review on: run woodshed review enable --commit/);
+});
+
+test('enable again with no tag keeps the tag already kept; disable is done once off, whatever an admin still has to do', async (t) => {
+  const s = await setup(t);
+  await s.run(['review', 'enable', '--every-commit']);
+  const again = await s.run(['review', 'enable', '--json']);
+  assert.equal(again.code, EXIT.done);
+  assert.deepEqual([again.lines[0].changed, again.lines[0].rerun], [false, null], 'a rerun of setup does not undo every-commit');
+  assert.equal(s.store.state.keptReviews['acme/game'].review.rerun, null);
+
+  s.state.reviewer = 'none';
+  const off = await s.run(['review', 'disable']);
+  assert.equal(off.code, EXIT.done, off.out);
+  assert.match(off.out, /Still to do:/);
+  assert.match(off.out, /Review is off\./);
+  assert.deepEqual(s.store.state.keptReviews, {});
+});
+
+test('a console that says the person may not change it refuses: 3, and nothing is kept', async (t) => {
+  const s = await setup(t);
+  s.state.mayChange = false;
+  const run = await s.run(['review', 'enable', '--json']);
+  assert.equal(run.code, EXIT.refused);
+  assert.equal(run.lines[0].refused, true);
+  assert.match(run.lines[0].unasked, /refused: only an owner of this console may turn acme\/game's review on or off here/);
+  assert.equal(s.store.state.keptReviews, undefined);
 });

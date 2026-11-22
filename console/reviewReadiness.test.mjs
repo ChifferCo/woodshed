@@ -238,6 +238,24 @@ test('POST /api/kept-review: a token or the page\'s write, held to write access;
   assert.deepEqual(store.state.keptReviews, {});
 });
 
+test('a tag left out keeps the one already kept; mayChange refuses before anything changes', async () => {
+  const store = { state: {}, save() {} };
+  const keptReviews = createKeptReviews({ store });
+  const plain = readinessFor('installed', { keptReviews, from: 'none' });
+  await plain.keep('acme/game', { projects: PROJECTS, login: 'bob', on: true, rerun: null });
+  const again = await plain.keep('acme/game', { projects: PROJECTS, login: 'bob', on: true });
+  assert.deepEqual([again.changed, again.kept.rerun], [false, null]);
+  let allowed = false;
+  const hosted = createReviewReadiness({
+    publicUrl: 'https://console.example', reviewer: reviewerIn('installed'), ownReviewer: false, appLogin: async () => 'acme-woodshed[bot]',
+    pullRequestsOf: async () => null, keptReviews, mayChange: async (login, project) => { assert.equal(project.repo, 'acme/game'); return allowed; },
+  });
+  await assert.rejects(hosted.keep('acme/game', { projects: PROJECTS, login: 'sam', on: false }), (err) => err.refused && /only an owner of this console/.test(err.message));
+  assert.ok(store.state.keptReviews['acme/game'], 'still kept');
+  allowed = true;
+  assert.equal((await hosted.keep('acme/game', { projects: PROJECTS, login: 'sam', on: false })).changed, true);
+});
+
 test('a console that keeps no review answers 404 to the POST', async (t) => {
   const s = await serve(t, { readiness: readinessFor('installed') });
   const { token } = s.tokenFor('bob');

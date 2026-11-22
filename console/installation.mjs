@@ -298,7 +298,7 @@ function mcpAccess({ loaded: given, secrets, launcher }) {
  *   gives several installations behind one address the same one: the token is made by the installation it is approved
  *   on, and `cli.owns(headers)` says whose a request's token is (README.md "Embedding the console").
  *   `reviewKeeping` is where the program keeps a repo's review turned on with no commit to the repo (`woodshed review
- *   enable`), `{get(repo), set(repo, value, {by})}`, in place of the console's state (keptReview.mjs, README.md
+ *   enable`), `{get(repo), set(repo, value, {by}), mayChange?(login, repo)}`, in place of the console's state (keptReview.mjs, README.md
  *   "Embedding the console").
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
@@ -307,6 +307,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   checkMembersHook(memberList, trusted);
   if (mcpServersHook && ['list', 'save', 'remove'].some((f) => typeof mcpServersHook[f] !== 'function')) throw new Error('mcpServers needs list, save and remove');
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
+  if (reviewKeeping?.mayChange != null && typeof reviewKeeping.mayChange !== 'function') throw new Error('reviewKeeping.mayChange must be a function');
   if (slackEventsUrl != null && typeof slackEventsUrl !== 'function') throw new Error('slackEventsUrl must be a function');
   checkSlackInstall(slackInstall);
   if (hostApp && (typeof hostApp.login !== 'function' || (hostApp.reviewer != null && ['login', 'configured', 'submitReview'].some((f) => typeof hostApp.reviewer[f] !== 'function')))) {
@@ -566,6 +567,10 @@ export async function createInstallation({ config: loaded, store, provider, trus
     reviewReadiness: config.githubApp || hostApp ? createReviewReadiness({
       publicUrl: config.publicUrl, reviewer: reviewerApp, ownReviewer: !hostApp, appLogin: () => appIdentity.login(),
       pullRequestsOf: fileGatesOf, sourceOf: (name) => readerOf(name).source(), keptReviews,
+      // Behind a hosting proxy GitHub is not asked who writes (canWrite is null), so the host says who may change it:
+      // its own check, else an owner on its People list. Nobody, with neither.
+      mayChange: reviewKeeping?.mayChange ? async (login, project) => Boolean(await reviewKeeping.mayChange(login, project.repo))
+        : trusted ? async (login) => Boolean(login && members?.isAdmin?.(login)) : null,
       runsOnName: config.runsOnName ?? null,
       // A token's person must still write to the repo, as sign-in asks of a browser's (auth.mjs). With no sign-in, or
       // behind a hosting proxy, nobody's access is asked there either.

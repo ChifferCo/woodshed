@@ -16,7 +16,8 @@
 //
 // Exit codes, as every command's: 0 done (enable: on, or with --commit the file says it and the console is ready, so
 // commit it; disable: the console keeps it off; status: on), 2 waiting on a person (something only an admin can do, a
-// sign-in, or a change not yet on the default branch), 3 refused, 1 anything else (a project file that does not read, a
+// sign-in, or a change not yet on the default branch), 3 refused (a hosted console's member who may not change it), 1
+// anything else (a project file that does not read, a
 // check that fails, or a console that could not be asked).
 
 import { runGit } from '../shared/git.mjs';
@@ -43,7 +44,8 @@ Commands:
   enable [options]       review the repo's pull requests in Woodshed sessions from now on: the console keeps it on for
                          the repo, with no commit and no checkout, and says what is still missing on its side
       --repo <owner/name>  the repo (default: the origin of the checkout this is run in)
-      --rerun <tag>      review a commit whose message has this tag (default: [woodshed-review])
+      --rerun <tag>      review a commit whose message has this tag (default: the tag already kept, else
+                         [woodshed-review])
       --every-commit     review each new commit, with no tag
       --dry-run          say what would change, and change nothing
       --commit           write pullRequests.review with runner: woodshed into the checkout's .woodshed/project.yaml
@@ -181,6 +183,9 @@ export async function reviewCommand({ origin, rest }, deps) {
     if (keep && (got.status === 404 || (got.status === 403 && /does not reach this/.test(String(got.body?.error ?? ''))))) {
       return { readiness: null, unasked: `${origin} is from before the console could keep a repo's review on: run woodshed review enable --commit in a checkout instead`, failed: true, unsupported: true };
     }
+    if (keep && got.status === 403) {
+      return { readiness: null, unasked: `${origin} refused: ${printable(got.body?.error, 200) ?? 'not yours to change'}`, refused: true };
+    }
     if (got.status === 401) {
       const me = await call(origin, '/api/cli/me', { token }).catch(() => null);
       if (me?.status === 200) return { readiness: null, unasked: `${origin} is from before woodshed review, so it was not asked what is missing`, failed: true, unsupported: Boolean(keep) };
@@ -248,13 +253,15 @@ export async function reviewCommand({ origin, rest }, deps) {
         : `the repo's project file reviews ${reviewWords(fileReview)}, which wins over the one the console keeps: set its pullRequests.review.runner to woodshed (woodshed review enable --commit, in a pull request), or take the review out of it.`);
     }
     if (!on && fileReview && readiness?.project) findings.warnings.push(`the repo's project file still names a review (${reviewWords(fileReview)}): take it out of ${PROJECT_FILE} in a pull request to turn that off.`);
-    const wanted = rerun === undefined ? DEFAULT_RERUN : rerun;
+    // No tag asked for keeps the one already kept (console/reviewReadiness.mjs, keep).
+    const keptNow = readiness?.kept && !readiness.kept.error ? readiness.kept : null;
+    const wanted = rerun !== undefined ? rerun : keptNow ? keptNow.rerun : DEFAULT_RERUN;
     const changed = dryRun ? Boolean(readiness?.project) && (on ? !(readiness.kept && !readiness.kept.error && readiness.kept.rerun === wanted) : Boolean(readiness.kept)) : Boolean(readiness?.changed);
     if (json) {
       emit({
         event: sub, repo, where: 'console', on, changed, dryRun, ...(on ? { rerun: wanted } : {}),
         console: consoleView(readiness), unasked, missing: findings.missing, warnings: findings.warnings,
-        ...(asked.unsupported ? { unsupported: true } : {}),
+        ...(asked.unsupported ? { unsupported: true } : {}), ...(asked.refused ? { refused: true } : {}),
       });
     }
     say(`Repo:            ${printable(repo, 140)}`);
@@ -264,16 +271,18 @@ export async function reviewCommand({ origin, rest }, deps) {
       else say(changed ? `Turned ${verb} the review the console keeps for ${printable(readiness.repo, 140)}${on ? `, ${reviewWords({ runner: 'woodshed', rerun: wanted })}` : ''}: no commit needed.` : `The review the console keeps was already ${verb}.`);
     }
     sayConsole(readiness, unasked, findings);
-    if (signIn || findings.missing.length) return EXIT.waiting;
-    if (!readiness) return EXIT.failed;
+    if (asked.refused) return EXIT.refused;
+    if (signIn || !readiness?.project) return readiness || signIn ? EXIT.waiting : EXIT.failed;
+    // Off is done once the console keeps none, whatever an admin still has to do for reviews to run.
+    if (!on && !readiness.defaultBranch?.error) {
+      say(review ? `Review is still on, ${fromWords(review.from)}: ${reviewWords(review)}.` : 'Review is off.');
+      return EXIT.done;
+    }
+    if (findings.missing.length) return EXIT.waiting;
     const unread = readiness.defaultBranch?.error ? printable(readiness.defaultBranch.error, 300) : null;
     if (unread) {
       say(`Console: the default branch's ${PROJECT_FILE} was not read: ${unread}. Until it is, the console holds the repo's reviews.`);
       return EXIT.failed;
-    }
-    if (!on) {
-      say(review ? `Review is still on, ${fromWords(review.from)}: ${reviewWords(review)}.` : 'Review is off.');
-      return EXIT.done;
     }
     if (dryRun) return EXIT.done;
     if (review?.runner !== 'woodshed') return EXIT.waiting;

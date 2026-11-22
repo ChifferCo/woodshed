@@ -243,10 +243,13 @@ export async function setupCommand(args, ctx) {
           const steps = info.missing.map((item) => printable(item?.step)).filter(Boolean);
           return stop('repo-review', EXIT.waiting, `${levels} ${steps.join(' ')} Then run setup again.`, { repo, ...(url ? { url } : {}) });
         }
-        // Kept on, but the repo's own project file reviews another way, and wins: a pull request changes that.
-        if (review.code === EXIT.waiting && info) {
+        // The repo's own project file reviews another way (GitHub Actions), and wins: its review is on already, and only
+        // a pull request changes it, so setup goes on.
+        const runner = info?.console?.review?.runner;
+        if (review.code === EXIT.waiting && runner && runner !== 'woodshed') {
           const warnings = Array.isArray(info.warnings) ? info.warnings.map(printable).filter(Boolean) : [];
-          return stop('repo-review', EXIT.waiting, `${levels} For ${repo}: ${warnings.join(' ') || printable(info.unasked) || 'review is not on yet.'} Then run setup again.`, { repo });
+          report('repo-review', 'done', `${levels} ${repo}'s own project file reviews ${runner === 'actions' ? 'in GitHub Actions' : 'its own way'}, which it keeps. ${warnings.join(' ')}`.trim(), { repo });
+          continue;
         }
         if (review.code !== EXIT.done || !info) {
           const reason = printable(info?.console?.defaultBranch?.error) || printable(info?.unasked);

@@ -133,20 +133,22 @@ test('setup turns review on for each repo in the console, with no checkout and n
 
 test('setup says when the repo\'s own project file reviews another way, and when the console is too old to keep it', async () => {
   const fileWins = fake({ commands: ['review'], answers: {
-    'review enable': result(2, { event: 'enable', where: 'console', missing: [], warnings: ['the repo\'s project file reviews in GitHub Actions, which wins over the one the console keeps.'] }),
+    'review enable': result(2, { event: 'enable', where: 'console', missing: [], console: { review: { runner: 'actions', rerun: null, from: 'default branch' } }, warnings: ['the repo\'s project file reviews in GitHub Actions, which wins over the one the console keeps.'] }),
   } });
-  const stopped = await fileWins.invoke('--yes', '--repo', repo, '--no-session');
-  assert.equal(stopped.code, 2);
-  assert.match(stopped.events.at(-1).message, /For acme\/app: the repo's project file reviews in GitHub Actions, which wins/);
+  const goesOn = await fileWins.invoke('--yes', '--repo', repo, '--no-session');
+  assert.equal(goesOn.code, 0, 'its review is on already, in Actions: setup goes on, and a rerun does not stop there');
+  const step = goesOn.events.find((entry) => entry.step === 'repo-review');
+  assert.equal(step.status, 'done');
+  assert.match(step.message, /acme\/app's own project file reviews in GitHub Actions, which it keeps/);
 
   const old = fake({ commands: ['review'], answers: {
     'review enable': result(1, { event: 'enable', where: 'console', unsupported: true, unasked: 'from before' }, { event: 'error', error: 'x' }),
   } });
   const skipped = await old.invoke('--yes', '--repo', repo, '--no-session');
   assert.equal(skipped.code, 0);
-  const step = skipped.events.find((entry) => entry.step === 'repo-review');
-  assert.equal(step.status, 'skipped');
-  assert.match(step.message, /run woodshed review enable --commit --console "https:\/\/console\.example" and open a pull request/);
+  const oldStep = skipped.events.find((entry) => entry.step === 'repo-review');
+  assert.equal(oldStep.status, 'skipped');
+  assert.match(oldStep.message, /run woodshed review enable --commit --console "https:\/\/console\.example" and open a pull request/);
 });
 
 test('setup prints the review command when no repo was chosen', async () => {
