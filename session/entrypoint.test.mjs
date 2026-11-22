@@ -1219,6 +1219,9 @@ function agentTerminalRun({ terminal = null, kind = 'private', mode = '', hc = '
   const record = (name, fails) => `#!/bin/bash\necho "${name} $*" >> ${calls}\n${fails ? 'echo "hc: the core did not start" >&2; exit 1\n' : ''}[ "$1" != --version ] || echo "hc 0.1.21"\n`;
   if (hc !== 'none') fs.writeFileSync(path.join(bin, 'hc'), record('hc', hc === 'fails'), { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'tmux'), record('tmux', false), { mode: 0o755 });
+  // node by itself, never its folder: in a session image /usr/local/bin holds the real hc beside it, which `hc: 'none'`
+  // would find, and run.
+  fs.symlinkSync(process.execPath, path.join(bin, 'node'));
   const script = [
     'set -euo pipefail',
     'log() { echo "[woodshed] $*"; }',
@@ -1230,7 +1233,7 @@ function agentTerminalRun({ terminal = null, kind = 'private', mode = '', hc = '
   try {
     const out = execFileSync('bash', ['-c', script], {
       encoding: 'utf8',
-      env: { PATH: `${bin}:/usr/bin:/bin:${path.dirname(process.execPath)}`, HOME: tmp, REPO_DIR: repo, SESSION_MODE: mode, SESSION_KIND: kind, ...(terminal ? { OWNER_TERMINAL: terminal } : {}) },
+      env: { PATH: `${bin}:/usr/bin:/bin`, HOME: tmp, REPO_DIR: repo, SESSION_MODE: mode, SESSION_KIND: kind, ...(terminal ? { OWNER_TERMINAL: terminal } : {}) },
     });
     return { out, calls: fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8') : '', config: fs.existsSync(path.join(tmp, '.config/herdr-core/config.toml')) ? fs.readFileSync(path.join(tmp, '.config/herdr-core/config.toml'), 'utf8') : null };
   } finally {
