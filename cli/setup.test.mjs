@@ -372,7 +372,7 @@ test('with --yes, setup reviews the open pull requests updated last, and ends wi
   const step = after.events.find((event) => event.step === 'pr-reviews');
   assert.equal(step.status, 'done');
   assert.equal(step.reviews.length, 5);
-  assert.match(step.message, new RegExp(`#9 ${origin}/s/00000000`));
+  assert.match(step.message, new RegExp(`^Reviews on acme/app: #9 ${origin}/s/00000000, #7`));
   assert.match(step.message, /The 5 updated last; --review-prs all reviews every one/);
   assert.match(step.message, /a review will start on your next one whose commit message has \[woodshed-review\]/);
   const last = after.events.at(-1);

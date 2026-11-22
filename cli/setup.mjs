@@ -366,13 +366,14 @@ export async function setupCommand(args, ctx) {
       const started = await call('review start', 'review', 'start', ...numbers.map(String), '--repo', repo);
       const reviews = started.events.filter((event) => event.event === 'review' && Number.isSafeInteger(event.number));
       if (!reviews.length) return childError('pr-reviews', started, `Could not start reviews on ${repo}.`, { repo });
-      const links = reviews.filter((r) => r.outcome !== 'refused').map((r) => ({ number: r.number, url: linkTo(r.session?.url, origin), pullUrl: linkTo(r.pullUrl, origin, true) }));
+      const links = reviews.filter((r) => r.outcome !== 'refused').map((r) => ({ number: r.number, outcome: r.outcome, url: linkTo(r.session?.url, origin), pullUrl: linkTo(r.pullUrl, origin, true) }));
       const refused = reviews.filter((r) => r.outcome === 'refused').map((r) => `#${r.number}: ${printable(r.error)}`);
       reviewLinks.push(...links.map((link) => ({ repo, ...link })));
-      const linkText = links.map((link) => `#${link.number} ${link.url ?? link.pullUrl}`).join(', ');
+      const already = { running: ' (being reviewed already)', reviewed: ' (its head commit was reviewed already)' };
+      const linkText = links.map((link) => `#${link.number} ${link.url ?? link.pullUrl}${already[link.outcome] ?? ''}`).join(', ');
       const refusedText = refused.length ? ` Not started: ${refused.join('; ')}.` : '';
       if (!links.length) return stop('pr-reviews', started.code || EXIT.failed, `No review started on ${repo}.${refusedText}`, { repo });
-      report('pr-reviews', 'done', `Reviews started on ${repo}: ${linkText}. Each posts its verdict on the pull request; after that, ${next}.${why}${refusedText}`, { repo, reviews: links });
+      report('pr-reviews', 'done', `Reviews on ${repo}: ${linkText}. Each posts its verdict on the pull request; after that, ${next}.${why}${refusedText}`, { repo, reviews: links });
     }
   }
 
