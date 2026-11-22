@@ -283,3 +283,26 @@ test('a shared session\'s app has no share of its own', async (t) => {
   const res = await c.consoleCall('mia-dev', '/api/sessions/0a1b2c3d/app-share');
   assert.equal(res.status, 409);
 });
+
+test('a link lands on the page its owner named, and never off the app', async (t) => {
+  const c = await sharedConsole(t);
+  const made = await c.consoleCall('octocat', '/api/sessions/0a1b2c3d/app-share/links', { method: 'POST', body: { hours: 1, path: '/landing-a?v=2' } });
+  assert.equal(made.status, 201);
+  const { url, path } = JSON.parse(made.body);
+  assert.equal(path, '/landing-a?v=2');
+  const link = new URL(url);
+  assert.equal(link.searchParams.get('next'), '/landing-a?v=2');
+  const claimed = await c.appCall(link.pathname + link.search);
+  assert.deepEqual([claimed.status, claimed.headers.location], [302, '/landing-a?v=2']);
+
+  // The token's owner never chose these: a `next` added by hand lands on the app's home, on its own name, or nowhere.
+  const token = link.searchParams.get('t');
+  for (const [next, location] of [['//evil.example/x', '/'], ['https://evil.example/', '/'], ['/\\evil.example', '/'], ['/__woodshed/code/', '/'], ['/ok/page', '/ok/page']]) {
+    const res = await c.appCall(`/__woodshed/share?t=${token}&next=${encodeURIComponent(next)}`);
+    assert.deepEqual([res.status, res.headers.location], [302, location], next);
+  }
+  const plain = JSON.parse((await c.consoleCall('octocat', '/api/sessions/0a1b2c3d/app-share/links', { method: 'POST', body: { hours: 1 } })).body);
+  assert.doesNotMatch(plain.url, /next=/, 'no path, no next');
+  assert.equal(plain.path, null);
+  assert.equal((await c.consoleCall('octocat', '/api/sessions/0a1b2c3d/app-share/links', { method: 'POST', body: { hours: 1, path: '//evil.example' } })).status, 400);
+});

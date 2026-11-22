@@ -5,6 +5,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
+import { createAppShares } from '../console/appShares.mjs';
 import { createCliSignIn } from '../console/cliSignIn.mjs';
 import { createHandler } from '../console/server.mjs';
 import { createCredentials } from './credentials.mjs';
@@ -238,7 +239,9 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
   const config = { host: '127.0.0.1', publicUrl: 'http://pending', extraHosts: [], repo: 'acme/app', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, ...(appDomain && { appDomain }) };
   // Who may see shared sessions, as People's Sessions from GitHub says; with none, everyone may.
   const members = githubSessions ? { hasGithubSessions: (login) => githubSessions.has(login), isMember: () => true, isAssignable: () => false, assignables: () => [], view: () => ({ members: [{ login: 'mia-dev' }, { login: 'octocat' }] }) } : undefined;
-  const handle = createHandler({ config, fleet, auth, cli, userSettings, projectAccess, ...(members ? { members } : {}) });
+  // Real app shares, as the page's Share the app keeps them, on a console that serves session apps.
+  const appShares = appDomain ? createAppShares({ store, now }) : null;
+  const handle = createHandler({ config, fleet, auth, cli, userSettings, projectAccess, ...(members ? { members } : {}), ...(appShares && { appShares }) });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
@@ -275,7 +278,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
   };
   const signed = await run(['login', '--console', origin]);
   assert.equal(signed.code, EXIT.done, signed.err);
-  return { origin, run, calls, sessions, cli, hc, app, dir, answer: (a) => { answer = a; }, listFailures, now };
+  return { origin, run, calls, sessions, cli, hc, app, dir, answer: (a) => { answer = a; }, listFailures, now, appShares };
 }
 
 // A start as the fleet moves it: in line, starting, each step, then running.
@@ -1499,4 +1502,93 @@ test('a codex child wakes its parent only by exiting: the pinned codex tells Her
   assert.match(out.out, /is a child of t4 here, and outlives it: hc wait --children any wakes t4 only when it exits: codex tells Herdr nothing of its turns\.\n/);
   const json = await consoleFor(t, { hc: fakeHc({ waiting: true }), env: IN_HERDR, script: [...START, { status: 'running', state: 'starting' }] });
   assert.equal((await json.run(['session', 'new', '--agent', 'codex', '--herdr', '--parent', '--json', 'go'])).lines.at(-1).parent.reportsStatus, false);
+});
+
+test('session share shows who can open the app, switches members, makes a link once, and revokes it', async (t) => {
+  const c = await consoleFor(t, { appDomain: 'apps.example.test' });
+  const none = await c.run(['session', 'share', 'aaaa0001']);
+  assert.equal(none.code, EXIT.done, none.err);
+  assert.equal(none.out, 'Session aaaa0001\'s app, https://aaaa0001.apps.example.test/:\n  Members of this console: off\n  Links: none\n  Only you can open it.\n');
+
+  const on = await c.run(['session', 'share', 'aaaa0001', '--members', 'on', '--json']);
+  assert.equal(on.code, EXIT.done, on.err);
+  assert.deepEqual([on.lines[0].event, on.lines[0].share.members], ['members', true]);
+  assert.equal(c.appShares.membersOpen('aaaa0001'), true);
+
+  const made = await c.run(['session', 'share', 'aaaa0001', '--link']);
+  assert.equal(made.code, EXIT.done, made.err);
+  const [linkId] = /Link ([0-9a-f]{8}) to session aaaa0001's app, for 1 day, ending 2026-11-21 10:00 UTC:/.exec(made.out).slice(1);
+  const url = /\n {2}(https:\/\/aaaa0001\.apps\.example\.test\/__woodshed\/share\?t=[0-9a-f.]+)\n/.exec(made.out)?.[1];
+  assert.ok(url, made.out);
+  assert.match(made.out, /This link is a secret, shown only now: anyone who has it can open the app .* until it expires, you revoke it \(woodshed session share aaaa0001 --revoke [0-9a-f]{8}\), or the session pauses or stops\. Give it to the person it is for; do not post it anywhere\.\n/);
+  assert.match(made.out, /Sharing ends when the session pauses or stops \(it pauses in 42m\): woodshed session limits aaaa0001 keeps it up longer\.\n$/);
+
+  const week = await c.run(['session', 'share', 'aaaa0001', '--link', '--hours', '168', '--path', '/landing-a', '--json']);
+  assert.equal(week.code, EXIT.done, week.err);
+  const [event] = week.lines;
+  assert.equal(event.event, 'link');
+  assert.equal(new URL(event.url).searchParams.get('next'), '/landing-a');
+  assert.equal(event.path, '/landing-a');
+  assert.equal(event.link.expiresAt, c.now() + 168 * 3_600_000);
+  assert.equal(event.link.by, 'mia-dev');
+
+  const listed = await c.run(['session', 'share', 'aaaa0001']);
+  assert.match(listed.out, /Members of this console: on, anyone signed in to the console can open it\n/);
+  assert.match(listed.out, new RegExp(` {2}Link ${linkId}: made by @mia-dev 2026-11-20 10:00 UTC, ends 2026-11-21 10:00 UTC\\n`));
+  assert.ok(!listed.out.includes('t='), 'a listing never shows a link\'s token');
+  const listedJson = await c.run(['session', 'share', 'aaaa0001', '--json']);
+  assert.deepEqual(Object.keys(listedJson.lines[0].share.links[0]).sort(), ['by', 'createdAt', 'expiresAt', 'id']);
+
+  const revoked = await c.run(['session', 'share', 'aaaa0001', '--revoke', linkId]);
+  assert.equal(revoked.code, EXIT.done, revoked.err);
+  assert.match(revoked.out, new RegExp(`^Revoked link ${linkId}: it opens nothing now\\.\\n`));
+  assert.doesNotMatch(revoked.out, new RegExp(`Link ${linkId}:`));
+  const again = await c.run(['session', 'share', 'aaaa0001', '--revoke', linkId]);
+  assert.equal(again.code, EXIT.failed);
+  assert.match(again.err, /has no live link/);
+
+  const off = await c.run(['session', 'share', 'aaaa0001', '--members', 'off']);
+  assert.equal(off.code, EXIT.done, off.err);
+  assert.equal(c.appShares.membersOpen('aaaa0001'), false);
+});
+
+test('session share refuses expiries the page does not offer, and mixed options, before asking the console', async (t) => {
+  const c = await consoleFor(t, { appDomain: 'apps.example.test' });
+  for (const args of [
+    ['--link', '--hours', '2'], ['--link', '--hours', '0'], ['--link', '--hours', '24.0'], ['--link', '--hours', '9999'], ['--hours', '24'],
+    ['--members', 'yes'], ['--members', 'on', '--link'], ['--link', '--revoke', '1a2b3c4d'], ['--revoke', 'nope'],
+    ['--link', '--path', 'landing'], ['--link', '--path', '//evil.example'], ['--path', '/x'],
+  ]) {
+    const out = await c.run(['session', 'share', 'aaaa0001', ...args]);
+    assert.equal(out.code, EXIT.failed, args.join(' '));
+  }
+  assert.match((await c.run(['session', 'share', 'aaaa0001', '--link', '--hours', '2'])).err, /--hours must be 1, 24 or 168/);
+  assert.deepEqual(c.appShares.view('aaaa0001'), { members: false, links: [] }, 'nothing was made');
+});
+
+test('session share is refused for a shared session, another person\'s, a paused one, one that saw production, and a console with no apps', async (t) => {
+  const c = await consoleFor(t, { appDomain: 'apps.example.test', extra: [{ id: '7a7a0007', owner: 'mia-dev', title: 'Saw prod', status: 'running', state: 'working', taintedAt: iso(T0) }] });
+  const shared = await c.run(['session', 'share', '1a1a0007', '--link', '--json']);
+  assert.equal(shared.code, EXIT.refused);
+  assert.match(shared.lines.at(-1).error, /shared session: the command line can share the app of only your own My Woodshed sessions/);
+  const theirs = await c.run(['session', 'share', 'eeee0005']);
+  assert.equal(theirs.code, EXIT.failed, 'someone else\'s private session is not on her list');
+  assert.match(theirs.err, /No session eeee0005 that you can see/);
+  const paused = await c.run(['session', 'share', 'bbbb0002', '--link']);
+  assert.equal(paused.code, EXIT.refused);
+  assert.match(paused.err, /not running/);
+  const prod = await c.run(['session', 'share', '7a7a0007', '--members', 'on']);
+  assert.equal(prod.code, EXIT.refused);
+  assert.match(prod.err, /seen production data/);
+  assert.equal((await c.run(['session', 'share', '7a7a0007', '--members', 'off'])).code, EXIT.done, 'turning it off is always allowed');
+  // The console holds to it on its own too, as it does for the page.
+  c.sessions.find((x) => x.id === '7a7a0007').taintedAt = null;
+  const appShared = await c.run(['session', 'share', '7a7a0007', '--link']);
+  assert.equal(appShared.code, EXIT.done, appShared.err);
+  for (const id of ['1a1a0007', 'bbbb0002']) assert.deepEqual(c.appShares.view(id), { members: false, links: [] });
+
+  const plain = await consoleFor(t);
+  const none = await plain.run(['session', 'share', 'aaaa0001']);
+  assert.equal(none.code, EXIT.refused);
+  assert.match(none.err, /serves no session apps/);
 });

@@ -112,6 +112,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed session list [--all]` | Their sessions and the shared ones they see, with state, kind (`private`, `shared`, `review`, `qa`, `ask`) and when each pauses; each session's pull request (state, verdict, checks), `review it: woodshed review <id>` under those they can review, and their own open pull requests with no session; in `--json` also a review's or QA's `verdict` once it reported, and whether the console's Mine lists it (`inMine`); names Herdr machines of sessions no longer on the console | 0 | main |
 | `woodshed session get <id>` | One session: state, kind, branch, pull request, a review's or QA's verdict, its app and the app's link, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
 | `woodshed session app <id> [start [--app NAME] [--no-wait]\|stop]` | A running session's app: whether it is up and its link; `start` starts it and waits up to 5 minutes until it is up, `stop` stops it | 0 up or asked, 2 no app in the project file, 1 not up in time, failed, or still stopping, 3 not running, `stop` with no stop command, or no session apps on this console | main |
+| `woodshed session share <id> [--members on\|off \| --link [--hours 1\|24\|168] [--path /page] \| --revoke <link id>]` | Who besides the person can open their private session's app (the members switch, live links with id, maker and end; never a secret), as the page's Share the app; `--members` switches members on or off, `--link` makes a link anyone can open and prints it once, `--revoke` ends one. Only when they ask: see the recipe | 0, 3 shared, not running, saw production, or a console with app ports, 1 an expiry other than 1, 24 or 168, or an unknown link, 2 sign-in ended | main |
 | `woodshed session watch [--kind K,…] [--everyone] [--every S] [--herdr] [--json]` | Follows the console until stopped and prints one event per session that starts, runs, is done with its turn, needs the person, pauses (idle), stops (lifetime, a person), finishes (a review's or QA's with its verdict) or fails, and says when a session's Herdr machine is unreachable; Mine by default. `--herdr` starts it in hc terminal `woodshed-watch` instead, reporting to Herdr, and returns | runs until stopped (`--herdr`: 0 started or kept); 2 sign-in ended, 3 refused or no `hc` | main |
 | `woodshed session stop <id>` | Stops it, checkpointing a running one's work on the way (waits up to 3 minutes) | 0, 1 not answered in time | main |
 | `woodshed session resume <id> [--no-wait]` | Starts one of their stopped sessions again, conversation and all; inside Herdr, follow it with `session herdr <id>` | as `new`; 3 a shared session | main |
@@ -357,6 +358,32 @@ With several apps (`session.apps`), `--app <name>` starts that one; with another
 `stop` first and the command waits through the switch. One with no `stop` in the project file is left running beside
 it: say so if they ask why it still answers. `woodshed session app <id> stop` stops it, only when they ask; exit 3 saying
 there is no stop command means the project file has no `app.stop`, so nothing was stopped: tell them.
+
+### Share a session's app
+
+Only when the person asks to let someone else see or try their session's app. Check `woodshed session --help` lists
+`share` first (section 1); on an older CLI, point them at Share the app on the session's ⋯ menu (`url`).
+
+```sh
+woodshed session share <id> --json                   # who can open it now
+woodshed session share <id> --members on --json      # everyone signed in to the console
+woodshed session share <id> --link --json            # a link anyone can open, for a day (--hours 1 or 168)
+woodshed session share <id> --revoke <link id>       # end one link
+```
+
+- Prefer `--members on` when the people are members of the console: it needs no secret and `--members off` takes it
+  back. Make a `--link` only for someone with no account here, or when the person asks for one. `--path /landing-a`
+  makes it open on that page of the app.
+- A link is a secret, printed once: give it to the person in your reply, and say anyone who has it can use the app as
+  the session's signed-in user, changing its data, until it expires or is revoked. Never post it anywhere yourself (a
+  pull request, an issue, Slack, a commit, a file), never put it in a command another program logs, and never print
+  it again: `share <id>` lists links without it.
+- Sharing ends when the session pauses or stops, and a resumed session is private again: tell them when it pauses
+  (`session get <id>`), and offer `woodshed session limits <id>` when the sharing must outlast that.
+- Exit 3: a shared session (its app is already open to who can open the session), one not running (offer `resume`), one
+  that has seen production data, or a console with app ports (nobody signs in: its link already opens for whoever
+  reaches it).
+  Report it; do not work around it.
 
 ### Change a choice on My settings
 

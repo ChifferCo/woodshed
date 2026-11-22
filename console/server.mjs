@@ -179,9 +179,12 @@
 //   GET  https://<id>.<app domain>/__woodshed/auth   claims the code: the app's own sign-in cookie
 //   GET  /api/sessions/<id>/app-share   who else may open a My Woodshed session's app, and its links (owner only; appShares.mjs)
 //   POST /api/sessions/<id>/app-share/members  {"on": true}   every signed-in member may open the app
-//   POST /api/sessions/<id>/app-share/links    {"hours": 24}  a link anyone can open, with its expiry; the token is shown once
+//   POST /api/sessions/<id>/app-share/links    {"hours": 24, "path"?: "/landing"}  a link anyone can open, with its
+//        expiry and, if asked, the app's page it lands on; the token is shown once
 //   POST /api/sessions/<id>/app-share/links/<linkId>/revoke   ends one link
-//   GET  https://<id>.<app domain>/__woodshed/share?t=<token>   claims a link: a cookie for that one app, until the link ends
+//        These four take the command line's token too, for woodshed session share (cliSessions.mjs)
+//   GET  https://<id>.<app domain>/__woodshed/share?t=<token>[&next=<path>]   claims a link: a cookie for that one app,
+//        until the link ends, then the app's `next` page (shareNext in appShares.mjs: a path on the app, or /)
 //   *    https://<id>.<app domain>/__woodshed/code/...   the session's VS Code, through its statusd, websockets too:
 //        Editor ↗, for whoever can open the session itself (editorProxy.mjs)
 //
@@ -208,6 +211,7 @@ import { ENGINE_NAMES, viewersOf } from '../shared/databases/index.mjs';
 import { handlePwaRequest, MANIFEST } from '../shared/pwa.mjs';
 import { createReviewProxy, isReviewPath } from './reviewProxy.mjs';
 import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
+import { shareNext } from './appShares.mjs';
 import { safeNext, signInFailure } from './auth.mjs';
 import { handleDesktopSignIn } from './desktopSignIn.mjs';
 import { handleCliApi, handleCliPage } from './cliSignIn.mjs';
@@ -1125,7 +1129,7 @@ export function createHandler({
         return res.end(shareLinkEndedPage(id, config.publicUrl));
       }
       // The token leaves the address bar at once, and no page the app links to is told where it came from.
-      res.writeHead(302, { location: '/', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', 'set-cookie': claimed.setCookie });
+      res.writeHead(302, { location: shareNext(url.searchParams.get('next')) ?? '/', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', 'set-cookie': claimed.setCookie });
       return res.end();
     }
     const viewer = await appViewerFor({ auth, trusted, appShares, headers: req.headers, appId: id });
@@ -2317,9 +2321,12 @@ export function createHandler({
       return reply(res, 200, shareView());
     }
     if (session.status !== 'running') return reply(res, 409, { error: 'the session is not running: its app can be shared while it is' });
+    const next = body?.path === undefined || body?.path === null ? null : shareNext(body.path);
+    if (next === null && body?.path !== undefined && body?.path !== null) return reply(res, 400, { error: 'path must be a page of the app, starting with /, such as /landing-a' });
     try {
       const link = appShares.createLink({ sessionId: id, hours: body?.hours, by: login });
-      return reply(res, 201, { ...shareView(), url: appUrl(config, id, `${APP_SHARE_PATH}?t=${link.token}`), created: link.id });
+      const landing = next && next !== '/' ? `&next=${encodeURIComponent(next)}` : '';
+      return reply(res, 201, { ...shareView(), url: appUrl(config, id, `${APP_SHARE_PATH}?t=${link.token}${landing}`), created: link.id, path: next });
     } catch (err) {
       if (err.shown) return reply(res, 400, { error: err.message });
       throw err;
@@ -2464,6 +2471,8 @@ export function createHandler({
     if (pathname === REVIEW_READINESS_PATH) return reviewReadinessReply({ req, res, url, login, readiness: reviewReadiness, config, reply });
     if (pathname === CLI_CONFIG_PATH) return reply(res, 200, await configView({ userSettings, projectsView }, login));
     if (pathname === '/api/my/pulls') return pullsReply(res, login);
+    const shareRead = APP_SHARE_RE.exec(pathname);
+    if (shareRead && !shareRead[2]) return appShareAction(req, res, shareRead, login);
     return reply(res, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
   }
   function cliWrite(req, res, pathname, login) {

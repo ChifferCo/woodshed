@@ -8,6 +8,7 @@
 //   woodshed session list [--all]
 //   woodshed session get <id>
 //   woodshed session app <id> [start [--app <name>] [--no-wait]|stop]
+//   woodshed session share <id> [--members on|off | --link [--hours 1|24|168] [--path /page] | --revoke <link id>]
 //   woodshed session stop <id>
 //   woodshed session resume <id> [--no-wait]
 //   woodshed session remove <id> [--yes]
@@ -30,6 +31,8 @@
 //
 // app says whether the session's app runs and where it opens, and starts or stops it, as the page's Open app, Start app
 // and Stop app do. Set up app, which asks the session's agent to write the project file's app, stays on the page.
+// share says who besides you may open your private session's app, and changes it, as the page's Share the app does:
+// every member of the console (one switch), or a link anyone can open, until it expires, is revoked or the session stops.
 //
 // connect puts this terminal on one of your sessions' (terminal.mjs): its agent's, or with --shell the Terminal tab's
 // shell, resuming it first when it paused.
@@ -97,6 +100,14 @@ Commands:
                              it (one to three minutes) and waits until it is up, stop stops it
       --app <name>           start this one of the project's apps, where it has several
       --no-wait              return once the session has been asked to start it
+  share <id> [option]        who besides you can open your session's app: the members switch and the live links,
+                             as the page's Share the app shows them (never a link's secret). One option at a time:
+      --members on|off       every member signed in to the console may open it, or no longer
+      --link                 make a link anyone can open, printed once: a secret until it expires, is revoked, or
+                             the session pauses or stops
+      --hours 1|24|168       with --link: how long it lasts (default 24)
+      --path </page>         with --link: the app's page it lands on, such as /landing-a (default its home)
+      --revoke <link id>     end one link at once
   stop <id>                  stop a session; a running one's work is pushed as it stops
   resume <id> [--no-wait]    start one of your stopped sessions again, its conversation and all, and wait for it
   remove <id> [--yes]        take one of your sessions off the list, with its saved conversation (stopped first),
@@ -1151,6 +1162,63 @@ export async function sessionCommand({ origin, rest }, ctx) {
     return EXIT.failed;
   }
 
+  if (sub === 'share') return share();
+
+  // Who besides you may open your session's app, as the page's Share the app says it and changes it: the members
+  // switch, and links anyone can open (console/appShares.mjs). A link's token is printed once, as the page shows it once.
+  async function share() {
+    ownPrivate(s, login, 'share the app of');
+    if (s.kind === 'ask') throw fail(`Session ${id} answers a question from Slack: it has no app.`, { code: EXIT.refused, status: 'refused' });
+    if (!servesApps(appsOn)) throw fail(`${origin} serves no session apps: there is no app to share.`, { code: EXIT.refused, status: 'refused' });
+    // App ports are a console nobody signs in to, whose page has no Share the app.
+    if (appsOn.ports) throw fail(`${origin} lends its session apps ports, and nobody signs in to it: their links already open for whoever reaches the console, so there is nothing to share.`, { code: EXIT.refused, status: 'refused' });
+    if (s.taintedAt && (opts.link || opts.members === 'on')) throw fail(`Session ${id} has seen production data: its app is never shared.`, { code: EXIT.refused, status: 'refused' });
+    const base = `/api/sessions/${id}/app-share`;
+    let answer;
+    try {
+      if (opts.members) answer = await ask(`${base}/members`, { method: 'POST', body: { on: opts.members === 'on' } });
+      else if (opts.link) answer = await ask(`${base}/links`, { method: 'POST', body: { hours: opts.hours, ...(opts.path && { path: opts.path }) } });
+      else if (opts.revoke) answer = await ask(`${base}/links/${opts.revoke}/revoke`, { method: 'POST', body: {} });
+      else answer = await ask(base);
+    } catch (err) {
+      // The console's own rules: not running, a shared session, production data, ten links already. A link it does not
+      // know is a mistake in what was asked.
+      if (opts.revoke && err.http === 404 && /no such link/.test(err.message)) throw fail(`Session ${id} has no live link ${opts.revoke}: woodshed session share ${id} lists them.`);
+      if (err.http === 409 || err.http === 404 || (err.http === 400 && /at most/.test(err.message))) throw fail(err.message, { code: EXIT.refused, status: 'refused' });
+      throw err;
+    }
+    const shown = shareView(answer);
+    const x = summary(s, { origin, login, appsOn });
+    const ends = x.pause ? ` (it ${x.pause.why === 'lifetime' ? 'stops' : 'pauses'} ${pauseText(x.pause, now()).replace(/, \w+$/, '')})` : '';
+    const lasts = `Sharing ends when the session pauses or stops${ends}: woodshed session limits ${id} keeps it up longer.`;
+    if (opts.link) {
+      const url = typeof answer.url === 'string' && /^https?:\/\//.test(answer.url) ? printable(answer.url, 1000) : null;
+      if (!url) throw fail(`${origin} made link ${printable(answer.created, 20) ?? ''} but did not send it back: revoke it with woodshed session share ${id} --revoke <link id>.`);
+      const link = shown.links.find((l) => l.id === answer.created) ?? null;
+      // A console from before a link's own path makes it without one: it lands on the app's home.
+      const landed = opts.path ? new URL(url).searchParams.has('next') : null;
+      if (json) emit({ event: 'link', id, link, url, path: landed ? printable(answer.path, 500) : null, share: shown });
+      say(`Link ${link?.id ?? printable(answer.created, 20)} to session ${id}'s app, for ${HOURS_WORDS[opts.hours]}${link ? `, ending ${utc(link.expiresAt)}` : ''}:`);
+      say(`  ${url}`);
+      say(`This link is a secret, shown only now: anyone who has it can open the app as the session's signed-in user, and change its data, until it expires, you revoke it (woodshed session share ${id} --revoke ${link?.id ?? printable(answer.created, 20)}), or the session pauses or stops. Give it to the person it is for; do not post it anywhere.`);
+      if (opts.path && !landed) say(`${origin} does not take a page for the link to land on: after opening it, go to ${opts.path} on the app.`);
+      say(lasts);
+      if (appsOn.signIn === false) say(`Nobody signs in to ${origin}, so its app link already opens for whoever reaches the console.`);
+      return EXIT.done;
+    }
+    const event = opts.members ? 'members' : opts.revoke ? 'revoked' : 'share';
+    if (json) emit({ event, id, ...(opts.revoke && { link: opts.revoke }), share: shown });
+    if (opts.revoke) say(`Revoked link ${opts.revoke}: it opens nothing now.`);
+    say(`Session ${id}'s app${shown.appUrl ? `, ${shown.appUrl}` : ''}:`);
+    say(`  Members of this console: ${shown.members ? 'on, anyone signed in to the console can open it' : 'off'}`);
+    if (!shown.links.length) say('  Links: none');
+    for (const l of shown.links) say(`  Link ${l.id}: made${l.by ? ` by @${l.by}` : ''} ${utc(l.createdAt)}, ends ${utc(l.expiresAt)}`);
+    if (!shown.members && !shown.links.length) say('  Only you can open it.');
+    if (shown.members || shown.links.length) say(lasts);
+    if (appsOn.signIn === false) say(`Nobody signs in to ${origin}, so its app link already opens for whoever reaches the console.`);
+    return EXIT.done;
+  }
+
   if (sub === 'get') {
     const x = summary(s, { origin, login, appsOn });
     if (json) {
@@ -1242,6 +1310,35 @@ export async function sessionCommand({ origin, rest }, ctx) {
   return EXIT.done;
 }
 
+// A link's expiries, as the page's Share the app offers them (console/public/appShare.js, EXPIRIES).
+export const SHARE_HOURS = [1, 24, 168];
+const HOURS_WORDS = { 1: '1 hour', 24: '1 day', 168: '7 days' };
+const LINK_ID_RE = /^[0-9a-f]{8}$/;
+
+/** @returns {string}  a console's time as `2026-11-20 10:00 UTC`, or `?` */
+function utc(ms) {
+  return Number.isFinite(ms) ? `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC` : '?';
+}
+
+/**
+ * What the console says of who may open a session's app, its strings made safe to print. Never a token: the console's
+ * view has none, and the one link URL a make answers with is printed on its own.
+ * @returns {{appUrl: string|null, members: boolean, links: {id: string, by: string|null, createdAt: number|null, expiresAt: number|null}[]}}
+ */
+export function shareView(body) {
+  const links = Array.isArray(body?.links) ? body.links : [];
+  return {
+    appUrl: typeof body?.appUrl === 'string' && /^https?:\/\//.test(body.appUrl) ? printable(body.appUrl, 300) : null,
+    members: body?.members === true,
+    links: links.filter((l) => l && LINK_ID_RE.test(l.id)).map((l) => ({
+      id: l.id,
+      by: typeof l.by === 'string' ? printable(l.by, 60) : null,
+      createdAt: Number.isFinite(l.createdAt) ? l.createdAt : null,
+      expiresAt: Number.isFinite(l.expiresAt) ? l.expiresAt : null,
+    })),
+  };
+}
+
 /**
  * @returns {{prompt?: string, repo?: string, branch?: string, agent?: string, model?: string, wait?: boolean,
  *            all?: boolean, yes?: boolean, id?: string, action?: 'start'|'stop', app?: string}}
@@ -1254,6 +1351,7 @@ export function parseSessionArgs(sub, words, fail) {
     list: { values: [], flags: ['all'], words: null },
     get: { values: [], flags: [], words: 'id' },
     app: { values: ['app'], flags: ['no-wait'], words: 'id-action' },
+    share: { values: ['members', 'hours', 'path', 'revoke'], flags: ['link'], words: 'id' },
     extend: { values: [], flags: [], words: 'id' },
     limits: { values: ['idle-hours', 'lifetime-hours'], flags: [], words: 'id' },
     stop: { values: [], flags: [], words: 'id' },
@@ -1301,6 +1399,19 @@ export function parseSessionArgs(sub, words, fail) {
   if (out.agent !== undefined && !['claude', 'codex'].includes(out.agent)) throw fail('--agent must be claude or codex');
   // An app's name, never the next option taken for one (`--app --no-wait`).
   if (out.app !== undefined && !APP_NAME_RE.test(out.app)) throw fail(`--app needs an app's name: lowercase letters, digits and dashes, as the project file names them${out.app.startsWith('-') ? `, not ${out.app}` : ''}`);
+  if (sub === 'share') {
+    const asked = ['members', 'link', 'revoke'].filter((k) => out[k] !== undefined);
+    if (asked.length > 1) throw fail(`session share takes one of --members, --link and --revoke at a time, not ${asked.map((k) => `--${k}`).join(' and ')}`);
+    if (out.members !== undefined && !['on', 'off'].includes(out.members)) throw fail('--members must be on or off');
+    if (out.revoke !== undefined && !LINK_ID_RE.test(out.revoke)) throw fail(`--revoke needs a link's id: eight letters and digits, as woodshed session share <id> lists them`);
+    if ((out.hours !== undefined || out.path !== undefined) && !out.link) throw fail(`--${out.hours !== undefined ? 'hours' : 'path'} goes with --link`);
+    if (out.link) {
+      const hours = out.hours === undefined ? 24 : Number(out.hours);
+      if (!SHARE_HOURS.includes(hours) || !/^\d+$/.test(out.hours ?? '24')) throw fail(`--hours must be 1, 24 or 168 (an hour, a day or a week, as the page's Share the app offers), not ${out.hours}`);
+      out.hours = hours;
+    }
+    if (out.path !== undefined && (!out.path.startsWith('/') || /^\/[/\\]/.test(out.path) || out.path.length > 500)) throw fail(`--path needs a page of the app, starting with one /, such as /landing-a${out.path.startsWith('-') ? `, not ${out.path}` : ''}`);
+  }
   if (sub === 'watch') {
     out.kinds = parseKinds(out.kind, fail);
     out.everyMs = parseEvery(out.every, fail);
