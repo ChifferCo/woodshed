@@ -295,10 +295,11 @@ woodshed session app <id> start --json  # when it is not up: starts it, waits un
 
 `session.app` is the app's state, and `session.appUrl` the link. Then:
 
-- `running`: give them `appUrl`. When `session.appLink` is `domain`, it opens in the browser they are signed in to the
+- `running`: give them `appUrl`. When `session.appSignIn` is true, it opens in the browser they are signed in to the
   console with: it is not a public link, so it will not open for someone else, and sharing it is the page's Share the
-  app, on the session's ⋯ menu (`url`). When it is `port`, the console has app ports and nobody signs in to it: the link
-  opens for whoever reaches the console, and there is no Share the app; say neither.
+  app, on the session's ⋯ menu (`url`). When it is false, nobody signs in to the console: the link opens for whoever
+  reaches the console, so say neither (with `appLink` `port` there is no Share the app either). When it is null, the
+  console does not say: give the link alone.
 - `stopped`, `failed` or `frontend-down`: run the start command `woodshed session app <id>` prints (it adds `--app
   <name>` for an app that is not the project's default, so the one that went down is the one started), then give them
   the link it prints. Ask first only when starting it would get in the way of what the session is doing. Exit 1 means
@@ -313,8 +314,9 @@ woodshed session app <id> start --json  # when it is not up: starts it, waits un
 - `app` null, or exit 3: the session is not running (offer `woodshed session resume <id>` for one of theirs), or this
   console serves no session apps.
 
-With several apps (`session.apps`), `--app <name>` starts that one; with another running, the session stops it first,
-and the command waits through the switch. `woodshed session app <id> stop` stops it, only when they ask; exit 3 saying
+With several apps (`session.apps`), `--app <name>` starts that one; with another running, the session runs that app's
+`stop` first and the command waits through the switch. One with no `stop` in the project file is left running beside
+it: say so if they ask why it still answers. `woodshed session app <id> stop` stops it, only when they ask; exit 3 saying
 there is no stop command means the project file has no `app.stop`, so nothing was stopped: tell them.
 
 ### Change a choice on My settings

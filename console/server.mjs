@@ -1243,6 +1243,8 @@ export function createHandler({
       appDomain: config.appDomain || (appPorts ? new URL(config.publicUrl).hostname : null),
       // With app ports each running session carries its `appUrl`, and an app is not shared: nobody signs in to it.
       appPorts: Boolean(appPorts),
+      // Whether a browser must sign in to open a session's app, as to open the console: the command line says so.
+      signIn: signInOn(),
       // The databases the console makes each session a copy of, and every engine's viewers. Open ▾ offers a session
       // the viewers it says it runs (its `viewers`, statusd's), which is also how a session given its databases by
       // its environment gets them; one from an image before statusd said so gets those of `databases`.

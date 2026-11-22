@@ -243,7 +243,7 @@ export function appUrlOf(s, { origin, appsOn }) {
 /** @returns {{domain: string|null, ports: boolean}}  what the console's list says of session apps */
 function appsOnOf(body) {
   const domain = typeof body?.appDomain === 'string' && body.appDomain.length <= 253 && HOST_RE.test(body.appDomain) ? body.appDomain.toLowerCase() : null;
-  return { domain, ports: body?.appPorts === true };
+  return { domain, ports: body?.appPorts === true, signIn: typeof body?.signIn === 'boolean' ? body.signIn : null };
 }
 
 /**
@@ -315,6 +315,9 @@ export function summary(s, { origin, login, appsOn = null }) {
     // browser signed in to the console and which Share the app shares; `port`, a port of a console nobody signs in to,
     // which opens for anyone who reaches the console and has no Share the app.
     appLink: appUrlOf(s, { origin, appsOn }) ? (appsOn.ports ? 'port' : 'domain') : null,
+    // Whether the link needs a browser signed in to the console: false on a console nobody signs in to (app ports
+    // always, an app domain with sign-in off), null from a console that does not say.
+    appSignIn: appUrlOf(s, { origin, appsOn }) ? (appsOn.ports ? false : appsOn.signIn) : null,
     // Its pull request as the console's chip reads it, every one it opened, and the command that reviews it here.
     pullRequest: pullOf(s.prUrl, s.pr),
     pullRequests: (Array.isArray(s.prs) ? s.prs : []).map((p) => pullOf(p?.url, p?.pr)).filter(Boolean),
@@ -877,7 +880,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
     const skipped = typeof after?.started === 'boolean' ? !after.started && asked.app === 'stopping' : asked.app === 'stopping';
     if (skipped) throw fail(stillStopping, { code: EXIT.failed, status: 'stopping' });
     if (json) emit({ event: 'app-starting', session: asked });
-    const which = asked.appName && asked.apps?.length > 1 ? ` (${asked.appName})` : '';
+    // The app asked for: --app's, else the default (the first), which the console's answer does not name yet.
+    const target = opts.app || asked.apps?.[0] || asked.appName;
+    const which = target && asked.apps?.length > 1 ? ` (${target})` : '';
     say(asked.app === 'stopping'
       ? `Switching session ${id}'s app${which}: the running one stops first, then it starts, in one to three minutes.`
       : `Starting session ${id}'s app${which}: one to three minutes.`);

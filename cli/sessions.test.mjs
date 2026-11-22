@@ -201,7 +201,8 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       }
       said.started = true;
       // A switch from a running app with a stop command: taken, and stopping while the running one stops.
-      const switching = app !== null && session.app === 'running' && session.appName && session.appName !== app;
+      const to = app ?? session.apps?.[0]?.name ?? null;
+      const switching = to !== null && session.app === 'running' && session.appName && session.appName !== to;
       Object.assign(session, { app: switching ? 'stopping' : 'starting' }, app !== null && { appName: app });
       moving.set(session.id, appScript.map((step) => ({ ...step })));
       return session;
@@ -567,6 +568,12 @@ test('a switch to another app, queued behind the running one\'s stop, is waited 
   const again = await c.run(['session', 'app', 'aaaa0001', 'stop']);
   assert.equal(again.code, EXIT.done, again.err);
   assert.match(again.out, /already stopping/);
+
+  // Back to the default with no --app: named as the default, which the console's answer does not name yet.
+  Object.assign(s, { app: 'running', appName: 'admin' });
+  const back = await c.run(['session', 'app', 'aaaa0001', 'start', '--no-wait']);
+  assert.equal(back.code, EXIT.done, back.err);
+  assert.match(back.out, /^Switching session aaaa0001's app \(web\)/m);
 });
 
 test('restart hints name the app that went down when it is not the default, and the link says where it opens', () => {
@@ -585,6 +592,11 @@ test('with app ports the app opens on the port the console lent it, or through t
   const s = { id: 'aaaa0001', status: 'running', app: 'running', appUrl: 'http://mac.tail1.ts.net:7701/' };
   assert.equal(appUrlOf(s, { origin, appsOn }), 'http://mac.tail1.ts.net:7701/');
   assert.equal(summary(s, { origin, login: null, appsOn }).appLink, 'port', 'opens for anyone who reaches the console, with no Share the app');
+  assert.equal(summary(s, { origin, login: null, appsOn }).appSignIn, false, 'nobody signs in to a console with app ports');
+  const onDomain = { id: 'aaaa0001', status: 'running', app: 'running' };
+  const domainOn = (signIn) => summary(onDomain, { origin: 'https://c.example.test', login: null, appsOn: { domain: 'apps.example.test', ports: false, signIn } });
+  assert.deepEqual([domainOn(true).appSignIn, domainOn(false).appSignIn, domainOn(null).appSignIn], [true, false, null], 'as the console says, or null from one that does not');
+  assert.equal(domainOn(false).appLink, 'domain');
   assert.equal(appUrlOf({ ...s, app: 'stopped', appUrl: null }, { origin, appsOn }), 'http://mac.tail1.ts.net/auth/app?id=aaaa0001&next=/');
   assert.equal(appUrlOf({ ...s, appUrl: 'javascript:alert(1)' }, { origin, appsOn }), 'http://mac.tail1.ts.net/auth/app?id=aaaa0001&next=/', 'only a web link');
   assert.equal(appUrlOf({ ...s, app: 'none' }, { origin, appsOn }), null);

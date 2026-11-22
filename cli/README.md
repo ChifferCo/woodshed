@@ -273,21 +273,24 @@ agent does. `get`, `app`, and a start that reaches `running` say how it is: in `
 page's state (`running`, `api-down`, `frontend-down`, `starting`, `stopping`, `failed`, `stopped`, or `none` when the
 project file names no app), `appName` and `apps` which of several apps it is, and `appUrl` where it opens. That is the
 link the page's Open app opens: `<id>.<app domain>` on the console's scheme and port, or with app ports the port the
-console lent it, or the console's `/auth/app`, which lends one. `appLink` says which: `domain`, a link that opens only
-in a browser signed in to the console, and that the page's Share the app shares with others; or `port`, a console with
-app ports, which nobody signs in to, so the link opens for whoever reaches the console and there is no Share the app.
-`app`, `appUrl` and `appLink` are null while the session is not running, or on a console that serves no session apps.
+console lent it, or the console's `/auth/app`, which lends one. `appLink` says which: `domain` or `port`. `appSignIn`
+says whether the link needs a browser signed in to the console: true on a console that requires sign-in, where it is
+not a public link and the page's Share the app shares it; false on one nobody signs in to (always with app ports, which
+have no Share the app, and an app domain with sign-in off), where it opens for whoever reaches the console; null from a
+console that does not say. `app`, `appUrl`, `appLink` and `appSignIn` are null while the session is not running, or on
+a console that serves no session apps.
 
 `session app <id> start` waits until both the app's frontend and backend answer, and says when its start failed or
-it is not up in 5 minutes. A start while the app is still stopping (right after `stop`) is not taken by the session,
+it is not up in 5 minutes: its start log is `/tmp/woodshed-app.log` in the session (`woodshed tunnel <id> -- tail -n
+50 /tmp/woodshed-app.log`). A start while the app is still stopping (right after `stop`) is not taken by the session,
 so it exits 1 at once, saying to try again once `session app <id>` says it is not running. A start of another of the
-project's apps while one runs is a switch: the session stops the running one first, then starts the new one, and the
-command says so and waits for it. `stop` on an app whose project file has no `app.stop` stops nothing: it exits 3 and
-says so. The commands it suggests to
-start an app again name it with `--app` when it is one of several and not the default: its start log is `/tmp/woodshed-app.log` in the session (`woodshed tunnel <id> -- tail -n
-50 /tmp/woodshed-app.log`). A project file with no app exits 2: Set up app, which asks the session's agent to write
-one, is on the console's page only. With `--json`, `app` prints `{"event":"app","session":{…}}`, and `start` an
-`app-starting` event, then `app-running` or `app-not-up` with the session; `stop` an `app-stopping`.
+project's apps while one runs is a switch: the session runs the running app's `stop` first, then starts the new one,
+and the command says so and waits for it. A running app with no `stop` in the project file is left running beside the
+new one. `stop` on an app whose project file has no `stop` stops nothing: it exits 3 and says so. The commands it
+suggests to start an app again name it with `--app` when it is one of several and not the default. A project file with
+no app exits 2: Set up app, which asks the session's agent to write one, is on the console's page only. With
+`--json`, `app` prints `{"event":"app","session":{…}}`, and `start` an `app-starting` event, then `app-running` or
+`app-not-up` with the session; `stop` an `app-stopping`.
 
 ## A terminal on a session
 
