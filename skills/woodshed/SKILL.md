@@ -15,7 +15,7 @@ Setup's aim is the person's first automated code reviews: Claude Code and Codex 
 repo. If they ask to get started, check `woodshed --help` for `setup`. Use the choices they gave you:
 
 ```sh
-woodshed setup --yes --json --repo acme/app --repo-dir /path/to/app --reviews default
+woodshed setup --yes --json --repo acme/app --reviews default
 ```
 
 Pass the person's console with `--console <url>` when they use their own. Repeat `--repo` for multiple repos. Each
@@ -28,9 +28,12 @@ browser.
   (`claude setup-token` for Claude; `codex login`, then `~/.codex/auth.json` or an OpenAI API key, for Codex). They
   paste it on My settings themselves: never ask for, read, or pass a token. If they say they use only one, rerun with
   `--agent claude` or `--agent codex`, and setup does not ask for the other.
-- **Review on the repo (`repo-review`, `review-choice`).** If the repo's project file needs a review configuration
-  change, setup tells you to open an ordinary pull request. `--reviews` is their own reviewer choice; `default` runs
-  the most the console can, both once both are connected.
+- **Review on the repo (`repo-review`, `review-choice`).** Every repo is reviewed by default, with no checkout, project
+  file or pull request. Setup checks it per repo, exits 2 with the link when the console's reviewer App still has to be
+  made or installed (an admin's step), and otherwise says the tag (`tag` in `--json`, `[woodshed-review]` unless the
+  repo's project file names another): tell the person that putting it in a commit's message on a pull request gets it
+  reviewed, and that sessions add it for them. `--reviews` is their own reviewer choice; `default` runs the most the
+  console can, both once both are connected.
 - **Reviews of their open pull requests (`pr-reviews`), the main step.** Setup lists their open pull requests on the
   repo and starts the console's review on them, then gives each review's link (`reviews` in the entry). With `--json`
   and no `--yes`, it exits 2 listing them: ask the person which, then rerun with `--review-prs all`, `none`, or numbers
@@ -125,7 +128,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 
 | Command | Does | Exits | Arrives in |
 | --- | --- | --- | --- |
-| `woodshed setup [--yes] [--repo R] [--repo-dir D] [--agent claude\|codex] [--reviews CHOICE] [--review-prs all\|none\|N,N] [--terminal herdr\|tmux] [--prompt TEXT]` | Guides sign-in, repos, connecting Claude Code and Codex, and reviews of their open pull requests; then, optionally, the terminal and a first session | 0 done, 2 needs the person, 3 refused, 1 failed | main |
+| `woodshed setup [--yes] [--repo R] [--agent claude\|codex] [--reviews CHOICE] [--review-prs all\|none\|N,N] [--terminal herdr\|tmux] [--prompt TEXT]` | Guides sign-in, repos, connecting Claude Code and Codex, and reviews of their open pull requests; then, optionally, the terminal and a first session | 0 done, 2 needs the person, 3 refused, 1 failed | main |
 | `woodshed login [--no-browser]` | Prints a code and opens the console's `/cli` page; waits up to 10 minutes for the person to approve | 0 signed in, 2 code expired, 3 denied | main |
 | `woodshed logout` | Ends this computer's sign-in | 0 | main |
 | `woodshed status` | The console, its org, who is signed in, and the Herdr `hc` here with its version | 0, 2 not signed in | main |
@@ -151,7 +154,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude and Codex settings, skills, plugins, a few dotfiles and ignored checkout files. Imported Claude MCP definitions sync between computers. | 0, 2 not listed before or not confirmed | main |
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | main |
 | `woodshed review enable [--qa] [--rerun <tag>\|--every-commit] [--dry-run]` | In a checkout: writes `pullRequests.review` with `runner: woodshed` (and with `--qa`, QA in a session) into `.woodshed/project.yaml`, checks it, and asks the console what is missing | 0 ready to commit, 2 an admin's step or a sign-in, 1 the file does not read or check, or the console could not confirm | main |
-| `woodshed review status` | In a checkout: whether review is on, in the checkout's file, on the default branch, and on the console | 0 on, 2 not yet, 1 the console could not tell | main |
+| `woodshed review status [--repo R]` | Whether review is on (by default, on `[woodshed-review]`, or by the repo's project file) and what the console still needs; `--repo` needs no checkout | 0 on, 2 not yet, 1 the console could not tell | main |
 | `woodshed review pulls [--repo R]` | Their open pull requests on the repo (else the checkout's), and how it is reviewed: on by default, by the project file's review or the console's default, with its tag | 0, 2 sign-in ended, 3 a repo they cannot start on | main |
 | `woodshed review start <pull request>... [--repo R]` | The console's review of each of their own open pull requests, now, tag or not; prints each review's link, or the one already reviewing its head | 0 started, 3 not theirs, a draft, or a repo whose project file runs its review elsewhere, 1 failed | main |
 | `woodshed review <id>\|<pull request>` | A full-screen review of one of their own sessions' change on their terminal, as the Review tab shows it: the analysis, Q&A, chat with the session's agent, the diff with comments, Re-review, and comment, verdict, rename, merge as them. Interactive: suggest it to them. `--json` (or no terminal) prints the analysis and the diff's summary once, for you | 0, 2 sign-in ended, 3 shared or saw production, 1 failed | main |
@@ -227,8 +230,9 @@ title up. When `session list` names Herdr machines of sessions no longer on the 
 
 ### Reviews and QA runs on their pull requests
 
-The console starts a review (`Review: …`) or QA run (`QA: …`) on a pull request by itself, when the repo's project
-file has `pullRequests.review` or `.qa` with `runner: woodshed`. `session list --json` gives each `"kind":"review"` or
+The console starts a review (`Review: …`) on a pull request by itself at a commit whose message has `[woodshed-review]`
+(every repo's default), or as the repo's project file's `pullRequests.review` says; and a QA run (`QA: …`) when the file
+has `pullRequests.qa` with `runner: woodshed`. `session list --json` gives each `"kind":"review"` or
 `"qa"`, `pullRequest` (`number`, `url`), `startedBy`, and `verdict` once it reported (`APPROVE`, `REQUEST_CHANGES`,
 `COMMENT`, or QA's conclusion). `inMine: true` is one on the person's Mine on the console: their own pull request's.
 A finished one has ended, so it is listed only with `--all`. These run by themselves and are nobody's to resume,
@@ -497,8 +501,14 @@ rename or edit a file to get it past the check.
 
 ### Turn on a repo's review
 
-Woodshed's review runs in a review session the console starts, and is turned on in the repo's own project file,
-`.woodshed/project.yaml`: its `pullRequests.review` with `runner: woodshed`. In a checkout of the repo, on a branch:
+Woodshed's review runs in a review session the console starts, and is on for every repo by default: a commit whose
+message has `[woodshed-review]` gets its pull request reviewed, and sessions add the tag themselves. Nothing to turn on
+or commit. `woodshed review status --repo <owner/name>` says whether it is on and what the console still needs (exit 2
+lists each step, such as the reviewer App: tell the person and stop).
+
+To review every commit, use another tag, or add QA in a session, write it into the repo's own project file,
+`.woodshed/project.yaml` (its `pullRequests.review` with `runner: woodshed`, which then wins). In a checkout of the
+repo, on a branch:
 
 ```sh
 woodshed review enable --dry-run   # what it would change

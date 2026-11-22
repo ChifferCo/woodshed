@@ -38,7 +38,8 @@ export function reviewOf(readiness, repo) {
   const review = readiness.review !== undefined ? readiness.review : remote.review ? { ...remote.review, from: 'project file' } : null;
   const runner = printable(review?.runner, 20);
   let why = null;
-  if (!review) why = `${repo}'s project file names no review, and this console runs no default one`;
+  // Only a console from before every repo was reviewed by default sends no `review` for a file that names none.
+  if (!review) why = `${repo}'s project file names no review, and this console is from before every repo was reviewed by default`;
   else if (runner !== 'woodshed') why = `${repo}'s project file runs its review in ${runner === 'actions' ? 'GitHub Actions' : runner}, not in this console`;
   else if (remote.runsHere === false) why = `${repo}'s pullRequests.runsOn names another console${remote.runsOn ? ` (${printable(remote.runsOn, 100)})` : ''}, which runs its reviews`;
   return { on: !why, from: printable(review?.from, 40), rerun: printable(review?.rerun, 100) ?? null, known: true, why };

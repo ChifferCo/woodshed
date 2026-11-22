@@ -1,12 +1,14 @@
-// `woodshed review`: turn on Woodshed's review for the repo checked out here, in a Woodshed session
-// (pullRequests.review.runner: woodshed): the console starts a review session on each pull request and posts the verdict
-// as its reviewer App. It edits the checkout's .woodshed/project.yaml (projectReview.mjs), checks it as `project.mjs
+// `woodshed review`: Woodshed's review of a repo's pull requests, in a Woodshed session (pullRequests.review.runner:
+// woodshed): the console starts a review session on a pull request and posts the verdict as its reviewer App. Every repo
+// is reviewed by default, on a commit whose message has [woodshed-review] (console/defaultReview.mjs), with nothing to
+// turn on: `status` says whether it is on and what is missing. `enable` writes it into the repo's project file instead,
+// for QA too, every commit, or another tag. It edits the checkout's .woodshed/project.yaml (projectReview.mjs), checks it as `project.mjs
 // check` does, and asks the console what is still missing on its side (console/reviewReadiness.mjs). It never writes a
 // GitHub workflow, sets an Actions secret or handles an Anthropic key: a repo with no Woodshed console uses
 // scripts/enable-review.sh instead.
 //
 //   woodshed review enable [--qa] [--rerun <tag>|--every-commit] [--dry-run] [--dir <path>]
-//   woodshed review status [--dir <path>]
+//   woodshed review status [--repo <owner/name>] [--dir <path>]
 //
 //   woodshed review pulls|start ...             your own open pull requests, reviewed by the console now (reviewPulls.mjs)
 //
@@ -34,16 +36,20 @@ export const REVIEW_USAGE = `Usage: woodshed review <session id | pull request> 
                          #123 or its URL) opens the session of yours that opened it; a paused one is resumed first.
                          With --json, or with no terminal, it prints the analysis and the diff's summary instead.
 
-Commands, run in a checkout of the repo:
-  enable [options]       review this repo's pull requests in Woodshed sessions: writes pullRequests.review with
-                         runner: woodshed into .woodshed/project.yaml, checks it, and asks the console what is missing
+Every repo the console has is reviewed by default: put [woodshed-review] in a commit's message, and the console reviews
+the pull request at that commit, with nothing to turn on or commit.
+
+Commands:
+  status [--repo <owner/name>] [--dir <path>]
+                         whether review is on and what it runs by (the repo's project file, or the default), and what
+                         the console still needs, such as its reviewer App. --repo needs no checkout
+  enable [options]       in a checkout: write pullRequests.review with runner: woodshed into .woodshed/project.yaml, for
+                         QA too, every commit or another tag, check it, and ask the console what is missing
       --qa               QA too, in a Woodshed session, when the woodshed-qa label goes on a pull request
       --rerun <tag>      review a commit whose message has this tag (default: the file's own, else [woodshed-review])
       --every-commit     review each new commit, with no tag
       --dry-run          say what would change, and write nothing
       --dir <path>       the checkout (default: the one this is run in)
-  status [--dir <path>]  whether review is on: in the checkout's project file, on the default branch, and the console's
-                         reviewer App
 
 Commands on your own open pull requests, for the repo given by --repo owner/name, else this checkout's origin:
   pulls                  list them, and how the repo is reviewed: on by default, with the tag that starts a review
@@ -58,6 +64,7 @@ Exit codes: 0 done (or quit), 2 waiting on a person (an admin's step, a sign-in,
 session or pull request that is not your own, a repo whose project file runs its review elsewhere, or a session that
 has seen production data), 1 anything else.`;
 
+const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 // eslint-disable-next-line no-control-regex
 const UNPRINTABLE_RE = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
 function printable(text, most = 400) {
@@ -269,9 +276,15 @@ export async function reviewCommand({ origin, rest }, deps) {
   }
 
   if (sub === 'status') {
-    const opts = options({ '--dir': 'value' });
-    const { dir, repo } = checkout(opts['--dir']);
-    const found = projectFileOf(dir);
+    const opts = options({ '--dir': 'value', '--repo': 'value' });
+    let repo;
+    let dir = null;
+    if (opts['--repo']) {
+      repo = String(opts['--repo']).trim();
+      if (!REPO_RE.test(repo)) throw fail('--repo must be a GitHub repo as owner/name');
+    } else ({ dir, repo } = checkout(opts['--dir']));
+    // The checkout's file, when there is one: what a pull request would change.
+    const found = dir ? projectFileOf(dir) : null;
     let gates = null;
     let fileError = null;
     try {
@@ -281,31 +294,40 @@ export async function reviewCommand({ origin, rest }, deps) {
     }
     const local = gates?.review ?? null;
     const { readiness, unasked, signIn, unreachable, failed } = await askConsole(repo);
-    const findings = readiness ? readinessFindings(readiness, gates) : { missing: [], warnings: [] };
+    const findings = readiness ? readinessFindings(readiness, readiness.defaultBranch ?? gates) : { missing: [], warnings: [] };
     const remote = readiness?.defaultBranch ?? null;
-    // On: the default branch says it, the console runs its reviews (runsOn), and its reviewer App is known installed.
-    const on = remote?.review?.runner === 'woodshed' && !findings.missing.length && readiness?.reviewerApp?.installed === true
-      && runsOnHere(remote.runsOn ?? null, readiness.consoleApp);
+    // What the console runs the review by: the file's, else the default. A console from before the default says only the file's.
+    const review = readiness ? (readiness.review !== undefined ? readiness.review
+      : remote?.review ? { runner: remote.review.runner, rerun: remote.review.rerun ?? null, from: 'default branch' } : null) : null;
+    // On: it runs in a session, the console runs its reviews (runsOn), and its reviewer App is known installed.
+    const on = review?.runner === 'woodshed' && !findings.missing.length && readiness?.reviewerApp?.installed === true
+      && runsOnHere(remote?.runsOn ?? null, readiness.consoleApp);
     if (json) {
       emit({
-        repo, on,
-        checkout: { from: found?.from ?? null, error: fileError, review: local ? { runner: local.runner, rerun: local.rerun ?? null } : null, qa: gates?.qa ? { runner: gates.qa.runner, label: gates.qa.label } : null },
+        repo, on, review,
+        checkout: dir ? { from: found?.from ?? null, error: fileError, review: local ? { runner: local.runner, rerun: local.rerun ?? null } : null, qa: gates?.qa ? { runner: gates.qa.runner, label: gates.qa.label } : null } : null,
         console: readiness ? { project: readiness.project ?? null, reviewerApp: readiness.reviewerApp ?? null, defaultBranch: remote } : null,
         unasked, missing: findings.missing, warnings: findings.warnings,
       });
     }
-    const words = (r) => (!r ? 'off' : r.runner === 'woodshed' ? `in a Woodshed session${r.rerun ? `, on commits tagged ${r.rerun}` : ', on each commit'}` : `in ${r.runner === 'actions' ? 'GitHub Actions' : printable(r.runner, 20)}`);
-    say(`Repo:            ${repo ?? 'not on GitHub'}`);
-    say(`This checkout:   ${fileError ? `${PROJECT_FILE} does not read: ${fileError}` : `review ${words(local)}${gates?.qa ? `; QA ${gates.qa.runner === 'woodshed' ? 'in a Woodshed session' : 'in GitHub Actions'}` : ''}`}`);
-    if (remote) say(`Default branch:  ${remote.error ? `not read: ${printable(remote.error, 200)}` : `review ${words(remote.review)}`}`);
+    const words = (r) => (!r ? 'off' : r.runner === 'woodshed' ? `in a Woodshed session${r.rerun ? `, on commits tagged ${printable(r.rerun, 100)}` : ', on each commit'}` : `in ${r.runner === 'actions' ? 'GitHub Actions' : printable(r.runner, 20)}`);
+    const fromWords = (from) => (from === 'default' ? 'default, for every repo' : 'the repo\'s project file');
+    say(`Repo:            ${repo ? printable(repo, 140) : 'not on GitHub'}`);
+    if (dir) say(`This checkout:   ${fileError ? `${PROJECT_FILE} does not read: ${fileError}` : `review ${words(local)}${gates?.qa ? `; QA ${gates.qa.runner === 'woodshed' ? 'in a Woodshed session' : 'in GitHub Actions'}` : ''}`}`);
+    if (remote) say(`Project file:    ${remote.error ? `not read: ${printable(remote.error, 200)}` : remote.review ? `review ${words(remote.review)}` : 'names no review'}`);
+    if (review) say(`Runs:            review ${words(review)}, ${fromWords(review.from)}`);
     sayConsole(readiness, unasked, findings);
     if (fileError || unreachable || failed || remote?.error) return EXIT.failed;
     if (on) {
-      say('Review is on.');
+      say(review.rerun
+        ? `Review is on: put ${printable(review.rerun, 100)} in a commit's message, and the console reviews the pull request at that commit.`
+        : 'Review is on: the console reviews each new commit of a pull request.');
       return EXIT.done;
     }
     if (!signIn && readiness && !findings.missing.length) {
-      say(local?.runner === 'woodshed' ? 'Next: merge the change to the project file.' : 'Next: woodshed review enable, then commit it and open a pull request.');
+      say(review && review.runner !== 'woodshed'
+        ? `Review runs ${words(review)}, by the repo's project file: woodshed review enable, in a pull request, moves it to a Woodshed session.`
+        : local?.runner === 'woodshed' ? 'Next: merge the change to the project file.' : 'Next: woodshed review enable, then commit it and open a pull request.');
     }
     return EXIT.waiting;
   }

@@ -1009,6 +1009,19 @@ when it carries `Authorization: Bearer wsc_…`, as it does `/api/cli/*`. A host
 `installedOn(repo)`; without it, whether it is installed is `null`. It logs `reviewReadiness: reviewer App
 installation not read` when GitHub did not answer.
 
+**On by default.** Every repo the console has is reviewed in a session, with nothing to turn on or commit: where the
+project file the console reads names no `pullRequests.review` (or there is no file), the console runs by
+`console/defaultReview.mjs`'s review, `runner: woodshed` on a commit whose message has `[woodshed-review]`, added by
+`reviewGatesOf` in `installation.mjs` (the fleet's `reviewGates`). It only starts reviews: what a pull request waits for,
+its Slack post and QA, stays the file's alone, so a repo whose file names no review posts once out of draft and green,
+as before, whatever a default review said. `woodshed review start` (`reviewOnDemand`) runs by it too. The file's own
+`review`, on any runner, wins; it is where a team reviews every commit, uses another tag, or adds QA (`woodshed review
+enable`). The default is the review alone: `suites`, `qa`, `mergeRisk` and `runsOn` stay the file's. Each coding session
+is told the tag in `WOODSHED_REVIEW_TAG` (fleet.mjs, decided at each start), which its rules use when its checkout's file
+names none, so the pull requests sessions open carry it. Someone who wants no review of their own pull requests picks
+none on My settings ("Who reviews"). `GET /api/review-readiness`
+says what runs in `review` (`{runner, rerun, from}`, `from` being `project file` or `default`).
+
 At each verdict the console finds the reviewer App's installation on the repo, mints a token narrowed to pull requests,
 and submits the review at the reviewed commit. It logs `fleet: review verdict submitted` with `as: 'reviewer App'`, or
 `as: 'console App'` when no reviewer App was made, in which case GitHub refuses an approval of the App's own pull

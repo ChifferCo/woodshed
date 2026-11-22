@@ -50,7 +50,7 @@ Setup's aim is your first automated code reviews: Claude Code and Codex reviewin
 `woodshed setup` on a terminal, or give your coding agent the repo:
 
 ```sh
-woodshed setup --yes --repo acme/app --repo-dir ~/code/app --reviews default
+woodshed setup --yes --repo acme/app --reviews default
 ```
 
 Use `--console <url>` for your own console and `--no-browser` to print links without opening them. When setup exits 2,
@@ -67,9 +67,11 @@ It goes in this order:
    whose token you paste under Claude; `codex login`, then all of `~/.codex/auth.json` (or an OpenAI API key) under
    Codex. Setup never handles a token itself. Use only one? Pass `--agent claude` or `--agent codex`, or answer so on a
    terminal, and setup does not ask for the other.
-3. **Review on the repo.** For each repo, setup uses the current checkout when its GitHub origin matches, or a checkout
-   supplied by `--repo-dir`, and prepares the project file change for a pull request. `--reviews` sets your own
-   reviewer choice (`default` is the most the console can run: both, once both are connected).
+3. **Review on the repo.** Every repo is reviewed by default, on a commit whose message has `[woodshed-review]`
+   (sessions add it for you), with no checkout, project file or pull request: for each repo setup runs `woodshed review
+   status --repo <repo>`, stops with the link when the console's reviewer App still has to be made or installed, and
+   otherwise tells you the tag. `--reviews` sets your own reviewer choice (`default` is the most the console can run:
+   both, once both are connected).
 4. **Reviews of your open pull requests**, the step setup is for: it lists your open pull requests on each repo
    (`woodshed review pulls`) and starts the console's review on them now (`woodshed review start`), then gives each
    review's link. On a terminal it asks which, Enter for all (closing the input, Ctrl-D, starts none). `--review-prs
@@ -119,7 +121,7 @@ Keep a source explicit even when only one is supported. Keep session management 
 | `woodshed repo add <owner/name> [--name N]` | Adds a repo as in Console settings. Use `--name` on consoles that let you choose a project name. | 0 added, 2 GitHub App access or sign-in needed, 3 refused, 1 failed |
 | `woodshed repo remove <owner/name>` | Removes a repo and its Woodshed settings as in Console settings. | 0 removed, 2 sign in, 3 refused, 1 failed |
 | `woodshed review <id>\|<pull request>` | Reviews one of your sessions' change on this terminal, as the console's Review tab: [below](#reviewing-a-session-on-this-terminal). | 0 quit, 2 the sign-in ended, 3 a shared session or one that has seen production data, 1 anything else |
-| `woodshed review enable\|status` | In a checkout: reviews the repo's pull requests in Woodshed sessions, by its project file, and says what the console still needs. Below. | 0 done, 2 an admin's step, a sign-in or a merge still to come, 1 a project file that does not read or check |
+| `woodshed review status\|enable` | Whether a repo's pull requests are reviewed in Woodshed sessions (on by default, on `[woodshed-review]`) and what the console still needs; `enable` writes the review into the project file, for QA, every commit or another tag. Below. | 0 done, 2 an admin's step, a sign-in or a merge still to come, 1 a project file that does not read or check |
 | `woodshed review pulls\|start` | Lists your open pull requests on a repo, and has the console review them now: [below](#reviewing-your-open-pull-requests-now). | 0 done, 2 a sign-in, 3 a pull request or repo not yours, or a repo whose project file runs its review elsewhere, 1 anything else |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 | `woodshed config list\|get\|set` | Reads or sets [your choices on My settings](#your-choices-on-my-settings). | as below |
@@ -156,8 +158,14 @@ run the same add again. If the console's response to a change is lost, run `repo
 
 ## Review
 
-`woodshed review enable`, run in a checkout of a repo the console has, turns on Woodshed's review for it the way a
-connected repo has it: in a review session the console starts on each pull request, whose verdict the console posts as
+Every repo the console has is reviewed by default: put `[woodshed-review]` in a commit's message on a pull request, and
+the console reviews it at that commit, with nothing to turn on or commit. Woodshed's sessions add the tag to the commits
+they push. `woodshed review status --repo owner/name` (or, in a checkout, `woodshed review status`) says whether review
+is on, what it runs by (`default`, or the repo's project file, which wins when it names a review) and what the console
+still needs, such as its reviewer App.
+
+`woodshed review enable`, run in a checkout of a repo the console has, writes Woodshed's review into its project file,
+for QA in a session too (`--qa`), every commit, or another tag: in a review session the console starts on each pull request, whose verdict the console posts as
 its reviewer App (console/README.md, "The reviewer App"). It needs no GitHub workflow, Actions secret or Anthropic key,
 and writes none: `scripts/enable-review.sh` is for a repo with no Woodshed console.
 
@@ -166,7 +174,7 @@ woodshed review enable                 # pullRequests.review with runner: woodsh
 woodshed review enable --qa            # QA too, in a session, when the woodshed-qa label goes on a pull request
 woodshed review enable --every-commit  # each new commit, with no tag (--rerun <tag> for another tag)
 woodshed review enable --dry-run       # what it would change, nothing written
-woodshed review status                 # the checkout's file, the default branch's, and the console's reviewer App
+woodshed review status [--repo R]      # what runs (default or the project file), and the console's reviewer App
 ```
 
 `enable` edits `.woodshed/project.yaml` (made with `version: 1` when there is none): it adds or changes those lines and
@@ -185,7 +193,7 @@ open a pull request: the review starts once that is merged, since the console re
 when the file's `runsOn` names another console, or names an `author` or `commentAuthor` that is not this console's.
 `enable` exits `1` when the console could not be asked or did not answer (an origin not on GitHub, a console with no
 GitHub App or from before the route): the file is written, but nothing says the review can run. `status` exits `0`
-once the default branch says it, the console runs its reviews (the default branch's `runsOn`, if any, names it, App and
+once a review runs in a session, by the default or the default branch's file, the console runs its reviews (the default branch's `runsOn`, if any, names it, App and
 name, as its fleet reads it) and its reviewer App is known to be installed; else `2` with what comes next.
 
 ### Reviewing your open pull requests now
