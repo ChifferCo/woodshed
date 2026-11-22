@@ -970,6 +970,11 @@ export async function sessionCommand({ origin, rest }, ctx) {
       phases = next;
       for (const e of events) {
         if (!wanted(e.session, got.login)) continue;
+        // Back at work after a question or a turn: nothing to tell, but Herdr's record of it is put right.
+        if (e.quiet) {
+          if (inHerdr && records.has(e.session.id)) ctx.stdout.write(herdrRecord(e, summary(e.session, { origin, login: got.login, appsOn })));
+          continue;
+        }
         const x = summary(e.session, { origin, login: got.login, appsOn });
         const machine = e.event === 'paused' || e.event === 'stopped' ? await machineOf(x) : null;
         if (inHerdr) {

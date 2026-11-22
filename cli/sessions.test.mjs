@@ -1356,6 +1356,8 @@ test('session watch in its Herdr terminal reports each session as an OSC 7501 re
     before: (c) => herdrMachine(c, 'aaaa0001'),
     moves: [
       (s) => { Object.assign(at(s, 'aaaa0001'), { state: 'needs-you' }); },
+      // Answered, and at work again: told to Herdr's record alone, never as a line.
+      (s) => { Object.assign(at(s, 'aaaa0001'), { state: 'working' }); },
       (s) => { Object.assign(at(s, 'aaaa0001'), { status: 'stopped', state: null, stopReason: 'ran for 12 h' }); },
       (s) => { s.splice(s.findIndex((x) => x.id === 'aaaa0001'), 1); },
     ],
@@ -1366,8 +1368,9 @@ test('session watch in its Herdr terminal reports each session as an OSC 7501 re
     const [k, v] = p.split(/=(.*)/s);
     return [k, ['msg', 'title'].includes(k) ? Buffer.from(v, 'base64').toString() : v];
   })));
-  assert.deepEqual(records.map((r) => [r.id, r.state, r.kind ?? null]), [['aaaa0001', 'blocked', 'question'], ['aaaa0001', 'done', null], ['aaaa0001', 'clear', null]]);
-  assert.equal(records[1].msg, 'aaaa0001 stopped (at its lifetime). woodshed-aaaa0001 in Herdr is unreachable until it runs again: woodshed session herdr aaaa0001 brings it back');
+  assert.deepEqual(records.map((r) => [r.id, r.state, r.kind ?? null]), [['aaaa0001', 'blocked', 'question'], ['aaaa0001', 'working', null], ['aaaa0001', 'done', null], ['aaaa0001', 'clear', null]]);
+  assert.doesNotMatch(out.out, /aaaa0001 {2}working/, 'no line for it');
+  assert.equal(records[2].msg, 'aaaa0001 stopped (at its lifetime). woodshed-aaaa0001 in Herdr is unreachable until it runs again: woodshed session herdr aaaa0001 brings it back');
   assert.equal(records[0].title, 'Fix the login bug');
   assert.match(out.out, /^Watching your sessions \(Mine\) on .*, for Herdr\. Ctrl-C stops\.$/m, 'its terminal shows the lines too');
 });
