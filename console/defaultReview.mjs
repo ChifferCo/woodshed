@@ -4,10 +4,11 @@
 // (projectFile.mjs: its default branch's, else the installation's for a repo with none): one that names a review, on any
 // runner, is the review, and it is where a team changes the tag or reviews every commit (`woodshed review enable`).
 //
-// It is the review alone: QA, suites, mergeRisk and runsOn stay the file's. installation.mjs's gatesOf adds it, which the
-// fleet's review, QA and Slack gates all read. Sessions are told its tag (WOODSHED_REVIEW_TAG, fleet.mjs), since their
-// checkout's file cannot say it, so the pull requests they open carry it. Someone who wants no review of their own pull
-// requests chooses none on My settings (reviewAgents.mjs), which also lets their Slack posts go out without one.
+// It only starts reviews: the fleet's `reviewGates` (installation.mjs) add it for the review on the tag and for the tag
+// sessions are told (WOODSHED_REVIEW_TAG, fleet.mjs), since their checkout's file cannot say it, so the pull requests
+// they open carry it. What a pull request waits for, its Slack post and QA, stays the file's alone: a repo whose file
+// names no review posts once green, as before, whatever a default review said, and a console with no reviewer App, whose
+// verdicts do not count, holds nothing back. QA, suites, mergeRisk and runsOn are the file's.
 
 export const DEFAULT_RERUN = '[woodshed-review]';
 

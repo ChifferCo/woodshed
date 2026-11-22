@@ -510,7 +510,7 @@ writeRules() {
   rules=${rules//"{{STARTED_BY}}"/"${STARTED_BY:-someone}"}
   rules=${rules//"{{VIA}}"/"${SESSION_URL:+[}Woodshed${SESSION_URL:+]($SESSION_URL)}"}
   # The tag that asks for the project's code review (pullRequests.review.rerun), else the console's for a repo whose file
-  # names no review (WOODSHED_REVIEW_TAG, console/keptReview.mjs). A project with neither loses the line.
+  # names no review (WOODSHED_REVIEW_TAG, console/defaultReview.mjs). A project with neither loses the line.
   tag=$(project get pullRequests.review.rerun 2>/dev/null) || tag=
   [ -n "$tag" ] || tag=${WOODSHED_REVIEW_TAG:-}
   if [ -n "$tag" ]; then

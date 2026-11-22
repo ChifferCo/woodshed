@@ -424,12 +424,14 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const logins = async () => ({ reviewerLogin: reviewerApp?.login() ?? null, ownLogin: await appIdentity.login() });
   // A project's pull request gates from its project file, with the Apps' logins the file leaves out (reviewLogins.mjs).
   const fileGatesOf = async (name) => withAppLogins(await readerOf(name).pullRequests(), await logins());
-  // What the fleet runs them by: the file's, with every repo's default review where the file names none (defaultReview.mjs).
-  const gatesOf = async (name) => withAppLogins(withDefaultReview(await readerOf(name).pullRequests()), await logins());
+  // A pull request's gates (the Slack post, QA's wait) are the file's alone, as before: the default review only starts a
+  // review on the tag and gives sessions the tag (defaultReview.mjs), since it may have no reviewer App to approve with.
+  const gatesOf = fileGatesOf;
+  const reviewGatesOf = async (name) => withAppLogins(withDefaultReview(await readerOf(name).pullRequests()), await logins());
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, qaRecordings, pullWebhooksFlowing: pullWebhooks.flowing,
-    pullRequests: gatesOf,
+    pullRequests: gatesOf, reviewGates: reviewGatesOf,
     projectBlocker: databaseGate.blocker, githubFor,
     consoleLinks: (name) => readerOf(name).consoleLinks(), ...(newId ? { newId } : {}),
     // The App that posts a QA session's check, so the brief trusts it.

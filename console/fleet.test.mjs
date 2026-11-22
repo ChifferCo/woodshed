@@ -16,7 +16,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null, qaRecordings = null, reviewAgents = null } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null, qaRecordings = null, reviewAgents = null, reviewGates = undefined } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
@@ -111,7 +111,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, qaRecordings, now: () => clock,
-    pings, pullRequests: async () => gates, projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, reviewAgents, ...(consoleLinks ? { consoleLinks } : {}),
+    pings, pullRequests: async () => gates, ...(reviewGates !== undefined ? { reviewGates: async () => reviewGates } : {}), projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, reviewAgents, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
       isAssignable: (login) => assignables.some((e) => e.toLowerCase() === String(login).toLowerCase()),
@@ -1320,9 +1320,9 @@ test('a shared session\'s databases are copied as it starts, and swept once it h
   assert.equal(calls.started.length, 2, 'and no container is started for it');
 });
 
-async function sessionWithPull({ createdAt }) {
+async function sessionWithPull({ createdAt, ...options }) {
   const slack = { available: true, posts: [], async postPr(pr) { this.posts.push(pr); return true; } };
-  const ctx = setup({ slack });
+  const ctx = setup({ slack, ...options });
   await ctx.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'Add GTM', kind: 'issue' });
   const [session] = ctx.fleet.sessions();
   ctx.github.pull = async (number) => ({ number, title: 'Add GTM to the agent', created_at: createdAt, state: 'open', head: { sha: 'abc' } });
@@ -2799,15 +2799,27 @@ function reviewSetup(options = {}) {
 }
 
 test('a repo whose project file names no review is reviewed in a session on [woodshed-review], by default', async () => {
-  const { fleet } = reviewSetup({ gates: withDefaultReview(null) });
+  const { fleet } = reviewSetup({ gates: null, reviewGates: withDefaultReview(null) });
   const started = await fleet.reviewOnTag({ number: 7 });
   assert.equal(started.outcome, 'started');
   const [session] = fleet.sessions();
   assert.deepEqual([session.trigger, session.review.heading, session.review.check], ['review', '## Woodshed review', null]);
 });
 
+test('the default review holds back no Slack post: a repo whose file names no review posts once out of draft and green, as before', async () => {
+  const { fleet, github, slack, statuses, session } = await sessionWithPull({ createdAt: '2026-10-21T10:05:00Z', gates: null, reviewGates: withDefaultReview(null) });
+  const pull = github.pull;
+  github.pull = async (number) => ({ ...(await pull(number)), draft: false, html_url: `https://github.com/o/r/pull/${number}` });
+  github.reviews = async () => [];
+  github.checkRuns = async () => [{ name: 'test', status: 'completed', conclusion: 'success', html_url: 'u' }];
+  statuses[session.id] = { state: 'working', prUrl: 'https://github.com/o/r/pull/7' };
+  await fleet.tick();
+  await fleet.tick();
+  assert.deepEqual(slack.posts.map((p) => p.url), ['https://github.com/o/r/pull/7'], 'no approval waited for');
+});
+
 test('a coding session is told the review\'s tag, which its checkout\'s project file may not name; a review, QA or every-commit review is not', async () => {
-  const tagged = setup({ gates: withDefaultReview(null) });
+  const tagged = setup({ gates: null, reviewGates: withDefaultReview(null) });
   await tagged.fleet.createSession({ kind: 'issue', number: 7, title: 'i', startedBy: 'joel', trigger: 'label', prompt: 'p' });
   assert.equal(tagged.calls.started.at(-1).env.WOODSHED_REVIEW_TAG, '[woodshed-review]');
   await tagged.fleet.createSession({ kind: 'pr', number: 10, title: 'Review', startedBy: 'joel', trigger: 'review', branch: 'a/d', review: { base: 'main', sha: 'b'.repeat(40), heading: '## R', author: null, check: null, commentId: null, agents: ['claude'] } });

@@ -260,6 +260,9 @@ export function failedComment({ session, publicUrl, linkQuery = null, consoleNam
  *   `pullWebhooksFlowing`: pull request webhooks are arriving, so a waiting pull request is read only when one comes,
  *   or every `config.fallbackPollMs` (pullWebhooks.mjs)
  *   `pullRequests`: the repo's project file's gates for a pull request, from the default branch (projectFile.mjs)
+ *   `reviewGates`: the same, with every repo's default review where the file names none (defaultReview.mjs): what starts
+ *   a review on the tag, and the tag a session is told. Only that: the Slack post and QA wait for the file's own review
+ *   alone, so a repo that names none posts as before, whether or not a default review ran
  *   `projectBlocker(project)`: why no session that gets databases can start on that project, a blocker, or null
  *   (databaseGate.mjs)
  *   `repoTriggers`: each repo's label and its switches for labels and /woodshed comments (repoTriggers.mjs); without
@@ -268,7 +271,7 @@ export function failedComment({ session, publicUrl, linkQuery = null, consoleNam
 export function createFleet({
   config, store, launcher, github, statusd = callStatusd, now = Date.now, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, qaRecordings = null, members = null, pings = null,
-  pullWebhooksFlowing = () => false, pullRequests = async () => null, projectBlocker = async () => null, githubFor = null,
+  pullWebhooksFlowing = () => false, pullRequests = async () => null, reviewGates = pullRequests, projectBlocker = async () => null, githubFor = null,
   consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null, repoTriggers = null, reviewAgents = null,
   mcpServers = null, appShares = null, egress = null,
 }) {
@@ -576,7 +579,7 @@ export function createFleet({
     // project file's, or the console's for a repo whose file names none, which the file in the checkout cannot say
     // (keptReview.mjs). None for every-commit review, review off, or a file that could not be read.
     if (!isAsk(session) && !isQa(session) && !isReview(session)) {
-      const review = (await pullRequests(projectFor(config, session).name).catch(() => null))?.review ?? null;
+      const review = (await reviewGates(projectFor(config, session).name).catch(() => null))?.review ?? null;
       update(session, { reviewTag: review?.rerun ?? null });
     }
     let started;
@@ -2237,7 +2240,7 @@ export function createFleet({
    */
   async function reviewOnTag({ number, project: projectName = null }) {
     const project = projectOfEvent(projectName);
-    const gates = project ? await pullRequests(project.name) : null;
+    const gates = project ? await reviewGates(project.name) : null;
     const review = gates?.review;
     if (!review || review.runner !== 'woodshed') return { unrecorded: true };
     const gh = githubOf(project);
