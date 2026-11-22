@@ -43,13 +43,16 @@ export function phaseOf(s) {
 
 /**
  * How a session that ended did, from what the console keeps of its stop (console/sessions.mjs, stopReason: `idle for
- * 2 h` at its idle pause, `ran for 12 h` at its lifetime; `stoppedBy` when a person stopped it).
+ * 2 h` at its idle pause, `ran for 12 h` at its lifetime; `stoppedBy` when a person stopped it). Only what this stop
+ * set counts: a Slack post (`slackPostedAt`) outlives a resume, so it is read from the stop's own reason.
  * @returns {{event: 'paused'|'stopped'|'finished', why: string}}
  */
 export function endOf(s, kind) {
-  if (kind === 'review' || kind === 'qa') return { event: 'finished', why: 'reported' };
+  const run = kind === 'review' ? s.review : kind === 'qa' ? s.qa : null;
+  // A review or QA run stopped before it reported (its Stop pressed) ends as any session does.
+  if (run && typeof run === 'object' && (run.reported || run.conclusion)) return { event: 'finished', why: 'reported' };
   if (s.prClosedAt) return { event: 'finished', why: s.prMerged ? 'merged' : 'closed' };
-  if (s.slackPostedAt || s.stopReason === 'posted to Slack') return { event: 'finished', why: 'posted' };
+  if (s.stopReason === 'posted to Slack') return { event: 'finished', why: 'posted' };
   if (s.stoppedBy) return { event: 'stopped', why: 'person' };
   const reason = String(s.stopReason ?? '');
   if (/^idle for /.test(reason)) return { event: 'paused', why: 'idle' };
@@ -58,25 +61,43 @@ export function endOf(s, kind) {
   return { event: 'stopped', why: 'other' };
 }
 
+// What the console marks on a session after it ended: its pull request merged or closed (a kept shared session's, read
+// by retention), or the session deleted (Delete now, or cleaned up). Each is told once, when it first appears.
+function markOf(s) {
+  if (s.prClosedAt) return s.prMerged ? 'merged' : 'closed';
+  if (s.cleanedAt) return 'deleted';
+  return null;
+}
+
 /**
  * The events between two reads of the list.
- * @param {Map<string, string>|null} before  each session's phase at the last read, by id; null for the first read,
- *   which only learns what is there: a watch tells what happens from when it starts
+ * @param {Map<string, {phase: string, mark: string|null}|string>|null} before  each session's phase (and the mark it
+ *   had once ended) at the last read, by id; null for the first read, which only learns what is there: a watch tells
+ *   what happens from when it starts. A bare phase is read as one with no mark.
  * @param {object[]} sessions  the console's sessions, as /api/sessions lists them
  * @param {{kindOf: (s: object) => string}} opts
- * @returns {{phases: Map<string, string>, events: {event: string, why?: string, session: object}[]}}
+ * @returns {{phases: Map<string, {phase: string, mark: string|null}>, events: {event: string, why?: string, quiet?: true, session: object}[]}}
+ *   A `quiet` event changes nothing a person is told of: it puts back a Herdr record that would still say a question
+ *   is open, or a turn done, once the agent works again.
  */
 export function changes(before, sessions, { kindOf }) {
   const phases = new Map();
   const events = [];
   for (const s of sessions) {
     const now = phaseOf(s);
-    phases.set(s.id, now);
+    const mark = now === 'ended' ? markOf(s) : null;
+    phases.set(s.id, { phase: now, mark });
     if (!before) continue;
-    const seen = before.get(s.id);
-    if (seen === now) continue;
+    const last = before.get(s.id);
+    const seen = typeof last === 'string' ? last : last?.phase;
+    const tell = (event, why, quiet = false) => events.push({ event, ...(why ? { why } : {}), ...(quiet ? { quiet: true } : {}), session: s });
+    if (seen === now) {
+      // Already ended at the last read, and marked since: merged, closed or deleted.
+      const had = typeof last === 'string' ? null : last?.mark ?? null;
+      if (now === 'ended' && mark && mark !== had) tell(mark === 'deleted' ? 'stopped' : 'finished', mark);
+      continue;
+    }
     const byItself = ['review', 'qa'].includes(kindOf(s));
-    const tell = (event, why) => events.push({ event, ...(why ? { why } : {}), session: s });
     // One that appeared since the last read was in line a moment ago, as far as this watch knows.
     const was = seen ?? 'pending';
     if (now === 'pending') {
@@ -85,6 +106,7 @@ export function changes(before, sessions, { kindOf }) {
       if (!RUNNING.has(was)) tell('started');
       if (now === 'needs-you') tell('needs-you');
       else if (now === 'done' && !byItself) tell('done');
+      else if (now === 'working' && (was === 'needs-you' || was === 'done')) tell('working', null, true);
     } else if (now === 'failed') tell('failed');
     else if (now === 'ended' && LIVE.has(was)) {
       const end = endOf(s, kindOf(s));
@@ -147,7 +169,7 @@ export function unreachableText(machine, id) {
 // and toasts on its own agents' done, blocked and error: a session pausing or stopping is told as done, its failure as
 // error, a question as blocked.
 const RECORD_STATE = {
-  starting: 'working', started: 'working', done: 'done', 'needs-you': 'blocked',
+  starting: 'working', started: 'working', working: 'working', done: 'done', 'needs-you': 'blocked',
   paused: 'done', stopped: 'done', finished: 'done', failed: 'error',
 };
 

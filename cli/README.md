@@ -329,12 +329,13 @@ Watching your sessions (Mine) on https://console.example.com, kinds: review, qa,
   | `done` | Its agent is done with its turn, or exited, and waits for a message | |
   | `needs-you` | It asks you something | |
   | `paused` | It stopped by itself after its idle hours (`resume` picks it up) | `idle` |
-  | `stopped` | At its lifetime, by a person (`session.stoppedBy`), deleted, or otherwise | `lifetime`, `person`, `deleted`, `other` |
-  | `finished` | A review or QA run reported (its `verdict`), its pull request merged or closed, or it was posted to Slack | `reported`, `merged`, `closed`, `posted` |
+  | `stopped` | At its lifetime, by a person (`session.stoppedBy`), deleted (also when it is deleted after it had stopped), or otherwise | `lifetime`, `person`, `deleted`, `other` |
+  | `finished` | A review or QA run reported (its `verdict`), its pull request merged or closed (also when that is read after it stopped), or this run was stopped for its Slack post | `reported`, `merged`, `closed`, `posted` |
   | `failed` | It failed, or did not start in time (`session.error`) | |
 
   A review or QA run works by itself, so its turns are not told: it says `starting`, `started`, `needs-you` if it
-  asks, then `finished` with its `verdict`, or `failed`. Its time is UTC.
+  asks, then `finished` with its `verdict`, or `failed`; one stopped before it reported is `stopped`, as any session.
+  Its time is UTC.
 - **A machine in Herdr:** when one of your sessions that `session herdr` made a machine pauses or stops, its line says
   that `woodshed-<id>` is unreachable until it runs again, and that `woodshed session herdr <id>` brings it back (it
   resumes the session and adds its machine again: `resume` alone leaves it unreachable). In `--json` the event has
@@ -372,7 +373,8 @@ hc run --bg --json --name woodshed-watch --no-parent --label herdr.space=woodshe
   `blocked` with `kind=question`, and `failed` is `error`. Its `title` is the session's, and its `msg` says what
   happened (`aaaa0001 paused (idle)`), the session's link when it needs you or failed, and for a machine in Herdr that
   it is unreachable until `woodshed session herdr <id>` brings it back. hc takes a record's `title` and `msg` only in
-  base64, which is how they are written. A session's record is cleared (`state=clear`) an hour after it ended, or once
+  base64, which is how they are written. A session back at work after a question or a turn gets its record put back to
+  `working`, with no line printed. A session's record is cleared (`state=clear`) an hour after it ended, or once
   it is no longer on the list or watched. The terminal shows the watch's lines too.
 - **The first read** tells nothing, as above: a session already waiting on you when the watch starts gets a record at
   its next change.

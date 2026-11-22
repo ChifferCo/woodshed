@@ -30,7 +30,7 @@ test('changes tells nothing on the first read, and each move into a phase that m
   assert.deepEqual(second.events.map((e) => [e.event, e.session.id]), [['done', 'w']], 'a review\'s turn is its own');
   const third = changes(second.phases, [{ ...review, status: 'stopping' }, { ...work, state: 'done' }], { kindOf });
   assert.deepEqual(third.events, [], 'stopping is not yet finished, and nothing moved for the other');
-  const fourth = changes(third.phases, [{ ...review, status: 'stopped' }], { kindOf });
+  const fourth = changes(third.phases, [{ ...review, status: 'stopped', review: { conclusion: 'APPROVE', reported: true } }], { kindOf });
   assert.deepEqual(fourth.events.map((e) => e.event), ['finished']);
   // One that appeared and failed between two reads, and one already ended when first seen after the first read.
   const fifth = changes(fourth.phases, [{ id: 'n', status: 'failed' }, { id: 'o', status: 'stopped', kept: false }], { kindOf });
@@ -59,7 +59,12 @@ test('endOf tells an idle pause, a stop at its lifetime or by a person, and a fi
   assert.deepEqual(endOf({ ...mine, stopReason: 'posted to Slack' }, 'private'), { event: 'finished', why: 'posted' });
   assert.deepEqual(endOf({ status: 'stopped', kept: true, prClosedAt: 'x', prMerged: true }, 'shared'), { event: 'finished', why: 'merged' });
   assert.deepEqual(endOf({ status: 'stopped', kept: true, prClosedAt: 'x' }, 'shared'), { event: 'finished', why: 'closed' });
-  assert.deepEqual(endOf({ status: 'stopped', stopReason: 'Review finished: APPROVE' }, 'review'), { event: 'finished', why: 'reported' });
+  assert.deepEqual(endOf({ status: 'stopped', stopReason: 'Review finished: APPROVE', review: { conclusion: 'APPROVE', reported: true } }, 'review'), { event: 'finished', why: 'reported' });
+  assert.deepEqual(endOf({ status: 'stopped', stoppedBy: 'mia', stopReason: 'stopped by @mia', review: { base: 'main' } }, 'review'), { event: 'stopped', why: 'person' },
+    'a review stopped before it reported is no finish');
+  assert.deepEqual(endOf({ status: 'stopped', kept: true, qa: {}, stopReason: 'ran for 12 h' }, 'qa'), { event: 'stopped', why: 'lifetime' });
+  assert.deepEqual(endOf({ status: 'stopped', kept: true, slackPostedAt: 'x', stopReason: 'idle for 2 h' }, 'shared'), { event: 'paused', why: 'idle' },
+    'posted to Slack on an earlier run, resumed since: this stop is its idle pause');
   assert.deepEqual(endOf({ status: 'stopped', kept: true, stopReason: 'idle for 4 h' }, 'shared'), { event: 'paused', why: 'idle' });
   assert.deepEqual(endOf({ status: 'stopped', cleanedAt: 'x' }, 'shared'), { event: 'stopped', why: 'deleted' });
   assert.deepEqual(endOf({ ...mine, stopReason: 'container exited' }, 'private'), { event: 'stopped', why: 'other' });
@@ -131,4 +136,34 @@ test('eventDetail says a verdict, why it ended, or why it failed', () => {
   assert.equal(eventDetail({ event: 'stopped', why: 'person' }, x), 'by @mia');
   assert.equal(eventDetail({ event: 'stopped', why: 'other' }, { ...x, stopReason: 'container exited' }), 'container exited');
   assert.equal(eventDetail({ event: 'started' }, x), null);
+});
+
+test('changes tells a merge, a close or a delete marked on a session that had already ended, once', () => {
+  const s = { id: 'k', owner: null, kept: true, status: 'stopped', stopReason: 'idle for 4 h' };
+  let { phases } = changes(null, [s], { kindOf: () => 'shared' });
+  const step = (list) => {
+    const out = changes(phases, list, { kindOf: () => 'shared' });
+    phases = out.phases;
+    return out.events.map((e) => `${e.session.id} ${e.event} ${e.why ?? ''}`.trim());
+  };
+  assert.deepEqual(step([s]), []);
+  assert.deepEqual(step([{ ...s, prClosedAt: 'x', prMerged: true }]), ['k finished merged'], 'its pull request merged after it stopped');
+  assert.deepEqual(step([{ ...s, prClosedAt: 'x', prMerged: true }]), [], 'told once');
+  assert.deepEqual(step([{ ...s, id: 'k2', cleanedAt: 'x' }, { ...s, prClosedAt: 'x', prMerged: true }]), ['k2 paused idle'], 'one first seen already ended is told as before, from its stop');
+  assert.deepEqual(step([{ ...s, id: 'k2', cleanedAt: 'x' }, { ...s, prClosedAt: 'x', prMerged: true, cleanedAt: 'y' }]), [], 'merged wins over deleted: nothing new');
+  const c = { id: 'c', owner: null, kept: true, status: 'stopped', stopReason: 'idle for 4 h' };
+  ({ phases } = changes(null, [c], { kindOf: () => 'shared' }));
+  assert.deepEqual(step([{ ...c, cleanedAt: 'x' }]), ['c stopped deleted'], 'Delete now on a stopped session');
+  assert.deepEqual(step([{ ...c, id: 'c' }]), [], 'a mark that goes is nothing to tell');
+});
+
+test('back at work after a question or a turn is a quiet event, for Herdr\'s record alone', () => {
+  const s = { id: 'q', owner: 'mia', status: 'running', state: 'needs-you' };
+  const { phases } = changes(null, [s], { kindOf: () => 'private' });
+  const { events, phases: next } = changes(phases, [{ ...s, state: 'working' }], { kindOf: () => 'private' });
+  assert.deepEqual(events.map((e) => [e.event, e.quiet]), [['working', true]]);
+  assert.deepEqual(changes(next, [{ ...s, state: 'done' }], { kindOf: () => 'private' }).events.map((e) => [e.event, e.quiet ?? false]), [['done', false]]);
+  assert.equal(decode(herdrRecord({ event: 'working', quiet: true }, { id: 'q', kind: 'private', title: 'T', url: 'u' })).state, 'working');
+  assert.deepEqual(changes(new Map([['r', 'needs-you']]), [{ id: 'r', trigger: 'review', review: {}, status: 'running', state: 'working' }], { kindOf: () => 'review' }).events.map((e) => e.event), ['working'],
+    'a bare phase from an older map is still read');
 });
