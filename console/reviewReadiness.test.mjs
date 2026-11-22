@@ -59,6 +59,7 @@ test('each missing step names who takes it and how', async () => {
   assert.equal(unread.review, null, 'unknown while the file is not read');
   const byDefault = await readinessFor('installed').check('acme/game', { projects: PROJECTS });
   assert.deepEqual([byDefault.defaultBranch.review, byDefault.review], [null, { runner: 'woodshed', rerun: '[woodshed-review]', from: 'default' }], 'a file that names no review, or none: every repo\'s default');
+  assert.equal((await readinessFor('none').check('acme/game', { projects: PROJECTS })).review, null, 'no reviewer App, no default review: its verdicts would not count');
 });
 
 test('a repo the asker may not start on is told nothing of, and GitHub is not asked', async () => {

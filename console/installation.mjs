@@ -427,7 +427,11 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // A pull request's gates (the Slack post, QA's wait) are the file's alone, as before: the default review only starts a
   // review on the tag and gives sessions the tag (defaultReview.mjs), since it may have no reviewer App to approve with.
   const gatesOf = fileGatesOf;
-  const reviewGatesOf = async (name) => withAppLogins(withDefaultReview(await readerOf(name).pullRequests()), await logins());
+  // With no reviewer App a verdict counts for nothing, so the default starts no review there (and tells sessions no tag).
+  const reviewGatesOf = async (name) => {
+    const gates = await readerOf(name).pullRequests();
+    return withAppLogins(reviewerApp?.configured() ? withDefaultReview(gates) : gates, await logins());
+  };
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, qaRecordings, pullWebhooksFlowing: pullWebhooks.flowing,

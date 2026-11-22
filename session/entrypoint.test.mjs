@@ -199,8 +199,10 @@ test('a project with a review tag tells its sessions to end each push\'s last co
       assert.doesNotMatch(tagged.rules, /\{\{/);
       assert.match(tagged.out, /review tag: \[run-review\]/);
     }
-    // The console's tag fills in only where the file names none (console/defaultReview.mjs).
+    // The console's tag fills in only where the file names no review (console/defaultReview.mjs).
     assert.ok(writePrompt({ attachments: false, repoDir: repo, reviewTag: '[woodshed-review]' }).rules.includes('` [run-review]`'), 'the file\'s own wins');
+    fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ pullRequests: { review: { ...review, rerun: null }, suites: [], qa: null, mergeRisk: null } }));
+    assert.doesNotMatch(writePrompt({ attachments: false, repoDir: repo, reviewTag: '[woodshed-review]' }).rules, /code review runs on a push/, 'a file reviewing every commit asks for no tag');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

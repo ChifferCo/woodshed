@@ -248,7 +248,13 @@ export async function setupCommand(args, ctx) {
           report('repo-review', 'done', `${repo}’s project file reviews its pull requests in GitHub Actions. ${levels}`, { repo });
           continue;
         }
-        if (state.code === EXIT.waiting && Array.isArray(info?.missing) && info.missing.length) {
+        // A repo whose runsOn names another console: that console runs its reviews, so nothing here is missing for it.
+        const missing = Array.isArray(info?.missing) ? info.missing : [];
+        if (state.code === EXIT.waiting && missing.length && missing.every((item) => item?.key === 'runs-on')) {
+          report('repo-review', 'done', `${repo}’s reviews run on another console, as its project file’s runsOn says. ${levels}`, { repo });
+          continue;
+        }
+        if (state.code === EXIT.waiting && missing.length) {
           const url = linkTo(info.console?.reviewerApp?.installUrl, origin, true);
           const steps = info.missing.map((item) => printable(item?.step)).filter(Boolean);
           return stop('repo-review', EXIT.waiting, `For Woodshed to review ${repo}’s pull requests: ${steps.join(' ')} Then run setup again.`, { repo, ...(url ? { url } : {}) });

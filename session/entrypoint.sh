@@ -509,10 +509,14 @@ writeRules() {
   rules=${rules//"{{DEFAULT_BRANCH}}"/"$DEFAULT_BRANCH"}
   rules=${rules//"{{STARTED_BY}}"/"${STARTED_BY:-someone}"}
   rules=${rules//"{{VIA}}"/"${SESSION_URL:+[}Woodshed${SESSION_URL:+]($SESSION_URL)}"}
-  # The tag that asks for the project's code review (pullRequests.review.rerun), else the console's for a repo whose file
-  # names no review (WOODSHED_REVIEW_TAG, console/defaultReview.mjs). A project with neither loses the line.
-  tag=$(project get pullRequests.review.rerun 2>/dev/null) || tag=
-  [ -n "$tag" ] || tag=${WOODSHED_REVIEW_TAG:-}
+  # The tag that asks for the project's code review (pullRequests.review.rerun; none when it reviews every commit), or the
+  # console's for a checkout whose file names no review at all (WOODSHED_REVIEW_TAG, console/defaultReview.mjs). A
+  # project with neither loses the line.
+  if [ -n "$(project get pullRequests.review 2>/dev/null)" ]; then
+    tag=$(project get pullRequests.review.rerun 2>/dev/null) || tag=
+  else
+    tag=${WOODSHED_REVIEW_TAG:-}
+  fi
   if [ -n "$tag" ]; then
     rules=${rules//"{{REVIEW_TAG}}"/"$tag"}
   else

@@ -142,6 +142,15 @@ test('setup goes on past a repo whose project file reviews in GitHub Actions, ev
   assert.match(step.message, /acme\/app’s project file reviews its pull requests in GitHub Actions/);
 });
 
+test('setup goes on past a repo whose runsOn names another console', async () => {
+  const elsewhere = fake({ commands: ['review'], answers: {
+    'review status': result(2, { repo, on: false, review: { runner: 'woodshed', rerun: null, from: 'project file' }, missing: [{ key: 'runs-on', step: 'The default branch\'s pullRequests.runsOn names other[bot].' }] }),
+  } });
+  const after = await elsewhere.invoke('--yes', '--repo', repo, '--no-session');
+  assert.equal(after.code, 0);
+  assert.match(after.events.find((entry) => entry.step === 'repo-review').message, /acme\/app’s reviews run on another console/);
+});
+
 test('setup says the tag when no repo was chosen', async () => {
   const { invoke } = fake({ commands: ['review'] });
   const after = await invoke('--yes', '--no-session');

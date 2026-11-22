@@ -1014,7 +1014,8 @@ project file the console reads names no `pullRequests.review` (or there is no fi
 `console/defaultReview.mjs`'s review, `runner: woodshed` on a commit whose message has `[woodshed-review]`, added by
 `reviewGatesOf` in `installation.mjs` (the fleet's `reviewGates`). It only starts reviews: what a pull request waits for,
 its Slack post and QA, stays the file's alone, so a repo whose file names no review posts once out of draft and green,
-as before, whatever a default review said, and a console with no reviewer App holds nothing back. The file's own
+as before, whatever a default review said. A console with no reviewer App starts no default review, since its
+verdicts would not count, and tells sessions no tag: readiness lists the reviewer App as missing. The file's own
 `review`, on any runner, wins; it is where a team reviews every commit, uses another tag, or adds QA (`woodshed review
 enable`). The default is the review alone: `suites`, `qa`, `mergeRisk` and `runsOn` stay the file's. Each coding session
 is told the tag in `WOODSHED_REVIEW_TAG` (fleet.mjs, decided at each start), which its rules use when its checkout's file
