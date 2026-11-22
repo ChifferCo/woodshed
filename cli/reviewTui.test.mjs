@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 
-import { createKeyReader, editKey, frame, initialState, mergeHint, parseKeys, screenText } from './reviewTui.mjs';
-import { clean, diagramLines, headerLines, linkUrl, qaLines, qaVisible, fileOrder, markdownLines, plainText, pullRequestUrl, stripAnsi, tabBar, toAnsi, width, wrapSegments } from './reviewView.mjs';
+import { browserCommand, canOpenBrowser, openBrowser } from './browser.mjs';
+
+import { createKeyReader, editKey, frame, headerPullUrl, initialState, linkAt, mergeHint, parseKeys, screenText } from './reviewTui.mjs';
+import { clean, diagramLines, githubPullUrl, headerLines, linkUrl, qaLines, qaVisible, fileOrder, markdownLines, plainText, pullRequestUrl, stripAnsi, tabBar, toAnsi, width, wrapSegments } from './reviewView.mjs';
 
 test('raw stdin reads as keys: arrows, a paste with its newlines, and an escape sequence it does not know is skipped whole', () => {
   assert.deepEqual(parseKeys('\x1b[A\x1b[B\x1bOC\x1b[5~\x1b[Z\t\r\x7f\x03q'), ['up', 'down', 'right', 'pageup', 'shift-tab', 'tab', 'enter', 'backspace', 'ctrl-c', 'q']);
@@ -111,7 +114,9 @@ test('the Q&A is folded: only the open question shows its answer and its follow-
 
 // The TUI on a made-up terminal over a scripted shed: `routes` answers each call by `METHOD path`, and every call is kept.
 // Its timers run at once, so polls that wait seconds in a terminal take milliseconds here.
-async function tuiOver(t, routes, { columns = 80, rows = 24 } = {}) {
+// It opens no browser and hooks no signal of this process: `opened` lists what it would have opened, and `proc` is a
+// stand-in process whose signals a test sends.
+async function tuiOver(t, routes, { columns = 80, rows = 24, canOpen = true, platform = 'linux' } = {}) {
   const { EventEmitter } = await import('node:events');
   const { runReviewTui } = await import('./reviewTui.mjs');
   const calls = [];
@@ -127,10 +132,14 @@ async function tuiOver(t, routes, { columns = 80, rows = 24 } = {}) {
   const stdout = Object.assign(new EventEmitter(), { columns, rows, write: (s) => { screen += s; return true; } });
   const status = routes.get('GET ')();
   const diff = routes.get('GET /diff')();
+  const opened = [];
+  const killed = [];
+  const proc = Object.assign(new EventEmitter(), { pid: 4242, platform, kill: (pid, sig) => killed.push([pid, sig]) });
   const done = runReviewTui({ api, initial: { status, diff, session: 'aaaa0001' }, stdin, stdout, color: false,
-    timers: { set: (fn) => setTimeout(fn, 2), clear: clearTimeout } });
+    timers: { set: (fn) => setTimeout(fn, 2), clear: clearTimeout },
+    openUrl: (url, failed) => opened.push({ url, failed }), canOpen: () => canOpen, proc });
   t.after(() => stdin.emit('data', 'q'));
-  const frame = () => screen.split('\x1b[H').at(-1).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/ /g, ' ').split('\r\n').map((l) => l.trimEnd());
+  const frame = () => screen.split('\x1b[H').at(-1).replace(/\x1b\]8;[^\x1b]*\x1b\\/g, '').replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/ /g, ' ').split('\r\n').map((l) => l.trimEnd());
   const until = async (test, what) => {
     for (let i = 0; i < 500; i += 1) {
       if (test()) return;
@@ -138,7 +147,10 @@ async function tuiOver(t, routes, { columns = 80, rows = 24 } = {}) {
     }
     assert.fail(`never: ${what}\n${frame().join('\n')}`);
   };
-  return { calls, done, frame, until, type: (s) => stdin.emit('data', Buffer.from(s)), said: (key) => calls.filter((c) => `${c.method} ${c.path.split('?')[0]}` === key) };
+  return {
+    calls, done, frame, until, opened, killed, proc, written: () => screen,
+    type: (s) => stdin.emit('data', Buffer.from(s)), said: (key) => calls.filter((c) => `${c.method} ${c.path.split('?')[0]}` === key),
+  };
 }
 
 const T = '2026-11-20T10:00:00.000Z';
@@ -433,4 +445,201 @@ test('only an https address with nothing but printable characters in it is linke
   assert.equal(pullRequestUrl({ status: linkedStatus({ url: 'https://evil.example/' }) }, 311), null);
   // The screen as text, as a pipe or a test reads it, has no link in it.
   assert.ok(screenText(initialState({ status: linkedStatus(), diff: { files: [] }, session: 'e58a87e8' }), { columns: 80, rows: 24 }).every((l) => !/\x1b/.test(l)));
+});
+
+// --- opening the pull request: the o key and a click -----------------------------------------------------------
+
+test('mouse reports read as clicks and the wheel, in SGR\'s form or X10\'s, and never type their bytes as keys', () => {
+  assert.deepEqual(parseKeys('\x1b[<0;12;1M\x1b[<0;12;1m'), [{ mouse: { kind: 'click', column: 12, row: 1 } }, { mouse: { kind: 'other', column: 12, row: 1 } }]);
+  assert.deepEqual(parseKeys('\x1b[<16;3;4M'), [{ mouse: { kind: 'click', column: 3, row: 4 } }], 'Ctrl-click is a click');
+  assert.deepEqual(parseKeys('\x1b[<64;1;1M\x1b[<65;1;1M\x1b[<2;1;1M'), [
+    { mouse: { kind: 'wheel-up', column: 1, row: 1 } }, { mouse: { kind: 'wheel-down', column: 1, row: 1 } }, { mouse: { kind: 'other', column: 1, row: 1 } }]);
+  // X10: ESC [ M and three bytes, each 32 over; 'q' as a byte must never quit.
+  assert.deepEqual(parseKeys(`\x1b[M ${String.fromCharCode(32 + 81)}${String.fromCharCode(32 + 2)}x`), [{ mouse: { kind: 'click', column: 81, row: 2 } }, 'x']);
+  assert.deepEqual(parseKeys('\x1b[Mqqq'), [{ mouse: { kind: 'wheel-down', column: 81, row: 81 } }], 'q, 81 over 32: the wheel, not a quit');
+  const read = createKeyReader();
+  assert.deepEqual(read('\x1b[<0;4'), [], 'a report cut between chunks waits for its end');
+  assert.deepEqual(read('0;2Mj'), [{ mouse: { kind: 'click', column: 40, row: 2 } }, 'j']);
+  assert.deepEqual(read('\x1b[M '), []);
+  assert.deepEqual(read('!!k'), [{ mouse: { kind: 'click', column: 1, row: 1 } }, 'k']);
+  assert.deepEqual(parseKeys('\x1a'), ['ctrl-z']);
+});
+
+test('the header\'s pull request number is underlined where it is a link, and the frame says where it is for a click', () => {
+  const state = initialState({ status: linkedStatus(), diff: { files: [] }, session: 'e58a87e8' });
+  const links = [];
+  const lines = frame(state, { columns: 120, rows: 24, links });
+  assert.ok(lines[1].includes(`\x1b[1;4m${link(PR_URL, '#311')}\x1b[0m`), JSON.stringify(lines[1]));
+  assert.equal(links.length, 1);
+  const col = stripAnsi(lines[1]).indexOf('#311');
+  assert.deepEqual(links[0], { row: 1, from: col, to: col + 4, url: PR_URL });
+  assert.equal(linkAt(links, col + 1, 2), PR_URL, 'its first cell, as the terminal counts (from 1)');
+  assert.equal(linkAt(links, col + 4, 2), PR_URL, 'its last cell');
+  assert.equal(linkAt(links, col + 5, 2), null, 'the cell after it');
+  assert.equal(linkAt(links, col + 1, 1), null, 'another row');
+  // In the title: dim and underlined.
+  const titled = frame(initialState({ status: { ...linkedStatus({ url: null }, { number: 311, url: PR_URL }), kind: 'pr' }, diff: { files: [] }, session: 'e58a87e8' }), { columns: 80, rows: 24 });
+  assert.ok(titled[0].includes(`\x1b[2;4m${link(PR_URL, '#311')}\x1b[0m`), JSON.stringify(titled[0]));
+  // Not a link, not underlined.
+  const plain = frame(initialState({ status: linkedStatus({ url: null }), diff: { files: [] }, session: 'e58a87e8' }), { columns: 120, rows: 24 });
+  assert.ok(plain[1].includes('\x1b[1m#311\x1b[0m'), JSON.stringify(plain[1]));
+  assert.equal(headerPullUrl(state), PR_URL);
+});
+
+test('only a pull request\'s page on github.com is one the review opens itself', () => {
+  assert.equal(githubPullUrl(PR_URL), PR_URL);
+  for (const url of ['https://evil.example/acme/app/pull/311', 'http://github.com/acme/app/pull/311', 'https://github.com.evil.example/acme/app/pull/311',
+    'https://gist.github.com/acme/app/pull/311', 'https://github.com/acme/app/issues/311', 'https://github.com/acme/app/pull/311?x=1',
+    'https://user@github.com/acme/app/pull/311', 'https://github.com/acme/app/pull/-1', '--help', 'file:///etc/passwd', null]) {
+    assert.equal(githubPullUrl(url), null, String(url));
+  }
+});
+
+test('the opener gets the address as its one argument, never a shell, on every platform', () => {
+  for (const platform of ['linux', 'darwin', 'win32', 'freebsd']) {
+    const spawned = [];
+    const child = Object.assign(new EventEmitter(), { unref() {} });
+    openBrowser(PR_URL, { platform, env: { SystemRoot: 'C:\\Windows' }, spawnFn: (...a) => { spawned.push(a); return child; } });
+    assert.equal(spawned.length, 1);
+    const [command, args, opts] = spawned[0];
+    assert.deepEqual([command, args], browserCommand(PR_URL, platform, { SystemRoot: 'C:\\Windows' }));
+    assert.equal(args.at(-1), PR_URL);
+    assert.equal(opts.shell, false);
+    assert.doesNotMatch(command, /(^|[\\/])(sh|bash|zsh|cmd(\.exe)?|powershell(\.exe)?)$/i, platform);
+  }
+  assert.deepEqual(browserCommand(PR_URL, 'darwin'), ['open', [PR_URL]]);
+  assert.deepEqual(browserCommand(PR_URL, 'linux'), ['xdg-open', [PR_URL]]);
+  // An opener that is missing, or fails, says so.
+  const why = [];
+  const child = Object.assign(new EventEmitter(), { unref() {} });
+  openBrowser(PR_URL, { platform: 'linux', spawnFn: () => child, failed: (w) => why.push(w) });
+  child.emit('error', Object.assign(new Error('spawn xdg-open ENOENT'), { code: 'ENOENT' }));
+  child.emit('exit', 3);
+  assert.deepEqual(why, ['xdg-open is not installed', 'xdg-open exited with 3']);
+});
+
+test('a browser opens on this screen only: not over SSH, and on Linux only with a display', () => {
+  assert.equal(canOpenBrowser('darwin', {}), true);
+  assert.equal(canOpenBrowser('win32', {}), true);
+  assert.equal(canOpenBrowser('linux', { DISPLAY: ':0' }), true);
+  assert.equal(canOpenBrowser('linux', { WAYLAND_DISPLAY: 'wayland-0' }), true);
+  assert.equal(canOpenBrowser('linux', {}), false);
+  assert.equal(canOpenBrowser('darwin', { SSH_CONNECTION: '1 2 3 4' }), false);
+  assert.equal(canOpenBrowser('linux', { DISPLAY: 'localhost:10.0', SSH_TTY: '/dev/pts/1' }), false);
+});
+
+const linkedRoutes = (url = PR_URL) => baseRoutes({
+  'GET ': () => ({ ok: true, kind: 'worktree', status: 'ready', createdAt: T, headSha: 'aaaa', meta: { title: 'T', headRefName: 'b', baseRefName: 'main', dirtyFiles: 0 },
+    livePr: { number: 311, url, title: 'T', state: 'open', review: 'pending', checks: null }, review: { overview: 'It changes things.' } }),
+});
+
+test('o opens the pull request on GitHub, says so, and the footer and help offer it', async (t) => {
+  const tui = await tuiOver(t, linkedRoutes(), { columns: 120 });
+  await tui.until(() => tui.frame().some((l) => l.includes('o open PR on GitHub')), 'the footer offers it');
+  tui.type('o');
+  await tui.until(() => tui.opened.length === 1, 'the opener');
+  assert.equal(tui.opened[0].url, PR_URL);
+  await tui.until(() => tui.frame().some((l) => l.includes(`Opening ${PR_URL} in your browser.`)), 'the status line');
+  tui.opened[0].failed('xdg-open exited with 4');
+  await tui.until(() => tui.frame().some((l) => l.includes(`Not opened (xdg-open exited with 4). The pull request: ${PR_URL}`)), 'a failed opener shows the address');
+  tui.type('?');
+  await tui.until(() => tui.frame().includes('Keys'), 'the help');
+  const help = tui.frame().join(' ').replace(/ +/g, ' ');
+  assert.match(help, /o opens the pull request on GitHub/);
+  assert.match(help, /In Herdr, Ctrl-click opens a link too\./);
+  assert.match(help, /To select text, hold Shift as you drag/);
+});
+
+test('o refuses a pull request address that is not github.com, and opens nothing', async (t) => {
+  const tui = await tuiOver(t, linkedRoutes('https://evil.example/acme/app/pull/311'), { columns: 120 });
+  await tui.until(() => tui.frame().some((l) => l.includes('o open PR on GitHub')), 'the first frame');
+  tui.type('o');
+  await tui.until(() => tui.frame().some((l) => l.includes('Not opened: only a pull request\'s page on github.com opens from here.')), 'refused');
+  assert.deepEqual(tui.opened, []);
+});
+
+test('with no browser to open, o and a click show the pull request\'s address instead', async (t) => {
+  const tui = await tuiOver(t, linkedRoutes(), { columns: 120, canOpen: false });
+  await tui.until(() => tui.frame().some((l) => l.includes('#311')), 'the first frame');
+  tui.type('o');
+  await tui.until(() => tui.frame().some((l) => l.includes(`No browser to open here. The pull request: ${PR_URL}`)), 'the address');
+  assert.deepEqual(tui.opened, []);
+});
+
+test('with no pull request, o says there is none, and the footer does not offer it', async (t) => {
+  const tui = await tuiOver(t, baseRoutes(), { columns: 120 });
+  await tui.until(() => tui.frame().some((l) => l.includes('1 Overview')), 'the first frame');
+  assert.ok(!tui.frame().some((l) => l.includes('open PR on GitHub')));
+  tui.type('o');
+  await tui.until(() => tui.frame().some((l) => l.includes('This review has no pull request to open on GitHub.')), 'said');
+  assert.deepEqual(tui.opened, []);
+});
+
+test('a click on the pull request\'s number opens it, a click elsewhere does nothing, and the wheel scrolls', async (t) => {
+  const overview = Array.from({ length: 60 }, (_, i) => `Line ${i + 1}.`).join('\n\n');
+  const routes = linkedRoutes();
+  const status = routes.get('GET ')();
+  status.review = { overview };
+  routes.set('GET ', () => status);
+  const tui = await tuiOver(t, routes, { columns: 120 });
+  await tui.until(() => tui.frame().some((l) => l.includes('#311')), 'the first frame');
+  const row = tui.frame().findIndex((l) => l.includes('#311'));
+  const col = tui.frame()[row].indexOf('#311');
+  tui.type(`\x1b[<0;${col};${row + 1}M\x1b[<0;${col};${row + 1}m`);
+  tui.type(`\x1b[<0;${col + 5};${row + 1}M`);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual(tui.opened, [], 'the cell before it, and the cell after it');
+  tui.type(`\x1b[<0;${col + 1};${row + 1}M\x1b[<0;${col + 1};${row + 1}m`);
+  await tui.until(() => tui.opened.length === 1, 'the click');
+  assert.equal(tui.opened[0].url, PR_URL);
+  tui.type(`\x1b[<0;${col + 4};${row + 1}M`);
+  await tui.until(() => tui.opened.length === 2, 'its last cell');
+  const first = () => tui.frame().find((l) => /^Line \d+\.$/.test(l));
+  await tui.until(() => first() === 'Line 1.', 'the overview, at its top');
+  tui.type('\x1b[<65;5;10M\x1b[<65;5;10M');
+  await tui.until(() => first() !== 'Line 1.', 'the wheel scrolled down');
+  tui.type('\x1b[<64;5;10M\x1b[<64;5;10M');
+  await tui.until(() => first() === 'Line 1.', 'and back up');
+});
+
+test('clicks are reported while the review runs, and given back on a quit, a signal, an exit and a suspend', async (t) => {
+  const ON = '\x1b[?1000h\x1b[?1006h';
+  const OFF = '\x1b[?1000l\x1b[?1006l';
+  const count = (s, x) => s.split(x).length - 1;
+  {
+    const tui = await tuiOver(t, linkedRoutes());
+    await tui.until(() => tui.frame().some((l) => l.includes('#311')), 'the first frame');
+    assert.equal(count(tui.written(), ON), 1, 'click reports on, and no motion tracking');
+    assert.doesNotMatch(tui.written(), /\x1b\[\?100[23]h/);
+    // A suspend, by Ctrl-Z or the signal: the terminal back as it was, then stopped; on continuing, taken again.
+    tui.type('\x1a');
+    assert.equal(count(tui.written(), OFF), 1);
+    assert.match(tui.written(), /\x1b\[\?1049l$/);
+    assert.deepEqual(tui.killed, [[4242, 'SIGTSTP']]);
+    tui.proc.emit('SIGCONT');
+    assert.equal(count(tui.written(), ON), 2);
+    tui.proc.emit('SIGTSTP');
+    assert.equal(count(tui.written(), OFF), 2);
+    assert.deepEqual(tui.killed.at(-1), [4242, 'SIGTSTP']);
+    tui.proc.emit('SIGCONT');
+    tui.type('q');
+    assert.deepEqual(await tui.done, { code: 'quit' });
+    assert.equal(count(tui.written(), OFF), 3, 'off on a quit');
+    for (const ev of ['exit', 'SIGINT', 'SIGTERM', 'SIGHUP', 'SIGTSTP', 'SIGCONT']) assert.equal(tui.proc.listenerCount(ev), 0, `${ev} let go`);
+  }
+  {
+    const tui = await tuiOver(t, linkedRoutes());
+    await tui.until(() => tui.frame().some((l) => l.includes('#311')), 'the first frame');
+    tui.proc.emit('SIGTERM', 'SIGTERM');
+    assert.equal(count(tui.written(), OFF), 1, 'off on a signal');
+    assert.deepEqual(tui.killed, [[4242, 'SIGTERM']], 'then dies of it');
+    assert.equal(tui.proc.listenerCount('SIGTERM'), 0);
+  }
+  {
+    const tui = await tuiOver(t, linkedRoutes());
+    await tui.until(() => tui.frame().some((l) => l.includes('#311')), 'the first frame');
+    tui.proc.emit('exit', 1);
+    assert.equal(count(tui.written(), OFF), 1, 'off on an exit, a crash among them');
+    assert.match(tui.written(), /\x1b\[\?25h\x1b\[\?1049l$/);
+  }
 });

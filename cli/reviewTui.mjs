@@ -4,13 +4,16 @@
 // 403), whether a merge may go is GitHub's read on the shed (GET /merge), and the controls that need a pull request are
 // offered only when the shed names one (`livePr`), as the page draws them.
 //
-// Plain Node: raw-mode stdin read as keys, an alternate screen drawn whole on each change (reviewView.mjs makes the
-// lines), the size followed on resize, the keys for what is on screen in the footer.
+// Plain Node: raw-mode stdin read as keys and mouse reports, an alternate screen drawn whole on each change
+// (reviewView.mjs makes the lines), the size followed on resize, the keys for what is on screen in the footer. A click
+// on a link the frame drew (the header's pull request number) opens it, as o does, through browser.mjs.
 
 import {
   analysisLines, chatLines, chatStarters, clean, cut, diffRows, discussionLines, fileLines, fileListLines, fileOrder, headerLines,
-  plainText, qaLines, qaVisible, reviewTitle, stripAnsi, tabBar, tabsOf, toAnsi, width, wrapSegments, wrapText,
+  githubPullUrl, plainText, pullRequestUrl, qaLines, qaVisible, reviewTitle, stripAnsi, tabBar, tabsOf, toAnsi, width,
+  wrapSegments, wrapText,
 } from './reviewView.mjs';
+import { canOpenBrowser, openBrowser } from './browser.mjs';
 
 const STATUS_POLL_MS = 2000;
 const ANSWER_POLL_MS = 1500;
@@ -75,6 +78,25 @@ export function createKeyReader() {
         continue;
       }
       if (text[i] === '\x1b') {
+        // A mouse report: SGR's (ESC [ < button ; column ; row, M pressed, m released), or the older X10 form's three
+        // bytes after ESC [ M from a terminal that does not know SGR's, whose bytes are never typed as keys.
+        const sgr = /^\x1b\[<(\d{1,4});(\d{1,5});(\d{1,5})([Mm])/.exec(text.slice(i, i + 24));
+        if (sgr) {
+          keys.push({ mouse: mouseEvent(Number(sgr[1]), Number(sgr[2]), Number(sgr[3]), sgr[4] === 'M') });
+          i += sgr[0].length;
+          continue;
+        }
+        if (text.startsWith('\x1b[M', i)) {
+          const bytes = [...text.slice(i + 3, i + 9)].slice(0, 3);
+          if (bytes.length < 3) {
+            held = text.slice(i);
+            return keys;
+          }
+          const [b, x, y] = bytes.map((c) => c.codePointAt(0) - 32);
+          keys.push({ mouse: mouseEvent(b, x, y, (b & 3) !== 3) });
+          i += 3 + bytes.join('').length;
+          continue;
+        }
         const seq = Object.keys(SEQUENCES).find((q) => text.startsWith(q, i));
         if (seq) {
           keys.push(SEQUENCES[seq]);
@@ -88,7 +110,7 @@ export function createKeyReader() {
           continue;
         }
         // A sequence the chunk cut short (ESC [ and digits, or ESC O): finished by the next chunk.
-        if (/^\x1b(\[[0-9;?]*[ -/]*|O)$/.test(text.slice(i)) && text.length - i > 1) {
+        if (/^\x1b(\[<?[0-9;?]*[ -/]*|O)$/.test(text.slice(i)) && text.length - i > 1) {
           held = text.slice(i);
           return keys;
         }
@@ -108,11 +130,25 @@ export function createKeyReader() {
       else if (ch === '\x05') keys.push('end');
       else if (ch === '\x04') keys.push('ctrl-d');
       else if (ch === '\x0c') keys.push('ctrl-l');
+      else if (ch === '\x1a') keys.push('ctrl-z');
       else if (ch.codePointAt(0) >= 0x20) keys.push(ch);
     }
     text = '';
     return keys;
   };
+}
+
+/**
+ * A mouse report as {kind, column, row}, both from 1 as the terminal counts: `click` (the left button pressed, with or
+ * without Shift, Alt or Ctrl), `wheel-up`, `wheel-down`, or `other` (another button, a release, a drag).
+ */
+function mouseEvent(button, column, row, pressed) {
+  const base = button & ~(4 | 8 | 16);
+  let kind = 'other';
+  if (base === 64) kind = 'wheel-up';
+  else if (base === 65) kind = 'wheel-down';
+  else if (base === 0 && pressed) kind = 'click';
+  return { kind, column, row };
 }
 
 /** One chunk's keys, with nothing held over: for a test. */
@@ -236,6 +272,7 @@ export function footerKeys(state) {
   if (state.tab === 'qa' && state.qa.data && state.qa.data.status !== 'running') keys.push(['i', state.qa.data.items?.length ? 'ask about it' : 'ask'], ['A', 'ask again']);
   if (state.tab === 'qa' && !state.qa.data && state.qa.started && !state.qa.loading) keys.push(['A', 'ask the questions']);
   if (state.status.livePr) keys.push(['s', 'submit review'], ['m', 'merge'], ['t', 'rename']);
+  if (headerPullUrl(state)) keys.push(['o', 'open PR on GitHub']);
   const st = state.status.status;
   if (st !== 'running' && st !== 'queued' && (st !== 'ready' || state.offerReanalysis)) keys.push(['a', st === 'ready' ? 'read it again' : st === 'unknown' ? 'run analysis' : 'retry analysis']);
   keys.push(['r', 're-review'], ['d', 'discard'], ['?', 'help'], ['q', 'quit']);
@@ -291,7 +328,7 @@ function sheetLines(state, columns) {
  * The whole screen, as lines of text with escape codes, exactly `rows` of them.
  * @returns {string[]}
  */
-export function frame(state, { columns, rows, color = true, nowMs = Date.now() }) {
+export function frame(state, { columns, rows, color = true, nowMs = Date.now(), links = null }) {
   if (columns < 40 || rows < 12) {
     const say = cut('Make this window at least 40 columns by 12 rows. q quits.', columns);
     return [say, ...Array(Math.max(0, rows - 1)).fill('')];
@@ -319,21 +356,39 @@ export function frame(state, { columns, rows, color = true, nowMs = Date.now() }
   }
   scroll = Math.max(0, Math.min(scroll, Math.max(0, lines.length - room)));
   state.scroll[key] = scroll;
-  const out = top.map((l) => toAnsi(l, { columns, color }));
+  // Each row's text, and the links drawn on it: `links` gets {row, from, to, url}, row and columns from 0.
+  const out = [];
+  const rowLinks = [];
+  const put = (row, line, fill = null) => {
+    const got = [];
+    out[row] = line ? toAnsi(line, { columns, color, fill, links: got }) : '';
+    rowLinks[row] = got;
+  };
+  top.forEach((l) => put(out.length, l));
   for (let i = 0; i < room; i += 1) {
     const at = scroll + i;
-    const line = lines[at];
-    if (!line) out.push('');
-    else out.push(toAnsi(line, { columns, color, fill: items && !state.sheet && !state.compose && items[at] === cursor && cursor >= 0 ? true : null }));
+    put(out.length, lines[at], items && !state.sheet && !state.compose && items[at] === cursor && cursor >= 0 ? true : null);
   }
   // A cursor line while a comment is written on it stays marked.
   if (items && state.compose?.kind === 'comment') {
-    for (let i = 0; i < room; i += 1) if (items[scroll + i] === cursor) out[top.length + i] = toAnsi(lines[scroll + i], { columns, color, fill: true });
+    for (let i = 0; i < room; i += 1) if (items[scroll + i] === cursor) put(top.length + i, lines[scroll + i], true);
   }
   const more = lines.length - scroll - room;
-  if (more > 0 && out.length) out[out.length - 1] = toAnsi([['dim', `↓ ${more} more line${more === 1 ? '' : 's'}`]], { columns, color });
-  out.push(...bottom.map((l) => toAnsi(l, { columns, color })));
+  if (more > 0 && out.length) put(out.length - 1, [['dim', `↓ ${more} more line${more === 1 ? '' : 's'}`]]);
+  bottom.forEach((l) => put(out.length, l));
+  if (links) rowLinks.slice(0, rows).forEach((got, row) => { for (const l of got) links.push({ row, ...l }); });
   return out.slice(0, rows);
+}
+
+/** The link drawn at a mouse report's column and row (each from 1), from what `frame` put in its `links`, else null. */
+export function linkAt(links, column, row) {
+  return (links ?? []).find((l) => l.row === row - 1 && column - 1 >= l.from && column - 1 < l.to)?.url ?? null;
+}
+
+/** The pull request's page the header's number links to (the o key opens it), else null. */
+export function headerPullUrl(state) {
+  const n = state.status?.meta?.number ?? state.status?.livePr?.number;
+  return n ? pullRequestUrl(state, n) : null;
 }
 
 function scrollKey(state) {
@@ -348,16 +403,26 @@ function scrollKey(state) {
  * Runs the review on this terminal until the person quits.
  * @param {{api: (method: string, path: string, body?: object) => Promise<object>, initial: {status: object, diff: object, session: string, pulls?: object[]},
  *          stdin: object, stdout: object, color?: boolean, now?: () => number,
- *          timers?: {set: typeof setTimeout, clear: typeof clearTimeout}}} args
+ *          timers?: {set: typeof setTimeout, clear: typeof clearTimeout},
+ *          openUrl?: (url: string, failed: (why: string) => void) => void, canOpen?: () => boolean,
+ *          proc?: {on: Function, off: Function, kill: Function, pid: number, platform: string}|null}} args
  *   `api` takes a path after /reviews/claude-<id> and answers the JSON, or throws an Error with `status` and `code`;
- *   one with `ended` set is a sign-in that ended, which ends the review
+ *   one with `ended` set is a sign-in that ended, which ends the review. `openUrl` opens a pull request's page
+ *   (browser.mjs, never a shell), and `canOpen` says whether a browser could open here at all. `proc` is the process
+ *   whose exit and signals put the terminal back as it was: null for none.
  * @returns {Promise<{code: 'quit'|'ended', message?: string}>}
  */
-export function runReviewTui({ api, initial, stdin, stdout, color = true, now = Date.now, timers = { set: setTimeout, clear: clearTimeout } }) {
+export function runReviewTui({
+  api, initial, stdin, stdout, color = true, now = Date.now, timers = { set: setTimeout, clear: clearTimeout },
+  openUrl = (url, failed) => openBrowser(url, { failed }), canOpen = () => canOpenBrowser(process.platform, process.env),
+  proc = process,
+}) {
   const state = initialState(initial);
   const pending = new Set();
   let finished = null;
   let drawQueued = false;
+  // Where the last frame drew each link, for a click on it.
+  let links = [];
 
   return new Promise((resolve) => {
     const columns = () => stdout.columns || 80;
@@ -375,7 +440,9 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
       drawQueued = true;
       later(() => {
         drawQueued = false;
-        const lines = frame(state, { columns: columns(), rows: rows(), color, nowMs: now() });
+        const drawn = [];
+        const lines = frame(state, { columns: columns(), rows: rows(), color, nowMs: now(), links: drawn });
+        links = drawn;
         stdout.write(`\x1b[H${lines.map((l) => `${l}\x1b[K`).join('\r\n')}\x1b[J`);
       }, 0);
     }
@@ -383,14 +450,71 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
       state.flash = { text: clean(text), bad };
       draw();
     }
+    // The terminal as the review takes it: the alternate screen, no cursor of the terminal's own (the boxes draw
+    // theirs), pastes marked as pastes, and clicks and the wheel reported (1000, presses and releases only, never
+    // motion; 1006, as SGR's numbers). And as it gives it back, on a quit, an exit, a crash, a signal or a suspend.
+    function takeTerminal() {
+      if (stdin.isTTY) stdin.setRawMode?.(true);
+      stdout.write('\x1b[?1049h\x1b[?25l\x1b[?2004h\x1b[?1000h\x1b[?1006h\x1b[2J');
+    }
+    function giveTerminalBack() {
+      stdout.write('\x1b[?1000l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[?1049l');
+      if (stdin.isTTY) stdin.setRawMode?.(false);
+    }
+    const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+    function onExit() {
+      if (!finished) giveTerminalBack();
+    }
+    function onSignal(signal) {
+      if (!finished) {
+        finished = { code: 'quit' };
+        giveTerminalBack();
+      }
+      unhook();
+      // Dies of the signal it was sent, as it would have with nobody listening.
+      proc.kill(proc.pid, signal);
+    }
+    function onStop() {
+      if (finished) return;
+      giveTerminalBack();
+      proc.off('SIGTSTP', onStop);
+      proc.kill(proc.pid, 'SIGTSTP');
+    }
+    function onContinue() {
+      if (finished) return;
+      proc.on('SIGTSTP', onStop);
+      takeTerminal();
+      draw();
+    }
+    // Ctrl-Z in raw mode is a key, not a signal: it suspends as a terminal's would (not on Windows, which has none).
+    function suspend() {
+      if (!proc || proc.platform === 'win32') return undefined;
+      return onStop();
+    }
+    function hook() {
+      if (!proc) return;
+      proc.on('exit', onExit);
+      for (const sig of SIGNALS) proc.on(sig, onSignal);
+      if (proc.platform !== 'win32') {
+        proc.on('SIGTSTP', onStop);
+        proc.on('SIGCONT', onContinue);
+      }
+    }
+    function unhook() {
+      if (!proc) return;
+      proc.off('exit', onExit);
+      for (const sig of SIGNALS) proc.off(sig, onSignal);
+      proc.off('SIGTSTP', onStop);
+      proc.off('SIGCONT', onContinue);
+    }
     function finish(result) {
       if (finished) return;
       finished = result;
       for (const t of pending) timers.clear(t);
       stdin.off('data', onData);
       stdout.off?.('resize', draw);
-      stdout.write('\x1b[?2004l\x1b[?25h\x1b[?1049l');
-      if (stdin.isTTY) stdin.setRawMode?.(false);
+      giveTerminalBack();
+      unhook();
       stdin.pause?.();
       resolve(result);
     }
@@ -873,6 +997,8 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
           'Enter on Chat asks the session\'s agent about the change.',
           '2 Q&A: ↑ ↓ choose a question, Enter or → opens it (one at a time, with its follow-ups), ← closes it; i asks a follow-up on it (on the last row, a question of your own), A all of them again.',
           's submits your review (comment, approve or request changes) with your draft comments. m merges, t renames.',
+          'o opens the pull request on GitHub in your browser, as a click on its underlined number in the header does. Over SSH, or with no display, the status line shows its address instead. In Herdr, Ctrl-click opens a link too.',
+          'The review takes this window\'s clicks and wheel (the wheel scrolls). To select text, hold Shift as you drag (Option in some macOS terminals, such as iTerm2 and Terminal).',
           'r re-reviews: pulls the branch, takes the diff again and reads it again. a runs the analysis. d discards it.',
           'Writes to GitHub go as you, from your own My Woodshed session, once you have connected GitHub on My settings.',
           'q quits; the session and the review go on.',
@@ -1076,8 +1202,26 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
       if (sheet.editor && editKey(sheet.editor, key)) return draw();
       return undefined;
     }
+    // The o key and a click on a link: a pull request's page on github.com only, opened without a shell, or its
+    // address in the status line where no browser could open (over SSH, with no display) or the opener failed.
+    function openPullRequest(url) {
+      const ok = githubPullUrl(url);
+      if (!ok) return flash('Not opened: only a pull request\'s page on github.com opens from here.', true);
+      if (!canOpen()) return flash(`No browser to open here. The pull request: ${ok}`);
+      flash(`Opening ${ok} in your browser.`);
+      openUrl(ok, (why) => flash(`Not opened (${clean(why)}). The pull request: ${ok}`, true));
+      return undefined;
+    }
+    function onMouse({ kind, column, row }) {
+      if (kind === 'wheel-up' || kind === 'wheel-down') return scrollBy(kind === 'wheel-up' ? -3 : 3);
+      if (kind !== 'click') return undefined;
+      const url = linkAt(links, column, row);
+      return url ? openPullRequest(url) : undefined;
+    }
     function onKey(key) {
       if (key === 'ctrl-c') return finish({ code: 'quit' });
+      if (key === 'ctrl-z') return suspend();
+      if (typeof key === 'object' && key.mouse) return onMouse(key.mouse);
       if (key === 'ctrl-l') {
         stdout.write('\x1b[2J');
         return draw();
@@ -1121,9 +1265,13 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
           if (diff) return moveCursor(Infinity);
           state.scroll[scrollKey(state)] = Number.MAX_SAFE_INTEGER;
           return draw();
-        case 'right': case 'o':
+        case 'o': {
+          const url = headerPullUrl(state);
+          return url ? openPullRequest(url) : flash('This review has no pull request to open on GitHub.');
+        }
+        case 'right':
           if (qaTab) return qaToggle();
-          return list ? openFile(true) : diff && key === 'right' ? moveFile(1) : undefined;
+          return list ? openFile(true) : diff ? moveFile(1) : undefined;
         case 'n': case ']': return diff ? moveFile(1) : list ? moveFile(1) : undefined;
         case 'left': case 'p': case '[':
           if (qaTab && key === 'left') return qaToggle(true);
@@ -1171,12 +1319,11 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
       }
     }
 
-    if (stdin.isTTY) stdin.setRawMode?.(true);
+    hook();
+    takeTerminal();
     stdin.on('data', onData);
     stdin.resume?.();
     stdout.on?.('resize', draw);
-    // The alternate screen, no cursor of the terminal's own (the boxes draw theirs), and pastes marked as pastes.
-    stdout.write('\x1b[?1049h\x1b[?25l\x1b[?2004h\x1b[2J');
     draw();
     loadDraft();
     loadChat();

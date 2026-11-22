@@ -9,7 +9,8 @@
 // only), so it reads on a light terminal as on a dark one; NO_COLOR keeps bold, dim and reverse and drops colour.
 // Every piece of text from the session (titles, code, answers) goes through `clean`, so none of it can move the
 // cursor or retitle the window. A segment may carry a third element, a link (only the header's pull request number
-// does): `toAnsi` draws it as a terminal hyperlink (OSC 8) that takes no columns, once `linkUrl` passed it.
+// does, underlined so it reads as one): `toAnsi` draws it as a terminal hyperlink (OSC 8) that takes no columns, once
+// `linkUrl` passed it, and says which columns it took, for a click on them (reviewTui.mjs).
 
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
@@ -69,6 +70,18 @@ export function linkUrl(url) {
   return url;
 }
 
+/**
+ * `url` when the review may open it in a browser itself (the o key, a click): a pull request's page on github.com,
+ * as `linkUrl` passed it. Anything else is left to the terminal, or not opened.
+ */
+export function githubPullUrl(url) {
+  const ok = linkUrl(url);
+  if (!ok) return null;
+  const u = new URL(ok);
+  if (u.origin !== 'https://github.com' || u.search || u.hash) return null;
+  return /^\/[\w.-]+\/[\w.-]+\/pull\/[1-9]\d{0,8}\/?$/.test(u.pathname) ? ok : null;
+}
+
 /** `text` as a terminal hyperlink to `url` (OSC 8): terminals that do not know it draw `text` alone. */
 export function hyperlink(url, text) {
   return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
@@ -89,9 +102,10 @@ const COLOURS = new Set(['red', 'green', 'yellow', 'blue', 'magenta', 'cyan']);
 /**
  * One line's segments as text with escape codes, cut to `columns`. `fill` reverses the whole width (a cursor). A
  * segment's link is measured as its text alone, and is cut with it: the sequence is opened and closed around what is
- * drawn, never split.
+ * drawn, never split. Each link drawn is pushed onto `links` as {from, to, url}: the columns it takes, from 0, `to`
+ * past its last.
  */
-export function toAnsi(line, { columns, color = true, fill = null } = {}) {
+export function toAnsi(line, { columns, color = true, fill = null, links = null } = {}) {
   let out = '';
   let used = 0;
   // Neighbours in one style (and one link) are drawn as one run: wrapping splits a sentence into words.
@@ -109,6 +123,7 @@ export function toAnsi(line, { columns, color = true, fill = null } = {}) {
     if (fill) codes.push(STYLES.rev);
     const url = link && linkUrl(link);
     const shown = url && text ? hyperlink(url, text) : text;
+    if (url && text && links) links.push({ from: used, to: used + room, url });
     out += codes.length ? `\x1b[${codes.join(';')}m${shown}\x1b[0m` : shown;
     used += room;
   }
@@ -355,13 +370,18 @@ export function headerLines(state, columns, nowMs = Date.now()) {
   const lines = [];
   // The pull request's number links to it on GitHub, where the terminal makes links clickable, as the page's does.
   const title = [['bold', reviewTitle(s)]];
-  if (meta.number) title.push(['dim', ' '], ['dim', `#${meta.number}`, pullRequestUrl(state, meta.number)]);
+  // Underlined where it is a link, as the description's links are: a click on it, or o, opens it.
+  const titleUrl = meta.number ? pullRequestUrl(state, meta.number) : null;
+  if (meta.number) title.push(['dim', ' '], [titleUrl ? 'dim under' : 'dim', `#${meta.number}`, titleUrl]);
   lines.push(...wrapSegments(title, columns, { first: 'Review: ', firstStyle: 'dim', rest: '  ' }));
   const facts = [];
   if (meta.author?.login) facts.push([null, clean(meta.author.login)], [null, '  ']);
   if (meta.headRefName) facts.push(['cyan', clean(meta.headRefName)], ['dim', ' → '], ['cyan', clean(meta.baseRefName ?? s.baseRef ?? '')], [null, '  ']);
   if (s.livePr) {
-    if (!meta.number) facts.push(['bold', `#${s.livePr.number}`, pullRequestUrl(state, s.livePr.number)], [null, ' ']);
+    if (!meta.number) {
+      const url = pullRequestUrl(state, s.livePr.number);
+      facts.push([url ? 'bold under' : 'bold', `#${s.livePr.number}`, url], [null, ' ']);
+    }
     facts.push(...prFacts(s.livePr), [null, '  ']);
   }
   const sha = String(meta.headRefOid ?? s.headSha ?? '').slice(0, 8);
