@@ -324,6 +324,7 @@ before the line ends (Ctrl-C, a cut network) hangs up everything the line starte
 | `session list [--all]` | Your sessions and the shared ones you can see, as the console's page shows them to you: id, state (the page's words), kind (below), whose, when it pauses or stops by itself, project and title. Under each, every pull request it opened, as the console's chips read it (`#123 open · approved · checks 3 passing`; `not read yet` before the console has read it), and `review it: woodshed review <id>` under your own sessions'. Then your own open pull requests on the console's repos that no listed session opened (My Woodshed's Pull requests group). Ended shared sessions only with `--all`; a review or QA run has ended once it stops, since nothing of it is kept to resume. With `hc` here, it also names the `woodshed-<id>` machines in Herdr whose session is no longer on the console (`herdrLeftovers` in `--json`), and says to run `prune`. | 0 |
 | `session get <id>` | One session: state, kind, whose, branch, agent, pull request, a review's or QA's verdict, its app, when it pauses or stops, and the hours it runs on. | 0, 1 none you can see |
 | `session app <id> [start [--app NAME] [--no-wait]\|stop]` | A running session's app, as the page's Open app, Start app and Stop app: whether it is up and the link that opens it. `start` starts it (or `NAME`, one of the project's apps) and waits up to 5 minutes for it to come up; `stop` stops it. Below. | 0 up, asked or stopping, 2 the project file names no app (Set up app on the page), 1 not up in time, its start failed, or the app was still stopping, 3 not running, a question from Slack, a console that serves no session apps, the session refused, or `stop` with no stop command in the project file |
+| `session app <id> share [--members on\|off \| --link [--hours 1\|24\|168] [--path /page] \| --revoke <link id>]` | Who besides you can open your private session's app, as the page's Share the app: the Members of this console switch and the live links, each with its id, who made it and when it ends (never a link's secret). `--members` turns the switch on or off; `--link` makes a link anyone can open, for an hour, a day (the default) or a week, landing on `--path` when given, and prints it once; `--revoke` ends one link. Below. | 0, 3 a shared session, one not running (for `--link` or `--members on`), one that has seen production data, ten links already, or a console that serves no apps or lends them ports, 1 an expiry the page does not offer, an unknown link, or anything else, 2 the sign-in ended |
 | `session watch [--kind K,…] [--everyone] [--every S] [--herdr]` | Follows the console and prints one line per session that starts, runs, is done with its turn, needs you, pauses, stops, finishes or fails, until stopped; `--herdr` runs it in a Herdr terminal of its own instead, and returns: [below](#watching-sessions). | runs until Ctrl-C (`--herdr`: 0 started or already running); 2 the sign-in ended, 3 refused, or `--herdr` with no `hc` 0.1.21 or newer |
 | `session stop <id>` | Stops it, and waits until the console has stopped it, a running one's work checkpointed on the way (up to 3 minutes: past that it says to check with `get`). One that paused or failed by itself is marked stopped by you, as the page's Stop does, so it no longer waits on you. | 0, 1 not answered in time |
 | `session resume <id> [--no-wait]` | Starts one of your stopped sessions again, its conversation and all, and waits as `new` does. | as `new`; 3 a shared session (resume it on the console) |
@@ -400,6 +401,25 @@ suggests to start an app again name it with `--app` when it is one of several an
 no app exits 2: Set up app, which asks the session's agent to write one, is on the console's page only. With
 `--json`, `app` prints `{"event":"app","session":{…}}`, and `start` an `app-starting` event, then `app-running` or
 `app-not-up` with the session; `stop` an `app-stopping`.
+
+### Sharing a session's app
+
+`session app <id> share` does what Share the app does (the Share button beside the session's app button, or its ⋯ menu) (console/README.md, "Sharing the app"), for
+your own running My Woodshed session: only the app, never its terminal, Review, databases or Start/Stop. Prefer
+`--members on`, which opens it to everyone signed in to the console and is taken back with `--members off`. For
+someone with no account, `--link` makes a link anyone can open, and prints it once: it is a secret, and lets whoever has
+it use the app as the session's signed-in user, changing its data, until it expires, `--revoke <link id>` ends it, or
+the session pauses or stops. `--hours` takes the page's choices, 1, 24 (the default) or 168, and refuses any other.
+`--path /landing-a` makes the link land on that page of the app once it is opened (the console's `next`, a path on the
+app's own name; a console from before it makes the link without, and the command says to go to the page after opening
+it). Sharing ends when the session pauses or stops, and a resumed session starts private again: `session limits <id>`
+keeps it up longer. Shared sessions, a session that has seen production data (except `--members off` and
+`--revoke`), and a console with app ports, which nobody signs in to and whose page has no Share the app, are refused
+with 3. On a console with an app domain and no sign-in, it shares as the page does, and says the app link already opens
+for whoever reaches the console. With `--json`, the listing prints `{"event":"share","id","share":{"appUrl","members","links":[{"id","by","createdAt","expiresAt"}]}}`,
+`--members` a `members` event and `--revoke` a `revoked` event with the same `share`, and `--link` a `link` event with
+`link`, `url`, `path` (null when the console did not take one) and `share`. Its options are share's alone: with `start`,
+`stop` or no action they exit 1 rather than be ignored, as `--app` and `--no-wait` do with share.
 
 ## Watching sessions
 

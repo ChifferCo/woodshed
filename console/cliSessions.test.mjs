@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 
+import { createAppShares } from './appShares.mjs';
 import { createCliSignIn } from './cliSignIn.mjs';
 import { carriesCliToken, cliMayCall } from './cliSessions.mjs';
 import { createHandler } from './server.mjs';
@@ -12,7 +13,9 @@ function listen(server) {
 
 // A console where mia-dev and octocat each have a private session and a shared one runs, with a command line token
 // made for each of them, and cookies for the page.
-async function consoleFor(t, { people = null, writers = null, claudeToken = true } = {}) {
+// With `shares`, sessions' apps are served on an app domain and their owners can share them (appShares.mjs); mia-dev
+// also has a private session that has seen production data.
+async function consoleFor(t, { people = null, writers = null, claudeToken = true, shares = false } = {}) {
   let clock = Date.parse('2026-11-20T10:00:00Z');
   const store = { state: {}, save() {} };
   const asked = [];
@@ -23,6 +26,7 @@ async function consoleFor(t, { people = null, writers = null, claudeToken = true
     { id: 'aaaa0001', owner: 'mia-dev', title: 'Mia\'s', status: 'running', token: 'statusd-secret', terminalToken: 'ttyd-secret' },
     { id: 'bbbb0002', owner: 'octocat', title: 'Octocat\'s', status: 'stopped', token: 'statusd-secret-2', options: { agent: 'codex' } },
     { id: 'cccc0003', owner: null, title: 'Shared', status: 'running', startedBy: 'octocat', assignee: 'octocat', token: 'statusd-secret-3' },
+    ...(shares ? [{ id: 'eeee0005', owner: 'mia-dev', title: 'Tainted', status: 'running', taintedAt: '2026-11-20T09:00:00.000Z', token: 'statusd-secret-5' }] : []),
   ];
   const calls = [];
   const fleet = {
@@ -49,8 +53,9 @@ async function consoleFor(t, { people = null, writers = null, claudeToken = true
     enabled: () => true, available: () => true, sessionFor: async (cookie) => (cookie ? { login: /woodshed_session=([\w-]+)/.exec(cookie)[1] } : null),
     canWrite,
   };
-  const config = { host: '127.0.0.1', publicUrl: 'http://pending', extraHosts: [], repo: 'acme/app', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
-  const handle = createHandler({ config, fleet, auth, cli, userSettings });
+  const config = { host: '127.0.0.1', publicUrl: 'http://pending', extraHosts: [], repo: 'acme/app', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, ...(shares && { appDomain: 'apps.example' }) };
+  const appShares = shares ? createAppShares({ store, now: () => clock }) : null;
+  const handle = createHandler({ config, fleet, auth, cli, userSettings, ...(appShares && { appShares }) });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
@@ -69,7 +74,7 @@ async function consoleFor(t, { people = null, writers = null, claudeToken = true
     });
     return { status: res.status, body: await res.json().catch(() => null) };
   }
-  return { origin, call, calls, cli, tokens, asked, tick: (ms) => { clock += ms; } };
+  return { origin, call, calls, cli, tokens, asked, appShares, tick: (ms) => { clock += ms; } };
 }
 
 test('the command line allows only the session, config and review routes', () => {
@@ -78,6 +83,9 @@ test('the command line allows only the session, config and review routes', () =>
     ['POST', '/api/my/sessions/0a1b2c3d/resume'], ['POST', '/api/my/sessions/0a1b2c3d/remove'], ['POST', '/api/sessions/0a1b2c3d/stop'],
     ['POST', '/api/sessions/0a1b2c3d/extend'], ['POST', '/api/sessions/0a1b2c3d/limits'], ['GET', '/api/review-readiness'],
     ['POST', '/api/sessions/0a1b2c3d/app/start'], ['POST', '/api/sessions/0a1b2c3d/app/stop'],
+    // woodshed session app share's: the page's Share the app.
+    ['GET', '/api/sessions/0a1b2c3d/app-share'], ['POST', '/api/sessions/0a1b2c3d/app-share/members'],
+    ['POST', '/api/sessions/0a1b2c3d/app-share/links'], ['POST', '/api/sessions/0a1b2c3d/app-share/links/1a2b3c4d/revoke'],
     // woodshed review start's: the console's review of one of their own pull requests, now.
     ['POST', '/api/my/pulls/7/review'], ['POST', '/api/my/pulls/123456789/review'],
     // woodshed config's: the choices on My settings, never a secret.
@@ -94,6 +102,8 @@ test('the command line allows only the session, config and review routes', () =>
     ['POST', '/api/my/pulls/1234567890/review'], ['POST', '/api/my/pulls/7/review/x'],
     // Set up app types into the session's agent, as send does: the page's alone.
     ['POST', '/api/sessions/0a1b2c3d/app/setup'], ['POST', '/api/sessions/0a1b2c3d/app/start/x'],
+    ['POST', '/api/sessions/0a1b2c3d/app-share'], ['GET', '/api/sessions/0a1b2c3d/app-share/members'], ['GET', '/api/sessions/0a1b2c3d/app-share/links'],
+    ['POST', '/api/sessions/0a1b2c3d/app-share/links/1a2b3c4d'], ['POST', '/api/sessions/0a1b2c3d/app-share/links/x/revoke'],
     // The secrets beside them on My settings, and the rest of the page.
     ['POST', '/api/my/claude-token/remove'], ['POST', '/api/my/codex-auth'], ['POST', '/api/my/codex-auth/remove'], ['POST', '/api/my/files/tmux-conf'],
     ['GET', '/api/my/files/tmux-conf'], ['POST', '/api/my/repos/app/env/api'], ['GET', '/api/my/repos/app/env/api'], ['POST', '/api/my/github/disconnect'],
@@ -129,6 +139,46 @@ test('a command line token lists, starts, stops, resumes and removes as exactly 
   assert.deepEqual(c.calls.at(-1)[1].owner, 'mia-dev');
   assert.equal((await c.call('/api/my/sessions/bbbb0002/remove', { method: 'POST', body: {} })).status, 200);
   assert.deepEqual(c.calls.at(-1), ['remove', { owner: 'mia-dev', id: 'bbbb0002' }], 'the fleet is asked for hers alone, which it refuses for another\'s');
+});
+
+test('a command line token shares its person\'s own private session\'s app as the page does, and nothing else\'s', async (t) => {
+  const c = await consoleFor(t, { shares: true });
+  const read = await c.call('/api/sessions/aaaa0001/app-share');
+  assert.deepEqual(read, { status: 200, body: { members: false, links: [], appUrl: 'https://aaaa0001.apps.example/' } });
+  const on = await c.call('/api/sessions/aaaa0001/app-share/members', { method: 'POST', body: { on: true } });
+  assert.deepEqual([on.status, on.body.members], [200, true]);
+  const made = await c.call('/api/sessions/aaaa0001/app-share/links', { method: 'POST', body: { hours: 1, path: '/landing-a' } });
+  assert.equal(made.status, 201, JSON.stringify(made.body));
+  assert.match(made.body.url, /^https:\/\/aaaa0001\.apps\.example\/__woodshed\/share\?t=[0-9a-f]{8}\.[0-9a-f]{64}&next=%2Flanding-a$/);
+  assert.deepEqual(made.body.links.map((l) => [l.id, l.by]), [[made.body.created, 'mia-dev']], 'who made it, and never its token');
+  assert.ok(!JSON.stringify((await c.call('/api/sessions/aaaa0001/app-share')).body).includes('t='));
+  for (const path of ['https://evil.example/', '//evil.example', '/\\evil.example', 'landing', '/__woodshed/code/', '/a\nb']) {
+    assert.equal((await c.call('/api/sessions/aaaa0001/app-share/links', { method: 'POST', body: { hours: 1, path } })).status, 400, `path ${JSON.stringify(path)}`);
+  }
+  const revoked = await c.call(`/api/sessions/aaaa0001/app-share/links/${made.body.created}/revoke`, { method: 'POST', body: {} });
+  assert.deepEqual([revoked.status, revoked.body.links], [200, []]);
+
+  // Octocat's token on mia-dev's session: as one that does not exist, as the page answers octocat's cookie.
+  const mias = c.tokens['mia-dev'];
+  for (const [method, path, body] of [['GET', '/api/sessions/aaaa0001/app-share'], ['POST', '/api/sessions/aaaa0001/app-share/members', { on: true }], ['POST', '/api/sessions/aaaa0001/app-share/links', { hours: 24 }]]) {
+    const theirs = await c.call(path, { method, body, token: c.tokens.octocat });
+    assert.deepEqual([theirs.status, theirs.body], [404, { error: 'no such session' }], `${method} ${path} with another person's token`);
+  }
+  // Hers, on octocat's private session and on a shared one.
+  assert.equal((await c.call('/api/sessions/bbbb0002/app-share', { token: mias })).status, 404);
+  const shared = await c.call('/api/sessions/cccc0003/app-share/links', { method: 'POST', body: { hours: 24 } });
+  assert.equal(shared.status, 409, 'a shared session\'s app has no share of its own');
+  assert.equal((await c.call('/api/sessions/cccc0003/app-share/links', { method: 'POST', body: { hours: 24 }, token: c.tokens.octocat })).status, 409, 'not even for whoever has it');
+  // One that has seen production data: never shared, though it can be read and turned off.
+  assert.equal((await c.call('/api/sessions/eeee0005/app-share/links', { method: 'POST', body: { hours: 24 } })).status, 409);
+  assert.equal((await c.call('/api/sessions/eeee0005/app-share/members', { method: 'POST', body: { on: true } })).status, 409);
+  assert.equal((await c.call('/api/sessions/eeee0005/app-share/members', { method: 'POST', body: { on: false } })).status, 200);
+  assert.deepEqual(c.appShares.view('eeee0005'), { members: false, links: [] });
+  assert.deepEqual(c.appShares.view('cccc0003'), { members: false, links: [] });
+
+  // A page carrying the token is refused before any of it.
+  const page = await c.call('/api/sessions/aaaa0001/app-share/members', { method: 'POST', body: { on: true }, headers: { origin: c.origin } });
+  assert.equal(page.status, 403);
 });
 
 test('a command line token extends a session and sets its own limits, where the page would let its person', async (t) => {
