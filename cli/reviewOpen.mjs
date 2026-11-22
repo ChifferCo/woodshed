@@ -8,7 +8,7 @@
 // that has no analysis yet starts it, as opening the tab does.
 
 import { runReviewTui } from './reviewTui.mjs';
-import { clean, fileOrder, markdownLines, plainText, reviewTitle, statusStrip } from './reviewView.mjs';
+import { clean, fileOrder, markdownLines, plainText, pullRequestUrl, reviewTitle, statusStrip } from './reviewView.mjs';
 import { parsePullUrl, printable } from './sessions.mjs';
 
 // A review call may take a while: opening one makes it and fetches the branch, a Re-review pulls and diffs it.
@@ -136,9 +136,12 @@ export async function reviewOpenCommand({ origin, words }, ctx) {
     }
   }
 
-  if (json || !ctx.tty) return printReview({ id, origin, status, diff }, ctx);
+  // The session's pull requests as the console lists them: the header links its number to one when the review's own
+  // data has no address for it.
+  const pulls = sessionPulls(found).map(({ number, url }) => ({ number, url }));
+  if (json || !ctx.tty) return printReview({ id, origin, status, diff, pulls }, ctx);
   const tui = ctx.tui ?? runReviewTui;
-  const done = await tui({ api, initial: { status, diff, session: id }, stdin: ctx.stdin, stdout: ctx.stdout, color: ctx.color });
+  const done = await tui({ api, initial: { status, diff, session: id, pulls }, stdin: ctx.stdin, stdout: ctx.stdout, color: ctx.color });
   if (done.code === 'ended') {
     ctx.stderr.write(`woodshed: ${done.message}\n`);
     return EXIT.waiting;
@@ -147,7 +150,7 @@ export async function reviewOpenCommand({ origin, words }, ctx) {
 }
 
 /** The analysis and the diff's summary, for --json or a pipe: what an agent needs to say what the change is. */
-export function reviewSummary({ id, origin, status, diff }) {
+export function reviewSummary({ id, origin, status, diff, pulls = [] }) {
   const review = status.review ?? null;
   const groups = new Map();
   for (const { file, entry, group } of fileOrder({ status, diff })) {
@@ -168,7 +171,7 @@ export function reviewSummary({ id, origin, status, diff }) {
     baseRef: status.baseRef ? clean(status.baseRef) : null,
     headSha: status.headSha ?? null,
     takenAt: status.createdAt ?? null,
-    pullRequest: pr ? { number: pr.number, url: pr.url ?? null, title: clean(pr.title), state: pr.state ?? null, review: pr.review ?? null, checks: pr.checks ?? null } : null,
+    pullRequest: pr ? { number: pr.number, url: pullRequestUrl({ status, pulls }, pr.number), title: clean(pr.title), state: pr.state ?? null, review: pr.review ?? null, checks: pr.checks ?? null } : null,
     analysis: {
       status: status.status ?? null,
       error: status.error ? clean(status.error) : null,
@@ -194,7 +197,8 @@ function printReview(args, ctx) {
   }
   const say = ctx.say;
   const columns = 100;
-  say(`Review: ${summary.title}${summary.pullRequest ? ` (#${summary.pullRequest.number}, ${summary.pullRequest.state})` : ''}`);
+  const pr = summary.pullRequest;
+  say(`Review: ${summary.title}${pr ? ` (#${pr.number}, ${pr.state}${pr.url ? `, ${pr.url}` : ''})` : ''}`);
   say(`Session ${summary.session}, ${summary.diff.files} file${summary.diff.files === 1 ? '' : 's'}, +${summary.diff.additions} −${summary.diff.deletions}. ${summary.url}`);
   const strip = statusStrip(args.status);
   if (strip) say(plainText(strip));

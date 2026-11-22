@@ -10,7 +10,7 @@ import { createCliSignIn } from '../console/cliSignIn.mjs';
 import { createHandler } from '../console/server.mjs';
 import { createCredentials } from './credentials.mjs';
 import { findTarget, parseReviewTarget } from './reviewOpen.mjs';
-import { width } from './reviewView.mjs';
+import { stripAnsi, width } from './reviewView.mjs';
 import { parsePullUrl } from './sessions.mjs';
 import { EXIT, main } from './woodshed.mjs';
 
@@ -215,15 +215,18 @@ test('review --json prints the analysis and the diff in reading order, through t
     const { review } = got.lines[0];
     assert.equal(review.session, 'aaaa0001');
     assert.equal(review.pullRequest.number, 12);
+    assert.equal(review.pullRequest.url, 'https://github.com/acme/app/pull/12');
     assert.match(review.analysis.overview, /redirects/);
     assert.deepEqual(review.diff.groups.map((g) => [g.title, g.files.map((f) => f.path)]), [['The redirect', ['src/login.mjs']], [null, ['README.md']]]);
   }
   assert.ok(c.seen.length);
   assert.ok(c.seen.every((s) => s.auth === 'Bearer statusd-secret'), 'statusd sees the session\'s token, never the command line\'s');
+  assert.doesNotMatch((await c.run(['review', 'aaaa0001', '--json'])).out, /\x1b/, 'no escape code in --json');
   // No terminal: the same, as text.
   const plain = await c.run(['review', 'aaaa0001']);
   assert.equal(plain.code, EXIT.done, plain.err);
-  assert.match(plain.out, /^Review: Fix the login bug \(#12, open\)\n/);
+  assert.match(plain.out, /^Review: Fix the login bug \(#12, open, https:\/\/github\.com\/acme\/app\/pull\/12\)\n/);
+  assert.doesNotMatch(plain.out, /\x1b/, 'no escape code with no terminal');
   assert.match(plain.out, /Files, in reading order\n {2}The redirect\n {4}src\/login\.mjs {2}\+2 −1 {2}core\n {4}README\.md/);
 });
 
@@ -279,6 +282,7 @@ test('the review on a terminal: every frame fits 80 columns, and a comment, a ve
   // A failure part way leaves no review running, whose timers would keep the test from ending.
   t.after(() => term.type('q'));
   await until(() => / 1 Overview │ 2 Q&A │ 3 Discussion │ 4 Files changed │ 5 Chat /.test(lastFrame()), 'the first frame: the tabs by number and name, with no counts');
+  assert.ok(lastFrame().includes('\x1b]8;;https://github.com/acme/app/pull/12\x1b\\#12\x1b]8;;\x1b\\'), 'the header\'s #12 links to the pull request');
   assert.equal(term.stdin.raw, true);
   assert.match(term.screen(), /\x1b\[\?1049h/, 'an alternate screen');
   const said = (method, section) => c.seen.filter((s) => s.method === method && s.section === section);
@@ -368,7 +372,7 @@ test('the review on a terminal: every frame fits 80 columns, and a comment, a ve
   assert.deepEqual(said('POST', '/chat')[0].body, { question: 'What does it read?' });
 
   for (const frame of term.screen().split('\x1b[H').slice(1)) {
-    for (const line of frame.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').split('\r\n')) assert.ok(width(line) <= 80, `wider than 80 columns: ${line}`);
+    for (const line of stripAnsi(frame).split('\r\n')) assert.ok(width(line) <= 80, `wider than 80 columns: ${line}`);
   }
   term.type('q');
   const out = await done;
