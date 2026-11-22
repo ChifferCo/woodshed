@@ -388,6 +388,9 @@ export function createFleet({
     if (session.prompt) env.PROMPT = session.prompt;
     // Claude opens with nothing to do: the person came to read the review, which the session starts itself.
     if (session.reviewOnly) env.REVIEW_ONLY = '1';
+    // Its agent's terminal comes from its person's Herdr, as a child of theirs (`woodshed session new --herdr --parent`):
+    // the entrypoint waits for it rather than make its own. Set for this run alone, by the start or resume that asked.
+    if (session.owner && session.herdrParent) env.WOODSHED_HERDR_PARENT = '1';
     // The MCP servers the console hands this session (mcpServers.mjs), each reached through its relay: names only, the
     // session never holds what a server takes. A production one is turned off until its person turns it on. A launcher
     // whose sessions cannot be moved onto a locked network later (AWS) starts a session that may use one on a guarded
@@ -614,7 +617,7 @@ export function createFleet({
    * @param {{kind: 'issue'|'pr'|'task'|'ask', number: number|null, title: string, startedBy: string,
    *          trigger: 'label'|'comment'|'console'|'my-woodshed'|'slack'|'qa', prompt?: string, branch?: string|null,
    *          owner?: string|null, options?: {model: string, effort: string, permissionMode: string}|null,
-   *          attach?: ((id: string) => Promise<number>)|null, background?: boolean, reviewOnly?: boolean,
+   *          attach?: ((id: string) => Promise<number>)|null, background?: boolean, reviewOnly?: boolean, herdrParent?: boolean,
    *          slack?: {channel: string, threadTs: string, user: string, name: string|null}|null}} args
    *   `qa` ({base, sha, heading, commentId}) makes a 'pr' session a QA session (qaSessions.mjs), which tests the pull
    *   request against `base` and changes nothing on it.
@@ -632,6 +635,7 @@ export function createFleet({
   async function createSession({
     kind, number, title, startedBy, trigger, prompt = '', branch = null, owner = null, options = null, resumeClaude = null, attach = null,
     background = false, reviewOnly = false, slack: thread = null, assignTo = null, project = defaultProject(config), qa = null, review = null,
+    herdrParent = false,
   }) {
     refuseWithoutRepo(project, { kind, trigger });
     // A question from Slack, and a review that only reads the diff, get no databases, so they need none hosted.
@@ -657,6 +661,7 @@ export function createFleet({
       token: newSessionToken(), terminalToken: newSessionToken(), ref: null, endpoint: null, pendingMessages: [],
       ...(attached ? { attachments: attached } : {}),
       ...(reviewOnly ? { reviewOnly: true } : {}),
+      ...(owner && herdrParent ? { herdrParent: true } : {}),
       ...(qa ? { qa } : {}),
       ...(review ? { review } : {}),
       ...(assignTo ? { assignee: assignTo.login, assignedBy: assignTo.login, assignedHow: assignTo.how, assignedAt: nowIso() } : {}),
@@ -666,6 +671,7 @@ export function createFleet({
     console.log('fleet: session created', {
       id, kind, number, trigger, startedBy, private: Boolean(owner), resumed: Boolean(branch), background, assignee: session.assignee ?? null, qa: Boolean(qa),
       ...(project.default ? {} : { project: project.name, repo: project.repo }),
+      ...(session.herdrParent ? { herdrParent: true } : {}),
     });
     await runStartQueued({ background });
     return session;
@@ -1698,7 +1704,7 @@ export function createFleet({
    * @param {{owner: string, prompt: string, name?: string, workOn?: string, model?: string, effort?: string,
    *          permissionMode?: string, background?: boolean}} args  `workOn` is the form's optional issue, pull request or branch
    */
-  async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], background = false, project = defaultProject(config), ...picked }) {
+  async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], background = false, project = defaultProject(config), herdrParent = false, ...picked }) {
     refuseWithoutRepo(project, { kind: 'task', trigger: 'my-woodshed' });
     const on = parseWorkOn(workOn, { defaultBranch: await githubOf(project).defaultBranch?.() ?? null });
     const reviewOnly = !String(prompt ?? '').trim() && on.kind !== 'task';
@@ -1717,6 +1723,7 @@ export function createFleet({
     const attach = attachments && attachmentIds?.length ? (sessionId) => attachments.claim({ login: owner, ids: attachmentIds, sessionId }) : null;
     const session = await createSession({
       ...target, title: given || titleFrom(text), startedBy: owner, owner, trigger: 'my-woodshed', prompt: text, options, attach, background, reviewOnly, project,
+      herdrParent,
     });
     if (naming) renameWhenNamed(session, naming);
     return session;
@@ -1750,9 +1757,10 @@ export function createFleet({
    * Resume on a stopped private session: the same session runs again, with its page, branch and options, and claude
    * reopens its conversation from the Claude home it saved. Its prompt starts again when there is no conversation to
    * reopen, such as one that never reached claude.
-   * @param {{owner: string, id: string, background?: boolean}} args
+   * @param {{owner: string, id: string, background?: boolean, herdrParent?: boolean}} args  herdrParent: for this run, as
+   *   startPrivate's
    */
-  async function resumePrivate({ owner, id, background = false }) {
+  async function resumePrivate({ owner, id, background = false, herdrParent = false }) {
     const session = find(id);
     if (!session || session.owner !== owner) throw shown('no session you can open with that id');
     if (ACTIVE_STATUSES.has(session.status)) throw shown('that session is still running');
@@ -1761,6 +1769,7 @@ export function createFleet({
       status: 'queued', state: null, startedAt: null, stoppedAt: null, stopReason: null, stoppedBy: null, error: null, ref: null,
       endpoint: null, startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: session.claudeSession ?? null,
       lastActiveAt: null, checkedAt: null, app: null, appServers: null, appName: null, apps: null, resumedAt: nowIso(), resumedBy: owner, queuedAt: nowIso(),
+      herdrParent: herdrParent ? true : null,
       // Its pull request's watch ended when it stopped: it is watched again once statusd reports it.
       announcedPrUrl: null,
       // A tainted session starts locked down, its entrypoint told so (WOODSHED_TAINTED): its statusd needs no notice.
@@ -1768,7 +1777,7 @@ export function createFleet({
     });
     // Or, when its stop was not read yet, the watch starts a new run for this one.
     announcer.renew(session.id);
-    console.log('fleet: resuming a private session', { id, owner, claudeSession: Boolean(session.resumeClaude), background, tainted: Boolean(session.taintedAt) });
+    console.log('fleet: resuming a private session', { id, owner, claudeSession: Boolean(session.resumeClaude), background, tainted: Boolean(session.taintedAt), herdrParent: Boolean(herdrParent) });
     await runStartQueued({ background });
     return session;
   }

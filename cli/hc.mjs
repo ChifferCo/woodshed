@@ -14,6 +14,9 @@ import { windowsExecutable } from '../shared/windowsExecutable.mjs';
 export const HC_MINIMUM = '0.1.21';
 // The terminal a session's agent runs in when its owner picked Herdr (session/agentPane.mjs, HC_TERMINAL).
 export const AGENT_TERMINAL = 'claude';
+// Where a session started with a parent (`session new --herdr --parent`) says it waits for its agent's terminal: the
+// entrypoint writes it (startHerdr) and takes it away once the terminal is there, or once it stopped waiting.
+export const AGENT_WAIT_FILE = '/tmp/woodshed-agent-terminal.json';
 // `machine add` dials the session through the console and may copy hc there: give it longer than a plain call.
 const ADD_MS = 180_000;
 const CALL_MS = 30_000;
@@ -68,8 +71,10 @@ export function compareVersions(a, b) {
  * Runs hc with these arguments and this environment (its HC_SESSION and XDG folders pick the core).
  * @returns {(args: string[], opts?: {timeoutMs?: number}) => Promise<{code: number|null, stdout: string, stderr: string, missing?: boolean}>}
  */
-export function hcRunner({ bin = 'hc', env = process.env } = {}) {
-  return (args, { timeoutMs = CALL_MS } = {}) => new Promise((resolve) => {
+export function hcRunner({ bin = 'hc', env: base = process.env } = {}) {
+  // `env`: variables over the environment's for this one call (HC_TERMINAL_ID, for the parent of a terminal it starts).
+  return (args, { timeoutMs = CALL_MS, env: over = null } = {}) => new Promise((resolve) => {
+    const env = over ? { ...base, ...over } : base;
     const executable = process.platform === 'win32' ? windowsExecutable(bin, { searchPath: env.PATH ?? env.Path ?? '' }) : bin;
     if (!executable) return resolve({ code: null, stdout: '', stderr: '', missing: true });
     execFile(executable, args, { env, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, encoding: 'utf8' }, (err, stdout, stderr) => {
@@ -287,4 +292,71 @@ export async function nameAgentPlace(hc, app, { machine, address, title, agent, 
     return { ...out, error: err.message };
   }
   return out;
+}
+
+/**
+ * The terminal here that `--parent` names: the one this command line runs in (HC_TERMINAL_ID) when it names none, else
+ * a terminal of this computer's by its address or name. hc takes a parent on another machine only from its caller, so
+ * this command line must run in a Herdr terminal either way.
+ * @param {(args: string[]) => Promise<object>} run
+ * @param {{env: object, named?: string|null}} args
+ * @returns {Promise<string>}  its address on this computer's core: `t7`
+ * @throws {Error & {hc?: boolean, usage?: boolean}}
+ */
+export async function parentTerminal(run, { env, named = null }) {
+  const own = typeof env.HC_TERMINAL_ID === 'string' ? env.HC_TERMINAL_ID.trim() : '';
+  if (!own) {
+    throw Object.assign(new Error('--parent needs this command line to run in a Herdr terminal (HC_TERMINAL_ID is not set): hc gives a session\'s terminal a parent here only when it is asked from one'), { usage: true });
+  }
+  if (!named) return own;
+  if (named.includes('/')) throw Object.assign(new Error(`--parent names a terminal on this computer, and ${named} is on a machine`), { usage: true });
+  const out = await run(['get', '--json', '--', named]);
+  const terminal = parsed(out.stdout);
+  if (out.code !== 0 || typeof terminal?.address !== 'string') {
+    throw Object.assign(new Error(`hc found no terminal ${named} here: ${hcError(out).message}`), { hc: true, usage: hcError(out).kind === 'not_found' });
+  }
+  if (terminal.state && terminal.state !== 'live') throw Object.assign(new Error(`${named} is ${terminal.state}: a parent must be a live terminal`), { usage: true });
+  return terminal.address;
+}
+
+/**
+ * The session's agent's terminal, made from here as a child of `parent`, when the session waits for one: started with
+ * `--parent`, it makes no terminal of its own, and types its agent into the one this makes, as into its own. The
+ * terminal is the one the entrypoint makes otherwise (a kept login shell, named `claude`, in the checkout), on the
+ * session's core and in its environment, with a parent here.
+ * @param {(args: string[], opts?: object) => Promise<object>} run
+ * @param {{machine: string, parent: string, notify?: boolean, outlive?: boolean}} args
+ * @returns {Promise<{made: true, address: string, parent: string|null}|{made: false, why: 'not-waiting'|'taken', there: boolean, parent: string|null}>}
+ *   not-waiting: the session made its terminal itself (started without --parent, an image from before it, or its wait
+ *   ran out), or a run of this made it already; taken: it was made while this was on its way. `parent`, then: the one
+ *   the terminal there has (as the session's core names it, `<core>/t7`), null for none or not read; `there`: false
+ *   when the session has no agent's terminal in Herdr at all (its agent runs in tmux)
+ */
+export async function startAgentTerminal(run, { machine, parent, notify = true, outlive = true }) {
+  // The terminal already there: its parent as it is, never assumed.
+  const existing = async (why) => {
+    const got = await run(['get', '--json', `${machine}/${AGENT_TERMINAL}`]);
+    const terminal = got.code === 0 ? parsed(got.stdout) : null;
+    // Not there at all: a session that never waited runs its agent in tmux (Agent terminal on My settings).
+    return { made: false, why, there: Boolean(terminal), parent: typeof terminal?.parent === 'string' ? terminal.parent : null };
+  };
+  const read = await run(['file', 'read', '--json', '--on', machine, AGENT_WAIT_FILE]);
+  if (read.code !== 0) {
+    if (hcError(read).kind === 'not_found') return existing('not-waiting');
+    throw Object.assign(new Error(`hc could not read whether ${machine} waits for its agent's terminal: ${hcError(read).message}`), { hc: true });
+  }
+  const waiting = parsed(parsed(read.stdout)?.text ?? '');
+  if (typeof waiting?.cwd !== 'string' || !waiting.cwd.startsWith('/')) {
+    throw Object.assign(new Error(`${machine}'s ${AGENT_WAIT_FILE} does not say where its agent works`), { hc: true });
+  }
+  const name = typeof waiting.terminal === 'string' && /^[a-z0-9_-]{1,32}$/.test(waiting.terminal) ? waiting.terminal : AGENT_TERMINAL;
+  const args = ['run', '--json', '--bg', '--on', machine, '--keep', '--name', name, '--cwd', waiting.cwd,
+    ...(outlive ? ['--outlive-parent'] : []), ...(notify ? [] : ['--no-notify'])];
+  const out = await run(args, { env: { HC_TERMINAL_ID: parent } });
+  if (out.code !== 0) {
+    if (hcError(out).kind === 'name_taken') return existing('taken');
+    throw Object.assign(new Error(`hc could not start ${machine}'s agent terminal: ${hcError(out).message}`), { hc: true });
+  }
+  const started = parsed(out.stdout);
+  return { made: true, address: typeof started?.address === 'string' ? started.address : `${machine}/${name}`, parent: typeof started?.parent === 'string' ? started.parent : null };
 }

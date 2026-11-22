@@ -78,6 +78,8 @@ esac
 `, { mode: 0o755 });
   const run = hcRunner({ bin, env: { PATH: process.env.PATH, HC_SESSION: 'scratch' } });
   assert.match((await run(['--version'])).stdout, /session=scratch/, 'the core the person\'s environment names');
+  assert.match((await run(['--version'], { env: { HC_SESSION: 'other' } })).stdout, /session=other/, 'a call\'s own variables over the environment\'s');
+  assert.match((await run(['--version'])).stdout, /session=scratch/, 'for that call alone');
   await assert.rejects(addMachine(run, { name: 'woodshed-aaaa0001', via: 'x' }), /hc could not add woodshed-aaaa0001: the via command exited 255/);
   assert.deepEqual(await agentOn(run, 'woodshed-aaaa0001'), { inHerdr: false, address: null }, 'no such terminal: the agent runs in tmux');
   assert.equal(await removeMachine(run, 'woodshed-aaaa0001', { origin: 'http://localhost:7712', session: 'aaaa0001' }), false, 'nothing to forget');
