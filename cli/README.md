@@ -315,12 +315,13 @@ Watching your sessions (Mine) on https://console.example.com, kinds: review, qa,
   `started`, `needs-you` if it asks, then `finished` with its `verdict`, or `failed`. Its time is UTC.
 - **The first read** only learns what is there: a watch tells what happens from when it starts, never what was already
   running.
-- **With `--json`**, the first line is `{"event":"watching","console","login","kinds","everyone","everySeconds","sessions"}`
+- **With `--json`**, the first line is `{"event":"watching","console","login","kinds","everyone","everySeconds","sessions"}`,
+  unless the console cannot be reached at the start: then `unreachable` and `reachable` (below) come before it
   (`kinds` null for all, `sessions` how many it watches), then one `{"event","at","session":{…}}` per change, the
   session as `get --json` gives it.
 - **A console it cannot reach** (a laptop asleep, a redeploy) is asked again at the same pace for as long as it runs:
   `{"event":"unreachable","at","error"}` once, then `{"event":"reachable","at","awaySeconds"}` when it answers, and the
-  events of what changed meanwhile. Only a sign-in that ended (exit 2, `{"event":"error","status":"signed-out"}`) or a
+  events of what changed meanwhile. Any 5xx answer counts as away too. Only a sign-in that ended (exit 2, `{"event":"error","status":"signed-out"}`) or a
   refusal (3) stops it.
 
 ### Notifications in Herdr, or anywhere

@@ -699,7 +699,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
     let pullsError = null;
     try {
       const body = await ask('/api/my/pulls');
-      const has = new Set(shown.flatMap((x) => [x.pullRequest, ...x.pullRequests]).filter(Boolean).map((p) => `${p.repo.toLowerCase()}#${p.number}`));
+      // A review's or QA's pullRequest is the one it was started on, which it did not open: that stays in the group.
+      const opened = (x) => [x.kind === 'review' || x.kind === 'qa' ? null : x.pullRequest, ...x.pullRequests];
+      const has = new Set(shown.flatMap(opened).filter(Boolean).map((p) => `${p.repo.toLowerCase()}#${p.number}`));
       pulls = (Array.isArray(body.pulls) ? body.pulls : [])
         .filter((p) => p?.why === 'yours' && Number.isInteger(p.number) && typeof p.repo === 'string' && !has.has(`${p.repo.toLowerCase()}#${p.number}`))
         .map((p) => ({ ...pullOf(`https://github.com/${p.repo}/pull/${p.number}`, { title: p.title, state: p.draft ? 'draft' : 'open', checks: p.checks }), project: printable(p.project, 60), branch: printable(p.branch, 200) }))
@@ -784,7 +786,8 @@ export async function sessionCommand({ origin, rest }, ctx) {
   // Follows the console's list until stopped, and says each session that starts, is done with its turn, needs its
   // person, finishes or fails (watch.mjs). The first read only learns what is there. A console it cannot reach (a
   // laptop asleep, a redeploy) is asked again at the same pace for as long as it runs, and what changed meanwhile is
-  // told when it answers again. Only a sign-in that ended, or a refusal, stops it.
+  // told when it answers again. Only a sign-in that ended, or a refusal, stops it. A console away at the first read is
+  // said (unreachable, then reachable) before the first read's `watching`.
   async function watch() {
     const wanted = (s, login) => (!opts.kinds || opts.kinds.has(kindOf(s))) && (opts.everyone || inMine(s, login));
     const stamp = () => new Date(now()).toISOString();
@@ -796,7 +799,8 @@ export async function sessionCommand({ origin, rest }, ctx) {
       try {
         got = await list();
       } catch (err) {
-        if (!err.unreachable && ![502, 503, 504].includes(err.http)) throw err;
+        // Any 5xx is the console's own trouble, and passes: a watch meant to run for hours outlives it.
+        if (!err.unreachable && !(err.http >= 500)) throw err;
         if (awaySince === null) {
           awaySince = now();
           if (json) emit({ event: 'unreachable', at: stamp(), error: printable(err.message, 300) });

@@ -1016,13 +1016,13 @@ test('session watch rides out a console it cannot reach, and stops when the sign
   const out = await watching(t, {
     args: ['--json'],
     moves: [
-      (s, c) => { c.listFailures.push(502, null); Object.assign(at(s, 'aaaa0001'), { state: 'needs-you' }); },
+      (s, c) => { c.listFailures.push(500, null); Object.assign(at(s, 'aaaa0001'), { state: 'needs-you' }); },
       () => {},
       () => {},
     ],
   });
   assert.equal(out.code, EXIT.done, out.err);
-  assert.deepEqual(out.lines.map((l) => l.event), ['watching', 'unreachable', 'reachable', 'needs-you'], 'told once each way, and what changed meanwhile after');
+  assert.deepEqual(out.lines.map((l) => l.event), ['watching', 'unreachable', 'reachable', 'needs-you'], 'a 500 is the console away too: told once each way, and what changed meanwhile after');
 
   // Revoked on My settings: the watch says so and ends, waiting on the person to sign in again.
   const ended = await watching(t, { args: ['--json'], moves: [(s, c) => { c.cli.revokeAll('mia-dev', 'My settings'); }, () => {}] });

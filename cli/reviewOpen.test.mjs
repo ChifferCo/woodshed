@@ -115,6 +115,8 @@ async function consoleFor(t) {
     // #16 on two repos.
     { ...base, id: 'abab0007', owner: 'mia-dev', title: 'On app', status: 'running', state: 'done', endpoint, prUrl: 'https://github.com/acme/app/pull/16' },
     { ...base, id: 'abab0008', owner: 'mia-dev', repo: 'acme/tools', title: 'On tools', status: 'running', state: 'done', endpoint, prUrl: 'https://github.com/acme/tools/pull/16' },
+    // The console's review of #40: it did not open #40, so #40 still has no session of hers.
+    { ...base, id: 'abab0009', owner: null, kind: 'pr', number: 40, trigger: 'review', startedBy: 'mia-dev', title: 'Review: #40', status: 'running', state: 'working', review: { base: 'main', sha: 'abc' } },
   ];
   const fleet = {
     sessions: () => sessions,
@@ -204,7 +206,7 @@ test('session list shows each session\'s pull request as the chips read it, how 
   assert.deepEqual(mine.pullRequest, { number: 12, repo: 'acme/app', url: 'https://github.com/acme/app/pull/12', title: 'Fix the login bug', state: 'open', review: 'approved', checks: { pass: 2, fail: 0, pending: 0, total: 2 } });
   assert.equal(mine.reviewCommand, 'woodshed review aaaa0001');
   assert.equal(json.sessions.find((s) => s.id === 'cccc0003').reviewCommand, null);
-  assert.deepEqual(json.pullRequests.map((p) => [p.number, p.state, p.project]), [[40, 'draft', 'app']]);
+  assert.deepEqual(json.pullRequests.map((p) => [p.number, p.state, p.project]), [[40, 'draft', 'app']], 'a review of #40 did not open it');
 });
 
 test('review --json prints the analysis and the diff in reading order, through the console with the session\'s own token', async (t) => {

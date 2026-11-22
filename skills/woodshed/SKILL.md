@@ -209,7 +209,8 @@ woodshed session watch --kind review,qa --json
 ```
 
 It runs until stopped, so start it only when asked, in the background or a terminal of its own, and never wait on it
-in the foreground. Its first line is `{"event":"watching",…}`, then one `{"event":"started"|"done"|"needs-you"|
+in the foreground. Its first line is `{"event":"watching",…}` (after `unreachable` and `reachable` when the console was
+away at the start), then one `{"event":"started"|"done"|"needs-you"|
 "finished"|"failed","at","session":{…}}` per change. `--everyone` watches every session they can see, not only Mine.
 
 ### Start a session as your child in Herdr, and wait on it
