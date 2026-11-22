@@ -2,9 +2,9 @@
 // console's own session routes, signed in with the command line's token (console/cliSessions.mjs lists the routes it
 // reaches). A session started here is a private one, as My Woodshed's New session starts.
 //
-//   woodshed session new [--repo R] [--branch B] [--agent claude|codex] [--model M] [--no-wait|--connect|--herdr] ["prompt"]
+//   woodshed session new [--repo R] [--branch B] [--agent claude|codex] [--model M] [--no-wait|--connect|--herdr [--parent[=T]]] ["prompt"]
 //   woodshed session connect <id> [--shell]
-//   woodshed session herdr <id>
+//   woodshed session herdr <id> [--parent[=T]]
 //   woodshed session list [--all]
 //   woodshed session get <id>
 //   woodshed session stop <id>
@@ -21,9 +21,12 @@
 // shell, resuming it first when it paused.
 // herdr makes one of your sessions a machine in Herdr's hc, `woodshed-<id>`, reached through `woodshed tunnel` (hc.mjs),
 // resuming it first when it paused; remove forgets that machine too. A session removed elsewhere (the console's page, or
-// the console cleaning it up) leaves its machine behind, unreachable: list says so, and prune forgets those.
+// the console cleaning it up) leaves its machine behind, unreachable: list says so, and prune forgets those. With
+// --parent the session's agent's terminal is made from here, a child of a terminal of this computer's (hc's `run --on`
+// from that terminal), so an agent there can `hc wait --children` on it: the session, started or resumed with
+// herdrParent, waits for it rather than make its own.
 
-import { HC_MINIMUM, addMachine, agentOn, hcVersion, leftoverMachines, machineName, nameAgentPlace, removeMachine, shellQuote } from './hc.mjs';
+import { HC_MINIMUM, addMachine, agentOn, hcVersion, leftoverMachines, machineName, nameAgentPlace, parentTerminal, removeMachine, shellQuote, startAgentTerminal } from './hc.mjs';
 
 // A terminal whose connection dropped is opened again for this long, waiting a little longer each time.
 const RECONNECT_GIVE_UP_MS = 60_000;
@@ -49,11 +52,20 @@ Commands:
       --no-wait              print the session and return once the console has it
       --connect              once it runs, put this terminal on its agent's, as connect does
       --herdr                once it runs, add it to Herdr as herdr does
+      --parent[=<t>]         with --herdr: make its agent's terminal a child of a terminal here, this one (HC_TERMINAL_ID)
+                             or <t>, so it can hc wait --children on it; run it from a Herdr terminal. The agent starts
+                             as Woodshed starts it, in Herdr whatever My settings says, and outlives its parent
+      --no-notify            with --parent: Herdr types no notes about the agent into its parent
+      --end-with-parent      with --parent: the agent ends when its parent's program does (hc's own default)
   connect <id> [--shell]     put this terminal on one of your sessions' agent (the console's TUI tab), or with --shell
                              its shell (the Terminal tab); a paused one is resumed first. Ctrl-\\ disconnects, and the
                              session goes on
   herdr <id>                 make one of your sessions a machine in Herdr (hc ${HC_MINIMUM} or newer), woodshed-<id>,
                              reached through woodshed tunnel; a paused one is resumed first, and waited for
+      --parent[=<t>]         resume it with its agent's terminal a child of a terminal here, as new's --parent does
+      --no-notify            (and --no-notify, --end-with-parent as there). A running session's terminal is there
+      --end-with-parent      already, with no parent, and hc gives a terminal its parent only as it starts: only one
+                             still waiting for its terminal (started with --parent) takes one
   list [--all]               your sessions and the shared ones you can see, with their state and when each
                              pauses or stops by itself; --all also lists those that ended
   get <id>                   one session: its state, branch, pull request, and when it pauses or stops
@@ -87,6 +99,10 @@ const START_STEPS = [
 ];
 
 const LIVE = new Set(['queued', 'starting', 'running', 'stopping']);
+// What goes with --parent: hc's --no-notify, and its own default of ending with the parent, which a session does not take.
+const PARENT_FLAGS = ['no-notify', 'end-with-parent'];
+// An hc terminal address here (`t7`, `t1b`): at most hc's 32 characters, read in one pass.
+const looksLikeAddress = (word) => typeof word === 'string' && word.length <= 32 && /^t\d+(?:[a-z][a-z0-9]*)?$/.test(word);
 const ID_RE = /^[0-9a-f]{8}$/;
 
 // What a console says reaches a terminal: never a control character or a direction override, which could move the
@@ -394,15 +410,29 @@ export async function sessionCommand({ origin, rest }, ctx) {
     return hc;
   }
 
+  // The terminal here --parent names, found before anything is started or resumed for it.
+  async function parentHere() {
+    try {
+      return await parentTerminal(ctx.hc, { env: ctx.env ?? {}, named: opts.parent === true ? null : opts.parent });
+    } catch (err) {
+      if (!err.usage && !err.hc) throw err;
+      throw fail(printable(err.message, 500), err.usage ? { code: EXIT.refused, status: 'no-parent' } : {});
+    }
+  }
+
   // A running session of yours made a machine in hc. Its agent is there only when you picked Herdr on My settings: in
   // tmux otherwise, which hc cannot reach, though new terminals and agents on the machine work. Exits as a start's wait
   // does: waiting on you when the session asks for you.
-  async function connect(s, login) {
+  // With `parent` (parentTerminal's address here), its agent's terminal is made from here as that terminal's child, when
+  // the session waits for it; one that does not already has its terminal, which hc cannot give a parent now.
+  async function connect(s, login, parent = null) {
     const name = machineName(s.id);
     if (!json) say(`Adding ${s.id} to Herdr as ${name}…`);
     let added;
+    let child = null;
     try {
       added = await addMachine(ctx.hc, { name, via: ctx.via(s.id) });
+      if (parent) child = await startAgentTerminal(ctx.hc, { machine: name, parent, notify: !opts['no-notify'], outlive: !opts['end-with-parent'] });
     } catch (err) {
       if (!err.hc) throw err;
       throw fail(printable(err.message, 500));
@@ -418,12 +448,32 @@ export async function sessionCommand({ origin, rest }, ctx) {
       if (named.space || named.tab) agent.named = { space: named.space, tab: named.tab };
       if (named.error) agent.namingError = printable(named.error, 500);
     }
-    const code = shown.state === 'needs-you' ? EXIT.waiting : EXIT.done;
+    let code = shown.state === 'needs-you' ? EXIT.waiting : EXIT.done;
+    // Asked for and not given: the machine stays added, and the exit says the parent was not.
+    // What it has as its parent now is read from hc, never assumed: a run of this one may have made it already.
+    const why = (c) => {
+      if (!c.there) return 'the session did not wait for one, and its agent runs in tmux, not Herdr';
+      return `${c.why === 'taken' ? 'it was made while this was on its way' : 'it was already there'}, ${c.parent ? `a child of ${c.parent}` : 'with no parent'}, and hc gives a terminal its parent only as it starts`;
+    };
+    const noParent = child && !child.made
+      ? `Could not make ${parent} the parent of its agent's terminal: ${why(child)}. Run woodshed session new --herdr --parent for a session whose agent is a child of this terminal.`
+      : null;
+    if (noParent) code = EXIT.failed;
+    // Herdr hears of a turn ending or the agent blocking from the agent's own status records: claude sends them, the
+    // pinned codex none (session/agentPane.mjs), so a codex child wakes its parent's hc wait only by exiting.
+    const reportsStatus = shown.agent !== 'codex';
+    const parentField = child ? { parent: child.made ? { made: true, terminal: parent, address: child.address, outlives: !opts['end-with-parent'], notify: !opts['no-notify'], reportsStatus } : { made: false, why: child.why, there: child.there, has: child.parent } } : {};
     if (json) {
-      emit({ event: 'connected', session: shown, machine: { name, action: added.action, state: added.state }, agent });
+      emit({ event: 'connected', session: shown, machine: { name, action: added.action, state: added.state }, agent, ...parentField });
+      if (noParent) emit({ event: 'error', status: 'no-parent', error: noParent });
       return code;
     }
     say(added.action === 'kept' ? `${name} was already in Herdr, connected.` : `${name} is in Herdr: it shows in the app's sidebar.`);
+    if (child?.made) {
+      const wakes = reportsStatus ? 'when it ends a turn, blocks, errors or exits' : 'only when it exits: codex tells Herdr nothing of its turns';
+      say(`Its agent's terminal ${child.address} is a child of ${parent} here${opts['end-with-parent'] ? ', and ends with it' : ', and outlives it'}: hc wait --children any wakes ${parent} ${wakes}.`);
+    }
+    if (noParent) stderr.write(`woodshed: ${noParent}\n`);
     if (agent.placementError) say(`Could not put the agent in a Herdr space: ${printable(agent.placementError, 500)}`);
     if (agent.named?.space) say(`Named its Herdr space "${agent.named.space}".`);
     if (agent.namingError) say(`Could not name its Herdr space or tab: ${agent.namingError}`);
@@ -508,14 +558,18 @@ export async function sessionCommand({ origin, rest }, ctx) {
       if (opts.wait === false) throw fail('--connect waits for the session to run: leave out --no-wait');
       terminalReady();
     }
+    if (opts.parent && !opts.herdr) throw fail('--parent makes the agent\'s terminal in Herdr: add --herdr');
     if (opts.herdr) {
       if (opts.wait === false) throw fail('--herdr waits for the session to run: leave out --no-wait');
       await hcReady();
     }
+    const parent = opts.parent ? await parentHere() : null;
     // With no --repo, the one New session opens on for this person (a default they saved), never the console's own.
     const project = opts.repo ? await projectFor(opts.repo) : await defaultProjectName();
     const body = {
       prompt: opts.prompt, workOn: opts.branch ?? '', agent: opts.agent ?? 'claude', model: opts.model ?? '', ...(project ? { project } : {}),
+      // The session then waits for its agent's terminal from here, rather than make its own (startAgentTerminal).
+      ...(parent ? { herdrParent: true } : {}),
     };
     const s = await ask('/api/my/sessions', { method: 'POST', body });
     if (!ID_RE.test(String(s.id))) throw fail(`${origin} answered with no session id`);
@@ -528,7 +582,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
     if ((!opts.herdr && !opts.connect) || (started !== EXIT.done && started !== EXIT.waiting)) return started;
     const found = await find(shown.id);
     if (opts.connect) return onTerminal(found.s, 'term');
-    return connect(found.s, found.login);
+    return connect(found.s, found.login, parent);
   }
 
   // The machines in Herdr this command line added for sessions no longer on the console's list. Every session it lists
@@ -664,7 +718,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
       if (s.status === 'running') return stateOf(s).key === 'needs-you' ? EXIT.waiting : EXIT.done;
       return opts.wait === false ? EXIT.done : follow(id);
     }
-    const after = await ask(`/api/my/sessions/${id}/resume`, { method: 'POST', body: {} });
+    const after = await ask(`/api/my/sessions/${id}/resume`, { method: 'POST', body: opts.parent ? { herdrParent: true } : {} });
     if (json) emit({ event: 'resumed', session: summary({ ...s, ...after }, { origin, login }), already: false });
     say(`Resuming session ${id}${s.title ? `: ${printable(s.title)}` : ''}`);
     if (opts.wait === false) return EXIT.done;
@@ -693,11 +747,13 @@ export async function sessionCommand({ origin, rest }, ctx) {
     ownPrivate(s, login, 'add to Herdr');
     if (s.taintedAt) throw fail(`Session ${id} has seen production data: nothing opens a pipe into it from this computer.`, { code: EXIT.refused, status: 'refused' });
     await hcReady();
-    if (s.status === 'running') return connect(s, login);
+    const parent = opts.parent ? await parentHere() : null;
+    // A running one is taken as it is: only one still waiting for its terminal takes a parent (connect says so).
+    if (s.status === 'running') return connect(s, login, parent);
     const resumed = await resumeAndWait();
     if (resumed !== EXIT.done && resumed !== EXIT.waiting) return resumed;
     const found = await find(id);
-    return connect(found.s, found.login);
+    return connect(found.s, found.login, parent);
   }
 
   if (sub === 'get') {
@@ -789,9 +845,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
  */
 export function parseSessionArgs(sub, words, fail) {
   const commands = {
-    new: { values: ['repo', 'branch', 'agent', 'model'], flags: ['no-wait', 'connect', 'herdr'], words: 'prompt' },
+    new: { values: ['repo', 'branch', 'agent', 'model'], flags: ['no-wait', 'connect', 'herdr', ...PARENT_FLAGS], optional: ['parent'], words: 'prompt' },
     connect: { values: [], flags: ['shell'], words: 'id' },
-    herdr: { values: [], flags: [], words: 'id' },
+    herdr: { values: [], flags: [...PARENT_FLAGS], optional: ['parent'], words: 'id' },
     list: { values: [], flags: ['all'], words: null },
     get: { values: [], flags: [], words: 'id' },
     extend: { values: [], flags: [], words: 'id' },
@@ -818,7 +874,15 @@ export function parseSessionArgs(sub, words, fail) {
       continue;
     }
     const [name, inline] = word.replace(/^--/, '').split(/=(.*)/s);
-    if (takes.values.includes(name)) {
+    if (takes.optional?.includes(name)) {
+      // A value after `=`, or as the next word only when it reads as an hc address (t7, t1b): any other word is the
+      // prompt's or the id, so a terminal's name goes after `=`.
+      if (inline !== undefined) {
+        if (inline === '') throw fail(`--${name}= needs a terminal`);
+        out[name] = inline;
+      } else if (looksLikeAddress(words[i + 1])) out[name] = words[++i];
+      else out[name] = true;
+    } else if (takes.values.includes(name)) {
       const value = inline ?? words[++i];
       if (value === undefined || value === '') throw fail(`--${name} needs a value`);
       out[name] = value;
@@ -827,6 +891,7 @@ export function parseSessionArgs(sub, words, fail) {
       else out[name] = true;
     } else throw fail(`unknown option ${word} for session ${sub}\n\n${SESSION_USAGE}`);
   }
+  for (const flag of PARENT_FLAGS) if (out[flag] && !out.parent) throw fail(`--${flag} goes with --parent`);
   if (sub === 'limits' && out['idle-hours'] === undefined && out['lifetime-hours'] === undefined) throw fail('session limits needs --idle-hours or --lifetime-hours (a number, or default)');
   if (out.agent !== undefined && !['claude', 'codex'].includes(out.agent)) throw fail('--agent must be claude or codex');
   if (takes.words === 'prompt') out.prompt = positional.join(' ');

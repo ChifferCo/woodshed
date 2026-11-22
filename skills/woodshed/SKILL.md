@@ -106,9 +106,9 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed repo list` | Shows connected repos and, for admins, repos available to add and GitHub App access | 0 listed, 2 sign in, 1 failed | main |
 | `woodshed repo add <owner/name> [--name N]` | Adds a repo to the console | 0 added, 2 needs GitHub App access or sign-in, 3 refused, 1 failed | main |
 | `woodshed repo remove <owner/name>` | Removes a repo and its Woodshed settings | 0 removed, 2 sign in, 3 refused, 1 failed | main |
-| `woodshed session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--no-wait\|--connect\|--herdr] ["prompt"]` | Starts a private session and waits, step by step, until it runs; `--connect` then puts the terminal on its agent's, `--herdr` adds it to Herdr as below (by default when you run inside Herdr with `hc` ok) | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on, or no `hc` | main |
+| `woodshed session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--no-wait\|--connect\|--herdr [--parent[=T] [--no-notify] [--end-with-parent]]] ["prompt"]` | Starts a private session and waits, step by step, until it runs; `--connect` then puts the terminal on its agent's, `--herdr` adds it to Herdr as below (by default when you run inside Herdr with `hc` ok), and `--parent` with it makes the session's agent a child of this Herdr terminal (section 5) | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on, no `hc`, or `--parent` outside a Herdr terminal | main |
 | `woodshed session connect <id> [--shell]` | Puts the person's own terminal on the session's agent, or its shell; resumes a paused one first. Interactive: suggest it to them, and use `tunnel` yourself | 0 disconnected, 1 could not open, 2 sign-in ended, 3 shared or saw production | main |
-| `woodshed session herdr <id>` | Makes a session a machine in Herdr and shows its Herdr agent in a space named after the session, in a tab named after its agent (never over names the person gave; run it again to pick up a later title). Resumes a paused session first, and re-adds the machine, which a plain `resume` leaves unreachable: run it after every `resume` inside Herdr | 0 connected, 2 needs the person, 1 failed, 3 no `hc` 0.1.21 or newer, shared, or saw production | main |
+| `woodshed session herdr <id> [--parent[=T] …]` | Makes a session a machine in Herdr and shows its Herdr agent in a space named after the session, in a tab named after its agent (never over names the person gave; run it again to pick up a later title). Resumes a paused session first, and re-adds the machine, which a plain `resume` leaves unreachable: run it after every `resume` inside Herdr. With `--parent`, a paused one is resumed waiting for its agent's terminal from this one | 0 connected, 2 needs the person, 1 failed, or `--parent` on a session whose agent's terminal was already there, 3 no `hc` 0.1.21 or newer, shared, saw production, or `--parent` outside a Herdr terminal | main |
 | `woodshed session list [--all]` | Their sessions and the shared ones they see, with state and when each pauses; each session's pull request (state, verdict, checks), `review it: woodshed review <id>` under those they can review, and their own open pull requests with no session; names Herdr machines of sessions no longer on the console | 0 | main |
 | `woodshed session get <id>` | One session: state, branch, pull request, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
 | `woodshed session stop <id>` | Stops it, checkpointing a running one's work on the way (waits up to 3 minutes) | 0, 1 not answered in time | main |
@@ -191,6 +191,26 @@ Herdr machine whose tunnel says the session is not running is fixed the same way
 space after the session's title, which the console sets a few seconds after the start: run it again later to pick the
 title up. When `session list` names Herdr machines of sessions no longer on the console, offer `woodshed session prune`.
 `hc.ok: false`, or no `HC_TERMINAL_ID`: leave Herdr out unless the person asks.
+
+### Start a session as your child in Herdr, and wait on it
+
+When you run in a Herdr terminal (`HC_TERMINAL_ID` is set) and want to hand work to a session and be woken when its
+agent ends a turn, blocks, errors or exits:
+
+```sh
+woodshed session new --herdr --parent --json "Fix the login redirect loop"
+hc wait --children any --json
+```
+
+The last line is `connected` with `parent: {"made": true, "address": "woodshed-<id>/t1", …}`: the session's agent runs
+as Woodshed starts it, in a terminal that is your child and outlives you (`--end-with-parent` to end it with you,
+`--no-notify` for no notes typed into you). With `--agent codex`, `parent.reportsStatus` is false: codex tells Herdr
+nothing of its turns, so `hc wait --children` wakes you only when it exits; poll `woodshed session get <id> --json`
+for its state instead. `hc read woodshed-<id>/claude` shows its screen; `hc send` types to it.
+Exit 3 with `no-parent`: you are not in a Herdr terminal; leave out `--parent`. Exit 1 with `no-parent` from
+`session herdr <id> --parent`: that session's agent was already running (`parent.has` is the parent it has, maybe you
+from an earlier run, or null), and hc cannot give a running terminal a parent; start a new session with `--parent` instead of restarting theirs. Never run a second agent with `hc run --on
+woodshed-<id>` to get a child: it would not have the session's hooks, rules and permissions.
 
 ### Before a long task: will the session still be there?
 

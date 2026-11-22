@@ -239,9 +239,9 @@ before the line ends (Ctrl-C, a cut network) hangs up everything the line starte
 
 | Command | What it does | Exits |
 | --- | --- | --- |
-| `session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--connect\|--herdr] ["prompt"]` | Starts a private session, as My Woodshed's New session does: on `R` (`owner/name`, default the repo New session opens on for you), working on branch `B` or a pull request or issue (`123`, `pr 123`, its URL), with that agent and model. Then it waits, printing each start step as it is done, until the session runs. `--no-wait` returns once the console has it. Ctrl-C stops the wait, not the session. `--connect` then puts this terminal on its agent's, as `connect` does; `--herdr` adds it to Herdr, as `herdr` does (below), and checks for `hc` before starting anything. | 0 running (with `--connect`, until you disconnect; with `--herdr`, added), 2 running and needs you, 1 failed or stopped (or `hc` could not add it), 3 a repo you cannot start on, or no `hc` |
+| `session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--connect\|--herdr [--parent[=T]]] ["prompt"]` | Starts a private session, as My Woodshed's New session does: on `R` (`owner/name`, default the repo New session opens on for you), working on branch `B` or a pull request or issue (`123`, `pr 123`, its URL), with that agent and model. Then it waits, printing each start step as it is done, until the session runs. `--no-wait` returns once the console has it. Ctrl-C stops the wait, not the session. `--connect` then puts this terminal on its agent's, as `connect` does; `--herdr` adds it to Herdr, as `herdr` does (below), and checks for `hc` before starting anything; `--parent` with it makes the agent's terminal a child of a terminal here (below). | 0 running (with `--connect`, until you disconnect; with `--herdr`, added), 2 running and needs you, 1 failed or stopped (or `hc` could not add it), 3 a repo you cannot start on, or no `hc` |
 | `session connect <id> [--shell]` | Puts this terminal on one of your sessions' agent, as its TUI tab shows it (claude or codex, in tmux or Herdr), or with `--shell` on its shell, the Terminal tab's. A paused or stopped one is resumed first. Below. | 0 disconnected (Ctrl-\\) or the session's terminal closed normally, 2 the sign-in ended, 1 could not open or reconnect, or the session's terminal closed it on an error, 3 a shared session, or one that has seen production data |
-| `session herdr <id>` | Makes one of your sessions a machine in Herdr, `woodshed-<id>`, so it shows in the app's sidebar beside this computer: below. A paused or stopped one is resumed first, and waited for as `resume` does. | 0 connected, 2 connected and the session needs you, 1 its start failed or `hc` could not add it, 3 no `hc`, one older than 0.1.21, a shared session, or one that has seen production data |
+| `session herdr <id> [--parent[=T]]` | Makes one of your sessions a machine in Herdr, `woodshed-<id>`, so it shows in the app's sidebar beside this computer: below. A paused or stopped one is resumed first, and waited for as `resume` does; with `--parent`, resumed waiting for its agent's terminal from here. | 0 connected, 2 connected and the session needs you, 1 its start failed, `hc` could not add it, or `--parent` and its agent's terminal was already there, 3 no `hc`, one older than 0.1.21, a shared session, one that has seen production data, or `--parent` outside a Herdr terminal |
 | `session list [--all]` | Your sessions and the shared ones you can see: id, state (the page's words), whose, when it pauses or stops by itself, project and title. Under each, every pull request it opened, as the console's chips read it (`#123 open · approved · checks 3 passing`; `not read yet` before the console has read it), and `review it: woodshed review <id>` under your own sessions'. Then your own open pull requests on the console's repos that no listed session opened (My Woodshed's Pull requests group). Ended shared sessions only with `--all`. With `hc` here, it also names the `woodshed-<id>` machines in Herdr whose session is no longer on the console (`herdrLeftovers` in `--json`), and says to run `prune`. | 0 |
 | `session get <id>` | One session: state, branch, agent, pull request, when it pauses or stops, and the hours it runs on. | 0, 1 none you can see |
 | `session stop <id>` | Stops it, and waits until the console has stopped it, a running one's work checkpointed on the way (up to 3 minutes: past that it says to check with `get`). One that paused or failed by itself is marked stopped by you, as the page's Stop does, so it no longer waits on you. | 0, 1 not answered in time |
@@ -324,6 +324,46 @@ hc machine add --json --name woodshed-<id> --install \
   when you choose.
 - `hc` machines have no label of their own, so the sidebar shows the machine's name, `woodshed-<id>`; `session list`
   gives each id's title.
+
+### The session's agent as a child of a terminal here
+
+`session new --herdr --parent` (and `session herdr <id> --parent` for a paused or stopped session) makes the session's
+agent's terminal a child of a terminal on this computer, so an agent there can `hc wait --children any` (or `all`) and
+wake when the session's agent ends a turn, blocks, errors or exits, and Herdr types notes about it into its parent:
+
+```sh
+# from a Herdr terminal here (HC_TERMINAL_ID is set), say Claude Code's
+woodshed session new --herdr --parent "fix the login bug"
+hc wait --children any
+```
+
+- **Which terminal:** the one the command runs in, `HC_TERMINAL_ID`, with `--parent` alone; another here with
+  `--parent=<t>` (its address or name), or `--parent t7` when the next word reads as an address. Either way the command
+  must run in a Herdr terminal: `hc` takes a parent on another machine only from its caller's terminal, and refuses an
+  explicit `--parent` across machines (`hc run --on m --parent t7` looks `t7` up on `m`). Exits 3 otherwise, before
+  anything starts.
+- **How:** the console starts (or resumes) the session with `herdrParent`, and its entrypoint starts Herdr but leaves
+  the agent's terminal unmade, saying so in `/tmp/woodshed-agent-terminal.json` with its checkout. Once the session runs
+  and its machine is added, this command reads that file through `hc file read --on` and makes the terminal the
+  entrypoint would, with `HC_TERMINAL_ID` naming the parent:
+  `hc run --json --bg --on woodshed-<id> --keep --name claude --cwd <checkout> --outlive-parent`. It is a login shell
+  on the session's core, in the session's environment; the session types its agent into it with the same flags,
+  prompt or `--resume` it uses in its own terminal. Herdr runs the agent whatever Agent terminal on My settings says.
+- **It outlives its parent** by default (`--outlive-parent`): a cloud session is not ended because a laptop's terminal
+  closed or slept, and hc's own default is to end a child with its parent's program, on another machine too.
+  `--end-with-parent` keeps hc's default; `--no-notify` passes hc's, so no notes are typed into the parent.
+  `hc wait --children` works either way.
+- **What wakes the parent** is Herdr's: a turn ending or the agent blocking comes from the agent's own status records.
+  claude sends them; the pinned codex sends none, so a codex child wakes `hc wait --children` only when it exits. The
+  `connected` line's `parent.reportsStatus` says which.
+- **A running session cannot take a parent.** hc sets a terminal's parent once, as it starts, and has no way to change
+  it, so `session herdr <id> --parent` on a running session adds the machine and exits 1, saying its terminal was
+  already there and what parent it has (`parent.has` in `--json`: the parent as the session's core names it, `<core>/t7`,
+  or null for none), or that its agent runs in tmux (`parent.there: false`). Only one still waiting for its terminal (started with `--parent`, its command line stopped before it
+  made it) takes one.
+- **The session waits 5 minutes** for its terminal, then makes it itself, with no parent, so the agent starts all the
+  same; the session's log says `WARNING: no parent made the agent's terminal`, and this command, if it comes later,
+  exits 1. The log says `Agent's terminal made by its parent` with the parent when it came.
 
 `hc` runs with your environment, so `HC_SESSION` and the XDG folders pick the core it talks to, as they do for `hc`
 itself. `WOODSHED_HC_BIN` names another `hc` than the PATH's.

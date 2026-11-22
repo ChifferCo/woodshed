@@ -363,7 +363,9 @@ The **Agent terminal** row beside it picks what your private sessions run claude
 changed` in the log): **tmux**, the default, or **Herdr**, the session image's pinned herdr-core, whose terminal the
 TUI tab attaches to and your own Herdr can too (session/README.md, "What a container does"). It reaches your next
 private session in the session API's `/settings` answer (`terminal`); shared sessions, reviews, QA runs and questions
-are in tmux whatever it says. Resume asks again, so a session on a project whose repo you can no longer write
+are in tmux whatever it says. `woodshed session new --herdr --parent` sends `herdrParent: true` with the start (and
+`session herdr <id> --parent` with the resume), for that run alone: the session runs in Herdr and waits for its agent's
+terminal from the person's own (`WOODSHED_HERDR_PARENT`; session/README.md). Resume asks again, so a session on a project whose repo you can no longer write
 to does not start (403). The form
 asks for a prompt and, optionally, the rest below. It asks for no name: the session starts named after the prompt's
 first line, and the console asks Claude Haiku for a better one on the team's Anthropic key (`console/autoName.mjs`).

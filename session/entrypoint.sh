@@ -1039,26 +1039,75 @@ codexFlags() {
 }
 
 # What the agent runs in (session/agentPane.mjs): Herdr only in a private coding session whose owner picked it on My
-# settings (fetchOwnerSettings), and tmux everywhere else: a shared session, a question, a review and a QA run.
+# settings (fetchOwnerSettings), or whose owner's Herdr makes its terminal (WOODSHED_HERDR_PARENT, below), and tmux
+# everywhere else: a shared session, a question, a review and a QA run.
 agentTerminal() {
   case "${SESSION_MODE:-}" in ask | qa | review) echo tmux; return ;; esac
-  if [ "${SESSION_KIND:-}" = private ] && [ "${OWNER_TERMINAL:-}" = herdr ]; then echo herdr; else echo tmux; fi
+  if [ "${SESSION_KIND:-}" = private ] && { [ "${OWNER_TERMINAL:-}" = herdr ] || [ "${WOODSHED_HERDR_PARENT:-}" = 1 ]; }; then
+    echo herdr
+  else
+    echo tmux
+  fi
 }
+
+# Where the session says it waits for its agent's terminal from its owner's Herdr (cli/hc.mjs, AGENT_WAIT_FILE), and for
+# how long before it makes the terminal itself, with no parent. A constant: nothing per session sets it, so the ECS
+# launcher's allowlist (PER_SESSION_ENV) has nothing to carry.
+AGENT_TERMINAL_WAIT=/tmp/woodshed-agent-terminal.json
+HERDR_PARENT_WAIT_SECONDS=300
+# The TUI tab's command while the agent's terminal is not there yet (startClaude).
+TUI_WAIT_THEN_ATTACH='hc get --json claude > /dev/null 2>&1 || printf "Waiting for your Herdr to make the agent'"'"'s terminal (woodshed session new --herdr --parent)...\r\n"; until hc get --json claude > /dev/null 2>&1; do sleep 1; done; exec hc attach claude'
 
 # Herdr's core (herdr-core, `hc`) for this session, with a terminal named claude in the checkout for the agent: a
 # shell, kept (a lost one is replaced in place), as tmux's pane is. Its programs get the environment it starts with, as
 # tmux's do. The shell is bash as a login shell, as tmux starts it: with no SHELL set (Docker sets none) hc's own pick is
 # sh. notes off: hc types nothing on its own into the agent.
+# With WOODSHED_HERDR_PARENT (`woodshed session new --herdr --parent`) the terminal is left to the owner's Herdr, which
+# makes the same one with `hc run --on` from a terminal of theirs, its parent: hc gives a terminal its parent only as it
+# starts, and only from the caller's side. The session says so in AGENT_TERMINAL_WAIT, with the folder to make it in.
 startHerdr() {
   command -v hc > /dev/null || { log "WARNING: no hc in this image, the agent runs in tmux"; return 1; }
   mkdir -p "$HOME/.config/herdr-core"
   printf 'notes = false\nshell = ["/bin/bash", "-l"]\n' > "$HOME/.config/herdr-core/config.toml"
-  if ! hc server start > /tmp/woodshed-herdr.log 2>&1 \
-    || ! hc run --bg --no-parent --keep --name claude --cwd "$REPO_DIR" >> /tmp/woodshed-herdr.log 2>&1; then
+  if ! hc server start > /tmp/woodshed-herdr.log 2>&1; then
+    log "WARNING: Herdr did not start, the agent runs in tmux" "($(tail -n 1 /tmp/woodshed-herdr.log))"
+    return 1
+  fi
+  if [ "${WOODSHED_HERDR_PARENT:-}" = 1 ]; then
+    jq -n --arg terminal claude --arg cwd "$REPO_DIR" --argjson waitSeconds "$HERDR_PARENT_WAIT_SECONDS" \
+      '{terminal: $terminal, cwd: $cwd, waitSeconds: $waitSeconds}' > "$AGENT_TERMINAL_WAIT"
+    log "Herdr started" "(version: $(hc --version | awk '{print $2}'), terminal: claude, made by: its parent, waits up to: ${HERDR_PARENT_WAIT_SECONDS}s)"
+    return 0
+  fi
+  if ! hc run --bg --no-parent --keep --name claude --cwd "$REPO_DIR" >> /tmp/woodshed-herdr.log 2>&1; then
     log "WARNING: Herdr did not start, the agent runs in tmux" "($(tail -n 1 /tmp/woodshed-herdr.log))"
     return 1
   fi
   log "Herdr started" "(version: $(hc --version | awk '{print $2}'), terminal: claude)"
+}
+
+# Until the owner's Herdr made the agent's terminal (startHerdr), for up to HERDR_PARENT_WAIT_SECONDS; then the session
+# makes it itself, as startHerdr does with no parent, so the agent starts all the same. Either way the wait file goes,
+# so a late `woodshed session herdr --parent` finds no wait and says so.
+awaitAgentTerminal() {
+  local waited=0
+  until hc get --json claude > /dev/null 2>&1; do
+    if [ "$waited" -ge "$HERDR_PARENT_WAIT_SECONDS" ]; then
+      rm -f "$AGENT_TERMINAL_WAIT"
+      if hc run --bg --no-parent --keep --name claude --cwd "$REPO_DIR" >> /tmp/woodshed-herdr.log 2>&1; then
+        log "WARNING: no parent made the agent's terminal" "(waited: ${waited}s, started: with no parent)"
+        return 0
+      fi
+      # Made from the owner's side while this one was on its way: theirs is the agent's.
+      hc get --json claude > /dev/null 2>&1 && break
+      log "ERROR: the agent's terminal could not be started" "($(tail -n 1 /tmp/woodshed-herdr.log))"
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  rm -f "$AGENT_TERMINAL_WAIT"
+  log "Agent's terminal made by its parent" "(parent: $(hc get --json claude | jq -r '.parent // "none"'), outlives it: $(hc get --json claude | jq -r 'if .die_with_parent then "no" else "yes" end'), waited: ${waited}s)"
 }
 
 # A command typed at the agent's terminal's prompt, with its Enter: tmux's pane, or Herdr's terminal, where text goes in
@@ -1071,25 +1120,9 @@ agentRun() {
   fi
 }
 
-startClaude() {
-  # --add-dir needs the folder to be there, attachments or not.
-  mkdir -p "${UPLOADS_DIR:-/tmp/uploads}"
-  if [ "${SESSION_MODE:-}" != ask ]; then
-    startRedisIfUsed viewer
-    startDbViewers
-    startDockerPorts
-  fi
-  # Exported before either starts, so statusd, claude and what claude runs (woodshed-login) all know where it is.
-  WOODSHED_TERMINAL=$(agentTerminal)
-  export WOODSHED_TERMINAL
-  if [ "$WOODSHED_TERMINAL" = herdr ] && ! startHerdr; then WOODSHED_TERMINAL=tmux; fi
-  if [ "$WOODSHED_TERMINAL" = tmux ]; then
-    tmux new-session -d -s claude -x 200 -y 50 -c "$REPO_DIR"
-    tmux set-option -t claude remain-on-exit on
-  fi
-  # woodshed-login reopens claude with the same flags once it signed in, and `woodshed move --from herdr` opens a conversation moved
-  # from a laptop with the agent's own (cli/move.mjs).
-  if [ "${AGENT:-claude}" = codex ]; then codexFlags > /tmp/woodshed-codex-flags; else claudeFlags > /tmp/woodshed-claude-flags; fi
+# The agent, typed into its terminal (agentRun) with the flags woodshed-login and move reuse: the QA run, the review, or
+# claude or codex on the prompt, the conversation it resumes, or nothing for a review-only session.
+startAgent() {
   if [ "${SESSION_MODE:-}" = qa ]; then
     # After statusd's port is open: the run asks it for the app's port and to start the app. Working from the start.
     touch /tmp/qa-running
@@ -1112,6 +1145,35 @@ startClaude() {
   else
     agentRun "$SESSION_DIR/bin/claude$(claudeFlags) \"\$(cat /tmp/woodshed-prompt.md)\""
   fi
+}
+
+startClaude() {
+  # --add-dir needs the folder to be there, attachments or not.
+  mkdir -p "${UPLOADS_DIR:-/tmp/uploads}"
+  if [ "${SESSION_MODE:-}" != ask ]; then
+    startRedisIfUsed viewer
+    startDbViewers
+    startDockerPorts
+  fi
+  # Exported before either starts, so statusd, claude and what claude runs (woodshed-login) all know where it is.
+  WOODSHED_TERMINAL=$(agentTerminal)
+  export WOODSHED_TERMINAL
+  if [ "$WOODSHED_TERMINAL" = herdr ] && ! startHerdr; then WOODSHED_TERMINAL=tmux; fi
+  if [ "$WOODSHED_TERMINAL" = tmux ]; then
+    tmux new-session -d -s claude -x 200 -y 50 -c "$REPO_DIR"
+    tmux set-option -t claude remain-on-exit on
+  fi
+  # woodshed-login reopens claude with the same flags once it signed in, and `woodshed move --from herdr` opens a conversation moved
+  # from a laptop with the agent's own (cli/move.mjs).
+  if [ "${AGENT:-claude}" = codex ]; then codexFlags > /tmp/woodshed-codex-flags; else claudeFlags > /tmp/woodshed-claude-flags; fi
+  # A terminal its owner's Herdr makes comes once the session runs, after statusd opened the tunnel it comes through:
+  # the agent is typed into it then, in the background, as into the session's own. Handed to the init like progress's
+  # reports: this shell becomes statusd, which would never reap it, and it would stay a zombie once done.
+  if [ -f "$AGENT_TERMINAL_WAIT" ]; then
+    ( { awaitAgentTerminal && startAgent; } & )
+  else
+    startAgent
+  fi
   # The shed's terminal theme: a terminal paints its own background, and ttyd's default is a lighter grey than the
   # pane around it. The pane's ground, the accent for the cursor, and the app's selection wash. No leave alert, as in the
   # shed: the page swaps terminals in and out of its frames, and every switch of session would ask "Leave site?".
@@ -1122,6 +1184,9 @@ startClaude() {
   # The TUI tab: the agent's terminal, tmux's pane or Herdr's terminal, which a person's own Herdr can attach to too.
   local attach=(tmux attach -t claude)
   [ "$WOODSHED_TERMINAL" = tmux ] || attach=(hc attach claude)
+  # While the owner's Herdr has not made the agent's terminal yet, the tab says so and attaches once it is there, rather
+  # than an attach that finds nothing and closes. ttyd runs it for each browser that connects.
+  [ ! -f "$AGENT_TERMINAL_WAIT" ] || attach=(bash -c "$TUI_WAIT_THEN_ATTACH")
   ttyd --writable --port 7681 --base-path "/term/$SESSION_ID" --credential "woodshed:${TERMINAL_TOKEN:-$SESSION_TOKEN}" \
     -t "$theme" -t "$scrollback" -t disableLeaveAlert=true "${attach[@]}" >/tmp/ttyd.log 2>&1 &
   # The Terminal tab: a shell beside claude in the repo, with the same environment. Its own tmux session, so a

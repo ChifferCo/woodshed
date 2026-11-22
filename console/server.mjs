@@ -11,7 +11,9 @@
 //   GET  /api/sessions           every shared session and your own private ones, without their tokens
 //   GET  /api/my                 your settings' state (never a value), your running count and limit, and each of your
 //                                projects that cannot start sessions with why and how to fix it (`projectBlockers`)
-//   POST /api/my/sessions        {"prompt", "name", "workOn", "model", "effort", "permissionMode", "project"}  a private session
+//   POST /api/my/sessions        {"prompt", "name", "workOn", "model", "effort", "permissionMode", "project", "herdrParent"}  a private session;
+//                                herdrParent: its agent's terminal is made from the person's Herdr, as a child of theirs
+//                                (`woodshed session new --herdr --parent`), and the session waits for it
 //   GET  /api/my/projects        the projects you can start sessions on, and the one New session opens on for you
 //   GET  /api/my/codex-models    the Codex models New session offers you: OpenAI's catalog, read on your Codex sign-in or the team key
 //   POST /api/my/projects/default {"project": "<name>"}   New session opens on it for you
@@ -39,7 +41,8 @@
 //   POST /api/my/github/identity {"name": "...", "email": "..."}   what your sessions' commits say
 //   POST /api/my/github/disconnect
 //   POST /api/my/home/forget     deletes your saved Claude home: MCP logins, memory, transcripts
-//   POST /api/my/sessions/<id>/resume   a stopped private session again, claude's conversation and all
+//   POST /api/my/sessions/<id>/resume   a stopped private session again, claude's conversation and all; {"herdrParent": true}
+//                                       as a start's, for that run alone
 //   POST /api/my/sessions/<id>/remove   a private session (a running one is stopped first) off the list, with the Claude home it kept
 //   POST /api/my/databases       your own databases, made, or copied from the template again ({"confirm": "reset"} once made)
 //   POST /api/my/databases/restore?name=<file>   a pg_dump or mongodump as the body, restored into a copy of your database to check;
@@ -1589,7 +1592,7 @@ export function createHandler({
           console.log('console: session resume refused, project not open to the person', { login, sessionId: resuming.id, project: resuming.project ?? null });
           return reply(res, 403, { error: `you can no longer start sessions on ${resuming.project}: you have no write access to its repo, or it is not one of this console's` });
         }
-        return reply(res, 201, publicSession(await fleet.resumePrivate({ owner: login, id: actionMatch[1], background: true })));
+        return reply(res, 201, publicSession(await fleet.resumePrivate({ owner: login, id: actionMatch[1], background: true, herdrParent: body?.herdrParent === true })));
       }
       if (pathname === '/api/my/home/forget') {
         // A running session saves its home every few minutes, which would bring back what was forgotten.
@@ -1621,6 +1624,7 @@ export function createHandler({
       }
       if (pathname === '/api/my/sessions') {
         const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
+        const herdrParent = body.herdrParent === true;
         await userSettings?.refresh?.(login, { force: true });
         // A Codex session signs in with its own login or the team's OpenAI key: it needs no Claude token.
         if (agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
@@ -1636,7 +1640,7 @@ export function createHandler({
           console.log('console: session start refused, project not open to the person', { login, project: String(body.project ?? '').slice(0, 40) });
           return reply(res, 403, { error: `you cannot start sessions on a project named ${String(body.project ?? '').slice(0, 40)}: it is not one of this console's, or you have no write access to its repo` });
         }
-        return reply(res, 201, publicSession(await fleet.startPrivate({ owner: login, prompt, name, workOn, agent, model, effort, permissionMode, attachmentIds, background: true, project })));
+        return reply(res, 201, publicSession(await fleet.startPrivate({ owner: login, prompt, name, workOn, agent, model, effort, permissionMode, attachmentIds, background: true, project, herdrParent })));
       }
       if (pathname === MY_DEFAULT_PROJECT_PATH) {
         if (!projectAccess || !viewPrefs) return reply(res, 404, { error: 'this console keeps no default project' });
