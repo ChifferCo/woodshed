@@ -317,7 +317,9 @@ a console that serves no session apps.
 The link opens whatever answers on the app's frontend port in the session, not only what the project file's `start`
 runs. To show something the app does not serve (static pages in a folder, a docs site), have the session serve it on
 that port, with the app stopped when it holds the port, or start another of the project's apps that serves it (`--app
-NAME`); a server started through `woodshed tunnel` needs `setsid … &` to outlive it. The link then opens it, and
+NAME`); a server started through `woodshed tunnel` needs `setsid … &` to outlive it. Serve a copy of only the files
+meant to be seen (no dotfiles, no symlinks): everyone the link reaches, a share's viewers too, sees what that port
+serves. The link then opens it, and
 `session app` says `running`, or `api-down` when the app's backend is on another port that is not answering. To keep
 it, add it to the project file as an app of its own (`apps`, docs/reference.md, "The project file").
 

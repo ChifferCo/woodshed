@@ -372,19 +372,26 @@ The app link opens whatever answers on the app's frontend port in the session. W
 project file's app serves (static pages in a folder, a docs site, another service in the repo), Start app alone will
 not show it: have the session serve it on that port, then give them the app link as above.
 
+Whatever answers on that port reaches everyone the link reaches: with `session.appSignIn` false, whoever reaches the
+console, and any Share the app link the owner made. So before serving, check that audience is right for what will show,
+and serve only the files meant to be seen: a copy of the built pages with no dotfiles (a `.env.local` Woodshed writes)
+and no symlinks, never the checkout or a source folder as it is.
+
 - **Another app of the project file serves it**: `woodshed session app <id> start --app <name>` (`session.apps` lists
   them), and give the link it prints.
-- **Otherwise, ask the session's agent** to serve it on the app's frontend port in the session, with the project's app
-  stopped first when it holds that port (`woodshed session app <id> stop`, when the person agrees: it stops what the
-  session runs). Its agent knows the ports and the checkout. Reach it in Herdr with `hc send woodshed-<id>/claude
-  "<ask>"` (after `woodshed session herdr <id>`, between its turns), else point the person at the Chat tab on the
-  session's console page (`url`) or `woodshed session connect <id>` to ask it themselves.
-- **Or serve it yourself through the tunnel**, for one of their own sessions. Read the port with `woodshed tunnel <id>
-  -- node /opt/woodshed/shared/project.mjs get app` (`frontendPort`), then start a server that outlives the tunnel with
-  `setsid`, as closing the tunnel hangs up what it started:
+- **Otherwise, ask the session's agent** to serve a clean copy of it on the app's frontend port in the session, with
+  the project's app stopped first (`woodshed session app <id> stop`, when the person agrees: it stops what the session
+  runs). The link follows the app the session runs, `session.appName`: the port is that app's, and while it still
+  answers the link shows it, not the copy. Its agent knows the ports and the checkout. Reach it in Herdr with `hc send
+  woodshed-<id>/claude "<ask>"` (after `woodshed session herdr <id>`, between its turns), else point the person at the
+  Chat tab on the session's console page (`url`) or `woodshed session connect <id>` to ask it themselves.
+- **Or serve it yourself through the tunnel**, for one of their own sessions, the same way. Read the port with
+  `woodshed tunnel <id> -- node /opt/woodshed/shared/project.mjs get app` (`frontendPort`); with several apps, `get
+  apps` prints one per line, and the one whose `name` is `session.appName` is the port. Copy the pages to a folder of
+  their own, then start a server that outlives the tunnel with `setsid`, as closing the tunnel hangs up what it started:
 
   ```sh
-  woodshed tunnel <id> -- 'setsid python3 -m http.server <frontendPort> --bind 127.0.0.1 -d site >/tmp/site.log 2>&1 </dev/null &'
+  woodshed tunnel <id> -- 'rm -rf /tmp/preview && cp -R site /tmp/preview && find /tmp/preview \( -type l -o -name ".*" \) -prune -exec rm -rf {} + && setsid python3 -m http.server <frontendPort> --bind 127.0.0.1 -d /tmp/preview >/tmp/preview.log 2>&1 </dev/null &'
   ```
 
 Then `woodshed session app <id>` says `running` (or `api-down` when the project's app has a backend of its own that is
