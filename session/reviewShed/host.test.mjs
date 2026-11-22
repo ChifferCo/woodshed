@@ -5,7 +5,7 @@ import http from 'node:http';
 import { createReviewHost } from './host.mjs';
 
 // A stand-in for the shed's module: it answers what the host passes its ctx, which is the host's whole contract.
-function fakeShed({ account, created = false, hasAnalysis = false }) {
+function fakeShed({ account, created = false, hasAnalysis = false, qaThrows = false }) {
   const calls = [];
   const analyses = [];
   const qas = [];
@@ -22,6 +22,7 @@ function fakeShed({ account, created = false, hasAnalysis = false }) {
         return true;
       },
       startReviewQaIfNone: ({ sessionName }) => {
+        if (qaThrows) throw new Error('qa.json unreadable');
         qas.push(sessionName);
         return true;
       },
@@ -127,4 +128,14 @@ test('opening the review starts the Q&A with the analysis, once in the container
   const callDone = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'shared', load: done.load }));
   await callDone('GET', '/shed-review/reviews/claude-0a1b2c3d');
   assert.deepEqual([done.analyses, done.qas], [[], ['claude-0a1b2c3d']]);
+});
+
+test('a Q&A that cannot be started on opening is logged, and the review still opens', async (t) => {
+  const broken = fakeShed({ account: 'a', created: true, qaThrows: true });
+  const call = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'private', load: broken.load }));
+  const warn = t.mock.method(console, 'warn', () => {});
+  const status = await call('GET', '/shed-review/reviews/claude-0a1b2c3d');
+  assert.equal(status.status, 200);
+  assert.deepEqual(broken.analyses, ['claude-0a1b2c3d'], 'the analysis still started');
+  assert.ok(warn.mock.calls.some((c) => c.arguments[0] === 'review: Q&A not started on opening'));
 });

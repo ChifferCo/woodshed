@@ -103,8 +103,16 @@ export function createReviewHost({
       // reader is on the analysis rather than only once they open its tab: whichever page or terminal opened the review.
       if (!analysisOffered) {
         analysisOffered = true;
-        const started = shed.startReviewAnalysisIfNone({ ctx, sessionName });
-        const qaStarted = shed.startReviewQaIfNone?.({ ctx, sessionName }) ?? false;
+        // Neither may fail the read that opens the page: a start that throws (qa.json unreadable, say) is logged and
+        // left for the page's own button.
+        const offer = (what, start) => {
+          try { return start(); } catch (err) {
+            console.warn(`review: ${what} not started on opening`, { reqId, error: err?.message });
+            return false;
+          }
+        };
+        const started = offer('analysis', () => shed.startReviewAnalysisIfNone({ ctx, sessionName }));
+        const qaStarted = offer('Q&A', () => shed.startReviewQaIfNone?.({ ctx, sessionName }) ?? false);
         console.log('review: analysis on opening', { reqId, started, qaStarted });
       }
       // The first read would otherwise answer before the shed has asked GitHub for the branch's pull request.
