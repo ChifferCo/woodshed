@@ -173,6 +173,10 @@ would land there, so open that session by its id instead. A paused one is resume
 - **The header**: the title (the pull request's own once there is one), its branch, the pull request's state, verdict
   and checks, the commit, `+`/`−`, what was read (the working tree as of when, or the pull request at which commit),
   and the analysis's state while it runs or when it failed.
+- **The tab bar**, each tab after its number: `1 Overview │ 2 Q&A │ 3 Discussion │ 4 Files changed │ 5 Chat`, on one
+  line at 80 columns. The number opens the tab (`Tab` and `Shift-Tab` move to the next and the one before); a tab keeps
+  its number when there is no Discussion. While you type in a box (the chat, a question, a comment, a sheet's comment
+  or title), a number is text.
 - **1 Overview**: the pull request's description, the overview, the decisions and the architecture, its diagram as a
   list of what connects to what, marked added, removed or changed. **2 Q&A**: the questions someone new to the code
   would ask, each answered from the code, started on opening the tab as the page does. They are folded, as on the
