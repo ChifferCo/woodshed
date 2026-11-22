@@ -9,7 +9,7 @@ import { createCliSignIn } from '../console/cliSignIn.mjs';
 import { createHandler } from '../console/server.mjs';
 import { createCredentials } from './credentials.mjs';
 import { viaCommand } from './hc.mjs';
-import { appUrlOf, parseSessionArgs, pauseText, stateOf } from './sessions.mjs';
+import { appText, appUrlOf, parseSessionArgs, pauseText, startCommand, stateOf, summary } from './sessions.mjs';
 import { EXIT, main } from './woodshed.mjs';
 
 function listen(server) {
@@ -193,6 +193,9 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       if (session.status !== 'running') throw Object.assign(new Error('the session is not running'), { notRunning: true });
       if (app !== null && !session.apps?.some((a) => a.name === app)) throw Object.assign(new Error(`the project has no app named ${app}`), { refused: true });
       calls.push(['startApp', { id: session.id, app }]);
+      // As statusd: no start is taken while the stop script runs, and it answers with the app still stopping.
+      // `stopScript`: the list read before it still said otherwise.
+      if (session.app === 'stopping' || session.stopScript) return Object.assign(session, { app: 'stopping' });
       Object.assign(session, { app: 'starting' }, app !== null && { appName: app });
       moving.set(session.id, appScript.map((step) => ({ ...step })));
       return session;
@@ -472,6 +475,7 @@ test('session app starts a running session\'s app and waits until it is up, and 
   assert.deepEqual(c.calls.at(-1), ['startApp', { id: 'aaaa0001', app: null }]);
   assert.deepEqual(up.lines.map((l) => l.event), ['app-starting', 'app-running'], 'stopped and half up in between are waited through');
   assert.match(up.lines.at(-1).session.appUrl, /^http:\/\/aaaa0001\.apps\.example\.test:\d+\/$/);
+  assert.equal(up.lines.at(-1).session.appLink, 'domain', 'opens signed in to the console, and Share the app shares it');
 
   s.apps = [{ name: 'web', label: 'Web' }, { name: 'admin', label: 'Admin' }];
   const picked = await c.run(['session', 'app', 'aaaa0001', 'start', '--app', 'admin', '--no-wait']);
@@ -515,11 +519,43 @@ test('session app says why it cannot start the app, and gives up on one that doe
   assert.equal((await c.run(['session', 'app'])).code, EXIT.failed);
 });
 
+test('a start right after a stop, while the stop script runs, is not taken: session app says so and when to try again', async (t) => {
+  const c = await consoleFor(t, { appDomain: 'apps.example.test', appScript: [{ app: 'running' }] });
+  const s = c.sessions.find((x) => x.id === 'aaaa0001');
+  s.app = 'running';
+  assert.equal((await c.run(['session', 'app', 'aaaa0001', 'stop'])).code, EXIT.done);
+  // The list still says running, as it can until the next status check: the console's answer says stopping.
+  Object.assign(s, { app: 'running', stopScript: true });
+  const raced = await c.run(['session', 'app', 'aaaa0001', 'start', '--json']);
+  assert.equal(raced.code, EXIT.failed, raced.err);
+  assert.ok(!raced.lines.some((l) => l.event === 'app-starting'), 'never says it is starting');
+  assert.match(raced.lines.at(-1).error, /still stopping, so it was not started\. Try again in a few seconds, once `woodshed session app aaaa0001` says it is not running/);
+
+  // Seen stopping in the list already: refused before anything is asked.
+  Object.assign(s, { app: 'stopping', stopScript: false });
+  const before = c.calls.length;
+  const early = await c.run(['session', 'app', 'aaaa0001', 'start']);
+  assert.equal(early.code, EXIT.failed);
+  assert.match(early.err, /still stopping/);
+  assert.equal(c.calls.length, before, 'nothing asked of the session');
+});
+
+test('restart hints name the app that went down when it is not the default, and the link says where it opens', () => {
+  const x = { id: 'aaaa0001', apps: ['web', 'admin'], appUrl: 'https://aaaa0001.apps.example.test/', url: 'https://c.example.test/s/aaaa0001' };
+  assert.equal(startCommand({ ...x, appName: 'web' }), 'woodshed session app aaaa0001 start', 'the default needs no --app');
+  assert.equal(startCommand({ ...x, appName: 'admin' }), 'woodshed session app aaaa0001 start --app admin');
+  assert.equal(startCommand({ ...x, apps: ['web'], appName: 'web' }), 'woodshed session app aaaa0001 start');
+  assert.equal(startCommand({ ...x, appName: "it's", apps: ['web', "it's"] }), "woodshed session app aaaa0001 start --app 'it'\\''s'");
+  for (const app of ['frontend-down', 'failed', 'stopped']) assert.match(appText({ ...x, app, appName: 'admin' }), /start --app admin$/, app);
+  assert.match(appText({ ...x, app: 'stopped', appName: 'web' }), /start$/);
+});
+
 test('with app ports the app opens on the port the console lent it, or through the console, which lends one', () => {
   const origin = 'http://mac.tail1.ts.net';
   const appsOn = { domain: 'mac.tail1.ts.net', ports: true };
   const s = { id: 'aaaa0001', status: 'running', app: 'running', appUrl: 'http://mac.tail1.ts.net:7701/' };
   assert.equal(appUrlOf(s, { origin, appsOn }), 'http://mac.tail1.ts.net:7701/');
+  assert.equal(summary(s, { origin, login: null, appsOn }).appLink, 'port', 'opens for anyone who reaches the console, with no Share the app');
   assert.equal(appUrlOf({ ...s, app: 'stopped', appUrl: null }, { origin, appsOn }), 'http://mac.tail1.ts.net/auth/app?id=aaaa0001&next=/');
   assert.equal(appUrlOf({ ...s, appUrl: 'javascript:alert(1)' }, { origin, appsOn }), 'http://mac.tail1.ts.net/auth/app?id=aaaa0001&next=/', 'only a web link');
   assert.equal(appUrlOf({ ...s, app: 'none' }, { origin, appsOn }), null);

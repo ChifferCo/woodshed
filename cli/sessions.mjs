@@ -228,7 +228,8 @@ function ended(s) {
 /**
  * Where a running session's app opens, as the console's page links Open app (console/public/common.js, appUrl): its
  * own name under the console's app domain, on the console's scheme and port; with app ports, the port the console
- * lent it, or the console's /auth/app, which lends one. A browser signed in to the console opens it.
+ * lent it, or the console's /auth/app, which lends one. On an app domain a browser signed in to the console opens it;
+ * an app port, on a console nobody signs in to, opens for anyone who reaches it.
  * @param {{domain: string|null, ports: boolean}|null} appsOn  what the console's list says of session apps
  * @returns {string|null}  none while the session is not running, has no app, or the console serves no session apps
  */
@@ -245,10 +246,20 @@ function appsOnOf(body) {
   return { domain, ports: body?.appPorts === true };
 }
 
+/**
+ * The command that starts the session's app again: with --app for one of several that is not the default (the first,
+ * which statusd starts without a name), so a restart never starts another app than the one that went down.
+ */
+export function startCommand(x) {
+  const named = x.appName && x.apps?.length > 1 && x.apps[0] !== x.appName ? x.appName : null;
+  const quoted = named && (/^[\w.@-]+$/.test(named) ? named : `'${named.replace(/'/g, `'\\''`)}'`);
+  return `woodshed session app ${x.id} start${quoted ? ` --app ${quoted}` : ''}`;
+}
+
 /** @returns {string}  what `get` and a start say of the session's app, with the next step; empty when it has none to say */
 export function appText(x) {
   const label = x.appName && x.apps?.length > 1 ? ` (${x.appName})` : '';
-  const start = `woodshed session app ${x.id} start`;
+  const start = startCommand(x);
   switch (x.app) {
     case 'running': return `running${label}: ${x.appUrl}`;
     case 'api-down': return `up${label}, but its API is down, so its calls fail: ${x.appUrl}`;
@@ -295,11 +306,15 @@ export function summary(s, { origin, login, appsOn = null }) {
     ownLimits: s.limits ? { idleHours: hours(s.limits.idleHours), lifetimeHours: hours(s.limits.lifetimeHours) } : null,
     extendedUntil: printable(s.extendedUntil, 40),
     // Its app, while it runs on a console that serves session apps: its state, which of the project's apps it is, and
-    // the link that opens it in a browser signed in to the console. null when there is nothing to open.
+    // the link that opens it (appLink says for whom). null when there is nothing to open.
     app: appsOn?.domain && s.status === 'running' && s.kind !== 'ask' && APP_STATES.has(s.app) ? s.app : null,
     appName: printable(s.appName, 60),
     apps: Array.isArray(s.apps) ? s.apps.map((a) => printable(a?.name, 60)).filter(Boolean) : null,
     appUrl: appUrlOf(s, { origin, appsOn }),
+    // Where the link opens: `domain`, the session's own name under the console's app domain, which opens only in a
+    // browser signed in to the console and which Share the app shares; `port`, a port of a console nobody signs in to,
+    // which opens for anyone who reaches the console and has no Share the app.
+    appLink: appUrlOf(s, { origin, appsOn }) ? (appsOn.ports ? 'port' : 'domain') : null,
     // Its pull request as the console's chip reads it, every one it opened, and the command that reviews it here.
     pullRequest: pullOf(s.prUrl, s.pr),
     pullRequests: (Array.isArray(s.prs) ? s.prs : []).map((p) => pullOf(p?.url, p?.pr)).filter(Boolean),
@@ -834,6 +849,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
       throw fail(`Session ${id}'s project file names no app yet. Set up app on ${x.url} has its agent write one.`, { code: EXIT.waiting, status: 'no-app' });
     }
     if (opts.app !== undefined && opts.action !== 'start') throw fail('--app picks the app to start: use it with start');
+    // statusd takes no start while the stop script runs: it answers as asked and starts nothing.
+    const stillStopping = `Session ${id}'s app is still stopping, so it was not started. Try again in a few seconds, once \`woodshed session app ${id}\` says it is not running.`;
+    if (opts.action === 'start' && x.app === 'stopping') throw fail(stillStopping, { code: EXIT.failed, status: 'stopping' });
     let after;
     try {
       after = await ask(`/api/sessions/${id}/app/${opts.action}`, { method: 'POST', body: opts.app ? { app: opts.app } : {} });
@@ -848,6 +866,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
       say(`Stopping session ${id}'s app.`);
       return EXIT.done;
     }
+    if (asked.app === 'stopping') throw fail(stillStopping, { code: EXIT.failed, status: 'stopping' });
     if (json) emit({ event: 'app-starting', session: asked });
     say(`Starting session ${id}'s app${asked.appName && asked.apps?.length > 1 ? ` (${asked.appName})` : ''}: one to three minutes.`);
     if (opts.wait === false) return EXIT.done;

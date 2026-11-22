@@ -111,7 +111,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed session herdr <id> [--parent[=T] …]` | Makes a session a machine in Herdr and shows its Herdr agent in a space named after the session, in a tab named after its agent (never over names the person gave; run it again to pick up a later title). Resumes a paused session first, and re-adds the machine, which a plain `resume` leaves unreachable: run it after every `resume` inside Herdr. With `--parent`, a paused one is resumed waiting for its agent's terminal from this one | 0 connected, 2 needs the person, 1 failed, or `--parent` on a session whose agent's terminal was already there, 3 no `hc` 0.1.21 or newer, shared, saw production, or `--parent` outside a Herdr terminal | main |
 | `woodshed session list [--all]` | Their sessions and the shared ones they see, with state and when each pauses; each session's pull request (state, verdict, checks), `review it: woodshed review <id>` under those they can review, and their own open pull requests with no session; names Herdr machines of sessions no longer on the console | 0 | main |
 | `woodshed session get <id>` | One session: state, branch, pull request, its app and the app's link, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
-| `woodshed session app <id> [start [--app NAME] [--no-wait]\|stop]` | A running session's app: whether it is up and its link; `start` starts it and waits up to 5 minutes until it is up, `stop` stops it | 0 up or asked, 2 no app in the project file, 1 not up in time or failed, 3 not running, or no session apps on this console | main |
+| `woodshed session app <id> [start [--app NAME] [--no-wait]\|stop]` | A running session's app: whether it is up and its link; `start` starts it and waits up to 5 minutes until it is up, `stop` stops it | 0 up or asked, 2 no app in the project file, 1 not up in time, failed, or still stopping, 3 not running, or no session apps on this console | main |
 | `woodshed session stop <id>` | Stops it, checkpointing a running one's work on the way (waits up to 3 minutes) | 0, 1 not answered in time | main |
 | `woodshed session resume <id> [--no-wait]` | Starts one of their stopped sessions again, conversation and all; inside Herdr, follow it with `session herdr <id>` | as `new`; 3 a shared session | main |
 | `woodshed session remove <id> [--yes]` | Takes it off the list with its saved conversation, and forgets its Herdr machine | 0, 2 not confirmed, 3 a shared session | main |
@@ -295,11 +295,17 @@ woodshed session app <id> start --json  # when it is not up: starts it, waits un
 
 `session.app` is the app's state, and `session.appUrl` the link. Then:
 
-- `running`: give them `appUrl`. It opens in the browser they are signed in to the console with: it is not a public
-  link, so it will not open for someone else. Sharing it is the page's Share the app, on the session's ⋯ menu (`url`).
-- `stopped`, `failed` or `frontend-down`: `woodshed session app <id> start`, then give them the link it prints. Ask
-  first only when starting it would get in the way of what the session is doing. Exit 1 means it did not come up:
-  say so, and where its log is (`woodshed tunnel <id> -- tail -n 50 /tmp/woodshed-app.log`, their own sessions only).
+- `running`: give them `appUrl`. When `session.appLink` is `domain`, it opens in the browser they are signed in to the
+  console with: it is not a public link, so it will not open for someone else, and sharing it is the page's Share the
+  app, on the session's ⋯ menu (`url`). When it is `port`, the console has app ports and nobody signs in to it: the link
+  opens for whoever reaches the console, and there is no Share the app; say neither.
+- `stopped`, `failed` or `frontend-down`: run the start command `woodshed session app <id>` prints (it adds `--app
+  <name>` for an app that is not the project's default, so the one that went down is the one started), then give them
+  the link it prints. Ask first only when starting it would get in the way of what the session is doing. Exit 1 means
+  it did not come up: say so, and where its log is (`woodshed tunnel <id> -- tail -n 50 /tmp/woodshed-app.log`, their
+  own sessions only). Exit 1 saying it is still stopping means a stop had not finished: wait a few seconds, check
+  `woodshed session app <id>` says it is not running, and start it again.
+- `stopping`: wait a few seconds before starting it: a start while it stops is not taken.
 - `starting`: it is on its way. `woodshed session app <id>` says again in a minute, or give them the link now.
 - `api-down`: the page loads, but its API calls fail: give the link, and say so.
 - `none` (exit 2 from `start`): the project file names no app yet. Set up app on the session's console page (`url`)
