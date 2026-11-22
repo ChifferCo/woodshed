@@ -1118,9 +1118,10 @@ when it did. Codex's own log is at `.review/logs/codex.jsonl`.
 `woodshed setup`'s last review step) calls `POST /api/my/pulls/<number>/review` with the project's name, which the
 command line's token reaches (cliSessions.mjs). The project must be one the person may start sessions on, which asks
 GitHub for their write access to its repo (projectAccess.mjs), and the fleet's `reviewOnDemand` then starts the same
-review session a tagged commit does (`startReview`), on the pull request's head as it is, tag or not. It refuses
-(`fleet: review asked for, refused` with the `reason`): 409 where the default branch's project file does not run the
-review in a session, 403 a pull request whose author (or, for one a session opened, that session's starter) is
+review session a tagged commit does (`startReview`), on the pull request's head as it is, tag or not. It runs by the
+review the fleet's gates carry: the project file's, or every repo's default where the file names none. It refuses
+(`fleet: review asked for, refused` with the `reason`): 409 where the project file itself chooses another runner for
+its review (`runs its review in GitHub Actions`), or its `pullRequests.runsOn` names another console, 403 a pull request whose author (or, for one a session opened, that session's starter) is
 someone else, since the review runs on the author's sign-ins and choice, 409 one closed or a draft, and 409 with
 `startReview`'s own reason (a review running on an older commit, the author chose no review), and 409 while another ask
 for the same pull request, or a tagged commit's review of it, is still starting (one guard for both, so they start

@@ -2837,7 +2837,13 @@ test('a review its author asks for starts on the head now, tag or not, and only 
   actions.github.pull = async () => REVIEW_PULL;
   const off = await actions.fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
   assert.deepEqual([off.outcome, off.status], ['refused', 409]);
-  assert.match(off.reason, /^review is not on for o\/r/);
+  assert.equal(off.reason, 'o/r\'s project file runs its review in GitHub Actions, not in this console: its pullRequests.review chooses that runner');
+
+  const elsewhere = setup({ gates: { ...REVIEW_GATES, runsOn: 'other-console[bot]' }, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
+  elsewhere.github.pull = async () => REVIEW_PULL;
+  const ran = await elsewhere.fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
+  assert.deepEqual([ran.status, ran.reason], [409, 'o/r\'s pullRequests.runsOn names another console (other-console[bot]), which runs its reviews']);
+  assert.equal(elsewhere.fleet.sessions().length, 0);
   assert.equal(actions.fleet.sessions().length, 0);
 
   const none = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: [], choice: 'none', why: null }) } });

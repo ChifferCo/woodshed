@@ -2272,9 +2272,13 @@ export function createFleet({
       console.log('fleet: review asked for, refused', { number, login, reason, ...projectField(project) });
       return { outcome: 'refused', status, reason };
     };
+    // The review the fleet runs by: the project file's, or every repo's default where it names none (installation.mjs's
+    // gatesOf, defaultReview.mjs). Refused only where the file itself chooses another runner, or runsOn another console.
     const gates = await pullRequests(project.name);
-    if (gates?.review?.runner !== 'woodshed') {
-      return refused(409, `review is not on for ${project.repo}: its default branch's .woodshed/project.yaml has no pullRequests.review with runner: woodshed`);
+    const runner = gates?.review?.runner ?? null;
+    if (!runner) return refused(409, `${project.repo}'s project file names no review, and this console runs no default one`);
+    if (runner !== 'woodshed') {
+      return refused(409, `${project.repo}'s project file runs its review in ${runner === 'actions' ? 'GitHub Actions' : runner}, not in this console: its pullRequests.review chooses that runner`);
     }
     const gh = githubOf(project);
     let pull;
@@ -2286,6 +2290,9 @@ export function createFleet({
     if (!pull?.head?.sha) return refused(404, `no pull request #${number} on ${project.repo}`);
     const owner = pullOwner(project, pull, number);
     if (owner.login !== login) return refused(403, `#${number} is not your pull request: only its author asks for its review, which runs on their sign-ins`);
+    if (runsElsewhere(gates, project, number, 'review', owner)) {
+      return refused(409, `${project.repo}'s pullRequests.runsOn names another console (${gates.runsOn}), which runs its reviews`);
+    }
     if (pull.state !== 'open') return refused(409, `#${number} is not open`);
     if (pull.draft) return refused(409, `#${number} is a draft: mark it ready for review first`);
     const done = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.sha === pull.head.sha

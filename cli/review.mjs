@@ -46,7 +46,7 @@ Commands, run in a checkout of the repo:
                          reviewer App
 
 Commands on your own open pull requests, for the repo given by --repo owner/name, else this checkout's origin:
-  pulls                  list them, and whether the repo's review is on
+  pulls                  list them, and how the repo is reviewed: on by default, with the tag that starts a review
   start <pull request>...
                          review each now (its number, #number or URL): the console starts the same review session a
                          tagged commit would, on your own Claude token and Codex sign-in where it has no team keys, and
@@ -54,9 +54,9 @@ Commands on your own open pull requests, for the repo given by --repo owner/name
 
 Nothing here writes a GitHub workflow or an Actions secret: the review runs in the console's sessions, which need neither.
 
-Exit codes: 0 done (or quit), 2 waiting on a person (an admin's step, a sign-in, the change to merge, or review not on
-for the repo), 3 refused (a session or pull request that is not your own, or a session that has seen production data),
-1 anything else.`;
+Exit codes: 0 done (or quit), 2 waiting on a person (an admin's step, a sign-in, or the change to merge), 3 refused (a
+session or pull request that is not your own, a repo whose project file runs its review elsewhere, or a session that
+has seen production data), 1 anything else.`;
 
 // eslint-disable-next-line no-control-regex
 const UNPRINTABLE_RE = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;

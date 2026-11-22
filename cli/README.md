@@ -77,8 +77,10 @@ It goes in this order:
    names one repo of several. With `--yes` and no `--review-prs`, the 5 updated last (enough to see reviews work on your own code without spending
    your plan on old branches, and `--review-prs all` takes every one). Without `--yes` or a terminal, setup exits 2
    listing them, for `--review-prs`. A draft is left until it is ready, and a head commit reviewed already is not
-   reviewed again. With no open pull requests, it says a review starts on your next one. With `--reviews none` it
-   starts none.
+   reviewed again. With no open pull requests, it says a review starts on your next one whose last commit's subject
+   ends with the review's tag (`[woodshed-review]` by default; a session adds it, on your own computer you add it).
+   Every repo is reviewed by default; only one whose project file runs its review elsewhere (GitHub Actions, or
+   another console by `runsOn`) gets none, and setup says why. With `--reviews none` it starts none.
 5. **Optional: the agent terminal**, Herdr or tmux, for new private sessions. On a terminal Enter keeps the saved
    choice; `--terminal herdr` or `--terminal tmux` sets it.
 6. **Optional: a first coding session**, only with `--prompt`, or a prompt typed in when asked. Without one, setup
@@ -118,7 +120,7 @@ Keep a source explicit even when only one is supported. Keep session management 
 | `woodshed repo remove <owner/name>` | Removes a repo and its Woodshed settings as in Console settings. | 0 removed, 2 sign in, 3 refused, 1 failed |
 | `woodshed review <id>\|<pull request>` | Reviews one of your sessions' change on this terminal, as the console's Review tab: [below](#reviewing-a-session-on-this-terminal). | 0 quit, 2 the sign-in ended, 3 a shared session or one that has seen production data, 1 anything else |
 | `woodshed review enable\|status` | In a checkout: reviews the repo's pull requests in Woodshed sessions, by its project file, and says what the console still needs. Below. | 0 done, 2 an admin's step, a sign-in or a merge still to come, 1 a project file that does not read or check |
-| `woodshed review pulls\|start` | Lists your open pull requests on a repo, and has the console review them now: [below](#reviewing-your-open-pull-requests-now). | 0 done, 2 review not on for the repo or a sign-in, 3 a pull request or repo not yours, 1 anything else |
+| `woodshed review pulls\|start` | Lists your open pull requests on a repo, and has the console review them now: [below](#reviewing-your-open-pull-requests-now). | 0 done, 2 a sign-in, 3 a pull request or repo not yours, or a repo whose project file runs its review elsewhere, 1 anything else |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 | `woodshed config list\|get\|set` | Reads or sets [your choices on My settings](#your-choices-on-my-settings). | as below |
 | `woodshed settings plan\|push\|pull` | Sync [Claude and Codex settings, plugins, dotfiles and ignored checkout files](#settings) with private sessions. Claude MCP definitions pushed from computers stay between computers. | as below |
@@ -188,11 +190,13 @@ name, as its fleet reads it) and its reviewer App is known to be installed; else
 
 ### Reviewing your open pull requests now
 
-Once review is on for a repo, the console starts a review on a pull request when its head commit carries the review's
-tag (or on each commit, with `--every-commit`). To have your open pull requests reviewed now, tag or not:
+Every repo is reviewed: by its project file's `pullRequests.review`, or, when it names none, by the console's default
+review in a session. The console starts one on a pull request when its last commit's subject ends with the review's tag,
+`[woodshed-review]` by default (a Woodshed session adds it to its pushes; on your own computer, add it to the subject),
+or on each commit with `--every-commit`. To have your open pull requests reviewed now, tag or not:
 
 ```sh
-woodshed review pulls --repo acme/app            # your open pull requests there, and whether its review is on
+woodshed review pulls --repo acme/app            # your open pull requests there, and how the repo is reviewed
 woodshed review start 12 15 --repo acme/app      # the console's review of each, now; prints each review's link
 ```
 
@@ -203,9 +207,9 @@ did not answer, the console's last list is shown and `pulls` says it may be out 
 `#number` or URL. `start` calls `POST /api/my/pulls/<number>/review` (console/README.md, "A review asked for by hand"),
 which starts the same review session a tagged commit would, as you: on your own Claude token and Codex sign-in where
 the console has no team keys, and as your reviewer choice on My settings says. It answers with that review's link when
-the head commit is being reviewed, or has its verdict, already (a review that failed with none may be asked again). It refuses a pull request that is not yours (exit 3), a draft
-(exit 3), and a repo whose default branch's project file does not run its review in a session (exit 2: turn it on with
-`woodshed review enable` first). One refused does not keep the others from starting. `--json` prints a
+the head commit is being reviewed, or has its verdict, already (a review that failed with none may be asked again). It refuses a pull request that is not yours, a draft, and
+a repo whose default branch's project file chooses another runner for its review (GitHub Actions), or whose
+`pullRequests.runsOn` names another console, which runs its reviews (exit 3 for each, with the reason). One refused does not keep the others from starting. `--json` prints a
 `{"event":"review","number":…,"outcome":"started"|"running"|"reviewed"|"refused",…}` line for each, with its
 `session.url`, or its `error`.
 

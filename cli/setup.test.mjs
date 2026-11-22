@@ -374,7 +374,7 @@ test('with --yes, setup reviews the open pull requests updated last, and ends wi
   assert.equal(step.reviews.length, 5);
   assert.match(step.message, new RegExp(`^Reviews on acme/app: #9 ${origin}/s/00000000, #7`));
   assert.match(step.message, /The 5 updated last; --review-prs all reviews every one/);
-  assert.match(step.message, /a review will start on your next one whose commit message has \[woodshed-review\]/);
+  assert.match(step.message, /a review starts on your next one when its last commit's subject ends with \[woodshed-review\] \(a Woodshed session adds it itself/);
   const last = after.events.at(-1);
   assert.equal(last.step, 'reviews');
   assert.match(last.message, /^Your reviews: acme\/app#9 https:\/\/console\.example\/s\/00000000/);
@@ -406,18 +406,24 @@ test('in agent mode setup lists the pull requests and asks for --review-prs', as
   assert.ok(!none.calls.some(([group, sub]) => group === 'review' && sub === 'pulls'));
 });
 
-test('with no open pull requests, setup says a review starts on the next one; with review off, it starts none', async () => {
-  const empty = await fake({ commands: ['review pulls|start'], answers: { 'review pulls': pullsOn([], { on: true, rerun: null, known: true }) } })
+test('with no open pull requests, setup says a review starts on the next one with the tag; only another runner starts none', async () => {
+  const byDefault = { on: true, from: 'default', rerun: '[woodshed-review]', known: true, why: null };
+  const empty = await fake({ commands: ['review pulls|start'], answers: { 'review pulls': pullsOn([], byDefault) } })
     .invoke('--yes', '--repo', repo, '--no-session');
   assert.equal(empty.code, EXIT.done);
-  assert.match(empty.events.find((event) => event.step === 'pr-reviews').message, /no open pull requests on acme\/app: a review will start on your next one\.$/);
-  const off = await fake({ commands: ['review pulls|start'], answers: { 'review pulls': pullsOn([pull(9)], { on: false, rerun: null, known: true }) } })
+  assert.match(empty.events.find((event) => event.step === 'pr-reviews').message,
+    /no open pull requests on acme\/app: a review starts on your next one when its last commit's subject ends with \[woodshed-review\] \(a Woodshed session adds it itself; on your own computer, add it to the subject\)\.$/);
+  const why = 'acme/app\'s project file runs its review in GitHub Actions, not in this console';
+  const off = await fake({ commands: ['review pulls|start'], answers: { 'review pulls': pullsOn([pull(9)], { on: false, from: 'project file', rerun: null, known: true, why }) } })
     .invoke('--yes', '--repo', repo, '--no-session');
   assert.equal(off.code, EXIT.done);
   const step = off.events.find((event) => event.step === 'pr-reviews');
   assert.equal(step.status, 'skipped');
-  assert.match(step.message, /Review is not on for acme\/app yet/);
+  assert.equal(step.message, `No review starts here: ${why}.`);
   assert.ok(!off.calls.some(([group, sub]) => group === 'review' && sub === 'start'));
+  const unknown = await fake({ commands: ['review pulls|start'], answers: { 'review pulls': pullsOn([pull(9)], { on: false, from: null, rerun: null, known: false, why: null }), 'review start': startedFor([9]) } })
+    .invoke('--yes', '--repo', repo, '--no-session');
+  assert.equal(unknown.code, EXIT.done, 'a review the console could not describe is still asked for: the console decides');
 });
 
 test('a review the console refuses is named, and none started stops setup with the reason', async () => {

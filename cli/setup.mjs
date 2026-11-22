@@ -357,11 +357,16 @@ export async function setupCommand(args, ctx) {
       const pulls = found.pulls.filter((p) => Number.isSafeInteger(p?.number));
       const rerun = printable(found.review?.rerun);
       const staleText = found.stale === true ? ' GitHub did not answer just now, so this list may be out of date: run setup again to check.' : '';
-      if (found.review?.on !== true) {
-        report('pr-reviews', 'skipped', `Review is not on for ${repo} yet, so no review can start on your pull requests. Once it is: ${command('review', 'start', '<number>', '--repo', repo)}.`, { repo });
+      // Every repo is reviewed, by its project file's review or the console's default: none starts only where the file
+      // names another runner, or its runsOn another console.
+      const offWhy = printable(found.review?.why);
+      if (found.review?.on === false && offWhy) {
+        report('pr-reviews', 'skipped', `No review starts here: ${offWhy}.`, { repo });
         continue;
       }
-      const next = `a review will start on your next one${rerun ? ` whose commit message has ${rerun}` : ''}`;
+      const next = rerun
+        ? `a review starts on your next one when its last commit's subject ends with ${rerun} (a Woodshed session adds it itself; on your own computer, add it to the subject)`
+        : 'a review starts on its every new commit';
       if (!pulls.length) {
         report('pr-reviews', 'done', `You have no open pull requests on ${repo}: ${next}.${staleText}`, { repo, reviews: [] });
         continue;

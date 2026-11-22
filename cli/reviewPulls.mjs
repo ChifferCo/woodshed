@@ -8,8 +8,8 @@
 //   woodshed review start <pull request>... [--repo <owner/name>] [--dir <path>]
 //
 // The repo is --repo, else the GitHub origin of the checkout at --dir or here. Exit codes: 0 done, 2 waiting on a person
-// (a sign-in, or review not on for the repo), 3 refused (a pull request that is not yours, a repo you cannot start on),
-// 1 anything else.
+// (a sign-in), 3 refused (a pull request that is not yours or a draft, a repo you cannot start on, or one whose project
+// file runs its review elsewhere), 1 anything else.
 
 import path from 'node:path';
 
@@ -23,6 +23,25 @@ const UNPRINTABLE_RE = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
 function printable(text, most = 400) {
   if (text === null || text === undefined) return null;
   return String(text).replace(UNPRINTABLE_RE, ' ').slice(0, most);
+}
+
+/**
+ * The review the console runs on `repo`'s pull requests, as its readiness says (console/reviewReadiness.mjs): `review`,
+ * the project file's or every repo's default where the file names none (`from`), and the default branch's runsOn. Off
+ * only when the file chooses another runner, or its runsOn another console. A console from before the default sends no
+ * `review`, and its default branch's file says it alone.
+ * @returns {{on: boolean, from: string|null, rerun: string|null, known: boolean, why: string|null}}
+ */
+export function reviewOf(readiness, repo) {
+  const remote = readiness?.defaultBranch ?? null;
+  if (!remote || remote.error) return { on: false, from: null, rerun: null, known: false, why: null };
+  const review = readiness.review !== undefined ? readiness.review : remote.review ? { ...remote.review, from: 'project file' } : null;
+  const runner = printable(review?.runner, 20);
+  let why = null;
+  if (!review) why = `${repo}'s project file names no review, and this console runs no default one`;
+  else if (runner !== 'woodshed') why = `${repo}'s project file runs its review in ${runner === 'actions' ? 'GitHub Actions' : runner}, not in this console`;
+  else if (remote.runsHere === false) why = `${repo}'s pullRequests.runsOn names another console${remote.runsOn ? ` (${printable(remote.runsOn, 100)})` : ''}, which runs its reviews`;
+  return { on: !why, from: printable(review?.from, 40), rerun: printable(review?.rerun, 100) ?? null, known: true, why };
 }
 
 /**
@@ -75,12 +94,12 @@ export async function reviewPullsCommand({ origin, sub, words }, deps) {
     const mine = pulls.body.pulls
       .filter((p) => p?.why === 'yours' && Number.isSafeInteger(p.number) && String(p.repo ?? '').toLowerCase() === repo.toLowerCase())
       .map((p) => ({ number: p.number, title: printable(p.title, 200) ?? '', draft: p.draft === true, updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : null, url: pullUrl(p.number) }));
-    const remote = readiness.status === 200 ? readiness.body?.defaultBranch ?? null : null;
-    const review = { on: remote?.review?.runner === 'woodshed' && remote?.runsHere !== false, rerun: printable(remote?.review?.rerun, 100) ?? null, known: Boolean(remote && !remote.error) };
+    const review = reviewOf(readiness.status === 200 ? readiness.body : null, repo);
     // The console keeps a repo's last list when GitHub did not answer, and says so: the list may be out of date.
     const stale = pulls.body.stale === true;
     if (json) emit({ event: 'pulls', repo, project: project.name, review, pulls: mine, ...(stale ? { stale } : {}) });
-    say(`Review on ${repo}: ${!review.known ? 'not known' : review.on ? `on${review.rerun ? `, on commits tagged ${review.rerun}` : ', on each commit'}` : 'off'}.`);
+    const how = review.on ? `on${review.from === 'default' ? ' by default' : ''}${review.rerun ? `, on commits whose subject ends with ${review.rerun}` : ', on each commit'}` : `off: ${review.why}`;
+    say(`Review on ${repo}: ${!review.known ? 'not known' : how}.`);
     if (stale) say('GitHub did not answer just now: this list may be out of date.');
     if (!mine.length) say(`You have no open pull requests on ${repo}.`);
     for (const p of mine) say(`  #${p.number}${p.draft ? ' (draft)' : ''}  ${p.title}  ${p.url}`);
@@ -106,7 +125,7 @@ export async function reviewPullsCommand({ origin, sub, words }, deps) {
     }
     const error = printable(out.body?.error, 300) ?? `${origin} answered ${out.status}`;
     const refusal = out.status === 404 && !out.body?.error ? `${origin} answered 404: a console from before woodshed review start` : error;
-    const failCode = out.status === 403 ? EXIT.refused : out.status === 409 && /review is not on/.test(error) ? EXIT.waiting : out.status === 409 ? EXIT.refused : EXIT.failed;
+    const failCode = out.status === 403 || out.status === 409 ? EXIT.refused : EXIT.failed;
     if (json) emit({ event: 'review', repo, number, outcome: 'refused', pullUrl: pullUrl(number), error: refusal });
     say(`#${number}: not started: ${refusal}`);
     if (code === EXIT.done) code = failCode;

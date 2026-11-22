@@ -13,6 +13,7 @@ import { parseProject } from '../shared/project.mjs';
 import { parseYaml } from '../shared/yamlLite.mjs';
 import { createCredentials } from './credentials.mjs';
 import { readinessFindings } from './review.mjs';
+import { reviewOf } from './reviewPulls.mjs';
 import { EXIT, main } from './woodshed.mjs';
 
 const git = (dir, ...args) => execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
@@ -311,7 +312,7 @@ test('status is 1, not 2, when the console answered with a failure', async (t) =
   assert.equal(enable.code, EXIT.failed);
 });
 
-test('review pulls lists your open pull requests on the repo, and whether its review is on', async (t) => {
+test('review pulls lists your open pull requests on the repo, and how the repo is reviewed', async (t) => {
   const s = await setup(t);
   s.state.gates = { review: { runner: 'woodshed', rerun: '[woodshed-review]', heading: 'Code review' } };
   s.state.pulls = [
@@ -322,10 +323,10 @@ test('review pulls lists your open pull requests on the repo, and whether its re
   const run = await s.run(['review', 'pulls', '--json']);
   assert.equal(run.code, EXIT.done, run.err + run.out);
   const [listed] = run.lines;
-  assert.deepEqual(listed.review, { on: true, rerun: '[woodshed-review]', known: true });
+  assert.deepEqual(listed.review, { on: true, from: 'project file', rerun: '[woodshed-review]', known: true, why: null });
   assert.deepEqual(listed.pulls.map((p) => [p.number, p.draft, p.url]), [[12, false, 'https://github.com/acme/game/pull/12'], [11, true, 'https://github.com/acme/game/pull/11']]);
   const text = await s.run(['review', 'pulls']);
-  assert.match(text.out, /Review on acme\/game: on, on commits tagged \[woodshed-review\]\./);
+  assert.match(text.out, /Review on acme\/game: on, on commits whose subject ends with \[woodshed-review\]\./);
   assert.match(text.out, /Review them now: woodshed review start 12 --repo acme\/game/);
   for (const call of s.sent) assert.ok(!('origin' in call.headers));
 });
@@ -345,10 +346,10 @@ test('review start asks the console to review each pull request now, and names i
   const off = await s.run(['review', 'start', '7', '--repo', 'acme/other']);
   assert.equal(off.code, EXIT.refused);
   assert.match(off.err, /acme\/other is not one of .* repos you can start sessions on\. Yours: acme\/game/);
-  s.state.reviews[6] = { outcome: 'refused', status: 409, reason: 'review is not on for acme/game: its default branch\'s .woodshed/project.yaml has no pullRequests.review with runner: woodshed' };
-  const waiting = await s.run(['review', 'start', '6']);
-  assert.equal(waiting.code, EXIT.waiting);
-  assert.match(waiting.out, /#6: not started: review is not on for acme\/game/);
+  s.state.reviews[6] = { outcome: 'refused', status: 409, reason: 'acme/game\'s project file runs its review in GitHub Actions, not in this console: its pullRequests.review chooses that runner' };
+  const elsewhere = await s.run(['review', 'start', '6']);
+  assert.equal(elsewhere.code, EXIT.refused, 'the file chose another runner: nothing for the person to wait on');
+  assert.match(elsewhere.out, /#6: not started: acme\/game's project file runs its review in GitHub Actions/);
   await assert.rejects(s.run(['review', 'start']).then((r) => { if (r.code) throw new Error(r.err); }), /needs a pull request/);
 });
 
@@ -367,4 +368,16 @@ test('the review route refuses a project the person cannot start on, before the 
   assert.equal(answer.status, 403);
   assert.match((await answer.json()).error, /you cannot start sessions on a project named nope/);
   assert.equal(s.state.asked.length, 1, 'the fleet was not asked');
+});
+
+test('a repo is reviewed by default: off only where its project file runs the review elsewhere', () => {
+  const branch = { review: null, qa: null, runsOn: null, runsHere: true, error: null };
+  assert.deepEqual(reviewOf({ defaultBranch: branch, review: { runner: 'woodshed', rerun: '[woodshed-review]', from: 'default' } }, 'acme/game'),
+    { on: true, from: 'default', rerun: '[woodshed-review]', known: true, why: null });
+  assert.deepEqual(reviewOf({ defaultBranch: { ...branch, review: { runner: 'actions' } }, review: { runner: 'actions', rerun: null, from: 'project file' } }, 'acme/game'),
+    { on: false, from: 'project file', rerun: null, known: true, why: 'acme/game\'s project file runs its review in GitHub Actions, not in this console' });
+  assert.equal(reviewOf({ defaultBranch: { ...branch, runsOn: 'other[bot]', runsHere: false }, review: { runner: 'woodshed', rerun: '[woodshed-review]', from: 'default' } }, 'acme/game').why,
+    'acme/game\'s pullRequests.runsOn names another console (other[bot]), which runs its reviews');
+  assert.equal(reviewOf({ defaultBranch: { ...branch, error: 'not read' }, review: null }, 'acme/game').known, false, 'a file not read says nothing');
+  assert.equal(reviewOf({ defaultBranch: branch }, 'acme/game').why, 'acme/game\'s project file names no review, and this console runs no default one', 'a console from before the default');
 });
