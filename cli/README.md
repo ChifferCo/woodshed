@@ -209,7 +209,7 @@ woodshed review start 12 15 --repo acme/app      # the console's review of each,
 ```
 
 Without `--repo`, the repo is the GitHub origin of the checkout at `--dir`, or here. `pulls` lists what GitHub's search
-finds you wrote: at most 10 of your open pull requests across the console's repos, the updated last first, and not one
+finds you wrote: at most 10 of your open pull requests on each repo, the updated last first, and not one
 a session of yours opened (its author is the console's App). `start` takes those by number all the same. When GitHub
 did not answer, the console's last list is shown and `pulls` says it may be out of date (`stale` in `--json`). A pull request is its number,
 `#number` or URL. `start` calls `POST /api/my/pulls/<number>/review` (console/README.md, "A review asked for by hand"),
