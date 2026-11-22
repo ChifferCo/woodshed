@@ -111,7 +111,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed session herdr <id> [--parent[=T] …]` | Makes a session a machine in Herdr and shows its Herdr agent in a space named after the session, in a tab named after its agent (never over names the person gave; run it again to pick up a later title). Resumes a paused session first, and re-adds the machine, which a plain `resume` leaves unreachable: run it after every `resume` inside Herdr. With `--parent`, a paused one is resumed waiting for its agent's terminal from this one | 0 connected, 2 needs the person, 1 failed, or `--parent` on a session whose agent's terminal was already there, 3 no `hc` 0.1.21 or newer, shared, saw production, or `--parent` outside a Herdr terminal | main |
 | `woodshed session list [--all]` | Their sessions and the shared ones they see, with state and when each pauses; each session's pull request (state, verdict, checks), `review it: woodshed review <id>` under those they can review, and their own open pull requests with no session; names Herdr machines of sessions no longer on the console | 0 | main |
 | `woodshed session get <id>` | One session: state, branch, pull request, its app and the app's link, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
-| `woodshed session app <id> [start [--app NAME] [--no-wait]\|stop]` | A running session's app: whether it is up and its link; `start` starts it and waits up to 5 minutes until it is up, `stop` stops it | 0 up or asked, 2 no app in the project file, 1 not up in time, failed, or still stopping, 3 not running, or no session apps on this console | main |
+| `woodshed session app <id> [start [--app NAME] [--no-wait]\|stop]` | A running session's app: whether it is up and its link; `start` starts it and waits up to 5 minutes until it is up, `stop` stops it | 0 up or asked, 2 no app in the project file, 1 not up in time, failed, or still stopping, 3 not running, `stop` with no stop command, or no session apps on this console | main |
 | `woodshed session stop <id>` | Stops it, checkpointing a running one's work on the way (waits up to 3 minutes) | 0, 1 not answered in time | main |
 | `woodshed session resume <id> [--no-wait]` | Starts one of their stopped sessions again, conversation and all; inside Herdr, follow it with `session herdr <id>` | as `new`; 3 a shared session | main |
 | `woodshed session remove <id> [--yes]` | Takes it off the list with its saved conversation, and forgets its Herdr machine | 0, 2 not confirmed, 3 a shared session | main |
@@ -313,8 +313,9 @@ woodshed session app <id> start --json  # when it is not up: starts it, waits un
 - `app` null, or exit 3: the session is not running (offer `woodshed session resume <id>` for one of theirs), or this
   console serves no session apps.
 
-With several apps (`session.apps`), `--app <name>` starts that one. `woodshed session app <id> stop` stops it, only
-when they ask.
+With several apps (`session.apps`), `--app <name>` starts that one; with another running, the session stops it first,
+and the command waits through the switch. `woodshed session app <id> stop` stops it, only when they ask; exit 3 saying
+there is no stop command means the project file has no `app.stop`, so nothing was stopped: tell them.
 
 ### Change a choice on My settings
 

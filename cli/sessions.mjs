@@ -862,13 +862,25 @@ export async function sessionCommand({ origin, rest }, ctx) {
     }
     const asked = summary({ ...s, ...after }, { origin, login, appsOn });
     if (opts.action === 'stop') {
+      // `stopping` false: no stop ran. With the app still up, the project's app has no stop command; a stop already
+      // running is said as stopping. A console from before it says nothing, and the state is taken as it reads.
+      if (after?.stopping === false && asked.app !== 'stopping') {
+        throw fail(`Session ${id}'s app has no stop command in the project file (app.stop), so nothing was stopped: it is ${appText(asked) || asked.app || 'as it was'}.`, { code: EXIT.refused, status: 'no-stop' });
+      }
       if (json) emit({ event: 'app-stopping', session: asked });
-      say(`Stopping session ${id}'s app.`);
+      say(after?.stopping === false ? `Session ${id}'s app is already stopping.` : `Stopping session ${id}'s app.`);
       return EXIT.done;
     }
-    if (asked.app === 'stopping') throw fail(stillStopping, { code: EXIT.failed, status: 'stopping' });
+    // A start the session did not take reads `started: false`; a switch to another app, which starts once the running
+    // one's stop script ends, is taken and reads as stopping meanwhile. A console from before `started` says only the
+    // state, and stopping is then taken as not started.
+    const skipped = typeof after?.started === 'boolean' ? !after.started && asked.app === 'stopping' : asked.app === 'stopping';
+    if (skipped) throw fail(stillStopping, { code: EXIT.failed, status: 'stopping' });
     if (json) emit({ event: 'app-starting', session: asked });
-    say(`Starting session ${id}'s app${asked.appName && asked.apps?.length > 1 ? ` (${asked.appName})` : ''}: one to three minutes.`);
+    const which = asked.appName && asked.apps?.length > 1 ? ` (${asked.appName})` : '';
+    say(asked.app === 'stopping'
+      ? `Switching session ${id}'s app${which}: the running one stops first, then it starts, in one to three minutes.`
+      : `Starting session ${id}'s app${which}: one to three minutes.`);
     if (opts.wait === false) return EXIT.done;
     // Up once its frontend and backend both answer. Between the start script's end and its servers listening it can
     // read as stopped or half up for a moment, so only a failed start ends the wait early.

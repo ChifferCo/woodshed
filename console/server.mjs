@@ -168,8 +168,8 @@
 //   GET  /login, /auth/start, /auth/callback, POST /auth/sign-out   sign-in with GitHub (auth.mjs); behind a hosting
 //                                proxy, POST /auth/sign-out alone, which the program embedding the console answers
 //   GET  /api/me                 who is signed in, and whether sign-in is on
-//   POST /api/sessions/<id>/app/start  start the session's app: {"app": "<name>"} picks one of several
-//   POST /api/sessions/<id>/app/stop   stop it
+//   POST /api/sessions/<id>/app/start  start the session's app: {"app": "<name>"} picks one of several; the answer has `started`, false when the session took no start
+//   POST /api/sessions/<id>/app/stop   stop it; the answer has `stopping`, false when no stop ran
 //   POST /api/sessions/<id>/app/setup  ask its claude to write the project file's app, when it has none
 //   POST /api/sessions/<id>/claude-login   type woodshed-login at the session's Terminal tab (a My Woodshed session)
 //   GET  /api/sessions/<id>/review     what the session's branch changes, from GitHub (review.mjs)
@@ -2396,9 +2396,15 @@ export function createHandler({
           // Which of several apps, by name; none is the default. A console page from before several apps sends no body.
           const body = await readJson(req).catch(() => null);
           if (!body || (body.app !== undefined && typeof body.app !== 'string')) return reply(res, 400, { error: 'app must be an app\'s name' });
-          return reply(res, 200, publicSession(await fleet.startApp(session, { app: body.app || null })));
+          // `started`: whether the session took it (none while a stop script runs), for the command line.
+          const said = {};
+          const after = await fleet.startApp(session, { app: body.app || null, said });
+          return reply(res, 200, { ...publicSession(after), ...said });
         }
-        return reply(res, 200, publicSession(await fleet.stopApp(session)));
+        // `stopping`: whether a stop ran (none with no stop command, or one already running).
+        const said = {};
+        const after = await fleet.stopApp(session, { said });
+        return reply(res, 200, { ...publicSession(after), ...said });
       } catch (err) {
         if (err.notRunning) return reply(res, 409, { error: 'the session is not running' });
         if (err.refused) return reply(res, 409, { error: err.message });

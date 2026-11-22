@@ -189,20 +189,28 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
     },
     // As the fleet's: the session's statusd runs the project file's app.start, and the next status checks say how it
     // goes, which `appScript` plays one step per list read.
-    startApp: async (session, { app = null } = {}) => {
+    startApp: async (session, { app = null, said = {} } = {}) => {
       if (session.status !== 'running') throw Object.assign(new Error('the session is not running'), { notRunning: true });
       if (app !== null && !session.apps?.some((a) => a.name === app)) throw Object.assign(new Error(`the project has no app named ${app}`), { refused: true });
       calls.push(['startApp', { id: session.id, app }]);
       // As statusd: no start is taken while the stop script runs, and it answers with the app still stopping.
       // `stopScript`: the list read before it still said otherwise.
-      if (session.app === 'stopping' || session.stopScript) return Object.assign(session, { app: 'stopping' });
-      Object.assign(session, { app: 'starting' }, app !== null && { appName: app });
+      if (session.app === 'stopping' || session.stopScript) {
+        said.started = false;
+        return Object.assign(session, { app: 'stopping' });
+      }
+      said.started = true;
+      // A switch from a running app with a stop command: taken, and stopping while the running one stops.
+      const switching = app !== null && session.app === 'running' && session.appName && session.appName !== app;
+      Object.assign(session, { app: switching ? 'stopping' : 'starting' }, app !== null && { appName: app });
       moving.set(session.id, appScript.map((step) => ({ ...step })));
       return session;
     },
-    stopApp: async (session) => {
+    stopApp: async (session, { said = {} } = {}) => {
       calls.push(['stopApp', { id: session.id }]);
-      session.app = 'stopping';
+      // As statusd: an app with no stop command (`noStop`) is left as it is, and no stop runs.
+      said.stopping = !session.noStop && session.app !== 'stopping';
+      if (!session.noStop) session.app = 'stopping';
       return session;
     },
     setLimits: (s, values, by) => {
@@ -538,6 +546,27 @@ test('a start right after a stop, while the stop script runs, is not taken: sess
   assert.equal(early.code, EXIT.failed);
   assert.match(early.err, /still stopping/);
   assert.equal(c.calls.length, before, 'nothing asked of the session');
+});
+
+test('a switch to another app, queued behind the running one\'s stop, is waited for; a stop with no stop command says so', async (t) => {
+  const c = await consoleFor(t, { appDomain: 'apps.example.test', appScript: [{ app: 'stopping' }, { app: 'starting' }, { app: 'running' }] });
+  const s = c.sessions.find((x) => x.id === 'aaaa0001');
+  Object.assign(s, { app: 'running', appName: 'web', apps: [{ name: 'web', label: 'Web' }, { name: 'admin', label: 'Admin' }] });
+  const switched = await c.run(['session', 'app', 'aaaa0001', 'start', '--app', 'admin']);
+  assert.equal(switched.code, EXIT.done, switched.err);
+  assert.match(switched.out, /^Switching session aaaa0001's app \(admin\): the running one stops first/);
+  assert.match(switched.out, /Its app is up: /);
+
+  Object.assign(s, { app: 'running', noStop: true });
+  const noStop = await c.run(['session', 'app', 'aaaa0001', 'stop', '--json']);
+  assert.equal(noStop.code, EXIT.refused, noStop.err);
+  assert.ok(!noStop.lines.some((l) => l.event === 'app-stopping'), 'never says it is stopping');
+  assert.match(noStop.lines.at(-1).error, /has no stop command in the project file \(app\.stop\), so nothing was stopped/);
+
+  Object.assign(s, { app: 'stopping', noStop: false });
+  const again = await c.run(['session', 'app', 'aaaa0001', 'stop']);
+  assert.equal(again.code, EXIT.done, again.err);
+  assert.match(again.out, /already stopping/);
 });
 
 test('restart hints name the app that went down when it is not the default, and the link says where it opens', () => {
