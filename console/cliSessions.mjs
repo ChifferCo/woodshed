@@ -4,6 +4,7 @@
 //
 //   GET  /api/sessions                      woodshed session list, and the wait on a start: what that person sees
 //   GET  /api/my/projects                   the repos that person may start on, for --repo
+//   GET  /api/my/pulls                      woodshed session list: their open pull requests, My Woodshed's group
 //   POST /api/my/sessions                   woodshed session new: a private session of theirs
 //   POST /api/my/sessions/<id>/resume       woodshed session resume: one of their private sessions
 //   POST /api/my/sessions/<id>/remove       woodshed session remove: one of their private sessions
@@ -16,6 +17,9 @@
 //   GET  /api/review-readiness?repo=        woodshed review enable and status: whether a repo of theirs can be
 //                                           reviewed in a session, and what is missing (reviewReadiness.mjs)
 //   GET  /api/cli/config, and a few My settings writes   woodshed config: their choices, never a secret (cliConfig.mjs)
+//
+// A review's calls, /reviews/claude-<id>/..., take the token too, for `woodshed review <id>`, through the review proxy's
+// own gate (reviewProxy.mjs forCli): owner only, never a session that has seen production data.
 //
 // A terminal connected to a session never keeps it awake: more time is asked for, by the person or their agent, with
 // extend or limits, and otherwise the session pauses and stops as its limits say.
@@ -32,6 +36,7 @@ import { CONFIG_ROUTES } from './cliConfig.mjs';
 const ROUTES = [
   ['GET', /^\/api\/sessions$/],
   ['GET', /^\/api\/my\/projects$/],
+  ['GET', /^\/api\/my\/pulls$/],
   ['POST', /^\/api\/my\/sessions$/],
   ['POST', /^\/api\/my\/sessions\/[0-9a-f]{8}\/(resume|remove)$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/(stop|extend|limits)$/],

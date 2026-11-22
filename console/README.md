@@ -363,7 +363,9 @@ The **Agent terminal** row beside it picks what your private sessions run claude
 changed` in the log): **tmux**, the default, or **Herdr**, the session image's pinned herdr-core, whose terminal the
 TUI tab attaches to and your own Herdr can too (session/README.md, "What a container does"). It reaches your next
 private session in the session API's `/settings` answer (`terminal`); shared sessions, reviews, QA runs and questions
-are in tmux whatever it says. Resume asks again, so a session on a project whose repo you can no longer write
+are in tmux whatever it says. `woodshed session new --herdr --parent` sends `herdrParent: true` with the start (and
+`session herdr <id> --parent` with the resume), for that run alone: the session runs in Herdr and waits for its agent's
+terminal from the person's own (`WOODSHED_HERDR_PARENT`; session/README.md). Resume asks again, so a session on a project whose repo you can no longer write
 to does not start (403). The form
 asks for a prompt and, optionally, the rest below. It asks for no name: the session starts named after the prompt's
 first line, and the console asks Claude Haiku for a better one on the team's Anthropic key (`console/autoName.mjs`).
@@ -1634,6 +1636,17 @@ does the page's. ttyd 1.7.7 also wants its credential in the terminal's first me
 compression is asked for. Then it copies bytes both ways. The log lines are the pipe's, with `kind` (`term` or
 `shell`; `exec` for a pipe). It is the same terminal as the tab's: the agent's tmux or Herdr terminal, or the shell's
 tmux, so what is typed in one shows in the other.
+
+**A review from the command line**: `woodshed review <id>` (cli/README.md) makes the Review tab's own calls,
+`/reviews/claude-<id>/...`, with the command line's token in place of the browser's sign-in, and no Origin. The review
+proxy's `forCli` (`reviewProxy.mjs`) checks the token with cliSignIn's `authenticate` (live, its person on People with
+write access), then lets through only a running session of that person's own: never a question from Slack, a shared
+session, one that has seen production data or is being locked down (409), nor the page itself (`/review`). It forwards
+as the page's calls are, with the session's token in place of the person's; what the review may write to GitHub stays
+the session's rule. The console logs `console: review call from the command line` for each write, with who, the
+token's id, the session and the path, and `console: review call from the command line refused` with `why` (`not
+theirs`, `tainted`, `no valid token`, `a browser's call`). `woodshed session list` reads `GET /api/my/pulls` with the
+same token (cliSessions.mjs), for the person's open pull requests with no session.
 
 **A console with no repo yet** (neither `WOODSHED_REPO` nor `WOODSHED_PROJECTS`, and nothing added on the
 Repos card) has no repository to ask about. It lets in the owner of the account its GitHub App is installed on: that
