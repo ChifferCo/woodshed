@@ -862,7 +862,7 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
       state.sheet = {
         kind: 'help', title: 'Keys',
         lines: [
-          '1 to 5 open the tab with that number on the tab bar: 1 Overview, 2 Q&A, 3 Discussion, 4 Files changed, 5 Chat. Tab and Shift-Tab move between them. In a box being typed in, a number is text.',
+          '1-5 open the numbered tabs. In a text box, a number is text. Tab and Shift-Tab cycle.',
           '↑ ↓ j k scroll (on Files changed, move the line), PgUp PgDn Space b by a page, g G the top and the end.',
           '4 Files changed lists every file in the analysis\'s reading order: ↑ ↓ choose one, Enter opens its diff, Esc goes back to the list; in a diff, n p move to the next and previous file.',
           'i on Files changed starts a chat about the file (in its diff, about the line), with its path in the box.',

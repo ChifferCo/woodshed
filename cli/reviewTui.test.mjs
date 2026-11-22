@@ -111,7 +111,7 @@ test('the Q&A is folded: only the open question shows its answer and its follow-
 
 // The TUI on a made-up terminal over a scripted shed: `routes` answers each call by `METHOD path`, and every call is kept.
 // Its timers run at once, so polls that wait seconds in a terminal take milliseconds here.
-async function tuiOver(t, routes) {
+async function tuiOver(t, routes, { columns = 80, rows = 24 } = {}) {
   const { EventEmitter } = await import('node:events');
   const { runReviewTui } = await import('./reviewTui.mjs');
   const calls = [];
@@ -124,7 +124,7 @@ async function tuiOver(t, routes) {
   };
   const stdin = Object.assign(new EventEmitter(), { isTTY: true, setRawMode() {}, resume() {}, pause() {} });
   let screen = '';
-  const stdout = Object.assign(new EventEmitter(), { columns: 80, rows: 24, write: (s) => { screen += s; return true; } });
+  const stdout = Object.assign(new EventEmitter(), { columns, rows, write: (s) => { screen += s; return true; } });
   const status = routes.get('GET ')();
   const diff = routes.get('GET /diff')();
   const done = runReviewTui({ api, initial: { status, diff, session: 'aaaa0001' }, stdin, stdout, color: false,
@@ -320,4 +320,13 @@ test('a number typed into a box is text, and switches no tab', async (t) => {
   await tui.until(() => !has('Title:'), 'the sheet closed');
   const sent = ['POST /chat', 'POST /qa/ask', 'POST /comments', 'POST /submit', 'PATCH /title'].flatMap((k) => tui.said(k));
   assert.deepEqual(sent, [], 'nothing sent');
+});
+
+test('the help, on a terminal of 40 by 14, shows whole what the number keys do', async (t) => {
+  const tui = await tuiOver(t, baseRoutes(), { columns: 40, rows: 14 });
+  await tui.until(() => tui.frame().some((l) => l.includes('1 Overview')), 'the first frame');
+  tui.type('?');
+  await tui.until(() => tui.frame().includes('Keys'), 'the help');
+  const text = tui.frame().join(' ').replace(/ +/g, ' ');
+  assert.match(text, /1-5 open the numbered tabs\. In a text box, a number is text\. Tab and Shift-Tab cycle\./);
 });
