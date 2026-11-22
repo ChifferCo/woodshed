@@ -444,13 +444,15 @@ const repoSettingsDev = process.env.DEV_CONSOLE_REPO_SETTINGS === '1' ? devRepoS
 // open pull requests there, for `woodshed review pulls|start` and `woodshed setup`'s reviews (with
 // DEV_CONSOLE_REVIEWER=installed for the review's readiness). A review started on one fails at launch: no session
 // image runs here.
-const reviewOn = process.env.DEV_CONSOLE_REVIEW_ON === '1';
+// DEV_CONSOLE_REVIEW_ON=default: the same, with a project file that names no review, which the console reviews by its
+// default (console/defaultReview.mjs).
+const reviewOn = ['1', 'default'].includes(process.env.DEV_CONSOLE_REVIEW_ON);
 // As `woodshed review enable` writes it (cli/projectReview.mjs).
 const REVIEW_ON_FILE = enableReview(null, {}).text;
 const devGhDir = writeDevGh(path.join(stateDir, 'dev-gh'), {
   projectFiles: {
     ...(reviewerDev ? { 'example-org/example-repo': 'version: 1\n' } : {}), ...repoSettingsDev?.projectFiles,
-    ...(reviewOn ? { 'example-org/example-repo': REVIEW_ON_FILE } : {}),
+    ...(reviewOn ? { 'example-org/example-repo': process.env.DEV_CONSOLE_REVIEW_ON === 'default' ? 'version: 1\n' : REVIEW_ON_FILE } : {}),
   },
   mine: reviewOn ? { repo: 'example-org/example-repo', login: 'local' } : null,
 });

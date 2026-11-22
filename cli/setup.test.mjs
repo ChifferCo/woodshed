@@ -31,6 +31,8 @@ function fake({
     if (answers[command]) return answers[command];
     if (command === 'status') return result(0, ready);
     if (command === 'config get') return result(0, { key: 'terminal', value: 'tmux' });
+    // Review is on by default (console/defaultReview.mjs), for the tests that are about a later step.
+    if (command === 'review status') return result(0, { on: true, review: { runner: 'woodshed', rerun: '[woodshed-review]', from: 'default' }, missing: [] });
     return { code: 99, stdout: '' };
   };
   const invoke = async (...args) => {
@@ -464,6 +466,7 @@ test('a choice of numbers reaches only the repo that lists them, and owner/name#
         if (words[0] === '--help') return help(['review pulls|start']);
         if (words[0] === 'status') return result(0, ready);
         const at = words[words.indexOf('--repo') + 1];
+        if (words[1] === 'status') return result(0, { on: true, review: { runner: 'woodshed', rerun: '[woodshed-review]', from: 'default' }, missing: [] });
         if (words[1] === 'pulls') return result(0, { event: 'pulls', repo: at, review: { on: true, rerun: null, known: true }, pulls: pullsBy[at] });
         if (words[1] === 'start') return startedFor(words.slice(2, words.indexOf('--repo')).map(Number));
         return { code: 99, stdout: '' };

@@ -1139,7 +1139,8 @@ file, from the stand-in `gh`, has no review.
 that keeps a made-up Claude token and Codex key) turns review on in `example-org/example-repo`'s default branch, and
 gives @local three open pull requests there from the stand-in `gh`, for `woodshed review pulls|start` and `woodshed
 setup`'s reviews. A review started on one queues and never runs: no session image runs here. @local needs Sessions from
-GitHub on People (on for everyone on a hosted console) for a review to use their own sign-ins.
+GitHub on People (on for everyone on a hosted console) for a review to use their own sign-ins. `DEV_CONSOLE_REVIEW_ON=default`
+gives the repo a project file that names no review, for the console's default review.
 `DEV_CONSOLE_REVIEW_PR=1` makes `/s/beadfeed` @local's own My Woodshed session whose branch has a made-up open pull
 request, #26701, answered by a stand-in `gh` (`console/bin/devReviewGh.mjs`), for `woodshed review beadfeed` and the
 review's comment, verdict, rename and merge (cli/README.md, "Reviewing a session on this terminal").
