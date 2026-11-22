@@ -72,8 +72,9 @@ It goes in this order:
    reviewer choice (`default` is the most the console can run: both, once both are connected).
 4. **Reviews of your open pull requests**, the step setup is for: it lists your open pull requests on each repo
    (`woodshed review pulls`) and starts the console's review on them now (`woodshed review start`), then gives each
-   review's link. On a terminal it asks which, Enter for all. With `--yes`, `--review-prs all`, `none` or numbers
-   (`12,15`) say which; without it, the 5 updated last (enough to see reviews work on your own code without spending
+   review's link. On a terminal it asks which, Enter for all (closing the input, Ctrl-D, starts none). `--review-prs
+   all`, `none` or numbers (`12,15`) say which: a number reaches only a repo that lists it as yours, and `owner/name#12`
+   names one repo of several. With `--yes` and no `--review-prs`, the 5 updated last (enough to see reviews work on your own code without spending
    your plan on old branches, and `--review-prs all` takes every one). Without `--yes` or a terminal, setup exits 2
    listing them, for `--review-prs`. A draft is left until it is ready, and a head commit reviewed already is not
    reviewed again. With no open pull requests, it says a review starts on your next one.
@@ -198,7 +199,7 @@ Without `--repo`, the repo is the GitHub origin of the checkout at `--dir`, or h
 `#number` or URL. `start` calls `POST /api/my/pulls/<number>/review` (console/README.md, "A review asked for by hand"),
 which starts the same review session a tagged commit would, as you: on your own Claude token and Codex sign-in where
 the console has no team keys, and as your reviewer choice on My settings says. It answers with that review's link when
-the head commit is being reviewed, or was, already. It refuses a pull request that is not yours (exit 3), a draft
+the head commit is being reviewed, or has its verdict, already (a review that failed with none may be asked again). It refuses a pull request that is not yours (exit 3), a draft
 (exit 3), and a repo whose default branch's project file does not run its review in a session (exit 2: turn it on with
 `woodshed review enable` first). One refused does not keep the others from starting. `--json` prints a
 `{"event":"review","number":…,"outcome":"started"|"running"|"reviewed"|"refused",…}` line for each, with its

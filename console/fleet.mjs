@@ -2247,11 +2247,27 @@ export function createFleet({
    * A review its author asks for (`woodshed review start`, POST /api/my/pulls/<number>/review): the same review
    * session a tagged commit starts (reviewOnTag), on the pull request's head as it is now, tag or not. Only the author
    * may ask, since it runs on their own sign-ins and their choice on My settings, and only where the project's review
-   * runs in a session. A head a review session already reviewed, or is reviewing, answers with that session.
+   * runs in a session. A head a review session gave its verdict on, or is reviewing, answers with that session; one whose
+   * review failed or was stopped with no verdict may be asked again. One ask at a time for each pull request, so two at
+   * once cannot both start a session.
    * @param {{project: object, number: number, login: string}} args
    * @returns {Promise<{outcome: 'started'|'running'|'reviewed', sessionId: string}|{outcome: 'refused', status: number, reason: string}>}
    */
   async function reviewOnDemand({ project, number, login }) {
+    const key = `${project.name}#${number}`;
+    if (askingReview.has(key)) {
+      console.log('fleet: review asked for, refused', { number, login, reason: 'already being asked for', ...projectField(project) });
+      return { outcome: 'refused', status: 409, reason: `a review of #${number} is being started already: try again in a moment` };
+    }
+    askingReview.add(key);
+    try {
+      return await askReview({ project, number, login });
+    } finally {
+      askingReview.delete(key);
+    }
+  }
+
+  async function askReview({ project, number, login }) {
     const refused = (status, reason) => {
       console.log('fleet: review asked for, refused', { number, login, reason, ...projectField(project) });
       return { outcome: 'refused', status, reason };
@@ -2272,7 +2288,8 @@ export function createFleet({
     if (owner.login !== login) return refused(403, `#${number} is not your pull request: only its author asks for its review, which runs on their sign-ins`);
     if (pull.state !== 'open') return refused(409, `#${number} is not open`);
     if (pull.draft) return refused(409, `#${number} is a draft: mark it ready for review first`);
-    const done = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.sha === pull.head.sha).at(-1);
+    const done = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.sha === pull.head.sha
+      && (ACTIVE_STATUSES.has(s.status) || s.review.conclusion)).at(-1);
     if (done) {
       const outcome = ACTIVE_STATUSES.has(done.status) ? 'running' : 'reviewed';
       console.log('fleet: review asked for', { number, login, outcome, id: done.id, ...projectField(project) });
@@ -2283,6 +2300,8 @@ export function createFleet({
     console.log('fleet: review asked for', { number, login, outcome: 'started', id: started.sessionId, ...projectField(project) });
     return started;
   }
+
+  const askingReview = new Set();
 
   // The review runs as a session (pullRequests.review.runner: woodshed) instead of the Actions workflow: the
   // `[woodshed-review]` tag on the head commit starts it, session/review.sh runs the review, and the console submits

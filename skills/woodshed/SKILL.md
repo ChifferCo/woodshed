@@ -34,7 +34,7 @@ browser.
 - **Reviews of their open pull requests (`pr-reviews`), the main step.** Setup lists their open pull requests on the
   repo and starts the console's review on them, then gives each review's link (`reviews` in the entry). With `--json`
   and no `--yes`, it exits 2 listing them: ask the person which, then rerun with `--review-prs all`, `none`, or numbers
-  (`12,15`). With `--yes` and no `--review-prs` it reviews the 5 updated last. With none open, it says a review starts
+  (`12,15`; `owner/name#12` when several repos are chosen). With `--yes` and no `--review-prs` it reviews the 5 updated last. With none open, it says a review starts
   on their next one. Tell them the links when it ends: the final `reviews` entry repeats them.
 - **Optional, after that: the agent terminal and a first coding session.** When `woodshed status` shows a compatible
   `hc` and the person hasn't chosen a terminal, ask whether they want Herdr for new private sessions, and pass

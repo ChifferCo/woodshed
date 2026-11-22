@@ -432,3 +432,44 @@ test('--review-prs is checked before anything runs', async () => {
   await assert.rejects(fake().invoke('--review-prs', 'some'), /--review-prs must be all, none, or pull request numbers/);
   await assert.rejects(fake().invoke('--review-prs', 'all', '--skip-reviews'), /Choose either --review-prs or --skip-reviews/);
 });
+
+test('closing the input at the review prompt starts no review', async () => {
+  const { invoke } = fake({ tty: true, input: [], commands: ['review pulls|start'], answers: { 'review pulls': pullsOn([pull(9), pull(7)]) } });
+  const after = await invoke('--repo', repo, '--no-session');
+  assert.equal(after.code, EXIT.done);
+  assert.match(after.questions.at(-1), /Review which now\?/);
+  assert.ok(!after.calls.some(([group, sub]) => group === 'review' && sub === 'start'), 'Ctrl-D is not Enter');
+  assert.match(after.events.find((event) => event.step === 'pr-reviews').message, /^No answer, so no review started on acme\/app/);
+});
+
+test('a choice of numbers reaches only the repo that lists them, and owner/name#N names one repo of several', async () => {
+  const lib = 'acme/lib';
+  const pullsBy = { [repo]: [pull(9), pull(7)], [lib]: [pull(9, { url: `https://github.com/${lib}/pull/9` }), pull(4)] };
+  const run = async (which) => {
+    const calls = [];
+    const events = [];
+    // Answered per repo: fake()'s answers are keyed by the command alone.
+    const code = await setupCommand({ origin, args: ['--repo', repo, '--repo', lib, '--no-session', '--review-prs', which], rest: null, json: true, browser: false }, {
+      EXIT, emit: (e) => events.push(e), say: () => {}, fail: (m) => new Error(m), stderr: { write() {} }, cwd: path.resolve('fake-checkout'),
+      open() {}, tty: false, platform: 'test', ask: async () => null, repoOf: () => null,
+      run: async (args) => {
+        const words = args.slice(noBrowser.length);
+        calls.push(words);
+        if (words[0] === '--help') return help(['review pulls|start']);
+        if (words[0] === 'status') return result(0, ready);
+        const at = words[words.indexOf('--repo') + 1];
+        if (words[1] === 'pulls') return result(0, { event: 'pulls', repo: at, review: { on: true, rerun: null, known: true }, pulls: pullsBy[at] });
+        if (words[1] === 'start') return startedFor(words.slice(2, words.indexOf('--repo')).map(Number));
+        return { code: 99, stdout: '' };
+      },
+    });
+    return { code, events, starts: calls.filter(([g, sub]) => g === 'review' && sub === 'start') };
+  };
+  const bare = await run('7,4');
+  assert.equal(bare.code, EXIT.done);
+  assert.deepEqual(bare.starts, [['review', 'start', '7', '--repo', repo], ['review', 'start', '4', '--repo', lib]]);
+  const named = await run(`${lib}#9`);
+  assert.equal(named.code, EXIT.done);
+  assert.deepEqual(named.starts, [['review', 'start', '9', '--repo', lib]], 'not acme/app\'s #9');
+  assert.match(named.events.find((e) => e.step === 'pr-reviews' && e.repo === repo).message, /None of the pull requests you chose is one of your open ones on acme\/app/);
+});

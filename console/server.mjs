@@ -2122,7 +2122,9 @@ export function createHandler({
   }
 
   // `woodshed review start`: the console's review of one of the person's own open pull requests, now (fleet.mjs,
-  // reviewOnDemand). The project is one they may start sessions on, which asks GitHub for their write access to its repo.
+  // reviewOnDemand). The project is one they may start sessions on: GitHub is asked for their write access to an added
+  // project's repo, and the default project's (also the one used when none is named) was proved at sign-in, and is
+  // checked again on each command line call (cliSignIn.mjs authenticate).
   async function myPullReviewWrite(req, res, number, login) {
     if (!login) return reply(res, 409, { error: 'a review asked for by hand needs GitHub sign-in, which this console does not have' });
     if (!fleet.reviewOnDemand) return reply(res, 404, { error: 'this console cannot start a review by hand' });

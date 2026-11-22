@@ -19,7 +19,8 @@ export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--
   --agent <name>         claude or codex, when you use only one: else setup asks for both, and your pull requests
                          get reviews from both
   --reviews <choice>     personal reviewer choice: none, claude, codex, both, default
-  --review-prs <which>   the open pull requests of yours to review now: all, none, or numbers separated by commas
+  --review-prs <which>   the open pull requests of yours to review now: all, none, or numbers separated by commas,
+                         each only on the repos that list it (owner/name#12 for one repo of several)
                          (with --yes and no --review-prs: the ${REVIEW_PRS_DEFAULT} updated last)
   --skip-reviews         skip the project file, your reviewer choice and reviews of your pull requests
   --terminal <name>      optional: agent terminal for new private sessions, herdr or tmux
@@ -37,7 +38,27 @@ const AGENT_HOW = {
   claude: 'For Claude Code, run claude setup-token and paste the token it prints under Claude',
   codex: 'For Codex, run codex login, then paste all of ~/.codex/auth.json (or an OpenAI API key, sk-…) under Codex',
 };
-const REVIEW_PRS_RE = /^(?:all|none|#?[1-9][0-9]{0,8}(?:\s*,\s*#?[1-9][0-9]{0,8})*)$/i;
+// A pull request in --review-prs or the terminal's answer: 12, #12, or owner/name#12 for one repo of several.
+const PICK = '(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?/[\\w.-]+)?#?[1-9][0-9]{0,8}';
+const REVIEW_PRS_RE = new RegExp(`^(?:all|none|${PICK}(?:\\s*,\\s*${PICK})*)$`, 'i');
+
+/**
+ * The pull requests a choice picks on `repo`, of the person's open ones there: `all` the ready ones, else each number
+ * listed there, bare or named for this repo. A number named for another repo, or not on this one's list, is left out,
+ * so one choice for several repos never reaches a pull request it did not mean.
+ * @returns {{numbers: number[], drafts: number[]}}  `drafts`: picked, but reviewed only once ready
+ */
+function picksFor(which, repo, pulls) {
+  if (which === 'none') return { numbers: [], drafts: [] };
+  const ready = pulls.filter((p) => p.draft !== true).map((p) => p.number);
+  if (which === 'all') return { numbers: ready, drafts: [] };
+  const listed = new Map(pulls.map((p) => [p.number, p]));
+  const picked = new Set(which.split(',').map((w) => w.trim()).flatMap((w) => {
+    const [, named, n] = /^(?:(.+)#)?#?(\d+)$/.exec(w) ?? [];
+    return named && named.toLowerCase() !== repo.toLowerCase() ? [] : [Number(n)];
+  }).filter((n) => listed.has(n)));
+  return { numbers: [...picked].filter((n) => listed.get(n).draft !== true), drafts: [...picked].filter((n) => listed.get(n).draft === true) };
+}
 const key = (repo) => repo.toLowerCase();
 
 function options(args, fail) {
@@ -61,7 +82,7 @@ function options(args, fail) {
   if (out['--agent'] && !['claude', 'codex'].includes(out['--agent'])) throw fail('--agent must be claude or codex.');
   if (out['--terminal'] && !TERMINAL_CHOICES.includes(out['--terminal'])) throw fail('--terminal must be herdr or tmux.');
   if (out['--skip-reviews'] && out['--reviews']) throw fail('Choose either --reviews or --skip-reviews.');
-  if (out['--review-prs'] && !REVIEW_PRS_RE.test(out['--review-prs'].trim())) throw fail('--review-prs must be all, none, or pull request numbers separated by commas.');
+  if (out['--review-prs'] && !REVIEW_PRS_RE.test(out['--review-prs'].trim())) throw fail('--review-prs must be all, none, or pull request numbers separated by commas (owner/name#12 for one repo of several).');
   if (out['--skip-reviews'] && out['--review-prs']) throw fail('Choose either --review-prs or --skip-reviews.');
   if (out['--no-session'] && out['--prompt']) throw fail('Choose either --prompt or --no-session.');
   return out;
@@ -348,7 +369,12 @@ export async function setupCommand(args, ctx) {
         if (args.json) ctx.stderr.write(`${lines.join('\n')}\n`);
         else lines.forEach((line) => say(line));
         const answer = await choose('Review which now? Press Enter for all of them, or give numbers separated by commas, or none. ');
-        which = answer === '' || answer === null ? 'all' : answer.trim().toLowerCase();
+        // Closing the input (Ctrl-D) starts nothing: reviews spend the person's plan and post on GitHub.
+        if (answer === null) {
+          report('pr-reviews', 'skipped', `No answer, so no review started on ${repo}. To review one: ${command('review', 'start', '<number>', '--repo', repo)}.`, { repo });
+          continue;
+        }
+        which = answer === '' ? 'all' : answer.trim().toLowerCase();
         if (!REVIEW_PRS_RE.test(which)) return stop('pr-reviews', EXIT.waiting, `Answer all, none, or pull request numbers, or rerun setup with --review-prs. Yours: ${shown}.`, { repo });
       }
       if (!which && opts['--yes']) {
@@ -358,9 +384,13 @@ export async function setupCommand(args, ctx) {
       if (!which) {
         return stop('pr-reviews', EXIT.waiting, `Choose which of your open pull requests on ${repo} to review now with --review-prs all, none, or their numbers. Yours: ${shown}.`, { repo, pulls });
       }
-      const numbers = which === 'all' ? ready.map((p) => p.number) : which === 'none' ? [] : which.split(',').map((n) => Number(n.trim().replace(/^#/, '')));
+      const { numbers, drafts } = picksFor(which, repo, pulls);
+      const draftText = drafts.length ? ` ${drafts.map((n) => `#${n}`).join(', ')} ${drafts.length === 1 ? 'is a draft' : 'are drafts'}: reviewed once ready for review.` : '';
       if (!numbers.length) {
-        report('pr-reviews', 'skipped', which === 'none' ? `You chose to review none of your pull requests on ${repo} now.` : `Your open pull requests on ${repo} are drafts: each is reviewed once it is ready for review.`, { repo });
+        const why = which === 'none' ? `You chose to review none of your pull requests on ${repo} now.`
+          : which === 'all' ? `Your open pull requests on ${repo} are drafts: each is reviewed once it is ready for review.`
+            : `None of the pull requests you chose is one of your open ones on ${repo}.${draftText} Yours: ${shown}.`;
+        report('pr-reviews', 'skipped', why, { repo });
         continue;
       }
       const started = await call('review start', 'review', 'start', ...numbers.map(String), '--repo', repo);
@@ -373,7 +403,7 @@ export async function setupCommand(args, ctx) {
       const linkText = links.map((link) => `#${link.number} ${link.url ?? link.pullUrl}${already[link.outcome] ?? ''}`).join(', ');
       const refusedText = refused.length ? ` Not started: ${refused.join('; ')}.` : '';
       if (!links.length) return stop('pr-reviews', started.code || EXIT.failed, `No review started on ${repo}.${refusedText}`, { repo });
-      report('pr-reviews', 'done', `Reviews on ${repo}: ${linkText}. Each posts its verdict on the pull request; after that, ${next}.${why}${refusedText}`, { repo, reviews: links });
+      report('pr-reviews', 'done', `Reviews on ${repo}: ${linkText}. Each posts its verdict on the pull request; after that, ${next}.${why}${draftText}${refusedText}`, { repo, reviews: links });
     }
   }
 

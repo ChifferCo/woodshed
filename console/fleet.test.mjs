@@ -2845,6 +2845,26 @@ test('a review its author asks for starts on the head now, tag or not, and only 
   assert.deepEqual(chose, { outcome: 'refused', status: 409, reason: 'the author chose no code review' });
 });
 
+test('a review asked for again after one stopped with no verdict starts anew, and two asks at once start one', async () => {
+  const project = { name: 'r', repo: 'o/r', default: true };
+  const { fleet } = reviewSetup();
+  const first = await fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
+  const [session] = fleet.sessions();
+  Object.assign(session, { status: 'failed' });
+  const again = await fleet.reviewOnDemand({ project, number: 7, login: 'joel' });
+  assert.equal(again.outcome, 'started', 'a failed review gave no verdict, so it may be asked again');
+  assert.notEqual(again.sessionId, first.sessionId);
+  const second = fleet.sessions().find((s) => s.id === again.sessionId);
+  Object.assign(second, { status: 'stopped', review: { ...second.review, conclusion: 'APPROVE' } });
+  assert.deepEqual(await fleet.reviewOnDemand({ project, number: 7, login: 'joel' }), { outcome: 'reviewed', sessionId: second.id });
+
+  const both = reviewSetup();
+  const [a, b] = await Promise.all([1, 2].map(() => both.fleet.reviewOnDemand({ project, number: 7, login: 'joel' })));
+  assert.equal(both.fleet.sessions().length, 1);
+  assert.deepEqual([a.outcome, b.outcome, b.status], ['started', 'refused', 409]);
+  assert.match(b.reason, /being started already/);
+});
+
 test('a review runs whom its author chose, and says so on the pull request', async () => {
   const both = { forReview: async () => ({ agents: ['claude', 'codex'], why: null }) };
   const { fleet, calls } = reviewSetup({ reviewAgents: both });
