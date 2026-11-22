@@ -818,6 +818,8 @@ export function runReviewTui({ api, initial, stdin, stdout, color = true, now = 
         state.offerReanalysis = false;
         state.qa = { data: null, started: true, error: null };
         await loadReview();
+        // The shed started the new diff's Q&A with its analysis: read it, after the review that says which diff it is.
+        loadQa(false);
         flash('Re-reviewed: the diff is as the branch is now.');
       } catch (err) {
         if (!finished) flash(`Re-review failed: ${err.message}`, true);

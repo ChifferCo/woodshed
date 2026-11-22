@@ -8,15 +8,21 @@ import { createReviewHost } from './host.mjs';
 function fakeShed({ account, created = false, hasAnalysis = false }) {
   const calls = [];
   const analyses = [];
+  const qas = [];
   return {
     calls,
     analyses,
+    qas,
     load: async () => ({
       ghAccount: async () => account,
       ensureWorktreeReview: async () => ({ ok: true, created }),
       startReviewAnalysisIfNone: ({ sessionName }) => {
         if (hasAnalysis) return false;
         analyses.push(sessionName);
+        return true;
+      },
+      startReviewQaIfNone: ({ sessionName }) => {
+        qas.push(sessionName);
         return true;
       },
       handleReviewRequest: async (req, res, ctx) => {
@@ -104,4 +110,21 @@ test('opening the review starts the analysis once, in any session, and only when
   const callDiff = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'private', load: diffOnly.load }));
   await callDiff('GET', '/shed-review/reviews/claude-0a1b2c3d/diff');
   assert.deepEqual(diffOnly.analyses, [], 'only the page\'s status read is an opening');
+});
+
+test('opening the review starts the Q&A with the analysis, once in the container, whether or not the analysis is there', async (t) => {
+  const fresh = fakeShed({ account: 'a', created: true });
+  const callFresh = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'private', load: fresh.load }));
+  await callFresh('GET', '/shed-review/reviews/claude-0a1b2c3d/qa');
+  assert.deepEqual(fresh.qas, [], 'reading the Q&A is not opening the review');
+  await callFresh('GET', '/shed-review/reviews/claude-0a1b2c3d');
+  assert.deepEqual([fresh.analyses, fresh.qas], [['claude-0a1b2c3d'], ['claude-0a1b2c3d']]);
+  await callFresh('GET', '/shed-review/reviews/claude-0a1b2c3d');
+  assert.deepEqual(fresh.qas, ['claude-0a1b2c3d'], 'a reload or a second viewer asks the shed for nothing more');
+
+  // An analysis from an earlier open: the Q&A is still the shed's to start or keep (it keeps one this diff has).
+  const done = fakeShed({ account: 'a', created: false, hasAnalysis: true });
+  const callDone = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'shared', load: done.load }));
+  await callDone('GET', '/shed-review/reviews/claude-0a1b2c3d');
+  assert.deepEqual([done.analyses, done.qas], [[], ['claude-0a1b2c3d']]);
 });

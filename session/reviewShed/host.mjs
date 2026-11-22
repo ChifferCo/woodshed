@@ -19,14 +19,14 @@ const SESSION_ID_RE = /^[0-9a-f]{8}$/;
 async function loadShed(repoDir) {
   // The shed reads this when its store module loads.
   process.env.WOODSHED_REVIEWS ??= REVIEWS_DIR;
-  const [{ handleReviewRequest, ensureWorktreeReview, startReviewAnalysisIfNone, warmLivePr }, { ghAccount }, { configurePrStatus }] = await Promise.all([
+  const [{ handleReviewRequest, ensureWorktreeReview, startReviewAnalysisIfNone, startReviewQaIfNone, warmLivePr }, { ghAccount }, { configurePrStatus }] = await Promise.all([
     import('../../shared/review/index.mjs'),
     import('../../shared/review/github.mjs'),
     import('../../shared/prStatus.mjs'),
   ]);
   // Without the checkout, the shed cannot name the repo, so its pull request lookup finds nothing and the page gets no PR.
   configurePrStatus({ repoRoot: repoDir, log: (event, fields) => console.log(`review: ${event}`, fields) });
-  return { handleReviewRequest, ensureWorktreeReview, startReviewAnalysisIfNone, warmLivePr, ghAccount };
+  return { handleReviewRequest, ensureWorktreeReview, startReviewAnalysisIfNone, startReviewQaIfNone, warmLivePr, ghAccount };
 }
 
 /**
@@ -99,11 +99,13 @@ export function createReviewHost({
         return true;
       }
       // Once per container, and only when the review has no analysis: a reload, a second viewer, a finished or failed
-      // run, or a Discard pressed since, must not pay for another.
+      // run, or a Discard pressed since, must not pay for another. The Q&A the same way, so it is written while the
+      // reader is on the analysis rather than only once they open its tab: whichever page or terminal opened the review.
       if (!analysisOffered) {
         analysisOffered = true;
         const started = shed.startReviewAnalysisIfNone({ ctx, sessionName });
-        console.log('review: analysis on opening', { reqId, started });
+        const qaStarted = shed.startReviewQaIfNone?.({ ctx, sessionName }) ?? false;
+        console.log('review: analysis on opening', { reqId, started, qaStarted });
       }
       // The first read would otherwise answer before the shed has asked GitHub for the branch's pull request.
       await shed.warmLivePr?.({ sessionName });

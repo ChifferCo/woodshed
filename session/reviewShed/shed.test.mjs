@@ -51,6 +51,13 @@ test('opening the review of a checkout with changes makes the review, with its d
   assert.equal(status.ok, true);
   assert.equal(status.kind, 'worktree');
   assert.notEqual(status.status, 'unknown', 'the analysis was started on opening');
+  // The Q&A too, about this diff, without the Q&A tab asking: with no claude here it cannot run, but it was started.
+  const qa = await get('/reviews/claude-aaaaaaa1/qa');
+  assert.equal(qa.qa?.forDiff, status.createdAt, 'the Q&A was started on opening');
+  assert.equal((await get('/reviews/claude-aaaaaaa1')).ok, true);
+  const tab = await get(`/reviews/claude-aaaaaaa1/qa?forDiff=${encodeURIComponent(status.createdAt)}&first=1`, { method: 'POST' });
+  assert.equal(tab.ok, true, 'the tab\'s first ask joins or keeps it');
+  assert.equal((await get('/reviews/claude-aaaaaaa1/qa')).qa.startedAt, qa.qa.startedAt, 'opened again and the tab asking: the same run');
   assert.equal(status.livePr, null);
   const diff = await get('/reviews/claude-aaaaaaa1/diff');
   assert.deepEqual(diff.files.map((f) => f.path), ['a.mjs']);

@@ -66,7 +66,7 @@ exec ${REAL_GIT} "$@"
 process.env.PATH = `${BIN}:${process.env.PATH}`;
 process.env.WOODSHED_REVIEWS = path.join(DIR, 'reviews');
 
-const { handleReviewRequest, failedQaRecord, removeReviewSession, pullRequestDiff, withoutLostAsks } = await import('./index.mjs');
+const { handleReviewRequest, failedQaRecord, removeReviewSession, pullRequestDiff, withoutLostAsks, startReviewQaIfNone } = await import('./index.mjs');
 const { writeSessionReview, writeDiff, readQa, writeQa } = await import('./store.mjs');
 const { makeSnapshot, removeSnapshot, sweepStaleSnapshots, reservedSnapshotBytes } = await import('./qa.mjs');
 
@@ -253,6 +253,73 @@ test('a first-open ask keeps the Q&A the diff already has; Ask again replaces it
   const again = await call('POST', `/reviews/${session}/qa`);
   assert.equal(again.body.status, 'running');
   await until(() => (readQa(session)?.status === 'ready' && readQa(session).startedAt !== done.startedAt));
+});
+
+test('opening the review starts its Q&A once: a second opening, a second viewer and the tab\'s first ask reuse it', async () => {
+  const session = 'claude-0e0e0e01';
+  makeReview(session, path.join(DIR, 'opened'), '2026-11-19T17:00:00.000Z');
+  const starts = [];
+  const ctx = { reqId: 'open', log: (event) => { if (event === 'review.qa_started') starts.push(event); }, json: () => {} };
+  assert.equal(startReviewQaIfNone({ ctx, sessionName: session }), true, 'started on opening');
+  assert.equal(readQa(session).status, 'running', 'written at once, for the tab to show its progress');
+  assert.equal(readQa(session).forDiff, '2026-11-19T17:00:00.000Z');
+  // While it runs: opened again (a reload, a second viewer), and the tab asking by itself, all join it.
+  assert.equal(startReviewQaIfNone({ ctx, sessionName: session }), false);
+  const tab = await call('POST', `/reviews/${session}/qa?forDiff=${encodeURIComponent('2026-11-19T17:00:00.000Z')}&first=1`);
+  assert.deepEqual([tab.status, tab.body.status], [200, 'running']);
+  const done = await until(() => (readQa(session)?.status === 'ready' ? readQa(session) : null));
+  // Finished: the same again keeps it.
+  assert.equal(startReviewQaIfNone({ ctx, sessionName: session }), false);
+  const later = await call('POST', `/reviews/${session}/qa?first=1`);
+  assert.deepEqual([later.body.kept, readQa(session).startedAt], [true, done.startedAt]);
+  assert.equal(starts.length, 1, 'one run for the commit');
+});
+
+test('a Re-review starts a new Q&A for the new diff, once, with its analysis', async () => {
+  const session = 'claude-0e0e0e02';
+  const origin = path.join(DIR, 'rereview-origin.git');
+  const wt = path.join(DIR, 'rereview-wt');
+  const g = (cwd, ...args) => execFileSync(REAL_GIT, ['-C', cwd, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  execFileSync(REAL_GIT, ['init', '-q', '--bare', '-b', 'main', origin]);
+  execFileSync(REAL_GIT, ['clone', '-q', origin, wt], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(wt, 'a.txt'), 'one\n');
+  g(wt, 'add', '-A');
+  g(wt, 'commit', '-q', '-m', 'base');
+  g(wt, 'push', '-q', 'origin', 'HEAD:main');
+  g(wt, 'remote', 'set-head', 'origin', 'main');
+  g(wt, 'checkout', '-q', '-b', 'feature');
+  fs.writeFileSync(path.join(wt, 'a.txt'), 'two\n');
+  const starts = [];
+  const ctx = {
+    reqId: 't', repoRoot: wt, worktreePathFor: () => wt,
+    log: (event, fields) => { if (event === 'review.qa_started') starts.push(fields); },
+    json: (res, status, body) => { res.status = status; res.body = body; },
+  };
+  const take = async () => {
+    const res = {};
+    await handleReviewRequest({ method: 'POST', url: `/reviews/${session}`, headers: {} }, res, ctx);
+    return res;
+  };
+  const createdAt = () => JSON.parse(fs.readFileSync(path.join(process.env.WOODSHED_REVIEWS, session, 'session.json'), 'utf8')).createdAt;
+
+  assert.equal((await take()).status, 200);
+  const first = createdAt();
+  assert.equal(starts.length, 1, 'taking the review started its Q&A');
+  await until(() => (readQa(session)?.status === 'ready' ? readQa(session) : null));
+  assert.equal(startReviewQaIfNone({ ctx, sessionName: session }), false, 'opened afterwards: kept');
+
+  fs.writeFileSync(path.join(wt, 'b.txt'), 'b\n');
+  assert.equal((await take()).status, 200);
+  assert.notEqual(createdAt(), first);
+  assert.equal(starts.length, 2, 'the Re-review started a new one');
+  assert.deepEqual([readQa(session)?.status, readQa(session)?.forDiff], ['running', createdAt()], 'about the new diff, the old one gone');
+  // The tab, and the review opened again, join the new diff's run.
+  const tab = await call('POST', `/reviews/${session}/qa?forDiff=${encodeURIComponent(createdAt())}&first=1`);
+  assert.equal(tab.body.status, 'running');
+  assert.equal(startReviewQaIfNone({ ctx, sessionName: session }), false);
+  await until(() => (readQa(session)?.status === 'ready' ? readQa(session) : null));
+  assert.equal(starts.length, 2);
+  await removeReviewSession({ ctx, sessionName: session });
 });
 
 // The copy is the tree's bytes as git stores them, which is what the diff compares. A smudge filter configured in the
@@ -622,7 +689,8 @@ test('the worktree review records its tree and holds it with a ref, or records w
     const asked = await call('POST', `/reviews/${session}/qa`);
     assert.deepEqual([asked.status, asked.body.code], [409, 'retaking']);
     assert.equal((await taking).status, 200);
-    assert.equal(readQa(session), null, 'nothing was started');
+    // The take starts its new diff's Q&A itself, with its analysis: the refused ask lost nothing.
+    assert.equal(readQa(session)?.forDiff, record().createdAt, 'the take\'s own Q&A, for the diff it took');
 
     // Two takes at once, both slowed: they go one after the other, and the tree the record names is the one held.
     const [x, y] = await Promise.all([post(), (async () => { fs.writeFileSync(path.join(wt, 'c.txt'), 'c\n'); return post(); })()]);

@@ -760,6 +760,20 @@ export function startReviewAnalysisIfNone({ ctx, sessionName }) {
 }
 
 /**
+ * Start the Q&A when the review is opened, alongside the analysis, so it is written before the reader opens its tab.
+ * Only when this diff has none: one going is joined, and one finished, failed or cut off is kept (its Ask again is the
+ * person's to press). A take in progress starts the new diff's itself.
+ *
+ * @returns {boolean}  whether it started one
+ */
+export function startReviewQaIfNone({ ctx, sessionName }) {
+  if (DISABLED || takes.has(sessionName)) return false;
+  const review = readSessionReview(sessionName);
+  if (!review) return false;
+  return Boolean(startQa({ ctx, session: sessionName, review, first: true }).started);
+}
+
+/**
  * Everything a killed session's review owns: its jobs, its state on disk, its
  * worktree and its branch.
  *
@@ -1477,6 +1491,8 @@ async function takeWorktreeReview(res, ctx, session) {
   qaRuns.delete(session);
   qaAsks.delete(session);
   beginAnalysis({ ctx, session, review: made.review });
+  // The Q&A alongside it, for this diff: what the reader opens the tab to find should be written by then.
+  startQa({ ctx, session, review: made.review, first: true });
 
   log('review.worktree_started', { reqId, session, cancelled, files: made.review.meta.changedFiles });
   return json(res, 200, {
@@ -1527,6 +1543,7 @@ async function takeRefreshReview(res, ctx, session) {
   qaRuns.delete(session);
   qaAsks.delete(session);
   beginAnalysis({ ctx, session, review: done.review });
+  startQa({ ctx, session, review: done.review, first: true });
 
   log('review.refresh_started', {
     reqId, session, cancelled, headSha: done.headSha?.slice(0, 8), files: done.review?.meta?.changedFiles,
@@ -2362,12 +2379,27 @@ function handleQaStart(res, ctx, session, forDiff, first = false) {
     log('review.qa_refused_retaking', { reqId, session });
     return json(res, 409, { ok: false, code: 'retaking', error: 'this review is being taken again: ask once that has finished' });
   }
+  const started = startQa({ ctx, session, review, first });
+  if (started.refused) return json(res, 409, { ok: false, code: 'retaking', error: 'a Q&A of the previous diff is still stopping: ask again in a moment' });
+  return json(res, 200, started.kept ? { ok: true, status: started.status, kept: true } : { ok: true, status: 'running' });
+}
+
+/**
+ * Start this diff's Q&A, or join or keep the one it has. Shared by the route and by the review's own start (the
+ * review opened, or taken again), which is why it answers rather than writes a response.
+ *
+ * `first`: keep a Q&A this diff already has, whatever its state, rather than pay for another (see handleQaStart).
+ *
+ * @returns {{joined: true} | {refused: true} | {kept: true, status: string} | {started: true}}
+ */
+function startQa({ ctx, session, review, first }) {
+  const { log, reqId } = ctx;
   const going = qaRuns.get(session);
   if (going) {
     // Joined only when it is this diff's.
-    if ((going.forDiff ?? null) === (review.createdAt ?? null)) return json(res, 200, { ok: true, status: 'running' });
+    if ((going.forDiff ?? null) === (review.createdAt ?? null)) return { joined: true };
     log('review.qa_refused_old_run', { reqId, session });
-    return json(res, 409, { ok: false, code: 'retaking', error: 'a Q&A of the previous diff is still stopping: ask again in a moment' });
+    return { refused: true };
   }
   if (first) {
     const had = readQa(session);
@@ -2376,7 +2408,7 @@ function handleQaStart(res, ctx, session, forDiff, first = false) {
     // Ask again for each, and a first ask is not a person choosing to pay again.
     if (had && (had.forDiff ?? null) === (review.createdAt ?? null)) {
       log('review.qa_first_ask_kept', { reqId, session, status: had.status });
-      return json(res, 200, { ok: true, status: had.status, kept: true });
+      return { kept: true, status: had.status };
     }
   }
   qaGen += 1;
@@ -2400,7 +2432,7 @@ function handleQaStart(res, ctx, session, forDiff, first = false) {
     .finally(function release() {
       if (qaIsLive(session, gen)) qaRuns.delete(session);
     });
-  return json(res, 200, { ok: true, status: 'running' });
+  return { started: true };
 }
 
 /**
