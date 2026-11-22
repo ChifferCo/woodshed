@@ -850,6 +850,54 @@ test('a refresh whose record fails to save leaves the new diff naming its own ta
   assert.deepEqual([asked.status, asked.body.code], [409, 'other-diff']);
 });
 
+test('a refresh of a branch to a new head starts that diff\'s Q&A itself, before anything asks for one', async () => {
+  const session = 'claude-0e0e0e03';
+  const origin = path.join(DIR, 'refresh-qa-origin.git');
+  const repo = path.join(DIR, 'refresh-qa-clone');
+  const wt = path.join(DIR, 'refresh-qa-wt');
+  const g = (cwd, ...args) => execFileSync(REAL_GIT, ['-C', cwd, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  execFileSync(REAL_GIT, ['init', '-q', '--bare', '-b', 'main', origin]);
+  execFileSync(REAL_GIT, ['clone', '-q', origin, repo], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(repo, 'base.txt'), 'base\n');
+  g(repo, 'add', '-A'); g(repo, 'commit', '-q', '-m', 'base'); g(repo, 'push', '-q', 'origin', 'HEAD:main');
+  g(repo, 'remote', 'set-head', 'origin', 'main');
+  g(repo, 'checkout', '-q', '-b', 'feature');
+  fs.writeFileSync(path.join(repo, 'f.txt'), 'one\n');
+  g(repo, 'add', '-A'); g(repo, 'commit', '-q', '-m', 'one'); g(repo, 'push', '-q', 'origin', 'HEAD:feature');
+  const first = g(repo, 'rev-parse', 'HEAD');
+  g(repo, 'worktree', 'add', '-q', '--detach', wt, first);
+  const takenAt = '2026-11-19T21:00:00.000Z';
+  writeSessionReview({
+    session,
+    review: {
+      kind: 'branch', pr: null, branch: 'feature', baseRef: 'main', headSha: first, reviewBranch: null,
+      worktree: wt, createdAt: takenAt, meta: { title: 'feature', body: '', headRefName: 'feature', baseRefName: 'main' },
+    },
+  });
+  writeDiff({ session, diff: { files: [{ path: 'f.txt', additions: 1, deletions: 0, status: 'added', hunks: [] }], createdAt: takenAt } });
+  writeQa({ session, qa: { forDiff: takenAt, status: 'ready', items: [{ id: 'q1', parent: null, depth: 1, question: 'q', answer: 'about one' }] } });
+  fs.writeFileSync(path.join(repo, 'f.txt'), 'two\n');
+  g(repo, 'commit', '-q', '-am', 'two'); g(repo, 'push', '-q', 'origin', 'HEAD:feature');
+  const events = [];
+  const ctx = {
+    reqId: 't', repoRoot: repo, log: (event) => events.push(event), worktreePathFor: () => wt,
+    json: (res, status, body) => { res.status = status; res.body = body; },
+  };
+  const req = async (method, url) => { const res = {}; await handleReviewRequest({ method, url, headers: {} }, res, ctx); return res; };
+  process.env.WOODSHED_TEST_ORIGIN_URL = 'https://github.com/example-org/example-repo.git';
+  let refreshed;
+  try { refreshed = await req('POST', `/reviews/${session}/refresh`); } finally { delete process.env.WOODSHED_TEST_ORIGIN_URL; }
+  assert.equal(refreshed.status, 200, JSON.stringify(refreshed.body));
+  assert.equal(refreshed.body.unchanged, false);
+  const diff = (await req('GET', `/reviews/${session}/diff`)).body;
+  assert.notEqual(diff.createdAt, takenAt);
+  // Read before any POST /qa: the refresh started it, for the new diff, and the old one's answers are gone.
+  const qa = (await req('GET', `/reviews/${session}/qa`)).body.qa;
+  assert.equal(qa?.forDiff, diff.createdAt, 'the new diff\'s Q&A, started by the refresh');
+  assert.equal(events.filter((e) => e === 'review.qa_started').length, 1);
+  await until(() => (readQa(session)?.status !== 'running' ? readQa(session) : null));
+});
+
 test('a worktree review with no snapshot fails before anything is asked', async () => {
   const session = 'claude-8c8c8c8c';
   makeReview(session, path.join(DIR, 'old'), '2026-11-19T15:00:00.000Z');
