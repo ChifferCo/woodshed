@@ -768,8 +768,12 @@ use, so a session sends the refreshed one back at stop (`POST /agent-auth`, with
 given), kept only while the saved one is still that sign-in (not a key or login saved since, nor another session's
 refresh) and does not run out before it. Antigravity's Google sign-in is its file
 `~/.gemini/antigravity-cli/antigravity-oauth-token`, which agy writes in place of the keyring where the machine has none,
-as in a session: My settings has the person sign in from the Terminal tab of one of their own sessions (`agy -p`, which
-prints a link and takes the code back) and paste the file. Google keeps its refresh token as it is, so nothing goes back
+as in a session, so the person's own computer cannot hand it over: My settings has them run `woodshed-sign-in
+antigravity` in the Terminal tab of one of their own sessions (`session/bin/woodshed-sign-in`). It runs `agy -p` in a
+folder of its own, which prints a link and takes the code back, and sends the file agy wrote to the session API's
+`POST /agent-sign-in`, which saves it as the owner's (`sessionApi: Antigravity CLI sign-in saved from a session`): the
+sign-in is never shown in the terminal, and the folder is deleted. Only the owner's own private session may, never a
+shared one, a question, QA, a review or a tainted session (`sessionApi: sign-in from a session refused` with `why`). Google keeps its refresh token as it is, so nothing goes back
 at stop. Their **Model** is a name their own `--model` takes, blank for the agent's default (OpenCode's is
 `provider/model`); **Effort** and **Permissions** offer what each one's command line has (`efforts` and
 `permissionModes` in the registry). None of them gets the console's MCP servers yet.

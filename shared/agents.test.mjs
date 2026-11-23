@@ -57,6 +57,7 @@ test('own sign-ins: a key or a login file each agent writes, checked before it i
   assert.throws(() => agents.checkSignIn('antigravity', JSON.stringify({ ...agyLogin, token: { access_token: 'a' } })), /not agy’s Google sign-in/, 'with nothing to renew it from');
   assert.throws(() => agents.checkSignIn('antigravity', 'sk-nope'), /Gemini API key \(AIza…\) or the contents of/);
   assert.equal(agents.agent('antigravity').signIn.rotates, false, 'Google keeps its refresh token as it is');
+  assert.deepEqual(agents.OWN_SIGN_IN_AGENTS.filter((id) => agents.agent(id).signIn.inSession), ['antigravity'], 'only a sign-in kept in a file where there is no keyring is made in a session');
 
   const oc = { anthropic: { type: 'api', key: 'sk-ant-x' }, openai: { type: 'oauth', refresh: 'r', access: 'a', expires: 1 } };
   assert.equal(agents.checkSignIn('opencode', JSON.stringify(oc)), JSON.stringify(oc));

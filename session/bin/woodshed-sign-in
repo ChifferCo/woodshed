@@ -1,0 +1,48 @@
+#!/bin/bash
+# Makes its owner's sign-in for an agent whose sign-in is made in a session (shared/agents.cjs, `signIn.inSession`), and
+# saves it on their My settings, never showing it:
+#
+#   woodshed-sign-in antigravity
+#
+# Antigravity's Google sign-in: agy keeps it in a file only where the machine has no keyring, as in a session, so the
+# person's own computer cannot hand it over. agy signs in here in a folder of its own (its link, then the code pasted
+# back), with no key and no sign-in of this session's own in reach, and the file it writes goes to the console's
+# POST /agent-sign-in (console/sessionApi.mjs), which saves it as the owner's. The folder is deleted however it ends.
+# Only the owner's own private session saves one: the console refuses any other.
+set -euo pipefail
+
+agent=${1:-}
+if [ "$agent" != antigravity ]; then
+  echo "usage: woodshed-sign-in antigravity" >&2
+  exit 2
+fi
+: "${WOODSHED_CONSOLE_URL:?WOODSHED_CONSOLE_URL is not set: run this in a Woodshed session's Terminal tab}"
+: "${SESSION_TOKEN:?SESSION_TOKEN is not set: run this in a Woodshed session's Terminal tab}"
+
+umask 077
+home=$(mktemp -d /tmp/woodshed-sign-in.XXXXXX)
+trap 'rm -rf "$home"' EXIT
+mkdir -p "$home/.gemini/antigravity-cli/cache"
+# As configureAntigravity writes it: no colour scheme to pick, and Google's data-sharing question left unanswered.
+jq -n '{consumerOnboardingComplete: true, enterpriseOnboardingComplete: false, onboardingComplete: true}' \
+  > "$home/.gemini/antigravity-cli/cache/onboarding.json"
+login=$home/.gemini/antigravity-cli/antigravity-oauth-token
+
+echo "Signing Antigravity in with your Google account. Open the link agy prints, sign in with the account that has"
+echo "your plan, and paste the code back here within the minute agy waits."
+# No key (GEMINI_API_KEY, or the session's own in its file) and no sign-in of this session's own: agy asks for Google's.
+env -u GEMINI_API_KEY HOME="$home" WOODSHED_AGENT_AUTH_FILE=/dev/null "$(dirname "$0")/agy" -p "Say ok." || true
+if [ ! -s "$login" ]; then
+  echo "No sign-in was saved: agy did not finish signing in. Run woodshed-sign-in antigravity again." >&2
+  exit 1
+fi
+
+answer=$home/answer
+code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
+  | curl -sS -X POST -K - -H 'x-woodshed-agent: antigravity' -H 'content-type: application/json' \
+    --data-binary "@$login" -o "$answer" -w '%{http_code}' --max-time 15 "$WOODSHED_CONSOLE_URL/agent-sign-in") || code=000
+if [ "$code" != 200 ]; then
+  echo "The console did not save it (status $code): $(jq -r '.error // empty' "$answer" 2>/dev/null || true)" >&2
+  exit 1
+fi
+echo "Saved on My settings: your next Antigravity session runs on this Google sign-in. Reload My settings to see it."

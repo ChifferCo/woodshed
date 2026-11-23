@@ -70,10 +70,12 @@
         secret: 'antigravity-auth', label: 'Antigravity', placeholder: 'AIza… or the contents of ~/.gemini/antigravity-cli/antigravity-oauth-token', maxChars: 20_000,
         // Google keeps a refresh token as it is when it refreshes the access token, so every session can hold the same one.
         rotates: false,
+        // Made in a session's terminal and sent to the console by session/bin/woodshed-sign-in (sessionApi.mjs,
+        // POST /agent-sign-in), never printed.
+        inSession: true,
         kinds: 'your Google sign-in (AI Pro or Ultra), or a Gemini API key',
         steps: [
-          { text: 'agy keeps a Google sign-in in a file only where the machine has no keyring, as in a session. In the Terminal tab of one of your own My Woodshed sessions, sign in with your Google account: open the link it prints, sign in, and paste the code back within the minute agy waits.', command: 'agy -p "say ok"' },
-          { text: 'Print the sign-in it saved, then delete it from that session:', command: 'jq . ~/.gemini/antigravity-cli/antigravity-oauth-token && rm ~/.gemini/antigravity-cli/antigravity-oauth-token' },
+          { text: 'In the Terminal tab of one of your own My Woodshed sessions, run this, open the link it prints, sign in with the Google account that has your plan, and paste the code back within the minute agy waits. It saves the sign-in here without showing it, then reload this page.', command: 'woodshed-sign-in antigravity' },
           { text: 'Or paste a Gemini API key (AIza…) from Google AI Studio (aistudio.google.com/apikey).' },
         ],
       },

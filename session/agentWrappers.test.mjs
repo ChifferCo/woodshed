@@ -45,3 +45,51 @@ test('agy gets no key for a Google sign-in, and no D-Bus, so it keeps that sign-
 test('opencode is run as it is', async (t) => {
   assert.deepEqual(await wrapped(t, 'opencode', { auth: '{"anthropic":{"type":"api","key":"k"}}' }), { argv: ['--model', 'm', 'hi there'], xai: null, gemini: null, update: null, dbus: null });
 });
+
+// woodshed-sign-in over a stand-in agy, which signs in by writing its file where it is told HOME is, and a stand-in
+// console's /agent-sign-in.
+test('woodshed-sign-in sends the Google sign-in agy saved to the console, never printing it, and keeps no copy', async (t) => {
+  const http = await import('node:http');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sign-in-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const login = '{"token":{"access_token":"at-secret","refresh_token":"rt-secret"},"auth_method":"consumer"}';
+  const real = path.join(dir, 'agy');
+  // What it got: no key, D-Bus or sign-in of the session's own, and the onboarding the entrypoint writes.
+  fs.writeFileSync(real, `#!/bin/bash\nprintf '%s %s %s' "\${GEMINI_API_KEY:-none}" "$(jq -c . "$HOME/.gemini/antigravity-cli/cache/onboarding.json")" "$*" > ${JSON.stringify(path.join(dir, 'seen'))}\nprintf '%s' '${login}' > "$HOME/.gemini/antigravity-cli/antigravity-oauth-token"\n`, { mode: 0o755 });
+  const got = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; }).on('end', () => {
+      got.push({ url: req.url, auth: req.headers.authorization, agent: req.headers['x-woodshed-agent'], body });
+      res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const ownKey = path.join(dir, 'agent-auth');
+  fs.writeFileSync(ownKey, 'AIzaSyTheSessionsOwnKey', { mode: 0o600 });
+  const { stdout, stderr } = await run(fileURLToPath(new URL('./bin/woodshed-sign-in', import.meta.url)), ['antigravity'], {
+    env: {
+      PATH: process.env.PATH, HOME: dir, WOODSHED_REAL_AGY: real, WOODSHED_AGENT_AUTH_FILE: ownKey, GEMINI_API_KEY: 'AIzaSyExported', TMPDIR: dir,
+      WOODSHED_CONSOLE_URL: `http://127.0.0.1:${server.address().port}`, SESSION_TOKEN: 'session-token',
+    },
+  });
+  assert.deepEqual(got, [{ url: '/agent-sign-in', auth: 'Bearer session-token', agent: 'antigravity', body: login }]);
+  assert.equal(fs.readFileSync(path.join(dir, 'seen'), 'utf8'), 'none {"consumerOnboardingComplete":true,"enterpriseOnboardingComplete":false,"onboardingComplete":true} -p Say ok.');
+  assert.match(stdout, /Saved on My settings/);
+  assert.doesNotMatch(stdout + stderr, /secret/, 'the sign-in is never printed');
+  assert.ok(!fs.existsSync(path.join(dir, '.gemini')), 'nothing is written in the session\'s own home');
+  assert.deepEqual(fs.readdirSync('/tmp').filter((f) => f.startsWith('woodshed-sign-in.')).filter((f) => fs.statSync(path.join('/tmp', f)).mtimeMs > Date.now() - 60_000), [], 'its folder is gone');
+});
+
+test('woodshed-sign-in says so when agy did not sign in, and sends nothing', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sign-in-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const real = path.join(dir, 'agy');
+  fs.writeFileSync(real, '#!/bin/bash\nexit 1\n', { mode: 0o755 });
+  await assert.rejects(run(fileURLToPath(new URL('./bin/woodshed-sign-in', import.meta.url)), ['antigravity'], {
+    env: { PATH: process.env.PATH, HOME: dir, WOODSHED_REAL_AGY: real, WOODSHED_CONSOLE_URL: 'http://127.0.0.1:9', SESSION_TOKEN: 't' },
+  }), (err) => /No sign-in was saved/.test(err.stderr));
+  await assert.rejects(run(fileURLToPath(new URL('./bin/woodshed-sign-in', import.meta.url)), ['grok'], { env: { PATH: process.env.PATH } }),
+    (err) => err.code === 2 && /usage/.test(err.stderr));
+});
