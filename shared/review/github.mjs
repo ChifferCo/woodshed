@@ -261,6 +261,8 @@ export async function setPrTitle({ pr, slug, title }) {
 // startLine and originalStartLine and no side at all. Without it a comment
 // written on a deleted line is drawn beside the added one that replaced it,
 // which is the wrong row and looks confident.
+const CHECK_RUN_FIELDS = 'databaseId name status conclusion title summary detailsUrl permalink startedAt completedAt';
+
 const PENDING_QUERY = `query($owner:String!,$repo:String!,$pr:Int!){
   repository(owner:$owner,name:$repo){
     pullRequest(number:$pr){
@@ -287,11 +289,6 @@ const PENDING_QUERY = `query($owner:String!,$repo:String!,$pr:Int!){
         nodes{ id fullDatabaseId author{ login } body url createdAt isMinimized viewerCanDelete viewerDidAuthor }
       }
       labels(first:30){ nodes{ name } }
-      commits(last:1){
-        nodes{ commit{ oid checkSuites(first:30){ nodes{ app{ slug name } checkRuns(first:30,filterBy:{checkType:LATEST}){
-          nodes{ name status conclusion title summary detailsUrl permalink startedAt completedAt }
-        } } } } }
-      }
       reviewThreads(first:100){
         pageInfo{ hasNextPage }
         nodes{
@@ -480,9 +477,8 @@ export async function fetchReviewState({ pr, slug }) {
     said,
     // The reviews Woodshed's review (Claude Code, Codex or both) posted, read
     // into verdicts and findings: aiReviews.mjs.
-    // The head commit's check runs and the pull request's labels, for the merge risk and QA (prChecks.mjs).
+    // The base and the labels, for the merge risk and QA (prChecks.mjs); their checks are fetchPrChecks's own read.
     baseRef: node.baseRefName || null,
-    checkRuns: checkRunsOf(node.commits?.nodes?.[0]?.commit),
     labels: (node.labels?.nodes || []).map((l) => l?.name).filter(Boolean),
     aiReviews: aiReviewsOf({ verdicts: node.verdicts?.nodes || [], threads: node.reviewThreads?.nodes || [], headSha: node.headRefOid || null }),
     truncated,
@@ -852,6 +848,44 @@ export function graphqlArgv({ query, strings = {}, numbers = {} }) {
     args.push('-F', `${key}=${n}`);
   }
   return args;
+}
+
+// The merge risk and QA checks on the head commit, by name, in a read of their own: a token GitHub refuses part of a
+// check suite to (an App it may not see) then costs the tab its two boxes, never the comments or a verdict, which
+// fetchReviewState reads. No App field is asked for, since that is what a restricted token was refused.
+const CHECKS_QUERY = `query($owner:String!,$repo:String!,$pr:Int!,$risk:String!,$qa:String!){
+  repository(owner:$owner,name:$repo){
+    pullRequest(number:$pr){
+      commits(last:1){
+        nodes{ commit{ oid checkSuites(first:100){
+          pageInfo{ hasNextPage }
+          nodes{
+            risk: checkRuns(first:10,filterBy:{checkName:$risk,checkType:LATEST}){ nodes{ ${CHECK_RUN_FIELDS} } }
+            qa: checkRuns(first:10,filterBy:{checkName:$qa,checkType:LATEST}){ nodes{ ${CHECK_RUN_FIELDS} } }
+          }
+        } } }
+      }
+    }
+  }
+}`;
+
+/**
+ * The head commit's runs of the merge risk and QA checks, by their names (prChecks.mjs, checkNamesOf). `partial`: the
+ * commit has more check suites than one page, so a check not found may only be past it.
+ *
+ * @returns {Promise<{ok: true, runs: object[], partial: boolean} | {ok: false, status: number, error: string}>}
+ */
+export async function fetchPrChecks({ pr, slug, names }) {
+  const [owner, repo] = String(slug).split('/');
+  const result = await run(
+    'gh',
+    graphqlArgv({ query: CHECKS_QUERY, strings: { owner, repo, risk: names.mergeRisk, qa: names.qa }, numbers: { pr } }),
+    { timeoutMs: GH_TIMEOUT_MS },
+  );
+  const read = readGraphql(result);
+  if (!read.ok) return read;
+  const commit = read.data?.repository?.pullRequest?.commits?.nodes?.[0]?.commit;
+  return { ok: true, runs: checkRunsOf(commit), partial: !!commit?.checkSuites?.pageInfo?.hasNextPage };
 }
 
 const VIEWED_QUERY = `query($owner:String!,$repo:String!,$pr:Int!,$after:String){

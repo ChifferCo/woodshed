@@ -604,8 +604,10 @@ and `pullRequests.qa.check`, read from `origin/<base>` so the pull request canno
 when it names none). The merge risk is the check's tier and reason (its title, `High: …`); with no check on the head,
 the `merge risk: <tier>` label the review left, said to be an older commit's. A check the project file asks for and the
 commit lacks says it has not run; one it does not ask for and GitHub lacks is left out. They come in `GET /comments` as
-`checks: {mergeRisk, qa}`, read in the same GraphQL call as the reviews. Nothing here gates anything: the decision
-brief is still the console's.
+`checks: {mergeRisk, qa}`, from a GraphQL read of their own (`fetchPrChecks`, the two names only, no App field): a
+token GitHub refuses part of a check suite to then gets `checks: null` and the shed logs `review.checks_unread`, while
+the comments, the reviews and a verdict go on as before. Past 100 check suites a check not found is not called
+missing. Nothing here gates anything: the decision brief is still the console's.
 
 A follow-up is a chat turn with `about: {review, finding}`: ids only. The shed reads the point again from GitHub
 (`aiReviewPoint` in index.mjs), refuses one no longer there (409), and puts it in the prompt fenced like the rest,

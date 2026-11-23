@@ -36,21 +36,23 @@ export function checkNamesOf(text) {
   };
 }
 
-/** The check runs on a commit, flat: GraphQL's `checkSuites { app, checkRuns }`. */
+/** The check runs on a commit, flat: fetchPrChecks's `checkSuites { risk, qa }`, each a `checkRuns` read by name. */
 export function checkRunsOf(commit) {
   const runs = [];
   for (const suite of commit?.checkSuites?.nodes || []) {
-    for (const run of suite?.checkRuns?.nodes || []) {
-      if (run?.name) runs.push({ ...run, app: suite.app?.slug || suite.app?.name || null });
+    for (const key of ['risk', 'qa', 'checkRuns']) {
+      for (const run of suite?.[key]?.nodes || []) if (run?.name) runs.push(run);
     }
   }
   return runs;
 }
 
-// The newest run of that name: a later run (a QA run again, a review of a pushed commit) replaces the one before.
+// The newest run of that name: a later run (a QA run again, a review of a pushed commit) replaces the one before. By
+// GitHub's id, which a run has from the moment it is queued, where its times come only once it starts and ends.
 function newest(runs, name) {
   const named = runs.filter((r) => r.name === name);
-  named.sort((a, b) => String(b.completedAt || b.startedAt || '').localeCompare(String(a.completedAt || a.startedAt || '')));
+  named.sort((a, b) => (Number(b.databaseId) || 0) - (Number(a.databaseId) || 0)
+    || String(b.completedAt || b.startedAt || '').localeCompare(String(a.completedAt || a.startedAt || '')));
   return named[0] || null;
 }
 
@@ -62,7 +64,6 @@ function shape(run, headSha) {
     title: String(run.title || '').trim(),
     summary: String(run.summary || '').trim(),
     url: run.permalink || run.detailsUrl || null,
-    app: run.app || null,
     at: run.completedAt || run.startedAt || null,
     commit: headSha,
     current: true,
@@ -73,11 +74,12 @@ function shape(run, headSha) {
  * The merge risk and QA on the pull request's head commit, for the AI reviews tab. Merge risk is the check's tier and
  * reason (its title, `High: touches the billing path`), else the `merge risk: <tier>` label, which stays on the pull
  * request after a push the review has not read yet, so it is said to be of an older commit. Null for one neither found
- * nor asked for by the project file; `{missing: true}` for one asked for and not found on the head commit.
+ * nor asked for by the project file; `{missing: true}` for one asked for and not found on the head commit, unless the
+ * read was `partial` (past one page of check suites), where not found is not the same as not there.
  *
- * @param {{runs: object[], labels: string[], headSha: string|null, names: ReturnType<typeof checkNamesOf>}} read
+ * @param {{runs: object[], labels: string[], headSha: string|null, names: ReturnType<typeof checkNamesOf>, partial?: boolean}} read
  */
-export function prChecksOf({ runs = [], labels = [], headSha = null, names = checkNamesOf(null) }) {
+export function prChecksOf({ runs = [], labels = [], headSha = null, names = checkNamesOf(null), partial = false }) {
   let mergeRisk = null;
   const risk = newest(runs, names.mergeRisk);
   if (risk) {
@@ -90,16 +92,16 @@ export function prChecksOf({ runs = [], labels = [], headSha = null, names = che
     if (label) {
       const tier = TIERS.find((t) => t.toLowerCase() === label[1].toLowerCase());
       mergeRisk = {
-        name: names.mergeRisk, status: 'completed', conclusion: null, title: '', summary: '', url: null, app: null, at: null,
+        name: names.mergeRisk, status: 'completed', conclusion: null, title: '', summary: '', url: null, at: null,
         commit: null, current: false, tier, reason: '', fromLabel: true,
       };
-    } else if (names.asks.mergeRisk) {
+    } else if (names.asks.mergeRisk && !partial) {
       mergeRisk = { name: names.mergeRisk, missing: true };
     }
   }
   let qa = null;
   const q = newest(runs, names.qa);
   if (q) qa = shape(q, headSha);
-  else if (names.asks.qa) qa = { name: names.qa, missing: true };
+  else if (names.asks.qa && !partial) qa = { name: names.qa, missing: true };
   return { mergeRisk, qa };
 }

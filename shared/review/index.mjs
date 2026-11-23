@@ -26,7 +26,7 @@ import { parseUnifiedDiff } from './diff.mjs';
 import { run } from './exec.mjs';
 import {
   originSlug, fetchPrMeta, submitPrReview, fetchViewedFiles, setFileViewed, ghAccount,
-  setPrTitle, fetchReviewState, addPendingComment, deletePendingComment, discardPendingReview,
+  setPrTitle, fetchReviewState, fetchPrChecks, addPendingComment, deletePendingComment, discardPendingReview,
   submitPendingReview, postLineComment, deletePostedComment, deleteIssueComment, hideComment,
 } from './github.mjs';
 import { parseTarget, prBranchFor, reviewBranchFor, describeTarget } from './target.mjs';
@@ -1336,9 +1336,23 @@ async function handleCommentsRead(res, ctx, session) {
     outdated: draft.outdated,
     said: draft.said,
     aiReviews: draft.aiReviews,
-    checks: prChecksOf({ runs: draft.checkRuns, labels: draft.labels, headSha: draft.headSha, names: await baseCheckNames(ctx.repoRoot, draft.baseRef) }),
+    checks: await prChecksFor(ctx, got, draft),
     truncated: draft.truncated,
   });
+}
+
+/**
+ * The merge risk and QA for the AI reviews tab, read apart from the comments: null when GitHub refused the read, which
+ * leaves the tab its reviews and the page its comments and verdicts.
+ */
+async function prChecksFor(ctx, got, draft) {
+  const names = await baseCheckNames(ctx.repoRoot, draft.baseRef);
+  const read = await fetchPrChecks({ pr: got.live.number, slug: got.slug, names });
+  if (!read.ok) {
+    ctx.log('review.checks_unread', { reqId: ctx.reqId, pr: got.live.number, error: read.error });
+    return null;
+  }
+  return prChecksOf({ runs: read.runs, labels: draft.labels, headSha: draft.headSha, names, partial: read.partial });
 }
 
 /**

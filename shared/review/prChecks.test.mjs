@@ -4,12 +4,12 @@ import assert from 'node:assert/strict';
 import { checkNamesOf, checkRunsOf, prChecksOf } from './prChecks.mjs';
 
 const HEAD = 'a'.repeat(40);
-const commit = (...suites) => ({ oid: HEAD, checkSuites: { nodes: suites.map(([app, runs]) => ({ app: { slug: app }, checkRuns: { nodes: runs } })) } });
+const commit = (...suites) => ({ oid: HEAD, checkSuites: { nodes: suites.map(([key, runs]) => ({ [key]: { nodes: runs } })) } });
 
 test('the merge risk check gives its tier and reason, and QA its verdict, both on the head commit', () => {
   const runs = checkRunsOf(commit(
-    ['woodshed-reviewer', [{ name: 'Merge risk', status: 'COMPLETED', conclusion: 'NEUTRAL', title: 'High: touches the billing path', summary: 'Why.', permalink: 'https://x/1', completedAt: '2026-11-01T00:00:00Z' }]],
-    ['github-actions', [
+    ['risk', [{ name: 'Merge risk', status: 'COMPLETED', conclusion: 'NEUTRAL', title: 'High: touches the billing path', summary: 'Why.', permalink: 'https://x/1', completedAt: '2026-11-01T00:00:00Z' }]],
+    ['qa', [
       { name: 'QA', status: 'COMPLETED', conclusion: 'FAILURE', title: '1 of 3 failed', summary: 'Report', detailsUrl: 'https://x/2', completedAt: '2026-11-01T00:00:00Z' },
       { name: 'test', status: 'COMPLETED', conclusion: 'SUCCESS', title: '', summary: '' },
     ]],
@@ -19,7 +19,6 @@ test('the merge risk check gives its tier and reason, and QA its verdict, both o
   assert.equal(mergeRisk.reason, 'touches the billing path');
   assert.equal(mergeRisk.fromLabel, false, 'the check wins over a label from an earlier review');
   assert.equal(mergeRisk.url, 'https://x/1');
-  assert.equal(mergeRisk.app, 'woodshed-reviewer');
   assert.equal(qa.conclusion, 'failure');
   assert.equal(qa.title, '1 of 3 failed');
   assert.equal(qa.url, 'https://x/2');
@@ -61,4 +60,18 @@ test('the newest run of a name wins', () => {
     { name: 'QA', status: 'COMPLETED', conclusion: 'SUCCESS', title: 'new', completedAt: '2026-11-02T00:00:00Z' },
   ];
   assert.equal(prChecksOf({ runs, headSha: HEAD }).qa.title, 'new');
+});
+
+test('a queued run, with no times yet, is newer than a finished one by its id', () => {
+  const runs = [
+    { databaseId: 10, name: 'QA', status: 'COMPLETED', conclusion: 'FAILURE', title: 'old', completedAt: '2026-11-01T00:00:00Z' },
+    { databaseId: 11, name: 'QA', status: 'QUEUED', conclusion: null, title: '' },
+  ];
+  assert.equal(prChecksOf({ runs, headSha: HEAD }).qa.status, 'queued');
+});
+
+test('a read past one page of check suites does not call an asked-for check missing', () => {
+  const names = { mergeRisk: 'Merge risk', qa: 'QA', asks: { mergeRisk: true, qa: true } };
+  assert.deepEqual(prChecksOf({ runs: [], headSha: HEAD, names, partial: true }), { mergeRisk: null, qa: null });
+  assert.equal(prChecksOf({ runs: [], headSha: HEAD, names }).qa.missing, true);
 });
