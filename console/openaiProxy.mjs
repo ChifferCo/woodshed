@@ -22,7 +22,7 @@
 
 import http from 'node:http';
 import https from 'node:https';
-import { isReview } from './sessions.mjs';
+import { isReview, runsCodex } from './sessions.mjs';
 import { credentialOf } from './codexModels.mjs';
 
 const PREFIX = '/openai';
@@ -96,7 +96,7 @@ export function bearerOf(headers) {
  *          upstream?: string, chatgptUpstream?: string, now?: () => number}} opts
  * @returns {{isProxyPath: (pathname: string) => boolean,
  *            handle: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, session: object|null) => Promise<void>,
- *            teamCredential: () => Promise<string|null>}}
+ *            teamCredential: () => Promise<string|null>, cut: (sessionId: string) => void}}
  */
 export function createOpenAiProxy({ secrets = null, teamKey = null, userSettings = null, upstream = 'https://api.openai.com',
   chatgptUpstream = 'https://chatgpt.com', now = Date.now }) {
@@ -132,7 +132,11 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, userSettings
     return cred;
   }
 
-  function forward(req, res, { target, path, headers: added }) {
+  // The calls on their way, by session: a lockdown cuts its session's (cut), so nothing it sends after its first relayed
+  // production call rides a request opened before it.
+  const open = new Map();
+
+  function forward(req, res, { target, path, headers: added, sessionId }) {
     const transport = target.protocol === 'http:' ? http : https;
     const headers = {};
     for (const [name, value] of Object.entries(req.headers)) if (!DROPPED_HEADERS.has(name)) headers[name] = value;
@@ -150,7 +154,29 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, userSettings
     });
     // codex cancels a turn by closing its request: the call to OpenAI goes with it.
     res.on('close', () => { if (!res.writableFinished) out.destroy(); });
+    if (sessionId) {
+      if (!open.has(sessionId)) open.set(sessionId, new Set());
+      const call = { req, res, out };
+      open.get(sessionId).add(call);
+      res.on('close', () => {
+        open.get(sessionId)?.delete(call);
+        if (!open.get(sessionId)?.size) open.delete(sessionId);
+      });
+    }
     req.pipe(out);
+  }
+
+  /** Every call of the session's still on its way, ended: its lockdown has started (fleet.onLocking). */
+  function cut(sessionId) {
+    const calls = open.get(sessionId);
+    if (!calls?.size) return;
+    console.log('openaiProxy: calls cut at the lockdown', { sessionId, calls: calls.size });
+    for (const { req, res, out } of calls) {
+      out.destroy();
+      req.destroy();
+      res.destroy();
+    }
+    open.delete(sessionId);
   }
 
   function firstCall(session, via) {
@@ -165,7 +191,8 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, userSettings
       console.warn('openaiProxy: refused, no active session has that token', { from: req.socket.remoteAddress });
       return refuse(res, 401, 'not an active Woodshed session');
     }
-    if (session.options?.agent !== 'codex' && !(isReview(session) && session.review.agents?.includes('codex'))) {
+    // A private session whose owner started a Codex agent beside its claude (session/agents.mjs) runs codex too.
+    if (!runsCodex(session) && !(isReview(session) && session.review.agents?.includes('codex'))) {
       req.resume();
       console.warn('openaiProxy: refused, not a Codex session', { sessionId: session.id });
       return refuse(res, 403, 'only a Codex session may use the team\'s OpenAI key');
@@ -199,16 +226,19 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, userSettings
         return refuse(res, 404, 'not something a review\'s codex needs');
       }
       firstCall(session, 'the author\'s ChatGPT login');
-      return forward(req, res, { target: targets.chatgpt, path: allowed, headers: cred.headers });
+      return forward(req, res, { target: targets.chatgpt, path: allowed, headers: cred.headers, sessionId: session.id });
     }
-    // A review reads what anyone who can push wrote, and runs it: on a key, its codex reaches Codex's calls alone.
+    // A review reads what anyone who can push wrote, and runs it: on a key, its codex reaches Codex's calls alone. So does
+    // a Codex agent its owner started beside claude (session/agents.mjs): the team key's files, batches and the rest of
+    // its account are no session's to reach.
     let openaiPath = req.url.slice(PREFIX.length) || '/';
-    if (isReview(session)) {
+    const besideClaude = !isReview(session) && session.options?.agent !== 'codex';
+    if (isReview(session) || besideClaude) {
       openaiPath = reviewOpenAiPathAllowed(openaiPath);
       if (!openaiPath) {
         req.resume();
-        console.warn('openaiProxy: refused an OpenAI path a review\'s codex does not need', { sessionId: session.id, path: req.url.slice(0, 120) });
-        return refuse(res, 404, 'not something a review\'s codex needs');
+        console.warn(`openaiProxy: refused an OpenAI path ${besideClaude ? 'a Codex agent beside claude' : 'a review\'s codex'} does not need`, { sessionId: session.id, path: req.url.slice(0, 120) });
+        return refuse(res, 404, 'not something codex needs');
       }
     }
     if (cred) {
@@ -217,7 +247,7 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, userSettings
         return refuse(res, 403, 'this review\'s Codex runs on its author\'s ChatGPT login, through /chatgpt');
       }
       firstCall(session, 'the author\'s key');
-      return forward(req, res, { target: targets.openai, path: openaiPath, headers: cred.headers });
+      return forward(req, res, { target: targets.openai, path: openaiPath, headers: cred.headers, sessionId: session.id });
     }
     let key;
     try {
@@ -233,9 +263,15 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, userSettings
       console.warn('openaiProxy: no team key saved', { sessionId: session.id });
       return refuse(res, 503, 'the console has no OpenAI key: save your own Codex sign-in on My settings, or set openai-api-key on the Secrets page');
     }
+    // Asked again after the key's read: a lockdown that started meanwhile took the session's Codex agent's access.
+    if (!runsCodex(session) && !isReview(session)) {
+      req.resume();
+      console.warn('openaiProxy: refused, not a Codex session', { sessionId: session.id });
+      return refuse(res, 403, 'only a Codex session may use the team\'s OpenAI key');
+    }
     firstCall(session, 'the team key');
-    return forward(req, res, { target: targets.openai, path: openaiPath, headers: { authorization: `Bearer ${key}` } });
+    return forward(req, res, { target: targets.openai, path: openaiPath, headers: { authorization: `Bearer ${key}` }, sessionId: session.id });
   }
 
-  return { isProxyPath: isOpenAiPath, handle, teamCredential };
+  return { isProxyPath: isOpenAiPath, handle, teamCredential, cut };
 }

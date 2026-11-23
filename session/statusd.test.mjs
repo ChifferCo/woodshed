@@ -1543,3 +1543,175 @@ test('a guarded send carries its caller\'s own deadline', () => {
   assert.equal(sendNotAfter('{"text":"x","notAfter":1700000000000}'), 1700000000000);
   for (const raw of ['{"text":"x"}', '{"text":"x","notAfter":"soon"}', '{"text":"x","notAfter":-1}', 'nope']) assert.equal(sendNotAfter(raw), null, raw);
 });
+
+// An agent started beside the session's own (agents.mjs) through statusd's routes, in a real tmux: the stand-in picker
+// stands in for its claude, and is asked and answered on that agent's routes, never the session's own pane.
+test('an agent beside the session\'s own starts in its own tmux session, and its question is read and answered on its routes', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-agents-'));
+  const tmuxEnv = { ...isolatedEnv(), TMUX: '', TMUX_TMPDIR: dir };
+  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
+  t.after(async () => {
+    await tmux('kill-server').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const spec = { questions: [{ question: 'Which colour?', header: 'Colour', options: ['Red', 'Green', 'Blue'] }] };
+  await fs.writeFile(path.join(dir, 'spec.json'), JSON.stringify(spec));
+  const picker = fileURLToPath(new URL('../shared/__fixtures__/claudePicker.mjs', import.meta.url));
+  // The agent's `claude`, whatever flags it is given: the picker, which writes what was picked.
+  await fs.mkdir(path.join(dir, 'bin'));
+  await fs.writeFile(path.join(dir, 'bin', 'claude'), `#!/bin/sh\nexec '${process.execPath}' '${picker}' '${dir}/spec.json' '${dir}/answers.json'\n`, { mode: 0o755 });
+  await fs.writeFile(path.join(dir, 'flags'), '');
+  // The session's own pane, which nothing here may type into.
+  await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '40', 'sleep 600');
+  const { call } = await statusdWithApp(t, { env: {
+    TMUX: '', TMUX_TMPDIR: dir, SESSION_KIND: 'private', SESSION_MODE: '', WOODSHED_AGENT_BIN: path.join(dir, 'bin'), WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'),
+    WOODSHED_CODEX_READY_FILE: path.join(dir, 'no-codex'), WOODSHED_AGENT_STATE_DIR: dir, WOODSHED_CLAUDE_STATE_FILE: path.join(dir, 'own-state.json'),
+  } });
+
+  assert.equal((await call('POST', '/agents', 'wrong', '{}')).status, 401);
+  const started = await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'claude', model: 'opus' }));
+  assert.equal(started.status, 200);
+  assert.equal(started.body.agent.id, 'agent-2');
+  assert.equal((await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'codex' }))).status, 409, 'no codex home in this session');
+  const shown = async () => (await tmux('capture-pane', '-p', '-t', '=agent-2:')).stdout;
+  for (let i = 0; i < 50 && !/Esc to cancel/.test(await shown()); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok((await tmux('ls')).stdout.includes('agent-2:'), 'its own tmux session');
+
+  const prompt = (await call('GET', '/agents/agent-2/prompt', 'sess')).body.prompt;
+  assert.equal(prompt?.question, 'Which colour?');
+  assert.equal((await call('GET', '/prompt', 'sess')).body.prompt, null, 'the session\'s own pane asks nothing');
+  assert.equal((await call('GET', '/agents/agent-9/prompt', 'sess')).status, 404);
+  const options = ['Red', 'Green', 'Blue'];
+  const answer = { kind: 'question', questions: [{ question: 'Which colour?', options, descriptions: options.map((o) => `${o} is one of the options`), pick: 2 }] };
+  assert.deepEqual((await call('POST', '/agents/agent-2/answer', 'sess', JSON.stringify(answer))).body, { ok: true });
+  let picked = null;
+  for (let i = 0; i < 50 && !picked; i++) {
+    picked = JSON.parse(await fs.readFile(path.join(dir, 'answers.json'), 'utf8').catch(() => 'null'));
+    if (!picked) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.ok(JSON.stringify(picked).includes('Blue'), JSON.stringify(picked));
+
+  assert.deepEqual((await call('POST', '/agents/agent-2/stop', 'sess', '{}')).body, { stopped: 'agent-2' });
+  assert.deepEqual((await call('GET', '/agents', 'sess')).body, { agents: [] });
+  assert.ok((await tmux('ls')).stdout.includes('claude:'), 'the session\'s own is still there');
+});
+
+// A Codex agent beside claude on its owner's own sign-in (agents.mjs, codexBeside): written into codex's home as the
+// start brings it, and sent back at the stop's checkpoint once codex refreshed it, even after the agent was stopped.
+test('a Codex agent beside claude gets the sign-in its start brings, and the stop sends a refreshed one back', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-codex-beside-'));
+  const tmuxEnv = { ...isolatedEnv(), TMUX: '', TMUX_TMPDIR: dir };
+  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
+  const posted = [];
+  const consoleServer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      posted.push({ url: req.url, body });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    });
+  });
+  const consolePort = await listen(consoleServer);
+  t.after(async () => {
+    consoleServer.close();
+    await tmux('kill-server').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const home = path.join(dir, 'home');
+  const codexHome = path.join(home, '.codex');
+  await fs.mkdir(codexHome, { recursive: true });
+  await fs.mkdir(path.join(dir, 'bin'));
+  await fs.writeFile(path.join(dir, 'bin', 'codex'), '#!/bin/sh\nexec sleep 600\n', { mode: 0o755 });
+  await fs.writeFile(path.join(dir, 'codex-ready'), '');
+  await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '40', 'sleep 600');
+  const { call } = await statusdWithApp(t, { env: {
+    TMUX: '', TMUX_TMPDIR: dir, HOME: home, CODEX_HOME: codexHome, SESSION_KIND: 'private', SESSION_MODE: '', AGENT: '',
+    WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consolePort}`, WOODSHED_AGENT_BIN: path.join(dir, 'bin'),
+    WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'), WOODSHED_CODEX_READY_FILE: path.join(dir, 'codex-ready'),
+    WOODSHED_AGENT_STATE_DIR: dir, WOODSHED_CLAUDE_STATE_FILE: path.join(dir, 'own-state.json'),
+  } });
+
+  const login = '{"last_refresh":"2026-11-23T10:00:00Z","tokens":{"refresh_token":"rt"}}';
+  const started = await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'codex', codexAuth: login }));
+  assert.equal(started.status, 200);
+  assert.equal(await fs.readFile(path.join(codexHome, 'auth.json'), 'utf8'), login, 'the sign-in the start brought');
+  assert.equal(((await fs.stat(path.join(codexHome, 'auth.json'))).mode & 0o777), 0o600);
+  assert.ok(!posted.some((p) => p.url === '/codex-sign-in'), 'nothing asked of the console for it');
+  // codex refreshes its ChatGPT login as it runs; then the person stops the agent.
+  const refreshed = '{"last_refresh":"2026-11-23T11:00:00Z","tokens":{"refresh_token":"rt2"}}';
+  await fs.writeFile(path.join(codexHome, 'auth.json'), refreshed);
+  assert.deepEqual((await call('POST', '/agents/agent-2/stop', 'sess', '{}')).body, { stopped: 'agent-2' });
+
+  await call('POST', '/checkpoint');
+  const back = posted.filter((p) => p.url === '/codex-auth');
+  assert.equal(back.length, 1, 'the refreshed sign-in goes back once');
+  assert.equal(back[0].body, refreshed);
+});
+
+// The same, where the session's agent runs in Herdr: the agent beside it is a Herdr terminal of its own on the session's
+// core (the test's scratch one, isolatedEnv), driven through hc, and gone once stopped.
+test('in Herdr, an agent beside the session\'s own is a Herdr terminal of its own, asked and answered through hc', { skip: spawnSync('hc', ['--version'], { env: isolatedEnv() }).status !== 0 && 'no hc here' }, async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-agents-hc-'));
+  const hc = (...args) => promisify(execFile)('hc', args, { env: isolatedEnv(), cwd: dir });
+  t.after(async () => {
+    await hc('kill', '--json', '--', 'agent-2').catch(() => {});
+    await hc('rm', '--json', '--', 'agent-2').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const spec = { questions: [{ question: 'Which colour?', header: 'Colour', options: ['Red', 'Green', 'Blue'] }] };
+  await fs.writeFile(path.join(dir, 'spec.json'), JSON.stringify(spec));
+  const picker = fileURLToPath(new URL('../shared/__fixtures__/claudePicker.mjs', import.meta.url));
+  await fs.mkdir(path.join(dir, 'bin'));
+  // Records the variable the start put before it, then is the picker.
+  await fs.writeFile(path.join(dir, 'bin', 'claude'), `#!/bin/sh\necho "$WOODSHED_CLAUDE_STATE_FILE" > '${dir}/state-file'\nexec '${process.execPath}' '${picker}' '${dir}/spec.json' '${dir}/answers.json'\n`, { mode: 0o755 });
+  await fs.writeFile(path.join(dir, 'flags'), '');
+  const { call } = await statusdWithApp(t, { env: {
+    WOODSHED_TERMINAL: 'herdr', SESSION_KIND: 'private', SESSION_MODE: '', WOODSHED_AGENT_BIN: path.join(dir, 'bin'),
+    WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'), WOODSHED_CODEX_READY_FILE: path.join(dir, 'no-codex'), WOODSHED_AGENT_STATE_DIR: dir,
+  } });
+
+  const started = await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'claude' }));
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  const terminal = JSON.parse((await hc('get', '--json', '--', 'agent-2')).stdout);
+  assert.equal(terminal.name, 'agent-2');
+  assert.equal(terminal.parent ?? null, null, 'no parent: it outlives nothing');
+  const shown = async () => JSON.parse((await hc('read', '--json', '--', 'agent-2')).stdout).text;
+  for (let i = 0; i < 80 && !/Esc to cancel/.test(await shown()); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal((await fs.readFile(path.join(dir, 'state-file'), 'utf8')).trim(), path.join(dir, 'woodshed-agent-2-state.json'), 'its hooks write its own state file');
+
+  assert.equal((await call('GET', '/agents/agent-2/prompt', 'sess')).body.prompt?.question, 'Which colour?');
+  const options = ['Red', 'Green', 'Blue'];
+  const answer = { kind: 'question', questions: [{ question: 'Which colour?', options, descriptions: options.map((o) => `${o} is one of the options`), pick: 1 }] };
+  assert.deepEqual((await call('POST', '/agents/agent-2/answer', 'sess', JSON.stringify(answer))).body, { ok: true });
+  let picked = null;
+  for (let i = 0; i < 50 && !picked; i++) {
+    picked = JSON.parse(await fs.readFile(path.join(dir, 'answers.json'), 'utf8').catch(() => 'null'));
+    if (!picked) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.ok(JSON.stringify(picked).includes('Green'), JSON.stringify(picked));
+  assert.equal((await call('POST', '/scroll', 'sess', JSON.stringify({ steps: -3, pane: 'agent-2' }))).status, 409, 'Herdr\'s client scrolls it');
+
+  assert.deepEqual((await call('POST', '/agents/agent-2/stop', 'sess', '{}')).body, { stopped: 'agent-2' });
+  await assert.rejects(hc('get', '--json', '--', 'agent-2'), 'its terminal is gone');
+
+  // A message from Chat goes in through hc's own send, once the agent is at its prompt: the dev console's stand-in claude.
+  const standIn = fileURLToPath(new URL('../console/bin/devChatAgent.mjs', import.meta.url));
+  const records = path.join(dir, 'records');
+  await fs.writeFile(path.join(dir, 'bin', 'claude'), `#!/bin/sh
+exec '${process.execPath}' '${standIn}' claude '${records}' "$PWD" "$@"
+`, { mode: 0o755 });
+  assert.equal((await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'claude' }))).status, 200);
+  for (let i = 0; i < 80 && !/auto mode on/.test(await shown()); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  const sent = await call('POST', '/agents/agent-2/send', 'sess', JSON.stringify({ text: 'hello from Chat', id: 'msg-00000001' }));
+  assert.equal(sent.status, 200, JSON.stringify(sent.body));
+  let typed = false;
+  for (let i = 0; i < 100 && !typed; i++) {
+    const files = await fs.readdir(records).catch(() => []);
+    for (const f of files) if ((await fs.readFile(path.join(records, f), 'utf8')).includes('hello from Chat')) typed = true;
+    if (!typed) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.ok(typed, 'the agent got the message');
+  assert.deepEqual((await call('GET', '/agents', 'sess')).body.agents[0].deliveredIds, ['msg-00000001']);
+  await call('POST', '/agents/agent-2/stop', 'sess', '{}');
+});

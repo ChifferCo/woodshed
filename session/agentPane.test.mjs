@@ -56,8 +56,8 @@ test('the tmux pane is read and typed into as statusd always has', async () => {
     ['tmux', 'capture-pane', '-e', '-p', '-S', '-30', '-t', 'claude'],
     ['tmux', 'send-keys', '-t', 'claude', 'Up', 'Enter'],
     ['tmux', 'send-keys', '-t', 'claude', '-l', 'hello'],
-    ['tmux', 'set-buffer', '-b', 'woodshed-send', '--', 'pasted'],
-    ['tmux', 'paste-buffer', '-p', '-d', '-b', 'woodshed-send', '-t', 'claude'],
+    ['tmux', 'set-buffer', '-b', 'woodshed-send-claude', '--', 'pasted'],
+    ['tmux', 'paste-buffer', '-p', '-d', '-b', 'woodshed-send-claude', '-t', 'claude'],
     ['tmux', 'send-keys', '-t', 'claude', '-l', 'claude --resume x'],
     ['tmux', 'send-keys', '-t', 'claude', 'Enter'],
   ]);

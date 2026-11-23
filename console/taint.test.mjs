@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { createFleet } from './fleet.mjs';
 import { createMcpServers, mcpSettings } from './mcpServers.mjs';
-import { keptIds } from './sessions.mjs';
+import { keptIds, runsCodex } from './sessions.mjs';
 import { TAINT_MESSAGE } from './taint.mjs';
 
 const PROD = mcpSettings({ WOODSHED_PROD_MCP_URL: 'https://prod-mcp.test/mcp', WOODSHED_PROD_MCP_PEOPLE: 'joel', WOODSHED_PROD_MCP_REPOS: 'o/r' }, 'https://console.test');
@@ -264,4 +264,19 @@ test('a session started before it could use production is never tainted, whateve
   await assert.rejects(fleet.taint(session), (err) => err.shown && /started before it could use production/.test(err.message));
   assert.equal(calls.lockDowns.length, 0);
   assert.equal(session.taintedAt, undefined);
+});
+
+test('the agents started beside a session\'s own lose what they were allowed once its lockdown starts, even one that fails', async (t) => {
+  quietly(t);
+  const { fleet } = setup({ lockDown: async () => { throw new Error('no network'); } });
+  const session = await runningPrivate(fleet);
+  fleet.allowAgent(session, 'codex');
+  assert.equal(runsCodex(session), true);
+  await assert.rejects(fleet.taint(session));
+  assert.equal(session.extraAgents, null);
+  assert.equal(runsCodex(session), false, 'neither the owner\'s Codex sign-in nor the team\'s OpenAI key');
+  const tainted = await runningPrivate(setup().fleet);
+  tainted.extraAgents = ['codex'];
+  tainted.taintedAt = '2026-11-19T10:00:00.000Z';
+  assert.equal(runsCodex(tainted), false);
 });
