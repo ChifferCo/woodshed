@@ -3,8 +3,9 @@
 // request shows without a reload; the invite field keeps what is typed.
 // It reads as the other settings pages do (settingsRows.js): Asking to join is a group of plain rows, Members a group
 // whose box holds the table, one column per switch, and inviting is the box's last row, which opens on its form.
-// Behind a hosting proxy whose program hands over its list (`hosted` in /api/people), it is a tab of Settings: the
-// program keeps who is in and each role, so Add someone takes a role, the Admin column is the role, and nobody asks to join.
+// It is a tab of Settings, after General and Secrets & webhooks, on every console. Behind a hosting proxy whose program
+// hands over its list (`hosted` in /api/people), the program keeps who is in and each role, so Add someone takes a role,
+// the Admin column is the role, and nobody asks to join.
 // The program may say what it did on an add (`told`, an email sent), said in place of the hint that nothing is sent, and
 // note something beside each person (`note`). Both are its plain text, drawn as text.
 window.Woodshed.settingsPage('/people', (app, life) => {
@@ -289,16 +290,14 @@ window.Woodshed.settingsPage('/people', (app, life) => {
   }
 
   function render() {
-    // Behind a hosting proxy People is a tab of Settings, as Secrets & webhooks is.
+    // People is a tab of Settings, as Secrets & webhooks is.
     const head = h('header', { class: 'page-head' },
-      hosted
-        ? h('div', null,
-          h('h1', { class: 'title' }, 'Settings ', W.scopePill('/people')),
-          W.settingsTabs('/people'),
-          h('p', { class: 'sub' }, 'Only these people can sign in. Owners are admins here, and choose what each person can do.'))
-        : h('div', null,
-          h('h1', { class: 'title' }, 'People ', W.scopePill('/people')),
-          h('p', { class: 'sub' }, 'Only these people can sign in, and each still needs write access to the repository. Admins choose what each member can do.')));
+      h('div', null,
+        h('h1', { class: 'title' }, 'Settings ', W.scopePill('/people')),
+        W.settingsTabs('/people'),
+        h('p', { class: 'sub' }, hosted
+          ? 'Only these people can sign in. Owners are admins here, and choose what each person can do.'
+          : 'Only these people can sign in, and each still needs write access to the repository. Admins choose what each member can do.')));
     const body = data ? [requestsGroup(), membersGroup()]
       : h('p', { class: 'empty' }, loadError ? `Could not load the list: ${loadError}` : 'Loading…');
     // A row's head is a new node after each draw: draw gives it its focus back.

@@ -191,7 +191,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   Slack, and Remove. Head cells are uppercase `group-label` on `stopped`, with a `meta` note under each switch's name.
   A thin `line` rule sets the feature columns apart from Admin. A switch that needs another is a disabled checkbox at
   45% with a title saying what it needs. Checkboxes take `slate` as their accent. The table scrolls sideways on a phone.
-- Behind a hosting proxy whose program keeps who is in, People is a tab of Settings (below), titled Settings. The
+- People is a tab of Settings (below), titled Settings. Behind a hosting proxy whose program keeps who is in, the
   Admin column is **Role**, a select of Owner and Member in its cell; adding is **Add someone**, the handle and a role
   select (as wide as its words) beside it. There is no Asking to join card, no accept or decline, and no asking dot.
   The program's note about a person sits in their `meta` line under the name, where a console of its own says who
@@ -212,9 +212,10 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   `menu-sub`), the open one marked as any current entry; Settings is then `aria-current="true"`, its icon `amber-ink`,
   not its ground. The tab row under the title stays. On a phone the list is one row, so it keeps Settings as one entry,
   marked, and leaves the tabs to the row under the title.
-- People stays an entry of its own: it is who is in, not settings. Behind a hosting proxy whose program hands over its
-  list, People is the console's third tab instead, after Secrets & webhooks and before the program's: who is in is the
-  program's there, beside its own pages. Webhook events is a log, not a setting, and not a
+- People is the console's third tab, after Secrets & webhooks and before a program's, on every console: one place for
+  it, never an entry of its own. It shows wherever the console keeps a list of who is in (behind a hosting proxy, only
+  when the program hands over its own). Someone asking to join is counted on its tab, and on Settings with any Woodshed
+  update, as one `menu-count`. Webhook events is a log, not a setting, and not a
   navigation entry either: Secrets & webhooks links to it (in the GitHub webhook card, or the page's note when there is
   none), its page has a `‹ Secrets & webhooks` crumb above the title, and Settings is marked current in the list on it.
   Its deliveries are plain rows of one box (Settings rows), never a table: when it came in `meta` mono, then what the

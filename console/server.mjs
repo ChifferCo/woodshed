@@ -866,6 +866,8 @@ export function createHandler({
         // Without sign-in turned on the server lets everyone through (signedIn gives no login), so the menu says the same.
         admin: !auth?.enabled() || Boolean(user && isAdmin(user)),
         asking: user && members && isAdmin(user) ? members.view().requests.length : 0,
+        // People, as a tab of Settings, when the console keeps a list of who is in.
+        people: Boolean(members),
         // Admins see how many Woodshed commits the console lacks, on the menu's Console settings.
         ...(woodshedUpdate && { updates: !auth?.enabled() || (user && isAdmin(user)) ? woodshedUpdate.behindBy() : 0 }),
         names: namesFor([user?.login ?? visitor?.login]),
