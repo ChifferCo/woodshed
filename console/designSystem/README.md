@@ -286,6 +286,10 @@ spinner, and opening one keeps the keyboard focus on it. The reader asks too: an
 for a follow-up, and the tree with one for a question of their own, each the ask panel's field and a quiet **Ask**
 button, never orange. A question they asked says "you asked" in `meta`.
 
+A session with more than one pull request has a review of each: the review switch (`components/ReviewSwitch`), a quiet
+row above the title, only with two or more, lists them as mono pills, the one on screen in `ink` with no link and the
+others links in the page's accent, never orange.
+
 Its tab bar ends with **Submit review**, then, for an approved pull request, either **Squash and merge** or the merge
 hint (`components/MergeHint`): an Octicons info icon whose tip says why merging waits. The bar holds controls, never a
 sentence, and no tab or button wraps its label: when they do not all fit on one row, the controls move to a row of

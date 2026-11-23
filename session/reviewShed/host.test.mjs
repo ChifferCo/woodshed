@@ -5,7 +5,7 @@ import http from 'node:http';
 import { createReviewHost } from './host.mjs';
 
 // A stand-in for the shed's module: it answers what the host passes its ctx, which is the host's whole contract.
-function fakeShed({ account, created = false, hasAnalysis = false, qaThrows = false }) {
+function fakeShed({ account, created = false, hasAnalysis = false, qaThrows = false, checkoutReview = { exists: false, branch: null } }) {
   const calls = [];
   const analyses = [];
   const qas = [];
@@ -16,6 +16,7 @@ function fakeShed({ account, created = false, hasAnalysis = false, qaThrows = fa
     load: async () => ({
       ghAccount: async () => account,
       ensureWorktreeReview: async () => ({ ok: true, created }),
+      worktreeReviewBranch: () => checkoutReview,
       ensurePullRequestReview: async ({ sessionName, pr, ctx }) => {
         calls.push({ ensured: sessionName, pr, worktree: ctx.worktreePathFor(sessionName) });
         return { ok: true, created: true };
@@ -174,4 +175,27 @@ test('a shared session\'s review of another pull request is read-only too', asyn
   const shed = fakeShed({ account: 'the-app' });
   const call = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'shared', load: shed.load, checkoutPull: async () => null }));
   assert.equal((await call('POST', '/shed-review/reviews/claude-0a1b2c3d-pr7/merge', { subject: 's' }, { 'x-woodshed-pulls': '7' })).status, 403);
+});
+
+test('a pull request checked out after the checkout\'s review was taken on another branch gets a review of its own', async (t) => {
+  // The checkout's review was taken on `second` (#8); `first` (#7) is checked out now. Sent to the checkout's review,
+  // a verdict would go to #8.
+  const shed = fakeShed({ account: 'octocat', checkoutReview: { exists: true, branch: 'second' } });
+  const call = await serve(t, createReviewHost({
+    repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'private', load: shed.load, pullWorktreesDir: '/tmp/rv-pulls-test',
+    checkoutBranch: async () => 'first', checkoutPull: async () => ({ number: 7, state: 'OPEN', baseRefName: 'main' }),
+  }));
+  const status = await (await call('GET', '/shed-review/reviews/claude-0a1b2c3d-pr7', null, { 'x-woodshed-pulls': '7,8' })).json();
+  assert.equal(status.ok, true);
+  assert.equal(status.status, 'ready', 'not sent to the checkout\'s review');
+  assert.deepEqual(shed.calls[0], { ensured: 'claude-0a1b2c3d-pr7', pr: 7, worktree: '/tmp/rv-pulls-test/claude-0a1b2c3d-pr7' });
+
+  // Taken on the branch checked out now: sent there.
+  const same = fakeShed({ account: 'octocat', checkoutReview: { exists: true, branch: 'first' } });
+  const callSame = await serve(t, createReviewHost({
+    repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'private', load: same.load,
+    checkoutBranch: async () => 'first', checkoutPull: async () => ({ number: 7, state: 'OPEN', baseRefName: 'main' }),
+  }));
+  const sent = await (await callSame('GET', '/shed-review/reviews/claude-0a1b2c3d-pr7', null, { 'x-woodshed-pulls': '7,8' })).json();
+  assert.deepEqual([sent.status, sent.review], ['checkout', 'claude-0a1b2c3d']);
 });

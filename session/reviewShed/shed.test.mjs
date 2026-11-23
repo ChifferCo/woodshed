@@ -218,7 +218,12 @@ exec ${execFileSync('sh', ['-c', 'command -v git']).toString().trim()} "$@"
   fs.writeFileSync(path.join(bin, 'gh'), `#!${process.execPath}
 const args = process.argv.slice(2);
 if (args[0] === 'pr' && args[1] === 'view' && args[2] === '7') { console.log(${JSON.stringify(JSON.stringify(pr7))}); process.exit(0); }
-if (args[0] === 'pr' && args[1] === 'view' && args[2] === '--json') { console.log(JSON.stringify({ number: 8, state: 'OPEN', baseRefName: 'first' })); process.exit(0); }
+if (args[0] === 'pr' && args[1] === 'view' && args[2] === '--json') {
+  // The branch checked out's pull request: #8 on second, stacked on first; #7 on first.
+  const branch = require('node:child_process').execFileSync('git', ['branch', '--show-current']).toString().trim();
+  console.log(JSON.stringify(branch === 'first' ? { number: 7, state: 'OPEN', baseRefName: 'master' } : { number: 8, state: 'OPEN', baseRefName: 'first' }));
+  process.exit(0);
+}
 process.exit(1);
 `, { mode: 0o755 });
   const oldPath = process.env.PATH;
@@ -268,4 +273,19 @@ test('a session with two pull requests has a review of each, and the checkout\'s
   const nine = await get('/reviews/claude-fffffff6-pr9', pulls);
   assert.match(nine.error, /#9 is not one of this session's pull requests/);
   assert.match((await get('/reviews/claude-fffffff6-pr7', {})).error, /#7 is not one of this session's pull requests/, 'nor with no list from the console');
+});
+
+test('a pull request checked out after the checkout\'s review was taken is not sent to that review', { timeout: 20_000 }, async (t) => {
+  const { repo, git, firstSha, worktrees } = twoPullRequests(t);
+  const get = await serve(t, repo, 'fffffff7', { sessionKind: 'private', pullWorktreesDir: worktrees });
+  const pulls = { headers: { 'x-woodshed-pulls': '7,8' } };
+  // Taken on `second` (#8), then `first` (#7) is checked out.
+  assert.equal((await get('/reviews/claude-fffffff7', pulls)).branch, 'second');
+  git(repo, 'checkout', '-q', 'first');
+  const seven = await get('/reviews/claude-fffffff7-pr7', pulls);
+  assert.equal(seven.ok, true, seven.error);
+  assert.equal(seven.kind, 'pr', 'its own review, not the checkout\'s of #8');
+  assert.equal(seven.pr, 7);
+  assert.equal(seven.headSha, firstSha);
+  assert.equal(git(repo, 'branch', '--show-current'), 'first', 'the checkout is left on its branch');
 });

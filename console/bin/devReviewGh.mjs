@@ -49,7 +49,9 @@ if (args[0] === 'pr' && args[1] === 'review') {
   const state = args.includes('--approve') ? 'APPROVED' : args.includes('--request-changes') ? 'CHANGES_REQUESTED' : 'COMMENTED';
   const bodyFile = args[args.indexOf('--body-file') + 1];
   const body = args.includes('--body-file') ? fs.readFileSync(bodyFile, 'utf8') : '';
-  s.verdicts.push({ id: id('PRR'), author: s.login, state, body, at: at() });
+  // Kept on the pull request it names: an earlier one's verdict never lands on the checkout's.
+  const o = other(args[2]);
+  (o ? (o.verdicts ||= []) : s.verdicts).push({ id: id('PRR'), author: s.login, state, body, at: at() });
   save();
   out('');
 }
@@ -109,7 +111,8 @@ if (args[0] === 'api' && args[1] === 'graphql') {
     const o = other(fields.pr);
     out({ data: { repository: { pullRequest: {
       id: 'PR_dev' + o.number, headRefOid: o.sha, body: o.body, bodyHTML: '', author: { login: s.login }, createdAt: s.createdAt, url: urlOf(o),
-      reviews: { nodes: [] }, verdicts: { nodes: [] }, comments: { nodes: [] }, reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [] },
+      reviews: { nodes: [] }, comments: { nodes: [] }, reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [] },
+      verdicts: { nodes: (o.verdicts || []).map((v) => ({ id: v.id, author: { login: v.author }, state: v.state, body: v.body, url: urlOf(o), submittedAt: v.at, isMinimized: false, viewerDidAuthor: v.author === s.login })) },
     } } } });
   }
   if (q.includes('reviewThreads')) {

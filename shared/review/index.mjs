@@ -579,8 +579,10 @@ async function worktreeBaseRef(ctx) {
     ctx.log?.('review.base_not_read', { reqId: ctx.reqId, error: err?.message });
     return null;
   }
-  const parsed = typeof base === 'string' && base ? parseTarget(base) : null;
-  return parsed?.ok && parsed.kind === 'branch' && parsed.branch === base ? base : null;
+  // A branch name, checked as one: a base named `123` is a branch, not a pull request number.
+  const ok = typeof base === 'string' && base.length <= 200 && /^[A-Za-z0-9._/-]+$/.test(base)
+    && !base.startsWith('-') && !base.startsWith('/') && !base.endsWith('/') && !base.endsWith('.lock') && !base.includes('..') && !base.includes('//');
+  return ok ? base : null;
 }
 
 /**
@@ -603,6 +605,17 @@ export async function ensurePullRequestReview({ ctx, sessionName, pr }) {
     });
     return made.ok ? { ok: true, created: true } : { ok: false, status: made.status, error: made.error };
   });
+}
+
+/**
+ * The branch a session's own worktree review was taken on, for a host deciding whether that review is of the branch
+ * checked out now: `exists` false when there is none yet.
+ * @returns {{exists: boolean, branch: string|null}}
+ */
+export function worktreeReviewBranch({ sessionName }) {
+  const review = readSessionReview(sessionName);
+  if (!review || review.kind !== 'worktree') return { exists: Boolean(review), branch: null };
+  return { exists: true, branch: review.branch || review.meta?.headRefName || null };
 }
 
 /**

@@ -78,9 +78,9 @@ function gitBranch(repoDir) {
 
 // A review's own worktree goes with git's say-so, twice forced as the shed's server does: it is the review's, never the
 // session's checkout.
-function removePullWorktree(repoDir) {
+function removePullWorktree(repoDir, pullWorktreesDir) {
   return (worktreePath) => new Promise((resolve) => {
-    if (path.dirname(worktreePath) !== PULL_WORKTREES_DIR) {
+    if (path.dirname(path.resolve(worktreePath)) !== path.resolve(pullWorktreesDir)) {
       resolve({ ok: false, stderr: 'a session\'s own checkout is not removed by a review' });
       return;
     }
@@ -93,14 +93,14 @@ function removePullWorktree(repoDir) {
 async function loadShed(repoDir) {
   // The shed reads this when its store module loads.
   process.env.WOODSHED_REVIEWS ??= REVIEWS_DIR;
-  const [{ handleReviewRequest, ensureWorktreeReview, ensurePullRequestReview, startReviewAnalysisIfNone, startReviewQaIfNone, warmLivePr }, { ghAccount }, { configurePrStatus }] = await Promise.all([
+  const [{ handleReviewRequest, ensureWorktreeReview, ensurePullRequestReview, worktreeReviewBranch, startReviewAnalysisIfNone, startReviewQaIfNone, warmLivePr }, { ghAccount }, { configurePrStatus }] = await Promise.all([
     import('../../shared/review/index.mjs'),
     import('../../shared/review/github.mjs'),
     import('../../shared/prStatus.mjs'),
   ]);
   // Without the checkout, the shed cannot name the repo, so its pull request lookup finds nothing and the page gets no PR.
   configurePrStatus({ repoRoot: repoDir, log: (event, fields) => console.log(`review: ${event}`, fields) });
-  return { handleReviewRequest, ensureWorktreeReview, ensurePullRequestReview, startReviewAnalysisIfNone, startReviewQaIfNone, warmLivePr, ghAccount };
+  return { handleReviewRequest, ensureWorktreeReview, ensurePullRequestReview, worktreeReviewBranch, startReviewAnalysisIfNone, startReviewQaIfNone, warmLivePr, ghAccount };
 }
 
 /**
@@ -197,7 +197,7 @@ export function createReviewHost({
       json: (r, status, body) => json(r, status, withReviews(writable === false ? withoutPullRequest(body) : body)),
       log: (event, fields) => console.log(`review: ${event}`, fields),
       worktreePathFor: (name) => (name === sessionName ? repoDir : path.join(pullWorktreesDir, name)),
-      removeWorktree: removePullWorktree(repoDir),
+      removeWorktree: removePullWorktree(repoDir, pullWorktreesDir),
       // A pull request stacked on another branch is reviewed against that branch, as GitHub shows it.
       worktreeBaseRef: async () => {
         const open = await checkoutPullNow();
@@ -205,9 +205,12 @@ export function createReviewHost({
       },
     };
     // The pull request checked out now is the checkout's review: a second, of GitHub's copy of the same branch, would
-    // split its comments and verdict across two pages. Nothing is made; the caller opens that one instead.
+    // split its comments and verdict across two pages. Nothing is made; the caller opens that one instead. Only while
+    // that review is of this branch, or not taken yet: one taken on a branch checked out before would post to that
+    // branch's pull request, so the pull request asked for gets a review of its own instead.
     const checkoutNumber = reviews?.[0]?.number ?? null;
-    if (isStatus && pr !== null && pr === checkoutNumber) {
+    const taken = isStatus && pr !== null && pr === checkoutNumber ? shed.worktreeReviewBranch?.({ sessionName }) ?? { exists: false } : null;
+    if (taken && (!taken.exists || (taken.branch && taken.branch === checkout.branch))) {
       json(res, 200, { ok: false, status: 'checkout', review: sessionName, error: `#${pr} is the branch checked out: its review is the checkout's`, reviews });
       return true;
     }

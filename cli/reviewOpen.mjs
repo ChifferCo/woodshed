@@ -95,6 +95,11 @@ export async function reviewOpenCommand({ origin, words }, ctx) {
   if (!found.owner || found.owner !== login) {
     throw fail(`${id} is ${found.owner ? `@${printable(found.owner, 60)}'s` : 'a shared'} session: woodshed review opens your own My Woodshed sessions only. Open ${origin}/s/${id}?tab=review`, { code: EXIT.refused, status: 'refused' });
   }
+  // A pull request named by its URL on another repo than the session's: the session reviews its own repo's pull
+  // requests only, and one of the same number there is another pull request.
+  if (target.number && target.repo && found.repo && String(found.repo).toLowerCase() !== target.repo) {
+    throw fail(`Session ${id} is on ${printable(found.repo, 100)}, not ${printable(target.repo, 100)}: its reviews are of its own repo's pull requests. Review #${target.number} on GitHub.`, { code: EXIT.refused, status: 'refused' });
+  }
   if (found.kind === 'ask') throw fail(`${id} is a question from Slack: it has no change to review.`, { code: EXIT.refused, status: 'refused' });
   if (found.taintedAt) throw fail(`Session ${id} has seen production data: nothing reads its review from this computer. Open ${origin}/s/${id}?tab=review`, { code: EXIT.refused, status: 'refused' });
   if (found.status !== 'running') {
@@ -146,14 +151,19 @@ export async function reviewOpenCommand({ origin, words }, ctx) {
     throw fail(`Session ${id}'s review: ${err.message}`);
   }
 
-  // A pull request asked for by number or URL: the review must post to that one. Where the session reviews only its
-  // checkout, a branch with another pull request now would take a verdict or merge instead.
-  if (target.number && checkoutOnly) {
+  // A pull request asked for by number or URL: the review must post to that one, whichever review answered (its own,
+  // the checkout's it was sent to, or the checkout's alone on a session from before a review of each), before any of
+  // its writes is offered.
+  if (target.number) {
     const wanted = target.repo ?? sessionPulls(found).find((p) => p.number === target.number)?.repo ?? null;
-    const live = status.livePr ? parsePullUrl(status.livePr.url) : null;
-    const elsewhere = status.livePr && (status.livePr.number !== target.number || (wanted && live && live.repo.toLowerCase() !== wanted));
+    const dest = status.livePr ?? (status.kind === 'pr' && status.pr ? { number: status.pr, url: status.meta?.url ?? null } : null);
+    const live = dest?.url ? parsePullUrl(dest.url) : null;
+    const elsewhere = dest && (Number(dest.number) !== target.number || (wanted && live && live.repo.toLowerCase() !== wanted));
+    if (elsewhere && checkoutOnly) {
+      throw fail(`Session ${id} opened #${target.number}, but it reviews only its checkout, whose pull request is #${dest.number}${live ? ` (${live.repo})` : ''} now: it runs from before a review of each pull request. Open #${target.number} on GitHub, or start a new session.`, { code: EXIT.refused, status: 'refused' });
+    }
     if (elsewhere) {
-      throw fail(`Session ${id} opened #${target.number}, but it reviews only its checkout, whose pull request is #${status.livePr.number}${live ? ` (${live.repo})` : ''} now: it runs from before a review of each pull request. Open #${target.number} on GitHub, or start a new session.`, { code: EXIT.refused, status: 'refused' });
+      throw fail(`Session ${id}'s review answered for #${dest.number}${live ? ` (${live.repo})` : ''}, not the #${target.number} asked for: nothing was written. Try again in a minute, or review #${target.number} on GitHub.`, { code: EXIT.refused, status: 'refused' });
     }
   }
 
@@ -251,6 +261,8 @@ function printReview(args, ctx) {
       else say(`  #${o.number}${o.checkout ? ' (checked out)' : ''}: woodshed review ${o.url ?? `#${o.number}`}`);
     }
   }
-  say(`\nRun woodshed review ${summary.session} on a terminal for the whole review: the diff, the conversation and the actions.`);
+  // A review of another pull request is opened by that pull request; the session's id opens its checkout's.
+  const again = summary.kind === 'pr' && pr ? (pr.url ?? `#${pr.number}`) : summary.session;
+  say(`\nRun woodshed review ${again} on a terminal for the whole review: the diff, the conversation and the actions.`);
   return ctx.EXIT.done;
 }
