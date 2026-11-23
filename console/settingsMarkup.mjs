@@ -140,7 +140,7 @@ export function actions(...items) {
  * sends the page back where it was.
  */
 export function form({ action, method = 'post', hidden = {}, id = null, inline = false }, ...body) {
-  return el('form', { method, action, id, class: inline ? 'inline-form' : null },
+  return el('form', { method, action, id, class: inline ? 'inline-form' : 'set-form' },
     Object.entries(hidden).map(([name, value]) => el('input', { type: 'hidden', name, value })), body);
 }
 

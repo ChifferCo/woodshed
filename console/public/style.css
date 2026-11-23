@@ -745,6 +745,11 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .set-group { display: flex; flex-direction: column; gap: 6px; max-width: 780px; scroll-margin-top: 12px; }
 /* A program's own groups on a repo's page (repoSettings.js, hostGroups): spaced as the page's own. */
 .host-groups { display: contents; }
+/* A program's page in the settings frame (hostSettings.js): its groups spaced as the console's own page's are. */
+.host-page { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+/* A form drawn by a program's server (settingsMarkup.mjs, form): its controls spaced as a row's body is. */
+.set-form { display: flex; flex-direction: column; align-items: stretch; gap: 10px; margin: 0; }
+.set-form > .set-actions, .set-form > .check-line { align-self: flex-start; }
 /* Who is signed in, on a program's page that stands alone (server.mjs, standalonePage): a line, not a link. */
 .side-who { color: var(--sub); cursor: default; }
 .side-who:hover { background: none; }
