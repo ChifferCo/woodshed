@@ -317,6 +317,8 @@ export function createFleet({
   const stopsInFlight = new Set();
   // Private sessions being handed off (handOffPrivate): a second Hand off meanwhile would start a second session.
   const handoffsInFlight = new Set();
+  // A Stop pressed while a hand-off's stop pushes: carried out if that push fails and the session would run on.
+  const stopsAskedMidHandoff = new Map();
   // Launches in flight in this process. A session left `starting` with no task by a restart has none, and tick
   // looks for the task it began.
   const launchesInFlight = new Set();
@@ -876,6 +878,11 @@ export function createFleet({
       if (!by || session.stoppedBy) return;
       update(session, { stoppedBy: by });
       console.log('fleet: stopped session moved to Stopped', { id: session.id, by, stopReason: session.stopReason });
+      return;
+    }
+    if (session.status === 'stopping' && handoffsInFlight.has(session.id)) {
+      stopsAskedMidHandoff.set(session.id, { reason, by });
+      console.log('fleet: stop asked during a hand-off, held until its push is done', { id: session.id, by });
       return;
     }
     if (session.status !== 'starting' && session.status !== 'running') return;
@@ -1825,7 +1832,19 @@ export function createFleet({
       if (isLocked(from)) throw shown('it has seen production data: nothing it holds goes to another session');
       // Stopped only once its work is pushed: a push refused (a branch moved on remotely) leaves it running, its work
       // in its checkout, and nothing handed off.
-      await stop(from, `handed off to ${agentName(options.agent)}`, { by: owner, requireCheckpoint: true });
+      try {
+        await stop(from, `handed off to ${agentName(options.agent)}`, { by: owner, requireCheckpoint: true });
+      } catch (err) {
+        // Someone pressed Stop meanwhile: it runs on only because the hand-off failed, so their stop goes ahead.
+        const asked = stopsAskedMidHandoff.get(id);
+        if (asked) {
+          stopsAskedMidHandoff.delete(id);
+          handoffsInFlight.delete(id);
+          await stop(from, asked.reason, { by: asked.by });
+          throw shown(`${err.message.replace(/: it keeps running.*$/, '')}: it was stopped, as asked meanwhile`);
+        }
+        throw err;
+      }
       if (from.status !== 'stopped') throw shown('it did not stop: try again in a moment');
       const files = conversation ? [{ name: HANDOFF_FILE, text: handoffDocument({ from: source, to: options, entries, at: nowIso() }) }] : [];
       let next;
@@ -1846,6 +1865,7 @@ export function createFleet({
       return next;
     } finally {
       handoffsInFlight.delete(id);
+      stopsAskedMidHandoff.delete(id);
     }
   }
 

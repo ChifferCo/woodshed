@@ -4299,3 +4299,25 @@ test('the hand-off file is written by the real attachments store and goes out in
   assert.match(execFileSync('tar', ['xOf', tarFile, '1-handoff.md'], { encoding: 'utf8' }), /MARKER-7f3: the token check was inverted/);
   assert.equal(await attachments.has(first.id), false, 'nothing under the old session');
 });
+
+test('a Stop pressed while a hand-off pushes is carried out when the push fails', async () => {
+  const { fleet, statuses, answers, alive } = setup({ attachments: fakeAttachments() });
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });
+  statuses[first.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+  answers['/transcript'] = { entries: [] };
+  let refuse;
+  answers['/checkpoint'] = new Promise((_, reject) => { refuse = reject; });
+  answers['/checkpoint'].catch(() => {});
+  const handing = fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'codex' });
+  for (let i = 0; i < 20 && first.status !== 'stopping'; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(first.status, 'stopping');
+  await fleet.stop(first, 'stopped from the console', { by: 'joel' });
+  answers['/checkpoint'] = { committed: false, head: 'abc' };
+  refuse(Object.assign(new Error('statusd /checkpoint answered 500'), { status: 500, body: { error: 'Command failed: git push -u origin HEAD' } }));
+  await assert.rejects(handing, /its work could not be pushed \(Command failed: git push -u origin HEAD\): it was stopped, as asked meanwhile/);
+  assert.equal(first.status, 'stopped');
+  assert.equal(first.stopReason, 'stopped from the console');
+  assert.equal(first.stoppedBy, 'joel');
+  assert.ok(!alive.has(`c-${first.id}`));
+});

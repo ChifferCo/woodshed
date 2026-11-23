@@ -663,7 +663,9 @@ that no other reads, so what goes across is agent-neutral:
   starts on that branch with the agent and model picked, under the same name, and the permission mode it ran in when
   that agent has it (else the agent's default). Unlike an ordinary Stop, it stops only once the push went through: a push
   refused (the branch moved on remotely) leaves it running, its work committed in its checkout and statusd sending again
-  (`POST /checkpoint {"keepRunningOnFailure": true}`), and nothing is handed off;
+  (`POST /checkpoint {"keepRunningOnFailure": true}`, which turns its sends, home saves and shared settings sync back
+  on), and nothing is handed off. A Stop pressed while that push is under way is held, and carried out if the push fails
+  (`fleet: stop asked during a hand-off, held until its push is done`);
 - the conversation, unless the dialog's switch (`--no-conversation`) leaves it behind: the console reads it first, from
   statusd's `GET /transcript` as the Chat tab does (what was asked, said and run; tool output left out, long messages
   cut, at most 2 MB with the oldest entries left out first), and attaches it to the new session as `handoff.md`, which the
