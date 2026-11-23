@@ -447,7 +447,7 @@ export function runReviewTui({
         const got = await call('GET', '/comments');
         state.draft = {
           prId: got.prId ?? null, headSha: got.headSha ?? null, reviewId: got.reviewId ?? null, description: got.description ?? null,
-          comments: got.comments ?? [], threads: got.threads ?? [], outdated: got.outdated ?? 0, said: got.said ?? [], aiReviews: got.aiReviews ?? [],
+          comments: got.comments ?? [], threads: got.threads ?? [], outdated: got.outdated ?? 0, said: got.said ?? [], aiReviews: got.aiReviews ?? [], checks: got.checks ?? null,
           truncated: Boolean(got.truncated),
         };
       } catch (err) {

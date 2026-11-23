@@ -611,6 +611,7 @@ ${DARK_PALETTE}
     }
     .verdictword.good { color: var(--add); border-color: var(--add); }
     .verdictword.bad { color: var(--del); border-color: var(--del); }
+    .verdictword.warn { color: var(--warn); border-color: var(--warn); }
     .saidbody {
       padding: 0.6rem 0.7rem; font-size: 13.5px; line-height: 1.55; color: var(--ink);
       max-width: var(--prose-measure);
@@ -648,6 +649,18 @@ ${DARK_PALETTE}
     .aifollow .msg.user { margin-left: 0; }
     .aifollow > .msg.bot { border-left: 2px solid var(--accent); padding-left: 0.6rem; }
     .aiwhole { padding: 0 0.7rem 0.6rem; }
+    /* The merge risk and QA over the reviews: two boxes side by side, one
+       under the other on a narrow screen, each its check's word and title,
+       and what the check says under Details. */
+    .aichecks { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0 0.9rem; }
+    .aicheck.warn { border-left-color: var(--warn); }
+    .aicheck .saidhead { flex-wrap: wrap; row-gap: 0.2rem; }
+    .aicheck .saidhead > * { white-space: nowrap; }
+    .aicheck .aititle { padding: 0.5rem 0.7rem; font-size: 13.5px; line-height: 1.55; color: var(--ink); }
+    .aicheck .aititle.none { color: var(--muted); }
+    .aicheck details { border-top: 1px solid var(--rule); padding: 0.35rem 0.7rem 0.5rem; }
+    .aicheck summary { cursor: pointer; font: 600 12px/1.6 "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--muted); }
+    .aicheck details .prose { font-size: 13px; line-height: 1.55; margin-top: 0.3rem; max-height: 28rem; overflow: auto; }
     .msg.user .about { display: block; margin-bottom: 0.2rem; font-size: 11.5px; color: var(--muted); white-space: normal; }
 
     /* Always out, not revealed on hover. Hover-to-reveal was tried and it
@@ -1876,6 +1889,7 @@ ${DARK_PALETTE}
         outdated: got.outdated || 0,
         said: got.said || [],
         aiReviews: got.aiReviews || [],
+        checks: got.checks || null,
         truncated: !!got.truncated,
       };
       // Better said than drawn: part of a conversation shown as the whole one
@@ -3926,7 +3940,7 @@ ${DARK_PALETTE}
     // agent check it against the code. Its answer is drawn under the point, and
     // in the conversation too, where it belongs to the same transcript.
 
-    var aiView = { drafts: {}, error: null, chatError: null };
+    var aiView = { drafts: {}, error: null, chatError: null, checkOpen: {} };
 
     var AI_WORD = {
       APPROVE: { word: 'approves', tone: 'good' },
@@ -3957,12 +3971,83 @@ ${DARK_PALETTE}
         content.appendChild(failed);
       }
       var list = draft.aiReviews || [];
+      var checks = renderAiChecks(draft.checks);
+      if (checks) content.appendChild(checks);
       if (!list.length) {
         content.appendChild(el('div', 'tabnote', 'No AI review has been posted on this pull request yet. Claude Code and Codex review a commit whose message carries the review\u2019s tag, [woodshed-review] by default, and what they say shows here.'));
         return;
       }
       content.appendChild(el('p', 'aiintro', 'What Claude Code and Codex said about this pull request, newest first. Ask a follow-up on any finding, or on a review as a whole: the session\u2019s agent checks the point against the code and answers here.'));
       for (var i = 0; i < list.length; i++) content.appendChild(renderAiReview(list[i], i === 0));
+    }
+
+    // The merge risk the review rated and the QA run's verdict, as GitHub has
+    // them on the pull request's head commit (prChecks.mjs). Either is left out
+    // when there is none and the project file asks for none.
+    var RISK_TONE = { Low: 'good', Medium: 'warn', High: 'bad' };
+    var QA_WORD = {
+      success: { word: 'passed', tone: 'good' },
+      failure: { word: 'failed', tone: 'bad' },
+      timed_out: { word: 'timed out', tone: 'bad' },
+      cancelled: { word: 'cancelled', tone: '' },
+      skipped: { word: 'skipped', tone: '' },
+      neutral: { word: 'not tested', tone: '' },
+      action_required: { word: 'needs you', tone: 'warn' },
+    };
+
+    function renderAiChecks(checks) {
+      if (!checks || (!checks.mergeRisk && !checks.qa)) return null;
+      var row = el('div', 'aichecks');
+      if (checks.mergeRisk) {
+        var r = checks.mergeRisk;
+        var tone = r.missing ? '' : RISK_TONE[r.tier] || '';
+        row.appendChild(aiCheckBox(r, 'Merge risk', r.missing ? null : { word: r.tier ? r.tier.toLowerCase() : 'not rated', tone: tone },
+          r.missing ? 'No ' + r.name + ' check on the latest commit yet: the review rates it when it reviews a commit.'
+            : r.fromLabel ? 'From the pull request\u2019s label: the review rated an earlier commit, and has not reviewed the latest one.'
+            : sentence(r.reason || r.title)));
+      }
+      if (checks.qa) {
+        var q = checks.qa;
+        var word = q.missing ? null
+          : q.status !== 'completed' ? { word: 'running', tone: 'warn' }
+          : QA_WORD[q.conclusion] || { word: q.conclusion || 'done', tone: '' };
+        row.appendChild(aiCheckBox(q, 'QA', word,
+          q.missing ? 'No ' + q.name + ' check on the latest commit yet: QA has not run on it.' : q.title));
+      }
+      return row;
+    }
+
+    // A check's reason after its tier (High: touches billing) starts lower case.
+    function sentence(text) {
+      text = String(text || '');
+      return text.charAt(0).toUpperCase() + text.slice(1);
+    }
+
+    function aiCheckBox(check, label, word, title) {
+      var box = el('div', 'saidbox aicheck' + (word && word.tone ? ' ' + word.tone : ''));
+      var head = el('div', 'saidhead');
+      head.appendChild(el('span', 'who', label));
+      if (word) head.appendChild(el('span', 'verdictword ' + word.tone, word.word));
+      if (check.missing) head.appendChild(el('span', 'aitag', 'not run'));
+      else if (check.fromLabel) head.appendChild(el('span', 'aitag old', 'older commit'));
+      else if (check.current) head.appendChild(el('span', 'aitag', 'latest commit'));
+      if (check.at) head.appendChild(el('span', 'when', fmtWhen(check.at)));
+      head.appendChild(el('span', 'grow'));
+      if (check.url) head.appendChild(openOnGitHub(check.url, 'Open on GitHub'));
+      box.appendChild(head);
+      if (title) box.appendChild(el('div', 'aititle' + (check.missing || check.fromLabel ? ' none' : ''), title));
+      if (check.summary) {
+        // Kept open across a redraw, which an answer arriving below causes.
+        var more = document.createElement('details');
+        more.open = !!aiView.checkOpen[label];
+        more.addEventListener('toggle', function onToggle() { aiView.checkOpen[label] = more.open; });
+        more.appendChild(el('summary', null, 'Details'));
+        var prose = el('div', 'prose');
+        renderMarkdown(prose, check.summary);
+        more.appendChild(prose);
+        box.appendChild(more);
+      }
+      return box;
     }
 
     function renderAiReview(review, newest) {
