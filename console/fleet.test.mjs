@@ -203,7 +203,7 @@ test('a private session names its agent to the container, and a resume of one bu
   assert.equal(calls.started[1].env.AGENT, 'opencode');
   await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
   assert.equal(calls.started[2].env.AGENT, undefined, 'claude is the image\'s default');
-  await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: '', agent: 'antigravity' }), /say what Antigravity CLI should do/);
+  await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: '', agent: 'grok' }), /say what Grok Build should do/);
   await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: 'x', agent: 'opencode', model: 'no-provider' }), /not a name OpenCode takes/);
   grok.claudeSession = '0b6e9c7a-1d2f-4e5a-9b8c-7d6e5f4a3b2c';
   await fleet.stopSession?.(grok.id).catch(() => {});

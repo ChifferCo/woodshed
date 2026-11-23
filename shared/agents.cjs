@@ -1,9 +1,9 @@
-// The agents a session can run, in one place: Claude Code, Codex, Grok Build, Antigravity and OpenCode. One file for
+// The agents a session can run, in one place: Claude Code, Codex, Grok Build and OpenCode. One file for
 // the console (imported), its pages (served as /static/agents.cjs, a script that sets `WoodshedAgents`), the command line
 // and the session image (/opt/woodshed/shared), so each names, offers and checks the same agents the same way.
 //
 // Claude Code and Codex are the two the console can run on a team's credential, through its own proxies
-// (anthropicProxy.mjs, openaiProxy.mjs). The three others run only on their owner's own sign-in, saved on My settings as
+// (anthropicProxy.mjs, openaiProxy.mjs). The two others run only on their owner's own sign-in, saved on My settings as
 // `users/<login>/<agent>-auth` and handed to that person's private sessions alone (sessionApi.mjs, /settings): never to a
 // shared session, a question from Slack, a QA run or a review, which hold no one's sign-in. That is why they review
 // nothing either: a review is a shared session.
@@ -62,26 +62,6 @@
       permissionModes: ['auto', 'acceptEdits', 'plan', 'default'],
       efforts: ['', 'low', 'medium', 'high', 'xhigh', 'max'], modelHint: 'grok-build', modelRe: MODEL_NAME, reviews: false,
       usageUrl: 'https://grok.com/build', docsUrl: 'https://docs.x.ai/build/overview',
-    },
-    antigravity: {
-      id: 'antigravity', name: 'Antigravity', product: 'Antigravity CLI', command: 'agy', processNames: ['agy', 'antigravity'], quit: '/exit',
-      teamCredential: false,
-      signIn: {
-        secret: 'antigravity-auth', label: 'Antigravity', placeholder: 'AIza… or the contents of ~/.gemini/antigravity-cli/antigravity-oauth-token', maxChars: 20_000,
-        // Google keeps a refresh token as it is when it refreshes the access token, so every session can hold the same one.
-        rotates: false,
-        // Made in a session's terminal and sent to the console by session/bin/woodshed-sign-in (sessionApi.mjs,
-        // POST /agent-sign-in), never printed.
-        inSession: true,
-        kinds: 'your Google sign-in (AI Pro or Ultra), or a Gemini API key',
-        steps: [
-          { text: 'In the Terminal tab of one of your own My Woodshed sessions, run this, open the link it prints, sign in with the Google account that has your plan, and paste the code back within the minute agy waits. It saves the sign-in here without showing it, then reload this page.', command: 'woodshed-sign-in antigravity' },
-          { text: 'Or paste a Gemini API key (AIza…) from Google AI Studio (aistudio.google.com/apikey).' },
-        ],
-      },
-      permissionModes: ['auto', 'acceptEdits', 'plan', 'default'],
-      efforts: ['', 'low', 'medium', 'high', 'xhigh', 'max'], modelHint: 'auto', modelRe: MODEL_NAME, reviews: false,
-      usageUrl: 'https://aistudio.google.com/usage', docsUrl: 'https://antigravity.google/docs/cli/reference/',
     },
     opencode: {
       id: 'opencode', name: 'OpenCode', product: 'OpenCode', command: 'opencode', processNames: ['opencode', 'opencode.exe'], quit: '/exit',
@@ -146,26 +126,13 @@
     const text = value.trim();
     if (!text) throw fail(`paste your ${a.product} sign-in first`);
     if (text.length > a.signIn.maxChars) throw fail(`that is too long for a ${a.product} sign-in`);
-    if (id === 'antigravity' && /^AIza[0-9A-Za-z_-]{20,80}$/.test(text)) return text;
     if (id === 'grok' && /^xai-[0-9A-Za-z_-]{10,200}$/.test(text)) return text;
     let json;
     try {
       // zsh ends output with no final newline in a `%`, which a copy of `cat …auth.json` takes along.
       json = JSON.parse(text.replace(/\}\s*%$/, '}'));
     } catch {
-      throw fail({
-        grok: 'paste an xAI API key (xai-…) or the contents of ~/.grok/auth.json',
-        antigravity: 'paste a Gemini API key (AIza…) or the contents of ~/.gemini/antigravity-cli/antigravity-oauth-token',
-      }[id] ?? 'paste the contents of ~/.local/share/opencode/auth.json');
-    }
-    if (id === 'antigravity') {
-      // agy's own file for a Google sign-in, as 1.5.14 reads it: the OAuth token (with the refresh token it renews the
-      // access token from) and the sign-in's kind, `consumer` for a Google account.
-      const token = json?.token;
-      if (!token || typeof token !== 'object' || typeof token.refresh_token !== 'string' || !token.refresh_token || typeof json.auth_method !== 'string' || !json.auth_method) {
-        throw fail('that is not agy’s Google sign-in: paste the whole of ~/.gemini/antigravity-cli/antigravity-oauth-token');
-      }
-      return JSON.stringify(json);
+      throw fail(id === 'grok' ? 'paste an xAI API key (xai-…) or the contents of ~/.grok/auth.json' : 'paste the contents of ~/.local/share/opencode/auth.json');
     }
     if (typeof json !== 'object' || json === null || Array.isArray(json) || !Object.keys(json).length) throw fail(`that holds no ${a.product} sign-in: paste the whole auth.json`);
     const entries = Object.values(json);

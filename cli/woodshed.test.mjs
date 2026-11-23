@@ -132,7 +132,7 @@ test('status shows only whether the CLI token owner has personal session sign-in
   assert.equal((await c.run(['login', '--console', c.origin])).code, EXIT.done);
   const status = await c.run(['status', '--json']);
   // The other agents run on their owner's own sign-in alone: none saved here.
-  assert.deepEqual(status.lines[0].sessionSignIns, { claude: false, codex: true, grok: false, antigravity: false, opencode: false });
+  assert.deepEqual(status.lines[0].sessionSignIns, { claude: false, codex: true, grok: false, opencode: false });
   assert.ok(!status.out.includes('private timestamp'));
 });
 

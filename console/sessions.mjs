@@ -197,8 +197,8 @@ export const PERMISSION_MODES = ['auto', 'acceptEdits', 'plan', 'default'];
 // The agent a private session runs (shared/agents.cjs). Codex takes its model and reasoning effort as `codex --model` and
 // `-c model_reasoning_effort=`; its permission modes are the entrypoint's mapping onto codex's sandbox and approval flags.
 // Codex's models and efforts are OpenAI's catalog's (codexModels.mjs), which the console checks a start against: here
-// only their shape, since both end up on codex's command line. Grok Build, Antigravity and OpenCode take a model name of
-// the registry's shape (OpenCode's is `provider/model`), an effort from the registry's list, and the permission modes the
+// only their shape, since both end up on codex's command line. Grok Build and OpenCode take a model name of the
+// registry's shape (OpenCode's is `provider/model`), an effort from the registry's list, and the permission modes the
 // entrypoint maps onto each one's own flags.
 export const AGENTS = agents.AGENT_IDS;
 export const CODEX_MODEL_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;

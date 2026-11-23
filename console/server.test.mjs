@@ -9,6 +9,7 @@ import { createProjectColors } from './projectColors.mjs';
 import { createTunnel } from './dbTunnel.mjs';
 import { createCliSignIn } from './cliSignIn.mjs';
 import { createHandler } from './server.mjs';
+import agentsRegistry from '../shared/agents.cjs';
 import { createSlack } from './slack.mjs';
 import { createUserSettings } from './userSettings.mjs';
 
@@ -1001,7 +1002,7 @@ test('New session offers only the agents set up to run, and a Codex start needs 
   const as = { cookie: 'woodshed_session=mia-dev' };
   const agents = async () => JSON.parse(await getBody(port, '/api/my', as)).agents;
 
-  const none = { grok: false, antigravity: false, opencode: false };
+  const none = Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, false]));
   assert.deepEqual(await agents(), { claude: true, codex: false, ...none }, 'no Codex sign-in and no team key');
   assert.deepEqual(await post(port, '/api/my/sessions', { prompt: 'go', agent: 'codex' }, as),
     { status: 409, body: { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' } });
@@ -1015,7 +1016,7 @@ test('New session offers only the agents set up to run, and a Codex start needs 
   assert.deepEqual(await agents(), { claude: false, codex: true, ...none }, 'no Claude token, no Claude');
 });
 
-test('Grok Build, Antigravity and OpenCode are offered and start only on their owner\'s own sign-in', async (t) => {
+test('Grok Build and OpenCode are offered and start only on their owner\'s own sign-in', async (t) => {
   t.mock.method(console, 'log', () => {});
   const started = [];
   const stopped = { id: '0a1b2c3d', owner: 'mia-dev', status: 'stopped', options: { agent: 'grok' } };
@@ -1029,7 +1030,7 @@ test('Grok Build, Antigravity and OpenCode are offered and start only on their o
     refresh: async () => {},
     view: () => ({
       claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: true, available: true,
-      agentAuth: Object.fromEntries(['grok', 'antigravity', 'opencode'].map((id) => [id, { set: own.has(id), savedAt: null }])),
+      agentAuth: Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, { set: own.has(id), savedAt: null }])),
     }),
     setAgentAuth: async (login, id, value) => { own.set(id, value); },
     removeAgentAuth: async (login, id) => { own.delete(id); },
@@ -1043,7 +1044,7 @@ test('Grok Build, Antigravity and OpenCode are offered and start only on their o
   const as = { cookie: 'woodshed_session=mia-dev' };
   const me = async () => JSON.parse(await getBody(port, '/api/my', as));
 
-  assert.deepEqual((await me()).agents, { claude: false, codex: false, grok: false, antigravity: false, opencode: false });
+  assert.deepEqual((await me()).agents, { claude: false, codex: false, ...Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, false])) });
   assert.deepEqual(await post(port, '/api/my/sessions', { prompt: 'go', agent: 'grok' }, as),
     { status: 409, body: { error: 'save your Grok Build sign-in on My settings first' } });
   assert.deepEqual(await post(port, `/api/my/sessions/${stopped.id}/resume`, {}, as),
@@ -1054,7 +1055,7 @@ test('Grok Build, Antigravity and OpenCode are offered and start only on their o
   assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'grok', model: 'grok-build' }, as)).status, 201, 'no Claude token needed');
   assert.equal(started[0].agent, 'grok');
   assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'opencode' }, as)).status, 409);
-  for (const id of ['codex', 'claude', 'gemini']) assert.equal((await post(port, `/api/my/agent-auth/${id}`, { value: 'x' }, as)).status, 404, id);
+  for (const id of ['codex', 'claude', 'nope']) assert.equal((await post(port, `/api/my/agent-auth/${id}`, { value: 'x' }, as)).status, 404, id);
   assert.equal((await post(port, '/api/my/agent-auth/grok/remove', {}, as)).body.agents.grok, false);
   assert.equal((await post(port, '/api/my/agent-auth/grok', { value: 'x' }, { ...as, origin: 'https://evil.example' })).status, 403);
 });

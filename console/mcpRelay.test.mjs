@@ -48,7 +48,7 @@ test('only a private claude session of an allowed person on an allowed repo may 
   assert.match(serverEligibility(s, { ...mine, qa: { base: 'main' } }, 'o/r').why, /QA run or a review/);
   assert.match(serverEligibility(s, { ...mine, review: { base: 'main' } }, 'o/r').why, /QA run or a review/);
   assert.match(serverEligibility(s, { ...mine, options: { agent: 'codex' } }, 'o/r').why, /Codex/);
-  for (const [agent, product] of [['grok', 'Grok Build'], ['antigravity', 'Antigravity CLI'], ['opencode', 'OpenCode']]) {
+  for (const [agent, product] of [['grok', 'Grok Build'], ['opencode', 'OpenCode']]) {
     assert.match(serverEligibility(s, { ...mine, options: { agent } }, 'o/r').why, new RegExp(`a ${product} session gets no MCP servers`));
   }
   assert.match(serverEligibility(s, { ...mine, owner: 'ana' }, 'o/r').why, /@ana is not allowed/);

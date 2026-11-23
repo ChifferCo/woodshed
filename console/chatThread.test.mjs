@@ -445,10 +445,9 @@ test('a held bubble whose send got no answer in time stops promising delivery, s
   assert.equal(chat.stillPending([a], [], now + 11 * 60_000).length, 0);
 });
 
-test('Grok Build, OpenCode and Antigravity tools are counted by what they did', () => {
+test('Grok Build and OpenCode tools are counted by what they did', () => {
   const kinds = (names) => names.map((n) => chat.toolKind(n));
   assert.deepEqual(kinds(['execute', 'edit', 'read', 'search', 'fetch', 'delete', 'think']), ['command', 'edit', 'read', 'search', 'web', 'edit', 'tool']);
   assert.deepEqual(kinds(['bash', 'write', 'patch', 'glob', 'grep', 'list', 'webfetch', 'task', 'todowrite']), ['command', 'edit', 'edit', 'search', 'search', 'search', 'web', 'agent', 'plan']);
-  assert.deepEqual(kinds(['run_command', 'view_file', 'write_to_file', 'replace_file_content', 'grep_search', 'read_url_content']), ['command', 'read', 'edit', 'edit', 'search', 'web']);
   assert.equal(chat.workSummary([{ tool: 'bash' }, { tool: 'edit' }, { tool: 'execute' }]), 'Ran 2 commands, edited 1 file');
 });

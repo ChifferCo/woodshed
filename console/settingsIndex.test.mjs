@@ -20,7 +20,6 @@ test('the words people reach for find the section, in the right place', () => {
   assert.equal(search('token')[0].id, 'claude');
   assert.ok(titles('openai').includes('Codex sign-in'));
   assert.equal(search('grok')[0].id, 'grok');
-  assert.equal(search('gemini key')[0].id, 'antigravity');
   assert.equal(search('opencode')[0].id, 'opencode');
   assert.equal(search('timeout')[0].page, '/settings');
   assert.ok(titles('timeout').includes('Session limits for everyone'));

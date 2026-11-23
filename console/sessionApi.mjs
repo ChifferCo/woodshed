@@ -15,15 +15,13 @@
 //                        console makes no databases; claudeToken is the owner's own, for claude in their session;
 //                        a shared session gets {"database"}, its own, and 503 while they are still being copied, with
 //                        {"plan"} too when it runs on the Claude plan of whoever started it. A private session of
-//                        Grok Build, Antigravity or OpenCode gets no claudeToken but "agentAuth", its owner's own sign-in
+//                        Grok Build or OpenCode gets no claudeToken but "agentAuth", its owner's own sign-in
 //                        for that agent, and 409 with none saved
 //   *    /anthropic/...  claude's calls to Anthropic, the real credential added here (anthropicProxy.mjs)
 //   *    /openai/...     a Codex session's calls to OpenAI on the team key, added here (openaiProxy.mjs)
 //   POST /codex-auth     a Codex session's refreshed ~/.codex/auth.json, kept for its owner's next session
 //   POST /agent-auth     a private Grok Build or OpenCode session's refreshed login (shared/agents.cjs, `rotates`), kept
 //                        as its owner's own sign-in for their next session
-//   POST /agent-sign-in  the owner's sign-in for an agent whose sign-in is made in a session (Antigravity's Google
-//                        sign-in, `x-woodshed-agent: antigravity`), from session/bin/woodshed-sign-in, saved on My settings
 //   POST /home           a session's Claude home, a gzipped tar, saved on stop: a private one's for its owner, a
 //                        shared one's for its own next run
 //   POST /home/restore   that tar back, for the owner's next private session or the shared session's next run;
@@ -214,7 +212,7 @@ export function createSessionApi({
       }
       return mcpRelay.handle(req, res, sessionForAuthorization(req.headers.authorization, fleet.sessions()));
     }
-    const routes = ['/codex-auth', '/agent-auth', '/agent-sign-in', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/qa-video', '/qa-poster', '/review-report', '/egress'];
+    const routes = ['/codex-auth', '/agent-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/qa-video', '/qa-poster', '/review-report', '/egress'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -225,7 +223,6 @@ export function createSessionApi({
     if (pathname === '/repo-settings') return repoSettingsReply(req, res, session, repoSettings);
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings);
     if (pathname === '/agent-auth') return agentAuthReply(req, res, session, userSettings);
-    if (pathname === '/agent-sign-in') return agentSignInReply(req, res, session, userSettings, fleet);
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
     if (pathname === '/answer') return answerReply(req, res, session, asks);
     if (pathname === '/qa-report') return qaReportReply(req, res, session, fleet);
@@ -362,7 +359,7 @@ async function settingsReply(res, session, userSettings, databases, repoSettings
   }
   if (!session.owner) return sharedSettingsReply(res, session, databases, userSettings, { planOnly });
   const codex = session.options?.agent === 'codex';
-  // Grok Build, Antigravity and OpenCode run on their owner's own sign-in, and on nothing else (shared/agents.cjs).
+  // Grok Build and OpenCode run on their owner's own sign-in, and on nothing else (shared/agents.cjs).
   const own = agents.OWN_SIGN_IN_AGENTS.includes(session.options?.agent) ? agents.agent(session.options.agent) : null;
   const agentAuth = own && userSettings ? await userSettings.agentAuth(session.owner, own.id) : null;
   if (own && !agentAuth) {
@@ -508,47 +505,6 @@ async function agentAuthReply(req, res, session, userSettings) {
     return reply(res, 400, { error: err.message });
   }
   console.log(`sessionApi: ${agent.product} sign-in kept`, { sessionId: session.id, owner: session.owner });
-  return reply(res, 200, { ok: true });
-}
-
-/**
- * A sign-in its owner made in one of their own private sessions' terminals, for an agent whose sign-in is made there
- * (shared/agents.cjs, `signIn.inSession`: Antigravity's Google sign-in, which agy keeps in a file only where there is no
- * keyring). session/bin/woodshed-sign-in sends agy's file here, so the sign-in is saved on My settings without ever being
- * shown in the terminal. Never from a shared session, a question, QA or a review, and never from a tainted session,
- * whose data stays in it.
- */
-async function agentSignInReply(req, res, session, userSettings, fleet) {
-  // A session being locked down (its first production call) counts as tainted, before the upload and again after it.
-  const locked = () => Boolean(session.taintedAt) || Boolean(fleet?.isLocked?.(session));
-  const id = String(req.headers['x-woodshed-agent'] ?? '');
-  const agent = agents.isAgent(id) ? agents.agent(id) : null;
-  const refused = !userSettings || !agent?.signIn?.inSession ? `no ${agent?.product ?? 'such agent'} sign-in is made in a session`
-    : !session.owner || isAsk(session) || isQa(session) || isReview(session) ? 'only its owner\'s own My Woodshed session saves a sign-in'
-      : locked() ? 'a session that has seen production data saves nothing outside it' : null;
-  if (refused) {
-    req.resume();
-    console.log('sessionApi: sign-in from a session refused', { sessionId: session.id, agent: id, why: refused });
-    return reply(res, refused.startsWith('no ') ? 404 : 403, { error: refused });
-  }
-  let text = '';
-  for await (const chunk of req) {
-    text += chunk;
-    if (text.length > agent.signIn.maxChars) return reply(res, 413, { error: 'too large' });
-  }
-  if (locked()) {
-    console.log('sessionApi: sign-in from a session refused', { sessionId: session.id, agent: id, why: 'locked down during the upload' });
-    return reply(res, 403, { error: 'a session that has seen production data saves nothing outside it' });
-  }
-  try {
-    if (!agents.checkSignIn(agent.id, text).startsWith('{')) throw Object.assign(new Error(`that is a key, which My settings takes as it is`), { shown: true });
-    await userSettings.setAgentAuth(session.owner, agent.id, text);
-  } catch (err) {
-    if (!err.shown) throw err;
-    console.warn(`sessionApi: ${agent.product} sign-in from a session refused`, { sessionId: session.id, owner: session.owner, message: err.message });
-    return reply(res, 400, { error: err.message });
-  }
-  console.log(`sessionApi: ${agent.product} sign-in saved from a session`, { sessionId: session.id, owner: session.owner });
   return reply(res, 200, { ok: true });
 }
 

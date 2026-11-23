@@ -767,26 +767,18 @@ answering, the menus are your last list read, or else codex's built-in list (`BU
 --bundled` of the image's codex), and a line under them says so. `CODEX_CLIENT_VERSION` follows the image's
 `CODEX_VERSION`, which `codexModels.test.mjs` checks; refresh `BUILT_IN` with it.
 
-**Grok Build**, **Antigravity** and **OpenCode** are on the Agent menu too (`shared/agents.cjs`), each only for someone
-whose own sign-in for it is saved on My settings: they run on nothing else, since the console holds no team key or proxy
-for them. The sign-in is `users/<login>/grok-auth` (an xAI key, `xai-…`, or `~/.grok/auth.json` from `grok login`),
-`antigravity-auth` (agy's Google sign-in, for a Google AI Pro or Ultra plan, or a Gemini API key, `AIza…`) or `opencode-auth` (`~/.local/share/opencode/auth.json` from `opencode auth login`), saved
-with `POST /api/my/agent-auth/<agent>` and removed with `…/remove`. It is handed to that person's private sessions of
-that agent alone (`/settings`'s `agentAuth`), never to a shared session, a question, QA or a review: so they review
-nothing, and a resume needs it saved as a start does. Grok's and OpenCode's logins rotate their refresh token at each
-use, so a session sends the refreshed one back at stop (`POST /agent-auth`, with the digest of the sign-in it was
-given), kept only while the saved one is still that sign-in (not a key or login saved since, nor another session's
-refresh) and does not run out before it. Antigravity's Google sign-in is its file
-`~/.gemini/antigravity-cli/antigravity-oauth-token`, which agy writes in place of the keyring where the machine has none,
-as in a session, so the person's own computer cannot hand it over: My settings has them run `woodshed-sign-in
-antigravity` in the Terminal tab of one of their own sessions (`session/bin/woodshed-sign-in`). It runs `agy -p` in a
-folder of its own, which prints a link and takes the code back, and sends the file agy wrote to the session API's
-`POST /agent-sign-in`, which saves it as the owner's (`sessionApi: Antigravity CLI sign-in saved from a session`): the
-sign-in is never shown in the terminal, and the folder is deleted. Only the owner's own private session may, never a
-shared one, a question, QA, a review or a tainted session (`sessionApi: sign-in from a session refused` with `why`). Google keeps its refresh token as it is, so nothing goes back
-at stop. Their **Model** is a name their own `--model` takes, blank for the agent's default (OpenCode's is
-`provider/model`); **Effort** and **Permissions** offer what each one's command line has (`efforts` and
-`permissionModes` in the registry). None of them gets the console's MCP servers yet.
+**Grok Build** and **OpenCode** are on the Agent menu too (`shared/agents.cjs`), each only for someone whose own sign-in
+for it is saved on My settings: they run on nothing else, since the console holds no team key or proxy for them. The
+sign-in is `users/<login>/grok-auth` (an xAI key, `xai-…`, or `~/.grok/auth.json` from `grok login`) or `opencode-auth`
+(`~/.local/share/opencode/auth.json` from `opencode auth login`), saved with `POST /api/my/agent-auth/<agent>` and
+removed with `…/remove`. It is handed to that person's private sessions of that agent alone (`/settings`'s `agentAuth`),
+never to a shared session, a question, QA or a review: so they review nothing, and a resume needs it saved as a start
+does. Their logins rotate their refresh token at each use, so a session sends the refreshed one back at stop
+(`POST /agent-auth`, with the digest of the sign-in it was given), kept only while the saved one is still that sign-in (not a
+key or login saved since, nor another session's refresh) and does not run out before it. Their **Model** is a name their
+own `--model` takes, blank for the agent's default (OpenCode's is `provider/model`); **Effort** and **Permissions**
+offer what each one's command line has (`efforts` and `permissionModes` in the registry). None of them gets the
+console's MCP servers yet.
 
 Under the token, the switch **Also use it for shared sessions I start from
 GitHub** (on by default, and only with a token saved) runs the shared
@@ -844,7 +836,7 @@ server (`mcpServers.mjs`, `checkServer`):
   console can lock a session down: the docker launcher, or AWS with `prod_mcp`'s guarded network, and a session API and
   egress proxy address. Otherwise the page and the API say why.
 - `shared` (ordinary ones only): shared sessions and questions from Slack get it too. A QA run or a review never gets
-  any, since it runs a pull request's code, nor does a Codex, Grok Build, Antigravity or OpenCode session yet.
+  any, since it runs a pull request's code, nor does a Codex, Grok Build or OpenCode session yet.
 - `auth`, what the relay adds to each call: `oidc`, a five-minute token the console signs for `audience` (below);
   `header`, a header (`header`, such as `authorization` or `x-api-key`) whose value is kept in the secret store as
   `mcp-servers/<name>/header`, written once on the card or with `/header` and never read back; or `none`.
@@ -2184,7 +2176,7 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   `slack-bot-token` the dialog does. Without the hook the dialog opens on the own app's steps.
 
 A Claude token, Codex sign-in or own sign-in for another agent written straight into the secret store, as
-`users/<login>/claude-token`, `codex-auth`, `grok-auth`, `antigravity-auth` or `opencode-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
+`users/<login>/claude-token`, `codex-auth`, `grok-auth` or `opencode-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
 
 ## Slack
 

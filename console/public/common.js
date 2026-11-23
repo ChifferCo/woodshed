@@ -612,7 +612,7 @@
     const at = s.startSteps || {};
     const last = START_STEPS.reduce((found, [key], i) => (at[key] ? i : found), -1);
     let from = Date.parse(s.startedAt);
-    // The last step opens the session's own agent, as its id names it: claude, codex, grok, antigravity or opencode.
+    // The last step opens the session's own agent, as its id names it: claude, codex, grok or opencode.
     const agent = agentOf(s);
     const steps = START_STEPS.map(([key, l, sh], i) => {
       const [label, short] = key === 'claude' ? [`Opening ${agent}`, `opening ${agent}`] : [l, sh];
@@ -664,7 +664,7 @@
     return window.WoodshedAgents.agentOfSession(s);
   }
 
-  /** @returns {string}  the agent's short name: Claude, Codex, Grok, Antigravity or OpenCode */
+  /** @returns {string}  the agent's short name: Claude, Codex, Grok or OpenCode */
   function agentTitle(s) {
     return window.WoodshedAgents.agent(agentOf(s)).name;
   }

@@ -138,7 +138,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       codexStatus);
   }
 
-  // Grok Build, Antigravity and OpenCode: each runs only on its owner's own sign-in (shared/agents.cjs), saved here as
+  // Grok Build and OpenCode: each runs only on its owner's own sign-in (shared/agents.cjs), saved here as
   // users/<login>/<agent>-auth and handed to that person's own My Woodshed sessions alone. One card each, from the
   // registry's words. Their boxes and notes are made once and kept across draws, as Codex's are.
   const A = window.WoodshedAgents;

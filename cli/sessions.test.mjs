@@ -346,7 +346,7 @@ test('session new says what the console refuses, with its exit code', async (t) 
   assert.equal(c.calls.length, 0, 'nothing started');
   const unknown = await c.run(['session', 'new', '--agent', 'gpt', 'go']);
   assert.equal(unknown.code, EXIT.failed);
-  assert.match(unknown.err, /--agent must be one of claude, codex, grok, antigravity, opencode/);
+  assert.match(unknown.err, /--agent must be one of claude, codex, grok, opencode/);
 
   const refused = await consoleFor(t, { refuse: 'say what Claude should do' });
   const empty = await refused.run(['session', 'new', '--json']);

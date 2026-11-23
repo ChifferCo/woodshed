@@ -645,18 +645,17 @@ test('a private Codex session needs no Claude token, gets its owner\'s Codex sig
   assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer claude-token', body: '{}' })).status, 404, 'not a Codex session');
 });
 
-test('a private Grok Build, Antigravity or OpenCode session runs on its owner\'s own sign-in alone, and can keep a refreshed login', async (t) => {
+test('a private Grok Build or OpenCode session runs on its owner\'s own sign-in alone, and can keep a refreshed login', async (t) => {
   t.mock.method(console, 'log', () => {});
   t.mock.method(console, 'warn', () => {});
   const sessions = [
     { id: 'aaaaaaaa', status: 'running', token: 'grok-token', owner: 'joel', options: { agent: 'grok' } },
     { id: 'bbbbbbbb', status: 'running', token: 'none-token', owner: 'mia', options: { agent: 'opencode' } },
-    { id: 'cccccccc', status: 'running', token: 'agy-token', owner: 'joel', options: { agent: 'antigravity' } },
+    { id: 'cccccccc', status: 'running', token: 'codex-token', owner: 'joel', options: { agent: 'codex' } },
     { id: 'dddddddd', status: 'running', token: 'oc-token', owner: 'joel', options: { agent: 'opencode' } },
   ];
   const own = {
     grok: JSON.stringify({ scope: { key: 'at', refresh_token: 'rt', expires_at: '2026-12-01T00:00:00Z' } }),
-    antigravity: 'AIzaSyA-joel-key-0123456789abcdef',
     opencode: JSON.stringify({ openai: { type: 'oauth', refresh: 'r', access: 'a', expires: 2_000 } }),
   };
   const saved = [];
@@ -676,7 +675,6 @@ test('a private Grok Build, Antigravity or OpenCode session runs on its owner\'s
   const grok = await request(port, { path: '/settings', authorization: 'Bearer grok-token' });
   assert.equal(grok.status, 200);
   assert.deepEqual([grok.body.agentAuth, grok.body.claudeToken, grok.body.codexAuth], [own.grok, null, undefined]);
-  assert.equal((await request(port, { path: '/settings', authorization: 'Bearer agy-token' })).body.agentAuth, own.antigravity);
   assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer none-token' }),
     { status: 409, body: { error: '@mia has no OpenCode sign-in saved on My settings' } });
 
@@ -693,76 +691,10 @@ test('a private Grok Build, Antigravity or OpenCode session runs on its owner\'s
   assert.equal(own.grok, 'xai-replacement-key-0123456789');
   const older = JSON.stringify({ openai: { type: 'oauth', refresh: 'r0', access: 'a0', expires: 1_000 } });
   assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer oc-token', body: older, headers: given(own.opencode) })).status, 409, 'an older login never replaces a newer one');
-  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer agy-token', body: 'AIza-x' })).status, 404, 'a key does not rotate');
-  // Nor does agy's Google sign-in: Google keeps its refresh token as it is, so the saved one stays good.
-  own.antigravity = JSON.stringify({ token: { access_token: 'at', token_type: 'Bearer', refresh_token: 'rt', expiry: '2026-12-01T00:00:00Z' }, auth_method: 'consumer' });
-  assert.equal((await request(port, { path: '/settings', authorization: 'Bearer agy-token' })).body.agentAuth, own.antigravity);
-  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer agy-token', body: own.antigravity, headers: given(own.antigravity) })).status, 404, 'a Google sign-in is not sent back');
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer codex-token', body: older })).status, 404, 'not an agent of its own sign-in');
   assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer none-token', body: older })).status, 409, 'no sign-in saved, nothing to replace');
   assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer grok-token', body: 'x'.repeat(20_001) })).status, 413);
   assert.equal(saved.length, 1, 'only the refresh of the sign-in it was given');
-});
-
-test('the owner\'s own session saves an Antigravity Google sign-in made in its terminal, and no other session does', async (t) => {
-  t.mock.method(console, 'log', () => {});
-  t.mock.method(console, 'warn', () => {});
-  const sessions = [
-    { id: 'aaaaaaaa', status: 'running', token: 'own-token', owner: 'joel', options: { agent: 'grok' } },
-    { id: 'bbbbbbbb', status: 'running', token: 'shared-token', options: { agent: 'claude' } },
-    { id: 'cccccccc', status: 'running', token: 'ask-token', owner: 'joel', kind: 'ask' },
-    { id: 'dddddddd', status: 'running', token: 'tainted-token', owner: 'joel', taintedAt: '2026-11-01T00:00:00Z' },
-  ];
-  const saved = [];
-  const userSettings = { setAgentAuth: async (login, id, text) => { saved.push([login, id, text]); } };
-  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
-  const server = http.createServer((req, res) => { handle(req, res); });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => server.close());
-  const { port } = server.address();
-  const login = JSON.stringify({ token: { access_token: 'at', token_type: 'Bearer', refresh_token: 'rt', expiry: '2026-12-01T00:00:00Z' }, auth_method: 'consumer' });
-  const send = (token, body, agent = 'antigravity') => request(port, { path: '/agent-sign-in', authorization: `Bearer ${token}`, body, headers: { 'x-woodshed-agent': agent } });
-
-  assert.equal((await send('own-token', login)).status, 200, 'any agent\'s session of its owner: the sign-in is made in its terminal');
-  assert.deepEqual(saved, [['joel', 'antigravity', login]]);
-  assert.equal((await send('own-token', login, 'grok')).status, 404, 'Grok Build\'s sign-in is made on the person\'s own computer');
-  assert.equal((await send('own-token', 'AIzaSyA-joel-key-0123456789abcdef')).status, 400, 'a key is pasted on My settings, never sent from a session');
-  assert.equal((await send('own-token', '{"token":{"access_token":"at"},"auth_method":"consumer"}')).status, 400, 'no refresh token: not a sign-in');
-  assert.equal((await send('shared-token', login)).status, 403, 'a shared session holds no one\'s sign-in');
-  assert.equal((await send('ask-token', login)).status, 403, 'nor a question from Slack');
-  assert.equal((await send('tainted-token', login)).status, 403, 'a tainted session\'s data stays in it');
-  assert.equal((await send('own-token', 'x'.repeat(20_001))).status, 413);
-  assert.equal(saved.length, 1);
-});
-
-test('a sign-in from a session is not saved when the session is locked down before or during its upload', async (t) => {
-  t.mock.method(console, 'log', () => {});
-  const session = { id: 'aaaaaaaa', status: 'running', token: 'own-token', owner: 'joel', options: { agent: 'grok' } };
-  const saved = [];
-  let locking = false;
-  const fleet = { sessions: () => [session], isLocked: () => locking };
-  const handle = createSessionApi({ fleet, tokens: { token: async () => ({}) }, userSettings: { setAgentAuth: async (...args) => { saved.push(args); } } });
-  const server = http.createServer((req, res) => { handle(req, res); });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => server.close());
-  const { port } = server.address();
-  const login = JSON.stringify({ token: { access_token: 'at', refresh_token: 'rt' }, auth_method: 'consumer' });
-  const headers = { authorization: 'Bearer own-token', 'x-woodshed-agent': 'antigravity', 'content-type': 'application/json' };
-
-  locking = true;
-  assert.equal((await request(port, { path: '/agent-sign-in', authorization: 'Bearer own-token', body: login, headers: { 'x-woodshed-agent': 'antigravity' } })).status, 403, 'a lockdown under way');
-  locking = false;
-  // The upload's first half, then the session's first production call, then the rest.
-  const status = await new Promise((resolve, reject) => {
-    const req = http.request({ port, host: '127.0.0.1', method: 'POST', path: '/agent-sign-in', headers }, (res) => { res.resume(); resolve(res.statusCode); });
-    req.on('error', reject);
-    req.write(login.slice(0, 20));
-    setTimeout(() => {
-      session.taintedAt = new Date().toISOString();
-      req.end(login.slice(20));
-    }, 50);
-  });
-  assert.equal(status, 403, 'tainted while its body was on its way');
-  assert.deepEqual(saved, []);
 });
 
 test('a session gets the token of the project it runs on', async (t) => {

@@ -2,7 +2,7 @@
 // console's own session routes, signed in with the command line's token (console/cliSessions.mjs lists the routes it
 // reaches). A session started here is a private one, as My Woodshed's New session starts.
 //
-//   woodshed session new [--repo R] [--branch B] [--agent claude|codex|grok|antigravity|opencode] [--model M] [--no-wait|--connect|--herdr [--parent[=T]]] ["prompt"]
+//   woodshed session new [--repo R] [--branch B] [--agent claude|codex|grok|opencode] [--model M] [--no-wait|--connect|--herdr [--parent[=T]]] ["prompt"]
 //   woodshed session connect <id> [--shell]
 //   woodshed session herdr <id> [--parent[=T]]
 //   woodshed session list [--all]
@@ -85,8 +85,8 @@ Commands:
   new [options] ["prompt"]   start a private session, and wait until it runs, fails or needs you
       --repo <owner/name>    the repo to work on (default: the one New session opens on for you)
       --branch <branch>      work on this branch, or a pull request or issue: 123, pr 123, or its URL
-      --agent <agent>        the agent it runs: claude, codex, grok, antigravity, opencode (default claude). Grok Build,
-                             Antigravity and OpenCode run on your own sign-in from My settings
+      --agent <agent>        the agent it runs: claude, codex, grok, opencode (default claude). Grok Build and
+                             OpenCode run on your own sign-in from My settings
       --model <model>        the agent's model (default the agent's own)
       --no-wait              print the session and return once the console has it
       --connect              once it runs, put this terminal on its agent's, as connect does

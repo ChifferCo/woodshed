@@ -1367,22 +1367,19 @@ test('while the agent\'s terminal is not there yet, the TUI tab says so and atta
   }
 });
 
-// Grok Build, Antigravity and OpenCode: their flags for each mode, and their own files, from the owner's own sign-in.
+// Grok Build and OpenCode: their flags for each mode, and their own files, from the owner's own sign-in.
 const agentFlags = (name, env) => execFileSync('bash', ['-c', `${fn(name)}\n${name}`], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, ...env }) });
 
 test('each agent gets its own flags for the mode, model and effort New session picked', () => {
   assert.equal(agentFlags('grokFlags', {}), ' --no-alt-screen --no-auto-update --always-approve');
   assert.equal(agentFlags('grokFlags', { PERMISSION_MODE: 'plan', MODEL: 'grok-build', EFFORT: 'high' }), ' --no-alt-screen --no-auto-update --permission-mode plan --model grok-build --effort high');
   assert.equal(agentFlags('grokFlags', { PERMISSION_MODE: 'default' }), ' --no-alt-screen --no-auto-update');
-  assert.equal(agentFlags('antigravityFlags', { UPLOADS_DIR: '/tmp/uploads' }), ' --mode auto --add-dir /tmp/uploads');
-  assert.equal(agentFlags('antigravityFlags', { PERMISSION_MODE: 'acceptEdits', MODEL: 'auto', EFFORT: 'max' }), ' --mode accept-edits --add-dir /tmp/uploads --model auto --effort max');
   assert.equal(agentFlags('opencodeFlags', {}), ' --auto');
   assert.equal(agentFlags('opencodeFlags', { PERMISSION_MODE: 'plan', MODEL: 'anthropic/claude-sonnet-4-5' }), ' --agent plan --model anthropic/claude-sonnet-4-5');
   assert.equal(agentFlags('opencodeFlags', { PERMISSION_MODE: 'default' }), '');
-  const command = (agent) => execFileSync('bash', ['-c', [fn('codexFlags'), fn('grokFlags'), fn('antigravityFlags'), fn('opencodeFlags'), fn('agentCommand'), fn('promptFlag'), 'printf "%s|%s" "$(agentCommand)" "$(promptFlag)"'].join('\n')],
+  const command = (agent) => execFileSync('bash', ['-c', [fn('codexFlags'), fn('grokFlags'), fn('opencodeFlags'), fn('agentCommand'), fn('promptFlag'), 'printf "%s|%s" "$(agentCommand)" "$(promptFlag)"'].join('\n')],
     { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, AGENT: agent, SESSION_DIR: '/opt/woodshed/session' }) });
   assert.equal(command('grok'), '/opt/woodshed/session/bin/grok --no-alt-screen --no-auto-update --always-approve|');
-  assert.equal(command('antigravity'), '/opt/woodshed/session/bin/agy --mode auto --add-dir /tmp/uploads| -i');
   assert.equal(command('opencode'), '/opt/woodshed/session/bin/opencode --auto| --prompt');
   assert.ok(fn('startAgent').includes('agentRun "$(agentCommand)$(promptFlag) \\"\\$(cat /tmp/woodshed-prompt.md)\\""'), 'the prompt after the agent\'s own flag for it');
 });
@@ -1394,7 +1391,7 @@ function configureAgent(name, auth, env = {}) {
   fs.mkdirSync(path.join(home, '.config', 'woodshed'), { recursive: true });
   fs.writeFileSync(path.join(home, '.config', 'woodshed', 'agent-auth'), auth, { mode: 0o600 });
   fs.writeFileSync(path.join(tmp, 'woodshed-rules.md'), '# Woodshed rules\n');
-  const vars = ['OWN_AGENT_AUTH_FILE=$HOME/.config/woodshed/agent-auth', 'GROK_HOME_DIR=$HOME/.grok', 'ANTIGRAVITY_DIR=$HOME/.gemini',
+  const vars = ['OWN_AGENT_AUTH_FILE=$HOME/.config/woodshed/agent-auth', 'GROK_HOME_DIR=$HOME/.grok',
     'OPENCODE_DATA_DIR=$HOME/.local/share/opencode', 'OPENCODE_CONFIG_DIR=$HOME/.config/opencode'];
   const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { echo "ERROR: $*"; exit 1; }', ...vars,
     fn('ownAgentAuthIsKey'), fn('agentDir'), fn(name).replaceAll('/tmp/', `${tmp}/`), name].join('\n');
@@ -1431,36 +1428,6 @@ test('Grok Build: a login as its own auth.json, a key left to the wrapper; its c
   assert.match(key.out, /own xAI key/);
 });
 
-test('Antigravity: a Gemini key with its provider, the checkout trusted, its status line and the rules', () => {
-  const a = configureAgent('configureAntigravity', 'AIzaSyExample');
-  assert.deepEqual(JSON.parse(a.read('.gemini/antigravity-cli/settings.json')), {
-    modelProvider: 'gemini', trustedWorkspaces: ['/work/app'], statusLine: { type: 'command', command: 'node /opt/woodshed/session/agentStatusLine.mjs' },
-  });
-  assert.equal(a.read('.gemini/AGENTS.md'), '# Woodshed rules\n');
-  // Its first-start questions are skipped as agy itself records them answered, with no consent given.
-  assert.deepEqual(JSON.parse(a.read('.gemini/antigravity-cli/cache/onboarding.json')), { consumerOnboardingComplete: true, enterpriseOnboardingComplete: false, onboardingComplete: true });
-  assert.equal(a.read('.gemini/antigravity-cli/settings.json').includes('AIza'), false, 'the key stays out of its settings');
-  assert.equal(a.read('.gemini/antigravity-cli/antigravity-oauth-token'), null);
-  assert.match(a.out, /own Gemini API key/);
-  assert.equal(configureAgent('configureAntigravity', '{"x":1}').failed, true, 'a file that is not agy\'s Google sign-in');
-});
-
-test('Antigravity: a Google sign-in as agy\'s own token file, with no Gemini provider, and none of it left on a key', () => {
-  const login = '{"token":{"access_token":"ya29.x","token_type":"Bearer","refresh_token":"1//r","expiry":"2026-12-01T00:00:00Z"},"auth_method":"consumer"}';
-  const g = configureAgent('configureAntigravity', login);
-  assert.equal(g.read('.gemini/antigravity-cli/antigravity-oauth-token'), login);
-  assert.equal(g.mode('.gemini/antigravity-cli/antigravity-oauth-token'), 0o600);
-  assert.deepEqual(JSON.parse(g.read('.gemini/antigravity-cli/settings.json')), {
-    trustedWorkspaces: ['/work/app'], statusLine: { type: 'command', command: 'node /opt/woodshed/session/agentStatusLine.mjs' },
-  }, 'agy signs in with Google unless told to use a key');
-  assert.match(g.out, /own Google sign-in/);
-  // A key saved since the last start: the old sign-in file is gone, so the key is the only way in.
-  const script = fn('configureAntigravity');
-  assert.match(script, /if ownAgentAuthIsKey; then\n    rm -f "\$login"/);
-  assert.match(script, /\[ ! -L "\$ANTIGRAVITY_DIR\/\$file" \]/);
-  assert.match(script, /antigravity-cli\/antigravity-oauth-token AGENTS\.md/, 'the token file is never a symlink');
-});
-
 test('OpenCode: its auth.json, its config with the effort as each agent\'s variant, and the rules', () => {
   const auth = '{"anthropic":{"type":"api","key":"sk-ant-x"}}';
   const o = configureAgent('configureOpencode', auth, { EFFORT: 'high' });
@@ -1489,7 +1456,7 @@ test('OpenCode: the repo\'s AGENTS.md, or its CLAUDE.md, is named in the owner\'
 
 test('an own-sign-in agent\'s start stops without its sign-in, and keeps the copy it was given', () => {
   const settings = fn('fetchOwnerSettings');
-  assert.match(settings, /grok \| antigravity \| opencode\)/);
+  assert.match(settings, /grok \| opencode\)/);
   assert.match(settings, /\[ -n "\$token" \] \|\| die "the console sent no sign-in for \$\{AGENT\}: save yours on My settings"/);
   assert.match(settings, /\(umask 077 && printf '%s' "\$token" > "\$OWN_AGENT_AUTH_FILE"\)/);
   assert.match(fn('configureMcp'), /\[ "\$\{AGENT:-claude\}" = claude \]/, 'MCP servers only for claude');

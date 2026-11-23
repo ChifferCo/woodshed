@@ -37,7 +37,6 @@ test('a terminal is an agent by its program or its status record, a shell by its
   assert.equal(classify(t({ name: 'codex', argv: ['codex'], cwd: '/w', pid: 4 })).agent, 'codex');
   // The agents a move refuses are still known as agents, never taken for a program.
   assert.equal(classify(t({ name: 'grok', argv: ['/home/mia/.grok/bin/grok'], cwd: '/w', pid: 4 })).agent, 'grok');
-  assert.equal(classify(t({ name: 'agy', argv: ['agy', '-i', 'fix it'], cwd: '/w', pid: 4 })).agent, 'antigravity');
   assert.equal(classify(t({ name: 'opencode', argv: ['opencode'], cwd: '/w', pid: 4 })).agent, 'opencode');
   assert.equal(classify(t({ name: 'bun', argv: ['/usr/lib/node_modules/opencode-ai/bin/opencode.exe'], cwd: '/w', pid: 4 })).agent, 'opencode');
   assert.equal(classify(t({ name: 'zsh', argv: ['-zsh'], cwd: '/w', pid: 4 })).kind, 'shell');

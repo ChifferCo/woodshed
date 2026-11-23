@@ -21,7 +21,7 @@
 //   POST /api/my/codex-auth      {"value": "sk-..." or the text of ~/.codex/auth.json}
 //   POST /api/my/codex-auth/remove
 //   POST /api/my/codex-auth/reviews  {"on": true|false}   reviews of my pull requests run Codex on this sign-in (reviewAgents.mjs)
-//   POST /api/my/agent-auth/<agent>  {"value": ...}   my own Grok Build, Antigravity or OpenCode sign-in (shared/agents.cjs)
+//   POST /api/my/agent-auth/<agent>  {"value": ...}   my own Grok Build or OpenCode sign-in (shared/agents.cjs)
 //   POST /api/my/agent-auth/<agent>/remove
 //   GET  /api/my/reviews              who reviews my pull requests, and the choices this console can run for me
 //   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|null}   null is the most there is
@@ -1609,7 +1609,7 @@ export function createHandler({
     return {
       login, ...view,
       // The agents New session offers: each only with something to run it on.
-      // Grok Build, Antigravity and OpenCode run on their owner's own sign-in alone (shared/agents.cjs).
+      // Grok Build and OpenCode run on their owner's own sign-in alone (shared/agents.cjs).
       agents: {
         claude: Boolean(view.claudeToken?.set), codex: Boolean(view.codexAuth?.set) || teamOpenAiKey,
         ...Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, Boolean(view.agentAuth?.[id]?.set)])),
@@ -1784,8 +1784,8 @@ export function createHandler({
         const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
         const herdrParent = body.herdrParent === true;
         await userSettings?.refresh?.(login, { force: true });
-        // A Codex session signs in with its own login or the team's OpenAI key, and Grok Build, Antigravity and OpenCode
-        // with their owner's own sign-in alone: none of them needs a Claude token.
+        // A Codex session signs in with its own login or the team's OpenAI key, and Grok Build and OpenCode with their
+        // owner's own sign-in alone: none of them needs a Claude token.
         const ownRefusal = signInRefusal(login, agent);
         if (ownRefusal) return reply(res, 409, { error: ownRefusal });
         if ((!agent || agent === 'claude') && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });

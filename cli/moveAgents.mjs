@@ -33,8 +33,8 @@ export function codexHome(env = process.env) {
 const base = (word) => path.basename(String(word ?? '')).replace(/^-/, '');
 
 /**
- * What a terminal runs: an agent (Claude Code, Codex, Grok Build, Antigravity or OpenCode), a shell, or another program, from what hc says runs in it in
- * the foreground now, and the status record the program sends.
+ * What a terminal runs: an agent (Claude Code, Codex, Grok Build or OpenCode), a shell, or another program, from what hc says runs in it
+ * in the foreground now, and the status record the program sends.
  * @param {object} terminal  hc's Terminal
  * @returns {{kind: 'agent'|'shell'|'process', agent?: string, argv: string[], cwd: string, state: string|null}}
  */
@@ -52,7 +52,6 @@ export function classify(terminal) {
   if (/codex/i.test(app) || words.includes('codex') || anyArg(/@openai\/codex|\/codex(\.js)?$/)) return { kind: 'agent', agent: 'codex', argv, cwd, state };
   // The agents a move does not carry yet (move.mjs refuses them), known by name so they are never taken for a program.
   if (/grok/i.test(app) || words.includes('grok') || anyArg(/@xai-official\/grok|\/grok$/)) return { kind: 'agent', agent: 'grok', argv, cwd, state };
-  if (/antigravity/i.test(app) || words.includes('agy') || words.includes('antigravity') || anyArg(/\/(agy|antigravity)$/)) return { kind: 'agent', agent: 'antigravity', argv, cwd, state };
   if (/opencode/i.test(app) || words.includes('opencode') || words.includes('opencode.exe') || anyArg(/opencode-ai\/|\/opencode(\.exe)?$/)) return { kind: 'agent', agent: 'opencode', argv, cwd, state };
   if (SHELLS.has(base(fg?.name ?? argv[0]))) return { kind: 'shell', argv, cwd, state };
   return { kind: 'process', argv, cwd, state };

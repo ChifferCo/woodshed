@@ -9,8 +9,7 @@
 // (devChatSession.mjs): a message is answered with a few tool calls and a reply, one that says "fail" has a tool fail,
 // and one that says "ask" puts the codex session at Needs you until Enter in its TUI tab.
 // /s/62000c0d and /s/0c0de0c0 are the same over a stand-in Grok Build and OpenCode, writing each one's own record (its
-// updates.jsonl, its SQLite database) for the real statusd to read; /s/a9a9a9a9 is a running Antigravity session, with no
-// stand-in behind it.
+// updates.jsonl, its SQLite database) for the real statusd to read.
 // /s/c1a0de02 is the same claude, started from a Claude home that holds an earlier session's conversation, as a private
 // session started while another runs is: its Chat stays empty until it is sent a message.
 // DEV_CONSOLE_APP_PORTS=7701-7703 puts session apps on those ports of localhost, in place of `<id>.apps.localhost`.
@@ -319,11 +318,6 @@ const sessions = [
     kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'opencode' }, status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null,
     ref: openCodeChat.ref, endpoint: { host: '127.0.0.1', statusPort: openCodeChat.port, termPort: openCodeChat.port },
   })] : []),
-  // Antigravity, running, with no container behind it: its card, pane bar and menus, never a live Chat.
-  session('a9a9a9a9', null, 'Add a health route on Antigravity', {
-    kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'antigravity', permissionMode: 'auto' }, status: 'running', state: 'working',
-    stoppedAt: null, stopReason: null, prUrl: null,
-  }),
   ...(newChat ? [session(NEW_CHAT_ID, null, 'A new session beside a running one', {
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null,
     ref: newChat.ref, endpoint: { host: '127.0.0.1', statusPort: newChat.port, termPort: newChat.port },

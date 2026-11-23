@@ -1544,8 +1544,8 @@ test('a guarded send carries its caller\'s own deadline', () => {
   for (const raw of ['{"text":"x"}', '{"text":"x","notAfter":"soon"}', '{"text":"x","notAfter":-1}', 'nope']) assert.equal(sendNotAfter(raw), null, raw);
 });
 
-test('Grok Build, Antigravity and OpenCode get pastes, as codex does', () => {
-  for (const agent of ['grok', 'antigravity', 'opencode']) {
+test('Grok Build and OpenCode get pastes, as codex does', () => {
+  for (const agent of ['grok', 'opencode']) {
     assert.deepEqual(typingSteps('fix it\nplease', agent), [{ paste: 'fix it\nplease', pauseMs: 50 }], agent);
   }
 });
@@ -1561,7 +1561,7 @@ test('an agent\'s own login goes back only when this session refreshed it, and a
 });
 
 test('tmux\'s test of the pane names every agent\'s program', () => {
-  for (const name of ['grok', 'agy', 'opencode']) assert.ok(AGENT_PANE_FORMAT.includes(`#{==:#{pane_current_command},${name}}`), name);
+  for (const name of ['claude', 'codex', 'grok', 'opencode']) assert.ok(AGENT_PANE_FORMAT.includes(`#{==:#{pane_current_command},${name}}`), name);
   assert.equal(isAgentCommand('opencode'), true);
   assert.equal(isAgentCommand('bash'), false);
 });

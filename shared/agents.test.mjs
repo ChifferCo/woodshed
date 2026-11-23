@@ -5,9 +5,9 @@ import test from 'node:test';
 const require = createRequire(import.meta.url);
 const agents = require('./agents.cjs');
 
-test('every agent is listed, Claude Code first, and only the new three need an own sign-in', () => {
-  assert.deepEqual(agents.AGENT_IDS, ['claude', 'codex', 'grok', 'antigravity', 'opencode']);
-  assert.deepEqual(agents.OWN_SIGN_IN_AGENTS, ['grok', 'antigravity', 'opencode']);
+test('every agent is listed, Claude Code first, and only the new two need an own sign-in', () => {
+  assert.deepEqual(agents.AGENT_IDS, ['claude', 'codex', 'grok', 'opencode']);
+  assert.deepEqual(agents.OWN_SIGN_IN_AGENTS, ['grok', 'opencode']);
   for (const id of agents.AGENT_IDS) {
     const a = agents.agent(id);
     assert.equal(a.id, id);
@@ -17,7 +17,7 @@ test('every agent is listed, Claude Code first, and only the new three need an o
     assert.equal(Boolean(a.signIn), !a.teamCredential);
     assert.ok(a.permissionModes.includes('auto'));
   }
-  assert.ok(agents.PROCESS_NAMES.includes('agy') && agents.PROCESS_NAMES.includes('opencode'));
+  assert.ok(agents.PROCESS_NAMES.includes('grok') && agents.PROCESS_NAMES.includes('opencode'));
   // tmux names a pane's command after the process, which Linux cuts at 15 characters.
   assert.ok(agents.PROCESS_NAMES.every((n) => n.length <= 15));
 });
@@ -36,7 +36,6 @@ test('model names: each agent\'s own shape, never a space or a quote', () => {
   assert.ok(agents.modelShapeOk('opencode', 'anthropic/claude-sonnet-4-5'));
   assert.ok(!agents.modelShapeOk('opencode', 'claude-sonnet-4-5'));
   assert.ok(!agents.modelShapeOk('opencode', 'a/b"; rm -rf /'));
-  assert.ok(agents.modelShapeOk('antigravity', 'gemini-3-pro'));
   // Claude Code's are a fixed list, checked by the console.
   assert.ok(!agents.modelShapeOk('claude', 'opus'));
 });
@@ -47,17 +46,6 @@ test('own sign-ins: a key or a login file each agent writes, checked before it i
   assert.equal(agents.checkSignIn('grok', `${JSON.stringify(grokLogin, null, 2)}%`), JSON.stringify(grokLogin));
   assert.throws(() => agents.checkSignIn('grok', '{"x": {"auth_mode": "oidc"}}'), /not a Grok Build auth.json/);
   assert.throws(() => agents.checkSignIn('grok', 'sk-nope'), /xAI API key/);
-
-  assert.equal(agents.checkSignIn('antigravity', 'AIzaSyA1234567890abcdefghijklmnop'), 'AIzaSyA1234567890abcdefghijklmnop');
-  // agy's own file for a Google sign-in (~/.gemini/antigravity-cli/antigravity-oauth-token), as 1.5.14 writes it.
-  const agyLogin = { token: { access_token: 'ya29.x', token_type: 'Bearer', refresh_token: '1//r', expiry: '2026-12-01T00:00:00Z' }, auth_method: 'consumer' };
-  assert.equal(agents.checkSignIn('antigravity', `${JSON.stringify(agyLogin, null, 2)}\n`), JSON.stringify(agyLogin));
-  assert.throws(() => agents.checkSignIn('antigravity', '{"token": "x"}'), /not agy’s Google sign-in/);
-  assert.throws(() => agents.checkSignIn('antigravity', JSON.stringify({ token: agyLogin.token })), /not agy’s Google sign-in/, 'it says which sign-in it is');
-  assert.throws(() => agents.checkSignIn('antigravity', JSON.stringify({ ...agyLogin, token: { access_token: 'a' } })), /not agy’s Google sign-in/, 'with nothing to renew it from');
-  assert.throws(() => agents.checkSignIn('antigravity', 'sk-nope'), /Gemini API key \(AIza…\) or the contents of/);
-  assert.equal(agents.agent('antigravity').signIn.rotates, false, 'Google keeps its refresh token as it is');
-  assert.deepEqual(agents.OWN_SIGN_IN_AGENTS.filter((id) => agents.agent(id).signIn.inSession), ['antigravity'], 'only a sign-in kept in a file where there is no keyring is made in a session');
 
   const oc = { anthropic: { type: 'api', key: 'sk-ant-x' }, openai: { type: 'oauth', refresh: 'r', access: 'a', expires: 1 } };
   assert.equal(agents.checkSignIn('opencode', JSON.stringify(oc)), JSON.stringify(oc));

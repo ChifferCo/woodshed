@@ -1,11 +1,11 @@
 // What an agent's pane says its session is doing, for the agents whose own word is not all there is: codex, which has
-// no hooks, and the pane fallbacks of Grok Build (before its first hook), Antigravity (before its status line first
-// runs) and OpenCode (no hooks, its state from its screen alone). Only the bottom of the screen is read: an agent's own
-// printed output stays on screen and can hold any marker.
+// no hooks, and the pane fallbacks of Grok Build (before its first hook) and OpenCode (no hooks, its state from its
+// screen alone). Only the bottom of the screen is read: an agent's own printed output stays on screen and can hold any
+// marker.
 //
 // codex's are captured from its pane (codex 0.167). The others are reconstructed from each agent's source or binary
-// strings (Grok Build 1.0.45's source and 1.0.92's strings, Antigravity 1.5.14's strings, OpenCode v1.19.6's
-// tui/src/routes/session/*.tsx), not captured from a pane: shared/__fixtures__/pane-<agent>-*.txt are drawn from them.
+// strings (Grok Build 1.0.45's source and 1.0.92's strings, OpenCode v1.19.6's tui/src/routes/session/*.tsx), not
+// captured from a pane: shared/__fixtures__/pane-<agent>-*.txt are drawn from them.
 
 import { readApproval } from './panePrompt.mjs';
 
@@ -68,17 +68,6 @@ export function classifyGrokPane(paneText) {
 }
 
 /**
- * Antigravity's screen says only that it asks: its status line says the rest.
- * @param {'antigravity'} agent
- * @param {string} paneText
- * @returns {'needs-you'|null}
- */
-export function classifyAskingPane(agent, paneText) {
-  if (typeof paneText !== 'string' || !paneText.trim()) return null;
-  return readApproval(paneText, agent) ? 'needs-you' : null;
-}
-
-/**
  * The pane's reading for any agent but claude, whose own reader is agentState.mjs's paneState.
  * @param {string} agent
  * @param {string} paneText
@@ -88,6 +77,5 @@ export function classifyAgentPane(agent, paneText) {
   if (agent === 'codex') return classifyCodexPane(paneText);
   if (agent === 'opencode') return classifyOpencodePane(paneText);
   if (agent === 'grok') return classifyGrokPane(paneText);
-  if (agent === 'antigravity') return classifyAskingPane(agent, paneText);
   return null;
 }

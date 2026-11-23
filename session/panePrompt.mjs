@@ -42,9 +42,6 @@ const CODEX_APPROVAL_FOOT = /Press enter to confirm/i;
 // `Yes, and don't ask again for anything (always-approve mode)`, `Yes, proceed`, `Always allow: …`, `No, and tell Grok
 // what to do differently` (or `No, reject (type to add feedback)`). A digit picks its row (`1`–`9`).
 const GROK_TITLE = /^\s*Allow .+\?\s*$/;
-// Antigravity's (the 1.5.14 binary's strings; not captured): `Run this command?`, `Allow access to this URL?`, `Allow
-// calling this tool?`, over options `Yes, allow tool call`, `No, deny permission` and the like.
-const ANTIGRAVITY_TITLE = /^\s*(Run this command|Allow access to this URL|Allow calling this tool|Allow [a-z ]+)\?\s*$/;
 // OpenCode's (its source, tui/src/routes/session/permission.tsx at v1.19.6; not captured): `△ Permission required` over
 // what it asks, then its choices on one line, `Allow once  Allow always  Reject`, the picked one shown by its colour
 // alone. Enter takes the picked one (Allow once at first), Esc rejects, and Left walks back to Allow once.
@@ -198,8 +195,7 @@ function dropTips(raw, width) {
 }
 
 /**
- * An approval the agent waits on: claude's permission dialog, codex's approval, or Grok Build's, Antigravity's or
- * OpenCode's.
+ * An approval the agent waits on: claude's permission dialog, codex's approval, or Grok Build's or OpenCode's.
  * @param {string} pane
  * @param {string} [agent]  the session's agent: only its own shape is read. Left out, every shape is tried
  * @returns {null|{agent: string, what: string|null, title: string, detail: string[],
@@ -240,9 +236,8 @@ export function readApproval(pane, agent) {
     const read = numberedApproval(who, lines, title, from, rows, what, detail);
     if (read) return read;
   }
-  for (const [who, titleRe] of [['grok', GROK_TITLE], ['antigravity', ANTIGRAVITY_TITLE]]) {
-    if (agent && agent !== who) continue;
-    const read = footlessApproval(who, lines, titleRe);
+  if (!agent || agent === 'grok') {
+    const read = grokApproval(lines);
     if (read) return read;
   }
   if (!agent || agent === 'opencode') return opencodeApproval(lines);
@@ -275,10 +270,10 @@ function numberedApproval(agent, lines, title, from, rows, what, detail, extra =
   };
 }
 
-// Grok Build's and Antigravity's: a title, what it asks under it, then numbered options down to a blank line or the
-// end of the screen, with no key hint of their own known under them. The last such title on screen is the live one.
-function footlessApproval(agent, lines, titleRe) {
-  const title = lastIndex(lines, titleRe);
+// Grok Build's: a title, what it asks under it, then numbered options down to a blank line or the end of the screen,
+// with no key hint of its own known under them. The last such title on screen is the live one.
+function grokApproval(lines) {
+  const title = lastIndex(lines, GROK_TITLE);
   if (title === -1) return null;
   const first = lines.findIndex((l, i) => i > title && ROW.test(l));
   if (first === -1) return null;
@@ -287,7 +282,7 @@ function footlessApproval(agent, lines, titleRe) {
   const rows = rowsOf(lines, first, end);
   // Options numbered from 1, each once: anything else is a list the agent printed, not a prompt.
   if (!rows.length || rows.some((r, i) => r.n !== i + 1)) return null;
-  return numberedApproval(agent, lines, title, title, rows, null, asDrawn(lines.slice(title + 1, first)), agent === 'grok' ? { digits: true } : {});
+  return numberedApproval('grok', lines, title, title, rows, null, asDrawn(lines.slice(title + 1, first)), { digits: true });
 }
 
 // OpenCode's: its title, what it asks, and its choices on one line. Answered with keys alone, since the pick shows only

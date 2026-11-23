@@ -223,7 +223,7 @@ masks what it returns and audits each call (its own docs), and Woodshed locks do
   A production server can be added only where the console can lock a session down: the local provider's docker
   launcher, or AWS with Terraform's `prod_mcp` set, which makes the guarded network. Then only a My Woodshed session
   running claude, whose owner and repo the server lists (`*` for all). Never a shared session, a question from Slack,
-  a QA run, a review, or a session running Codex, Grok Build, Antigravity or OpenCode.
+  a QA run, a review, or a session running Codex, Grok Build or OpenCode.
 - **The relay.** claude reaches the server by its name, at `<console>/mcp/<name>` on the session API (`/prod-mcp` for
   `woodshed-prod`), with the session's own token. The console forwards each call with a token of its own: a
   five-minute JWT it signs as an OpenID Connect issuer (`/.well-known/openid-configuration` and

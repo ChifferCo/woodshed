@@ -459,8 +459,8 @@ async function readJsonBody(req) {
 /**
  * Whether `login` has saved each personal agent sign-in, for `GET /api/cli/me`'s `sessionSignIns` (setup's agent step).
  * As on My settings, a sign-in saved directly to the store also counts: refresh re-reads it, and caches the check.
- * Grok Build, Antigravity and OpenCode count only with their own sign-in saved (shared/agents.cjs).
- * @returns {(login: string|null) => Promise<{claude: boolean, codex: boolean, grok: boolean, antigravity: boolean, opencode: boolean}>}
+ * Grok Build and OpenCode count only with their own sign-in saved (shared/agents.cjs).
+ * @returns {(login: string|null) => Promise<{claude: boolean, codex: boolean, grok: boolean, opencode: boolean}>}
  */
 export function sessionSignInsOf(userSettings) {
   return async (login) => {

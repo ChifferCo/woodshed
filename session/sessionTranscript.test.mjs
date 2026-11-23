@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
-import { MAX_DECOMPRESSED_BYTES, MAX_TEXT, grokFolderName, openCodeDb, ownClaudeTranscript, parseAntigravityTranscript, parseClaudeTranscript, parseCodexRollout, parseGrokUpdates, readSessionTranscript } from './sessionTranscript.mjs';
+import { MAX_DECOMPRESSED_BYTES, MAX_TEXT, grokFolderName, openCodeDb, ownClaudeTranscript, parseClaudeTranscript, parseCodexRollout, parseGrokUpdates, readSessionTranscript } from './sessionTranscript.mjs';
 
 const line = (o) => JSON.stringify(o);
 const at = '2026-11-12T10:00:00.000Z';
@@ -430,9 +430,8 @@ test('a prompt that quotes a command tag in its prose is the prompt, not the com
   assert.deepEqual(entries.map((e) => e.text), ['Explain <command-name>/help</command-name> in the transcript format.']);
 });
 
-// ---- Grok Build, OpenCode and Antigravity. Their fixtures are made from each agent's documented record shapes (Grok
-// Build's ACP updates.jsonl, OpenCode 1.19's SQLite tables, Antigravity's steps as third-party notes give them): none
-// is a capture from a real session yet.
+// ---- Grok Build and OpenCode. Their fixtures are made from each agent's documented record shapes (Grok Build's ACP
+// updates.jsonl, OpenCode 1.19's SQLite tables): none is a capture from a real session yet.
 
 const FIXTURES = new URL('../shared/__fixtures__/', import.meta.url);
 const fixture = (name) => fs.readFileSync(new URL(name, FIXTURES), 'utf8');
@@ -469,23 +468,6 @@ test('the newest Grok Build session of the checkout is read, not another folder\
   assert.equal(read.entries[0].text, 'Fix the login bug');
   const again = await readSessionTranscript({ agent: 'grok', home, root: '/work/app', since: read.writtenAt });
   assert.equal(again.unchanged, true);
-});
-
-test('Antigravity\'s steps, as reconstructed, read as what was asked, said and run', async () => {
-  const entries = parseAntigravityTranscript(fixture('transcript-antigravity.jsonl'));
-  assert.deepEqual(entries.map((e) => [e.role, e.tool ?? null, e.text, e.error ?? false]), [
-    ['user', null, 'Add a health route', false],
-    ['assistant', null, 'I will add GET /health.', false],
-    ['tool', 'run_command', 'npm test', false],
-    ['tool', 'view_file', 'file:///work/app/server.js', true],
-    ['assistant', null, 'Done.', false],
-  ]);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-'));
-  const statusFile = path.join(dir, 'status.json');
-  assert.deepEqual((await readSessionTranscript({ agent: 'antigravity', statusFile })).entries, []);
-  fs.writeFileSync(path.join(dir, 'transcript.jsonl'), fixture('transcript-antigravity.jsonl'));
-  fs.writeFileSync(statusFile, JSON.stringify({ agent_state: 'idle', transcript_path: path.join(dir, 'transcript.jsonl') }));
-  assert.equal((await readSessionTranscript({ agent: 'antigravity', statusFile })).entries.length, 5);
 });
 
 // OpenCode 1.19's tables (packages/opencode core/src/session/sql.ts), with the columns read here.

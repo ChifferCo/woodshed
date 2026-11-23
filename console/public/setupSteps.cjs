@@ -16,8 +16,8 @@
    */
   function setupSteps(me) {
     const db = me.databases;
-    // Any agent's sign-in does as well: a person who only uses Codex, or Grok Build, Antigravity or OpenCode on their own
-    // sign-in (shared/agents.cjs), has no Claude plan to save.
+    // Any agent's sign-in does as well: a person who only uses Codex, or Grok Build or OpenCode on their own sign-in
+    // (shared/agents.cjs), has no Claude plan to save.
     const tokenSet = anySignIn(me);
     const dbHint = {
       ready: 'Ready', working: 'Copying the template: about a minute', failed: 'The copy failed: try again on My settings',
@@ -35,7 +35,7 @@
       // Right after the App: GitHub never lets an App approve its own pull requests, so review sessions approve through a
       // second one. Offered, never required: sessions work without it, only their approvals do not count.
       ...(me.reviewerSetupNeeded ? [{ key: 'reviewer', label: 'Add the reviewer App (optional)', hint: 'Review sessions approve pull requests through it, since GitHub never lets an App approve its own', done: false, optional: true }] : []),
-      { key: 'token', label: 'Choose your agent', hint: 'Save a Claude token, or a Codex, Grok Build, Antigravity or OpenCode sign-in: any one is enough', done: tokenSet },
+      { key: 'token', label: 'Choose your agent', hint: 'Save a Claude token, or a Codex, Grok Build or OpenCode sign-in: any one is enough', done: tokenSet },
       ...(showDb ? [{ key: 'databases', label: 'Your databases', hint: dbHint[db.status], done: db.status === 'ready', todo: db.status === 'failed' || db.status === 'none' }] : []),
     ];
   }

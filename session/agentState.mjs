@@ -6,8 +6,6 @@
 //   codex   its pane alone (paneStates.mjs): codex has no hooks
 //   grok    Grok Build's own hooks (hookState.mjs, which it runs from ~/.grok/hooks/woodshed.json), its pane for an
 //           approval and until the first hook, and whether its program runs at all
-//   antigravity  its status line's word (agentStatusLine.mjs: `agent_state`, `tool_confirmation_pending`), its pane
-//           until the status line first runs
 //   opencode  its pane alone (paneStates.mjs), and whether its program runs
 //   qa      the QA run's marker file: the run is a script, not an agent
 //   herdr   for an agent run in Herdr (its owner's Agent terminal on My settings): the status herdr-core keeps for its
@@ -25,10 +23,9 @@ import { classifyAgentPane, classifyCodexPane } from './paneStates.mjs';
  * What the readers read, gathered by statusd once per status read.
  * @typedef {{paneText: string, hook: {state: string, event: string, at: number}|null, interruptedAt: number|null,
  *   transcriptAt: number|null, openTools: number|null, now: number, startedAt: number, qaRunning?: boolean,
- *   herdrStatus?: {app?: string, state?: string}|null, agentOpen?: boolean|null,
- *   statusLine?: {agent_state?: string, tool_confirmation_pending?: boolean, at: number}|null}} StateInput
+ *   herdrStatus?: {app?: string, state?: string}|null, agentOpen?: boolean|null}} StateInput
  *   agentOpen: whether the agent's program runs in its terminal (agentPane.mjs, agentRunning); null when it could not be
- *   told. statusLine: Antigravity's last status-line input (agentStatusLine.mjs), with when it was written
+ *   told
  */
 
 // No hook yet and a shell on screen reads as starting for this long after the container started; after it, the agent
@@ -87,9 +84,6 @@ export function codexState({ paneText, now, startedAt }) {
   return { state: now - startedAt < STARTING_MS ? 'starting' : 'not-running', source: 'pane' };
 }
 
-// Antigravity's status line's `agent_state` (antigravity.google/docs/cli/statusline), as statusd's states.
-const FROM_STATUS_LINE = { idle: 'done', working: 'working', tool_use: 'working', reviewing: 'working', initializing: 'working', authenticating: 'needs-you' };
-
 // Starting while the agent has not opened yet, for a while; after that, it has exited.
 const notOpen = ({ now, startedAt }) => ({ state: now - startedAt < STARTING_MS ? 'starting' : 'not-running', source: 'pane' });
 
@@ -106,24 +100,6 @@ export function grokState(input) {
   if (input.hook?.state && input.hook.at >= input.startedAt) return { state: input.hook.state, source: 'hook' };
   // No hook yet: what its screen shows, or, open and saying nothing, at its prompt with its first message on its way.
   if (pane) return { state: pane, source: 'pane' };
-  return input.agentOpen ? { state: 'done', source: 'pane' } : notOpen(input);
-}
-
-/**
- * Antigravity: its status line's word, written after this statusd started, and its pane for an approval the status line
- * has not drawn yet.
- * @param {StateInput} input
- * @returns {Reading}
- */
-export function antigravityState(input) {
-  if (input.agentOpen === false) return notOpen(input);
-  const line = input.statusLine;
-  if (line && line.at >= input.startedAt) {
-    if (line.tool_confirmation_pending === true) return { state: 'needs-you', source: 'statusline' };
-    const state = FROM_STATUS_LINE[line.agent_state];
-    if (state) return { state, source: 'statusline' };
-  }
-  if (classifyAgentPane('antigravity', input.paneText) === 'needs-you') return { state: 'needs-you', source: 'pane' };
   return input.agentOpen ? { state: 'done', source: 'pane' } : notOpen(input);
 }
 
@@ -176,7 +152,7 @@ export function withHerdr(herdr, own) {
   return (WEIGHT[own.state] ?? 0) > WEIGHT[herdr.state] ? own : herdr;
 }
 
-const READERS = { claude: claudeState, codex: codexState, grok: grokState, antigravity: antigravityState, opencode: opencodeState };
+const READERS = { claude: claudeState, codex: codexState, grok: grokState, opencode: opencodeState };
 
 /**
  * The reader for this session's agent.

@@ -328,8 +328,8 @@ test('what refuses a move: a secret in the work, an agent mid-turn, a session on
   assert.equal(busy.onGithub('woodshed/move-c0ffee42'), null);
 });
 
-test('Grok Build, Antigravity and OpenCode conversations are not moved yet, and nothing moves into a session running one', async (t) => {
-  for (const [agent, product] of [['grok', 'Grok Build'], ['agy', 'Antigravity CLI'], ['opencode', 'OpenCode']]) {
+test('Grok Build and OpenCode conversations are not moved yet, and nothing moves into a session running one', async (t) => {
+  for (const [agent, product] of [['grok', 'Grok Build'], ['opencode', 'OpenCode']]) {
     const l = laptop(t, { agent });
     const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--console', ORIGIN]);
     assert.equal(out.code, EXIT.refused, agent);

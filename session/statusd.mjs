@@ -73,8 +73,6 @@ import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs
 import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
-import { antigravityPlanUsageFrom } from './agentPlanUsage.mjs';
-import { readStatus } from './agentStatusLine.mjs';
 import { TAINTED_CLAUDE_FLAGS, applyTaint, isTaintSetUp, isTainted, markTaintSetUp } from './taint.mjs';
 import { paneState, stateReader } from './agentState.mjs';
 import { agentPane } from './agentPane.mjs';
@@ -210,8 +208,8 @@ const CODEX_AUTH_FILE = path.join(process.env.CODEX_HOME || path.join(os.homedir
 // The copy the entrypoint was given, to tell whether this session refreshed the login.
 const CODEX_GIVEN_FILE = path.join(os.homedir(), '.config/woodshed/codex-auth');
 // The own sign-in of Grok Build or OpenCode, which refresh a login whose refresh token works once: where the agent keeps
-// it, and the copy the entrypoint was given (configureGrok, configureOpencode). An API key never changes, and nor does
-// the refresh token of Antigravity's Google sign-in: agy renews only the access token in its file, so none goes back.
+// it, and the copy the entrypoint was given (configureGrok, configureOpencode). An API key never changes, so none goes
+// back.
 const OWN_AUTH_FILES = {
   grok: path.join(process.env.GROK_HOME || path.join(os.homedir(), '.grok'), 'auth.json'),
   opencode: path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'opencode', 'auth.json'),
@@ -1001,7 +999,6 @@ async function agentState({ strict = false } = {}) {
   // For the agents read from their screens and their own words: whether their program runs at all, which a shell left
   // behind would otherwise not say. claude's and codex's readers read that from their screens.
   const agentOpen = CLAUDE || CODEX || QA ? null : await agentIo().agentRunning().catch(() => null);
-  const statusLine = AGENT === 'antigravity' ? await readStatus() : null;
   const { state, source } = readAgent({
     paneText,
     qaRunning: QA && existsSync(QA_RUNNING),
@@ -1014,20 +1011,18 @@ async function agentState({ strict = false } = {}) {
     now: Date.now(),
     startedAt: STARTED_AT,
     agentOpen,
-    statusLine,
   });
   if (state !== lastState) console.log('statusd: claude state changed', { from: lastState, to: state, source });
   lastState = state;
   return { state, source, pane: paneText, tail, hook };
 }
 
-// The plan meter's reading for the session's agent: Claude Code's status line, Codex's rollouts, Antigravity's status
-// line's quota. Grok Build and OpenCode report no plan's limits anywhere a session can read (Grok's /usage is a
-// screen of its own, OpenCode keeps only costs), so they have none.
+// The plan meter's reading for the session's agent: Claude Code's status line, Codex's rollouts. Grok Build and OpenCode
+// report no plan's limits anywhere a session can read (Grok's /usage is a screen of its own, OpenCode keeps only costs),
+// so they have none.
 async function readAgentPlanUsage() {
   if (CLAUDE) return readPlanUsage();
   if (CODEX) return readCodexPlanUsage();
-  if (AGENT === 'antigravity') return antigravityPlanUsageFrom(await readStatus());
   return null;
 }
 
@@ -1217,8 +1212,8 @@ const CODEX_PASTE = 400;
  */
 export function typingSteps(text, agent) {
   const steps = [];
-  // Every agent but claude gets pastes: codex as measured; Grok Build, Antigravity and OpenCode, whose typing was not
-  // measured, as a bracketed paste is the one way each documents taking text as it is.
+  // Every agent but claude gets pastes: codex as measured; Grok Build and OpenCode, whose typing was not measured, as
+  // a bracketed paste is the one way each documents taking text as it is.
   if (agent !== 'claude') {
     const chars = [...text];
     for (let i = 0; i < chars.length; i += CODEX_PASTE) steps.push({ paste: chars.slice(i, i + CODEX_PASTE).join(''), pauseMs: 50 });

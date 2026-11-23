@@ -59,8 +59,8 @@
 #                         it, instead of the team key, on the owner's own databases;
 #                         the owner's own lines for the project's env files and ~/.tmux.conf, where they keep
 #                         some, go after the shared ones
-#   AGENT                codex, grok, antigravity or opencode: a private session runs that agent in place of claude
-#                        (default claude; shared/agents.cjs). Grok Build, Antigravity and OpenCode run only on their
+#   AGENT                codex, grok or opencode: a private session runs that agent in place of claude
+#                        (default claude; shared/agents.cjs). Grok Build and OpenCode run only on their
 #                        owner's own sign-in, which the console hands this session alone (fetchOwnerSettings)
 #   MODEL, EFFORT, PERMISSION_MODE                                  optional: claude's flags, from New session
 #   RESUME_SESSION       Resume on a stopped private session: claude's conversation id, reopened with --resume
@@ -355,7 +355,7 @@ configureEgress() {
 # The MCP servers the console hands this session (console/mcpServers.mjs), for claude: each at the console's relay,
 # with the session's own token, which no server ever sees (taint.mjs mcp-config). A production server is off in /mcp
 # until the person turns it on, since its first call of any kind locks the session down for good; a tainted session
-# gets its production servers alone, on. Only for claude: Codex, Grok Build, Antigravity and OpenCode get none yet.
+# gets its production servers alone, on. Only for claude: Codex, Grok Build and OpenCode get none yet.
 MCP_CONFIG=/tmp/woodshed-mcp.json
 # taint.mjs's TAINTED_CLAUDE_FLAGS, which statusd adds when the session is tainted while it runs.
 TAINTED_CLAUDE_FLAGS=' --strict-mcp-config --disallowedTools WebSearch,WebFetch'
@@ -696,12 +696,11 @@ OWN_FILES_JSON=$HOME/.config/woodshed/own-files.json
 # The owner's own Codex sign-in, for a Codex session: written into codex's own home by configureCodex.
 OWN_CODEX_AUTH_FILE=$HOME/.config/woodshed/codex-auth
 CODEX_HOME_DIR=${CODEX_HOME:-$HOME/.codex}
-# The owner's own sign-in for Grok Build, Antigravity or OpenCode (`agentAuth` in the /settings answer): written into the
+# The owner's own sign-in for Grok Build or OpenCode (`agentAuth` in the /settings answer): written into the
 # agent's own home by its configure function, and kept as given, for statusd to tell a login the agent refreshed from
 # it (keepAgentAuth). Outside every home a session saves.
 OWN_AGENT_AUTH_FILE=$HOME/.config/woodshed/agent-auth
 GROK_HOME_DIR=${GROK_HOME:-$HOME/.grok}
-ANTIGRAVITY_DIR=$HOME/.gemini
 OPENCODE_DATA_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/opencode
 OPENCODE_CONFIG_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
 
@@ -736,7 +735,7 @@ fetchOwnerSettings() {
     (umask 077 && printf '%s' "$token" > "$OWN_CODEX_AUTH_FILE")
   fi
   case "${AGENT:-claude}" in
-    grok | antigravity | opencode)
+    grok | opencode)
       # Their own sign-in or nothing: these agents run on no team credential. The console refuses the start without one
       # (409), so a console that answered without it is older than the agent.
       token=$(jq -r '.agentAuth // empty' <<< "$answer")
@@ -1142,61 +1141,6 @@ grokFlags() {
   [ -z "${EFFORT:-}" ] || printf ' --effort %s' "$EFFORT"
 }
 
-# Antigravity: the owner's own sign-in, one of two kinds (shared/agents.cjs). A Google sign-in is agy's own file,
-# ~/.gemini/antigravity-cli/antigravity-oauth-token, which agy reads and writes in place of the keyring when it finds no
-# D-Bus session bus or sees a container, as in a session (its log: `Using file-based token storage because no D-Bus
-# session bus detected`; measured with 1.5.14). It renews the access token in that file, and the refresh token stays as it
-# is, so nothing is sent back at stop. A Gemini API key goes to agy in GEMINI_API_KEY from session/bin/agy, with
-# `modelProvider` gemini, without which agy ignores the key (antigravity.google/docs/install); a sign-in file left from
-# before is removed, so the key is the only way in. The checkout is a trusted workspace, its status line is
-# agentStatusLine.mjs (statusd's word on what it does), and the rules go in ~/.gemini/AGENTS.md, which it reads with the
-# repo's own.
-configureAntigravity() {
-  agentDir "$ANTIGRAVITY_DIR" agy
-  agentDir "$ANTIGRAVITY_DIR/antigravity-cli" agy
-  local file login=$ANTIGRAVITY_DIR/antigravity-cli/antigravity-oauth-token
-  for file in antigravity-cli/settings.json antigravity-cli/antigravity-oauth-token AGENTS.md; do
-    [ ! -L "$ANTIGRAVITY_DIR/$file" ] || die "agy's $file is a symlink"
-  done
-  local settings='{trustedWorkspaces: [$repo], statusLine: {type: "command", command: $line}}'
-  if ownAgentAuthIsKey; then
-    rm -f "$login"
-    settings="{modelProvider: \"gemini\"} + $settings"
-  else
-    jq -e '.token.refresh_token and .auth_method' "$OWN_AGENT_AUTH_FILE" >/dev/null 2>&1 \
-      || die "the console sent an Antigravity sign-in that is neither a Gemini API key nor agy's Google sign-in"
-    (umask 077 && cp "$OWN_AGENT_AUTH_FILE" "$login")
-  fi
-  jq -n --arg repo "$REPO_DIR" --arg line "node $SESSION_DIR/agentStatusLine.mjs" "$settings" \
-    > "$ANTIGRAVITY_DIR/antigravity-cli/settings.json"
-  cp /tmp/woodshed-rules.md "$ANTIGRAVITY_DIR/AGENTS.md"
-  # Its first start asks for a colour scheme, then whether Google may collect the person's interactions (ticked
-  # already): nobody in the session answers that for them. Marked done as agy marks it, which records no consent, since
-  # agy keeps only a ticked box (measured with 1.5.14 in the session image: it saves nothing else for either page).
-  agentDir "$ANTIGRAVITY_DIR/antigravity-cli/cache" agy
-  [ ! -L "$ANTIGRAVITY_DIR/antigravity-cli/cache/onboarding.json" ] || die "agy's onboarding.json is a symlink"
-  jq -n '{consumerOnboardingComplete: true, enterpriseOnboardingComplete: false, onboardingComplete: true}' \
-    > "$ANTIGRAVITY_DIR/antigravity-cli/cache/onboarding.json"
-  if ownAgentAuthIsKey; then
-    log "agy runs on the owner's own Gemini API key, directly"
-  else
-    log "agy runs on the owner's own Google sign-in, directly"
-  fi
-}
-
-# Antigravity's flags: auto, accept-edits and plan are its own modes (`--mode`), default leaves its own policy.
-antigravityFlags() {
-  local mode=${PERMISSION_MODE:-auto}
-  case "$mode" in
-    auto) printf ' --mode auto' ;;
-    acceptEdits) printf ' --mode accept-edits' ;;
-    plan) printf ' --mode plan' ;;
-  esac
-  printf ' --add-dir %s' "${UPLOADS_DIR:-/tmp/uploads}"
-  [ -z "${MODEL:-}" ] || printf ' --model %s' "$MODEL"
-  [ -z "${EFFORT:-}" ] || printf ' --effort %s' "$EFFORT"
-}
-
 # OpenCode: the providers the owner signed in to, as `opencode auth login` saved them, as its own auth.json, which
 # statusd sends back refreshed at stop. Its config turns off its updater and sharing, and gives the effort (its
 # `variant`) to the build and plan agents; the rules go in its global AGENTS.md, which it reads with the repo's own.
@@ -1237,13 +1181,11 @@ agentCommand() {
   case "${AGENT:-claude}" in
     codex) printf '%s/bin/codex%s' "$SESSION_DIR" "$(codexFlags)" ;;
     grok) printf '%s/bin/grok%s' "$SESSION_DIR" "$(grokFlags)" ;;
-    antigravity) printf '%s/bin/agy%s' "$SESSION_DIR" "$(antigravityFlags)" ;;
     opencode) printf '%s/bin/opencode%s' "$SESSION_DIR" "$(opencodeFlags)" ;;
   esac
 }
 promptFlag() {
   case "${AGENT:-claude}" in
-    antigravity) printf ' -i' ;;
     opencode) printf ' --prompt' ;;
   esac
 }
@@ -1378,7 +1320,6 @@ startClaude() {
   case "${AGENT:-claude}" in
     codex) codexFlags > /tmp/woodshed-codex-flags ;;
     grok) grokFlags > /tmp/woodshed-grok-flags ;;
-    antigravity) antigravityFlags > /tmp/woodshed-antigravity-flags ;;
     opencode) opencodeFlags > /tmp/woodshed-opencode-flags ;;
     *) claudeFlags > /tmp/woodshed-claude-flags ;;
   esac
@@ -1531,7 +1472,6 @@ runSession() {
   case "${AGENT:-claude}" in
     codex) configureCodex ;;
     grok) configureGrok ;;
-    antigravity) configureAntigravity ;;
     opencode) configureOpencode ;;
     *)
       restorePlugins

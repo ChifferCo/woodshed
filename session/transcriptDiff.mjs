@@ -79,8 +79,7 @@ function replacement(oldText, newText) {
 
 /**
  * One file's change from its text before and after, as the agents that record edits that way write it: Grok Build's
- * and Antigravity's ACP `diff` content (`path`, `oldText`, `newText`), OpenCode's edit and write inputs. No text before
- * is a new file.
+ * ACP `diff` content (`path`, `oldText`, `newText`), OpenCode's edit and write inputs. No text before is a new file.
  * @param {string} file
  * @param {string|null|undefined} oldText
  * @param {string} newText

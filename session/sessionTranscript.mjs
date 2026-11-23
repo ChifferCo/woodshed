@@ -2,9 +2,9 @@
 // agent's screen, and its scrollback holds only what came since the browser attached, as terminal output. The
 // agent's own record of the conversation has it all: claude's transcript (~/.claude/projects/<repo>/<id>.jsonl),
 // codex's rollout ($CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl), Grok Build's session log
-// (~/.grok/sessions/<cwd, URL-encoded>/<id>/updates.jsonl), OpenCode's database (~/.local/share/opencode/opencode.db)
-// and Antigravity's transcript (the path its status line names, statusFile). Each is read from its end and shaped the same
-// way: what the person asked, what the agent said, and a line for each tool it ran, marked `error` when the run failed.
+// (~/.grok/sessions/<cwd, URL-encoded>/<id>/updates.jsonl) and OpenCode's database (~/.local/share/opencode/opencode.db).
+// Each is read from its end and shaped the same way: what the person asked, what the agent said, and a line for each
+// tool it ran, marked `error` when the run failed.
 // An edit carries what it changed, a small bounded diff (transcriptDiff.mjs), for the Chat to show each turn's changes.
 // Thinking and tool output are left out: the terminal shows those, and the Diff tab the whole branch. The console's Chat tab draws the
 // conversation from this, and asks again with `since` (the last answer's writtenAt): an agent that wrote nothing since
@@ -645,58 +645,6 @@ export async function readOpenCode({ dbFile, root, since = null }) {
   }
 }
 
-// ---- Antigravity: the transcript its status line names (`transcript_path`, which statusd's status line command keeps
-// in statusFile). Its records are reconstructed from Google's docs and third-party notes, not read from a real session:
-// one step a line, a USER_INPUT, a PLANNER_RESPONSE with the reply, and tool steps named for their tool. Each field is
-// looked for under the names those notes give, and a line of no known shape is skipped.
-
-const textOf = (v) => (typeof v === 'string' ? v
-  : Array.isArray(v) ? v.map(textOf).filter(Boolean).join('\n')
-    : v && typeof v === 'object' ? textOf(v.text ?? v.content ?? v.response ?? v.message ?? v.items ?? '') : '');
-
-const SKIPPED_STEPS = /^(CHECKPOINT|EPHEMERAL_MESSAGE|CONVERSATION_HISTORY|ERROR_MESSAGE|SYSTEM.*|THINKING|MEMORY.*|KNOWLEDGE.*)$/;
-
-/**
- * @param {string} text  the end of an Antigravity transcript.jsonl
- * @returns {Entry[]}
- */
-export function parseAntigravityTranscript(text, { partial = false, root } = {}) {
-  const entries = [];
-  for (const r of records(text, partial)) {
-    if (!r || typeof r !== 'object') continue;
-    const type = String(r.type ?? r.step_type ?? r.stepType ?? '').replace(/^CORTEX_STEP_TYPE_/, '').toUpperCase();
-    const at = unixAt(r.timestamp ?? r.created_at ?? r.createdAt ?? r.time);
-    if (type === 'USER_INPUT') {
-      const said = textOf(r.user_input ?? r.userInput ?? r.content ?? r.text).trim();
-      if (said) entries.push({ role: 'user', text: cut(said), at });
-    } else if (type === 'PLANNER_RESPONSE') {
-      const body = r.planner_response ?? r.plannerResponse ?? r;
-      const said = textOf(body.content ?? body.response ?? body.text).trim();
-      if (said) entries.push({ role: 'assistant', text: cut(said), at });
-    } else if (type && !SKIPPED_STEPS.test(type)) {
-      const tool = String(r.tool ?? r.tool_name ?? r.toolName ?? type.toLowerCase());
-      const input = r.args ?? r.arguments ?? r.input ?? r.tool_input ?? r[type.toLowerCase()] ?? null;
-      const entry = { role: 'tool', tool, text: toolLine(input), at };
-      const status = String(r.status ?? '');
-      if (/error|fail/i.test(status) || r.error) entry.error = true;
-      else if (Array.isArray(r.content)) {
-        const diffs = acpDiffs(r.content, root);
-        if (diffs) entry.diffs = diffs;
-      }
-      entries.push(entry);
-    }
-  }
-  return entries;
-}
-
-async function antigravityTranscript(statusFile) {
-  const status = parseJson(await fs.readFile(statusFile, 'utf8').catch(() => ''));
-  const file = status?.transcript_path ?? status?.transcriptPath;
-  if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
-  const stat = await fs.stat(file).catch(() => null);
-  return stat?.isFile() ? { file, stat } : null;
-}
-
 // The end of a file, and whether it was cut.
 async function tail(file, size) {
   const handle = await fs.open(file);
@@ -755,18 +703,17 @@ async function newestRollout(codexHome) {
 
 /**
  * The newest conversation of the session's agent, newest entries last.
- * @param {{agent: string, claudeDir: string, codexHome: string, home?: string, statusFile?: string, root?: string,
+ * @param {{agent: string, claudeDir: string, codexHome: string, home?: string, root?: string,
  *          limit?: number, since?: number, writtenFrom?: number, resume?: string|null}} opts
- *   agent: claude, codex, grok, antigravity or opencode (shared/agents.cjs). claudeDir: claude's transcript folder for
- *   the repo. home: the home the other agents keep theirs in. statusFile: where Antigravity's status line left the path of
- *   its transcript. root: the repo, which edits' paths are given relative to, and whose conversations are read.
+ *   agent: claude, codex, grok or opencode (shared/agents.cjs). claudeDir: claude's transcript folder for the repo. home:
+ *   the home the other agents keep theirs in. root: the repo, which edits' paths are given relative to, and whose conversations are read.
  *   since: the writtenAt of the caller's last answer. writtenFrom, resume: which of claude's are this session's
  *   (ownClaudeTranscript)
  * @returns {Promise<{agent: string, entries: Entry[], partial: boolean, writtenAt: number|null}|{agent: string, unchanged: true, writtenAt: number}>}
  *   partial: older entries were left out, by the read or by the limit. unchanged: the newest record is still the
  *   one written at `since`, so the caller's entries stand
  */
-export async function readSessionTranscript({ agent, claudeDir, codexHome, home = os.homedir(), statusFile = '/tmp/woodshed-agent-status.json', root, limit = MAX_ENTRIES, since = null, writtenFrom = 0, resume = null }) {
+export async function readSessionTranscript({ agent, claudeDir, codexHome, home = os.homedir(), root, limit = MAX_ENTRIES, since = null, writtenFrom = 0, resume = null }) {
   const max = Math.max(1, Math.min(MAX_ENTRIES, Math.trunc(Number(limit)) || MAX_ENTRIES));
   if (agent === 'opencode') {
     const read = await readOpenCode({ dbFile: openCodeDb(home), root, since });
@@ -776,8 +723,7 @@ export async function readSessionTranscript({ agent, claudeDir, codexHome, home 
   }
   const newest = agent === 'codex' ? await newestRollout(codexHome)
     : agent === 'grok' ? await newestGrokUpdates(home, root)
-      : agent === 'antigravity' ? await antigravityTranscript(statusFile)
-        : await ownClaudeTranscript(claudeDir, { writtenFrom, resume });
+      : await ownClaudeTranscript(claudeDir, { writtenFrom, resume });
   if (!newest) return { agent, entries: [], partial: false, writtenAt: null };
   if (since !== null && newest.stat.mtimeMs === since) return { agent, unchanged: true, writtenAt: since };
   let text;
@@ -795,7 +741,7 @@ export async function readSessionTranscript({ agent, claudeDir, codexHome, home 
   } else {
     ({ text, partial } = await tail(newest.file, newest.stat.size));
   }
-  const parse = { codex: parseCodexRollout, grok: parseGrokUpdates, antigravity: parseAntigravityTranscript }[agent] ?? parseClaudeTranscript;
+  const parse = { codex: parseCodexRollout, grok: parseGrokUpdates }[agent] ?? parseClaudeTranscript;
   const all = parse(text, { partial, root });
   return {
     agent,

@@ -17,7 +17,7 @@ import { asking } from './panePrompt.mjs';
 
 const { PROCESS_NAMES } = createRequire(import.meta.url)('../shared/agents.cjs');
 
-// What tmux names the pane's command while an agent runs in it (claude, codex, grok, agy, opencode: shared/agents.cjs),
+// What tmux names the pane's command while an agent runs in it (claude, codex, grok, opencode: shared/agents.cjs),
 // and what hc names the program in its terminal. tmux reads the name from the program's command line, so a wrapper in
 // session/bin that execs the agent by its full path is named as the agent.
 export const AGENT_NAMES = PROCESS_NAMES;
@@ -120,7 +120,7 @@ export function hcPane(run, { terminal = HC_TERMINAL, bin = 'hc', agent = 'claud
      * screen shows the agent at its prompt (a stale `done` can sit over a turn a person started); hc's own send still
      * refuses a blocked program and waits for a person's unsent draft in an attached client. codex and the agents after
      * it send no 7501 records: with no record, the screen must show the agent at its prompt, as codex's, Grok Build's and
-     * OpenCode's screens say; Antigravity's says only when it asks, so for it no prompt on screen is all that is checked.
+     * OpenCode's screens say.
      * @returns {Promise<{sent: true}|{sent: false, why: string, kind?: string|null}>}
      */
     async send(text) {
@@ -154,7 +154,6 @@ export function hcPane(run, { terminal = HC_TERMINAL, bin = 'hc', agent = 'claud
 // Whether the screen shows the agent at its prompt, as far as its screen can say (paneStates.mjs).
 function atPrompt(agent, screen) {
   if (agent === 'claude' || agent === 'codex') return paneState(screen) === 'done' || classifyAgentPane('codex', screen) === 'done';
-  if (agent === 'antigravity') return true;
   return classifyAgentPane(agent, screen) === 'done';
 }
 
