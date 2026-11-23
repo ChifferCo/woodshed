@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import { appNamed, checkoutDir, EMPTY_PROJECT, envFileKey, envFileKeys, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, secretEnvName, unsetPlaceholders, usesOldOverridesName, usesVariable, writeEnvFiles } from './project.mjs';
 import { fixtureApp, fixtureCheckout, fixtureProject, fixtureProjectFiles } from './projectFixture.mjs';
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
 
 const SCRIPT = path.join(import.meta.dirname, 'project.mjs');
 
@@ -649,7 +650,7 @@ test('the rules and setup files are never read through a link out of the checkou
   fs.writeFileSync(path.join(dir, '.woodshed/project.yaml'), fixtureProject({ rules: 'docs/rules.md', setup: 'docs/setup.md' }));
   const cli = (field) => {
     try {
-      return { out: execFileSync('node', [SCRIPT, 'file', field], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { PATH: process.env.PATH, REPO_DIR: dir } }) };
+      return { out: execFileSync('node', [SCRIPT, 'file', field], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: isolatedEnv({ PATH: process.env.PATH, REPO_DIR: dir }) }) };
     } catch (err) {
       return { out: err.stdout, err: err.stderr, failed: true };
     }
