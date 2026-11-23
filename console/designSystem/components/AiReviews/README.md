@@ -1,6 +1,7 @@
 The AI reviews are the review page's **AI reviews** tab: what Woodshed's review (Claude Code, Codex or both) posted on
 the pull request, read back from GitHub (`shared/review/aiReviews.mjs`), with the follow-ups a reader asked about each
-point. `woodshed review`'s `6 AI reviews` draws the same in the terminal's own colours.
+point, and over them the merge risk and QA checks on the pull request's head commit. `woodshed review`'s `6 AI
+reviews` draws the same in the terminal's own colours.
 
 It is drawn by the review page (`shared/review/page.mjs`, `.ai*` on the Discussion tab's `.saidbox`), framed by the
 console's **Review** tab. That page has its own palette, so it uses the page's variables; the preview shows it in the
@@ -8,6 +9,15 @@ console's nearest tokens: `--ink` is `ink`, `--muted` is `meta`, `--rule` is `li
 `--panel` is `ground`, `--sunk` is `stopped`, `--add` is `green`, `--del` is `bad`, `--warn` is `amber-ink`, `--accent`
 is `amber`.
 
+- Over the reviews, the **Merge risk** and **QA** the pull request's head commit carries (`shared/review/prChecks.mjs`):
+  two boxes side by side, one under the other on a narrow screen, each the `saidbox` with a head of its name in `ink`,
+  its word as a `verdictword` (the tier `low` in `green`, `medium` in `amber-ink`, `high` in `bad`; QA `passed` in
+  `green`, `failed` in `bad`, `running` in `amber-ink`, else `meta`) and its left edge in the same tone, the tag
+  `latest commit` (`older commit` in `amber-ink` for a tier read off the `merge risk: <tier>` label, `not run` for a
+  check the project file asks for and the commit lacks), the time and **Open on GitHub**. Under it the check's title
+  in `ink` (`meta` for a sentence saying why there is none), then a native **Details** disclosure in `meta` holding
+  the check's summary as markdown. Either box is left out when there is no such check and the project file asks for
+  none. The head wraps whole words onto a second line rather than breaking them.
 - A sentence in `meta` opens the tab: what it holds, and that a follow-up is checked against the code. Then one box per
   review, newest first, the Discussion tab's `saidbox`, its left edge `green` for an approval, `bad` for changes
   requested, `line` otherwise.

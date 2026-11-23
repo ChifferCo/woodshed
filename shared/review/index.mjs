@@ -53,6 +53,7 @@ import {
 } from './explain.mjs';
 import { validateChatRequest, buildChatPrompt } from './chat.mjs';
 import { aboutFinding, findAiPoint } from './aiReviews.mjs';
+import { checkNamesOf, prChecksOf } from './prChecks.mjs';
 import {
   MAX_DEPTH as QA_MAX_DEPTH, juniorArgv, seniorArgv, buildTopQuestionsPrompt, buildFollowupsPrompt,
   buildAnswersPrompt, extractStructured, topQuestions, followupQuestions, applyAnswers,
@@ -1335,8 +1336,23 @@ async function handleCommentsRead(res, ctx, session) {
     outdated: draft.outdated,
     said: draft.said,
     aiReviews: draft.aiReviews,
+    checks: prChecksOf({ runs: draft.checkRuns, labels: draft.labels, headSha: draft.headSha, names: await baseCheckNames(ctx.repoRoot, draft.baseRef) }),
     truncated: draft.truncated,
   });
+}
+
+/**
+ * The merge risk and QA check names the base branch's project file gives, as the console reads them from the default
+ * branch: the checkout's copy could be the pull request's own edit. The base as last fetched; none read gives the
+ * defaults (prChecks.mjs).
+ */
+async function baseCheckNames(repoRoot, baseRef) {
+  if (!baseRef || !/^[\w./-]+$/.test(baseRef) || baseRef.startsWith('-')) return checkNamesOf(null);
+  for (const ref of [`origin/${baseRef}`, baseRef]) {
+    const got = await run('git', ['-C', repoRoot, 'show', `${ref}:.woodshed/project.yaml`], { timeoutMs: 10_000 });
+    if (got.status === 0) return checkNamesOf(got.stdout);
+  }
+  return checkNamesOf(null);
 }
 
 async function handleCommentAdd(payload, res, ctx, session) {

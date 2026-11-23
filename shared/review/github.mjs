@@ -15,6 +15,7 @@ import path from 'node:path';
 
 import { run } from './exec.mjs';
 import { aiReviewsOf } from './aiReviews.mjs';
+import { checkRunsOf } from './prChecks.mjs';
 
 const GH_TIMEOUT_MS = 30_000;
 // The three things a review can say, and nothing else reaches argv. A map
@@ -265,6 +266,7 @@ const PENDING_QUERY = `query($owner:String!,$repo:String!,$pr:Int!){
     pullRequest(number:$pr){
       id
       headRefOid
+      baseRefName
       body
       bodyHTML
       author{ login }
@@ -283,6 +285,12 @@ const PENDING_QUERY = `query($owner:String!,$repo:String!,$pr:Int!){
       }
       comments(first:30){
         nodes{ id fullDatabaseId author{ login } body url createdAt isMinimized viewerCanDelete viewerDidAuthor }
+      }
+      labels(first:30){ nodes{ name } }
+      commits(last:1){
+        nodes{ commit{ oid checkSuites(first:30){ nodes{ app{ slug name } checkRuns(first:30,filterBy:{checkType:LATEST}){
+          nodes{ name status conclusion title summary detailsUrl permalink startedAt completedAt }
+        } } } } }
       }
       reviewThreads(first:100){
         pageInfo{ hasNextPage }
@@ -472,6 +480,10 @@ export async function fetchReviewState({ pr, slug }) {
     said,
     // The reviews Woodshed's review (Claude Code, Codex or both) posted, read
     // into verdicts and findings: aiReviews.mjs.
+    // The head commit's check runs and the pull request's labels, for the merge risk and QA (prChecks.mjs).
+    baseRef: node.baseRefName || null,
+    checkRuns: checkRunsOf(node.commits?.nodes?.[0]?.commit),
+    labels: (node.labels?.nodes || []).map((l) => l?.name).filter(Boolean),
     aiReviews: aiReviewsOf({ verdicts: node.verdicts?.nodes || [], threads: node.reviewThreads?.nodes || [], headSha: node.headRefOid || null }),
     truncated,
   };

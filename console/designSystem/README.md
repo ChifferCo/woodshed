@@ -309,7 +309,9 @@ button, never orange. A question they asked says "you asked" in `meta`.
 Its **AI reviews** tab (`components/AiReviews`) shows what Claude Code and Codex posted on the pull request, newest
 first, each a Discussion `saidbox` whose head is a keyboard disclosure, with each finding as a card and the follow-ups
 asked about it under it. A resolved or outdated finding is dashed and labelled, never faded, so its text keeps 4.5:1.
-Its **Ask** buttons are quiet, like the Q&A's, never orange.
+Its **Ask** buttons are quiet, like the Q&A's, never orange. Over the reviews, the pull request's **Merge risk** and **QA**
+checks sit as two smaller `saidbox`es, the tier or the QA verdict as a `verdictword` in its tone (`amber-ink` for
+`medium` and `running`), the check's title under it and its summary behind a **Details** disclosure.
 
 A session with more than one pull request has a review of each: the review switch (`components/ReviewSwitch`), a quiet
 row above the title, only with two or more, lists them as mono pills, the one on screen in `ink` with no link and the
