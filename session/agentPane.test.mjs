@@ -122,6 +122,14 @@ test('a done record is not enough while the screen shows claude working or askin
   }
 });
 
+test('a done record goes in while claude offers a suggestion in its box, which hc reads as text without its grey', async () => {
+  const screen = fixture('pane-done.txt').replace(/^❯\s*$/m, '❯ Try "run the tests and push"');
+  assert.notEqual(screen, fixture('pane-done.txt'));
+  const { run, calls } = fakeRun({ 'hc get': CLAUDE_DONE, 'hc read': read(screen) });
+  assert.deepEqual(await hcPane(run).send('the review asked for changes'), { sent: true });
+  assert.deepEqual(calls.at(-1), ['hc', 'send', '--json', '--', 'claude', 'the review asked for changes']);
+});
+
 test('a message that starts with a dash is the message, never one of hc\'s options', async () => {
   const { run, calls } = fakeRun({ 'hc get': CLAUDE_RUNNING, 'hc read': read(fixture('pane-done.txt')) });
   assert.deepEqual(await hcPane(run).send('- first\n- second'), { sent: true });
