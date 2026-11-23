@@ -470,7 +470,7 @@ test('the avatar menu: My settings and the program\'s pages under the name, its 
   const t = load('/settings', (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]], { me: HOST_MENU });
   await answered();
   assert.deepEqual(menuRows(t), [
-    'head', 'My settings', 'Your workspaces', '—',
+    'head', 'My settings', 'Usage', 'Your workspaces', '—',
     '[Organization]', 'Acme', 'Globex',
     '[Console]', 'Settings', '› General', '› Secrets & webhooks', '› Members', '› Credits',
     '[Service]', 'Admin', '› Overview', '› Pool',
@@ -478,13 +478,13 @@ test('the avatar menu: My settings and the program\'s pages under the name, its 
   ], 'the entry\'s own pages always listed in the menu, as Settings\' tabs are');
   const plain = load('/settings', (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]], { me: { login: 'sam', admin: true } });
   await answered();
-  assert.deepEqual(menuRows(plain).slice(0, 4), ['head', 'My settings', '—', '[Console]'], 'with no program, My settings alone under the name');
+  assert.deepEqual(menuRows(plain).slice(0, 5), ['head', 'My settings', 'Usage', '—', '[Console]'], 'with no program, My settings and Usage under the name');
 });
 
 test('the side list: You with the program\'s pages, Console, then the program\'s sections, an entry\'s pages open on its own', async () => {
   const t = load('/settings', (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]], { me: HOST_MENU });
   await answered();
-  assert.deepEqual(sideRows(t), ['[You]', 'My settings (page)', '› Sign-ins', '› Sessions', '› Kept for you', '› Repos and files', '› Display', 'Your workspaces', '[Console]', 'Settings', '[Service]', 'Admin', '[This browser]'],
+  assert.deepEqual(sideRows(t), ['[You]', 'My settings (page)', '› Sign-ins', '› Sessions', '› Kept for you', '› Repos and files', '› Display', 'Usage', 'Your workspaces', '[Console]', 'Settings', '[Service]', 'Admin', '[This browser]'],
     'Admin one entry away from its pages');
 
   const first = load('/nowhere');
@@ -495,7 +495,7 @@ test('the side list: You with the program\'s pages, Console, then the program\'s
   assert.equal(admin.title(), 'Admin', 'the page\'s own heading, not Settings');
   assert.deepEqual(admin.tabs(), [['Overview', '/admin', null], ['Pool', '/admin/pool', 'page']], 'and the row of its entry\'s pages');
   assert.match(admin.app.querySelector('div.host-page').textContent, /The pool/);
-  assert.deepEqual(sideRows(admin), ['[You]', 'My settings', 'Your workspaces', '[Console]', 'Settings', '[Service]', 'Admin (true)', '› Overview', '› Pool (page)', '[This browser]'],
+  assert.deepEqual(sideRows(admin), ['[You]', 'My settings', 'Usage', 'Your workspaces', '[Console]', 'Settings', '[Service]', 'Admin (true)', '› Overview', '› Pool (page)', '[This browser]'],
     'its pages open under it, the page marked, Settings closed');
   assert.deepEqual(menuRows(admin).slice(-4), ['Admin', '› Overview', '› Pool', 'Sign out']);
   const menu = admin.side().querySelector('div.user-menu');

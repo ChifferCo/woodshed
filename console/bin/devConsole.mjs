@@ -85,7 +85,7 @@ const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, ...tokensOf(C
 // A private session just started while another runs: its Claude home, restored from its owner's, holds an earlier
 // session's conversation, and its own claude has written nothing yet. Its Chat is empty until it is sent a message.
 const NEW_CHAT_ID = 'c1a0de02';
-const newChat = await startDevChatSession({ id: NEW_CHAT_ID, ...tokensOf(NEW_CHAT_ID), agent: 'claude', restoredHome: true, nextPath: [claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
+const newChat = await startDevChatSession({ id: NEW_CHAT_ID, ...tokensOf(NEW_CHAT_ID), agent: 'claude', restoredHome: true, claudeAuth: 'own', nextPath: [claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
 // A real agent runs on this machine's credentials, so it is never served behind the session's app name: Open app and
 // app shares reach that console, which has no sign-in. Run it on a port of its own instead, which only this machine
 // reaches: DEV_CONSOLE_REAL_CLAUDE=1 node console/bin/devConsole.mjs 7700.
@@ -362,7 +362,32 @@ if (execPort) {
     endpoint: { host: '127.0.0.1', statusPort: execPort, termPort: execPort },
   }));
 }
-fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null, mcpServers, ...people }));
+// Made-up token usage for the Usage page (usage.mjs), as statusd reports it: some of the sessions above, and some deleted
+// since, over the last 40 days, on a plan and on a key. The chat sessions add their own as they are sent messages.
+function devTokenUsage() {
+  const day = (back) => new Date(Date.now() - back * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const t = (k, extra = {}) => ({ input: 4_000 * k, cacheWrite5m: 0, cacheWrite1h: 90_000 * k, cacheRead: 1_600_000 * k, output: 60_000 * k, ...extra });
+  const o = (k) => ({ input: 600_000 * k, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 2_400_000 * k, output: 80_000 * k });
+  const days = (from, to, model, tokens) => Object.fromEntries(Array.from({ length: from - to + 1 }, (_, i) => [day(to + i), { [model]: tokens((i % 4) + 1) }]));
+  const entry = (meta, runs) => ({ title: null, repo: 'example-org/example-repo', branch: null, owner: null, startedBy: null, plan: null, ...meta, runs });
+  return {
+    ba5ed001: entry({ title: 'A private session paused when idle', kind: 'private', owner: 'local' },
+      { [`${day(12)}T09:00:00.000Z`]: { agent: 'claude', billing: 'plan', days: days(12, 2, 'claude-opus-5-5', t) } }),
+    c0dec0d1: entry({ title: 'Stopped Codex session', kind: 'private', owner: 'local' },
+      { [`${day(9)}T09:00:00.000Z`]: { agent: 'codex', billing: 'plan', days: days(9, 1, 'gpt-6.1-sol', o) } }),
+    bcde8888: entry({ title: 'Fix CSV upload for large files', kind: 'shared', startedBy: 'ana-dev' },
+      { [`${day(20)}T09:00:00.000Z`]: { agent: 'claude', billing: 'key', days: days(20, 14, 'claude-sonnet-5-5', t) },
+        [`${day(5)}T09:00:00.000Z`]: { agent: 'claude', billing: 'key', days: days(5, 0, 'claude-opus-5-5', t) } }),
+    cdef9999: entry({ title: 'Retry Xero sync on a 429', kind: 'shared', startedBy: 'priya-dev', plan: 'priya-dev' },
+      { [`${day(30)}T09:00:00.000Z`]: { agent: 'claude', billing: 'plan', days: days(30, 3, 'claude-opus-5-5', t) } }),
+    // Deleted since: the ledger keeps it.
+    dead0001: entry({ title: 'A deleted session', kind: 'private', owner: 'octocat' },
+      { [`${day(40)}T09:00:00.000Z`]: { agent: 'claude', billing: 'plan', days: { ...days(40, 25, 'claude-fable-5-2', t), [day(24)]: { 'claude-haiku-5-5': t(3) } } } }),
+    dead0002: entry({ title: 'Review of #26650', kind: 'review', startedBy: null },
+      { [`${day(6)}T09:00:00.000Z`]: { agent: 'codex', billing: 'key', days: { [day(6)]: { 'gpt-6.2-astra': o(2), 'gpt-next-preview': o(1) } } } }),
+  };
+}
+fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null, mcpServers, tokenUsage: devTokenUsage(), ...people }));
 
 // The shell's own console settings, under either name (shared/envNames.mjs: a GitHub App, required sign-in, the ECS
 // launcher), would turn this back into the real console, so none of them are passed on, but hosted mode's

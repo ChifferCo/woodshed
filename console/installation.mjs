@@ -25,6 +25,8 @@ import { createTunnel, tunnelTargetsFor } from './dbTunnel.mjs';
 import { createCliSignIn, sessionSignInsOf } from './cliSignIn.mjs';
 import { createExecPipe } from './execPipe.mjs';
 import { createFleet } from './fleet.mjs';
+import { createUsage } from './usage.mjs';
+import { createLivePrices } from './livePrices.mjs';
 import { createGitHub } from './github.mjs';
 import { createAppApi } from './githubApp.mjs';
 import { appOwnerCheck } from './appOwner.mjs';
@@ -432,6 +434,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const gatesOf = fileGatesOf;
   // What starts a review, by the tag or on demand, and the tag sessions are told: the file's, with every repo's default.
   const reviewGatesOf = async (name) => withAppLogins(withDefaultReview(await readerOf(name).pullRequests()), await logins());
+  // The tokens each session's agent spends, kept apart from the sessions for the Usage page.
+  const usage = createUsage(store);
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, qaRecordings, pullWebhooksFlowing: pullWebhooks.flowing,
@@ -446,6 +450,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     mcpServers,
     appShares,
     egress: access.egress,
+    usage,
   });
   // The relay and the egress proxy need the fleet, which locks a session down and says whether it is.
   const mcpRelay = createMcpRelay({ servers: mcpServers, issuer: access.issuer, fleet, repoOf: (session) => projectFor(config, session).repo ?? null });
@@ -543,6 +548,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     token: tokens ? async () => (await tokens.console.token()).token : null,
   }) : null;
   const handle = createHandler({
+    usage, livePrices: createLivePrices(),
     config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
     prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,

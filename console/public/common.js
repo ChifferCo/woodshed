@@ -1382,7 +1382,7 @@
 
   // Under the avatar, as most apps keep them, and on the settings pages' list: your own settings, and the console's own,
   // which only an admin sees (the console refuses their calls to anyone else).
-  const MY_LINKS = [{ href: '/settings', label: 'My settings' }];
+  const MY_LINKS = [{ href: '/settings', label: 'My settings' }, { href: '/usage', label: 'Usage' }];
   // My settings' groups (mySettings.js), which open under it in the settings list while it is the page shown.
   const MY_GROUPS = [['set-signins', 'Sign-ins'], ['set-sessions', 'Sessions'], ['set-kept', 'Kept for you'], ['repo-settings', 'Repos and files'], ['my-display', 'Display']];
   // Settings comes first and holds the console's own tabs (settingsTabs), so it stays current on each of them. Webhook
@@ -1590,7 +1590,7 @@
       document.getElementById(id)?.scrollIntoView({ block: 'start' });
     };
     const myGroups = navCurrent === '/settings' ? [h('div', { class: 'side-subs' }, MY_GROUPS.map(([id, label]) => h('a', { class: 'side-item side-sub', href: `/settings#${id}`, onclick: toGroup(id) }, label)))] : [];
-    youSlot.replaceChildren(h('div', { class: 'side-group' }, 'You'), ...MY_LINKS.map(mine), ...myGroups, ...(meNow?.menuYou ?? []).map(hostItem));
+    youSlot.replaceChildren(h('div', { class: 'side-group' }, 'You'), ...MY_LINKS.flatMap((link) => (link.href === '/settings' ? [mine(link), ...myGroups] : [mine(link)])), ...(meNow?.menuYou ?? []).map(hostItem));
     sectionsSlot.replaceChildren(...(meNow?.menuSections ?? []).flatMap((section) =>
       [h('div', { class: 'side-group' }, section.label), ...section.items.flatMap(hostEntry)]));
     fillConsoleSlot();
@@ -1622,7 +1622,7 @@
   // The settings pages' left column, in the rail's place: back to the sessions, the avatar menu, and a list of every
   // settings page, as Linear and GitHub keep theirs. Fixed beside the page, which the CSS moves over to make room. One
   // node, like userSlot: each render of each settings page puts the same list back, so moving between them never redraws it.
-  const SETTINGS_ICONS = { '/settings': '◉', '/people': '☺', '/secrets': '◇', '/events': '≋', '/console-settings': '⚙' };
+  const SETTINGS_ICONS = { '/settings': '◉', '/usage': '▤', '/people': '☺', '/secrets': '◇', '/events': '≋', '/console-settings': '⚙' };
   let sideNav = null;
   function markCurrent(scope, selector) {
     for (const a of scope.querySelectorAll(selector)) {

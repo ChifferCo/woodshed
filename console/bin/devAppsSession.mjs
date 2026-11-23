@@ -91,7 +91,8 @@ if (args[0] === 'pr' && args[1] === 'view') {
   return dir;
 }
 
-export async function startDevAppsSession({ id, token }) {
+/** @param {{id: string, token: string, env?: NodeJS.ProcessEnv}} opts  `env` the environment its statusd starts from, this process's by default (a test's isolatedEnv) */
+export async function startDevAppsSession({ id, token, env = process.env }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-apps-'));
   const repo = path.join(root, 'repo');
   for (const dir of ['.woodshed', 'scripts', 'run', 'web', 'admin']) fs.mkdirSync(path.join(repo, dir), { recursive: true });
@@ -106,10 +107,15 @@ export async function startDevAppsSession({ id, token }) {
   git('commit', '-q', '-m', 'two apps');
   const ghDir = branchesWithPulls({ root, repo, id, git });
   const port = await freePort();
+  // A home of its own, and an ordinary claude session's agent and mode whatever the dev console runs in: its token count
+  // (session/tokenUsage.mjs) follows HOME, CODEX_HOME, AGENT and a review's REVIEW_* to the agent's records, and with
+  // the machine's (a Woodshed session's own, or a Codex one's) would put its real usage on the made-up Usage page.
+  const home = path.join(root, 'home');
+  fs.mkdirSync(home);
   const child = spawn(process.execPath, [STATUSD], {
-    env: { ...process.env, PATH: [ghDir, process.env.PATH].join(path.delimiter), SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '',
+    env: { ...env, PATH: [ghDir, env.PATH].join(path.delimiter), HOME: home, SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '',
       // A QA run or a question starts the dev console with its own mode, in which statusd reports no pull request.
-      SESSION_MODE: '' },
+      WOODSHED_CLAUDE_AUTH: '', AGENT: '', SESSION_MODE: '', CODEX_HOME: path.join(home, '.codex'), REVIEW_AGENTS: '', REVIEW_CODEX_AUTH: '', REVIEW_CODEX_HOME: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   // Its app decisions only: tmux is not here, which it warns of on every status read.
