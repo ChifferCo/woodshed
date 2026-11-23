@@ -12,7 +12,8 @@ import { PRICES_AS_OF, TOKEN_KINDS, costOf, priceOf } from '../shared/apiPrices.
 
 export const KEEP_DAYS = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const MAX_DAYS = 62;
+// As many days as are kept: a run longer than the page's longest span never loses a day inside it.
+const MAX_DAYS = KEEP_DAYS + 1;
 const MAX_MODELS = 40;
 const MAX_RUNS = 50;
 const MAX_TOKENS = 1e13;
@@ -86,9 +87,10 @@ export function createUsage(store, { now = Date.now } = {}) {
    * @returns {boolean}  whether anything changed
    */
   function record(session, report) {
-    if (now() - prunedAt > 60 * 60 * 1000) prune();
-    const usage = tokenUsageFrom(report);
-    if (!usage || !Object.keys(usage.days).length) return false;
+    maybePrune();
+    // One report per agent (a review's codex beside its claude); a statusd from before that sent one.
+    const usages = (Array.isArray(report) ? report : [report]).slice(0, 4).map(tokenUsageFrom).filter((u) => u && Object.keys(u.days).length);
+    if (!usages.length) return false;
     const all = ledger();
     const entry = all[session.id] ??= { runs: {} };
     const meta = {
@@ -100,15 +102,20 @@ export function createUsage(store, { now = Date.now } = {}) {
       startedBy: session.startedBy ?? null,
       plan: session.plan ?? null,
     };
-    const run = { agent: usage.agent, billing: usage.billing, days: usage.days };
     const before = JSON.stringify(entry);
     Object.assign(entry, meta);
-    entry.runs[usage.since] = run;
+    // A run is the agent's count from one start: by when it began, and which agent.
+    for (const usage of usages) entry.runs[`${usage.since} ${usage.agent}`] = { agent: usage.agent, billing: usage.billing, days: usage.days };
     const runs = Object.keys(entry.runs).sort();
     for (const old of runs.slice(0, Math.max(0, runs.length - MAX_RUNS))) delete entry.runs[old];
     if (JSON.stringify(entry) === before) return false;
     store.save();
     return true;
+  }
+
+  // At most once an hour, from a report, a read of the page, or the fleet's tick on a console nobody looks at.
+  function maybePrune() {
+    if (now() - prunedAt > 60 * 60 * 1000) prune();
   }
 
   /** Drops the days past KEEP_DAYS, and a session left with none. */
@@ -129,11 +136,14 @@ export function createUsage(store, { now = Date.now } = {}) {
   }
 
   /**
-   * @param {{login: string|null, admin: boolean, everyone?: boolean, days?: number}} view
-   *   `everyone` an admin's whole console; otherwise the viewer's own
+   * @param {{login: string|null, admin: boolean, everyone?: boolean, days?: number, seesShared?: boolean}} view
+   *   `everyone` an admin's whole console; otherwise the viewer's own. `seesShared` whether the viewer may open shared
+   *   sessions now (Sessions from GitHub, server.mjs canOpen): without it, a shared session they started is not theirs
+   *   to read here either.
    * @returns {object}  the page's numbers (README.md, "Usage")
    */
-  function summary({ login, admin, everyone = false, days = 30 }) {
+  function summary({ login, admin, everyone = false, days = 30, seesShared = true }) {
+    maybePrune();
     const span = Math.min(KEEP_DAYS, Math.max(1, Math.round(Number(days) || 30)));
     const to = new Date(now()).toISOString().slice(0, 10);
     const from = new Date(now() - (span - 1) * DAY_MS).toISOString().slice(0, 10);
@@ -148,9 +158,14 @@ export function createUsage(store, { now = Date.now } = {}) {
     for (const [sessionId, entry] of Object.entries(ledger())) {
       for (const run of Object.values(entry.runs ?? {})) {
         const person = personOf({ ...entry, billing: run.billing });
-        const mine = login && (entry.owner === login || entry.startedBy === login || (run.billing === 'plan' && entry.plan === login));
+        const shared = entry.kind !== 'private';
+        const mine = login && (entry.owner === login || (shared && seesShared && (entry.startedBy === login || (run.billing === 'plan' && entry.plan === login))));
         if (!all && !mine) continue;
-        let row = sessionRows.find((r) => r.sessionId === sessionId && r.billing === run.billing && r.agent === run.agent);
+        // What the session was is shown only to whoever may open it, as everywhere in the console: a teammate's private
+        // session to nobody else, admins included, and a shared one to someone with Sessions from GitHub. Its numbers
+        // still count in the totals an admin sees.
+        const open = shared ? seesShared : entry.owner === login;
+        let row = sessionRows.find((r) => (r.sessionId ?? r.key) === sessionId && r.billing === run.billing && r.agent === run.agent);
         for (const [day, byModel] of Object.entries(run.days ?? {})) {
           if (day < from || day > to) continue;
           for (const [model, tokens] of Object.entries(byModel)) {
@@ -177,7 +192,9 @@ export function createUsage(store, { now = Date.now } = {}) {
             dayRows.set(day, d);
 
             if (!row) {
-              row = { sessionId, title: entry.title, repo: entry.repo, branch: entry.branch, kind: entry.kind, person, agent: run.agent, billing: run.billing, tokens: 0, cost: 0, lastDay: day };
+              row = open
+                ? { sessionId, title: entry.title, repo: entry.repo, branch: entry.branch, kind: entry.kind, person, agent: run.agent, billing: run.billing, tokens: 0, cost: 0, lastDay: day }
+                : { sessionId: null, hidden: true, key: sessionId, title: null, repo: null, branch: null, kind: entry.kind, person, agent: run.agent, billing: run.billing, tokens: 0, cost: 0, lastDay: day };
               sessionRows.push(row);
             }
             row.tokens += totalOf(tokens);
@@ -204,9 +221,10 @@ export function createUsage(store, { now = Date.now } = {}) {
       byModel: [...models.values()].sort(byCost),
       byPerson: [...people.values()].sort((a, b) => (b.plan.cost + b.key.cost) - (a.plan.cost + a.key.cost)),
       byDay: dayList,
-      bySession: sessionRows.sort((a, b) => b.cost - a.cost || b.tokens - a.tokens).slice(0, 50),
+      // A hidden row's id was only for adding its runs together: it never leaves.
+      bySession: sessionRows.sort((a, b) => b.cost - a.cost || b.tokens - a.tokens).slice(0, 50).map(({ key, ...row }) => row),
     };
   }
 
-  return { record, prune, summary };
+  return { record, prune, maybePrune, summary };
 }

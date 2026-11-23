@@ -2663,9 +2663,9 @@ export function createHandler({
     if (pathname === '/api/usage') {
       if (!usage) return reply(res, 404, { error: 'this console keeps no usage' });
       const admin = isAdmin(user);
-      const view = usage.summary({ login: user?.login ?? null, admin, everyone: url.searchParams.get('everyone') === '1', days: Number(url.searchParams.get('days')) || 30 });
+      const view = usage.summary({ login: user?.login ?? null, admin, everyone: url.searchParams.get('everyone') === '1', days: Number(url.searchParams.get('days')) || 30, seesShared: seesShared(user?.login ?? null) });
       const listed = new Set(fleet.sessions().map((s) => s.id));
-      const bySession = view.bySession.map((row) => ({ ...row, listed: listed.has(row.sessionId) }));
+      const bySession = view.bySession.map((row) => (row.hidden ? row : { ...row, listed: listed.has(row.sessionId) }));
       return reply(res, 200, { ...view, bySession, admin, names: namesFor(view.byPerson.map((p) => p.person).filter(Boolean)) });
     }
     if (pathname === '/api/webhook-events') {

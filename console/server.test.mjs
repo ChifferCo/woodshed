@@ -629,13 +629,14 @@ test('a member who is not an admin loads the console\'s own pages, and every cal
 test('the Usage page is everyone\'s: a member reads their own sessions\' usage, and only an admin everyone\'s', async (t) => {
   const { createMembers } = await import('./members.mjs');
   const { createUsage } = await import('./usage.mjs');
-  const store = { state: { members: { 'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true }, 'sam-ops': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' } } }, save() {} };
+  const store = { state: { members: { 'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true, githubSessions: true }, 'sam-ops': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited', githubSessions: true } } }, save() {} };
   const members = createMembers({ store });
   const today = new Date().toISOString().slice(0, 10);
   const usage = createUsage(store);
   const spent = (billing, model) => ({ agent: 'claude', billing, since: `${today}T00:00:00Z`, days: { [today]: { [model]: { input: 1_000_000, output: 0 } } } });
   usage.record({ id: 'aaaa1111', owner: 'sam-ops', title: 'Sam\'s' }, spent('plan', 'claude-opus-5-5'));
   usage.record({ id: 'bbbb2222', owner: 'mia-dev', title: 'Mia\'s' }, spent('key', 'claude-sonnet-5-5'));
+  usage.record({ id: 'cccc3333', startedBy: 'sam-ops', title: 'Shared fix', repo: 'o/r' }, spent('key', 'claude-sonnet-5-5'));
   const config = {
     host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
     maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
@@ -660,13 +661,20 @@ test('the Usage page is everyone\'s: a member reads their own sessions\' usage, 
   assert.match(await page.text(), /<script src="\/static\/usage\.js\?v=[0-9a-f]+"><\/script>/);
   const own = await (await fetch(`http://127.0.0.1:${port}/api/usage?everyone=1`, { headers: sam })).json();
   assert.equal(own.everyone, false, 'a member asking for everyone gets their own');
-  assert.deepEqual(own.bySession.map((r) => r.sessionId), ['aaaa1111']);
+  assert.deepEqual(own.bySession.map((r) => r.sessionId).sort(), ['aaaa1111', 'cccc3333'], 'their private session and the shared one they started');
   assert.equal(own.totals.plan.cost, 4, '1M input on Opus 5.5 at its API price');
+  members.setGithubSessions({ login: 'sam-ops', on: false, by: 'mia-dev' });
+  const revoked = await (await fetch(`http://127.0.0.1:${port}/api/usage`, { headers: sam })).json();
+  assert.deepEqual(revoked.bySession.map((r) => r.sessionId), ['aaaa1111'], 'with Sessions from GitHub off, the shared session is gone, as its page is');
+  assert.ok(!JSON.stringify(revoked).includes('Shared fix'));
+  assert.equal(revoked.totals.key.cost, 0);
   const all = await (await fetch(`http://127.0.0.1:${port}/api/usage?everyone=1&days=7`, { headers: mia })).json();
   assert.equal(all.everyone, true);
   assert.equal(all.days, 7);
-  assert.deepEqual(all.bySession.map((r) => r.sessionId).sort(), ['aaaa1111', 'bbbb2222']);
-  assert.equal(all.totals.key.cost, 2);
+  assert.deepEqual(all.bySession.map((r) => r.sessionId ?? 'hidden').sort(), ['bbbb2222', 'cccc3333', 'hidden'], 'sam\'s private session is never named, even to an admin');
+  assert.ok(!JSON.stringify(all).includes('Sam\'s'));
+  assert.equal(all.totals.plan.cost, 4);
+  assert.equal(all.totals.key.cost, 4);
   const none = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members });
   const bare = http.createServer((req, res) => { none(req, res); });
   const barePort = await listen(bare);

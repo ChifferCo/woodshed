@@ -118,8 +118,10 @@ window.Woodshed.settingsPage('/usage', (app, life) => {
       table([['Session'], ...(data.everyone ? [['Person']] : []), ['Kind'], ['Agent'], ['Paid by'], ['Tokens', 'num'], ['At API prices', 'num']],
         data.bySession.map((s) => h('tr', null,
           // A session deleted since keeps its usage, and has no page to open.
-          h('td', null, s.listed === false ? h('span', null, s.title || s.branch || s.sessionId, h('span', { class: 'detail' }, 'deleted'))
-            : h('a', { href: `/s/${s.sessionId}` }, s.title || s.branch || s.sessionId),
+          // Someone else's private session, or a shared one you may not open: its numbers, never what it was.
+          h('td', null, s.hidden ? h('span', { class: 'meta-cell' }, `A ${s.kind === 'private' ? 'private' : 'shared'} session you cannot open`)
+            : s.listed === false ? h('span', null, s.title || s.branch || s.sessionId, h('span', { class: 'detail' }, 'deleted'))
+              : h('a', { href: `/s/${s.sessionId}` }, s.title || s.branch || s.sessionId),
             s.repo ? h('span', { class: 'detail' }, s.repo) : null),
           ...(data.everyone ? [h('td', null, whoText(s.person))] : []),
           h('td', { class: 'nowrap' }, SESSION_KINDS[s.kind] ?? s.kind),

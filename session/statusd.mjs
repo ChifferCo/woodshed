@@ -12,7 +12,8 @@
 //                     with agentOnly, also a 409 unless claude or codex is what runs in the pane
 //   POST /claude-login  types /woodshed:remote-control into claude, or woodshed-login at the Terminal tab's prompt where
 //                       claude has no such command: {"where": "agent"|"terminal"}
-//   POST /checkpoint  commit whatever is uncommitted and push the branch, after saving the Claude home
+//   POST /checkpoint  commit whatever is uncommitted and push the branch, after saving the Claude home; answers the
+//                     tokens spent too, read fresh, for the Usage page to keep the last turns before a stop
 //                     (~/.claude and ~/.claude.json) to the console, for the session's next run
 //   POST /taint       {"proxy", "ca", "message"}: the console locked this session down (console/mcpRelay.mjs). Every tool
 //                     is pointed at the console's egress proxy, the settings sync stops, the rules gain tainted.md, and
@@ -72,7 +73,7 @@ import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs
 import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
-import { billingOf, tokenCounter } from './tokenUsage.mjs';
+import { billingOf, tokenCounter, usageSources } from './tokenUsage.mjs';
 import { TAINTED_CLAUDE_FLAGS, applyTaint, isTaintSetUp, isTainted, markTaintSetUp } from './taint.mjs';
 import { paneState, stateReader } from './agentState.mjs';
 import { agentPane } from './agentPane.mjs';
@@ -909,29 +910,40 @@ function planUsageFailed(error) {
   return null;
 }
 
-// The tokens the agent spent in this session, by day and model, and whether a plan or a key pays for them
-// (tokenUsage.mjs), for the console's Usage page. Counted from the time the entrypoint began restoring the Claude home:
-// what the home brought was an earlier session's. Read again at most every 30 s; the console asks every few.
+// The tokens the session's agents spent, by day and model, and whether a plan or a key pays for them (tokenUsage.mjs),
+// for the console's Usage page: one report per agent, a review's codex beside its claude. Counted from the time the
+// entrypoint began restoring the Claude home: what the home brought was an earlier session's. Read again at most every
+// 30 s, since the console asks every few; the checkpoint before a stop reads it fresh, so the last turns are kept.
 const TOKEN_USAGE_EVERY_MS = 30_000;
-let tokenCounterOf = null;
+let tokenSources = null;
 let tokenUsageAnswer = null;
 let tokenUsageAt = 0;
 let tokenUsageError = null;
-async function tokenUsage() {
-  if (Date.now() - tokenUsageAt < TOKEN_USAGE_EVERY_MS) return tokenUsageAnswer;
+async function tokenUsage({ fresh = false } = {}) {
+  if (!fresh && Date.now() - tokenUsageAt < TOKEN_USAGE_EVERY_MS) return tokenUsageAnswer;
   tokenUsageAt = Date.now();
-  tokenCounterOf ??= tokenCounter({ since: OWN_TRANSCRIPTS.writtenFrom, agent: CODEX ? 'codex' : 'claude' });
+  tokenSources ??= usageSources(process.env, os.homedir()).map((source) => ({
+    ...source, counter: tokenCounter({ since: OWN_TRANSCRIPTS.writtenFrom, ...source }),
+  }));
   try {
-    let codexAuth = null;
-    if (CODEX) {
-      try {
-        codexAuth = JSON.parse(readFileSync(CODEX_AUTH_FILE, 'utf8'));
-      } catch {
-        // No sign-in of its own: the team key, through the console.
+    const reports = [];
+    for (const source of tokenSources) {
+      let billing = source.billing;
+      if (!billing) {
+        let codexAuth = null;
+        if (source.codexAuthFile) {
+          try {
+            codexAuth = JSON.parse(readFileSync(source.codexAuthFile, 'utf8'));
+          } catch {
+            // No sign-in of its own: the team key, through the console.
+          }
+        }
+        billing = billingOf(process.env, source.agent, codexAuth);
       }
+      const { since, days } = await source.counter.read();
+      reports.push({ agent: source.agent, billing, since, days });
     }
-    const { since, days } = await tokenCounterOf.read();
-    tokenUsageAnswer = { agent: CODEX ? 'codex' : 'claude', billing: billingOf(process.env, CODEX ? 'codex' : 'claude', codexAuth), since, days };
+    tokenUsageAnswer = reports;
     tokenUsageError = null;
   } catch (error) {
     if (error.message !== tokenUsageError) console.log('statusd: token usage not read', { error: error.message });
@@ -1778,7 +1790,7 @@ async function handle(req, res) {
     }
     return reply(res, 200, await taint(body));
   }
-  if (route === 'POST /checkpoint') return reply(res, 200, await checkpoint());
+  if (route === 'POST /checkpoint') return reply(res, 200, { ...(await checkpoint()), tokenUsage: await tokenUsage({ fresh: true }) });
   if (route === 'POST /upload') return uploadReply(req, res);
   if (route === 'GET /applog') return reply(res, 200, await appLogs());
   if (route === 'GET /diff') {

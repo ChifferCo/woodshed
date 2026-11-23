@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { billingOf, tokenCounter } from './tokenUsage.mjs';
+import { billingOf, tokenCounter, usageSources } from './tokenUsage.mjs';
 
 const SINCE = Date.parse('2026-11-20T10:00:00Z');
 
@@ -109,4 +109,33 @@ test('what pays: a Claude plan or own token is a plan, the team key a key; codex
 test('no transcripts yet is no usage, not an error', async () => {
   const { days } = await tokenCounter({ since: SINCE, agent: 'claude', claudeDir: path.join(os.tmpdir(), 'no-such-dir-xyz') }).read();
   assert.deepEqual(days, {});
+});
+
+test('what is counted: the agent, and in a review its codex from the home that review gave it', () => {
+  const home = '/home/node';
+  assert.deepEqual(usageSources({}, home), [{ agent: 'claude', claudeDir: '/home/node/.claude/projects' }]);
+  assert.deepEqual(usageSources({ AGENT: 'codex', CODEX_HOME: '/x/codex' }, home),
+    [{ agent: 'codex', codexDir: '/x/codex/sessions', codexAuthFile: '/x/codex/auth.json' }]);
+  assert.deepEqual(usageSources({ SESSION_MODE: 'review', REVIEW_AGENTS: 'claude' }, home).map((s) => s.agent), ['claude'], 'claude alone reviews');
+  const chatgpt = usageSources({ SESSION_MODE: 'review', REVIEW_AGENTS: 'codex', REVIEW_CODEX_AUTH: 'chatgpt' }, home);
+  assert.deepEqual(chatgpt[1], { agent: 'codex', codexDir: '/home/node/.codex-review/sessions', codexAuthFile: '/home/node/.codex-review/auth.json', billing: 'plan' },
+    'the author\'s ChatGPT login, in review.sh\'s own home');
+  const key = usageSources({ SESSION_MODE: 'review', REVIEW_AGENTS: 'claude codex', REVIEW_CODEX_AUTH: 'key' }, home);
+  assert.deepEqual(key.map((s) => `${s.agent} ${s.codexDir ?? s.claudeDir} ${s.billing ?? ''}`),
+    ['claude /home/node/.claude/projects ', 'codex /home/node/.codex/sessions key']);
+  assert.equal(usageSources({ SESSION_MODE: 'review', REVIEW_AGENTS: 'codex', REVIEW_CODEX_AUTH: 'chatgpt', REVIEW_CODEX_HOME: '/r' }, home)[1].codexDir, '/r/sessions');
+});
+
+test('a character cut between two reads of a file is read whole', async () => {
+  const dir = await scratch();
+  const file = path.join(dir, 'p', 'a.jsonl');
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  // The model name carries a three-byte character; the first write stops inside it.
+  const bytes = Buffer.from(`${answer('msg_1', '2026-11-20T11:00:00Z', { input_tokens: 3, output_tokens: 4 }, 'claude-opus-5-5\u2603')}\n`);
+  const cut = bytes.indexOf(Buffer.from('\u2603')) + 1;
+  await fs.writeFile(file, bytes.subarray(0, cut));
+  const counter = tokenCounter({ since: SINCE, agent: 'claude', claudeDir: dir });
+  await counter.read();
+  await fs.appendFile(file, bytes.subarray(cut));
+  assert.deepEqual(Object.keys((await counter.read()).days['2026-11-20']), ['claude-opus-5-5\u2603']);
 });

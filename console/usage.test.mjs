@@ -28,7 +28,7 @@ test('each run of a session is kept, and an unchanged report saves nothing', () 
   assert.equal(usage.record(session, report('plan', { '2026-11-22': { 'claude-opus-5-5': t(1e6, 1e6) } })), false);
   assert.equal(s.saves, saves);
   usage.record(session, report('plan', { '2026-11-23': { 'claude-opus-5-5': t(1e6, 0) } }, { since: '2026-11-23T08:00:00Z' }));
-  assert.deepEqual(Object.keys(s.state.tokenUsage.aaaa1111.runs), ['2026-11-22T08:00:00.000Z', '2026-11-23T08:00:00.000Z']);
+  assert.deepEqual(Object.keys(s.state.tokenUsage.aaaa1111.runs), ['2026-11-22T08:00:00.000Z claude', '2026-11-23T08:00:00.000Z claude']);
   const view = usage.summary({ login: 'sam', admin: false });
   // 1M in and 1M out on Opus 5.5 (4 + 20), then 1M in (4).
   assert.equal(view.totals.plan.cost, 28);
@@ -81,8 +81,62 @@ test('the span picks the days, and days past the keep are dropped', () => {
   assert.equal(month.byDay.at(-1).day, '2026-11-23');
   now = Date.parse('2027-02-12T12:00:00Z');
   usage.prune();
-  assert.deepEqual(Object.keys(s.state.tokenUsage.a1.runs['2026-11-22T08:00:00.000Z'].days), ['2026-11-23']);
+  assert.deepEqual(Object.keys(s.state.tokenUsage.a1.runs['2026-11-22T08:00:00.000Z claude'].days), ['2026-11-23']);
   now = Date.parse('2027-03-12T12:00:00Z');
   usage.prune();
   assert.deepEqual(s.state.tokenUsage, {}, 'a session with nothing left is dropped');
+});
+
+test('another person\'s private session is never named, admins included: its numbers count, its title, repo and branch stay out', () => {
+  const s = store();
+  const usage = createUsage(s, { now: () => NOW });
+  usage.record({ id: 'k1', owner: 'kim', title: 'Kim\'s secret plan', repo: 'acme/web', branch: 'woodshed/k1' }, report('plan', { '2026-11-22': { 'claude-opus-5-5': t(1e6, 0) } }));
+  usage.record({ id: 's1', owner: 'sam', title: 'Sam\'s', repo: 'acme/web', branch: 'woodshed/s1' }, report('plan', { '2026-11-22': { 'claude-opus-5-5': t(1e6, 0) } }));
+  const all = usage.summary({ login: 'sam', admin: true, everyone: true });
+  assert.equal(all.totals.plan.cost, 8, 'both count');
+  const kims = all.bySession.find((r) => r.person === 'kim');
+  assert.deepEqual([kims.hidden, kims.sessionId, kims.title, kims.repo, kims.branch, kims.kind], [true, null, null, null, null, 'private']);
+  assert.ok(!JSON.stringify(all).includes('k1') && !JSON.stringify(all).includes('secret'), 'nothing of it anywhere in the answer');
+  assert.equal(all.bySession.find((r) => r.person === 'sam').title, 'Sam\'s', 'the admin\'s own is named');
+  assert.equal(usage.summary({ login: 'kim', admin: false }).bySession[0].title, 'Kim\'s secret plan', 'and kim sees hers');
+});
+
+test('without Sessions from GitHub a shared session is no longer yours to read here, and an admin sees only its numbers', () => {
+  const s = store();
+  const usage = createUsage(s, { now: () => NOW });
+  usage.record({ id: 'sh1', startedBy: 'sam', plan: 'sam', title: 'Shared fix', repo: 'acme/web' }, report('plan', { '2026-11-22': { 'claude-opus-5-5': t(1e6, 0) } }));
+  usage.record({ id: 'p1', owner: 'sam', title: 'Mine' }, report('plan', { '2026-11-22': { 'claude-opus-5-5': t(1e6, 0) } }));
+  assert.deepEqual(usage.summary({ login: 'sam', admin: false }).bySession.map((r) => r.title).sort(), ['Mine', 'Shared fix']);
+  const revoked = usage.summary({ login: 'sam', admin: false, seesShared: false });
+  assert.deepEqual(revoked.bySession.map((r) => r.title), ['Mine']);
+  assert.equal(revoked.totals.plan.cost, 4, 'nor in their totals');
+  const admin = usage.summary({ login: 'mia', admin: true, everyone: true, seesShared: false });
+  assert.equal(admin.totals.plan.cost, 8);
+  assert.ok(admin.bySession.every((r) => r.hidden && !r.title), 'neither session is one the admin may open');
+});
+
+test('a report per agent: a review\'s codex is kept beside its claude, each with what pays for it', () => {
+  const s = store();
+  const usage = createUsage(s, { now: () => NOW });
+  usage.record({ id: 'r1', review: { base: 'main' } }, [
+    report('key', { '2026-11-22': { 'claude-opus-5-5': t(1e6, 0) } }),
+    report('plan', { '2026-11-22': { 'gpt-6.1-sol': t(1e6, 0) } }, { agent: 'codex' }),
+  ]);
+  const all = usage.summary({ login: 'mia', admin: true, everyone: true });
+  assert.deepEqual(all.bySession.map((r) => `${r.kind} ${r.agent} ${r.billing}`).sort(), ['review claude key', 'review codex plan']);
+  assert.equal(all.totals.plan.cost, 2);
+  assert.equal(all.totals.key.cost, 4);
+});
+
+test('a run longer than the page\'s span keeps every day in it, and a read prunes on a console with no reports', () => {
+  const days = {};
+  for (let i = 0; i < 91; i++) days[new Date(NOW - i * 86_400_000).toISOString().slice(0, 10)] = { 'claude-opus-5-5': t(1e6, 0) };
+  assert.equal(Object.keys(tokenUsageFrom(report('key', days)).days).length, 91);
+  const s = store();
+  let now = NOW;
+  const usage = createUsage(s, { now: () => now });
+  usage.record({ id: 'a1', owner: 'sam' }, report('key', { '2026-11-23': { 'claude-opus-5-5': t(1e6, 0) } }));
+  now = Date.parse('2027-03-12T12:00:00Z');
+  usage.summary({ login: 'sam', admin: false });
+  assert.deepEqual(s.state.tokenUsage, {});
 });

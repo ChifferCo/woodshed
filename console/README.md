@@ -1170,15 +1170,19 @@ split by what pays for them, and what they cost at the providers' API list price
 `PRICES_AS_OF`): **On a plan** is what a Claude plan's or a ChatGPT login's tokens would have cost on an API key, and
 **On an API key** what the team key or a person's own key was charged, near enough. Then the same by model (input,
 cache writes, cache reads and output), by person (an admin's Everyone), by day, and the sessions that spent the most.
-Everyone sees their own: private sessions they own, shared ones they started or that ran on their plan. An admin may
-switch to Everyone. 7, 30 or 90 days, in UTC.
+Everyone sees their own: private sessions they own, and shared ones they started or that ran on their plan while they
+have Sessions from GitHub (People). An admin may switch to Everyone, whose totals count every session, but a session is
+named (its title, repo and branch) only to whoever may open it: a teammate's private session never, a shared one only
+with Sessions from GitHub. 7, 30 or 90 days, in UTC.
 
 Nothing is asked of Anthropic or OpenAI. Each session's statusd counts what its agent spent from the agent's own
 transcripts and says whether a plan or a key pays (`tokenUsage` in its `/status`, session/README.md); the fleet hands
 each report to `console/usage.mjs`, which keeps it in `state.json` under `tokenUsage`, by session and by run (a Resume
-reports from its own start), apart from the session list, so a deleted session's usage stays for 90 days. A model
+reports from its own start, and a review's codex beside its claude), apart from the session list, so a deleted session's
+usage stays for 90 days. A stop's checkpoint answers a fresh count, so the turns since the last status read are kept. A model
 with no price in the list shows its tokens and `no price`, never a guess: add its row when it ships. A session from an
-image before the count reports nothing. A review or QA run is the console's, whoever's sign-in its codex used.
+image before the count reports nothing. A review or QA run is the console's; a review's codex on the author's ChatGPT
+login counts as a plan.
 
 `GET /api/usage?days=30` answers the page: `{ everyone, from, to, days, pricesAsOf, totals: { plan, key }, unpricedModels,
 byModel, byPerson, byDay, bySession }`, with `everyone=1` for an admin's whole console (anyone else gets their own).

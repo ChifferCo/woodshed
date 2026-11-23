@@ -878,6 +878,8 @@ export function createFleet({
       try {
         const result = await statusd(session, 'POST', '/checkpoint', { timeoutMs: CHECKPOINT_TIMEOUT_MS });
         console.log('fleet: checkpoint pushed', { id: session.id, committed: result?.committed, head: result?.head });
+        // The tokens of the turns since the last status read, which the Usage page would otherwise never see.
+        if (usage && result?.tokenUsage) await safely('token usage', () => usage.record(session, result.tokenUsage));
       } catch (err) {
         console.warn('fleet: checkpoint failed, stopping anyway', { id: session.id, message: firstLine(err) });
       }
@@ -1138,6 +1140,8 @@ export function createFleet({
     if (ticking) return;
     ticking = true;
     try {
+      // Usage's retention, kept on a console nobody reads it on (usage.mjs, at most once an hour).
+      usage?.maybePrune?.();
       const taskStates = await taskStatesFor(state.sessions);
       for (const session of [...state.sessions]) {
         try {

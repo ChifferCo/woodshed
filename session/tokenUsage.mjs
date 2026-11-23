@@ -11,6 +11,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 
 export const CLAUDE_DIR = path.join(os.homedir(), '.claude', 'projects');
 export const CODEX_DIR = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions');
@@ -34,6 +35,29 @@ export function billingOf(env, agent, codexAuth) {
   }
   // own: the owner's setup token; plan: a Claude plan through the console. Anything else is a key.
   return env.WOODSHED_CLAUDE_AUTH === 'own' || env.WOODSHED_CLAUDE_AUTH === 'plan' ? 'plan' : 'key';
+}
+
+/**
+ * What a session's statusd counts: its agent, and in a review each agent the review runs. A review runs codex beside
+ * claude through review.sh (REVIEW_AGENTS), never as the session's agent, with a home of its own on the author's
+ * ChatGPT login (REVIEW_CODEX_HOME, `~/.codex-review`), paid by that login, or the usual one on a key.
+ * @param {Record<string, string|undefined>} env
+ * @param {string} home  the user's home
+ * @returns {{agent: 'claude'|'codex', claudeDir?: string, codexDir?: string, codexAuthFile?: string, billing?: 'plan'|'key'}[]}
+ *   `billing` when the source says it; otherwise billingOf, from the environment and codex's auth.json
+ */
+export function usageSources(env, home) {
+  const codexHome = env.CODEX_HOME || path.join(home, '.codex');
+  const codexOf = (dir) => ({ agent: 'codex', codexDir: path.join(dir, 'sessions'), codexAuthFile: path.join(dir, 'auth.json') });
+  if (env.AGENT === 'codex') return [codexOf(codexHome)];
+  const sources = [{ agent: 'claude', claudeDir: path.join(home, '.claude', 'projects') }];
+  const reviewAgents = String(env.REVIEW_AGENTS ?? 'claude').split(/\s+/);
+  if (env.SESSION_MODE === 'review' && reviewAgents.includes('codex')) {
+    const chatgpt = env.REVIEW_CODEX_AUTH === 'chatgpt';
+    const dir = chatgpt ? env.REVIEW_CODEX_HOME || path.join(home, '.codex-review') : codexHome;
+    sources.push({ ...codexOf(dir), billing: chatgpt ? 'plan' : 'key' });
+  }
+  return sources;
 }
 
 const n = (v) => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
@@ -141,7 +165,7 @@ export function tokenCounter({ since, agent, claudeDir = CLAUDE_DIR, codexDir = 
     let state = files.get(file);
     if (!state || stat.size < state.offset) {
       const start = stat.size > FIRST_READ_BYTES ? stat.size - FIRST_READ_BYTES : 0;
-      state = { offset: start, rest: '', skipFirst: start > 0 };
+      state = { offset: start, rest: '', skipFirst: start > 0, decoder: new StringDecoder('utf8') };
       files.set(file, state);
     }
     if (stat.size === state.offset) return;
@@ -152,7 +176,8 @@ export function tokenCounter({ since, agent, claudeDir = CLAUDE_DIR, codexDir = 
         const { bytesRead } = await handle.read(buffer, 0, buffer.length, state.offset);
         if (!bytesRead) break;
         state.offset += bytesRead;
-        const lines = (state.rest + buffer.subarray(0, bytesRead).toString('utf8')).split('\n');
+        // A character cut by the chunk's end is held by the decoder until the next chunk brings the rest of it.
+        const lines = (state.rest + state.decoder.write(buffer.subarray(0, bytesRead))).split('\n');
         state.rest = lines.pop();
         if (state.skipFirst) {
           lines.shift();
