@@ -1120,6 +1120,123 @@
       pr && ` · ${PR_STATE_WORD[pr.state]}${pr.title ? ` · ${pr.title}` : ''}`]);
   }
 
+  // ---- a rail card's hover card (designSystem/components/SessionPeek) ----
+  // What the card has no room for, as plain data: session.js draws it, and railPeek.test.mjs reads it.
+  const PERMISSION_WORDS = { auto: 'auto mode', acceptEdits: 'accepts edits', plan: 'plan mode', default: 'asks first' };
+  const TRIGGER_WORDS = {
+    label: 'with the label', comment: 'with a /woodshed comment', 'my-woodshed': 'from My Woodshed', slack: 'with a question in Slack',
+    qa: 'to QA a pull request', review: 'to review a pull request', console: 'from the console',
+  };
+  const PEEK_PRS = 3;
+
+  function timeOfDay(ms) {
+    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  /** @returns {string}  the agent, its model, effort and permissions as New session picked them; the agent alone with none picked */
+  function agentLine(s) {
+    const o = s.options;
+    if (!o) return agentTitle(s);
+    const codex = agentOf(s) === 'codex';
+    const mode = codex && o.permissionMode === 'default' ? 'Codex’s own approvals' : PERMISSION_WORDS[o.permissionMode];
+    return [agentTitle(s), o.model || 'its default model', o.effort && `${o.effort} effort`, mode].filter(Boolean).join(' · ');
+  }
+
+  /** @returns {string|null}  why the session is in its state, in a sentence after the status word */
+  function peekWhy(s, { login, sessions = [] }) {
+    const st = displayStatus(s);
+    const who = (l) => (sameLogin(l, login) ? 'you' : personText(l));
+    const agent = agentTitle(s);
+    if (s.status === 'queued') {
+      if (waitsForRetry(s)) return PROVIDER_WORDS.noRoom?.line ?? 'Waiting for room, and tries again soon';
+      const place = linePlace(s, sessions);
+      return place ? `${capitalised(lineText(place))} for one of ${s.owner && sameLogin(s.owner, login) ? 'your' : 'its owner’s'} slots` : 'Waiting for a free slot';
+    }
+    if (s.status === 'starting') {
+      const now = s.startedAt ? startProgress(s).current : null;
+      return now ? `${now.label}, ${clock(s.startedAt)} in` : 'Starting';
+    }
+    if (s.status === 'stopping') return 'Pushing its work, then stopping';
+    if (s.status === 'running') {
+      return {
+        'needs-you': `${agent} asked something and waits for an answer`,
+        working: `${agent} is working`,
+        review: 'Its pull request waits for its review and checks',
+        job: `Done with its turn, while ${s.shells === 1 ? 'a background job runs' : `${s.shells} background jobs run`} on its pull request`,
+        done: 'Done with its turn, and waits for you',
+        starting: `Opening ${agentOf(s)}`,
+        idle: `${agent} is no longer running in it`,
+      }[st.key] ?? null;
+    }
+    if (st.key === 'failed') return s.error || (s.stopReason ? capitalised(s.stopReason) : 'It did not start');
+    if (s.cleanedAt) return `Deleted ${ago(s.cleanedAt)}${s.stopReason ? `: ${s.stopReason}` : ''}`;
+    if (st.key === 'merged') return `Its pull request ${s.prMerged ? 'merged' : 'closed'} ${ago(s.prClosedAt)}`.trim();
+    if (st.key === 'finished') return `Its pull request went to Slack ${ago(s.slackPostedAt)}`.trim();
+    const how = s.stoppedBy ? `Stopped by ${who(s.stoppedBy)}` : st.key === 'paused' ? 'Paused' : 'Stopped';
+    const reason = !s.stoppedBy && s.stopReason ? `: ${s.stopReason}` : '';
+    return `${how} ${ago(s.stoppedAt)}`.trim() + reason;
+  }
+
+  /** @returns {{number: string, title: string|null, state: string|null, checks: {word: string, level: string}|null, review: {word: string, level: string}|null}[]}  newest first */
+  function peekPrs(s) {
+    const all = s.prs?.length ? s.prs : s.prUrl ? [{ url: s.prUrl, pr: s.pr ?? null }] : [];
+    return all.slice().reverse().map(({ url, pr }) => ({
+      number: prNumber(url),
+      title: pr?.title ?? null,
+      state: pr ? (pr.state === 'queued' && pr.queuePosition ? `${PR_STATE_WORD.queued}, position ${pr.queuePosition}` : PR_STATE_WORD[pr.state] ?? null) : null,
+      checks: pr?.checks ? { word: checksWord(pr.checks), level: pr.checks.fail ? 'fail' : pr.checks.pending ? 'pending' : 'pass' } : null,
+      review: pr?.review && REVIEW_WORD[pr.review] ? { word: REVIEW_WORD[pr.review], level: pr.review === 'changes' ? 'fail' : pr.review === 'approved' ? 'pass' : 'pending' } : null,
+    }));
+  }
+
+  /**
+   * What a rail card's hover card says about a session: its full title, its state and why, then rows of what the card
+   * leaves out (branch, pull requests with their checks, agent and model, whose it is, when it pauses or stops, when it
+   * was last active) and the agent's last line.
+   * @param {object} s  the session, as /api/sessions gives it
+   * @param {{login?: string, sessions?: object[], idleHours?: number, askIdleHours?: number, myIdleHours?: number}} data  the page's answer
+   * @param {number} [nowMs]
+   * @returns {{title: string, status: string, key: string, why: string|null, production: boolean,
+   *   rows: {term: string, text: string, mono?: boolean, warn?: boolean}[], prs: object[], morePrs: number, last: {who: string, text: string}|null}}
+   */
+  function peekFacts(s, data, nowMs = Date.now()) {
+    const { login } = data;
+    const who = (l) => (sameLogin(l, login) ? 'You' : personText(l));
+    const st = displayStatus(s);
+    const rows = [];
+    const row = (term, text, extra = {}) => { if (text) rows.push({ term, text, ...extra }); };
+    const prs = peekPrs(s);
+    row('Branch', s.branch, { mono: true });
+    if (!prs.length && s.number) row(s.kind === 'pr' ? 'Pull request' : 'Issue', ref(s), { mono: true });
+    row('Agent', agentLine(s));
+    // A shared session runs on the team's key or its starter's plan; a private one always on its owner's own.
+    if (!isPrivate(s) && agentOf(s) === 'claude') row('Runs on', s.plan ? `${personText(s.plan)}’s Claude plan` : 'The team’s Anthropic key');
+    if (isPrivate(s)) row('Belongs to', `${who(s.owner)}, private`);
+    else if (s.kind === 'ask') row('Asked by', who(s.startedBy));
+    else {
+      if (!isPullCheck(s)) row('Assigned to', s.assignee ? who(s.assignee) : 'Nobody yet');
+      row('Started by', `${who(s.startedBy)}, ${TRIGGER_WORDS[s.trigger] ?? TRIGGER_WORDS.console}`);
+    }
+    // When it pauses or stops by itself: the console's own `pause` (its limits and any Extend), else the page's numbers.
+    const end = pauseLeft(s, data);
+    const busyIdle = s.status === 'running' && s.pause?.why === 'idle' && BUSY_STATES.has(s.state);
+    if (end && end.left > 0) {
+      row(end.why === 'lifetime' ? 'Stops' : 'Pauses', `At ${timeOfDay(nowMs + end.left)}, in ${span(end.left)}`, { warn: end.left <= PAUSE_WARN_MS });
+    } else if (busyIdle) {
+      const hours = s.runsOn?.idleHours;
+      row('Pauses', hours ? `${hours} ${hours === 1 ? 'hour' : 'hours'} after it starts waiting for input` : 'Once it waits for input');
+    }
+    const deletes = deletedIn(s);
+    if (deletes) row('Deleted', capitalised(deletes.replace(/^deleted /, '')));
+    if (isLive(s) && s.lastActiveAt) row('Last active', capitalised(ago(s.lastActiveAt)));
+    const last = s.lastMessage?.text && st.key !== 'failed'
+      ? { who: s.lastMessage.role === 'user' ? 'you' : s.lastMessage.role, text: s.lastMessage.text.replace(/\s+/g, ' ').trim().slice(0, 400) } : null;
+    return {
+      title: s.title, status: capitalised(st.word), key: st.key, why: peekWhy(s, data), production: Boolean(s.taintedAt),
+      rows, prs: prs.slice(0, PEEK_PRS), morePrs: Math.max(0, prs.length - PEEK_PRS), last,
+    };
+  }
+
   // What the container uses, against what it may: amber past 70% of its memory or 150% CPU, red past 90% or 190%.
   function fmtBytes(bytes) {
     if (bytes < 1024 ** 2) return `${Math.round(bytes / 1024)} KB`;
@@ -1892,6 +2009,6 @@
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
+    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, peekFacts, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
 })();
