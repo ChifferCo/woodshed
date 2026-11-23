@@ -24,13 +24,23 @@ const id = (p) => p + '_' + Math.random().toString(36).slice(2, 10);
 const rollup = () => s.checks.map((c) => ({ status: 'COMPLETED', conclusion: c }));
 const decision = () => (s.verdicts.some((v) => v.state === 'CHANGES_REQUESTED') ? 'CHANGES_REQUESTED' : s.verdicts.some((v) => v.state === 'APPROVED') ? 'APPROVED' : 'REVIEW_REQUIRED');
 const url = 'https://github.com/' + s.slug + '/pull/' + s.number;
+// The session's earlier pull requests, on branches of their own: no comments or verdicts, only what a review reads.
+const other = (n) => (s.others || []).find((o) => String(o.number) === String(n)) || null;
+const urlOf = (o) => 'https://github.com/' + s.slug + '/pull/' + o.number;
+const otherView = (o) => ({ id: 'PR_dev' + o.number, number: o.number, title: o.title, body: o.body, author: { login: s.login },
+  headRefName: o.branch, headRefOid: o.sha, baseRefName: s.base, isCrossRepository: false, state: 'OPEN', url: urlOf(o), isDraft: false,
+  additions: o.additions, deletions: o.deletions, changedFiles: o.changedFiles, files: [], reviewDecision: 'REVIEW_REQUIRED',
+  mergeStateStatus: 'CLEAN', statusCheckRollup: rollup() });
 
 if (args[0] === 'api' && args[1] === 'user') out(s.login);
 if (args[0] === 'pr' && args[1] === 'list') {
   const branch = args[args.indexOf('--head') + 1];
+  const o = (s.others || []).find((x) => x.branch === branch);
+  if (o) out([{ number: o.number, title: o.title, headRefName: o.branch, state: 'OPEN', isDraft: false, reviewDecision: 'REVIEW_REQUIRED', url: urlOf(o), statusCheckRollup: rollup() }]);
   if (branch !== s.branch) out([]);
   out([{ number: s.number, title: s.title, headRefName: s.branch, state: s.state, isDraft: false, reviewDecision: decision(), url, statusCheckRollup: rollup() }]);
 }
+if (args[0] === 'pr' && args[1] === 'view' && other(args[2])) out(otherView(other(args[2])));
 if (args[0] === 'pr' && args[1] === 'view') {
   out({ id: 'PR_dev', number: s.number, title: s.title, state: s.state, isDraft: false, reviewDecision: decision(), headRefOid: head(),
     baseRefName: s.base, mergeStateStatus: 'CLEAN', statusCheckRollup: rollup() });
@@ -95,6 +105,13 @@ if (args[0] === 'api' && args[1] === 'graphql') {
     save();
     out({ data: {} });
   }
+  if (q.includes('reviewThreads') && other(fields.pr)) {
+    const o = other(fields.pr);
+    out({ data: { repository: { pullRequest: {
+      id: 'PR_dev' + o.number, headRefOid: o.sha, body: o.body, bodyHTML: '', author: { login: s.login }, createdAt: s.createdAt, url: urlOf(o),
+      reviews: { nodes: [] }, verdicts: { nodes: [] }, comments: { nodes: [] }, reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [] },
+    } } } });
+  }
   if (q.includes('reviewThreads')) {
     const pendingThreads = (s.pending ? s.pending.comments : []).map((c) => ({ id: 'T' + c.id, path: c.path, diffSide: c.side, line: c.line, startLine: null, isResolved: false, isOutdated: false,
       comments: { pageInfo: { hasNextPage: false }, nodes: [{ id: c.id, fullDatabaseId: null, author: { login: s.login }, body: c.body, state: 'PENDING', url: null, createdAt: at(), viewerCanDelete: true, viewerDidAuthor: true }] } }));
@@ -114,15 +131,17 @@ fail('not a call the dev review gh answers: ' + args.slice(0, 4).join(' '));
 
 /**
  * @param {string} dir  where to write `gh` and its state; put it first on the review host's PATH
- * @param {{repo: string, branch: string, base: string, slug: string, number: number, title: string, login: string}} pr
+ * @param {{repo: string, branch: string, base: string, slug: string, number: number, title: string, login: string,
+ *          others?: {number: number, branch: string, sha: string, title: string, body: string, additions: number, deletions: number, changedFiles: number}[]}} pr
+ *   `others`: the session's earlier pull requests, each on its own branch
  * @returns {{dir: string, state: string}}
  */
-export function writeDevReviewGh(dir, { repo, branch, base, slug, number, title, login }) {
+export function writeDevReviewGh(dir, { repo, branch, base, slug, number, title, login, others = [] }) {
   fs.mkdirSync(dir, { recursive: true });
   const state = path.join(dir, 'state.json');
   const now = new Date().toISOString();
   fs.writeFileSync(state, JSON.stringify({
-    repo, branch, base, slug, number, title, login, state: 'OPEN', createdAt: now,
+    repo, branch, base, slug, number, title, login, others, state: 'OPEN', createdAt: now,
     body: 'Subscribers that answer 5xx or 429 used to miss the event. This retries them with backoff.\n\n- `retry.mjs` holds the policy\n- `deliver.mjs` loops on it',
     checks: ['SUCCESS', 'SUCCESS', 'SUCCESS'],
     verdicts: [],

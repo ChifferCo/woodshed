@@ -6,6 +6,10 @@
 // /reviews/claude-<id>/..., with this computer's token, which the console checks and carries to the session's statusd
 // (console/reviewProxy.mjs forCli): never a shared session's, nor one that has seen production data. Opening a review
 // that has no analysis yet starts it, as opening the tab does.
+//
+// A session with more than one pull request has a review of each: a pull request asked for by number or URL opens its
+// own, /reviews/claude-<id>-pr<n> (session/reviewShed/host.mjs), unless it is the branch checked out, whose review is the
+// checkout's, /reviews/claude-<id>.
 
 import { runReviewTui } from './reviewTui.mjs';
 import { clean, fileOrder, markdownLines, plainText, pullRequestUrl, reviewTitle, statusStrip } from './reviewView.mjs';
@@ -99,7 +103,8 @@ export async function reviewOpenCommand({ origin, words }, ctx) {
     if (resumed !== EXIT.done && resumed !== EXIT.waiting) return resumed;
   }
 
-  const base = `/reviews/claude-${id}`;
+  // The review of the pull request asked for, else of the session's checkout.
+  let base = target.number ? `/reviews/claude-${id}-pr${target.number}` : `/reviews/claude-${id}`;
   async function api(method, path, body) {
     const out = await call(origin, `${base}${path}`, { method, body, token: ctx.token, deadlineMs: REVIEW_CALL_MS });
     if (out.status === 401) throw Object.assign(ended(out), { ended: true });
@@ -107,15 +112,31 @@ export async function reviewOpenCommand({ origin, words }, ctx) {
     if (!data || typeof data !== 'object') throw Object.assign(new Error(`${origin} answered ${out.status} with no JSON: a console from before woodshed review`), { status: out.status });
     if (out.status >= 400 || data.ok === false) {
       const message = printable(data.error, 400) ?? `${origin} answered ${out.status}`;
-      throw Object.assign(new Error(message), { status: out.status, code: data.code ?? null });
+      // `review`: the review to open instead, when the pull request asked for is the branch checked out.
+      throw Object.assign(new Error(message), { status: out.status, code: data.code ?? null, review: data.status === 'checkout' ? data.review : null });
     }
     return data;
   }
 
   let status;
   let diff;
+  // Only the session's checkout review: a console or session image from before a review of each pull request.
+  let checkoutOnly = false;
   try {
-    status = await api('GET', '');
+    try {
+      status = await api('GET', '');
+    } catch (err) {
+      if (!target.number || err.ended) throw err;
+      if (err.review === `claude-${id}`) {
+        base = `/reviews/claude-${id}`;
+      } else if (err.status === 404 && !/is not one of this session's pull requests/.test(err.message)) {
+        base = `/reviews/claude-${id}`;
+        checkoutOnly = true;
+      } else {
+        throw err;
+      }
+      status = await api('GET', '');
+    }
     diff = await api('GET', '/diff');
   } catch (err) {
     if (err.ended) throw err;
@@ -125,14 +146,14 @@ export async function reviewOpenCommand({ origin, words }, ctx) {
     throw fail(`Session ${id}'s review: ${err.message}`);
   }
 
-  // A pull request asked for by number or URL: the review must post to that one. A session that opened another since
-  // (one that replaced it) reviews its branch's current pull request, so a verdict or merge would land there instead.
-  if (target.number) {
+  // A pull request asked for by number or URL: the review must post to that one. Where the session reviews only its
+  // checkout, a branch with another pull request now would take a verdict or merge instead.
+  if (target.number && checkoutOnly) {
     const wanted = target.repo ?? sessionPulls(found).find((p) => p.number === target.number)?.repo ?? null;
     const live = status.livePr ? parsePullUrl(status.livePr.url) : null;
     const elsewhere = status.livePr && (status.livePr.number !== target.number || (wanted && live && live.repo.toLowerCase() !== wanted));
     if (elsewhere) {
-      throw fail(`Session ${id} opened #${target.number}, but its review now posts to #${status.livePr.number}${live ? ` (${live.repo})` : ''}, its branch's pull request: open that with woodshed review ${id}, or review #${target.number} on GitHub.`, { code: EXIT.refused, status: 'refused' });
+      throw fail(`Session ${id} opened #${target.number}, but it reviews only its checkout, whose pull request is #${status.livePr.number}${live ? ` (${live.repo})` : ''} now: it runs from before a review of each pull request. Open #${target.number} on GitHub, or start a new session.`, { code: EXIT.refused, status: 'refused' });
     }
   }
 
@@ -162,6 +183,13 @@ export function reviewSummary({ id, origin, status, diff, pulls = [] }) {
     });
   }
   const pr = status.livePr;
+  // The session's other reviews, one per pull request it opened besides the one this is (session/reviewShed/host.mjs).
+  const others = (Array.isArray(status.reviews) ? status.reviews : [])
+    .filter((r) => r && typeof r.review === 'string' && r.review !== status.session && (r.checkout === true || (Number.isInteger(r.number) && r.number > 0)))
+    .map((r) => {
+      const number = Number.isInteger(r.number) && r.number > 0 ? r.number : null;
+      return { number, checkout: r.checkout === true, url: number ? pullRequestUrl({ status, pulls }, number) ?? pulls.find((p) => p.number === number)?.url ?? null : null };
+    });
   return {
     session: id,
     url: `${origin}/s/${id}?tab=review`,
@@ -171,6 +199,7 @@ export function reviewSummary({ id, origin, status, diff, pulls = [] }) {
     baseRef: status.baseRef ? clean(status.baseRef) : null,
     headSha: status.headSha ?? null,
     takenAt: status.createdAt ?? null,
+    otherPullRequests: others,
     pullRequest: pr ? { number: pr.number, url: pullRequestUrl({ status, pulls }, pr.number), title: clean(pr.title), state: pr.state ?? null, review: pr.review ?? null, checks: pr.checks ?? null } : null,
     analysis: {
       status: status.status ?? null,
@@ -214,6 +243,13 @@ function printReview(args, ctx) {
   for (const g of summary.diff.groups) {
     if (g.title) say(`  ${g.title}`);
     for (const f of g.files) say(`    ${f.path}  +${f.additions} −${f.deletions}${f.role ? `  ${f.role}` : ''}${f.status !== 'modified' ? `  ${f.status}` : ''}`);
+  }
+  if (summary.otherPullRequests.length) {
+    say('\nThe session\'s other pull requests, each with a review of its own:');
+    for (const o of summary.otherPullRequests) {
+      if (o.number === null) say(`  The branch checked out, with no pull request yet: woodshed review ${summary.session}`);
+      else say(`  #${o.number}${o.checkout ? ' (checked out)' : ''}: woodshed review ${o.url ?? `#${o.number}`}`);
+    }
   }
   say(`\nRun woodshed review ${summary.session} on a terminal for the whole review: the diff, the conversation and the actions.`);
   return ctx.EXIT.done;

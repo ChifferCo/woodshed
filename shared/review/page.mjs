@@ -525,6 +525,20 @@ ${DARK_PALETTE}
       border: 1px solid var(--rule-strong); border-radius: 3px;
       padding: 0 0.3rem; color: var(--warn);
     }
+    /* Which of the session's pull requests this review is of, and a link to each other one's. Quiet, above the title:
+       it is a way to another page, not a fact about this change. */
+    .reviewswitch {
+      display: flex; align-items: center; gap: 0.3rem 0.5rem; flex-wrap: wrap;
+      font: 12px/1.6 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--faint); margin-bottom: 0.6rem;
+    }
+    .reviewswitch .lead { color: var(--muted); margin-right: 0.2rem; }
+    .reviewswitch a, .reviewswitch .on {
+      border: 1px solid var(--rule); border-radius: 999px; padding: 0 0.5rem;
+      color: var(--accent); text-decoration: none; background: var(--sunk);
+    }
+    .reviewswitch a:hover { border-color: var(--accent); }
+    .reviewswitch .on { color: var(--ink); border-color: var(--rule-strong); background: transparent; font-weight: 600; }
     .prmeta .openedpr {
       font: 600 11.5px/1.6 ui-monospace, monospace; color: var(--accent);
       text-decoration: none; border-bottom: 1px solid transparent;
@@ -1953,6 +1967,9 @@ ${DARK_PALETTE}
       box.hidden = !msg;
     }
 
+    // A session's review: claude-<id>, of its checkout, or claude-<id>-pr<n>, of another pull request it opened.
+    var REVIEW_NAME_RE = /^claude-[0-9a-f]{8}(?:-pr[1-9][0-9]{0,8})?$/;
+
     async function api(method, url, body) {
       var opts = { method: method };
       if (body) {
@@ -1970,6 +1987,10 @@ ${DARK_PALETTE}
         var err = new Error(data.error || 'HTTP ' + res.status);
         // The merge sheet keys its wording on why a merge was refused.
         err.code = data.code || null;
+        // A review that could not be opened still names the session's others, to switch to.
+        err.reviews = Array.isArray(data.reviews) ? data.reviews : null;
+        // The review asked for is another's to show (a pull request that is the branch checked out): its name.
+        err.review = typeof data.review === 'string' ? data.review : null;
         throw err;
       }
       return data;
@@ -3609,8 +3630,48 @@ ${DARK_PALETTE}
       return form;
     }
 
+    // A session with more than one pull request has a review of each: its checkout's, and one of every other pull
+    // request it opened, taken from GitHub's head of it. A link to each other review, in this frame, so the tab stays.
+    function reviewHref(name) {
+      var url = new URL(window.location.href);
+      url.searchParams.set('session', name);
+      url.searchParams.delete('chat');
+      return url.pathname + url.search;
+    }
+
+    function renderReviewSwitch(reviews, current) {
+      if (!reviews || reviews.length < 2) return null;
+      var row = el('nav', 'reviewswitch');
+      row.setAttribute('aria-label', 'This session\u2019s pull requests');
+      row.appendChild(el('span', 'lead', 'Pull requests'));
+      for (var i = 0; i < reviews.length; i++) {
+        var one = reviews[i];
+        if (!one || typeof one.review !== 'string' || !REVIEW_NAME_RE.test(one.review)) continue;
+        var words = one.checkout
+          ? (one.number ? '#' + one.number + ' \u00b7 checked out' : 'Checked out')
+          : '#' + one.number;
+        var tip = one.checkout
+          ? 'The branch checked out in the session now, as it is in the worktree'
+          : 'Pull request #' + one.number + ' as GitHub has it, reviewed apart from the checkout';
+        var item;
+        if (one.review === current) {
+          item = el('span', 'on', words);
+          item.setAttribute('aria-current', 'page');
+        } else {
+          item = document.createElement('a');
+          item.href = reviewHref(one.review);
+          item.textContent = words;
+        }
+        item.dataset.tip = tip;
+        row.appendChild(item);
+      }
+      return row;
+    }
+
     function renderHeader() {
       var wrap = document.createElement('div');
+      var others = renderReviewSwitch(state.reviews, state.session);
+      if (others) wrap.appendChild(others);
       if (renaming) {
         wrap.appendChild(renderTitleEditor());
         wrap.appendChild(renderMeta());
@@ -5695,6 +5756,8 @@ ${DARK_PALETTE}
       // request hours later, from that same session.
       state.livePr = got.livePr || null;
       draftLoading = !!state.livePr;
+      // The session's reviews, its checkout's and one for each other pull request it opened, when its host lists them.
+      state.reviews = Array.isArray(got.reviews) ? got.reviews : null;
       // The commit this review read. Merging is offered only while the pull
       // request is still at it.
       state.headSha = got.headSha || null;
@@ -5742,7 +5805,17 @@ ${DARK_PALETTE}
         await loadReview(session);
         initChat();
       } catch (e) {
+        if (e.review && e.review !== session && REVIEW_NAME_RE.test(e.review)) {
+          window.location.replace(reviewHref(e.review));
+          return;
+        }
         showError(e.message);
+        // The checkout may have nothing to review (it went back to the default branch) while the session's pull
+        // requests do: offer them rather than leave the page at the error.
+        var content = document.getElementById('content');
+        content.replaceChildren();
+        var others = renderReviewSwitch(e.reviews, session);
+        if (others) content.appendChild(others);
       }
     }
 
@@ -5819,7 +5892,7 @@ ${DARK_PALETTE}
     state.tab = tabFromUrl(initialUrl.searchParams.get('tab')) || state.tab;
 
     var initialSession = initialUrl.searchParams.get('session');
-    if (initialSession && /^claude-[0-9a-f]{8}$/.test(initialSession)) openSession(initialSession);
+    if (initialSession && REVIEW_NAME_RE.test(initialSession)) openSession(initialSession);
     else renderEmptyState();
   </script>
 </body>

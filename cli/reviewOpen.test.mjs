@@ -82,13 +82,32 @@ async function fakeStatusd(t) {
     let raw = '';
     req.on('data', (c) => { raw += c; });
     req.on('end', () => {
-      const section = req.url.replace(/^\/shed-review\/reviews\/claude-[0-9a-f]{8}/, '').split('?')[0];
+      const [, review, pr] = /^\/shed-review\/reviews\/(claude-[0-9a-f]{8}(?:-pr(\d+))?)/.exec(req.url) ?? [];
+      const section = req.url.replace(/^\/shed-review\/reviews\/claude-[0-9a-f]{8}(?:-pr\d+)?/, '').split('?')[0];
       const body = raw ? JSON.parse(raw) : null;
-      seen.push({ method: req.method, section, auth: req.headers.authorization, body });
+      const pulls = String(req.headers['x-woodshed-pulls'] ?? '');
+      seen.push({ method: req.method, section, review, pulls, auth: req.headers.authorization, body });
+      const reply = (code, answer) => {
+        res.writeHead(code, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(answer));
+      };
+      // As session/reviewShed/host.mjs answers another pull request's review: #12 is the branch checked out, so its
+      // review is the checkout's; any other must be one the console named.
+      if (pr) {
+        const checkout = review.replace(/-pr\d+$/, '');
+        const checkedOut = checkout === 'claude-abab0006' ? 17 : 12;
+        if (Number(pr) === checkedOut) return reply(200, { ok: false, status: 'checkout', review: checkout, error: `#${pr} is the branch checked out` });
+        if (!pulls.split(',').includes(pr)) return reply(404, { ok: false, error: `#${pr} is not one of this session's pull requests` });
+        if (req.method === 'GET' && section === '') {
+          return reply(200, { ...STATUS, session: review, kind: 'pr', pr: Number(pr), branch: null,
+            meta: { ...STATUS.meta, number: Number(pr), url: `https://github.com/acme/app/pull/${pr}`, title: `Pull request ${pr}` },
+            livePr: { ...STATUS.livePr, number: Number(pr), url: `https://github.com/acme/app/pull/${pr}`, title: `Pull request ${pr}` },
+            reviews: [{ review: checkout, number: checkedOut, checkout: true }, { review, number: Number(pr), checkout: false }] });
+        }
+      }
       const answer = answers.get(`${req.method} ${section}`);
       const known = typeof answer === 'function';
-      res.writeHead(known ? 200 : 404, { 'content-type': 'application/json' });
-      res.end(JSON.stringify(known ? answer(body) : { ok: false, error: 'not found' }));
+      reply(known ? 200 : 404, known ? answer(body) : { ok: false, error: 'not found' });
     });
   });
   const port = await listen(server);
@@ -109,9 +128,9 @@ async function consoleFor(t) {
     { ...base, id: 'cccc0003', owner: null, kind: 'pr', title: 'Shared work', status: 'running', state: 'done', assignee: 'mia-dev', kept: true, endpoint, prUrl: 'https://github.com/acme/app/pull/13' },
     { ...base, id: 'dddd0004', owner: 'mia-dev', title: 'Saw production', status: 'running', state: 'done', endpoint, taintedAt: iso(T0), prUrl: 'https://github.com/acme/app/pull/14' },
     { ...base, id: 'eeee0005', owner: 'octocat', title: 'Octocat\'s', status: 'running', state: 'done', endpoint, prUrl: 'https://github.com/acme/app/pull/15' },
-    // Opened #11, then #12 in its place: its review posts to #12 now.
+    // Opened #11, then #17 on another branch, checked out now: #17 is its checkout's review, and #11 has one of its own.
     { ...base, id: 'abab0006', owner: 'mia-dev', title: 'Replaced its pull request', status: 'running', state: 'done', endpoint,
-      prUrl: 'https://github.com/acme/app/pull/11', prs: [{ url: 'https://github.com/acme/app/pull/11' }, { url: 'https://github.com/acme/app/pull/12' }] },
+      prUrl: 'https://github.com/acme/app/pull/17', prUrls: ['https://github.com/acme/app/pull/11', 'https://github.com/acme/app/pull/17'] },
     // #16 on two repos.
     { ...base, id: 'abab0007', owner: 'mia-dev', title: 'On app', status: 'running', state: 'done', endpoint, prUrl: 'https://github.com/acme/app/pull/16' },
     { ...base, id: 'abab0008', owner: 'mia-dev', repo: 'acme/tools', title: 'On tools', status: 'running', state: 'done', endpoint, prUrl: 'https://github.com/acme/tools/pull/16' },
@@ -251,13 +270,35 @@ test('review refuses a session that is not your own, one that saw production dat
   assert.equal(both.code, EXIT.refused);
   assert.match(both.err, /#16 is on more than one of your sessions' repos \(acme\/app, acme\/tools\): give its URL/);
   assert.equal(c.seen.length, 0, 'nothing refused reached a session');
-  // By its URL it is one; that session's review posts to #12, which is the one asked for here.
-  assert.equal((await c.run(['review', 'https://github.com/acme/app/pull/16', '--json'])).code, EXIT.refused, 'its review posts to #12, not #16');
-  const replaced = await c.run(['review', '11', '--json']);
-  assert.equal(replaced.code, EXIT.refused);
-  assert.match(replaced.lines[0].error, /Session abab0006 opened #11, but its review now posts to #12 \(acme\/app\)/);
-  assert.equal((await c.run(['review', 'abab0006', '--json'])).code, EXIT.done, 'by its id it opens, on the pull request its header names');
+  // By its URL it is one: #16 is not its checkout's, so it opens #16's own review.
+  const byUrl = await c.run(['review', 'https://github.com/acme/app/pull/16', '--json']);
+  assert.equal(byUrl.code, EXIT.done, byUrl.err);
+  assert.equal(byUrl.lines[0].review.pullRequest.number, 16);
+  assert.ok(c.seen.some((x) => x.review === 'claude-abab0007-pr16'));
   assert.ok(c.seen.every((x) => x.method === 'GET'), 'nothing was written');
+});
+
+test('review of a session with more than one pull request opens the one asked for, and names the others', async (t) => {
+  const c = await consoleFor(t);
+  // #11 is not the branch checked out: its own review, which posts to #11.
+  const older = await c.run(['review', '11', '--json']);
+  assert.equal(older.code, EXIT.done, older.err);
+  const { review } = older.lines[0];
+  assert.equal(review.pullRequest.number, 11);
+  assert.equal(review.kind, 'pr');
+  assert.deepEqual(review.otherPullRequests, [{ number: 17, checkout: true, url: 'https://github.com/acme/app/pull/17' }]);
+  const asked = c.seen.filter((x) => x.review?.startsWith('claude-abab0006'));
+  assert.ok(asked.length && asked.every((x) => x.review === 'claude-abab0006-pr11'), 'only #11\'s review was read');
+  assert.equal(asked[0].pulls, '11,17', 'the console names the session\'s pull requests to statusd');
+  // #17 is the branch checked out: the checkout's review, not a second one of it.
+  c.seen.length = 0;
+  const current = await c.run(['review', '17', '--json']);
+  assert.equal(current.code, EXIT.done, current.err);
+  assert.equal(current.lines[0].review.kind, 'worktree');
+  assert.deepEqual(c.seen.map((x) => `${x.review}${x.section}`), ['claude-abab0006-pr17', 'claude-abab0006', 'claude-abab0006/diff'],
+    'asked for #17, statusd sends it to its checkout\'s review');
+  const text = await c.run(['review', '11']);
+  assert.match(text.out, /The session's other pull requests, each with a review of its own:\n {2}#17 \(checked out\): woodshed review https:\/\/github\.com\/acme\/app\/pull\/17/);
 });
 
 // A terminal: keys typed into stdin, frames read off stdout.
