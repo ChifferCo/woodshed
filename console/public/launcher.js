@@ -2,7 +2,8 @@
 // optional name and issue, PR or branch,
 // claude's model, effort and permission mode, files attached (the paperclip, a paste or a drop), and the repo's
 // skills on `/`. The session it starts is private to whoever is signed in and
-// runs on their own Claude token or Codex sign-in, so without either the form says where to save it instead. Built once and kept
+// runs on their own Claude token or Codex sign-in, or their own Grok Build, Antigravity or OpenCode sign-in
+// (shared/agents.cjs), so without one the form says where to save it instead. Built once and kept
 // across the page's refreshes, so nothing typed into it is lost.
 (function () {
   'use strict';
@@ -13,7 +14,24 @@
   const MODELS = [['', 'default', 'Claude’s own default'], ['opus', 'opus', 'Most capable'], ['sonnet', 'sonnet', 'Balanced, faster'],
     ['haiku', 'haiku', 'Smallest and quickest'], ['fable', 'fable', 'Newest generation']];
   const EFFORTS = [['', 'default'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']];
-  const AGENTS = [['claude', 'Claude', 'Claude Code, on your Claude plan'], ['codex', 'Codex', 'OpenAI Codex, on your Codex sign-in or the team key']];
+  // Every agent a session can run (shared/agents.cjs), in its order: the two the team's key can run, then the three that
+  // run on your own sign-in alone.
+  const A = window.WoodshedAgents;
+  const AGENT_WORDS = {
+    claude: 'Claude Code, on your Claude plan', codex: 'OpenAI Codex, on your Codex sign-in or the team key',
+    grok: 'Grok Build, on your own xAI sign-in', antigravity: 'Antigravity CLI, on your own Gemini API key', opencode: 'OpenCode, on the providers you signed in to',
+  };
+  const AGENTS = A.AGENT_IDS.map((id) => [id, A.agent(id).name, AGENT_WORDS[id] ?? A.agent(id).product]);
+  // What each permission mode does, in an agent that is not Claude Code or Codex (the entrypoint's mapping onto its flags).
+  const OWN_MODE_WORDS = {
+    auto: 'Works unattended, without asking', acceptEdits: 'Edits freely, asks before commands', plan: 'Plans only, changes nothing',
+    default: 'The agent\u2019s own approval rules',
+  };
+  const ownModes = (id) => A.agent(id).permissionModes.map((m) => [m, m, OWN_MODE_WORDS[m]]);
+  const ownEfforts = (id) => (A.agent(id).efforts ?? ['']).map((e) => [e, e || 'default']);
+  // What a session of that agent runs on, for the line under Start.
+  const RUNS_ON = { claude: 'Claude plan', codex: 'Codex sign-in or the team key' };
+  const runsOn = (id) => RUNS_ON[id] ?? `own ${A.agent(id).product} sign-in`;
   // Codex's models and efforts are OpenAI's catalog's, as the console reads it for you (GET /api/my/codex-models,
   // codexModels.mjs); its permission modes are CODEX_PERMISSION_MODES in sessions.mjs.
   const CODEX_MODES = [['auto', 'auto', 'Works unattended; asks when the model decides to'], ['plan', 'plan', 'Read-only, changes nothing'],
@@ -490,7 +508,12 @@
     const workOn = h('input', { id: 'l-on', class: 'field mono', autocomplete: 'off', placeholder: 'Search open PRs, or type PR #123 or a branch' });
     const agent = select('l-agent', AGENTS);
     const model = select('l-model', MODELS);
+    // An agent other than Claude Code or Codex takes any model name its own --model does (the registry's modelRe): typed.
+    const modelText = h('input', { id: 'l-model-text', class: 'field mono', autocomplete: 'off', spellcheck: 'false', hidden: true });
+    const ownAgent = () => !['claude', 'codex'].includes(agent.value);
+    const modelValue = () => (ownAgent() ? modelText.value.trim() : model.value);
     const effort = select('l-effort', EFFORTS);
+    const effortField = field('l-effort', 'Effort', effort);
     const mode = select('l-mode', MODES);
     // Start says its key (⌘↵, Ctrl+Enter elsewhere), which works from any field of the form; a phone has no keys.
     const K = window.WoodshedKeys;
@@ -528,7 +551,8 @@
     // Model, effort and permissions, folded on a phone to one line of what is picked, and open on a desktop as before.
     const picked = h('span', { class: 'loptions-picked' });
     const showPicked = () => {
-      picked.textContent = [model, effort, mode].map((s) => s.selectedOptions[0]?.textContent ?? '').join(' · ');
+      const modelWord = ownAgent() ? modelText.value.trim() || 'default' : model.selectedOptions[0]?.textContent ?? '';
+      picked.textContent = [modelWord, ...[effort, mode].filter((s) => !s.hidden).map((s) => s.selectedOptions[0]?.textContent ?? '')].join(' · ');
     };
     function fill(select, options) {
       select.replaceChildren(...options.map(([value, label, title]) => h('option', { value, title }, label)));
@@ -566,12 +590,20 @@
     model.addEventListener('change', () => { if (agent.value === 'codex') keepPick(effort, codexEffortOptions()); });
     function showAgent() {
       const codex = agent.value === 'codex';
-      fill(model, codex ? codexModelOptions() : MODELS);
-      fill(effort, codex ? codexEffortOptions() : EFFORTS);
-      fill(mode, codex ? CODEX_MODES : MODES);
+      const own = ownAgent();
+      const a = A.agent(agent.value);
+      model.hidden = own;
+      modelText.hidden = !own;
+      modelText.placeholder = a.modelHint ? `default (e.g. ${a.modelHint})` : 'default';
+      if (!own) fill(model, codex ? codexModelOptions() : MODELS);
+      fill(effort, codex ? codexEffortOptions() : own ? ownEfforts(agent.value) : EFFORTS);
+      // An agent with no effort on its command line has no menu for it.
+      effortField.hidden = own && !a.efforts;
+      effort.hidden = effortField.hidden;
+      fill(mode, codex ? CODEX_MODES : own ? ownModes(agent.value) : MODES);
       if (codex) loadCodexCatalog();
       codexNote.hidden = !codex || !codexCatalog?.note;
-      prompt.placeholder = `What should ${codex ? 'Codex' : 'Claude'} do? Type / for the repo\u2019s skills.`;
+      prompt.placeholder = `What should ${a.name} do? Type / for the repo\u2019s skills.`;
       showPicked();
     }
     // Until the person picks one, the agent follows their sign-ins: Codex for someone with only a Codex sign-in saved.
@@ -582,10 +614,11 @@
       if (me) update(me);
     });
     for (const s of [model, effort, mode]) s.addEventListener('change', showPicked);
+    modelText.addEventListener('input', showPicked);
     showPicked();
     const options = h('details', { class: 'loptions', open: !window.matchMedia('(max-width: 720px)').matches },
       h('summary', null, h('span', { class: 'field-label' }, 'Agent, model, effort and permissions'), picked),
-      h('div', { class: 'lgrid4' }, field('l-agent', 'Agent', agent), field('l-model', 'Model', model), field('l-effort', 'Effort', effort), field('l-mode', 'Permissions', mode)), codexNote);
+      h('div', { class: 'lgrid4' }, field('l-agent', 'Agent', agent), field('l-model', 'Model', h('div', null, model, modelText)), effortField, field('l-mode', 'Permissions', mode)), codexNote);
     // Where a blocked repo's fix card goes, in place of the rest of the form: the picker above stays.
     const blockedSlot = h('div', { class: 'launch-setup', hidden: true });
     const body = h('div', { class: 'launch-body' },
@@ -602,7 +635,8 @@
     const noToken = h('div', { class: 'launch-setup', hidden: true });
     const tokenHelp = h('p', { class: 'sub' }, 'For Claude, run ', h('code', null, 'claude setup-token'),
       ' on your laptop. For Codex, run ', h('code', null, 'codex login'), ' and copy ', h('code', null, '~/.codex/auth.json'),
-      ', or use an OpenAI API key. Save it on My settings: your sessions run on your own plan or sign-in.');
+      ', or use an OpenAI API key. Save it on My settings: your sessions run on your own plan or sign-in. Grok Build, Antigravity and OpenCode run on your own sign-in too: ',
+      ...A.OWN_SIGN_IN_AGENTS.flatMap((id, i) => [i ? ', ' : '', h('a', { href: `/settings#${id}` }, A.agent(id).product)]), '.');
     const el = h('section', { class: 'launch' },
       // On a phone New session is a screen of its own (/?new=1), and this is the way back to the list.
       h('a', { class: 'launch-back', href: '/' }, '‹ My Woodshed'),
@@ -638,7 +672,7 @@
       error.hidden = true;
       try {
         const session = await W.postJson('/api/my/sessions', {
-          prompt: prompt.value, workOn: workOn.value, agent: agent.value, model: model.value, effort: effort.value, permissionMode: mode.value,
+          prompt: prompt.value, workOn: workOn.value, agent: agent.value, model: modelValue(), effort: effortField.hidden ? '' : effort.value, permissionMode: mode.value,
           ...(projects.value() ? { project: projects.value() } : {}),
           attachments: attachments.ids(),
         });
@@ -658,9 +692,10 @@
 
     function update(next) {
       me = next;
-      // Only the agents set up to run are offered (`agents` in /api/my): a Claude token, or a Codex sign-in or the team's
-      // OpenAI key. A console from before `agents` offers both.
-      const offered = AGENTS.filter(([value]) => !me?.agents || me.agents[value]);
+      // Only the agents set up to run are offered (`agents` in /api/my): a Claude token, a Codex sign-in or the team's
+      // OpenAI key, or the person's own sign-in for the others. A console from before `agents` offers Claude and Codex,
+      // and one from before the other agents never lists them, which leaves them out.
+      const offered = AGENTS.filter(([value]) => (me?.agents ? me.agents[value] : ['claude', 'codex'].includes(value)));
       const shown = offered.length ? offered : AGENTS.slice(0, 1);
       if (shown.map(([v]) => v).join() !== [...agent.options].map((o) => o.value).join()) {
         const was = agent.value;
@@ -670,7 +705,8 @@
         if (agent.value !== was) showAgent();
       }
       agent.disabled = shown.length < 2;
-      const preferred = me?.codexAuth?.set && !me.claudeToken?.set && shown.some(([v]) => v === 'codex') ? 'codex' : shown[0][0];
+      // With no Claude token, the first agent they can run: Codex for someone with only a Codex sign-in saved.
+      const preferred = !me?.claudeToken?.set && me?.codexAuth?.set && shown.some(([v]) => v === 'codex') ? 'codex' : shown[0][0];
       if (me && !agentPicked && agent.value !== preferred) {
         agent.value = preferred;
         showAgent();
@@ -679,7 +715,7 @@
       const ready = Boolean(me) && W.setupDone(me);
       const after = ready ? W.stepsAfterSetup(me) : [];
       noToken.hidden = ready && !after.length;
-      if (!ready && me) noToken.replaceChildren(W.setupCard(me), ...(me.claudeToken?.set || me.codexAuth?.set ? [] : [tokenHelp]));
+      if (!ready && me) noToken.replaceChildren(W.setupCard(me), ...(W.anyAgentSignIn(me) ? [] : [tokenHelp]));
       else if (after.length) noToken.replaceChildren(W.setupCard(me, { compact: true, steps: after }));
       form.hidden = !ready;
       // A repo that cannot start sessions (databaseGate.mjs) keeps the picker, and shows its fix in place of the rest.
@@ -696,7 +732,7 @@
       note.replaceChildren(...(full()
         ? [`${me.running} of ${me.limit} running: this one waits in line and starts by itself when one stops.`,
           ...(W.isAdmin() ? [' Need more at once? ', h('a', { href: '/console-settings' }, 'Raise the limit in Settings'), '.'] : [])]
-        : [`Runs on your ${agent.value === 'codex' ? 'Codex sign-in or the team key' : 'Claude plan'}, from ${projects.repo() ? `${projects.repo()}\u2019s` : 'the'} default branch unless you name a branch.`]));
+        : [`Runs on your ${runsOn(agent.value)}, from ${projects.repo() ? `${projects.repo()}\u2019s` : 'the'} default branch unless you name a branch.`]));
     }
     // New session pressed on its own screen: show what is missing, or focus the prompt, so the button always answers.
     function nudge() {

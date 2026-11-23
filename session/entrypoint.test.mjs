@@ -269,7 +269,7 @@ test('a repo with no project file gets Woodshed\'s rules alone, and no notes', (
 
 test('claude gets the rules as a system prompt on a fresh start and on a resume, which rewrites them', () => {
   assert.match(fn('claudeFlags'), /--append-system-prompt-file %s' \/tmp\/woodshed-rules\.md/);
-  const run = ENTRYPOINT.slice(ENTRYPOINT.indexOf(' [ "${AGENT:-claude}" != codex ] && resumable; then\n    log "Resuming'));
+  const run = ENTRYPOINT.slice(ENTRYPOINT.indexOf(' [ "${AGENT:-claude}" = claude ] && resumable; then\n    log "Resuming'));
   assert.ok(run.indexOf('  writeRules\n') > run.indexOf('  fi\n'), 'writeRules runs after the resume branch, for both');
   assert.ok(run.indexOf('  writeRules\n') < run.indexOf('  startClaude\n'), 'writeRules runs before claude is started, which reads its file');
 });
@@ -355,7 +355,7 @@ test('the forwarder of the machine\'s ports starts only with the machine\'s Dock
 test('a QA session writes no prompt, and runs qa.sh in claude\'s pane once statusd answers, working from the start', () => {
   assert.match(ENTRYPOINT, /if \[ "\$\{SESSION_MODE:-\}" = qa \]; then\n    log "Prompt skipped"/);
   const start = fn('startAgent');
-  const qa = start.slice(start.indexOf('SESSION_MODE:-}" = qa'), start.indexOf('elif [ "${AGENT:-claude}" = codex ]'));
+  const qa = start.slice(start.indexOf('SESSION_MODE:-}" = qa'), start.indexOf('elif [ "${AGENT:-claude}" != claude ]'));
   assert.ok(qa.indexOf('touch /tmp/qa-running') < qa.indexOf('agentRun'), 'the session reads as working before the run starts');
   assert.match(qa, /until curl -s -o \/dev\/null http:\/\/127\.0\.0\.1:.*; do sleep 1; done; SESSION_DIR=\$SESSION_DIR bash \$SESSION_DIR\/qa\.sh/);
 });
@@ -907,8 +907,8 @@ test('a Codex session starts codex with the picked flags, and the rules go in co
     encoding: 'utf8', env: { PATH: process.env.PATH, PERMISSION_MODE: 'plan', MODEL: 'gpt-5.5', EFFORT: 'high' },
   });
   assert.equal(flags, ' --sandbox read-only --ask-for-approval on-request --model gpt-5.5 -c model_reasoning_effort=\\"high\\"');
-  assert.ok(ENTRYPOINT.indexOf('  writeRules\n  if [ "${AGENT:-claude}" = codex ]') > 0, 'the rules are written before codex is configured');
-  assert.ok(ENTRYPOINT.indexOf('  pullSettings\n') < ENTRYPOINT.indexOf('    configureCodex\n'), 'the owner\'s synced config is there before codex is configured');
+  assert.ok(ENTRYPOINT.indexOf('  writeRules\n  case "${AGENT:-claude}" in\n    codex) configureCodex ;;') > 0, 'the rules are written before codex is configured');
+  assert.ok(ENTRYPOINT.indexOf('  pullSettings\n') < ENTRYPOINT.indexOf('    codex) configureCodex ;;\n'), 'the owner\'s synced config is there before codex is configured');
 });
 
 // configureCodex as the entrypoint has it, in a codex home of the test's own, after a pull wrote `pulled` into it.
@@ -1364,4 +1364,102 @@ test('while the agent\'s terminal is not there yet, the TUI tab says so and atta
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+// Grok Build, Antigravity and OpenCode: their flags for each mode, and their own files, from the owner's own sign-in.
+const agentFlags = (name, env) => execFileSync('bash', ['-c', `${fn(name)}\n${name}`], { encoding: 'utf8', env: { PATH: process.env.PATH, ...env } });
+
+test('each agent gets its own flags for the mode, model and effort New session picked', () => {
+  assert.equal(agentFlags('grokFlags', {}), ' --no-alt-screen --no-auto-update --always-approve');
+  assert.equal(agentFlags('grokFlags', { PERMISSION_MODE: 'plan', MODEL: 'grok-build', EFFORT: 'high' }), ' --no-alt-screen --no-auto-update --permission-mode plan --model grok-build --effort high');
+  assert.equal(agentFlags('grokFlags', { PERMISSION_MODE: 'default' }), ' --no-alt-screen --no-auto-update');
+  assert.equal(agentFlags('antigravityFlags', { UPLOADS_DIR: '/tmp/uploads' }), ' --mode auto --add-dir /tmp/uploads');
+  assert.equal(agentFlags('antigravityFlags', { PERMISSION_MODE: 'acceptEdits', MODEL: 'auto', EFFORT: 'max' }), ' --mode accept-edits --add-dir /tmp/uploads --model auto --effort max');
+  assert.equal(agentFlags('opencodeFlags', {}), ' --auto');
+  assert.equal(agentFlags('opencodeFlags', { PERMISSION_MODE: 'plan', MODEL: 'anthropic/claude-sonnet-4-5' }), ' --agent plan --model anthropic/claude-sonnet-4-5');
+  assert.equal(agentFlags('opencodeFlags', { PERMISSION_MODE: 'default' }), '');
+  const command = (agent) => execFileSync('bash', ['-c', [fn('codexFlags'), fn('grokFlags'), fn('antigravityFlags'), fn('opencodeFlags'), fn('agentCommand'), fn('promptFlag'), 'printf "%s|%s" "$(agentCommand)" "$(promptFlag)"'].join('\n')],
+    { encoding: 'utf8', env: { PATH: process.env.PATH, AGENT: agent, SESSION_DIR: '/opt/woodshed/session' } });
+  assert.equal(command('grok'), '/opt/woodshed/session/bin/grok --no-alt-screen --no-auto-update --always-approve|');
+  assert.equal(command('antigravity'), '/opt/woodshed/session/bin/agy --mode auto --add-dir /tmp/uploads| -i');
+  assert.equal(command('opencode'), '/opt/woodshed/session/bin/opencode --auto| --prompt');
+  assert.ok(fn('startAgent').includes('agentRun "$(agentCommand)$(promptFlag) \\"\\$(cat /tmp/woodshed-prompt.md)\\""'), 'the prompt after the agent\'s own flag for it');
+});
+
+// One agent's configure function as the entrypoint has it, in a home of the test's own, given `auth` as its sign-in.
+function configureAgent(name, auth, env = {}) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-agent-'));
+  const home = path.join(tmp, 'home');
+  fs.mkdirSync(path.join(home, '.config', 'woodshed'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.config', 'woodshed', 'agent-auth'), auth, { mode: 0o600 });
+  fs.writeFileSync(path.join(tmp, 'woodshed-rules.md'), '# Woodshed rules\n');
+  const vars = ['OWN_AGENT_AUTH_FILE=$HOME/.config/woodshed/agent-auth', 'GROK_HOME_DIR=$HOME/.grok', 'ANTIGRAVITY_DIR=$HOME/.gemini',
+    'OPENCODE_DATA_DIR=$HOME/.local/share/opencode', 'OPENCODE_CONFIG_DIR=$HOME/.config/opencode'];
+  const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { echo "ERROR: $*"; exit 1; }', ...vars,
+    fn('ownAgentAuthIsKey'), fn('agentDir'), fn(name).replaceAll('/tmp/', `${tmp}/`), name].join('\n');
+  const read = (file) => (fs.existsSync(path.join(home, file)) ? fs.readFileSync(path.join(home, file), 'utf8') : null);
+  const mode = (file) => fs.statSync(path.join(home, file)).mode & 0o777;
+  try {
+    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, SESSION_DIR: '/opt/woodshed/session', REPO_DIR: '/work/app', ...env } });
+    return { out, read, mode };
+  } catch (err) {
+    return { out: String(err.stdout), failed: true, read, mode };
+  } finally {
+    setImmediate(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  }
+}
+
+test('Grok Build: a login as its own auth.json, a key left to the wrapper; its config, trust, rules and hooks', () => {
+  const login = '{"https://auth.x.ai::b1a00492":{"key":"access","refresh_token":"r"}}';
+  const g = configureAgent('configureGrok', login);
+  assert.equal(g.read('.grok/auth.json'), login);
+  assert.equal(g.mode('.grok/auth.json'), 0o600);
+  assert.match(g.read('.grok/config.toml'), /\[cli\]\nauto_update = false/);
+  assert.match(g.read('.grok/config.toml'), /\[compat\.claude\]\nmcps = false\nhooks = false/);
+  assert.match(g.read('.grok/trusted_folders.toml'), /^\[folders\."\/work\/app"\]\ntrusted = true\ndecided_at = \d+\n$/);
+  assert.equal(g.read('.grok/rules/woodshed.md'), '# Woodshed rules\n');
+  const hooks = JSON.parse(g.read('.grok/hooks/woodshed.json')).hooks;
+  assert.deepEqual(Object.keys(hooks).sort(), ['Notification', 'PostToolUse', 'PreToolUse', 'SessionStart', 'Stop', 'StopCancelled', 'StopFailure', 'UserPromptSubmit']);
+  assert.equal(hooks.Stop[0].hooks[0].command, 'node /opt/woodshed/session/hookState.mjs');
+  assert.match(g.out, /own Grok Build login/);
+  assert.doesNotMatch(g.read('.grok/config.toml'), /preferred_method/, 'a login is grok\'s own way in');
+  const key = configureAgent('configureGrok', 'xai-abc');
+  assert.equal(key.read('.grok/auth.json'), null, 'a key is never written into grok\'s home');
+  // Without it grok opens its browser sign-in whatever XAI_API_KEY holds.
+  assert.match(key.read('.grok/config.toml'), /\[auth\]\npreferred_method = "api_key"\n$/);
+  assert.match(key.out, /own xAI key/);
+});
+
+test('Antigravity: a Gemini key with its provider, the checkout trusted, its status line and the rules', () => {
+  const a = configureAgent('configureAntigravity', 'AIzaSyExample');
+  assert.deepEqual(JSON.parse(a.read('.gemini/antigravity-cli/settings.json')), {
+    modelProvider: 'gemini', trustedWorkspaces: ['/work/app'], statusLine: { type: 'command', command: 'node /opt/woodshed/session/agentStatusLine.mjs' },
+  });
+  assert.equal(a.read('.gemini/AGENTS.md'), '# Woodshed rules\n');
+  // Its first-start questions are skipped as agy itself records them answered, with no consent given.
+  assert.deepEqual(JSON.parse(a.read('.gemini/antigravity-cli/cache/onboarding.json')), { consumerOnboardingComplete: true, enterpriseOnboardingComplete: false, onboardingComplete: true });
+  assert.equal(a.read('.gemini/antigravity-cli/settings.json').includes('AIza'), false, 'the key stays out of its settings');
+  assert.equal(configureAgent('configureAntigravity', '{"x":1}').failed, true, 'a login file is not a key');
+});
+
+test('OpenCode: its auth.json, its config with the effort as each agent\'s variant, and the rules', () => {
+  const auth = '{"anthropic":{"type":"api","key":"sk-ant-x"}}';
+  const o = configureAgent('configureOpencode', auth, { EFFORT: 'high' });
+  assert.equal(o.read('.local/share/opencode/auth.json'), auth);
+  assert.equal(o.mode('.local/share/opencode/auth.json'), 0o600);
+  assert.deepEqual(JSON.parse(o.read('.config/opencode/opencode.json')), {
+    $schema: 'https://opencode.ai/config.json', autoupdate: false, share: 'disabled', agent: { build: { variant: 'high' }, plan: { variant: 'high' } },
+  });
+  assert.equal(o.read('.config/opencode/AGENTS.md'), '# Woodshed rules\n');
+  assert.match(o.out, /providers: anthropic/);
+  assert.equal(JSON.parse(configureAgent('configureOpencode', auth).read('.config/opencode/opencode.json')).agent, undefined);
+  assert.equal(configureAgent('configureOpencode', 'sk-ant-x').failed, true, 'a bare key is not its auth.json');
+});
+
+test('an own-sign-in agent\'s start stops without its sign-in, and keeps the copy it was given', () => {
+  const settings = fn('fetchOwnerSettings');
+  assert.match(settings, /grok \| antigravity \| opencode\)/);
+  assert.match(settings, /\[ -n "\$token" \] \|\| die "the console sent no sign-in for \$\{AGENT\}: save yours on My settings"/);
+  assert.match(settings, /\(umask 077 && printf '%s' "\$token" > "\$OWN_AGENT_AUTH_FILE"\)/);
+  assert.match(fn('configureMcp'), /\[ "\$\{AGENT:-claude\}" = claude \]/, 'MCP servers only for claude');
 });

@@ -13,7 +13,7 @@
 </div>
 
 Woodshed is an open-source platform for running coding agents in cloud dev environments. Each task gets a container
-with its own branch, a copy of your databases and a running copy of your app. The agent (Claude Code or Codex) makes
+with its own branch, a copy of your databases and a running copy of your app. The agent (Claude Code or Codex, or Grok Build, Antigravity or OpenCode on your own sign-in) makes
 the change, tests it in a browser and opens a pull request. You follow every session from one console, and can take
 over any of them.
 

@@ -78,6 +78,24 @@ function replacement(oldText, newText) {
 }
 
 /**
+ * One file's change from its text before and after, as the agents that record edits that way write it: Grok Build's
+ * and Antigravity's ACP `diff` content (`path`, `oldText`, `newText`), OpenCode's edit and write inputs. No text before
+ * is a new file.
+ * @param {string} file
+ * @param {string|null|undefined} oldText
+ * @param {string} newText
+ * @returns {FileDiff|null}  null when there is no path or no new text
+ */
+export function textDiff(file, oldText, newText, { root } = {}) {
+  if (typeof file !== 'string' || !file.trim() || typeof newText !== 'string') return null;
+  const at = relativePath(file, root);
+  if (oldText === null || oldText === undefined) {
+    return fileDiff(at, 'add', [{ head: '@@ new file @@', lines: newText ? splitLines(newText).map((l) => `+${l}`) : [] }]);
+  }
+  return fileDiff(at, 'edit', [{ head: '@@', lines: replacement(String(oldText), newText) }]);
+}
+
+/**
  * What a claude edit tool's input changes, before its result says.
  * @returns {FileDiff[]|null}  null for a tool that edits nothing
  */

@@ -51,6 +51,20 @@ ARG BUILDX_SHA256_ARM64=3b83b3731916ba433feccaaa689fe5bcdc81c641d92c8e6c2ea865df
 # pg_dump would write dumps a 16 server cannot restore.
 ARG PG_CLIENT_MAJOR=16
 
+# The agents that run on their owner's own sign-in (shared/agents.cjs), installed in the runtime stage. Global, so the
+# last stage can add them to a published runtime from before them.
+ARG OPENCODE_VERSION=1.19.6
+# Grok Build: the raw binary x.ai's installer downloads (https://x.ai/cli/install.sh), which publishes no checksums: these
+# are sha256 of the 1.0.92 binaries as downloaded, so a changed file fails the build.
+ARG GROK_VERSION=1.0.92
+ARG GROK_SHA256_AMD64=add4d201dbf2c0bd6077a36feb55a76939de30bae48dbb06f16b2307d38ceacb
+ARG GROK_SHA256_ARM64=8c74f1dc6cdc1befff6b9faada06bec4cf6759d04f2a60cdc28ece5ff696b44f
+# Antigravity CLI: the tarball its installer's manifest names (antigravity-cli-auto-updater…/manifests/linux_<arch>.json),
+# whose build number is not the version's, with the manifest's sha512.
+ARG ANTIGRAVITY_BUILD=1.5.14-5302690847260672
+ARG ANTIGRAVITY_SHA512_AMD64=83311d3f354567612dc16c1ae2ea9b503d6f6833aa4e138d39aa229da3f3bb99b0e4d7cca0bce4796b0060d6a51d8113eb7449ed5dc0e7900bf217107ea5bff9
+ARG ANTIGRAVITY_SHA512_ARM64=c9b29bba475f63a1a80161ae93ba72b221c7a586d9851e4d0061546704bab66d6b2760b25d716d191724fc7564f3246456ee151e28aa37af48dbcd72bdc6c463
+
 FROM node:22.16.0-bookworm-slim AS base
 
 ARG TTYD_VERSION=1.7.7
@@ -158,6 +172,34 @@ RUN case "$TARGETARCH" in \
   && echo "${buildx_sha}  /usr/local/lib/docker/cli-plugins/docker-buildx" | sha256sum -c - \
   && chmod 755 /usr/local/lib/docker/cli-plugins/docker-buildx
 
+# Grok Build as `grok` and Antigravity as `agy`, the names their own installers give them, and OpenCode from npm, whose
+# postinstall puts the platform's binary in place of a stub (so scripts must run). Pinned by the ARGs at the top. None
+# updates itself in a session: their wrappers in session/bin and the configs the entrypoint writes turn their updaters
+# off, rather than ENV here, which the db-admin task would refuse (dbAdmin.mjs, unexpectedEnv). The last stage installs
+# them again on a published runtime built before they were in it.
+ARG OPENCODE_VERSION
+ARG GROK_VERSION
+ARG GROK_SHA256_AMD64
+ARG GROK_SHA256_ARM64
+ARG ANTIGRAVITY_BUILD
+ARG ANTIGRAVITY_SHA512_AMD64
+ARG ANTIGRAVITY_SHA512_ARM64
+RUN case "$TARGETARCH" in \
+    amd64) grok_arch=x86_64; grok_sha="$GROK_SHA256_AMD64"; agy_dir=linux-x64; agy_arch=x64; agy_sha="$ANTIGRAVITY_SHA512_AMD64" ;; \
+    arm64) grok_arch=aarch64; grok_sha="$GROK_SHA256_ARM64"; agy_dir=linux-arm; agy_arch=arm64; agy_sha="$ANTIGRAVITY_SHA512_ARM64" ;; \
+    *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+  esac \
+  && { curl -fsSL -o /tmp/grok "https://x.ai/cli/grok-${GROK_VERSION}-linux-${grok_arch}" \
+    || curl -fsSL -o /tmp/grok "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-${GROK_VERSION}-linux-${grok_arch}"; } \
+  && echo "${grok_sha}  /tmp/grok" | sha256sum -c - \
+  && install -m 755 /tmp/grok /usr/local/bin/grok && rm /tmp/grok \
+  && curl -fsSL -o /tmp/agy.tar.gz "https://storage.googleapis.com/antigravity-public/antigravity-cli/${ANTIGRAVITY_BUILD}/${agy_dir}/cli_linux_${agy_arch}.tar.gz" \
+  && echo "${agy_sha}  /tmp/agy.tar.gz" | sha512sum -c - \
+  && tar -xzf /tmp/agy.tar.gz -C /tmp antigravity \
+  && install -m 755 /tmp/antigravity /usr/local/bin/agy && rm /tmp/agy.tar.gz /tmp/antigravity \
+  && npm install -g "opencode-ai@${OPENCODE_VERSION}" && npm cache clean --force \
+  && echo "grok ${GROK_VERSION}, antigravity ${ANTIGRAVITY_BUILD}, opencode ${OPENCODE_VERSION}" > /usr/local/share/woodshed-agents
+
 # The session should not be root: the node image's own uid 1000 user runs everything below.
 USER node
 ENV PATH=/home/node/.local/bin:$PATH
@@ -251,6 +293,32 @@ RUN if docker --version 2>/dev/null | grep -qF "version ${DOCKER_VERSION}," \
   && curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-${buildx_arch}" \
   && echo "${buildx_sha}  /usr/local/lib/docker/cli-plugins/docker-buildx" | sha256sum -c - \
   && chmod 755 /usr/local/lib/docker/cli-plugins/docker-buildx
+
+# The runtime stage's agents, for a published runtime built before they were in it: the same install, skipped when the
+# runtime has these versions.
+ARG OPENCODE_VERSION
+ARG GROK_VERSION
+ARG GROK_SHA256_AMD64
+ARG GROK_SHA256_ARM64
+ARG ANTIGRAVITY_BUILD
+ARG ANTIGRAVITY_SHA512_AMD64
+ARG ANTIGRAVITY_SHA512_ARM64
+RUN if [ "$(cat /usr/local/share/woodshed-agents 2>/dev/null)" = "grok ${GROK_VERSION}, antigravity ${ANTIGRAVITY_BUILD}, opencode ${OPENCODE_VERSION}" ]; then echo "agents from the runtime"; exit 0; fi \
+  && case "$TARGETARCH" in \
+    amd64) grok_arch=x86_64; grok_sha="$GROK_SHA256_AMD64"; agy_dir=linux-x64; agy_arch=x64; agy_sha="$ANTIGRAVITY_SHA512_AMD64" ;; \
+    arm64) grok_arch=aarch64; grok_sha="$GROK_SHA256_ARM64"; agy_dir=linux-arm; agy_arch=arm64; agy_sha="$ANTIGRAVITY_SHA512_ARM64" ;; \
+    *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+  esac \
+  && { curl -fsSL -o /tmp/grok "https://x.ai/cli/grok-${GROK_VERSION}-linux-${grok_arch}" \
+    || curl -fsSL -o /tmp/grok "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-${GROK_VERSION}-linux-${grok_arch}"; } \
+  && echo "${grok_sha}  /tmp/grok" | sha256sum -c - \
+  && install -m 755 /tmp/grok /usr/local/bin/grok && rm /tmp/grok \
+  && curl -fsSL -o /tmp/agy.tar.gz "https://storage.googleapis.com/antigravity-public/antigravity-cli/${ANTIGRAVITY_BUILD}/${agy_dir}/cli_linux_${agy_arch}.tar.gz" \
+  && echo "${agy_sha}  /tmp/agy.tar.gz" | sha512sum -c - \
+  && tar -xzf /tmp/agy.tar.gz -C /tmp antigravity \
+  && install -m 755 /tmp/antigravity /usr/local/bin/agy && rm /tmp/agy.tar.gz /tmp/antigravity \
+  && npm install -g "opencode-ai@${OPENCODE_VERSION}" && npm cache clean --force \
+  && echo "grok ${GROK_VERSION}, antigravity ${ANTIGRAVITY_BUILD}, opencode ${OPENCODE_VERSION}" > /usr/local/share/woodshed-agents
 
 # The base stage's psql, for a published runtime built before it was there: the same install, skipped when the runtime
 # has that major.

@@ -24,7 +24,7 @@ const CODEX_FLAGS = ' --sandbox read-only --ask-for-approval on-request';
  * machine answers hc as the session image does: its home, checkout and claude's flags, and a `claude` terminal once
  * connected, its agent having started with nothing to do.
  */
-function laptop(t, { window = true, sessions = [], conversation = true, agentState = 'idle', machine = {}, consoleSays = {} } = {}) {
+function laptop(t, { window = true, sessions = [], conversation = true, agentState = 'idle', machine = {}, consoleSays = {}, agent = 'claude' } = {}) {
   const repo = repoFor(t);
   fs.writeFileSync(path.join(repo.root, 'services', 'api', 'login.js'), 'export const fixed = true;\n');
   fs.writeFileSync(path.join(repo.root, '.env'), 'SECRET=stays-here\n');
@@ -90,7 +90,10 @@ function laptop(t, { window = true, sessions = [], conversation = true, agentSta
     };
   };
   for (const id of ['dddd0004', 'bbbb0002', 'aaaa0001', 'c0dec0de']) sessionMachine(`woodshed-${id}`);
-  const claude = h.add({ argv: ['/bin/zsh', '-l'], cwd, foreground: { name: 'claude', argv: ['claude'], cwd, pid: 7 }, status: { state: agentState, app: 'claude-code' }, statusMs: 5 });
+  // Another agent sends Herdr no status record, as codex does not.
+  const claude = agent === 'claude'
+    ? h.add({ argv: ['/bin/zsh', '-l'], cwd, foreground: { name: 'claude', argv: ['claude'], cwd, pid: 7 }, status: { state: agentState, app: 'claude-code' }, statusMs: 5 })
+    : h.add({ argv: ['/bin/zsh', '-l'], cwd, foreground: { name: agent, argv: [agent], cwd, pid: 7 } });
   const dev = h.add({ argv: ['/bin/zsh', '-l'], cwd, foreground: { name: 'npm', argv: ['npm', 'run', 'dev'], cwd, pid: 8 } });
   h.space('api', [['main', { row: [claude, dev] }]]);
 
@@ -323,6 +326,22 @@ test('what refuses a move: a secret in the work, an agent mid-turn, a session on
   assert.equal(mid.code, EXIT.refused);
   assert.match(mid.err, /t1 \(claude, working\) is mid-turn: a conversation moves between turns/);
   assert.equal(busy.onGithub('woodshed/move-c0ffee42'), null);
+});
+
+test('Grok Build, Antigravity and OpenCode conversations are not moved yet, and nothing moves into a session running one', async (t) => {
+  for (const [agent, product] of [['grok', 'Grok Build'], ['agy', 'Antigravity CLI'], ['opencode', 'OpenCode']]) {
+    const l = laptop(t, { agent });
+    const out = await l.run(['move', '--from', 'herdr', '--space', 'api', '--to', 'new', '--console', ORIGIN]);
+    assert.equal(out.code, EXIT.refused, agent);
+    assert.match(out.err, new RegExp(`woodshed move moves Claude Code and Codex conversations; ${product} conversations are not moved yet \\(t1 runs `));
+    assert.equal(l.onGithub('woodshed/move-c0ffee42'), null, 'nothing pushed');
+    assert.ok(!l.calls.some(([method]) => method === 'POST'), 'no session made');
+  }
+  const l = laptop(t, { sessions: [{ id: 'ffff0006', owner: 'mia-dev', repo: 'acme/app', project: 'app', status: 'running', state: 'done', title: 'On OpenCode', options: { agent: 'opencode' } }] });
+  const into = await l.run(['move', '--from', 'herdr', '--terminal', 't1', '--to', 'ffff0006', '--console', ORIGIN]);
+  assert.equal(into.code, EXIT.refused);
+  assert.match(into.err, /OpenCode conversations are not moved yet \(session ffff0006 runs opencode\)/);
+  assert.equal(l.onGithub('woodshed/move-c0ffee42'), null);
 });
 
 test('into a running session of yours, the agent gets a worktree and a branch of its own, and the session\'s agent is left alone', async (t) => {

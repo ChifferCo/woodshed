@@ -37,6 +37,19 @@ const CLAUDE_TITLE = /^\s*Do you want to .+\?\s*$/;
 const CODEX_TITLE = /^\s*Would you like to .+\?\s*$/;
 const CLAUDE_APPROVAL_FOOT = /^\s*Esc to cancel\b/;
 const CODEX_APPROVAL_FOOT = /Press enter to confirm/i;
+// Grok Build's approval (its source, xai-grok-pager's permissions.rs and prompter.rs at 1.0.45, and the 1.0.92 binary's
+// strings; not captured from a pane): `Allow \`git\`?`, `Allow Edit to src/a.ts?`, `Allow Execute?`, over numbered options,
+// `Yes, and don't ask again for anything (always-approve mode)`, `Yes, proceed`, `Always allow: …`, `No, and tell Grok
+// what to do differently` (or `No, reject (type to add feedback)`). A digit picks its row (`1`–`9`).
+const GROK_TITLE = /^\s*Allow .+\?\s*$/;
+// Antigravity's (the 1.5.14 binary's strings; not captured): `Run this command?`, `Allow access to this URL?`, `Allow
+// calling this tool?`, over options `Yes, allow tool call`, `No, deny permission` and the like.
+const ANTIGRAVITY_TITLE = /^\s*(Run this command|Allow access to this URL|Allow calling this tool|Allow [a-z ]+)\?\s*$/;
+// OpenCode's (its source, tui/src/routes/session/permission.tsx at v1.19.6; not captured): `△ Permission required` over
+// what it asks, then its choices on one line, `Allow once  Allow always  Reject`, the picked one shown by its colour
+// alone. Enter takes the picked one (Allow once at first), Esc rejects, and Left walks back to Allow once.
+const OPENCODE_TITLE = /^\s*[△▲]?\s*Permission required\s*$/;
+const OPENCODE_CHOICES = /^\s*Allow once\s{2,}Allow always\s{2,}Reject\b/;
 // What a row that is the picker's own says: no answer from the page picks these.
 const OWN_ROW = /^(\[.\]\s*)?(Type something\.?|Chat about this|Next)$/;
 const CHECKBOX = /^\[(.)\]\s+/;
@@ -185,15 +198,22 @@ function dropTips(raw, width) {
 }
 
 /**
- * An approval the agent waits on: claude's permission dialog, or codex's approval.
+ * An approval the agent waits on: claude's permission dialog, codex's approval, or Grok Build's, Antigravity's or
+ * OpenCode's.
  * @param {string} pane
- * @returns {null|{agent: 'claude'|'codex', what: string|null, title: string, detail: string[],
- *   options: {n: number, label: string, highlighted: boolean}[], highlighted: number|null, approve: number, deny: number}}
- *   approve and deny are indexes into options: the first that says Yes (and not `Yes, and …`), and the first that says No
+ * @param {string} [agent]  the session's agent: only its own shape is read. Left out, every shape is tried
+ * @returns {null|{agent: string, what: string|null, title: string, detail: string[],
+ *   options: {n: number, label: string, highlighted: boolean}[], highlighted: number|null, approve: number, deny: number,
+ *   keys?: {approve: string[], deny: string[]}, digits?: boolean}}
+ *   approve and deny are indexes into options: the first that says Yes (and not `Yes, and …`), and the first that says No.
+ *   keys: an approval answered with the same keys whatever is highlighted (OpenCode's, whose highlight is a colour).
+ *   digits: one whose rows are picked by their number (Grok Build's)
  */
-export function readApproval(pane) {
+export function readApproval(pane, agent) {
   const lines = linesOf(pane);
-  for (const [agent, titleRe, footRe] of [['claude', CLAUDE_TITLE, CLAUDE_APPROVAL_FOOT], ['codex', CODEX_TITLE, CODEX_APPROVAL_FOOT]]) {
+  const shapes = [['claude', CLAUDE_TITLE, CLAUDE_APPROVAL_FOOT], ['codex', CODEX_TITLE, CODEX_APPROVAL_FOOT]];
+  for (const [who, titleRe, footRe] of shapes) {
+    if (agent && agent !== who) continue;
     const foot = lastIndex(lines, footRe);
     if (foot === -1) continue;
     const title = lastIndex(lines, titleRe, foot);
@@ -203,7 +223,7 @@ export function readApproval(pane) {
     let what = null;
     let detail;
     let from = title;
-    if (agent === 'claude') {
+    if (who === 'claude') {
       const rule = lastIndex(lines, RULE, title);
       from = rule + 1;
       const head = lines.slice(rule + 1, title).map((l) => l.trim());
@@ -217,39 +237,96 @@ export function readApproval(pane) {
       // codex draws what it asks between the title and its options: the reason, the command.
       detail = asDrawn(lines.slice(title + 1, rows[0].line));
     }
-    const options = rows.map((r) => ({ n: r.n, label: r.text.replace(SHORTCUT, '').slice(0, MAX_LINE), highlighted: r.highlighted }));
-    // Just this once: never a `Yes, and …` row, which allows it for good or switches the mode. With none, no approval.
-    const approve = options.findIndex((o) => /^Yes\b/.test(o.label) && !/^Yes,? and\b/i.test(o.label));
-    const deny = options.findIndex((o) => /^No\b/.test(o.label));
-    if (approve === -1 || deny === -1) continue;
-    const at = options.findIndex((o) => o.highlighted);
-    // The page shows the whole of what it asks, or nothing to answer it with: a clipped command could hide its end.
-    const complete = detail.length <= MAX_DETAIL && detail.every((l) => l.length <= MAX_LINE) && (!what || what.length <= MAX_LINE)
-      && squash(lines[title]).length <= MAX_LINE;
-    return {
-      agent,
-      key: approvalKey(agent, lines.slice(from, rows[0].line)),
-      complete,
-      what: what ? what.slice(0, MAX_LINE) : null,
-      title: squash(lines[title]).slice(0, MAX_LINE),
-      detail: detail.slice(0, MAX_DETAIL).map((l) => l.slice(0, MAX_LINE)),
-      options,
-      highlighted: at === -1 ? null : at,
-      approve,
-      deny,
-    };
+    const read = numberedApproval(who, lines, title, from, rows, what, detail);
+    if (read) return read;
   }
+  for (const [who, titleRe] of [['grok', GROK_TITLE], ['antigravity', ANTIGRAVITY_TITLE]]) {
+    if (agent && agent !== who) continue;
+    const read = footlessApproval(who, lines, titleRe);
+    if (read) return read;
+  }
+  if (!agent || agent === 'opencode') return opencodeApproval(lines);
   return null;
+}
+
+// The options and the rest, once an agent's own reader found its title, what it asks and its numbered rows.
+function numberedApproval(agent, lines, title, from, rows, what, detail, extra = {}) {
+  const options = rows.map((r) => ({ n: r.n, label: r.text.replace(SHORTCUT, '').slice(0, MAX_LINE), highlighted: r.highlighted }));
+  // Just this once: never a `Yes, and …` row, which allows it for good or switches the mode. With none, no approval.
+  const approve = options.findIndex((o) => /^Yes\b/.test(o.label) && !/^Yes,? and\b/i.test(o.label));
+  const deny = options.findIndex((o) => /^No\b/.test(o.label));
+  if (approve === -1 || deny === -1) return null;
+  const at = options.findIndex((o) => o.highlighted);
+  // The page shows the whole of what it asks, or nothing to answer it with: a clipped command could hide its end.
+  const complete = detail.length <= MAX_DETAIL && detail.every((l) => l.length <= MAX_LINE) && (!what || what.length <= MAX_LINE)
+    && squash(lines[title]).length <= MAX_LINE;
+  return {
+    agent,
+    key: approvalKey(agent, lines.slice(from, rows[0].line)),
+    complete,
+    what: what ? what.slice(0, MAX_LINE) : null,
+    title: squash(lines[title]).slice(0, MAX_LINE),
+    detail: detail.slice(0, MAX_DETAIL).map((l) => l.slice(0, MAX_LINE)),
+    options,
+    highlighted: at === -1 ? null : at,
+    approve,
+    deny,
+    ...extra,
+  };
+}
+
+// Grok Build's and Antigravity's: a title, what it asks under it, then numbered options down to a blank line or the
+// end of the screen, with no key hint of their own known under them. The last such title on screen is the live one.
+function footlessApproval(agent, lines, titleRe) {
+  const title = lastIndex(lines, titleRe);
+  if (title === -1) return null;
+  const first = lines.findIndex((l, i) => i > title && ROW.test(l));
+  if (first === -1) return null;
+  let end = first + 1;
+  while (end < lines.length && lines[end].trim() && !RULE.test(lines[end])) end++;
+  const rows = rowsOf(lines, first, end);
+  // Options numbered from 1, each once: anything else is a list the agent printed, not a prompt.
+  if (!rows.length || rows.some((r, i) => r.n !== i + 1)) return null;
+  return numberedApproval(agent, lines, title, title, rows, null, asDrawn(lines.slice(title + 1, first)), agent === 'grok' ? { digits: true } : {});
+}
+
+// OpenCode's: its title, what it asks, and its choices on one line. Answered with keys alone, since the pick shows only
+// as a colour: Left to Allow once (the leftmost, where it starts) then Enter, or Esc, which rejects.
+function opencodeApproval(raw) {
+  // Its panel is drawn inside a left border (`┃`), as its input box is.
+  const lines = raw.map((l) => l.replace(/^\s*┃ ?/, ''));
+  const choices = lastIndex(lines, OPENCODE_CHOICES);
+  if (choices === -1) return null;
+  const title = lastIndex(lines, OPENCODE_TITLE, choices);
+  if (title === -1) return null;
+  const body = asDrawn(lines.slice(title + 1, choices));
+  const what = body.shift()?.trim() ?? null;
+  const detail = asDrawn(body);
+  const complete = detail.length <= MAX_DETAIL && detail.every((l) => l.length <= MAX_LINE) && (!what || what.length <= MAX_LINE);
+  return {
+    agent: 'opencode',
+    key: approvalKey('opencode', lines.slice(title, choices)),
+    complete,
+    what: what ? what.slice(0, MAX_LINE) : null,
+    title: 'Permission required',
+    detail: detail.slice(0, MAX_DETAIL).map((l) => l.slice(0, MAX_LINE)),
+    options: [{ n: 1, label: 'Allow once', highlighted: false }, { n: 2, label: 'Allow always', highlighted: false }, { n: 3, label: 'Reject', highlighted: false }],
+    highlighted: null,
+    approve: 0,
+    deny: 2,
+    keys: { approve: ['Left', 'Left', 'Left', 'Enter'], deny: ['Escape'] },
+  };
 }
 
 /**
  * What the pane asks now, for the Chat tab: a question picker or an approval, or null.
  * @param {string} pane
  */
-export function readPrompt(pane) {
-  const picker = readQuestionPicker(pane);
+export function readPrompt(pane, agent) {
+  // Only claude asks questions in a picker.
+  const picker = !agent || agent === 'claude' ? readQuestionPicker(pane) : null;
   if (picker) return { kind: 'question', ...picker };
-  const approval = readApproval(pane);
+  const approval = readApproval(pane, agent);
   return approval ? { kind: 'approval', ...approval } : null;
 }
 
@@ -349,7 +426,8 @@ export class Refusal extends Error {
 
 /**
  * @typedef {{capture: () => Promise<string>, keys: (...keys: string[]) => Promise<void>, sleep?: (ms: number) => Promise<void>,
- *   waitMs?: number, everyMs?: number}} PaneIo
+ *   waitMs?: number, everyMs?: number, agent?: string, literal?: (text: string) => Promise<void>}} PaneIo
+ *   agent: the session's agent, whose approval alone is read. literal: text typed as it is (Grok Build's digits)
  */
 
 // The pane read again until `ok` says yes or the wait is over. Returns the last read and whether it passed.
@@ -418,12 +496,23 @@ export async function answerQuestions(io, wants) {
  * @throws {Refusal}
  */
 export async function answerApproval(io, want) {
-  const screen = readApproval(await io.capture());
+  const read = (pane) => readApproval(pane, io.agent);
+  const screen = read(await io.capture());
   const same = matchApproval(screen, want);
   if (!same.ok) throw new Refusal(same.why);
   const index = want.decision === 'approve' ? screen.approve : screen.deny;
-  const moves = await pickRow(io, readApproval, screen, index, (s) => matchApproval(s, want).ok, 0);
-  const gone = await settle(io, readApproval, (s) => !matchApproval(s, want).ok);
+  let moves = 0;
+  if (screen.keys) {
+    // OpenCode's: the same keys whatever is picked, which its screen does not show.
+    await io.keys(...screen.keys[want.decision === 'approve' ? 'approve' : 'deny']);
+  } else if (screen.digits && io.literal) {
+    // Grok Build's: a row's number picks it, wherever the highlight is. Herdr types no text without an Enter, so there
+    // it moves the highlight as for any other.
+    await io.literal(String(screen.options[index].n));
+  } else {
+    moves = await pickRow(io, read, screen, index, (s) => matchApproval(s, want).ok, 0);
+  }
+  const gone = await settle(io, read, (s) => !matchApproval(s, want).ok);
   if (!gone.ok) throw new Refusal('still-there');
   return { moves, agent: screen.agent };
 }
@@ -458,8 +547,8 @@ function menuOn(pane, text) {
  * highlighted numbered menu. Nothing is typed while it asks.
  * @returns {string|null}
  */
-export function asking(pane, text) {
-  const known = readPrompt(pane);
+export function asking(pane, text, agent) {
+  const known = readPrompt(pane, agent);
   if (known) return known.kind;
   return menuOn(pane, text) ? 'menu' : null;
 }

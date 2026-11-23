@@ -29,9 +29,18 @@ import zlib from 'node:zlib';
 import { HC_MINIMUM, hcVersion, machineName, shellQuote } from './hc.mjs';
 import { checkoutOf, deleteBranch, freeze, pushBranch, redactCredentials, secretsIn, survey } from './moveCode.mjs';
 import { classify, claudeProjectDir, findConversations, rewriteConversation, rootsOf, shownCommand, withoutStateHooks } from './moveAgents.mjs';
+import agentRegistry from '../shared/agents.cjs';
 import { appSpaces, buildWithApp, buildWithLabels, choose, failureOf, leavesOf, localLayout, placesOf, readDoc } from './moveLayout.mjs';
 
 const ID_RE = /^[0-9a-f]{8}$/;
+// The agents whose conversations a move carries: Claude Code's and Codex's, which moveAgents.mjs finds and rewrites.
+export const MOVED_AGENTS = Object.freeze(['claude', 'codex']);
+
+/** @returns {string}  why a move refuses agents whose conversations it does not carry, naming each */
+export function unmovedText(found) {
+  const products = [...new Set(found.map((f) => agentRegistry.agent(f.agent).product))];
+  return `woodshed move moves Claude Code and Codex conversations; ${products.join(' and ')} conversations are not moved yet (${found.map((f) => `${f.address} runs ${f.agent}`).join(', ')}). Move the other terminals, or carry on there.`;
+}
 // hc file write takes at most 8 MB; a larger conversation goes gzipped, in parts.
 const FILE_PART = 6 * 1024 * 1024;
 // How long a moved agent has to say what it is doing, and a local one to end.
@@ -170,6 +179,9 @@ async function runMove({ origin, rest }, ctx) {
   const addresses = chosen.spaces.flatMap((s) => s.tabs.flatMap((t) => leavesOf(t.tree)));
   const byAddress = new Map(here.map((t) => [t.address, t]));
   const kinds = new Map(addresses.map((a) => [a, classify(byAddress.get(a))]));
+  // Only Claude Code's and Codex's conversations have a place in a session yet (moveAgents.mjs reads and rewrites theirs).
+  const unmoved = addresses.filter((a) => kinds.get(a).kind === 'agent' && !MOVED_AGENTS.includes(kinds.get(a).agent));
+  if (unmoved.length) throw refused(unmovedText(unmoved.map((a) => ({ address: a, agent: kinds.get(a).agent }))));
   const busy = addresses.filter((a) => kinds.get(a).kind === 'agent' && ['working', 'blocked'].includes(kinds.get(a).state));
   if (busy.length) throw refused(`${busy.map((a) => `${a} (${kinds.get(a).agent}, ${kinds.get(a).state})`).join(', ')} ${busy.length === 1 ? 'is' : 'are'} mid-turn: a conversation moves between turns. Wait for it, or stop it, then move again.`);
 
@@ -215,7 +227,8 @@ async function runMove({ origin, rest }, ctx) {
   for (const a of agents) {
     const repo = checkoutFor.get(a).repo.toLowerCase();
     const k = kinds.get(a).agent;
-    const want = opts.to === 'new' ? (kindOf.get(repo) ?? k) : (target0()?.options?.agent === 'codex' ? 'codex' : 'claude');
+    const want = opts.to === 'new' ? (kindOf.get(repo) ?? k) : agentRegistry.agentOfSession(target0());
+    if (!MOVED_AGENTS.includes(want)) throw refused(unmovedText([{ address: `session ${opts.to}`, agent: want }]));
     if (k !== want) throw refused(`${a} runs ${k}, and ${opts.to === 'new' ? `the session for ${repo} would run ${want}` : `session ${opts.to} runs ${want}`}: a session runs one kind of agent, with that kind's guards. Move ${k} and ${want} terminals apart.`);
     kindOf.set(repo, want);
   }

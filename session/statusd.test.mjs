@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { isolatedEnv } from '../test/isolatedEnv.mjs';
-import { AGENT_PANE_FORMAT, sendNotAfter, sendWithinMs, stillThePull, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps, typeableText } from './statusd.mjs';
+import { AGENT_PANE_FORMAT, sendNotAfter, sendWithinMs, stillThePull, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps, typeableText, changedLogin } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -1466,4 +1466,26 @@ test('a guarded send names how long it may still be typed, a minute at most', ()
 test('a guarded send carries its caller\'s own deadline', () => {
   assert.equal(sendNotAfter('{"text":"x","notAfter":1700000000000}'), 1700000000000);
   for (const raw of ['{"text":"x"}', '{"text":"x","notAfter":"soon"}', '{"text":"x","notAfter":-1}', 'nope']) assert.equal(sendNotAfter(raw), null, raw);
+});
+
+test('Grok Build, Antigravity and OpenCode get pastes, as codex does', () => {
+  for (const agent of ['grok', 'antigravity', 'opencode']) {
+    assert.deepEqual(typingSteps('fix it\nplease', agent), [{ paste: 'fix it\nplease', pauseMs: 50 }], agent);
+  }
+});
+
+test('an agent\'s own login goes back only when this session refreshed it, and a key never does', () => {
+  const login = JSON.stringify({ openai: { type: 'oauth', refresh: 'r1', access: 'a1', expires: 1 } });
+  const refreshed = JSON.stringify({ openai: { type: 'oauth', refresh: 'r2', access: 'a2', expires: 2 } });
+  assert.equal(changedLogin(login, refreshed), true);
+  assert.equal(changedLogin(login, `${login}\n`), false, 'the same login, written again');
+  assert.equal(changedLogin('xai-abc', refreshed), false, 'a key');
+  assert.equal(changedLogin(null, refreshed), false, 'nothing given');
+  assert.equal(changedLogin(login, 'not json'), false);
+});
+
+test('tmux\'s test of the pane names every agent\'s program', () => {
+  for (const name of ['grok', 'agy', 'opencode']) assert.ok(AGENT_PANE_FORMAT.includes(`#{==:#{pane_current_command},${name}}`), name);
+  assert.equal(isAgentCommand('opencode'), true);
+  assert.equal(isAgentCommand('bash'), false);
 });

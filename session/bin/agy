@@ -1,0 +1,15 @@
+#!/bin/bash
+# agy (Antigravity), on its owner's own Gemini API key (configureAntigravity in entrypoint.sh), handed to agy alone in
+# GEMINI_API_KEY from the 0600 file the entrypoint kept: never exported to the session's shell, nor to the Terminal tab.
+# What agy runs inherits it, as for grok's key: it is the owner's own key, in their own private session.
+set -euo pipefail
+
+real=${WOODSHED_REAL_AGY:-/usr/local/bin/agy}
+auth=${WOODSHED_AGENT_AUTH_FILE:-$HOME/.config/woodshed/agent-auth}
+if [ -s "$auth" ] && [[ "$(head -c 4 "$auth")" == AIza ]]; then
+  GEMINI_API_KEY=$(cat "$auth")
+  export GEMINI_API_KEY
+fi
+# Never updating itself in a session: a new version comes in by the image's pins.
+export AGY_CLI_DISABLE_AUTO_UPDATE=true
+exec "$real" "$@"

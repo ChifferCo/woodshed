@@ -1,0 +1,8 @@
+#!/bin/bash
+# opencode (OpenCode), on its owner's own provider sign-ins, which the entrypoint wrote as its own auth.json
+# (configureOpencode). Run by its full path, so tmux names the pane's command `opencode` (session/agentPane.mjs). Its
+# global AGENTS.md holds the rules, so it never falls back to ~/.claude/CLAUDE.md; a repo's own CLAUDE.md it still reads
+# when the repo has no AGENTS.md.
+set -euo pipefail
+
+exec "${WOODSHED_REAL_OPENCODE:-/usr/local/bin/opencode}" "$@"

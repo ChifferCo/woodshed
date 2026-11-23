@@ -8,7 +8,7 @@
   'use strict';
 
   /**
-   * What is left before New session works: a Claude token or a Codex sign-in, which is the person's to do, and the
+   * What is left before New session works: a Claude token or any agent's sign-in, which is the person's to do, and the
    * databases, which the console makes by itself once either is saved. They are progress while they copy, and `todo` when the copy failed
    * or never started, which is when the card gives them a button. An `optional` step is offered and never holds New
    * session back.
@@ -16,8 +16,9 @@
    */
   function setupSteps(me) {
     const db = me.databases;
-    // A Codex sign-in does as well: a person who only uses Codex has no Claude plan to save.
-    const tokenSet = Boolean(me.claudeToken?.set || me.codexAuth?.set);
+    // Any agent's sign-in does as well: a person who only uses Codex, or Grok Build, Antigravity or OpenCode on their own
+    // sign-in (shared/agents.cjs), has no Claude plan to save.
+    const tokenSet = anySignIn(me);
     const dbHint = {
       ready: 'Ready', working: 'Copying the template: about a minute', failed: 'The copy failed: try again on My settings',
       none: 'Not started: start them on My settings',
@@ -34,14 +35,19 @@
       // Right after the App: GitHub never lets an App approve its own pull requests, so review sessions approve through a
       // second one. Offered, never required: sessions work without it, only their approvals do not count.
       ...(me.reviewerSetupNeeded ? [{ key: 'reviewer', label: 'Add the reviewer App (optional)', hint: 'Review sessions approve pull requests through it, since GitHub never lets an App approve its own', done: false, optional: true }] : []),
-      { key: 'token', label: 'Choose your agent', hint: 'Save a Claude token or a Codex sign-in: either one is enough', done: tokenSet },
+      { key: 'token', label: 'Choose your agent', hint: 'Save a Claude token, or a Codex, Grok Build, Antigravity or OpenCode sign-in: any one is enough', done: tokenSet },
       ...(showDb ? [{ key: 'databases', label: 'Your databases', hint: dbHint[db.status], done: db.status === 'ready', todo: db.status === 'failed' || db.status === 'none' }] : []),
     ];
   }
 
-  /** @returns {boolean}  nothing is left: the console has a repo, a Claude token or a Codex sign-in is saved and the databases are ready (or this console has none) */
+  /** @returns {boolean}  nothing is left: the console has a repo, an agent's sign-in is saved and the databases are ready (or this console has none) */
   function setupDone(me) {
-    return !me.repoNeeded && !me.githubSetupNeeded && Boolean(me.claudeToken?.set || me.codexAuth?.set) && (!me.databases?.available || me.databases.status === 'ready');
+    return !me.repoNeeded && !me.githubSetupNeeded && anySignIn(me) && (!me.databases?.available || me.databases.status === 'ready');
+  }
+
+  /** @returns {boolean}  a Claude token, a Codex sign-in, or another agent's own sign-in (`agentAuth`) is saved */
+  function anySignIn(me) {
+    return Boolean(me.claudeToken?.set || me.codexAuth?.set || Object.values(me.agentAuth ?? {}).some((a) => a?.set));
   }
 
   /**

@@ -1,12 +1,12 @@
 // The Chat tab: a running session's conversation as a chat, in place of the agent's terminal. The thread is read from
-// the agent's own record of the conversation (claude's transcript, codex's rollout), through the session's statusd
+// the agent's own record of the conversation (claude's transcript, codex's rollout, the other agents' own), through the session's statusd
 // (GET /api/sessions/<id>/transcript), and drawn as messages: the person's on the right, the agent's replies as text,
 // and each run of tool calls between them as one work log that folds open (chatThread.cjs). The composer under it
 // types a message into the live agent (POST …/send, as the phone's message box does), with files from the picker or
 // dropped or pasted, and Stop sends it Esc (POST …/interrupt). The agent still runs in its terminal, which stays on the
 // TUI tab. claude's questions (AskUserQuestion) are answered here: one option picked for each, then Send answers
 // (POST …/answer), which the session types into the picker once its pane shows that same question. An approval the
-// pane shows (claude's permission dialog, codex's approval; GET …/prompt) is on the Needs you line with Approve and
+// pane shows (claude's permission dialog, codex's and the other agents' approvals; GET …/prompt) is on the Needs you line with Approve and
 // Deny, under the same check. Anything else it asks there shows as Needs you, with a button to the TUI tab. The code
 // each turn changed shows under its last work log that edited a file, from the edits' diffs the record carries.
 // session.js makes the Chat tab the one a running session opens on.

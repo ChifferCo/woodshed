@@ -429,9 +429,9 @@ test('sessionSignInsOf reads each sign-in after a refresh, and says false with n
   const refreshed = [];
   const userSettings = {
     refresh: async (login) => refreshed.push(login),
-    view: (login) => (login === 'mia' ? { claudeToken: { set: true }, codexAuth: { set: false } } : {}),
+    view: (login) => (login === 'mia' ? { claudeToken: { set: true }, codexAuth: { set: false }, agentAuth: { grok: { set: true }, opencode: { set: false } } } : {}),
   };
-  assert.deepEqual(await sessionSignInsOf(userSettings)('mia'), { claude: true, codex: false });
+  assert.deepEqual(await sessionSignInsOf(userSettings)('mia'), { claude: true, codex: false, grok: true, antigravity: false, opencode: false });
   assert.deepEqual(refreshed, ['mia']);
-  assert.deepEqual(await sessionSignInsOf(null)('mia'), { claude: false, codex: false });
+  assert.deepEqual(await sessionSignInsOf(null)('mia'), { claude: false, codex: false, grok: false, antigravity: false, opencode: false });
 });

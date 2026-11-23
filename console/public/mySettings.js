@@ -186,6 +186,46 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       codexStatus);
   }
 
+  // Grok Build, Antigravity and OpenCode: each runs only on its owner's own sign-in (shared/agents.cjs), saved here as
+  // users/<login>/<agent>-auth and handed to that person's own My Woodshed sessions alone. One card each, from the
+  // registry's words. Their boxes and notes are made once and kept across draws, as Codex's are.
+  const A = window.WoodshedAgents;
+  const agentInputs = Object.fromEntries(A.OWN_SIGN_IN_AGENTS.map((id) => [id, h('textarea', {
+    id: `${id}-auth`, class: 'field mono', rows: id === 'antigravity' ? '1' : '3', autocomplete: 'off', spellcheck: 'false', placeholder: A.agent(id).signIn.placeholder,
+  })]));
+  const agentStatus = Object.fromEntries(A.OWN_SIGN_IN_AGENTS.map((id) => [id, h('p', { class: 'form-note', role: 'status' })]));
+
+  function agentChange(id, path, body, done, working) {
+    return act({ card: id, note: agentStatus[id], working, done, call: async () => { me = await W.postJson(path, body); agentInputs[id].value = ''; } });
+  }
+
+  function agentCard(id) {
+    const a = A.agent(id);
+    const saved = me.agentAuth?.[id];
+    const set = Boolean(saved?.set);
+    const pill = set ? h('span', { class: 'pill is-ok' }, `Saved ${W.when(saved.savedAt)}`) : h('span', { class: 'pill' }, 'Not set');
+    const how = [
+      steps(...a.signIn.steps, { text: `Paste it below and press Save.${a.signIn.rotates ? ` A login ${a.product} refreshes is saved back when a session stops.` : ''}` }),
+    ];
+    return row({
+      id, title: a.product, pill,
+      value: set ? `Your own sign-in, for ${a.name} sessions` : `Save ${a.signIn.kinds}, and New session offers ${a.name}`,
+    },
+      h('p', { class: 'sub' }, `Choose ${a.name} as the agent in New session. It runs only on your own sign-in, handed to your own My Woodshed sessions and nobody else’s: ${a.name} never runs in a shared session and never reviews pull requests.`),
+      set ? howTo('How to get a sign-in', how) : how,
+      h('label', { class: 'field-label', for: `${id}-auth` }, h('span', null, set ? 'Replace the sign-in' : 'Paste your sign-in')),
+      agentInputs[id],
+      h('div', { class: 'set-actions' },
+        h('button', { type: 'button', class: 'btn btn-open', disabled: !me.available || busy.has(id), onclick: () => agentChange(id, `/api/my/agent-auth/${id}`, { value: agentInputs[id].value }, `Saved. Your next ${a.name} session uses it.`) }, 'Save'),
+        set && h('button', {
+          type: 'button', class: 'btn btn-quiet', disabled: busy.has(id), onclick: () => {
+            if (window.confirm(`Remove your ${a.product} sign-in? New ${a.name} sessions are refused until you save one again.`)) agentChange(id, `/api/my/agent-auth/${id}/remove`, {}, 'Removed.', 'Removing…');
+          },
+        }, 'Remove')),
+      !me.available && h('p', { class: 'form-note is-error' }, 'This console has no secrets manager yet, so nothing can be saved here. ', h('a', { href: '/secrets' }, 'Choose one on the Secrets page.')),
+      agentStatus[id]);
+  }
+
   // Whether reviews of your pull requests run Codex on your sign-in, when an admin has Codex review beside Claude Code.
   // On once a sign-in is saved, unless turned off, as the Claude token's switch is; the console adds the sign-in to
   // Codex's calls, never into the session.
@@ -875,7 +915,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       // A repo sessions cannot start on is said first: it is what stops the person, whatever else is set.
       blockersCard(),
       // What a new person does first, then how their sessions run, what is kept between them, each repo's own, and the look.
-      group({ id: 'set-signins', label: 'Sign-ins' }, tokenCard(), codexCard(), githubCard(), cliCard()),
+      group({ id: 'set-signins', label: 'Sign-ins' }, tokenCard(), codexCard(), A.OWN_SIGN_IN_AGENTS.map(agentCard), githubCard(), cliCard()),
       group({ id: 'set-sessions', label: 'Sessions' }, projectCard(), terminalCard(), reviewsCard(), limitsCard()),
       group({ id: 'set-kept', label: 'Kept for you' }, databasesCard(), homeCard()),
       group({
@@ -892,9 +932,10 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     repoSettings.afterRender();
   }
 
-  // A link that names a row (the setup card's #claude and #codex, the search's sections, ⇧⌘,'s #my-display) opens it,
-  // scrolls to it once its group is drawn, and puts the caret in the box of the two that have one. Once per page load.
-  const FOCUS = { claude: 'claude-token', codex: 'codex-auth' };
+  // A link that names a row (the setup card's #claude, #codex and the other agents', the search's sections, ⇧⌘,'s
+  // #my-display) opens it, scrolls to it once its group is drawn, and puts the caret in the box of those that have one.
+  // Once per page load.
+  const FOCUS = { claude: 'claude-token', codex: 'codex-auth', ...Object.fromEntries(A.OWN_SIGN_IN_AGENTS.map((id) => [id, `${id}-auth`])) };
   let asked = window.location.hash.slice(1) || null;
   if (new URLSearchParams(window.location.search).get('connected')) open.add('my-github');
   function showAsked() {

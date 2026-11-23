@@ -344,7 +344,9 @@ test('session new says what the console refuses, with its exit code', async (t) 
   assert.equal(noToken.code, EXIT.failed);
   assert.match(noToken.err, /save your Claude token on My settings first/);
   assert.equal(c.calls.length, 0, 'nothing started');
-  assert.equal((await c.run(['session', 'new', '--agent', 'gpt', 'go'])).code, EXIT.failed);
+  const unknown = await c.run(['session', 'new', '--agent', 'gpt', 'go']);
+  assert.equal(unknown.code, EXIT.failed);
+  assert.match(unknown.err, /--agent must be one of claude, codex, grok, antigravity, opencode/);
 
   const refused = await consoleFor(t, { refuse: 'say what Claude should do' });
   const empty = await refused.run(['session', 'new', '--json']);
@@ -660,6 +662,8 @@ test('session commands wait on a person to sign in, and say so once the sign-in 
 test('the state words and pause times are the page\'s', () => {
   assert.deepEqual(stateOf({ status: 'running', state: 'needs-you' }), { key: 'needs-you', word: 'needs you' });
   assert.deepEqual(stateOf({ status: 'running', state: null, options: { agent: 'codex' } }), { key: 'idle', word: 'codex exited' });
+  assert.deepEqual(stateOf({ status: 'running', state: null, options: { agent: 'opencode' } }), { key: 'idle', word: 'opencode exited' });
+  assert.deepEqual(stateOf({ status: 'running', state: null, options: { agent: 'nobody' } }), { key: 'idle', word: 'claude exited' }, 'an agent it does not know is claude');
   assert.deepEqual(stateOf({ status: 'queued', owner: 'mia' }), { key: 'queued', word: 'waiting' });
   assert.deepEqual(stateOf({ status: 'stopped', owner: 'mia', stopReason: 'ran for 12 h' }), { key: 'paused', word: 'paused' });
   assert.deepEqual(stateOf({ status: 'stopped', owner: 'mia', stoppedBy: 'mia', stopReason: 'stopped from the console' }), { key: 'stopped', word: 'stopped' });

@@ -9,7 +9,7 @@ import { createCliSignIn } from '../console/cliSignIn.mjs';
 import { createHandler } from '../console/server.mjs';
 import { createCredentials } from './credentials.mjs';
 import { fakeWindows, TOOLS } from './__fixtures__/fakeWindows.mjs';
-import { approvalUrl, consoleOrigin, DEFAULT_CONSOLE, EXIT, main, parseArgs } from './woodshed.mjs';
+import { approvalUrl, consoleOrigin, DEFAULT_CONSOLE, EXIT, main, parseArgs, signInsOf, agentsText } from './woodshed.mjs';
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
@@ -112,6 +112,14 @@ test('login --no-wait replaces an expired code and clears a denied approval', as
   assert.equal((await c.run(args)).code, EXIT.waiting, 'another sign-in can be started after denial');
 });
 
+test('status keeps Claude Code and Codex from a console that reports only them, and names who waits on a sign-in', () => {
+  assert.deepEqual(signInsOf({ claude: true, codex: false }), { claude: true, codex: false });
+  assert.deepEqual(signInsOf({ claude: true, codex: false, grok: true, opencode: 'yes' }), { claude: true, codex: false, grok: true, opencode: false });
+  assert.deepEqual(signInsOf(null), { claude: false, codex: false });
+  assert.equal(agentsText({ claude: true, codex: false, grok: true }), 'Claude Code, Grok Build (not yet: Codex; sign in on My settings)');
+  assert.equal(agentsText({ claude: false, codex: false }), 'none yet (not yet: Claude Code, Codex; sign in on My settings)');
+});
+
 test('status shows only whether the CLI token owner has personal session sign-ins', async (t) => {
   let refreshed;
   const c = await consoleFor(t, { userSettings: {
@@ -123,7 +131,8 @@ test('status shows only whether the CLI token owner has personal session sign-in
   } });
   assert.equal((await c.run(['login', '--console', c.origin])).code, EXIT.done);
   const status = await c.run(['status', '--json']);
-  assert.deepEqual(status.lines[0].sessionSignIns, { claude: false, codex: true });
+  // The other agents run on their owner's own sign-in alone: none saved here.
+  assert.deepEqual(status.lines[0].sessionSignIns, { claude: false, codex: true, grok: false, antigravity: false, opencode: false });
   assert.ok(!status.out.includes('private timestamp'));
 });
 

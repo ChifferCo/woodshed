@@ -2,7 +2,7 @@
 // console's own session routes, signed in with the command line's token (console/cliSessions.mjs lists the routes it
 // reaches). A session started here is a private one, as My Woodshed's New session starts.
 //
-//   woodshed session new [--repo R] [--branch B] [--agent claude|codex] [--model M] [--no-wait|--connect|--herdr [--parent[=T]]] ["prompt"]
+//   woodshed session new [--repo R] [--branch B] [--agent claude|codex|grok|antigravity|opencode] [--model M] [--no-wait|--connect|--herdr [--parent[=T]]] ["prompt"]
 //   woodshed session connect <id> [--shell]
 //   woodshed session herdr <id> [--parent[=T]]
 //   woodshed session list [--all]
@@ -48,6 +48,9 @@ import {
   shellQuote, startAgentTerminal, startWatcher, tunnelMachines,
 } from './hc.mjs';
 import { changes, eventDetail, herdrClear, herdrRecord, parseEvery, parseKinds, unreachableText } from './watch.mjs';
+import agents from '../shared/agents.cjs';
+
+const { AGENT_IDS, agentOfSession, agent: agentInfo } = agents;
 
 // Set in the environment of the watch --herdr starts in hc: that copy reports, rather than starting another.
 export const WATCH_IN_HERDR = 'WOODSHED_WATCH_IN_HERDR';
@@ -73,7 +76,8 @@ Commands:
   new [options] ["prompt"]   start a private session, and wait until it runs, fails or needs you
       --repo <owner/name>    the repo to work on (default: the one New session opens on for you)
       --branch <branch>      work on this branch, or a pull request or issue: 123, pr 123, or its URL
-      --agent claude|codex   the agent it runs (default claude)
+      --agent <agent>        the agent it runs: claude, codex, grok, antigravity, opencode (default claude). Grok Build,
+                             Antigravity and OpenCode run on your own sign-in from My settings
       --model <model>        the agent's model (default the agent's own)
       --no-wait              print the session and return once the console has it
       --connect              once it runs, put this terminal on its agent's, as connect does
@@ -173,7 +177,7 @@ export function printable(text, most = 200) {
  * @returns {{key: string, word: string}}
  */
 export function stateOf(s) {
-  const agent = s.options?.agent === 'codex' ? 'codex' : 'claude';
+  const agent = AGENT_IDS.includes(s.options?.agent) ? s.options.agent : 'claude';
   if (s.status === 'running') {
     if (s.state === 'needs-you') return { key: 'needs-you', word: 'needs you' };
     if (s.state === 'working') return { key: 'working', word: 'working' };
@@ -402,7 +406,7 @@ export function summary(s, { origin, login, appsOn = null }) {
     project: printable(s.project, 60),
     repo: printable(s.repo, 100),
     branch: printable(s.branch, 200),
-    agent: s.options?.agent === 'codex' ? 'codex' : 'claude',
+    agent: agentOfSession(s),
     model: printable(s.options?.model, 60) || null,
     prUrl: printable(s.prUrl, 300),
     url: `${origin}/s/${s.id}`,
@@ -666,8 +670,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
       : null;
     if (noParent) code = EXIT.failed;
     // Herdr hears of a turn ending or the agent blocking from the agent's own status records: claude sends them, the
-    // pinned codex none (session/agentPane.mjs), so a codex child wakes its parent's hc wait only by exiting.
-    const reportsStatus = shown.agent !== 'codex';
+    // pinned codex none (session/agentPane.mjs), nor do the other agents, so their child wakes its parent's hc wait only
+    // by exiting.
+    const reportsStatus = shown.agent === 'claude';
     const parentField = child ? { parent: child.made ? { made: true, terminal: parent, address: child.address, outlives: !opts['end-with-parent'], notify: !opts['no-notify'], reportsStatus } : { made: false, why: child.why, there: child.there, has: child.parent } } : {};
     if (json) {
       emit({ event: 'connected', session: shown, machine: { name, action: added.action, state: added.state }, agent, ...parentField });
@@ -676,7 +681,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
     }
     say(added.action === 'kept' ? `${name} was already in Herdr, connected.` : `${name} is in Herdr: it shows in the app's sidebar.`);
     if (child?.made) {
-      const wakes = reportsStatus ? 'when it ends a turn, blocks, errors or exits' : 'only when it exits: codex tells Herdr nothing of its turns';
+      const wakes = reportsStatus ? 'when it ends a turn, blocks, errors or exits' : `only when it exits: ${shown.agent} tells Herdr nothing of its turns`;
       say(`Its agent's terminal ${child.address} is a child of ${parent} here${opts['end-with-parent'] ? ', and ends with it' : ', and outlives it'}: hc wait --children any wakes ${parent} ${wakes}.`);
     }
     if (noParent) stderr.write(`woodshed: ${noParent}\n`);
@@ -700,7 +705,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
   // This terminal on the session's until one side ends it. A connection that drops (a network, a laptop that slept, a
   // console restarted) is opened again while the session runs: its terminal went on meanwhile, and is drawn again.
   async function onTerminal(s, kind) {
-    const what = kind === 'shell' ? 'shell' : `${s.options?.agent === 'codex' ? 'codex' : 'claude'}'s terminal`;
+    const what = kind === 'shell' ? 'shell' : `${agentInfo(agentOfSession(s)).command}'s terminal`;
     const reconnect = `woodshed session connect ${s.id}${kind === 'shell' ? ' --shell' : ''} --console ${shellQuote(origin)}`;
     stderr.write(`Connecting to ${s.id}'s ${what}. Ctrl-\\ disconnects; the session goes on.\n`);
     let reconnectUntil = null;
@@ -1398,7 +1403,7 @@ export function parseSessionArgs(sub, words, fail) {
   }
   for (const flag of PARENT_FLAGS) if (out[flag] && !out.parent) throw fail(`--${flag} goes with --parent`);
   if (sub === 'limits' && out['idle-hours'] === undefined && out['lifetime-hours'] === undefined) throw fail('session limits needs --idle-hours or --lifetime-hours (a number, or default)');
-  if (out.agent !== undefined && !['claude', 'codex'].includes(out.agent)) throw fail('--agent must be claude or codex');
+  if (out.agent !== undefined && !AGENT_IDS.includes(out.agent)) throw fail(`--agent must be one of ${AGENT_IDS.join(', ')}`);
   // An app's name, never the next option taken for one (`--app --no-wait`).
   if (out.app !== undefined && !APP_NAME_RE.test(out.app)) throw fail(`--app needs an app's name: lowercase letters, digits and dashes, as the project file names them${out.app.startsWith('-') ? `, not ${out.app}` : ''}`);
   if (sub === 'watch') {

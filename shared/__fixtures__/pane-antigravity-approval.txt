@@ -1,0 +1,10 @@
+  Planning the change
+
+  Run this command?
+
+    npm run migrate
+
+  Reason: the schema changed
+
+  ❯ 1. Yes, allow tool call
+    2. No, deny permission

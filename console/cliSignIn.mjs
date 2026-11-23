@@ -39,6 +39,7 @@
 import { AsyncResource } from 'node:async_hooks';
 import crypto from 'node:crypto';
 import { isSameOrigin } from '../shared/sameOrigin.mjs';
+import agents from '../shared/agents.cjs';
 import { clientAddress, clientKey, parseTrustedProxies } from './clientAddress.mjs';
 import { PAGE_HEADERS, PAGE_STYLE } from './desktopSignIn.mjs';
 
@@ -458,13 +459,15 @@ async function readJsonBody(req) {
 /**
  * Whether `login` has saved each personal agent sign-in, for `GET /api/cli/me`'s `sessionSignIns` (setup's agent step).
  * As on My settings, a sign-in saved directly to the store also counts: refresh re-reads it, and caches the check.
- * @returns {(login: string|null) => Promise<{claude: boolean, codex: boolean}>}
+ * Grok Build, Antigravity and OpenCode count only with their own sign-in saved (shared/agents.cjs).
+ * @returns {(login: string|null) => Promise<{claude: boolean, codex: boolean, grok: boolean, antigravity: boolean, opencode: boolean}>}
  */
 export function sessionSignInsOf(userSettings) {
   return async (login) => {
     await userSettings?.refresh?.(login);
     const view = userSettings?.view(login);
-    return { claude: view?.claudeToken?.set === true, codex: view?.codexAuth?.set === true };
+    const own = Object.fromEntries(agents.OWN_SIGN_IN_AGENTS.map((id) => [id, view?.agentAuth?.[id]?.set === true]));
+    return { claude: view?.claudeToken?.set === true, codex: view?.codexAuth?.set === true, ...own };
   };
 }
 

@@ -75,7 +75,7 @@
         ],
       },
       permissionModes: ['auto', 'acceptEdits', 'plan', 'default'],
-      efforts: ['', 'low', 'medium', 'high', 'max'], modelHint: 'auto', modelRe: MODEL_NAME, reviews: false,
+      efforts: ['', 'low', 'medium', 'high', 'xhigh', 'max'], modelHint: 'auto', modelRe: MODEL_NAME, reviews: false,
       usageUrl: 'https://aistudio.google.com/usage', docsUrl: 'https://antigravity.google/docs/cli/reference/',
     },
     opencode: {
@@ -153,7 +153,7 @@
     } catch {
       throw fail(id === 'grok' ? 'paste an xAI API key (xai-…) or the contents of ~/.grok/auth.json' : 'paste the contents of ~/.local/share/opencode/auth.json');
     }
-    if (typeof json !== 'object' || json === null || Array.isArray(json) || !Object.keys(json).length) throw fail(`that is not a ${a.product} auth.json`);
+    if (typeof json !== 'object' || json === null || Array.isArray(json) || !Object.keys(json).length) throw fail(`that holds no ${a.product} sign-in: paste the whole auth.json`);
     const entries = Object.values(json);
     if (id === 'grok') {
       // A map of scope to login: each with the token Grok calls with (`key`), and a refresh token for a login.

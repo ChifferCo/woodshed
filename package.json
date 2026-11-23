@@ -42,6 +42,7 @@
     "session/missingPlugins.mjs",
     "session/ownFiles.mjs",
     "session/settingsSync.mjs",
+    "shared/agents.cjs",
     "shared/codexConfig.mjs",
     "shared/databases/engines.mjs",
     "shared/databases/index.mjs",

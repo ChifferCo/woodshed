@@ -43,6 +43,25 @@ import { gitRunner } from './moveCode.mjs';
 import { settingsCommand } from './settings.mjs';
 import { setupCommand, SETUP_USAGE } from './setup.mjs';
 import { attach, openTerminal } from './terminal.mjs';
+import agents from '../shared/agents.cjs';
+
+/**
+ * Which agents a session of the signed-in person can run, as the console said: Claude Code and Codex always, as the
+ * console from before the other agents said only those, and each other agent the console reports.
+ * @returns {Record<string, boolean>}
+ */
+export function signInsOf(said) {
+  said = said && typeof said === 'object' ? said : {};
+  return Object.fromEntries(agents.AGENT_IDS.filter((id) => id === 'claude' || id === 'codex' || Object.hasOwn(said, id)).map((id) => [id, said[id] === true]));
+}
+
+/** @returns {string}  the agents a session can run for you, and those that wait on a sign-in on My settings */
+export function agentsText(signIns) {
+  const name = (id) => agents.agent(id).product;
+  const ready = Object.keys(signIns).filter((id) => signIns[id]).map(name);
+  const not = Object.keys(signIns).filter((id) => !signIns[id]).map(name);
+  return `${ready.length ? ready.join(', ') : 'none yet'}${not.length ? ` (not yet: ${not.join(', ')}; sign in on My settings)` : ''}`;
+}
 
 export const { version: VERSION } = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 export const DEFAULT_CONSOLE = 'https://console.woodshed.run';
@@ -491,7 +510,7 @@ export async function main(argv, deps = {}) {
       emit({
         console: origin, name: name ?? null, org: org ?? null, signedIn: true, login: who ?? null, store: entry.store,
         ...(store.file ? { credentialsFile: store.file } : {}), expiresAt: about?.expiresAt ?? null, device: about?.name ?? null, hc: herdr,
-        ...(me.body.sessionSignIns ? { sessionSignIns: { claude: me.body.sessionSignIns.claude === true, codex: me.body.sessionSignIns.codex === true } } : {}),
+        ...(me.body.sessionSignIns ? { sessionSignIns: signInsOf(me.body.sessionSignIns) } : {}),
       });
       return EXIT.done;
     }
@@ -500,6 +519,7 @@ export async function main(argv, deps = {}) {
       ['Org', org ?? 'none yet: the console has no repo'],
       ['Signed in', who ? `@${who}` : 'yes (this console has no GitHub sign-in)'],
       ['Token', `in ${store.label}, until ${about?.expiresAt ? about.expiresAt.slice(0, 10) : 'unknown'}`],
+      ...(me.body.sessionSignIns ? [['Agents', agentsText(signInsOf(me.body.sessionSignIns))]] : []),
       ['Herdr', herdrText],
     ];
     for (const [label, value] of rows) say(`${`${label}:`.padEnd(11)}${value}`);

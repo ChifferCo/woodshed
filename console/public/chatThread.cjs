@@ -155,15 +155,17 @@
   // (session/sessionTranscript.mjs).
   const INTERRUPTED = /^\[Request interrupted by user[^\]]*\]$/;
 
-  // Each tool, by what it did, for the work log's line. claude's names and codex's.
+  // Each tool, by what it did, for the work log's line. claude's names and codex's; Grok Build's ACP kinds (execute, edit,
+  // read, search, fetch, delete, move); OpenCode's tools (bash, edit, write, patch, read, glob, grep, list, webfetch, task,
+  // todowrite); Antigravity's (run_command, view_file, write_to_file, replace_file_content, grep_search, …).
   const KINDS = [
-    ['command', /^(Bash|BashOutput|KillShell|shell|exec_command|local_shell|unified_exec|write_stdin)$/i],
-    ['edit', /^(Edit|MultiEdit|Write|NotebookEdit|apply_patch)$/i],
-    ['read', /^(Read|view_image|NotebookRead)$/i],
-    ['search', /^(Grep|Glob|LS|ToolSearch)$/i],
-    ['web', /^(WebFetch|WebSearch|web_search)$/i],
-    ['agent', /^(Task|Agent)$/i],
-    ['plan', /^(TodoWrite|update_plan|ExitPlanMode)$/i],
+    ['command', /^(Bash|BashOutput|KillShell|shell|exec_command|local_shell|unified_exec|write_stdin|execute|run_command|command_status|send_command_input)$/i],
+    ['edit', /^(Edit|MultiEdit|Write|NotebookEdit|apply_patch|patch|multiedit|delete|move|write_to_file|replace_file_content|multi_replace_file_content)$/i],
+    ['read', /^(Read|view_image|NotebookRead|view_file|view_file_outline|view_code_item)$/i],
+    ['search', /^(Grep|Glob|LS|ToolSearch|list|search|find_by_name|grep_search|list_dir|codebase_search)$/i],
+    ['web', /^(WebFetch|WebSearch|web_search|fetch|websearch|read_url_content|search_web)$/i],
+    ['agent', /^(Task|Agent|invoke_subagent)$/i],
+    ['plan', /^(TodoWrite|update_plan|ExitPlanMode|todoread|plan)$/i],
   ];
   const PHRASES = {
     command: (n) => `ran ${n} command${n === 1 ? '' : 's'}`,

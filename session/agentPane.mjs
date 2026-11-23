@@ -8,16 +8,22 @@
 // coding session's agent can be in Herdr, when its owner picked it on My settings (Agent terminal): a shared session, a
 // question, a review and a QA run, and the Terminal tab's shell, are in tmux always.
 
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import { paneState } from './agentState.mjs';
-import { classifyCodexPane } from './codexState.mjs';
+import { classifyAgentPane } from './paneStates.mjs';
 import { asking } from './panePrompt.mjs';
 
-// What tmux names the pane's command while claude or codex runs in it, and what hc names the program in its terminal.
-export const AGENT_NAMES = Object.freeze(['claude', 'codex']);
+const { PROCESS_NAMES } = createRequire(import.meta.url)('../shared/agents.cjs');
+
+// What tmux names the pane's command while an agent runs in it (claude, codex, grok, agy, opencode: shared/agents.cjs),
+// and what hc names the program in its terminal. tmux reads the name from the program's command line, so a wrapper in
+// session/bin that execs the agent by its full path is named as the agent.
+export const AGENT_NAMES = PROCESS_NAMES;
 // tmux's own test of the pane's command: 1 while the agent runs in it, read just before an agentOnly send types.
-export const AGENT_PANE_FORMAT = `#{||:${AGENT_NAMES.map((c) => `#{==:#{pane_current_command},${c}}`).join(',')}}`;
+// tmux's `#{||:a,b}` takes two operands, so the names are nested two at a time.
+export const AGENT_PANE_FORMAT = AGENT_NAMES.map((c) => `#{==:#{pane_current_command},${c}}`).reduceRight((rest, test) => `#{||:${test},${rest}}`);
 // The Herdr terminal's name on the session's core: names are unique among its live terminals.
 export const HC_TERMINAL = 'claude';
 
@@ -89,7 +95,7 @@ export function tmuxPane(run, target = 'claude') {
  * @param {(cmd: string, args: string[]) => Promise<{stdout: string}>} run  execFile, promisified
  * @param {{terminal?: string, bin?: string}} [where]
  */
-export function hcPane(run, { terminal = HC_TERMINAL, bin = 'hc' } = {}) {
+export function hcPane(run, { terminal = HC_TERMINAL, bin = 'hc', agent = 'claude' } = {}) {
   // Options first, then `--`, then the terminal and anything else as it is: a message that starts with a dash (a pasted
   // Markdown bullet) is the message, never one of hc's options.
   const hc = async (command, options, ...args) => JSON.parse((await run(bin, [command, ...options, '--json', '--', terminal, ...args])).stdout);
@@ -110,16 +116,18 @@ export function hcPane(run, { terminal = HC_TERMINAL, bin = 'hc' } = {}) {
      * A message, pasted and sent with its Enter, never into a prompt: not while the screen asks a person anything (a
      * question, an approval, a numbered menu: what typeMessage refuses in tmux), and only while the agent says it is idle
      * (hc's own `send --if idle`, which also refuses a blocked program and waits for a person's unsent draft in an
-     * attached client). codex sends no 7501 records, so hc never calls it idle: with no record, the screen must show the
-     * agent at its prompt.
+     * attached client). codex and the agents after it send no 7501 records, so hc never calls them idle: with no record,
+     * the screen must show the agent at its prompt, as codex's, Grok Build's and OpenCode's screens say; Antigravity's
+     * says only when it asks, so for it no prompt on screen is all that is checked.
      * @returns {Promise<{sent: true}|{sent: false, why: string, kind?: string|null}>}
      */
     async send(text) {
       try {
         const [screen, { status }] = await Promise.all([read(), get()]);
+        // Every agent's shapes, not only its own: a send that holds back too often is safe, one that answers a prompt is not.
         const kind = asking(screen);
         if (kind) return { sent: false, why: 'prompt-open', kind };
-        if (!status && classifyCodexPane(screen) !== 'done' && paneState(screen) !== 'done') return { sent: false, why: 'not-at-prompt' };
+        if (!status && !atPrompt(agent, screen)) return { sent: false, why: 'not-at-prompt' };
         await hc('send', status ? ['--if', 'idle'] : [], text);
         return { sent: true };
       } catch (err) {
@@ -138,6 +146,13 @@ export function hcPane(run, { terminal = HC_TERMINAL, bin = 'hc' } = {}) {
   };
 }
 
+// Whether the screen shows the agent at its prompt, as far as its screen can say (paneStates.mjs).
+function atPrompt(agent, screen) {
+  if (agent === 'claude' || agent === 'codex') return paneState(screen) === 'done' || classifyAgentPane('codex', screen) === 'done';
+  if (agent === 'antigravity') return true;
+  return classifyAgentPane(agent, screen) === 'done';
+}
+
 // hc's error, from `--json` on stdout or its message, as what statusd answers: the agent was not idle, or blocked.
 function refusedSend(err) {
   let kind = '';
@@ -154,6 +169,6 @@ function refusedSend(err) {
  * @param {(cmd: string, args: string[]) => Promise<{stdout: string}>} run
  * @param {{terminal?: string, bin?: string}} [opts]  terminal: WOODSHED_TERMINAL
  */
-export function agentPane(run, { terminal = process.env.WOODSHED_TERMINAL, bin = process.env.WOODSHED_HC_BIN || 'hc' } = {}) {
-  return terminal === 'herdr' ? hcPane(run, { bin }) : tmuxPane(run);
+export function agentPane(run, { terminal = process.env.WOODSHED_TERMINAL, bin = process.env.WOODSHED_HC_BIN || 'hc', agent = process.env.AGENT || 'claude' } = {}) {
+  return terminal === 'herdr' ? hcPane(run, { bin, agent }) : tmuxPane(run);
 }

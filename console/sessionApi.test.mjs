@@ -644,6 +644,52 @@ test('a private Codex session needs no Claude token, gets its owner\'s Codex sig
   assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer claude-token', body: '{}' })).status, 404, 'not a Codex session');
 });
 
+test('a private Grok Build, Antigravity or OpenCode session runs on its owner\'s own sign-in alone, and can keep a refreshed login', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'running', token: 'grok-token', owner: 'joel', options: { agent: 'grok' } },
+    { id: 'bbbbbbbb', status: 'running', token: 'none-token', owner: 'mia', options: { agent: 'opencode' } },
+    { id: 'cccccccc', status: 'running', token: 'agy-token', owner: 'joel', options: { agent: 'antigravity' } },
+    { id: 'dddddddd', status: 'running', token: 'oc-token', owner: 'joel', options: { agent: 'opencode' } },
+  ];
+  const own = {
+    grok: JSON.stringify({ scope: { key: 'at', refresh_token: 'rt', expires_at: '2026-12-01T00:00:00Z' } }),
+    antigravity: 'AIzaSyA-joel-key-0123456789abcdef',
+    opencode: JSON.stringify({ openai: { type: 'oauth', refresh: 'r', access: 'a', expires: 2_000 } }),
+  };
+  const saved = [];
+  const userSettings = {
+    claudeToken: async () => { throw new Error('never asked for a Claude token'); },
+    agentAuth: async (login, id) => (login === 'joel' ? own[id] : null),
+    setAgentAuth: async (login, id, text) => { saved.push([login, id, text]); },
+    ownFiles: async () => ({}),
+    gitIdentity: () => null,
+  };
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  const grok = await request(port, { path: '/settings', authorization: 'Bearer grok-token' });
+  assert.equal(grok.status, 200);
+  assert.deepEqual([grok.body.agentAuth, grok.body.claudeToken, grok.body.codexAuth], [own.grok, null, undefined]);
+  assert.equal((await request(port, { path: '/settings', authorization: 'Bearer agy-token' })).body.agentAuth, own.antigravity);
+  assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer none-token' }),
+    { status: 409, body: { error: '@mia has no OpenCode sign-in saved on My settings' } });
+
+  const newer = JSON.stringify({ scope: { key: 'at2', refresh_token: 'rt2', expires_at: '2026-12-02T00:00:00Z' } });
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer grok-token', body: newer })).status, 200);
+  assert.deepEqual(saved, [['joel', 'grok', newer]]);
+  const older = JSON.stringify({ openai: { type: 'oauth', refresh: 'r0', access: 'a0', expires: 1_000 } });
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer oc-token', body: older })).status, 409, 'an older login never replaces a newer one');
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer agy-token', body: 'AIza-x' })).status, 404, 'a key does not rotate');
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer none-token', body: older })).status, 409, 'no sign-in saved, nothing to replace');
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer grok-token', body: 'x'.repeat(20_001) })).status, 413);
+  assert.equal(saved.length, 1);
+});
+
 test('a session gets the token of the project it runs on', async (t) => {
   const sessions = [
     { id: 'aaaaaaaa', status: 'running', token: 'on-app', project: 'app', repo: 'acme/app' },

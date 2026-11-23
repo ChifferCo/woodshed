@@ -27,6 +27,7 @@ import {
   EXTEND_MS, EXTEND_WINDOW_MS, pauseAt, withSessionLimits,
 } from './sessions.mjs';
 import logins from './public/logins.cjs';
+import agents from '../shared/agents.cjs';
 const { findLogin, sameLogin } = logins;
 
 const CHECKPOINT_TIMEOUT_MS = 90_000;
@@ -347,7 +348,8 @@ export function createFleet({
     // So does one on a default project an admin added to a console that started with no repo, which no image holds.
     const project = projectFor(config, session);
     if (!project.default || project.clonedAtStart) env.PROJECT_REPO = project.repo;
-    if (session.options?.agent === 'codex') env.AGENT = 'codex';
+    // Claude Code is the image's default; any other agent is named (shared/agents.cjs).
+    if (agents.isAgent(session.options?.agent) && session.options.agent !== 'claude') env.AGENT = session.options.agent;
     if (session.options?.model) env.MODEL = session.options.model;
     if (session.options?.effort) env.EFFORT = session.options.effort;
     if (session.options?.permissionMode) env.PERMISSION_MODE = session.options.permissionMode;
@@ -655,6 +657,12 @@ export function createFleet({
     herdrParent = false,
   }) {
     refuseWithoutRepo(project, { kind, trigger });
+    // An agent that runs on its owner's own sign-in alone runs only in that owner's private session: a shared session,
+    // a question, a QA run and a review hold no one's sign-in (shared/agents.cjs).
+    if (!owner && agents.agent(options?.agent).signIn) {
+      console.warn('fleet: session refused, its agent needs an owner\'s own sign-in', { kind, number, trigger, agent: options.agent });
+      throw shown(`${agents.agent(options.agent).product} runs only in a My Woodshed session`);
+    }
     // A question from Slack, and a review that only reads the diff, get no databases, so they need none hosted.
     // A question from Slack, and a review that only reads the diff, get no databases, so they need none hosted; nor
     // anything else of the project's start, so a blocker does not hold them back.
@@ -1726,7 +1734,7 @@ export function createFleet({
     const on = parseWorkOn(workOn, { defaultBranch: await githubOf(project).defaultBranch?.() ?? null });
     const reviewOnly = !String(prompt ?? '').trim() && on.kind !== 'task';
     const text = String(prompt ?? '').trim();
-    const agentName = picked.agent === 'codex' ? 'Codex' : 'Claude';
+    const agentName = picked.agent === 'claude' || !picked.agent ? 'Claude' : agents.agent(picked.agent).product;
     if (!text && !reviewOnly) throw shown(`say what ${agentName} should do`);
     const options = sessionOptions(picked);
     logIfInLine(owner);
@@ -1784,7 +1792,8 @@ export function createFleet({
     logIfInLine(owner);
     update(session, {
       status: 'queued', state: null, startedAt: null, stoppedAt: null, stopReason: null, stoppedBy: null, error: null, ref: null,
-      endpoint: null, startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: session.claudeSession ?? null,
+      // Only claude reopens a conversation; every other agent starts its prompt again.
+      endpoint: null, startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: agents.agentOfSession(session) === 'claude' ? session.claudeSession ?? null : null,
       lastActiveAt: null, checkedAt: null, app: null, appServers: null, appName: null, apps: null, resumedAt: nowIso(), resumedBy: owner, queuedAt: nowIso(),
       herdrParent: herdrParent ? true : null,
       // Its pull request's watch ended when it stopped: it is watched again once statusd reports it.

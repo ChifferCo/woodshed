@@ -1,7 +1,9 @@
 // The conversation so far, for a phone to scroll through on its own (statusd's `GET /transcript`). The terminal is the
 // agent's screen, and its scrollback holds only what came since the browser attached, as terminal output. The
-// agent's own record of the conversation has it all: claude's transcript (~/.claude/projects/<repo>/<id>.jsonl) and
-// codex's rollout ($CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl). Each is read from its end and shaped the same
+// agent's own record of the conversation has it all: claude's transcript (~/.claude/projects/<repo>/<id>.jsonl),
+// codex's rollout ($CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl), Grok Build's session log
+// (~/.grok/sessions/<cwd, URL-encoded>/<id>/updates.jsonl), OpenCode's database (~/.local/share/opencode/opencode.db)
+// and Antigravity's transcript (the path its status line names, statusFile). Each is read from its end and shaped the same
 // way: what the person asked, what the agent said, and a line for each tool it ran, marked `error` when the run failed.
 // An edit carries what it changed, a small bounded diff (transcriptDiff.mjs), for the Chat to show each turn's changes.
 // Thinking and tool output are left out: the terminal shows those, and the Diff tab the whole branch. The console's Chat tab draws the
@@ -9,10 +11,11 @@
 // costs a stat, not a read.
 
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
-import { capDiffs, claudeInputDiffs, claudeResultDiffs, parsePatch, scriptPatches, shellPatch } from './transcriptDiff.mjs';
+import { capDiffs, claudeInputDiffs, claudeResultDiffs, parsePatch, scriptPatches, shellPatch, textDiff } from './transcriptDiff.mjs';
 
 // How much of the end of a transcript is read: claude's hold every tool's output, so they run to many megabytes.
 export const TAIL_BYTES = 4 * 1024 * 1024;
@@ -57,7 +60,7 @@ function toolLine(input) {
   if (Array.isArray(argv) && argv.length === 3 && /^(ba|z)?sh$/.test(argv[0]) && /^-l?c$/.test(argv[1]) && typeof argv[2] === 'string') {
     return argv[2].split('\n')[0].slice(0, 300);
   }
-  for (const key of ['description', 'command', 'cmd', 'file_path', 'path', 'pattern', 'url', 'query', 'prompt', 'skill']) {
+  for (const key of ['description', 'command', 'cmd', 'command_line', 'file_path', 'filePath', 'target_file', 'absolute_path', 'absolute_path_uri', 'path', 'pattern', 'url', 'query', 'prompt', 'skill']) {
     const value = input[key];
     if (typeof value === 'string' && value.trim()) return value.split('\n')[0].slice(0, 300);
     if (Array.isArray(value) && value.length) return value.join(' ').slice(0, 300);
@@ -392,6 +395,308 @@ export function parseCodexRollout(text, { partial = false, root } = {}) {
   return entries;
 }
 
+// ---- Grok Build: ~/.grok/sessions/<cwd>/<id>/updates.jsonl, its authoritative log. Each line is an ACP notification,
+// `{timestamp: <unix seconds>, method: 'session/update', params: {sessionId, update: {sessionUpdate, …}}}`: the person's
+// and the agent's words arrive in chunks, joined here into one entry each, and each tool as a `tool_call` that later
+// `tool_call_update`s say finished or failed. Thoughts, plans and the command list are not the conversation.
+// From xAI's grok-build source (1.0.45) and docs: not yet read from a real 1.0.92 session.
+
+const ACP_TEXT = (content) => (typeof content === 'string' ? content
+  : Array.isArray(content) ? content.map(ACP_TEXT).join('')
+    : content?.type === 'text' && typeof content.text === 'string' ? content.text : '');
+
+// An ACP tool call's diffs: its `content` items of `{type: 'diff', path, oldText, newText}`.
+function acpDiffs(content, root) {
+  const diffs = (Array.isArray(content) ? content : [])
+    .filter((c) => c?.type === 'diff')
+    .map((c) => textDiff(c.path, c.oldText, c.newText, { root }))
+    .filter(Boolean);
+  return diffs.length ? diffs : null;
+}
+
+const unixAt = (t) => (typeof t === 'number' && Number.isFinite(t) ? new Date(t < 1e12 ? t * 1000 : t).toISOString()
+  : typeof t === 'string' ? t : null);
+
+/**
+ * @param {string} text  the end of a Grok Build updates.jsonl
+ * @param {{partial?: boolean, root?: string}} [opts]
+ * @returns {Entry[]}
+ */
+export function parseGrokUpdates(text, { partial = false, root } = {}) {
+  const entries = [];
+  const tools = new Map();
+  // The entry the next chunk of the same role adds to: any other update between them starts a new one.
+  let open = null;
+  for (const r of records(text, partial)) {
+    const u = r?.params?.update;
+    if (!u || typeof u.sessionUpdate !== 'string') continue;
+    const at = unixAt(r.timestamp);
+    const kind = u.sessionUpdate;
+    if (kind === 'user_message_chunk' || kind === 'agent_message_chunk') {
+      const role = kind === 'user_message_chunk' ? 'user' : 'assistant';
+      const said = ACP_TEXT(u.content);
+      if (!said) continue;
+      if (open?.role === role) open.text += said;
+      else {
+        open = { role, text: said, at };
+        entries.push(open);
+      }
+      continue;
+    }
+    // A thought between two chunks of the reply is not the reply: it neither starts nor ends it.
+    if (kind === 'agent_thought_chunk') continue;
+    open = null;
+    if (kind === 'tool_call') {
+      const input = u.rawInput ?? null;
+      const entry = { role: 'tool', tool: String(u.kind || u.title || 'tool'), text: toolLine(input) || String(u.title ?? '').split('\n')[0].slice(0, 300), at };
+      const diffs = acpDiffs(u.content, root);
+      if (diffs) entry.diffs = diffs;
+      if (u.status === 'failed') entry.error = true;
+      if (typeof u.toolCallId === 'string') tools.set(u.toolCallId, entry);
+      entries.push(entry);
+    } else if (kind === 'tool_call_update') {
+      const entry = tools.get(u.toolCallId);
+      if (!entry) continue;
+      if (!entry.text && (u.rawInput || u.title)) entry.text = toolLine(u.rawInput) || String(u.title ?? '').split('\n')[0].slice(0, 300);
+      const diffs = acpDiffs(u.content, root);
+      if (diffs) entry.diffs = diffs;
+      if (u.status === 'failed') {
+        entry.error = true;
+        delete entry.diffs;
+      }
+    }
+    // `rewind_marker` branches the log back to an earlier turn; the record does not say in a form read here which
+    // entries it drops, so a rewound turn stays in the Chat as it was said. Plans and the command list are skipped.
+  }
+  for (const e of entries) if (e.role !== 'tool') e.text = cut(e.text.trim());
+  return entries.filter((e) => e.role === 'tool' || e.text);
+}
+
+/** @returns {string}  a folder name as Grok Build makes one from a path (Rust's urlencoding::encode) */
+export function grokFolderName(dir) {
+  return [...Buffer.from(String(dir), 'utf8')].map((b) => {
+    const c = String.fromCharCode(b);
+    return /[A-Za-z0-9\-_.~]/.test(c) ? c : `%${b.toString(16).toUpperCase().padStart(2, '0')}`;
+  }).join('');
+}
+
+// The newest updates.jsonl of the checkout's sessions: its folder by name, or by the `.cwd` a long path's folder holds.
+// With none for the checkout, the newest of any, as codex's rollouts are read.
+async function newestGrokUpdates(home, root) {
+  const base = path.join(home, '.grok', 'sessions');
+  const dirs = await fs.readdir(base).catch(() => []);
+  const mine = [];
+  for (const d of dirs) {
+    if (root && d === grokFolderName(root)) mine.push(d);
+    else if (root) {
+      const cwd = await fs.readFile(path.join(base, d, '.cwd'), 'utf8').catch(() => null);
+      if (cwd?.trim() === root) mine.push(d);
+    }
+  }
+  const newestOf = async (list) => {
+    let best = null;
+    for (const d of list) {
+      for (const id of await fs.readdir(path.join(base, d)).catch(() => [])) {
+        const file = path.join(base, d, id, 'updates.jsonl');
+        const stat = await fs.stat(file).catch(() => null);
+        if (stat?.isFile() && (!best || stat.mtimeMs > best.stat.mtimeMs)) best = { file, stat };
+      }
+    }
+    return best;
+  };
+  return (await newestOf(mine)) ?? (mine.length ? null : await newestOf(dirs));
+}
+
+// ---- OpenCode: its SQLite database, ~/.local/share/opencode/opencode.db (OpenCode 1.19, tables session, message and
+// part, each row's `data` JSON without its ids). Read with node's own SQLite, read-only, newest root session of the
+// checkout first. A tool part's `state` says whether it ran (`completed`) or failed (`error`); an edit's input holds its
+// old and new text, a write its content, a patch its `*** Begin Patch` text.
+
+// The most messages read back from the end of a conversation.
+const OPENCODE_MESSAGES = 400;
+
+let sqliteModule;
+// node:sqlite warns that it is experimental on first load: statusd's log is not the place for it.
+async function sqlite() {
+  if (sqliteModule !== undefined) return sqliteModule;
+  const emit = process.emitWarning;
+  process.emitWarning = function (warning, ...rest) {
+    const type = typeof rest[0] === 'string' ? rest[0] : rest[0]?.type;
+    if (type === 'ExperimentalWarning' && /SQLite/i.test(String(warning))) return undefined;
+    return emit.call(this, warning, ...rest);
+  };
+  try {
+    sqliteModule = await import('node:sqlite');
+  } catch {
+    sqliteModule = null;
+  } finally {
+    process.emitWarning = emit;
+  }
+  return sqliteModule;
+}
+
+/** @returns {string}  where OpenCode keeps its database for this home */
+export function openCodeDb(home, env = process.env) {
+  return path.join(env.XDG_DATA_HOME || path.join(home, '.local', 'share'), 'opencode', 'opencode.db');
+}
+
+const parseJson = (text) => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
+const msAt = (t) => (typeof t === 'number' && Number.isFinite(t) ? new Date(t).toISOString() : null);
+
+// An OpenCode tool call's diffs: an edit's old and new text, a write's content, a patch's text.
+function openCodeDiffs(tool, input, root) {
+  if (!input || typeof input !== 'object') return null;
+  if (typeof input.patchText === 'string') {
+    const diffs = parsePatch(input.patchText, { root });
+    return diffs.length ? diffs : null;
+  }
+  if (tool === 'edit' && typeof input.oldString === 'string') {
+    const d = textDiff(input.filePath, input.oldString, input.newString, { root });
+    return d ? [d] : null;
+  }
+  if (tool === 'write' && typeof input.content === 'string') {
+    const d = textDiff(input.filePath, null, input.content, { root });
+    return d ? [d] : null;
+  }
+  return null;
+}
+
+/**
+ * The entries of OpenCode's messages and their parts, oldest first.
+ * @param {{role: string, data: object, at: number|null, parts: object[]}[]} messages
+ * @returns {Entry[]}
+ */
+export function openCodeEntries(messages, { root } = {}) {
+  const entries = [];
+  for (const m of messages) {
+    const at = msAt(m.data?.time?.created ?? m.at);
+    if (m.data?.role === 'user') {
+      const said = m.parts.filter((p) => p?.type === 'text' && !p.synthetic && !p.ignored && typeof p.text === 'string').map((p) => p.text).join('\n\n').trim();
+      if (said) entries.push({ role: 'user', text: cut(said), at });
+      continue;
+    }
+    if (m.data?.role !== 'assistant') continue;
+    for (const p of m.parts) {
+      const pat = msAt(p?.time?.start ?? p?.state?.time?.start) ?? at;
+      if (p?.type === 'text' && typeof p.text === 'string' && p.text.trim() && !p.synthetic) {
+        entries.push({ role: 'assistant', text: cut(p.text.trim()), at: pat });
+      } else if (p?.type === 'tool' && p.state) {
+        const input = p.state.input ?? null;
+        const entry = { role: 'tool', tool: String(p.tool || 'tool'), text: toolLine(input) || String(p.state.title ?? '').slice(0, 300), at: pat };
+        if (p.state.status === 'error') entry.error = true;
+        else {
+          const diffs = openCodeDiffs(entry.tool, input, root);
+          if (diffs) entry.diffs = diffs;
+        }
+        entries.push(entry);
+      }
+    }
+    // Esc ends a turn with the assistant message's error: the same note claude writes.
+    if (m.data?.error?.name === 'MessageAbortedError') entries.push({ role: 'user', text: '[Request interrupted by user]', at });
+  }
+  return entries;
+}
+
+/**
+ * The newest OpenCode conversation of the checkout, from its database.
+ * @returns {Promise<{entries: Entry[], partial: boolean, writtenAt: number}|{unchanged: true, writtenAt: number}|null>}
+ *   null: no database, no node:sqlite, or no conversation in the checkout yet
+ */
+export async function readOpenCode({ dbFile, root, since = null }) {
+  if (!(await fs.stat(dbFile).catch(() => null))) return null;
+  const mod = await sqlite();
+  if (!mod?.DatabaseSync) return null;
+  let db;
+  try {
+    db = new mod.DatabaseSync(dbFile, { readOnly: true });
+    const session = db.prepare(`SELECT id, time_updated FROM session WHERE directory = ? AND parent_id IS NULL AND time_archived IS NULL
+      ORDER BY time_updated DESC LIMIT 1`).get(root);
+    if (!session) return null;
+    const latest = db.prepare('SELECT MAX(time_updated) AS t FROM part WHERE session_id = ?').get(session.id)?.t ?? 0;
+    const writtenAt = Math.max(Number(session.time_updated) || 0, Number(latest) || 0);
+    if (since !== null && writtenAt === since) return { unchanged: true, writtenAt };
+    const rows = db.prepare('SELECT id, time_created, data FROM message WHERE session_id = ? ORDER BY time_created DESC, id DESC LIMIT ?')
+      .all(session.id, OPENCODE_MESSAGES + 1);
+    const partial = rows.length > OPENCODE_MESSAGES;
+    const kept = rows.slice(0, OPENCODE_MESSAGES).reverse();
+    const byId = new Map(kept.map((r) => [r.id, { data: parseJson(r.data) ?? {}, at: Number(r.time_created) || null, parts: [] }]));
+    if (kept.length) {
+      const parts = db.prepare('SELECT message_id, data FROM part WHERE session_id = ? AND time_created >= ? ORDER BY time_created, id')
+        .all(session.id, Number(kept[0].time_created) || 0);
+      for (const p of parts) byId.get(p.message_id)?.parts.push(parseJson(p.data) ?? {});
+    }
+    return { entries: openCodeEntries([...byId.values()], { root }), partial, writtenAt };
+  } catch {
+    // A database mid-migration or of another shape: nothing to say yet.
+    return null;
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // Already closed.
+    }
+  }
+}
+
+// ---- Antigravity: the transcript its status line names (`transcript_path`, which statusd's status line command keeps
+// in statusFile). Its records are reconstructed from Google's docs and third-party notes, not read from a real session:
+// one step a line, a USER_INPUT, a PLANNER_RESPONSE with the reply, and tool steps named for their tool. Each field is
+// looked for under the names those notes give, and a line of no known shape is skipped.
+
+const textOf = (v) => (typeof v === 'string' ? v
+  : Array.isArray(v) ? v.map(textOf).filter(Boolean).join('\n')
+    : v && typeof v === 'object' ? textOf(v.text ?? v.content ?? v.response ?? v.message ?? v.items ?? '') : '');
+
+const SKIPPED_STEPS = /^(CHECKPOINT|EPHEMERAL_MESSAGE|CONVERSATION_HISTORY|ERROR_MESSAGE|SYSTEM.*|THINKING|MEMORY.*|KNOWLEDGE.*)$/;
+
+/**
+ * @param {string} text  the end of an Antigravity transcript.jsonl
+ * @returns {Entry[]}
+ */
+export function parseAntigravityTranscript(text, { partial = false, root } = {}) {
+  const entries = [];
+  for (const r of records(text, partial)) {
+    if (!r || typeof r !== 'object') continue;
+    const type = String(r.type ?? r.step_type ?? r.stepType ?? '').replace(/^CORTEX_STEP_TYPE_/, '').toUpperCase();
+    const at = unixAt(r.timestamp ?? r.created_at ?? r.createdAt ?? r.time);
+    if (type === 'USER_INPUT') {
+      const said = textOf(r.user_input ?? r.userInput ?? r.content ?? r.text).trim();
+      if (said) entries.push({ role: 'user', text: cut(said), at });
+    } else if (type === 'PLANNER_RESPONSE') {
+      const body = r.planner_response ?? r.plannerResponse ?? r;
+      const said = textOf(body.content ?? body.response ?? body.text).trim();
+      if (said) entries.push({ role: 'assistant', text: cut(said), at });
+    } else if (type && !SKIPPED_STEPS.test(type)) {
+      const tool = String(r.tool ?? r.tool_name ?? r.toolName ?? type.toLowerCase());
+      const input = r.args ?? r.arguments ?? r.input ?? r.tool_input ?? r[type.toLowerCase()] ?? null;
+      const entry = { role: 'tool', tool, text: toolLine(input), at };
+      const status = String(r.status ?? '');
+      if (/error|fail/i.test(status) || r.error) entry.error = true;
+      else if (Array.isArray(r.content)) {
+        const diffs = acpDiffs(r.content, root);
+        if (diffs) entry.diffs = diffs;
+      }
+      entries.push(entry);
+    }
+  }
+  return entries;
+}
+
+async function antigravityTranscript(statusFile) {
+  const status = parseJson(await fs.readFile(statusFile, 'utf8').catch(() => ''));
+  const file = status?.transcript_path ?? status?.transcriptPath;
+  if (typeof file !== 'string' || !path.isAbsolute(file)) return null;
+  const stat = await fs.stat(file).catch(() => null);
+  return stat?.isFile() ? { file, stat } : null;
+}
+
 // The end of a file, and whether it was cut.
 async function tail(file, size) {
   const handle = await fs.open(file);
@@ -450,19 +755,29 @@ async function newestRollout(codexHome) {
 
 /**
  * The newest conversation of the session's agent, newest entries last.
- * @param {{agent: 'claude'|'codex', claudeDir: string, codexHome: string, root?: string, limit?: number, since?: number,
- *          writtenFrom?: number, resume?: string|null}} opts
- *   claudeDir: claude's transcript folder for the repo. root: the repo, which edits' paths are given relative to.
+ * @param {{agent: string, claudeDir: string, codexHome: string, home?: string, statusFile?: string, root?: string,
+ *          limit?: number, since?: number, writtenFrom?: number, resume?: string|null}} opts
+ *   agent: claude, codex, grok, antigravity or opencode (shared/agents.cjs). claudeDir: claude's transcript folder for
+ *   the repo. home: the home the other agents keep theirs in. statusFile: where Antigravity's status line left the path of
+ *   its transcript. root: the repo, which edits' paths are given relative to, and whose conversations are read.
  *   since: the writtenAt of the caller's last answer. writtenFrom, resume: which of claude's are this session's
  *   (ownClaudeTranscript)
  * @returns {Promise<{agent: string, entries: Entry[], partial: boolean, writtenAt: number|null}|{agent: string, unchanged: true, writtenAt: number}>}
  *   partial: older entries were left out, by the read or by the limit. unchanged: the newest record is still the
  *   one written at `since`, so the caller's entries stand
  */
-export async function readSessionTranscript({ agent, claudeDir, codexHome, root, limit = MAX_ENTRIES, since = null, writtenFrom = 0, resume = null }) {
-  const newest = agent === 'codex'
-    ? await newestRollout(codexHome)
-    : await ownClaudeTranscript(claudeDir, { writtenFrom, resume });
+export async function readSessionTranscript({ agent, claudeDir, codexHome, home = os.homedir(), statusFile = '/tmp/woodshed-agent-status.json', root, limit = MAX_ENTRIES, since = null, writtenFrom = 0, resume = null }) {
+  const max = Math.max(1, Math.min(MAX_ENTRIES, Math.trunc(Number(limit)) || MAX_ENTRIES));
+  if (agent === 'opencode') {
+    const read = await readOpenCode({ dbFile: openCodeDb(home), root, since });
+    if (!read) return { agent, entries: [], partial: false, writtenAt: null };
+    if (read.unchanged) return { agent, unchanged: true, writtenAt: read.writtenAt };
+    return { agent, entries: capDiffs(read.entries.slice(-max)), partial: read.partial || read.entries.length > max, writtenAt: read.writtenAt };
+  }
+  const newest = agent === 'codex' ? await newestRollout(codexHome)
+    : agent === 'grok' ? await newestGrokUpdates(home, root)
+      : agent === 'antigravity' ? await antigravityTranscript(statusFile)
+        : await ownClaudeTranscript(claudeDir, { writtenFrom, resume });
   if (!newest) return { agent, entries: [], partial: false, writtenAt: null };
   if (since !== null && newest.stat.mtimeMs === since) return { agent, unchanged: true, writtenAt: since };
   let text;
@@ -480,8 +795,8 @@ export async function readSessionTranscript({ agent, claudeDir, codexHome, root,
   } else {
     ({ text, partial } = await tail(newest.file, newest.stat.size));
   }
-  const all = agent === 'codex' ? parseCodexRollout(text, { partial, root }) : parseClaudeTranscript(text, { partial, root });
-  const max = Math.max(1, Math.min(MAX_ENTRIES, Math.trunc(Number(limit)) || MAX_ENTRIES));
+  const parse = { codex: parseCodexRollout, grok: parseGrokUpdates, antigravity: parseAntigravityTranscript }[agent] ?? parseClaudeTranscript;
+  const all = parse(text, { partial, root });
   return {
     agent,
     // The newest edits keep their hunks within the answer's bound; older ones their files and counts.

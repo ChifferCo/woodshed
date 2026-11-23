@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { readFileSync } from 'node:fs';
+
 import { SILENT_TURN_MS, STARTING_MS, codexState, herdrState, qaState, stateReader, withHerdr } from './agentState.mjs';
 
 const NOW = 10 * 60_000;
@@ -82,4 +84,38 @@ test('a QA run is read from its marker, whatever the terminal', () => {
 test('codex with nothing on its pane is starting for its first minutes, then not running', () => {
   assert.deepEqual(codexState(input({ paneText: SHELL, now: 1000 })), { state: 'starting', source: 'pane' });
   assert.deepEqual(codexState(input({ paneText: SHELL, now: STARTING_MS + 1 })), { state: 'not-running', source: 'pane' });
+});
+
+test('Grok Build: its hooks, its pane for an approval and before the first hook, and whether it runs at all', () => {
+  const grok = stateReader({ agent: 'grok' });
+  const pane = (name) => readFileSync(new URL(`../shared/__fixtures__/${name}`, import.meta.url), 'utf8');
+  assert.deepEqual(grok(input({ paneText: SHELL, agentOpen: false, startedAt: NOW - 1000 })), { state: 'starting', source: 'pane' });
+  assert.deepEqual(grok(input({ paneText: SHELL, agentOpen: false, startedAt: 0, now: STARTING_MS + 1 })), { state: 'not-running', source: 'pane' });
+  assert.deepEqual(grok(input({ paneText: pane('pane-grok-working.txt'), agentOpen: true })), { state: 'working', source: 'pane' });
+  assert.deepEqual(grok(input({ paneText: pane('pane-grok-idle.txt'), agentOpen: true, hook: hook('working') })), { state: 'working', source: 'hook' });
+  assert.deepEqual(grok(input({ paneText: pane('pane-grok-approval.txt'), agentOpen: true, hook: hook('working') })), { state: 'needs-you', source: 'pane' });
+  // An earlier Grok's last hook, before this statusd started, says nothing.
+  assert.deepEqual(grok(input({ paneText: 'grok', agentOpen: true, hook: hook('working'), startedAt: NOW })), { state: 'done', source: 'pane' });
+});
+
+test('Antigravity: its status line\'s word once it was written, its pane until then', () => {
+  const agy = stateReader({ agent: 'antigravity' });
+  const line = (over) => ({ agent_state: 'idle', tool_confirmation_pending: false, at: NOW - 1000, ...over });
+  assert.deepEqual(agy(input({ paneText: 'agy', agentOpen: true, statusLine: line({ agent_state: 'tool_use' }) })), { state: 'working', source: 'statusline' });
+  assert.deepEqual(agy(input({ paneText: 'agy', agentOpen: true, statusLine: line({ tool_confirmation_pending: true }) })), { state: 'needs-you', source: 'statusline' });
+  assert.deepEqual(agy(input({ paneText: 'agy', agentOpen: true, statusLine: line() })), { state: 'done', source: 'statusline' });
+  assert.deepEqual(agy(input({ paneText: 'agy', agentOpen: true, statusLine: line({ at: -1 }), startedAt: 0 })), { state: 'done', source: 'pane' }, 'an older one is not this run\'s');
+  assert.deepEqual(agy(input({ paneText: SHELL, agentOpen: false, statusLine: line(), startedAt: NOW - 1000 })), { state: 'starting', source: 'pane' });
+  // What agy 1.5.14 gave its status line at its prompt, captured in the session image: no tool_confirmation_pending.
+  const captured = JSON.parse(readFileSync(new URL('../shared/__fixtures__/antigravity-statusline-idle.json', import.meta.url), 'utf8'));
+  assert.deepEqual(agy(input({ paneText: 'agy', agentOpen: true, statusLine: { ...captured, at: NOW - 1000 } })), { state: 'done', source: 'statusline' });
+});
+
+test('OpenCode: its pane, while it runs', () => {
+  const oc = stateReader({ agent: 'opencode' });
+  const pane = (name) => readFileSync(new URL(`../shared/__fixtures__/${name}`, import.meta.url), 'utf8');
+  assert.deepEqual(oc(input({ paneText: pane('pane-opencode-working.txt'), agentOpen: true })), { state: 'working', source: 'pane' });
+  assert.deepEqual(oc(input({ paneText: pane('pane-opencode-approval.txt'), agentOpen: true })), { state: 'needs-you', source: 'pane' });
+  assert.deepEqual(oc(input({ paneText: pane('pane-opencode-idle.txt'), agentOpen: true })), { state: 'done', source: 'pane' });
+  assert.deepEqual(oc(input({ paneText: SHELL, agentOpen: false, now: STARTING_MS + 1 })), { state: 'not-running', source: 'pane' });
 });

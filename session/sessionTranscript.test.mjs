@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
-import { MAX_DECOMPRESSED_BYTES, MAX_TEXT, ownClaudeTranscript, parseClaudeTranscript, parseCodexRollout, readSessionTranscript } from './sessionTranscript.mjs';
+import { MAX_DECOMPRESSED_BYTES, MAX_TEXT, grokFolderName, openCodeDb, ownClaudeTranscript, parseAntigravityTranscript, parseClaudeTranscript, parseCodexRollout, parseGrokUpdates, readSessionTranscript } from './sessionTranscript.mjs';
 
 const line = (o) => JSON.stringify(o);
 const at = '2026-11-12T10:00:00.000Z';
@@ -428,4 +428,108 @@ test('a prompt that quotes a command tag in its prose is the prompt, not the com
   const user = (content) => line({ type: 'user', timestamp: at, message: { role: 'user', content } });
   const entries = parseClaudeTranscript(user('Explain <command-name>/help</command-name> in the transcript format.'));
   assert.deepEqual(entries.map((e) => e.text), ['Explain <command-name>/help</command-name> in the transcript format.']);
+});
+
+// ---- Grok Build, OpenCode and Antigravity. Their fixtures are made from each agent's documented record shapes (Grok
+// Build's ACP updates.jsonl, OpenCode 1.19's SQLite tables, Antigravity's steps as third-party notes give them): none
+// is a capture from a real session yet.
+
+const FIXTURES = new URL('../shared/__fixtures__/', import.meta.url);
+const fixture = (name) => fs.readFileSync(new URL(name, FIXTURES), 'utf8');
+
+test('a Grok Build log joins its chunks, keeps tools with their failures and edits, and skips thoughts and plans', () => {
+  const entries = parseGrokUpdates(fixture('transcript-grok-updates.jsonl'), { root: '/work/app' });
+  assert.deepEqual(entries.map((e) => [e.role, e.tool ?? null, e.text, e.error ?? false]), [
+    ['user', null, 'Fix the login bug', false],
+    ['assistant', null, 'Looking at it.', false],
+    ['tool', 'execute', 'npm test', true],
+    ['tool', 'edit', '/work/app/src/login.js', false],
+    ['assistant', null, 'Fixed: the check was inverted.', false],
+  ]);
+  assert.equal(entries[0].at, new Date(1763900001 * 1000).toISOString());
+  assert.equal(entries[3].diffs[0].path, 'src/login.js');
+  assert.deepEqual(entries[3].diffs[0].hunks[0].lines, ['-const ok = false;', '+const ok = true;']);
+});
+
+test('Grok Build folders are named as its Rust urlencoding names them', () => {
+  assert.equal(grokFolderName('/work/my app~'), '%2Fwork%2Fmy%20app~');
+});
+
+test('the newest Grok Build session of the checkout is read, not another folder\'s', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-home-'));
+  const mine = path.join(home, '.grok/sessions', grokFolderName('/work/app'), 'a');
+  const other = path.join(home, '.grok/sessions', grokFolderName('/elsewhere'), 'b');
+  fs.mkdirSync(mine, { recursive: true });
+  fs.mkdirSync(other, { recursive: true });
+  fs.writeFileSync(path.join(mine, 'updates.jsonl'), fixture('transcript-grok-updates.jsonl'));
+  fs.writeFileSync(path.join(other, 'updates.jsonl'), `${JSON.stringify({ timestamp: 1, params: { update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'not this' } } } })}\n`);
+  const later = new Date(Date.now() + 60_000);
+  fs.utimesSync(path.join(other, 'updates.jsonl'), later, later);
+  const read = await readSessionTranscript({ agent: 'grok', home, root: '/work/app' });
+  assert.equal(read.entries[0].text, 'Fix the login bug');
+  const again = await readSessionTranscript({ agent: 'grok', home, root: '/work/app', since: read.writtenAt });
+  assert.equal(again.unchanged, true);
+});
+
+test('Antigravity\'s steps, as reconstructed, read as what was asked, said and run', async () => {
+  const entries = parseAntigravityTranscript(fixture('transcript-antigravity.jsonl'));
+  assert.deepEqual(entries.map((e) => [e.role, e.tool ?? null, e.text, e.error ?? false]), [
+    ['user', null, 'Add a health route', false],
+    ['assistant', null, 'I will add GET /health.', false],
+    ['tool', 'run_command', 'npm test', false],
+    ['tool', 'view_file', 'file:///work/app/server.js', true],
+    ['assistant', null, 'Done.', false],
+  ]);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-'));
+  const statusFile = path.join(dir, 'status.json');
+  assert.deepEqual((await readSessionTranscript({ agent: 'antigravity', statusFile })).entries, []);
+  fs.writeFileSync(path.join(dir, 'transcript.jsonl'), fixture('transcript-antigravity.jsonl'));
+  fs.writeFileSync(statusFile, JSON.stringify({ agent_state: 'idle', transcript_path: path.join(dir, 'transcript.jsonl') }));
+  assert.equal((await readSessionTranscript({ agent: 'antigravity', statusFile })).entries.length, 5);
+});
+
+// OpenCode 1.19's tables (packages/opencode core/src/session/sql.ts), with the columns read here.
+const OPENCODE_SCHEMA = `
+CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, parent_id TEXT, directory TEXT, title TEXT,
+  time_created INTEGER, time_updated INTEGER, time_archived INTEGER);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);`;
+
+test('an OpenCode conversation is read from its database: words, tools, failures, edits and an interrupt', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'oc-home-'));
+  const file = openCodeDb(home, {});
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const db = new DatabaseSync(file);
+  db.exec(OPENCODE_SCHEMA);
+  const t = 1763900000000;
+  db.prepare('INSERT INTO session VALUES (?,?,?,?,?,?,?,?)').run('ses_old', 'p', null, '/work/app', 'old', t - 9000, t - 9000, null);
+  db.prepare('INSERT INTO session VALUES (?,?,?,?,?,?,?,?)').run('ses_new', 'p', null, '/work/app', 'new', t, t + 50, null);
+  db.prepare('INSERT INTO session VALUES (?,?,?,?,?,?,?,?)').run('ses_child', 'p', 'ses_new', '/work/app', 'sub', t, t + 99, null);
+  const msg = db.prepare('INSERT INTO message VALUES (?,?,?,?,?)');
+  const part = db.prepare('INSERT INTO part VALUES (?,?,?,?,?,?)');
+  msg.run('msg_1', 'ses_new', t, t, JSON.stringify({ role: 'user', time: { created: t } }));
+  part.run('prt_1', 'msg_1', 'ses_new', t, t, JSON.stringify({ type: 'text', text: 'Fix the login bug' }));
+  part.run('prt_2', 'msg_1', 'ses_new', t + 1, t + 1, JSON.stringify({ type: 'text', text: 'context', synthetic: true }));
+  msg.run('msg_2', 'ses_new', t + 10, t + 10, JSON.stringify({ role: 'assistant', time: { created: t + 10 } }));
+  part.run('prt_3', 'msg_2', 'ses_new', t + 11, t + 11, JSON.stringify({ type: 'reasoning', text: 'hmm' }));
+  part.run('prt_4', 'msg_2', 'ses_new', t + 12, t + 12, JSON.stringify({ type: 'text', text: 'Looking at it.' }));
+  part.run('prt_5', 'msg_2', 'ses_new', t + 13, t + 13, JSON.stringify({ type: 'tool', tool: 'bash', callID: 'c1', state: { status: 'error', input: { command: 'npm test' }, error: 'exit 1' } }));
+  part.run('prt_6', 'msg_2', 'ses_new', t + 14, t + 14, JSON.stringify({ type: 'tool', tool: 'edit', callID: 'c2', state: { status: 'completed', input: { filePath: '/work/app/src/login.js', oldString: 'a', newString: 'b' }, output: '' } }));
+  part.run('prt_7', 'msg_2', 'ses_new', t + 15, t + 50, JSON.stringify({ type: 'step-finish', reason: 'stop' }));
+  msg.run('msg_3', 'ses_new', t + 20, t + 20, JSON.stringify({ role: 'assistant', time: { created: t + 20 }, error: { name: 'MessageAbortedError', data: {} } }));
+  db.close();
+  const read = await readSessionTranscript({ agent: 'opencode', home, root: '/work/app' });
+  assert.deepEqual(read.entries.map((e) => [e.role, e.tool ?? null, e.text, e.error ?? false]), [
+    ['user', null, 'Fix the login bug', false],
+    ['assistant', null, 'Looking at it.', false],
+    ['tool', 'bash', 'npm test', true],
+    ['tool', 'edit', '/work/app/src/login.js', false],
+    ['user', null, '[Request interrupted by user]', false],
+  ]);
+  assert.equal(read.entries[3].diffs[0].path, 'src/login.js');
+  assert.equal(read.writtenAt, t + 50);
+  assert.equal((await readSessionTranscript({ agent: 'opencode', home, root: '/work/app', since: t + 50 })).unchanged, true);
+  assert.deepEqual((await readSessionTranscript({ agent: 'opencode', home, root: '/elsewhere' })).entries, []);
+  assert.deepEqual((await readSessionTranscript({ agent: 'opencode', home: fs.mkdtempSync(path.join(os.tmpdir(), 'oc-none-')), root: '/work/app' })).entries, []);
 });

@@ -8,6 +8,9 @@
 // on a Chat tab that works, over a stand-in codex and claude behind the real statusd, where tmux is on the PATH
 // (devChatSession.mjs): a message is answered with a few tool calls and a reply, one that says "fail" has a tool fail,
 // and one that says "ask" puts the codex session at Needs you until Enter in its TUI tab.
+// /s/62000c0d and /s/0c0de0c0 are the same over a stand-in Grok Build and OpenCode, writing each one's own record (its
+// updates.jsonl, its SQLite database) for the real statusd to read; /s/a9a9a9a9 is a running Antigravity session, with no
+// stand-in behind it.
 // /s/c1a0de02 is the same claude, started from a Claude home that holds an earlier session's conversation, as a private
 // session started while another runs is: its Chat stays empty until it is sent a message.
 // DEV_CONSOLE_APP_PORTS=7701-7703 puts session apps on those ports of localhost, in place of `<id>.apps.localhost`.
@@ -82,10 +85,15 @@ const CODEX_CHAT_ID = 'c0de5e55';
 const CLAUDE_CHAT_ID = 'c1a0de00';
 const codexChat = await startDevChatSession({ id: CODEX_CHAT_ID, ...tokensOf(CODEX_CHAT_ID), agent: 'codex', nextPath: [twoApps.binDir, basePath].join(path.delimiter) });
 const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, ...tokensOf(CLAUDE_CHAT_ID), agent: 'claude', nextPath: [codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
+// Grok Build and OpenCode, private sessions of @local's: their records in their own shapes (devChatAgent.mjs).
+const GROK_CHAT_ID = '62000c0d';
+const OPENCODE_CHAT_ID = '0c0de0c0';
+const grokChat = await startDevChatSession({ id: GROK_CHAT_ID, ...tokensOf(GROK_CHAT_ID), agent: 'grok', nextPath: [claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
+const openCodeChat = await startDevChatSession({ id: OPENCODE_CHAT_ID, ...tokensOf(OPENCODE_CHAT_ID), agent: 'opencode', nextPath: [grokChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
 // A private session just started while another runs: its Claude home, restored from its owner's, holds an earlier
 // session's conversation, and its own claude has written nothing yet. Its Chat is empty until it is sent a message.
 const NEW_CHAT_ID = 'c1a0de02';
-const newChat = await startDevChatSession({ id: NEW_CHAT_ID, ...tokensOf(NEW_CHAT_ID), agent: 'claude', restoredHome: true, nextPath: [claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
+const newChat = await startDevChatSession({ id: NEW_CHAT_ID, ...tokensOf(NEW_CHAT_ID), agent: 'claude', restoredHome: true, nextPath: [openCodeChat?.binDir, grokChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
 // A real agent runs on this machine's credentials, so it is never served behind the session's app name: Open app and
 // app shares reach that console, which has no sign-in. Run it on a port of its own instead, which only this machine
 // reaches: DEV_CONSOLE_REAL_CLAUDE=1 node console/bin/devConsole.mjs 7700.
@@ -287,6 +295,20 @@ const sessions = [
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
     ref: claudeChat.ref, endpoint: { host: '127.0.0.1', statusPort: claudeChat.port, termPort: claudeChat.port },
   })] : []),
+  // A stand-in Grok Build and OpenCode, each read from its pane and its own record, as statusd reads the real ones.
+  ...(grokChat ? [session(GROK_CHAT_ID, null, 'Back off webhook retries on Grok Build', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'grok' }, status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null,
+    ref: grokChat.ref, endpoint: { host: '127.0.0.1', statusPort: grokChat.port, termPort: grokChat.port },
+  })] : []),
+  ...(openCodeChat ? [session(OPENCODE_CHAT_ID, null, 'Back off webhook retries on OpenCode', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'opencode' }, status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null,
+    ref: openCodeChat.ref, endpoint: { host: '127.0.0.1', statusPort: openCodeChat.port, termPort: openCodeChat.port },
+  })] : []),
+  // Antigravity, running, with no container behind it: its card, pane bar and menus, never a live Chat.
+  session('a9a9a9a9', null, 'Add a health route on Antigravity', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'antigravity', permissionMode: 'auto' }, status: 'running', state: 'working',
+    stoppedAt: null, stopReason: null, prUrl: null,
+  }),
   ...(newChat ? [session(NEW_CHAT_ID, null, 'A new session beside a running one', {
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null,
     ref: newChat.ref, endpoint: { host: '127.0.0.1', statusPort: newChat.port, termPort: newChat.port },
@@ -492,7 +514,7 @@ function startConsole() {
   child = spawn(process.execPath, [server], {
     stdio: 'inherit',
     env: {
-      ...inherited, PATH: [devGhDir, realCodex?.binDir, realClaude?.binDir, newChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
+      ...inherited, PATH: [devGhDir, realCodex?.binDir, realClaude?.binDir, newChat?.binDir, openCodeChat?.binDir, grokChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
       WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev',
       // DEV_CONSOLE_APP_PORTS (such as 7701-7703) puts session apps on ports of localhost instead, as a console reached
       // through Tailscale's serve has them (appPorts.mjs).
@@ -536,6 +558,8 @@ function startConsole() {
     liveTerminal?.close();
     codexChat?.close();
     claudeChat?.close();
+    grokChat?.close();
+    openCodeChat?.close();
     newChat?.close();
     realClaude?.close();
     realCodex?.close();

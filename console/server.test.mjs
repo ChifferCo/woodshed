@@ -1001,17 +1001,62 @@ test('New session offers only the agents set up to run, and a Codex start needs 
   const as = { cookie: 'woodshed_session=mia-dev' };
   const agents = async () => JSON.parse(await getBody(port, '/api/my', as)).agents;
 
-  assert.deepEqual(await agents(), { claude: true, codex: false }, 'no Codex sign-in and no team key');
+  const none = { grok: false, antigravity: false, opencode: false };
+  assert.deepEqual(await agents(), { claude: true, codex: false, ...none }, 'no Codex sign-in and no team key');
   assert.deepEqual(await post(port, '/api/my/sessions', { prompt: 'go', agent: 'codex' }, as),
     { status: 409, body: { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' } });
   teamKey = 'sk-team';
-  assert.deepEqual(await agents(), { claude: true, codex: true }, 'the team key runs Codex');
+  assert.deepEqual(await agents(), { claude: true, codex: true, ...none }, 'the team key runs Codex');
   assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'codex' }, as)).status, 201);
   teamKey = null;
   await post(port, '/api/my/codex-auth', { value: 'sk-own' }, as);
-  assert.deepEqual(await agents(), { claude: true, codex: true }, 'their own sign-in runs Codex');
+  assert.deepEqual(await agents(), { claude: true, codex: true, ...none }, 'their own sign-in runs Codex');
   claude.delete('mia-dev');
-  assert.deepEqual(await agents(), { claude: false, codex: true }, 'no Claude token, no Claude');
+  assert.deepEqual(await agents(), { claude: false, codex: true, ...none }, 'no Claude token, no Claude');
+});
+
+test('Grok Build, Antigravity and OpenCode are offered and start only on their owner\'s own sign-in', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const started = [];
+  const stopped = { id: '0a1b2c3d', owner: 'mia-dev', status: 'stopped', options: { agent: 'grok' } };
+  const fleet = {
+    sessions: () => [], find: (id) => (id === stopped.id ? stopped : null),
+    startPrivate: async (args) => { started.push(args); return { id: '0a1b2c3e', owner: args.owner, token: 'secret', status: 'queued' }; },
+    resumePrivate: async () => stopped,
+  };
+  const own = new Map();
+  const userSettings = {
+    refresh: async () => {},
+    view: () => ({
+      claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: true, available: true,
+      agentAuth: Object.fromEntries(['grok', 'antigravity', 'opencode'].map((id) => [id, { set: own.has(id), savedAt: null }])),
+    }),
+    setAgentAuth: async (login, id, value) => { own.set(id, value); },
+    removeAgentAuth: async (login, id) => { own.delete(id); },
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet, auth, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+  const me = async () => JSON.parse(await getBody(port, '/api/my', as));
+
+  assert.deepEqual((await me()).agents, { claude: false, codex: false, grok: false, antigravity: false, opencode: false });
+  assert.deepEqual(await post(port, '/api/my/sessions', { prompt: 'go', agent: 'grok' }, as),
+    { status: 409, body: { error: 'save your Grok Build sign-in on My settings first' } });
+  assert.deepEqual(await post(port, `/api/my/sessions/${stopped.id}/resume`, {}, as),
+    { status: 409, body: { error: 'save your Grok Build sign-in on My settings first' } }, 'a resume needs it too');
+  const saved = await post(port, '/api/my/agent-auth/grok', { value: 'xai-own-key-0123456789' }, as);
+  assert.equal(saved.status, 200);
+  assert.deepEqual([saved.body.agents.grok, saved.body.agentAuth.grok.set], [true, true]);
+  assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'grok', model: 'grok-build' }, as)).status, 201, 'no Claude token needed');
+  assert.equal(started[0].agent, 'grok');
+  assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'opencode' }, as)).status, 409);
+  for (const id of ['codex', 'claude', 'gemini']) assert.equal((await post(port, `/api/my/agent-auth/${id}`, { value: 'x' }, as)).status, 404, id);
+  assert.equal((await post(port, '/api/my/agent-auth/grok/remove', {}, as)).body.agents.grok, false);
+  assert.equal((await post(port, '/api/my/agent-auth/grok', { value: 'x' }, { ...as, origin: 'https://evil.example' })).status, 403);
 });
 
 test('the first Claude token starts your own databases, and New session waits for them', async (t) => {

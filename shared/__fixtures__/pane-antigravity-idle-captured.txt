@@ -1,0 +1,40 @@
+/opt/woodshed/session/bin/agy --mode auto --add-dir /tmp/uploads
+node@session:/tmp/repo$ /opt/woodshed/session/bin/agy --mode auto --add-dir /tmp/uploads
+
+      ▄▀▀▄        Antigravity CLI 1.5.14
+     ▀▀▀▀▀▀       Gemini API key
+    ▀▀▀▀▀▀▀▀      Gemini 3.1 Pro (Low)
+   ▄▀▀    ▀▀▄     /tmp/repo
+  ▄▀▀      ▀▀▄
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Gemini 3.1 Pro (Low) · idle
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

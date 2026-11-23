@@ -58,6 +58,7 @@ test('removing everything deletes the person\'s secrets and their record, and le
   const store = { state: {}, save() {} };
   const settings = createUserSettings({ store, secrets });
   await settings.setClaudeToken('octocat', 'sk-ant-joel');
+  await settings.setAgentAuth('octocat', 'antigravity', 'AIzaSyA-joel-key-0123456789abcdef');
   await settings.setClaudeToken('mia-dev', 'sk-ant-mia');
   await settings.removeAll('octocat');
   assert.deepEqual([...secrets.values.keys()], ['users/mia-dev/claude-token']);
@@ -172,6 +173,47 @@ test('a Codex sign-in is an API key or a codex auth.json, kept under the person\
   assert.equal(settings.view('octocat').codexAuth.set, false);
 });
 
+test('Grok Build, Antigravity and OpenCode sign-ins are each kept under the person\'s login, never in state.json', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const secrets = fakeSecrets();
+  const store = { state: {}, save() {} };
+  const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-11-23T10:00:00Z') });
+  const grok = JSON.stringify({ 'https://auth.x.ai::b1a00492': { key: 'grok-at-1', refresh_token: 'grok-rt-1', auth_mode: 'oidc' } });
+  const opencode = JSON.stringify({ anthropic: { type: 'api', key: 'sk-ant-api-1' } });
+  await settings.setAgentAuth('Octocat', 'grok', ` ${grok}\n`);
+  await settings.setAgentAuth('octocat', 'antigravity', 'AIzaSyA-octo-key-0123456789abcdef');
+  await settings.setAgentAuth('octocat', 'opencode', opencode);
+  assert.deepEqual([...secrets.values.keys()], ['users/octocat/grok-auth', 'users/octocat/antigravity-auth', 'users/octocat/opencode-auth']);
+  assert.equal(await settings.agentAuth('octocat', 'grok'), grok);
+  assert.equal(await settings.agentAuth('octocat', 'opencode'), opencode);
+  assert.deepEqual(settings.view('octocat').agentAuth, {
+    grok: { set: true, savedAt: '2026-11-23T10:00:00.000Z' },
+    antigravity: { set: true, savedAt: '2026-11-23T10:00:00.000Z' },
+    opencode: { set: true, savedAt: '2026-11-23T10:00:00.000Z' },
+  });
+  assert.equal(/grok-rt|AIza|sk-ant/.test(JSON.stringify(store.state)), false, 'never the value');
+  assert.equal(await settings.agentAuth('mia-dev', 'grok'), null);
+  await settings.removeAgentAuth('octocat', 'grok');
+  assert.equal(await settings.agentAuth('octocat', 'grok'), null);
+  assert.deepEqual([settings.view('octocat').agentAuth.grok.set, settings.view('octocat').agentAuth.opencode.set], [false, true]);
+  await assert.rejects(settings.setAgentAuth('octocat', 'codex', 'sk-x'), /no own sign-in for codex/);
+  await assert.rejects(settings.setAgentAuth('octocat', 'antigravity', 'not a key hunter2'), (err) => err.shown && !err.message.includes('hunter2'));
+  await assert.rejects(settings.setAgentAuth('octocat', 'opencode', '{"x":{"type":"magic"}}'), /OpenCode auth.json/);
+});
+
+test('an own sign-in written straight into the store counts as set, as a Claude token does', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const secrets = fakeSecrets();
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets, now: () => 1_000_000 });
+  secrets.values.set('users/mia-dev/opencode-auth', '{"openai":{"type":"api","key":"sk-x"}}');
+  await settings.refresh('mia-dev', { force: true });
+  assert.deepEqual(settings.view('mia-dev').agentAuth.opencode.set, true);
+  assert.deepEqual(settings.view('mia-dev').agentAuth.grok.set, false);
+  secrets.values.delete('users/mia-dev/opencode-auth');
+  await settings.refresh('mia-dev', { force: true });
+  assert.deepEqual(settings.view('mia-dev').agentAuth.opencode.set, false);
+});
+
 test('a Codex sign-in is checked, and the error never repeats it', () => {
   assert.equal(checkCodexAuth(' sk-proj-abc '), 'sk-proj-abc');
   assert.equal(checkCodexAuth('{"OPENAI_API_KEY":"sk-x"}'), '{"OPENAI_API_KEY":"sk-x"}');
@@ -234,7 +276,7 @@ test('a store that fails to answer changes nothing about what is set, and is not
   await settings.refresh('mia-dev');
   assert.equal(settings.view('mia-dev').claudeToken.set, true);
   await settings.refresh('mia-dev');
-  assert.equal(reads, 2, 'one refresh, its two reads');
+  assert.equal(reads, 5, 'one refresh, its five reads: Claude, Codex, Grok, Antigravity and OpenCode');
 });
 
 test('with no token saved, page loads inside the minute ask the store once', async () => {
@@ -246,9 +288,9 @@ test('with no token saved, page loads inside the minute ask the store once', asy
     await settings.refresh('mia-dev');
     clock += 5_000;
   }
-  assert.equal(reads, 2, 'one refresh in the first minute, its claude-token and codex-auth reads');
+  assert.equal(reads, 5, 'one refresh in the first minute, one read for each agent\'s sign-in');
   await settings.refresh('mia-dev');
-  assert.equal(reads, 4, 'and one more once the minute is up');
+  assert.equal(reads, 10, 'and one more once the minute is up');
 });
 
 test('the own-files request body limit follows the store\'s limit, and never drops below 160 KB', () => {

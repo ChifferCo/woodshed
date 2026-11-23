@@ -751,6 +751,19 @@ answering, the menus are your last list read, or else codex's built-in list (`BU
 --bundled` of the image's codex), and a line under them says so. `CODEX_CLIENT_VERSION` follows the image's
 `CODEX_VERSION`, which `codexModels.test.mjs` checks; refresh `BUILT_IN` with it.
 
+**Grok Build**, **Antigravity** and **OpenCode** are on the Agent menu too (`shared/agents.cjs`), each only for someone
+whose own sign-in for it is saved on My settings: they run on nothing else, since the console holds no team key or proxy
+for them. The sign-in is `users/<login>/grok-auth` (an xAI key, `xai-…`, or `~/.grok/auth.json` from `grok login`),
+`antigravity-auth` (a Gemini API key, `AIza…`: Antigravity's Google sign-in keeps its login in the machine's keyring,
+which a session cannot carry) or `opencode-auth` (`~/.local/share/opencode/auth.json` from `opencode auth login`), saved
+with `POST /api/my/agent-auth/<agent>` and removed with `…/remove`. It is handed to that person's private sessions of
+that agent alone (`/settings`'s `agentAuth`), never to a shared session, a question, QA or a review: so they review
+nothing, and a resume needs it saved as a start does. Grok's and OpenCode's logins rotate their refresh token at each
+use, so a session sends the refreshed one back at stop (`POST /agent-auth`), kept unless it runs out before the saved
+one. Their **Model** is a name their own `--model` takes, blank for the agent's default (OpenCode's is
+`provider/model`); **Effort** and **Permissions** offer what each one's command line has (`efforts` and
+`permissionModes` in the registry). None of them gets the console's MCP servers yet.
+
 Under the token, the switch **Also use it for shared sessions I start from
 GitHub** (on by default, and only with a token saved) runs the shared
 sessions you start, with the label or a `/woodshed` comment, on your plan too.
@@ -807,7 +820,7 @@ server (`mcpServers.mjs`, `checkServer`):
   console can lock a session down: the docker launcher, or AWS with `prod_mcp`'s guarded network, and a session API and
   egress proxy address. Otherwise the page and the API say why.
 - `shared` (ordinary ones only): shared sessions and questions from Slack get it too. A QA run or a review never gets
-  any, since it runs a pull request's code, nor does a Codex session yet.
+  any, since it runs a pull request's code, nor does a Codex, Grok Build, Antigravity or OpenCode session yet.
 - `auth`, what the relay adds to each call: `oidc`, a five-minute token the console signs for `audience` (below);
   `header`, a header (`header`, such as `authorization` or `x-api-key`) whose value is kept in the secret store as
   `mcp-servers/<name>/header`, written once on the card or with `/header` and never read back; or `none`.
@@ -2085,8 +2098,8 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   (`href`) in place of Replace keys. Core has no install flow of its own: whatever `href` leads to writes the same
   `slack-bot-token` the dialog does. Without the hook the dialog opens on the own app's steps.
 
-A Claude token or Codex sign-in written straight into the secret store, as `users/<login>/claude-token` or
-`codex-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
+A Claude token, Codex sign-in or own sign-in for another agent written straight into the secret store, as
+`users/<login>/claude-token`, `codex-auth`, `grok-auth`, `antigravity-auth` or `opencode-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
 
 ## Slack
 
