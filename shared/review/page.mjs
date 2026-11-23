@@ -1778,7 +1778,7 @@ ${DARK_PALETTE}
     document.addEventListener('visibilitychange', function onBack() {
       if (document.hidden || !state.session || !state.livePr) return;
       loadViewed().then(render).catch(function ignore() {});
-      loadDraft().then(render).catch(function ignore() {});
+      loadDraft().then(function drawn() { render(); followPullRequest(); }).catch(function ignore() {});
     });
 
     // The Q&A can be emptied from another tab (Discard, Re-review), and a
@@ -1802,9 +1802,69 @@ ${DARK_PALETTE}
       clearPick();
     });
 
+    // --- keeping up with the pull request -------------------------------------
+    //
+    // A push to the pull request moves its head on GitHub, and the review read the commit before it. The page notices
+    // (the draft's headSha, read on load, on coming back to the tab and every WATCH_MS while it is shown) and takes the
+    // review again itself, as Re-review would: a reader should not have to spot the sentence and press the button.
+    // Once per head: a take that did not reach it (GitHub behind the session, a pull refused) is not tried again
+    // until GitHub moves once more, so the page never loops on a paid analysis. A refused pull is not a reason to stop
+    // following: the next head GitHub has, once the session sorted the branch out, gets its try.
+    var WATCH_MS = 60000;
+    var watchTimer = null;
+    var followedSha = null;
+    // The note's Re-review, set each time the note is drawn: takeAgain(auto).
+    var reReviewNow = null;
+    // GitHub's comments changed while the reader was busy: drawn at the first tick they are not.
+    var draftUndrawn = false;
+
+    function headMovedOnGitHub() {
+      return !!(draft.headSha && state.headSha && draft.headSha !== state.headSha);
+    }
+
+    function followPullRequest() {
+      if (!headMovedOnGitHub() || followedSha === draft.headSha || !reReviewNow) return;
+      followedSha = draft.headSha;
+      reReviewNow(true);
+    }
+
+    // Someone mid-sentence or mid-question loses it to a redraw, so what GitHub said is kept and drawn later.
+    function readerBusy() {
+      var tag = document.activeElement && document.activeElement.tagName;
+      if (tag === 'TEXTAREA' || tag === 'INPUT') return true;
+      if (picked || ask.openAnchor()) return true;
+      var open = document.querySelector('dialog[open]');
+      return !!open;
+    }
+
+    function watchPullRequest() {
+      clearTimeout(watchTimer);
+      watchTimer = setTimeout(async function tick() {
+        watchPullRequest();
+        if (document.hidden || !state.session || !state.livePr) return;
+        var before = JSON.stringify(draft);
+        try {
+          await loadDraft();
+        } catch (e) {
+          return;
+        }
+        if (headMovedOnGitHub() && followedSha !== draft.headSha) {
+          render();
+          followPullRequest();
+        } else if (JSON.stringify(draft) !== before || draftUndrawn) {
+          draftUndrawn = readerBusy();
+          if (!draftUndrawn) render();
+        }
+      }, WATCH_MS);
+    }
+
     async function loadDraft() {
-      draft = { prId: null, headSha: null, reviewId: null, description: null, comments: [], threads: [], outdated: 0, said: [], aiReviews: [] };
-      if (!state.session || !state.livePr) return;
+      if (!state.session || !state.livePr) {
+        draft = { prId: null, headSha: null, reviewId: null, description: null, comments: [], threads: [], outdated: 0, said: [], aiReviews: [] };
+        return;
+      }
+      // The draft on screen stays until GitHub's answer replaces it: the minute's check would otherwise leave a redraw
+      // in that second with no comments drawn.
       var got = await api('GET', '/reviews/' + state.session + '/comments');
       draft = {
         prId: got.prId || null,
@@ -4169,13 +4229,21 @@ ${DARK_PALETTE}
         live.insertBefore(offer, again);
       }
 
-      again.addEventListener('click', function onAgain() {
+      // auto is the page following the pull request on its own (followPullRequest), not a press: a worktree review
+      // then asks to be taken again only if the commit moved, and an unmoved one says nothing and offers nothing.
+      function takeAgain(auto) {
         again.disabled = true;
-        again.textContent = 'reading\\u2026';
+        again.textContent = auto ? 'new commits, reading\\u2026' : 'reading\\u2026';
         if (note) { note.remove(); note = null; }
         if (offer) { offer.remove(); offer = null; }
-        api('POST', '/reviews/' + state.session + opts.path, {})
+        var follow = auto && !opts.path ? '?follow=1' : '';
+        api('POST', '/reviews/' + state.session + opts.path + follow, {})
           .then(function (data) {
+            if (data && data.unchanged && auto) {
+              again.disabled = false;
+              again.textContent = 'Re-review';
+              return;
+            }
             // No new commits: nothing was rebuilt and no run was paid for, so
             // reloading would redraw the same page and read as a button that
             // did nothing. Say so, and offer the other thing instead.
@@ -4193,7 +4261,9 @@ ${DARK_PALETTE}
           .catch(function (err) {
             say('bad', err && err.message ? err.message : 'failed');
           });
-      });
+      }
+      again.addEventListener('click', function onAgain() { takeAgain(false); });
+      reReviewNow = takeAgain;
       live.appendChild(again);
 
       var discard = el('button', 'quiet', 'Discard');
@@ -4896,6 +4966,12 @@ ${DARK_PALETTE}
       function send(mode, button) {
         var text = area.value.trim();
         if (!text) return close();
+        // The lines are this diff's: on another commit GitHub would put the comment on whatever is there now.
+        if (draft.headSha && state.headSha && draft.headSha !== state.headSha) {
+          problem.textContent = 'The pull request has new commits, and the review is being taken again. '
+            + 'Your comment is kept here: send it once the new diff is on screen.';
+          return;
+        }
         button.disabled = true;
         problem.textContent = '';
         api('POST', '/reviews/' + state.session + '/comments', {
@@ -6072,7 +6148,9 @@ ${DARK_PALETTE}
         .then(function settled() {
           draftLoading = false;
           render();
+          followPullRequest();
         });
+      watchPullRequest();
       if (state.status === 'running' || state.status === 'queued') schedulePoll();
     }
 
