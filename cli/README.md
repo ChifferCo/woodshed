@@ -249,9 +249,13 @@ a repo whose default branch's project file chooses another runner for its review
 
 `woodshed review <id>` opens one of your My Woodshed sessions' review full-screen, the review the console's Review tab
 shows (`shared/review`, in the session). `123`, `#123` or a pull request's URL open the session of yours that opened
-it, your running one first. A bare number on more than one of your sessions' repos is refused (give the URL), and so is
-a pull request whose session's review now posts to another one, such as one that replaced it: a verdict or a merge
-would land there, so open that session by its id instead. A paused one is resumed first, as `session connect` does. It draws, in the page's order:
+it, your running one first. A bare number on more than one of your sessions' repos is refused (give the URL). A session
+with more than one pull request has a review of each: the branch checked out is reviewed from its working tree (against
+its pull request's base, so one stacked on another branch shows only its own change), and each other pull request it
+opened from GitHub's head of it, beside the checkout, which it never touches. `woodshed review <id>` opens the checkout's;
+a pull request by number or URL opens its own, and `--json` lists the others in `otherPullRequests`. A session from
+before a review of each pull request reviews only its checkout, and a pull request that is not its branch's is refused
+there. A paused one is resumed first, as `session connect` does. It draws, in the page's order:
 
 - **The header**: the title (the pull request's own once there is one), its branch, the pull request's state, verdict
   and checks, the commit, `+`/`−`, what was read (the working tree as of when, or the pull request at which commit),

@@ -311,6 +311,10 @@ first, each a Discussion `saidbox` whose head is a keyboard disclosure, with eac
 asked about it under it. A resolved or outdated finding is dashed and labelled, never faded, so its text keeps 4.5:1.
 Its **Ask** buttons are quiet, like the Q&A's, never orange.
 
+A session with more than one pull request has a review of each: the review switch (`components/ReviewSwitch`), a quiet
+row above the title, only with two or more, lists them as mono pills, the one on screen in `ink` with no link and the
+others links in `slate`, never orange.
+
 Its tab bar ends with **Submit review**, then, for an approved pull request, either **Squash and merge** or the merge
 hint (`components/MergeHint`): an Octicons info icon whose tip says why merging waits. The bar holds controls, never a
 sentence, and no tab or button wraps its label: when they do not all fit on one row, the controls move to a row of

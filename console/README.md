@@ -154,8 +154,18 @@ and no Discussion tab, and the session refuses a GitHub write called directly.
 Read-only means GitHub only: anyone who can see a shared session can still start
 its analysis, ask and chat, which spend its Claude.
 
+A session with more than one pull request has a review of each. The checkout's, `claude-<id>`, is of the branch checked
+out now; each other pull request the session opened has its own, `claude-<id>-pr<n>`, taken from GitHub's head of it
+into a detached worktree under `/tmp/woodshed-review-worktrees`, so the checkout and its branches are never touched,
+with its own analysis, Q&A, comments, verdict and merge, which go to that pull request. **Pull requests** above the
+title links each; asked for the one checked out, the page opens the checkout's. The proxy names the session's pull
+requests on its own repo to statusd (`x-woodshed-pulls`, from the session's `prUrls`), and statusd opens no review of a
+pull request it did not name (`review: refused, not one of the session's pull requests`); a review of another one logs
+`review: pull request review ensured` with the number.
+
 What the page does, from the shed's own review code:
-- **The diff** is the checkout against its merge base with the default branch, with
+- **The diff** is the checkout against its merge base with the default branch (with the base of its pull request
+  instead, when it has one open on another branch, so a stacked one shows only its own change), with
   everything uncommitted and untracked (as `.gitignore` allows), read through a
   scratch index so the session's own is left alone. **Read again** reads it
   afresh.
