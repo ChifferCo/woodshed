@@ -10,6 +10,8 @@ const repo = 'acme/app';
 const globals = ['--console', origin, '--json'];
 const noBrowser = [...globals, '--no-browser'];
 const help = (commands) => ({ code: 0, stdout: commands.map((command) => `  ${command}     help`).join('\n') });
+// The last entry before setup's closing `finished` one, which every run that ends with 0 has.
+const lastEntry = (events) => events.findLast((event) => event.step !== 'finished');
 const result = (code, ...events) => ({ code, stdout: events.map((event) => JSON.stringify(event)).join('\n') });
 
 function fake({
@@ -80,7 +82,7 @@ test('setup shows repo choices without asking when --yes is set even on a termin
   const after = await invoke('--yes');
   assert.equal(after.code, 2);
   assert.equal(after.questions.length, 0);
-  assert.deepEqual(after.events.at(-1).repos, [{ repo, added: true }, { repo: 'acme/lib', added: false }]);
+  assert.deepEqual(lastEntry(after.events).repos, [{ repo, added: true }, { repo: 'acme/lib', added: false }]);
   assert.deepEqual(after.calls.at(-1), ['repo', 'list']);
 });
 
@@ -93,8 +95,8 @@ test('setup skips repos already added and stops at the GitHub App install link',
   const after = await invoke('--yes', '--repo', repo, '--repo', 'acme/lib');
   assert.equal(after.code, 2);
   assert.deepEqual(after.calls.slice(2), [['repo', 'list'], ['repo', 'add', 'acme/lib']]);
-  assert.equal(after.events.at(-1).url, url);
-  assert.ok(after.events.at(-1).message.includes(`--repo ${repo} --repo acme/lib`));
+  assert.equal(lastEntry(after.events).url, url);
+  assert.ok(lastEntry(after.events).message.includes(`--repo ${repo} --repo acme/lib`));
 });
 
 test('setup does not treat a repo refusal as a browser handoff', async () => {
@@ -104,7 +106,7 @@ test('setup does not treat a repo refusal as a browser handoff', async () => {
   } });
   const after = await invoke('--yes', '--repo', repo);
   assert.equal(after.code, 3);
-  assert.equal(after.events.at(-1).message, 'Only an admin can add repos.');
+  assert.equal(lastEntry(after.events).message, 'Only an admin can add repos.');
 });
 
 test('setup opens My settings for a missing session sign-in and respects --no-browser', async () => {
@@ -113,8 +115,8 @@ test('setup opens My settings for a missing session sign-in and respects --no-br
     const after = await invoke('--yes');
     assert.equal(after.code, 2);
     assert.deepEqual(after.opened, browser ? [`${origin}/settings#claude`] : [], 'opens My settings at the first row to fill');
-    assert.equal(after.events.at(-1).url, `${origin}/settings#claude`);
-    assert.equal(after.events.at(-1).step, 'agent');
+    assert.equal(lastEntry(after.events).url, `${origin}/settings#claude`);
+    assert.equal(lastEntry(after.events).step, 'agent');
   }
 });
 
@@ -125,7 +127,7 @@ test('the agent sign-in handoff keeps interactive repo choices in order', async 
   } });
   const after = await invoke();
   assert.equal(after.code, EXIT.waiting);
-  assert.match(after.events.at(-1).message, /rerun setup with --repo acme\/lib --repo acme\/app/);
+  assert.match(lastEntry(after.events).message, /rerun setup with --repo acme\/lib --repo acme\/app/);
 });
 
 test('setup checks each repo\'s review with no checkout or pull request, and tells the person the tag', async () => {
@@ -179,8 +181,8 @@ test('setup passes through reviewer App readiness and its install link', async (
   } });
   const after = await invoke('--yes', '--repo', repo);
   assert.equal(after.code, 2);
-  assert.equal(after.events.at(-1).url, url);
-  assert.match(after.events.at(-1).message, /An owner installs the reviewer App/);
+  assert.equal(lastEntry(after.events).url, url);
+  assert.match(lastEntry(after.events).message, /An owner installs the reviewer App/);
 });
 
 test('setup skips already enabled reviews, applies a changed personal choice and starts the session with hc', async () => {
@@ -202,7 +204,7 @@ test('setup skips already enabled reviews, applies a changed personal choice and
     ['config', 'list'], ['config', 'set', 'reviews', 'both'], ['config', 'get', 'terminal'], ['session', 'watch', '--herdr', '--add'], ['session', 'list'],
     ['session', 'new', '--herdr', '--repo', repo, '--agent', 'claude', '--', '-v is broken'],
   ]);
-  assert.equal(after.events.at(-1).url, url);
+  assert.equal(lastEntry(after.events).url, url);
 });
 
 test('setup skips subcommands absent from this build and launches normally without hc using the saved agent', async () => {
@@ -215,7 +217,7 @@ test('setup skips subcommands absent from this build and launches normally witho
   assert.equal(after.code, 2);
   assert.deepEqual(after.events.filter((event) => event.status === 'skipped').map((event) => event.step), ['repos', 'repo-review', 'review-choice', 'pr-reviews', 'terminal']);
   assert.deepEqual(after.calls.at(-1), ['session', 'new', '--repo', repo, '--agent', 'codex', '--', 'Fix it.']);
-  assert.equal(after.events.at(-1).url, `${origin}/s/12345678`);
+  assert.equal(lastEntry(after.events).url, `${origin}/s/12345678`);
 });
 
 test('setup does not start another environment on rerun', async () => {
@@ -226,8 +228,8 @@ test('setup does not start another environment on rerun', async () => {
   const after = await invoke('--yes', '--repo', repo, '--prompt', 'Fix it.', '--reviews', 'codex');
   assert.equal(after.code, 0);
   assert.deepEqual(after.calls.slice(-3), [['config', 'list'], ['config', 'get', 'terminal'], ['session', 'list']]);
-  assert.match(after.events.at(-1).message, /already have a session/);
-  assert.match(after.events.at(-1).message, /woodshed session new/);
+  assert.match(lastEntry(after.events).message, /already have a session/);
+  assert.match(lastEntry(after.events).message, /woodshed session new/);
 });
 
 test('without repo selection, setup asks before reusing a session from a previous default repo', async () => {
@@ -239,8 +241,8 @@ test('without repo selection, setup asks before reusing a session from a previou
   } });
   const after = await invoke('--yes', '--reviews', 'codex', '--prompt', 'Fix the new repo.');
   assert.equal(after.code, EXIT.waiting);
-  assert.match(after.events.at(-1).message, /--repo owner\/name/);
-  assert.equal(after.events.at(-1).url, undefined);
+  assert.match(lastEntry(after.events).message, /--repo owner\/name/);
+  assert.equal(lastEntry(after.events).url, undefined);
   assert.deepEqual(after.calls.at(-1), ['session', 'list']);
   const next = await invoke('--yes', '--repo', 'acme/new', '--reviews', 'codex', '--prompt', 'Fix the new repo.');
   assert.equal(next.code, EXIT.done);
@@ -255,7 +257,7 @@ test('a connection failure after launch gives the command to reconnect to that s
   } });
   const after = await invoke('--yes', '--skip-reviews', '--repo', repo, '--prompt', 'Fix the redirect.');
   assert.equal(after.code, 1);
-  const last = after.events.at(-1);
+  const last = lastEntry(after.events);
   assert.match(last.message, /Could not connect/);
   assert.equal(last.url, session.url);
   assert.equal(last.retry, `woodshed session herdr 12345678 --console "${origin}"`);
@@ -268,8 +270,8 @@ test('setup in agent mode asks for the reviewer choice when config is available'
   const after = await invoke('--yes', '--no-session');
   assert.equal(after.code, 2);
   assert.equal(after.questions.length, 0);
-  assert.equal(after.events.at(-1).step, 'review-choice');
-  assert.match(after.events.at(-1).message, /Current choice: default/);
+  assert.equal(lastEntry(after.events).step, 'review-choice');
+  assert.match(lastEntry(after.events).message, /Current choice: default/);
 });
 
 test('setup asks on a terminal and can keep personal choices and skip starting a session', async () => {
@@ -280,8 +282,9 @@ test('setup asks on a terminal and can keep personal choices and skip starting a
   } });
   const after = await invoke();
   assert.equal(after.code, 0);
-  assert.match(after.lines[1], /Repos on https:\/\/console\.example: acme\/app \(added\)/);
-  assert.match(after.lines.at(-1), /^\[skipped\]/);
+  assert.ok(after.lines.some((line) => /^Repos on https:\/\/console\.example: acme\/app \(added\)/.test(line)));
+  assert.match(after.lines.at(-3), /^\[skipped\] You chose to finish without starting a session/);
+  assert.equal(after.lines.at(-1), '[done] Setup is finished. Run woodshed setup again any time to change a choice.');
   assert.equal(after.questions.length, 4);
   assert.match(after.questions[1], /Who should review your pull requests/);
   assert.match(after.questions[2], /Herdr or tmux.*Enter keeps tmux/);
@@ -380,15 +383,15 @@ test('setup can start a regular session when an older console has no config endp
   assert.deepEqual(after.calls.at(-1), ['session', 'new', '--repo', repo, '--agent', 'claude', '--', 'Fix the redirect.']);
   const explicit = await invoke('--yes', '--terminal', 'herdr', '--skip-reviews', '--no-session');
   assert.equal(explicit.code, EXIT.waiting);
-  assert.match(explicit.events.at(-1).message, /Choose herdr on My settings.*without --terminal/);
+  assert.match(lastEntry(explicit.events).message, /Choose herdr on My settings.*without --terminal/);
 });
 
 test('a first coding session is optional: with no prompt setup finishes and says how to start one', async () => {
   const { invoke } = fake({ answers: { 'session list': result(0, { sessions: [] }) } });
   const after = await invoke('--yes', '--skip-reviews');
   assert.equal(after.code, EXIT.done);
-  assert.equal(after.events.at(-1).status, 'skipped');
-  assert.match(after.events.at(-1).message, /optional.*session new --herdr.*--prompt/);
+  assert.equal(lastEntry(after.events).status, 'skipped');
+  assert.match(lastEntry(after.events).message, /optional.*session new --herdr.*--prompt/);
   assert.ok(!after.calls.some(([group]) => group === 'session'), 'no session list read for a session nobody asked for');
 });
 
@@ -396,7 +399,7 @@ test('setup asks for both Claude Code and Codex, and names how to get each sign-
   const { invoke } = fake({ answers: { status: result(0, { ...ready, sessionSignIns: { claude: false, codex: false } }) } });
   const after = await invoke('--yes', '--repo', repo);
   assert.equal(after.code, EXIT.waiting);
-  const last = after.events.at(-1);
+  const last = lastEntry(after.events);
   assert.equal(last.step, 'agent');
   assert.deepEqual(last.missing, ['claude', 'codex']);
   assert.match(last.message, /Connect Claude Code and Codex on My settings: with both connected, your pull requests get reviews from both/);
@@ -413,8 +416,8 @@ test('setup asks for the one agent missing, and not for the other when the perso
   const claudeOnly = { status: result(0, { ...ready, sessionSignIns: { claude: true, codex: false } }) };
   const both = await fake({ answers: claudeOnly }).invoke('--yes', '--repo', repo, '--no-session', '--skip-reviews');
   assert.equal(both.code, EXIT.waiting);
-  assert.deepEqual(both.events.at(-1).missing, ['codex']);
-  assert.doesNotMatch(both.events.at(-1).message, /claude setup-token/);
+  assert.deepEqual(lastEntry(both.events).missing, ['codex']);
+  assert.doesNotMatch(lastEntry(both.events).message, /claude setup-token/);
   const one = await fake({ answers: claudeOnly }).invoke('--yes', '--repo', repo, '--agent', 'claude', '--no-session', '--skip-reviews');
   assert.equal(one.code, EXIT.done);
   const agent = one.events.find((event) => event.step === 'agent');
@@ -427,12 +430,12 @@ test('on a terminal, setup lets the person answer that they use only one agent',
   const only = await fake({ tty: true, input: ['claude'], answers: codexMissing }).invoke('--repo', repo, '--skip-reviews', '--no-session');
   assert.equal(only.code, EXIT.done);
   assert.match(only.questions[0], /Press Enter for both, or type claude or codex/);
-  assert.match(only.lines[0], /with both connected, your pull requests get reviews from both\. Claude Code is connected/);
+  assert.match(only.lines.find((line) => line.startsWith('Connect ')), /with both connected, your pull requests get reviews from both\. Claude Code is connected/);
   const claudeMissing = { status: result(0, { ...ready, sessionSignIns: { claude: false, codex: true } }) };
   const missing = await fake({ tty: true, input: ['claude'], answers: claudeMissing }).invoke('--repo', repo);
   assert.equal(missing.code, EXIT.waiting);
-  assert.match(missing.events.at(-1).message, /Connect Claude Code on My settings\.\nClaude Code:\n {2}1\. In another terminal, run: claude setup-token[^]*rerun setup with --repo acme\/app --agent claude/);
-  assert.doesNotMatch(missing.events.at(-1).message, /Codex/);
+  assert.match(lastEntry(missing.events).message, /Connect Claude Code on My settings\.\nClaude Code:\n {2}1\. In another terminal, run: claude setup-token[^]*rerun setup with --repo acme\/app --agent claude/);
+  assert.doesNotMatch(lastEntry(missing.events).message, /Codex/);
 });
 
 test('on a terminal, setup walks through connecting each agent and goes on once the console has it', async () => {
@@ -465,8 +468,8 @@ test('on a terminal, skip stops setup at the agent with every step still to do',
   const { invoke } = fake({ tty: true, input: ['', 'skip'], answers: { status: result(0, { ...ready, sessionSignIns: { claude: false, codex: false } }) } });
   const after = await invoke('--repo', repo);
   assert.equal(after.code, EXIT.waiting);
-  assert.deepEqual(after.events.at(-1).missing, ['claude', 'codex']);
-  assert.match(after.events.at(-1).message, /Claude Code:\n[^]*Codex:\n/);
+  assert.deepEqual(lastEntry(after.events).missing, ['claude', 'codex']);
+  assert.match(lastEntry(after.events).message, /Claude Code:\n[^]*Codex:\n/);
 });
 
 const pull = (number, more = {}) => ({ number, title: `Change ${number}`, draft: false, url: `https://github.com/${repo}/pull/${number}`, ...more });
@@ -490,7 +493,7 @@ test('with --yes, setup reviews the open pull requests updated last, and ends wi
   assert.match(step.message, new RegExp(`^Reviews on acme/app: #9 ${origin}/s/00000000, #7`));
   assert.match(step.message, /The 5 updated last; --review-prs all reviews every one/);
   assert.match(step.message, /a review starts on your next one when its last commit's subject ends with \[woodshed-review\] \(a Woodshed session adds it itself/);
-  const last = after.events.at(-1);
+  const last = lastEntry(after.events);
   assert.equal(last.step, 'reviews');
   assert.match(last.message, /^Your reviews: acme\/app#9 https:\/\/console\.example\/s\/00000000/);
 });
@@ -510,8 +513,8 @@ test('in agent mode setup lists the pull requests and asks for --review-prs', as
   const { invoke } = fake({ commands: ['review pulls|start'], answers: { 'review pulls': pullsOn([pull(9)]) } });
   const after = await invoke('--repo', repo, '--no-session');
   assert.equal(after.code, EXIT.waiting);
-  assert.equal(after.events.at(-1).step, 'pr-reviews');
-  assert.match(after.events.at(-1).message, /--review-prs all, none, or their numbers\. Yours: #9 Change 9/);
+  assert.equal(lastEntry(after.events).step, 'pr-reviews');
+  assert.match(lastEntry(after.events).message, /--review-prs all, none, or their numbers\. Yours: #9 Change 9/);
   const all = await fake({ commands: ['review pulls|start'], answers: { 'review pulls': pullsOn([pull(9), pull(8, { draft: true })]), 'review start': startedFor([9]) } })
     .invoke('--repo', repo, '--no-session', '--review-prs', 'all');
   assert.equal(all.code, EXIT.done);
@@ -546,7 +549,7 @@ test('a review the console refuses is named, and none started stops setup with t
   const after = await fake({ commands: ['review pulls|start'], answers: { 'review pulls': pullsOn([pull(9)]), 'review start': refused } })
     .invoke('--yes', '--repo', repo, '--no-session');
   assert.equal(after.code, EXIT.refused);
-  assert.match(after.events.at(-1).message, /No review started on acme\/app\. Not started: #9: #9 is a draft/);
+  assert.match(lastEntry(after.events).message, /No review started on acme\/app\. Not started: #9: #9 is a draft/);
 });
 
 test('--review-prs is checked before anything runs', async () => {
@@ -590,7 +593,7 @@ test('with several repos, each pull request names its repo, and reaches that rep
   const bare = await run('7,4');
   assert.equal(bare.code, EXIT.waiting);
   assert.deepEqual(bare.starts, [], 'a bare number could be yours on both repos: none starts');
-  assert.match(bare.events.at(-1).message, /With several repos, name each pull request's repo in --review-prs, as acme\/app#7/);
+  assert.match(lastEntry(bare.events).message, /With several repos, name each pull request's repo in --review-prs, as acme\/app#7/);
   const both = await run(`${repo}#7,${lib}#4`);
   assert.equal(both.code, EXIT.done);
   assert.deepEqual(both.starts, [['review', 'start', '7', '--repo', repo], ['review', 'start', '4', '--repo', lib]]);
@@ -618,7 +621,7 @@ test('with several repos, setup asks for repo-qualified numbers, and says when t
   const { invoke } = fake({ commands: ['review pulls|start'], answers: { 'review pulls': result(0, { event: 'pulls', repo, review: { on: true, rerun: null, known: true }, pulls: [pull(9)], stale: true }) } });
   const after = await invoke('--repo', repo, '--repo', 'acme/lib', '--no-session');
   assert.equal(after.code, EXIT.waiting);
-  assert.match(after.events.at(-1).message, /or acme\/app#<number> for this repo alone/);
+  assert.match(lastEntry(after.events).message, /or acme\/app#<number> for this repo alone/);
   const none = await fake({ commands: ['review pulls|start'], answers: { 'review pulls': result(0, { event: 'pulls', repo, review: { on: true, rerun: null, known: true }, pulls: [], stale: true }) } })
     .invoke('--yes', '--repo', repo, '--no-session');
   assert.match(none.events.find((e) => e.step === 'pr-reviews').message, /may be out of date: run setup again/);
@@ -637,7 +640,7 @@ test('the first session runs Claude Code when both are connected, and answering 
     status: result(0, { ...ready, sessionSignIns: { claude: true, codex: false } }),
   } }).invoke('--repo', repo, '--skip-reviews', '--prompt', 'Fix it.');
   assert.equal(only.code, EXIT.waiting, 'Codex is still to connect');
-  assert.match(only.events.at(-1).message, /--agent codex/);
+  assert.match(lastEntry(only.events).message, /--agent codex/);
 });
 
 // A clock for --wait that moves only when setup pauses, so a 15-minute wait runs at once.
@@ -688,8 +691,8 @@ test('when --wait runs out, setup exits 2 with the steps and the message it give
   const waited = clock.slept.reduce((sum, ms) => sum + ms, 0);
   assert.ok(waited >= 59_000 && waited <= 60_000, `waited the minute, and no longer (${waited} ms)`);
   assert.equal(after.calls.filter(([word]) => word === 'status').length, 1 + 12, 'asked every 5 seconds');
-  const { status, ...last } = after.events.at(-1);
-  const { status: was, ...without } = before.events.at(-1);
+  const { status, ...last } = lastEntry(after.events);
+  const { status: was, ...without } = lastEntry(before.events);
   assert.equal(status, 'needs-you');
   assert.equal(was, 'needs-you');
   assert.deepEqual(last, without);
@@ -739,7 +742,7 @@ test('with --wait, a status call slower than the time left is cut off, and setup
   assert.equal(calls, 2, 'one hung call, cut off when the time ran out, and none after it');
   assert.deepEqual(after.events.filter((event) => event.step === 'agent').map((event) => event.status), ['waiting', 'waiting', 'needs-you']);
   assert.match(after.events[3].message, /did not answer before the wait ran out/);
-  assert.deepEqual(after.events.at(-1).missing, ['codex']);
+  assert.deepEqual(lastEntry(after.events).missing, ['codex']);
 });
 
 test('with --wait, a sign-in removed mid-wait is reported missing again', async () => {
@@ -754,4 +757,111 @@ test('with --wait, a sign-in removed mid-wait is reported missing again', async 
   assert.match(agent[2].message, /^Claude Code's sign-in is no longer saved on My settings/);
   assert.deepEqual(agent[2].missing, ['claude', 'codex']);
   assert.deepEqual(agent.at(-1).missing, ['claude', 'codex'], 'the timeout names both again');
+});
+
+// A login that waits for its code: `login --no-wait` answers the code until the person approves, then signs in.
+function pendingLogin(clock, { approvedAfter = 2, userCode = 'BCDF-GHJK', then = result(0, { event: 'signed-in' }) } = {}) {
+  let polls = 0;
+  const code = (c = userCode) => result(2, { event: 'code', userCode: c, verificationUrlComplete: `${origin}/cli?code=${c}`, expiresAt: new Date(clock.t + 600_000).toISOString() });
+  const first = code();
+  return {
+    login: () => (polls++ === 0 ? first : polls > approvedAfter ? (typeof then === 'function' ? then() : then) : code()),
+    status: () => (polls > approvedAfter ? result(0, ready) : result(2, { signedIn: false })),
+  };
+}
+
+test('on a terminal, setup waits for the browser approval of its sign-in and goes on in the same run', async () => {
+  const clock = fakeClock();
+  const { invoke } = fake({ clock, tty: true, json: false, input: [''], answers: pendingLogin(clock) });
+  const after = await invoke('--repo', repo, '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done);
+  assert.deepEqual(after.calls.slice(0, 4), [['status'], ['login', '--no-wait'], ['login', '--no-wait'], ['login', '--no-wait']]);
+  assert.ok(clock.slept.every((ms) => ms === 5000), 'asks every 5 seconds');
+  const text = after.lines.join('\n');
+  assert.match(text, /^Setup has 7 steps: 1\. Sign in, 2\. Repos, 3\. Claude Code and Codex, 4\. Review on your repos, 5\. Reviews of your open pull requests, 6\. Agent terminal \(optional\), 7\. A first coding session \(optional\)\./);
+  assert.match(text, /Step 1 of 7: Sign in\n\[waiting\] Your code is BCDF-GHJK\. On the sign-in page, check it shows the same code, then press Sign in the CLI\. Setup waits here and goes on once you have \(Ctrl-C stops it\)\. https:\/\/console\.example\/cli\?code=BCDF-GHJK\n\[done\] Signed in as @mia-dev/);
+  assert.match(text, /Step 2 of 7: Repos[^]*Step 3 of 7: Claude Code and Codex[^]*Step 4 of 7[^]*Step 5 of 7[^]*Step 6 of 7[^]*Step 7 of 7[^]*\[done\] Setup is finished\./);
+  assert.doesNotMatch(text, /not finished/);
+});
+
+test('with --wait, setup waits for the sign-in approval too, and says so in its entries', async () => {
+  const clock = fakeClock();
+  const { invoke } = fake({ clock, answers: pendingLogin(clock, { approvedAfter: 1 }) });
+  const after = await invoke('--yes', '--repo', repo, '--wait', '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done);
+  const login = after.events.filter((event) => event.step === 'login');
+  assert.deepEqual(login.map(({ status, userCode }) => [status, userCode]), [['waiting', 'BCDF-GHJK'], ['done', undefined]]);
+  assert.deepEqual(lastEntry(after.events).step, 'session');
+  assert.deepEqual(after.events.at(-1), { event: 'setup', step: 'finished', status: 'done', message: 'Setup is finished. Run woodshed setup again any time to change a choice.', finished: true });
+});
+
+test('a sign-in not approved before its code expires stops setup, saying it is not finished and what is left', async () => {
+  const clock = fakeClock();
+  const { invoke } = fake({ clock, tty: true, json: false, answers: pendingLogin(clock, { approvedAfter: Infinity }) });
+  const after = await invoke('--repo', repo);
+  assert.equal(after.code, EXIT.waiting);
+  assert.ok(clock.t - 1_000_000 <= 600_000, 'never polls past the code\'s expiry, which would start a new code');
+  const text = after.lines.join('\n');
+  assert.match(text, /\[needs you\] The code BCDF-GHJK was not approved in time\. Run setup again for a new one\./);
+  assert.match(text, /Setup is not finished: it stopped at step 1 of 7, Sign in\. Still to do after it: 2\. Repos, 3\. Claude Code and Codex, 4\. Review on your repos, 5\. Reviews of your open pull requests, 6\. Agent terminal \(optional\), 7\. A first coding session \(optional\)\. Run woodshed setup again/);
+});
+
+test('a sign-in denied in the browser while setup waits stops it as refused', async () => {
+  const clock = fakeClock();
+  const denied = result(3, { event: 'error', error: 'The sign-in was denied in the browser.', status: 'denied' });
+  const { invoke } = fake({ clock, answers: pendingLogin(clock, { approvedAfter: 1, then: denied }) });
+  const after = await invoke('--yes', '--repo', repo, '--wait');
+  assert.equal(after.code, EXIT.refused);
+  const last = after.events.at(-1);
+  assert.equal(last.message, 'The sign-in was denied in the browser.');
+  assert.deepEqual([last.finished, last.stepNumber, last.stepTotal, last.left], [false, 1, 7, ['repos', 'agent', 'repo-review', 'pr-reviews', 'terminal', 'session']]);
+});
+
+test('a sign-in poll that fails is said once, and the wait goes on', async () => {
+  const clock = fakeClock();
+  const unreachable = result(1, { event: 'error', error: 'could not reach https://console.example: fetch failed' });
+  let failures = 2;
+  const answers = pendingLogin(clock, { approvedAfter: 3 });
+  const login = answers.login;
+  const { invoke } = fake({ clock, answers: { ...answers, login: () => { const out = login(); return out.code === 2 && failures-- > 0 && clock.slept.length ? unreachable : out; } } });
+  const after = await invoke('--yes', '--repo', repo, '--wait', '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done);
+  const waiting = after.events.filter((event) => event.step === 'login' && event.status === 'waiting');
+  assert.equal(waiting.length, 2);
+  assert.match(waiting[1].message, /Could not ask the console whether it is approved \(could not reach https:\/\/console\.example: fetch failed\)\. Still asking\./);
+});
+
+test('at the repo question, Enter takes the repos added already, which the question names, and setup goes on', async () => {
+  const { invoke } = fake({ commands: ['repo'], tty: true, json: false, input: ['', 'none'], answers: {
+    'repo list': result(0, { projects: [{ repo }, { repo: 'acme/lib' }], available: [{ repo: 'acme/erp' }] }),
+  } });
+  const after = await invoke('--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done);
+  assert.equal(after.questions[0], 'Which repos should Woodshed use? Press Enter for the 2 added already (acme/app, acme/lib), or enter owner/name, separated by commas. ');
+  assert.ok(!after.calls.some(([group, sub]) => group === 'repo' && sub === 'add'), 'adds none again');
+  assert.ok(after.lines.includes('[done] Woodshed uses acme/app, acme/lib.'));
+  assert.equal(after.lines.at(-1), '[done] Setup is finished. Run woodshed setup again any time to change a choice.');
+});
+
+test('at the repo question with none added, Enter stops setup and says which can be added', async () => {
+  const { invoke } = fake({ commands: ['repo'], tty: true, json: false, input: [''], answers: {
+    'repo list': result(0, { projects: [], available: [{ repo: 'acme/erp' }] }),
+  } });
+  const after = await invoke();
+  assert.equal(after.code, EXIT.waiting);
+  assert.equal(after.questions[0], 'Which repos should Woodshed use? Enter owner/name, separated by commas. ');
+  const text = after.lines.join('\n');
+  assert.match(text, /\[needs you\] Choose the repos setup uses with --repo owner\/name, once for each\. None added yet\. Not added yet, and added when you choose it: acme\/erp\./);
+  assert.match(text, /Setup is not finished: it stopped at step 2 of 7, Repos\./);
+});
+
+test('a repo typed in at the question is added, and the step says so', async () => {
+  const { invoke } = fake({ commands: ['repo'], tty: true, json: false, input: ['acme/erp'], answers: {
+    'repo list': result(0, { projects: [{ repo }], available: [{ repo: 'acme/erp' }] }),
+    'repo add': result(0, { event: 'added', repo: 'acme/erp' }),
+  } });
+  const after = await invoke('--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done);
+  assert.ok(after.calls.some((words) => words.join(' ') === 'repo add acme/erp'));
+  assert.ok(after.lines.includes('[done] Woodshed uses acme/erp. Added just now: acme/erp.'));
 });

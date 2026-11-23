@@ -5,6 +5,10 @@
 // to. A closed row says what it holds. Admins only: the API refuses anyone else, and the page says so. Values stay
 // hidden until Show, as on Secrets & webhooks, and never reach the table, which names keys alone. ?file=<key> opens
 // one env file's row, #slack the channel's and #github the label's, so a link can point at them.
+// The scripts a program named for its groups (its `repoPage` hook), loaded once for the document: the settings pages are
+// one page, and this one starts again on each visit to a repo's settings, which would run them again and stack their
+// listeners.
+const repoPageScripts = new Set();
 window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/, (app, life) => {
   'use strict';
   const W = window.Woodshed;
@@ -472,16 +476,51 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
       envGroup(),
       promptGroup(),
       githubGroup(),
-      slackGroup()));
+      slackGroup(),
+      hostGroups()));
+    // A script loaded once listens on the document, or for this: the program's groups were drawn anew, and are in the page.
+    if (hostRedrawn) {
+      hostRedrawn = false;
+      window.dispatchEvent(new CustomEvent('woodshed:host-groups', { detail: { node: hostNode } }));
+    }
     for (const key of editors.keys()) updateCounts(key);
     if (focused && focused === document.activeElement) {
       try { if (caret?.[0] !== undefined && caret?.[0] !== null) focused.setSelectionRange(...caret); } catch { /* not a text field */ }
     }
   }
 
+  // A program's own groups for the repo (its `repoPage` hook, settingsMarkup.mjs), after the console's: its markup, put
+  // in as a template's so no <script> in it runs, its rows opened by hostRows.js. The same node until the markup changes, so
+  // a redraw for the console's groups keeps the program's rows as they were opened, and what is typed in its forms. The
+  // scripts it names (paths on the console's address) are loaded once, after its groups are first drawn.
+  let hostNode = null;
+  let hostText = null;
+  let hostRedrawn = false;
+  const hostScripts = repoPageScripts;
+  function hostGroups() {
+    if (!view.host?.html) return null;
+    if (view.host.html !== hostText) {
+      const template = document.createElement('template');
+      template.innerHTML = view.host.html;
+      hostNode = h('div', { class: 'host-groups' });
+      hostNode.append(template.content);
+      hostText = view.host.html;
+      // A link that names one of its rows opens it: readOpened, once the page is drawn.
+      window.WoodshedHostRows?.wire(hostNode, { hash: false });
+      for (const src of view.host.scripts ?? []) {
+        if (hostScripts.has(src)) continue;
+        hostScripts.add(src);
+        hostNode.append(h('script', { src }));
+      }
+      hostRedrawn = true;
+    }
+    return hostNode;
+  }
+
   // The search, or a link followed while the page is shown, opens a row without its head being pressed: the
   // instructions are read then too.
   function readOpened() {
+    if (hostNode) window.WoodshedHostRows?.reveal(hostNode, location.hash.slice(1));
     if (location.hash === GITHUB && view && !open.has(LABEL_ROW)) {
       open.add(LABEL_ROW);
       render();

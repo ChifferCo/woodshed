@@ -245,8 +245,9 @@ reader stands alone.
 
 statusd reads and types into the agent's terminal through `session/agentPane.mjs`, tmux's `claude` pane or Herdr's
 `claude` terminal through `hc`. Herdr reads the screen without its colours and types text only as a paste with its
-Enter, so in Herdr `POST /send` is `hc send --if idle` (`--if` left out for codex, which reports no status), which also
-holds for a person's draft in an attached client; `boxText` is null, as statusd cannot tell a draft from claude's dim
+Enter, so in Herdr `POST /send` is `hc send`, only while claude's record says `idle` or `done` (`--if idle` for the
+first; hc's `--if` has no `done`, which claude says after every finished turn) or, for codex, which reports no status,
+its screen shows its prompt. hc refuses a blocked program and holds for a person's draft in an attached client; `boxText` is null, as statusd cannot tell a draft from claude's dim
 suggestion; a file dropped on the TUI tab is saved and not typed in; and `POST /scroll` on the agent answers 409, as the
 attached `hc` client takes the wheel itself. `POST /answer`, `GET /prompt` and `POST /interrupt` work as in tmux, with
 `hc keys` and `hc read`.
