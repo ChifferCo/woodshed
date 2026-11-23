@@ -1394,7 +1394,7 @@ function configureAgent(name, auth, env = {}) {
   const vars = ['OWN_AGENT_AUTH_FILE=$HOME/.config/woodshed/agent-auth', 'GROK_HOME_DIR=$HOME/.grok',
     'OPENCODE_DATA_DIR=$HOME/.local/share/opencode', 'OPENCODE_CONFIG_DIR=$HOME/.config/opencode'];
   const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { echo "ERROR: $*"; exit 1; }', ...vars,
-    fn('ownAgentAuthIsKey'), fn('agentDir'), fn(name).replaceAll('/tmp/', `${tmp}/`), name].join('\n');
+    fn('ownAgentAuthIsKey'), fn('agentDir'), fn('refuseRulesOutsideCheckout'), fn(name).replaceAll('/tmp/', `${tmp}/`), name].join('\n');
   const read = (file) => (fs.existsSync(path.join(home, file)) ? fs.readFileSync(path.join(home, file), 'utf8') : null);
   const mode = (file) => fs.statSync(path.join(home, file)).mode & 0o777;
   try {
@@ -1438,6 +1438,35 @@ test('OpenCode: its auth.json, its config with the effort as each agent\'s varia
   assert.match(o.out, /providers: anthropic/);
   assert.equal(JSON.parse(configureAgent('configureOpencode', auth).read('.config/opencode/opencode.json')).agent, undefined);
   assert.equal(configureAgent('configureOpencode', 'sk-ant-x').failed, true, 'a bare key is not its auth.json');
+});
+
+test('Grok Build: not started where a rules file it reads by itself points outside the checkout', (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-grok-repo-'));
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-grok-elsewhere-'));
+  t.after(() => { fs.rmSync(repo, { recursive: true, force: true }); fs.rmSync(elsewhere, { recursive: true, force: true }); });
+  const secret = path.join(elsewhere, 'auth.json');
+  fs.writeFileSync(secret, '{"key":"secret"}');
+  const start = () => configureAgent('configureGrok', 'xai-abc', { REPO_DIR: repo });
+  const reset = () => { for (const f of fs.readdirSync(repo)) fs.rmSync(path.join(repo, f), { recursive: true, force: true }); };
+
+  fs.writeFileSync(path.join(repo, 'CLAUDE.md'), 'rules\n');
+  fs.symlinkSync('CLAUDE.md', path.join(repo, 'AGENTS.md'));
+  assert.equal(start().failed, undefined, 'a link inside the checkout is the repo\'s own choice');
+
+  for (const [what, make] of [
+    ['AGENTS.md', () => fs.symlinkSync(secret, path.join(repo, 'AGENTS.md'))],
+    ['.claude/CLAUDE.md', () => { fs.mkdirSync(path.join(repo, '.claude')); fs.symlinkSync(secret, path.join(repo, '.claude', 'CLAUDE.md')); }],
+    ['.grok/rules', () => { fs.mkdirSync(path.join(repo, '.grok')); fs.symlinkSync(elsewhere, path.join(repo, '.grok', 'rules')); }],
+    ['.claude/rules/deep/r.md', () => { fs.mkdirSync(path.join(repo, '.claude', 'rules', 'deep'), { recursive: true }); fs.symlinkSync(secret, path.join(repo, '.claude', 'rules', 'deep', 'r.md')); }],
+    ['.cursor', () => fs.symlinkSync(elsewhere, path.join(repo, '.cursor'))],
+  ]) {
+    reset();
+    make();
+    const g = start();
+    assert.equal(g.failed, true, what);
+    assert.match(g.out, new RegExp(`ERROR: the repo's ${what.replaceAll('.', '\\.')} points outside the checkout`), what);
+    assert.equal(g.read('.grok/config.toml'), null, `${what}: nothing written for grok`);
+  }
 });
 
 test('OpenCode: the repo\'s AGENTS.md, or its CLAUDE.md, is copied after the rules, never through a symlink', (t) => {

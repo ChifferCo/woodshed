@@ -997,7 +997,10 @@ URL on top of each env file's Repo settings values
   `sessionApi: <Product> sign-in handed out`, or `no <Product> sign-in for the owner` with a 409, and the session's log
   says `could not get the owner's settings`. None of them gets the console's MCP servers (`mcpRelay: refused` with `a
   <Product> session gets no MCP servers`), and Grok Build runs no MCP server at all, a repo's own included: the image's
-  `/etc/grok/requirements.toml` locks them down (`grok inspect` in the session lists each as `BLOCKED`).
+  `/etc/grok/requirements.toml` locks them down (`grok inspect` in the session lists each as `BLOCKED`), and runs only the
+  session's own hooks from it. A Grok session that fails at start with `the repo's <file> points outside the checkout` is a
+  branch whose rules file (`AGENTS.md`, `CLAUDE.md`, a rules folder) is a symlink out of the repo, which Grok would read into
+  its first request: make it a file, or a link inside the repo.
 - **New session's Codex models are old, or say `codex's built-in list`.** The line under the menus says why. The console
   logs `codexModels: catalog read` with `source` (`own` or `team`) and how many `models`, `OpenAI refused the catalog`
   with the `status` (a 401 is a sign-in OpenAI no longer takes), `catalog not read`, `own sign-in expired, not read`
