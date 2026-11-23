@@ -452,3 +452,34 @@ test('behind a proxy, the host\'s matchSlack links a member\'s Slack user by ema
   assert.equal(store.state.slackAccounts['lee-stranger'], undefined, 'someone the program does not list leaves nothing behind');
   assert.deepEqual(asked, [['/api/users.lookupByEmail', 'sam@example.com']]);
 });
+
+test('behind a proxy a People role gives the program owner or member and sets the switches here; an add may name one', async (t) => {
+  const { program, post, members, released } = await hostedPeople(t);
+  const state = (body, login) => {
+    const m = row(body, login);
+    return [m.access, m.role, m.githubSessions, m.assignable];
+  };
+  const contributor = await post('/api/people/access', { login: 'sam-member', access: 'contributor' });
+  assert.deepEqual(state(contributor.body, 'sam-member'), ['contributor', 'member', true, false], 'the default for someone listed');
+  const member = await post('/api/people/access', { login: 'sam-member', access: 'member' });
+  assert.deepEqual(state(member.body, 'sam-member'), ['member', 'member', true, true]);
+  assert.deepEqual(program.calls, [], 'the program\'s role did not change: nothing asked of it');
+  const owner = await post('/api/people/access', { login: 'sam-member', access: 'owner' });
+  assert.deepEqual(state(owner.body, 'sam-member'), ['owner', 'owner', true, true]);
+  const priv = await post('/api/people/access', { login: 'sam-member', access: 'private' });
+  assert.deepEqual(state(priv.body, 'sam-member'), ['private', 'member', false, false]);
+  assert.deepEqual(program.calls.map(([what, a]) => [what, a.role]), [['setRole', 'owner'], ['setRole', 'member']]);
+  assert.deepEqual(released.map((r) => r.login), ['sam-member', 'sam-member'], 'Contributor and Private only give shared sessions back');
+
+  const added = await post('/api/people/add', { login: 'new-person', access: 'member' });
+  assert.deepEqual(state(added.body, 'new-person'), ['member', 'member', true, true]);
+  assert.deepEqual(program.calls.at(-1), ['add', { login: 'new-person', role: 'member', by: 'ana-owner' }]);
+  assert.equal(members.isAssignable('new-person'), true);
+  assert.equal((await post('/api/people/add', { login: 'other', access: 'boss' })).status, 400);
+  assert.equal(program.calls.length, 3, 'a role that is not one reached no program');
+
+  program.refuse = 'shown';
+  const refused = await post('/api/people/access', { login: 'new-person', access: 'owner' });
+  assert.deepEqual(refused, { status: 409, body: { error: 'Your plan has room for 2 people.' } });
+  assert.equal(members.isAssignable('new-person'), true, 'the program refused: nothing changed here either');
+});

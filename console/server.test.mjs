@@ -528,7 +528,7 @@ test('an admin invites, accepts and removes on the People page, a member who is 
   assert.deepEqual((await post(port, '/api/people/invite', { login: '@outsider' }, mia)).status, 400, 'a handle without write access could never sign in');
   const invited = await post(port, '/api/people/invite', { login: '@ana-k' }, mia);
   assert.equal(invited.status, 200);
-  assert.deepEqual(invited.body.members.find((m) => m.login === 'ana-k'), { login: 'ana-k', addedBy: 'mia-dev', addedAt: invited.body.members.find((m) => m.login === 'ana-k').addedAt, how: 'invited' });
+  assert.deepEqual(invited.body.members.find((m) => m.login === 'ana-k'), { login: 'ana-k', addedBy: 'mia-dev', addedAt: invited.body.members.find((m) => m.login === 'ana-k').addedAt, how: 'invited', access: 'private', accessDiffers: null });
   assert.equal((await post(port, '/api/people/admin', { login: 'mia-dev', admin: false }, mia)).status, 409, 'the last admin keeps it');
   assert.equal((await post(port, '/api/people/admin', { login: 'sam-ops', admin: true }, mia)).status, 200);
   assert.equal((await getWith(port, '/api/people', sam)).status, 200, 'made an admin, they open People');
@@ -2116,6 +2116,54 @@ test('an admin turns on sessions from GitHub, then Can be assigned, and only the
   assert.equal(admin.status, 200);
   assert.equal(admin.body.members.find((m) => m.login === 'mia-dev').admin, true);
   assert.equal((await post(port, '/api/people/admin', { login: 'mia-dev', admin: true }, {})).status, 401);
+});
+
+test('a People role sets the three switches at once, and reads back from them; an invite may name one', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const { createMembers } = await import('./members.mjs');
+  const store = { state: { members: { 'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true }, 'sam-ops': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' } } }, save() {} };
+  const members = createMembers({ store });
+  const released = [];
+  const fleet = { releaseAssignments: (args) => { released.push(args); }, sessions: () => [], find: () => null };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => (/mia-dev/.test(String(cookie)) ? { login: 'mia-dev' } : null), visitorFor: async () => null };
+  const handle = createHandler({ config, fleet, auth, members });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const mia = { cookie: 'woodshed_session=mia-dev' };
+  const switches = (body, login) => {
+    const m = body.members.find((x) => x.login === login);
+    return [m.access, Boolean(m.admin), Boolean(m.githubSessions), Boolean(m.assignable), m.accessDiffers];
+  };
+
+  const listed = await (await fetch(`http://127.0.0.1:${port}/api/people`, { headers: mia })).json();
+  assert.deepEqual(listed.roles.map((r) => r.id), ['owner', 'member', 'contributor', 'private']);
+  assert.ok(listed.roles.every((r) => r.label && r.explain), 'each role comes with what it gives');
+  assert.deepEqual(switches(listed, 'sam-ops'), ['private', false, false, false, null], 'every switch off reads as Private only');
+  assert.deepEqual(switches(listed, 'mia-dev'), ['owner', true, false, false, 'Opens these settings pages, no sessions from GitHub, never assigned a shared session'],
+    'an admin from before roles is an Owner, and says what it lacks');
+
+  const member = await post(port, '/api/people/access', { login: 'sam-ops', access: 'member' }, mia);
+  assert.deepEqual(switches(member.body, 'sam-ops'), ['member', false, true, true, null]);
+  const contributor = await post(port, '/api/people/access', { login: 'sam-ops', access: 'contributor' }, mia);
+  assert.deepEqual(switches(contributor.body, 'sam-ops'), ['contributor', false, true, false, null]);
+  assert.deepEqual(released, [{ login: 'sam-ops', by: 'mia-dev' }], 'no longer assignable: their shared sessions go back');
+  const owner = await post(port, '/api/people/access', { login: 'sam-ops', access: 'owner' }, mia);
+  assert.deepEqual(switches(owner.body, 'sam-ops'), ['owner', true, true, true, null]);
+  const back = await post(port, '/api/people/access', { login: 'sam-ops', access: 'private' }, mia);
+  assert.deepEqual(switches(back.body, 'sam-ops'), ['private', false, false, false, null]);
+
+  assert.equal((await post(port, '/api/people/access', { login: 'sam-ops', access: 'admin' }, mia)).status, 400, 'only the roles People offers');
+  assert.equal((await post(port, '/api/people/access', { login: 'nobody', access: 'member' }, mia)).status, 409, 'only members');
+  const last = await post(port, '/api/people/access', { login: 'mia-dev', access: 'member' }, mia);
+  assert.deepEqual([last.status, last.body.error], [409, 'the console needs an admin: make someone else one first']);
+  assert.equal(members.hasGithubSessions('mia-dev'), false, 'a refused admin change changes nothing else');
+
+  const invited = await post(port, '/api/people/invite', { login: 'lee-dev', access: 'contributor' }, mia);
+  assert.deepEqual(switches(invited.body, 'lee-dev'), ['contributor', false, true, false, null]);
+  assert.equal((await post(port, '/api/people/invite', { login: 'bo-dev', access: 'boss' }, mia)).status, 400);
+  assert.equal(members.isMember('bo-dev'), false, 'a role that is not one invites nobody');
 });
 
 test('a local console with no sign-in and no GitHub App gives the person at the keyboard a login of their own', async () => {
