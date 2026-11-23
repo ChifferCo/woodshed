@@ -991,7 +991,9 @@ URL on top of each env file's Repo settings values
   (session/README.md, `tokenUsage` in `/status`): `statusd: token usage not read` in the session's log says why, and a
   session from an image before the count reports none. Only what was spent since its Claude home was restored counts,
   so a private session's earlier conversations are their own sessions'. `fleet: token usage failed` is the console
-  failing to keep a report. `no price` on a model is one `shared/apiPrices.mjs` does not list yet.
+  failing to keep a report. `no price` on a model is one neither OpenRouter's model list nor `shared/apiPrices.mjs` lists; prices from the
+  built-in list instead of OpenRouter's (the page's footer says which) log `livePrices: OpenRouter's prices not read` with
+  `why`.
 - **The App log tab is empty.** statusd's `GET /applog` reads
   `/tmp/woodshed-app.log` and the project file's `app.logs` in the session; the tab says `Nothing logged yet` until Start app ran.
 - **New session's Codex models are old, or say `codex's built-in list`.** The line under the menus says why. The console

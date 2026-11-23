@@ -675,6 +675,21 @@ test('the Usage page is everyone\'s: a member reads their own sessions\' usage, 
   assert.ok(!JSON.stringify(all).includes('Sam\'s'));
   assert.equal(all.totals.plan.cost, 4);
   assert.equal(all.totals.key.cost, 4);
+  assert.equal(all.pricesFrom, 'built-in', 'with no live prices, the built-in tables');
+  // With OpenRouter's list read on each ask: Opus 5.5's input at its live price.
+  const reads = [];
+  const livePrices = { read: async () => { reads.push(1); return { table: { 'claude-opus-5-5': { input: 3, output: 15, cacheRead: 0.3, cacheWrite5m: 3.75, cacheWrite1h: 6 } }, source: 'openrouter', asOf: '2026-11-23T10:00:00.000Z' }; } };
+  const priced = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, usage, livePrices });
+  const pricedServer = http.createServer((req, res) => { priced(req, res); });
+  const pricedPort = await listen(pricedServer);
+  t.after(() => pricedServer.close());
+  const live = await (await fetch(`http://127.0.0.1:${pricedPort}/api/usage?everyone=1`, { headers: mia })).json();
+  assert.equal(live.pricesFrom, 'openrouter');
+  assert.equal(live.pricesAsOf, '2026-11-23T10:00:00.000Z');
+  assert.equal(live.totals.plan.cost, 3, 'Opus 5.5 at OpenRouter\'s price');
+  assert.equal(live.totals.key.cost, 4, 'Sonnet 5.5, which the list leaves out, at the built-in one');
+  await fetch(`http://127.0.0.1:${pricedPort}/api/usage`, { headers: mia });
+  assert.equal(reads.length, 2, 'read again on each ask, never kept');
   const none = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members });
   const bare = http.createServer((req, res) => { none(req, res); });
   const barePort = await listen(bare);

@@ -1,7 +1,9 @@
 // What tokens cost at the providers' list API prices, for the console's Usage page (console/usage.mjs): what an API key
-// was charged, and what a Claude or ChatGPT plan's tokens would have cost on a key. US dollars per million tokens, as
-// published on 2026-11-23 (PRICES_AS_OF): Anthropic's pricing page and OpenAI's rate card. A model missing here is
-// shown with its tokens and no price, never a guess; add its row when it ships.
+// was charged, and what a Claude or ChatGPT plan's tokens would have cost on a key. US dollars per million tokens. The
+// console reads them from OpenRouter's model list each time the page asks (console/livePrices.mjs, pricesFromOpenRouter
+// below), which passes on Anthropic's and OpenAI's own list prices; the tables here, as published on 2026-11-23
+// (PRICES_AS_OF), are what it falls back on, for a model OpenRouter no longer lists or when it is not reached. They need
+// no upkeep: a model in neither is shown with its tokens and no price, never a guess.
 //
 // The kinds of token, as session/tokenUsage.mjs counts them:
 //   input        uncached input
@@ -77,7 +79,11 @@ const PER = 1_000_000;
 
 const own = (table, key) => (Object.hasOwn(table, key) ? table[key] : null);
 
-function row(model) {
+function row(model, live) {
+  if (live) {
+    const found = own(live, model);
+    if (found) return found;
+  }
   const claude = own(CLAUDE, model);
   if (claude) {
     const [input, output, cacheRead] = claude;
@@ -94,10 +100,11 @@ function row(model) {
 /**
  * @param {string} model  as the transcript names it: `claude-opus-5-5`, `claude-opus-5-5:fast`, a dated
  *   `claude-sonnet-4-5-20250929`, `gpt-6.1-sol`
+ * @param {Record<string, object>|null} [live]  pricesFromOpenRouter's table, looked in before the tables here
  * @returns {{input: number, output: number, cacheRead: number, cacheWrite5m: number, cacheWrite1h: number}|null}
  *   dollars per million tokens of each kind, or null for a model with no list price here
  */
-export function priceOf(model) {
+export function priceOf(model, live = null) {
   if (typeof model !== 'string' || !model) return null;
   const fast = model.endsWith(':fast');
   const id = (fast ? model.slice(0, -':fast'.length) : model).toLowerCase()
@@ -105,7 +112,7 @@ export function priceOf(model) {
     .replace(/^(?:us\.|eu\.|global\.)?anthropic\./, '').replace(/@\d{8}$/, '').replace(/-\d{8}$/, '').replace(/-v\d+(?::\d+)?$/, '')
     // Claude Code's [1m] context marker is not part of the id.
     .replace(/\[1m\]$/, '');
-  const base = row(id);
+  const base = row(id, live);
   if (!base || !fast) return base;
   return Object.fromEntries(Object.entries(base).map(([kind, price]) => [kind, price * FAST_RATE]));
 }
@@ -115,10 +122,52 @@ export const TOKEN_KINDS = ['input', 'cacheWrite5m', 'cacheWrite1h', 'cacheRead'
 /**
  * @param {string} model
  * @param {{input?: number, cacheWrite5m?: number, cacheWrite1h?: number, cacheRead?: number, output?: number}} tokens
+ * @param {Record<string, object>|null} [live]  as priceOf's
  * @returns {number|null}  dollars at list API prices, or null when the model has no price here
  */
-export function costOf(model, tokens) {
-  const price = priceOf(model);
+export function costOf(model, tokens, live = null) {
+  const price = priceOf(model, live);
   if (!price) return null;
   return TOKEN_KINDS.reduce((sum, kind) => sum + ((Number(tokens?.[kind]) || 0) * price[kind]) / PER, 0);
+}
+
+const MAX_PRICE = 10_000;
+
+/**
+ * OpenRouter's model list (`GET https://openrouter.ai/api/v1/models`) as a table priceOf reads: Anthropic's and
+ * OpenAI's models only, under the ids their transcripts use (`anthropic/claude-opus-5.5` is `claude-opus-5-5`,
+ * `openai/gpt-6.1-sol` is `gpt-6.1-sol`). Its prices are strings, in dollars per token. A variant (`:batch`) is left
+ * out, and so is a model whose input or output price is not a number; a cache price it does not give follows from the
+ * input price as the tables here do. A long-context price (`overrides`) is not applied, as PRICES_AS_OF's note says.
+ * @param {unknown} body  the answer, parsed
+ * @returns {Record<string, {input: number, output: number, cacheRead: number, cacheWrite5m: number, cacheWrite1h: number}>|null}
+ *   null when the answer is not a model list, or names none of theirs
+ */
+export function pricesFromOpenRouter(body) {
+  const list = body && typeof body === 'object' && Array.isArray(body.data) ? body.data : null;
+  if (!list) return null;
+  const perMillion = (v) => {
+    const n = typeof v === 'string' && /^\d+(?:\.\d+)?(?:e-?\d+)?$/i.test(v) ? Number(v) * PER : typeof v === 'number' ? v * PER : NaN;
+    return Number.isFinite(n) && n >= 0 && n <= MAX_PRICE ? n : null;
+  };
+  const table = Object.create(null);
+  for (const m of list.slice(0, 5000)) {
+    const match = typeof m?.id === 'string' ? /^(anthropic|openai)\/([a-z0-9.-]{1,80})$/.exec(m.id) : null;
+    if (!match) continue;
+    const [, provider, name] = match;
+    const id = provider === 'anthropic' ? name.replace(/\./g, '-') : name;
+    const p = m.pricing ?? {};
+    const input = perMillion(p.prompt);
+    const output = perMillion(p.completion);
+    if (input === null || output === null) continue;
+    const claude = provider === 'anthropic';
+    table[id] = {
+      input,
+      output,
+      cacheRead: perMillion(p.input_cache_read) ?? (claude ? input * 0.1 : input),
+      cacheWrite5m: perMillion(p.input_cache_write) ?? (claude ? input * 1.25 : input),
+      cacheWrite1h: perMillion(p.input_cache_write_1h) ?? (claude ? input * 2 : input),
+    };
+  }
+  return Object.keys(table).length ? { ...table } : null;
 }

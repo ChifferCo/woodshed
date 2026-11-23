@@ -167,7 +167,11 @@ window.Woodshed.settingsPage('/usage', (app, life) => {
       dayChart(),
       sessionTable(),
       h('p', { class: 'foot' },
-        `Counted from each session’s own transcripts, ${data.from} to ${data.to} (UTC). Prices are the providers’ standard list prices of ${data.pricesAsOf}, so a long-context turn priced higher is counted at the standard rate: `,
+        `Counted from each session’s own transcripts, ${data.from} to ${data.to} (UTC). `,
+        data.pricesFrom === 'openrouter'
+          ? 'Prices are the providers’ standard list prices, read from OpenRouter’s model list just now, '
+          : `Prices are the providers’ standard list prices of ${data.pricesAsOf}, built into the console, since OpenRouter’s model list could not be read, `,
+        'so a long-context turn priced higher is counted at the standard rate: ',
         'a plan’s figure is what its tokens would have cost on a key, not what the plan costs. ',
         data.unpricedModels.length ? `No price is known for ${data.unpricedModels.join(', ')}. ` : '',
         'A session started from an image before this page counts nothing, and a session’s usage is kept 90 days.')));

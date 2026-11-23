@@ -1172,14 +1172,21 @@ approval held: removing and adding the label runs QA again, which releases it.
 ## Usage
 
 **Usage** (`/usage`, under My settings in the avatar menu and the settings list) shows the tokens sessions' agents spent,
-split by what pays for them, and what they cost at the providers' API list prices (`shared/apiPrices.mjs`, dated in
-`PRICES_AS_OF`): **On a plan** is what a Claude plan's or a ChatGPT login's tokens would have cost on an API key, and
+split by what pays for them, and what they cost at the providers' API list prices: **On a plan** is what a Claude plan's or a ChatGPT login's tokens would have cost on an API key, and
 **On an API key** what the team key or a person's own key was charged, near enough. Then the same by model (input,
 cache writes, cache reads and output), by person (an admin's Everyone), by day, and the sessions that spent the most.
 Everyone sees their own: private sessions they own, and shared ones they started or that ran on their plan while they
 have Sessions from GitHub (People). An admin may switch to Everyone, whose totals count every session, but a session is
 named (its title, repo and branch) only to whoever may open it: a teammate's private session never, a shared one only
 with Sessions from GitHub. 7, 30 or 90 days, in UTC.
+
+The prices are read from OpenRouter's public model list (`GET https://openrouter.ai/api/v1/models`, no key) each time
+the page asks, its load and its refresh each minute, and never kept (`console/livePrices.mjs`); OpenRouter passes on
+Anthropic's and OpenAI's own list prices, and `shared/apiPrices.mjs` (`pricesFromOpenRouter`) maps its ids to the
+transcripts'. A model it does not list, and every model when it is not reached in 5 s or answers otherwise, is priced
+from the tables in `shared/apiPrices.mjs` (dated in `PRICES_AS_OF`), and the page's footer says which: the console logs
+`livePrices: OpenRouter's prices not read, the built-in list is used` with `why` once per reason, and `livePrices:
+OpenRouter's prices read again` when it recovers. Those tables need no upkeep.
 
 Nothing is asked of Anthropic or OpenAI. Each session's statusd counts what its agent spent from the agent's own
 transcripts and says whether a plan or a key pays (`tokenUsage` in its `/status`, session/README.md); the fleet hands
@@ -1190,12 +1197,13 @@ A session that has seen production data keeps nothing here: its usage is dropped
 included, and nothing it reports after is kept. A model's id that is not shaped like Anthropic's or OpenAI's is kept as
 `other`. Prices are standard rates: a long-context turn that costs more (Haiku 5.5 past 100K input tokens, GPT-5.5 past
 272K) is counted at the standard rate, so a long session's figure is a floor. A model
-with no price in the list shows its tokens and `no price`, never a guess: add its row when it ships. A session from an
+with no price in either list shows its tokens and `no price`, never a guess. A session from an
 image before the count reports nothing. A review or QA run is the console's; a review's codex on the author's ChatGPT
 login counts as a plan.
 
-`GET /api/usage?days=30` answers the page: `{ everyone, from, to, days, pricesAsOf, totals: { plan, key }, unpricedModels,
-byModel, byPerson, byDay, bySession }`, with `everyone=1` for an admin's whole console (anyone else gets their own).
+`GET /api/usage?days=30` answers the page: `{ everyone, from, to, days, pricesFrom, pricesAsOf, totals: { plan, key }, unpricedModels,
+byModel, byPerson, byDay, bySession }` (`pricesFrom` `openrouter`, with `pricesAsOf` the read's time, or `built-in`, with
+the tables' date), with `everyone=1` for an admin's whole console (anyone else gets their own).
 
 ## Webhook events, secrets and the GitHub App's webhook
 

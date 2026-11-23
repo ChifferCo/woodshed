@@ -181,9 +181,12 @@ export function createUsage(store, { now = Date.now } = {}) {
    *   `everyone` an admin's whole console; otherwise the viewer's own. `seesShared` whether the viewer may open shared
    *   sessions now (Sessions from GitHub, server.mjs canOpen): without it, a shared session they started is not theirs
    *   to read here either.
+   * @param {{table: Record<string, object>|null, source: string, asOf: string}} [prices]  console/livePrices.mjs's read;
+   *   without it, the built-in tables of shared/apiPrices.mjs
    * @returns {object}  the page's numbers (README.md, "Usage")
    */
-  function summary({ login, admin, everyone = false, days = 30, seesShared = true }) {
+  function summary({ login, admin, everyone = false, days = 30, seesShared = true }, prices = null) {
+    const live = prices?.table ?? null;
     maybePrune();
     const span = Math.min(KEEP_DAYS, Math.max(1, Math.round(Number(days) || 30)));
     const to = new Date(now()).toISOString().slice(0, 10);
@@ -210,13 +213,13 @@ export function createUsage(store, { now = Date.now } = {}) {
         for (const [day, byModel] of Object.entries(run.days ?? {})) {
           if (day < from || day > to) continue;
           for (const [model, tokens] of Object.entries(byModel)) {
-            const cost = costOf(model, tokens);
+            const cost = costOf(model, tokens, live);
             const b = billings[run.billing];
             addTokens(b.tokens, tokens);
             if (cost === null) { b.unpriced += totalOf(tokens); unpricedModels.add(model); } else b.cost += cost;
 
             const mKey = `${run.billing}|${run.agent}|${model}`;
-            const m = models.get(mKey) ?? { billing: run.billing, agent: run.agent, model, priced: Boolean(priceOf(model)), tokens: zero(), cost: 0 };
+            const m = models.get(mKey) ?? { billing: run.billing, agent: run.agent, model, priced: Boolean(priceOf(model, live)), tokens: zero(), cost: 0 };
             addTokens(m.tokens, tokens);
             m.cost += cost ?? 0;
             models.set(mKey, m);
@@ -256,7 +259,8 @@ export function createUsage(store, { now = Date.now } = {}) {
       from,
       to,
       days: span,
-      pricesAsOf: PRICES_AS_OF,
+      pricesAsOf: live ? prices.asOf : PRICES_AS_OF,
+      pricesFrom: live ? 'openrouter' : 'built-in',
       totals: billings,
       unpricedModels: [...unpricedModels].sort(),
       byModel: [...models.values()].sort(byCost),

@@ -747,7 +747,7 @@ export function createHandler({
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
-  cli = null, reviewReadiness = null, usage = null,
+  cli = null, reviewReadiness = null, usage = null, livePrices = null,
 }) {
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
   const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
@@ -2721,7 +2721,9 @@ export function createHandler({
     if (pathname === '/api/usage') {
       if (!usage) return reply(res, 404, { error: 'this console keeps no usage' });
       const admin = isAdmin(user);
-      const view = usage.summary({ login: user?.login ?? null, admin, everyone: url.searchParams.get('everyone') === '1', days: Number(url.searchParams.get('days')) || 30, seesShared: seesShared(user?.login ?? null) });
+      // Read on each ask, never kept: OpenRouter's list, or the built-in tables when it is not reached (livePrices.mjs).
+      const prices = livePrices ? await livePrices.read() : null;
+      const view = usage.summary({ login: user?.login ?? null, admin, everyone: url.searchParams.get('everyone') === '1', days: Number(url.searchParams.get('days')) || 30, seesShared: seesShared(user?.login ?? null) }, prices);
       const listed = new Set(fleet.sessions().map((s) => s.id));
       const bySession = view.bySession.map((row) => (row.hidden ? row : { ...row, listed: listed.has(row.sessionId) }));
       return reply(res, 200, { ...view, bySession, admin, names: namesFor(view.byPerson.map((p) => p.person).filter(Boolean)) });
