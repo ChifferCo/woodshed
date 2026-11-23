@@ -481,8 +481,14 @@ And what the shed shows about each session:
   merged or closed, `queued` in yellow while it waits in GitHub's merge queue
   (its place on hover), and otherwise one mark for what most needs a look (✗ a failing check
   or changes requested, a spinning ring while checks run, ✓ green or approved), with the
-  counts on hover. A session that opens another pull request keeps each one
-  it reported (`prUrls`, oldest first) and shows a chip for each, but a merged
+  counts on hover. While a review or QA session the console started is at work on the pull
+  request (waiting in line or running: `woodshedRunsOn` in `console/sessions.mjs`), the chip
+  says `review`, `QA` or `review, QA` with the ring in place of the ✓, since its checks say
+  nothing of them until they report; a failing check keeps its ✗ beside the word. The hover
+  card and the chip's tooltip say `Woodshed review running`. A session that opens another pull request keeps each one
+  it reported (`prUrls`, oldest first, by number): the one of the branch checked out and
+  those of its checkout's other branches, a git worktree's included (statusd's `prUrls`,
+  session/README.md). It shows a chip for each, but a merged
   or closed one only while no newer one came after it, so the newest always
   stays. The card and pane bar show the newest two of those, a phone's bar
   the newest one, and the older fold into a `+N` chip that names each on hover;
@@ -1171,8 +1177,10 @@ Only an admin can open them (see "Sign-in"). The same menu signs
 you out.
 
 - **Webhook events** (`/events`): each message it took off the webhooks queue,
-  what it did with it (started or messaged a session, skipped one the poll
-  already handled, ignored, failed) and the delivery id. Labels and comments
+  one line each: when it came, what the console did with it (started or messaged
+  a session, skipped one the poll already handled, ignored, failed), the event,
+  what it was on, who sent it and the delivery id, and a status word (Acted on,
+  Ignored, Skipped, Failed). Labels and comments
   it does not act on, and Slack events that are not mentions, are left out.
   Each message is one line appended to `webhookEvents.jsonl`, beside
   `state.json`; the page shows the last 7 days, and a sweep every 12 hours
@@ -1200,13 +1208,16 @@ you out.
   first delivery it drops, and at start `console: GitHub webhooks are switched
   off on Console settings, polling` or `console: Slack questions are switched
   off on Console settings`.
-- **Secrets & webhooks** (`/secrets`, the second tab of Settings): each secret's state and when it last
-  changed. Replace saves a new version, so the one before stays restorable as
+- **Secrets & webhooks** (`/secrets`, the second tab of Settings): groups of rows that open in place, as on My
+  settings (`public/settingsRows.js`), one row per secret. A closed row says what the secret is for, when it last
+  changed and whether it is set; open, it has the value behind Show and the form that sets or replaces it. A link to
+  `#secret-<name>` opens that row. Replace saves a new version, so the one before stays restorable as
   `AWSPREVIOUS`. Show reveals a session secret, since anyone who reaches the
   console can already read it in a session's terminal; the GitHub App's key is
   write-only. Slack's two keys are not listed: they are set on the Slack card
-  (below, "Slack"), and a line says so. A new App key is used at once, after a test token minted with it
-  succeeds. The webhook card checks four things (the App's webhook switched
+  (below, "Slack"), and a row says so. A new App key is used at once, after a test token minted with it
+  succeeds. The GitHub webhook group has three rows: Connection, Payload URL and secret, and a link to Webhook
+  events. Connection checks four things (the App's webhook switched
   on, the five events subscribed, the App connected to the Lambda with the
   stored secret, GitHub's last delivery accepted) and **Set up webhook** walks
   through them in three steps: the boxes only GitHub's settings page can tick
@@ -1214,7 +1225,7 @@ you out.
   the App with the Lambda's URL, `PATCH /app/hook/config`), and a test label
   whose delivery the modal follows from GitHub (`GET /app/hook/deliveries`) to
   the console's events log. The Lambda rereads
-  its secret when a signature fails, so Rotate under Advanced takes effect at once.
+  its secret when a signature fails, so Rotate secret on the Payload URL and secret row takes effect at once.
 
 Every change says what it changes and what that affects before it goes ahead.
 Replacing or rotating a secret needs its name typed; the server checks the
@@ -2645,18 +2656,23 @@ On AWS the base box's role makes, reads and deletes `<prefix>/repos/*` itself (`
 `providers/aws/terraform/baseBox.tf`), so a new env file needs no Terraform.
 
 An admin sets layer 2 on the repo's own page, `/console-settings/repos/<project>` (public/repoSettings.js), which the
-**Settings** link on its row of Console settings' Repos card opens; `?file=<key>` opens one env file's tab. For each env
-file of the project file it shows its key and path, the repo's `defaults` (read only, with a link to the file on
+**Settings** link on its row of Console settings' Repos card opens. It is groups of rows that open in place, as My
+settings is (public/settingsRows.js): **Env files**, **Prompt**, **Sessions from GitHub** and **Slack**; a closed row says
+what it holds, and several may be open at once. Each env file of the project file is a row, which says how many keys this
+installation sets for it; `?file=<key>` opens one. Open, it shows its key, the repo's `defaults` (read only, with a link to the file on
 GitHub), the installation's values (hidden until **Show and edit**, since reading them is logged), the keys the session
 sets itself, and a table of which layer wins each key: key names only, never a value. Env files that name one secret
-are one tab, `app-env → api/.env, worker/.env`, with a note that the values are written to both files; each file's
+are one row, `app-env → api/.env, worker/.env`, with a note that the values are written to both files; each file's
 defaults and overrides are shown under its path where they differ, and the table has a row a file (`LOG_LEVEL in api/.env`)
 for a key the files do not agree on. Then the installation's
-Instructions, with the 16 KB count as they are typed; a save that looks like a credential is refused under the field.
-A key saved for an env file the project file no longer names is listed with **Delete**, which removes everyone's values
+Instructions, read when their row opens, with the 16 KB count as they are typed; a save that looks like a credential is
+refused under the field.
+A key saved for an env file the project file no longer names is a row marked **Unused** with **Delete**, which removes everyone's values
 for it after a typed confirm. A project file with no env files gets a short how-to in their place: an `envFiles` entry with a `path`
-(and `defaults` if any) in a pull request, no `secret` needed, and a tab here once it is on the default branch. Last,
-the repo's **Slack** card ("A channel for each project", above; `#slack` opens it). The page loads for anyone signed
+(and `defaults` if any) in a pull request, no `secret` needed, and a row here once it is on the default branch. Then
+**Sessions from GitHub**: the label's and the `/woodshed` comments' switches on their rows, and the label's name in a row
+that opens (`#github` opens it). Last, the **Slack** group's Pull request channel row ("A channel for each project",
+above; `#slack` opens it). The page loads for anyone signed
 in; its calls answer 403 to anyone but an admin, and it says so.
 
 Each person sets layer 3 on My settings' repo rows, under **Repos and files** (public/myRepoSettings.js, with the layers drawn by

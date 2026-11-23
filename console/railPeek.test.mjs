@@ -60,12 +60,12 @@ test('each pull request is listed with its state, checks and review', () => {
     prUrl: PR,
     prs: [{ url: PR, pr: { title: 'Fix the export', state: 'open', checks: { total: 5, fail: 1, pending: 0 }, review: 'changes' } }],
   }), data);
-  assert.deepEqual({ ...v.prs[0] }, { number: '#9', title: 'Fix the export', state: 'Open', checks: '1 of 5 checks failing', level: 'fail', review: 'changes requested' });
+  assert.deepEqual({ ...v.prs[0] }, { number: '#9', title: 'Fix the export', state: 'Open', checks: '1 of 5 checks failing', level: 'fail', review: 'changes requested', running: null });
 });
 
 test('a pull request the console has not read yet is its number alone', () => {
   const v = W.peekView(shared({ prUrl: PR, prs: [{ url: PR, pr: null }] }), data);
-  assert.deepEqual({ ...v.prs[0] }, { number: '#9', title: null, state: null, checks: null, level: null, review: null });
+  assert.deepEqual({ ...v.prs[0] }, { number: '#9', title: null, state: null, checks: null, level: null, review: null, running: null });
 });
 
 test('the agent\'s last line is named after the agent, and cut to a few lines', () => {
