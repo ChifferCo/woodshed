@@ -1945,6 +1945,8 @@ export function createHandler({
           console.warn('console: Codex sign-in not read for an agent', { id: session.id, message: err?.message });
           return reply(res, 502, { error: 'the console could not read your Codex sign-in: try again' });
         }
+        // Asked again after the read: a lockdown that started meanwhile gets no sign-in sent into the session.
+        if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
       }
       console.log('console: another agent asked for', {
         id: session.id, agent: picked.agent, model: picked.model || null, effort: picked.effort || null, permissionMode: picked.permissionMode,

@@ -2753,6 +2753,12 @@ test('a Codex agent beside claude is started with its owner\'s sign-in, and allo
   assert.deepEqual(allowed, ['codex']);
   assert.equal((await start('claude')).status, 200);
   assert.equal(asked[2].codexAuth, undefined, 'a claude agent is sent no Codex sign-in');
+  // A lockdown that starts while the owner's sign-in is read: nothing is sent into the session.
+  let locked = false;
+  fleet.isLocked = () => locked;
+  userSettings.codexAuth = async () => { locked = true; return 'sk-own-key'; };
+  assert.equal((await start('codex')).status, 409);
+  assert.equal(asked.length, 3, 'the sign-in never reached the session');
   mine.taintedAt = '2026-11-23T10:00:00Z';
   assert.equal((await start('codex')).status, 409, 'a tainted session starts none');
   assert.equal(asked.length, 3);
