@@ -340,7 +340,7 @@ test('setup asks for both Claude Code and Codex, and names how to get each sign-
   assert.deepEqual(last.missing, ['claude', 'codex']);
   assert.match(last.message, /Connect Claude Code and Codex on My settings: with both connected, your pull requests get reviews from both/);
   assert.match(last.message, /Claude Code:\n {2}1\. In another terminal, run: claude setup-token\n {2}2\. .*sk-ant-oat01-.*\n {2}3\. On My settings \(https:\/\/console\.example\/settings#claude\), paste it in the Claude row's box and press Save\./);
-  assert.match(last.message, /Codex:\n {2}1\. In another terminal, run: codex login.*\n {2}2\. .*cat ~\/\.codex\/auth\.json\n {2}3\. On My settings \(https:\/\/console\.example\/settings#codex\)/);
+  assert.match(last.message, /Codex:\n {2}1\. In another terminal, run: codex login.*\n {2}2\. In that terminal, .*cat ~\/\.codex\/auth\.json\n {2}3\. On My settings \(https:\/\/console\.example\/settings#codex\)/);
   assert.match(last.message, /--agent claude or --agent codex/);
   assert.equal(last.url, `${origin}/settings#claude`);
   assert.deepEqual(Object.keys(last.steps), ['claude', 'codex']);
@@ -387,6 +387,17 @@ test('on a terminal, setup walks through connecting each agent and goes on once 
   assert.match(text, /The console does not have Claude Code's sign-in yet/, 'the first Enter came before Save');
   assert.match(text, /Claude Code is connected\.[^]*Connect Codex \(2 of 2\):[^]*pbcopy < ~\/\.codex\/auth\.json[^]*Codex is connected\./);
   assert.equal(after.events.find((event) => event.step === 'agent').status, 'done');
+});
+
+test('on a terminal, a status call that fails says so, rather than that the sign-in is not saved', async () => {
+  const seen = [result(0, { ...ready, sessionSignIns: { claude: false, codex: true } }), result(1, { event: 'error', error: 'console not reached' }), result(0, { ...ready, sessionSignIns: { claude: true, codex: true } })];
+  // Enter for both agents, then an Enter whose status call fails, then one that finds Claude Code saved.
+  const { invoke } = fake({ tty: true, input: ['', '', ''], answers: { status: () => (seen.length > 1 ? seen.shift() : seen[0]) } });
+  const after = await invoke('--repo', repo, '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done);
+  const text = after.lines.join('\n');
+  assert.match(text, /Could not ask the console whether it is saved/);
+  assert.doesNotMatch(text, /does not have Claude Code's sign-in yet/);
 });
 
 test('on a terminal, skip stops setup at the agent with every step still to do', async () => {
