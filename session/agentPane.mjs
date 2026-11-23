@@ -116,11 +116,11 @@ export function hcPane(run, { terminal = HC_TERMINAL, bin = 'hc', agent = 'claud
      * A message, pasted and sent with its Enter, never into a prompt: not while the screen asks a person anything (a
      * question, an approval, a numbered menu: what typeMessage refuses in tmux), and only while the agent says it is at
      * its prompt. claude's record says `idle` before its first turn and after one it stopped, and `done` after every
-     * turn it finished: both are its prompt. hc's `--if` takes `idle` alone, so `done` is checked here and sent with no
-     * `--if`; hc's own send still refuses a blocked program and waits for a person's unsent draft in an attached client.
-     * codex and the agents after it send no 7501 records: with no record, the screen must show the agent at its prompt,
-     * as codex's, Grok Build's and OpenCode's screens say; Antigravity's says only when it asks, so for it no prompt on
-     * screen is all that is checked.
+     * turn it finished: both are its prompt. hc's `--if` takes `idle` alone, so `done` is sent with no `--if`, once the
+     * screen shows the agent at its prompt (a stale `done` can sit over a turn a person started); hc's own send still
+     * refuses a blocked program and waits for a person's unsent draft in an attached client. codex and the agents after
+     * it send no 7501 records: with no record, the screen must show the agent at its prompt, as codex's, Grok Build's and
+     * OpenCode's screens say; Antigravity's says only when it asks, so for it no prompt on screen is all that is checked.
      * @returns {Promise<{sent: true}|{sent: false, why: string, kind?: string|null}>}
      */
     async send(text) {
@@ -129,10 +129,11 @@ export function hcPane(run, { terminal = HC_TERMINAL, bin = 'hc', agent = 'claud
         // Every agent's shapes, not only its own: a send that holds back too often is safe, one that answers a prompt is not.
         const kind = asking(screen);
         if (kind) return { sent: false, why: 'prompt-open', kind };
-        if (!status && !atPrompt(agent, screen)) return { sent: false, why: 'not-at-prompt' };
-        // As hc says it when `--if` does not match: working, blocked, or a turn that ended in an error.
-        if (status && status.state !== 'idle' && status.state !== 'done') return { sent: false, why: 'status_mismatch' };
-        await hc('send', status?.state === 'idle' ? ['--if', 'idle'] : [], text);
+        // Working, blocked, or a turn that ended in an error: said as hc says it when `--if` does not match.
+        const state = status?.state ?? null;
+        if (state && state !== 'idle' && state !== 'done') return { sent: false, why: 'status_mismatch' };
+        if (state !== 'idle' && !atPrompt(agent, screen)) return { sent: false, why: 'not-at-prompt' };
+        await hc('send', state === 'idle' ? ['--if', 'idle'] : [], text);
         return { sent: true };
       } catch (err) {
         return { sent: false, why: refusedSend(err) };
