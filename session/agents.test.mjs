@@ -130,6 +130,9 @@ test('a start makes a tmux session of its own, points its hooks at its own file,
     assert.equal(codex.id, 'agent-3');
     assert.ok(tmux.calls.find((c) => c[1] === 'new-session' && c.includes('agent-3')).includes('WOODSHED_CODEX_AUTH=key'), 'its sign-in, as statusd set it up');
     assert.equal(agents.ranCodex(), true);
+    await agents.stop('agent-3');
+    assert.equal(agents.ranCodex(), true, 'a codex stopped before its Chat was ever read still sends its sign-in back');
+    await agents.start({ agent: 'codex' });
 
     await agents.start({});
     await assert.rejects(agents.start({}), (err) => err.status === 409 && /at most 3/.test(err.message));
@@ -137,7 +140,7 @@ test('a start makes a tmux session of its own, points its hooks at its own file,
 
     await agents.stop('agent-2');
     assert.ok(tmux.calls.some((c) => c[1] === 'kill-session' && c.includes('=agent-2')));
-    assert.deepEqual((await agents.list()).map((a) => a.id), ['agent-3', 'agent-4']);
+    assert.deepEqual((await agents.list()).map((a) => a.id), ['agent-3', 'agent-4'], 'agent-3 again, in its slot');
     assert.ok(agents.claimed().claude.has(`${conversation}.jsonl`), 'a stopped one\'s record stays claimed');
     assert.equal((await agents.start({})).id, 'agent-2', 'the lowest id free');
     await assert.rejects(agents.transcript('agent-9'), (err) => err.status === 404);

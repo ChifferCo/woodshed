@@ -150,6 +150,8 @@ export function createAgents({
   // Every record one of them wrote, kept after it stops: the session's own agent never takes one for its own.
   const claimedClaude = new Set();
   const claimedCodex = new Set();
+  // Whether a codex ever started here, read or not on the Chat tab: its sign-in may have been refreshed all the same.
+  let codexStarted = false;
   let ticker = null;
 
   const claudeFile = (name) => path.join(claudeDir, name);
@@ -351,6 +353,7 @@ export function createAgents({
       held: [], delivered: [], refused: [], leftInBox: null, lastSent: null, lastState: null, rollout: null, rolloutAt: 0,
     };
     if (conversation) claimedClaude.add(`${conversation}.jsonl`);
+    if (a.agent === 'codex') codexStarted = true;
     agents.set(id, a);
     try {
       await a.io.line(line);
@@ -376,7 +379,7 @@ export function createAgents({
 
     /** Whether any started here ran codex, whose sign-in the stop sends back. */
     ranCodex() {
-      return claimedCodex.size > 0 || [...agents.values()].some((a) => a.agent === 'codex');
+      return codexStarted;
     },
 
     async start(body) {

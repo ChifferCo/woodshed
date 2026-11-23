@@ -11,7 +11,7 @@
 // each turn changed shows under its last work log that edited a file, from the edits' diffs the record carries.
 // session.js makes the Chat tab the one a running session opens on.
 // An agent started beside the session's own (session/agents.mjs) has a Chat of its own: session.js shows it a view of
-// the session whose `id` is that agent's (`<session>~agent-2`, which keys its drafts, bubbles and folds), whose state and
+// the session whose `id` is that agent's (`<session>~agent-2~<its start>`, which keys its drafts, bubbles and folds), whose state and
 // message ids are the agent's, and whose `apiBase` is its routes (/api/sessions/<id>/agents/agent-2), with `uploadBase`
 // the session's own, where files land.
 (function () {

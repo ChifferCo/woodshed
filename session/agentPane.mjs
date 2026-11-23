@@ -68,8 +68,10 @@ export function tmuxPane(run, target = 'claude') {
     literal,
     /** A bracketed paste, where the program asked for them. */
     async paste(text) {
-      await run('tmux', ['set-buffer', '-b', 'woodshed-send', '--', text]);
-      await run('tmux', ['paste-buffer', '-p', '-d', '-b', 'woodshed-send', '-t', target]);
+      // A buffer of the pane's own: the agents beside the session's (agents.mjs) type at the same time as it.
+      const buffer = `woodshed-send-${target.replace(/[^A-Za-z0-9-]/g, '')}`;
+      await run('tmux', ['set-buffer', '-b', buffer, '--', text]);
+      await run('tmux', ['paste-buffer', '-p', '-d', '-b', buffer, '-t', target]);
     },
     /** A command at the shell's prompt, once claude is gone from it. */
     async line(text) {

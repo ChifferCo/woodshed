@@ -201,7 +201,8 @@
     const a = shownAgent(s);
     if (!a) return s;
     return {
-      ...s, id: `${s.id}~${a.id}`, options: { ...s.options, agent: a.agent, model: a.model },
+      // Its start in the key too: a new agent in a stopped one's place gets none of its drafts, bubbles or folds.
+      ...s, id: `${s.id}~${a.id}~${Date.parse(a.startedAt ?? '') || 0}`, options: { ...s.options, agent: a.agent, model: a.model },
       state: a.state, boxText: false, heldIds: a.heldIds, deliveredIds: a.deliveredIds, refusedIds: a.refusedIds, unknownIds: [],
       leftInBox: a.leftInBox, apiBase: `/api/sessions/${s.id}/agents/${a.id}`, uploadBase: `/api/sessions/${s.id}`,
     };

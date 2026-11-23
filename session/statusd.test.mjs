@@ -1564,7 +1564,7 @@ test('an agent beside the session\'s own starts in its own tmux session, and its
   // The session's own pane, which nothing here may type into.
   await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '40', 'sleep 600');
   const { call } = await statusdWithApp(t, { env: {
-    TMUX: '', TMUX_TMPDIR: dir, SESSION_KIND: 'private', WOODSHED_AGENT_BIN: path.join(dir, 'bin'), WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'),
+    TMUX: '', TMUX_TMPDIR: dir, SESSION_KIND: 'private', SESSION_MODE: '', WOODSHED_AGENT_BIN: path.join(dir, 'bin'), WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'),
     WOODSHED_CODEX_READY_FILE: path.join(dir, 'no-codex'), WOODSHED_AGENT_STATE_DIR: dir, WOODSHED_CLAUDE_STATE_FILE: path.join(dir, 'own-state.json'),
   } });
 
