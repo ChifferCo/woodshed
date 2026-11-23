@@ -990,7 +990,7 @@ table.layer-table { width: 100%; min-width: 460px; border-collapse: collapse; fo
 .rename-offer-form .field { width: min(320px, calc(100vw - 180px)); min-height: 28px; padding: 3px 8px; font-size: 13px; }
 .rename-offer-ttl { flex: none; display: flex; align-items: center; gap: 6px; padding-left: 10px; border-left: 1px solid var(--line); color: var(--sub); white-space: nowrap; }
 .rename-offer-ttl .field { width: auto; min-height: 28px; padding: 3px 6px; font-size: 13px; }
-@media (max-width: 560px) { .rename-offer { flex-wrap: wrap; } .rename-offer-ttl { order: 1; padding-left: 0; border-left: 0; } }
+@media (max-width: 560px) { .rename-offer { flex-wrap: wrap; } .rename-offer-ttl { order: 1; flex-basis: 100%; padding-left: 0; border-left: 0; } }
 .rename-offer-close { flex: none; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--meta); font: inherit; font-size: 16px; cursor: pointer; }
 .rename-offer-close:hover { background: var(--stopped); color: var(--ink); }
 /* What is left of the 10 s: gone once a click keeps the offer. */

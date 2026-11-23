@@ -495,19 +495,24 @@
     const own = s.limits?.lifetimeHours ?? null;
     const hoursShort = (n) => `${n} h`;
     const picks = [...new Set([...LIFETIME_PICKS, ...(own ? [own] : [])])].sort((a, b) => a - b);
+    // A stop it has already run past would end it within seconds: those are not offered (Pause and stop… still can).
+    const ranHours = s.status === 'running' && s.startedAt ? (Date.now() - Date.parse(s.startedAt)) / 3_600_000 : 0;
+    const option = (value, text, hours) => h('option', { value, disabled: hours <= ranHours && value !== String(own ?? '') }, text);
     const select = h('select', { class: 'field rename-offer-ttl-pick', 'aria-label': 'Stop it after' },
-      h('option', { value: '' }, fallback ? `${hoursShort(fallback)} (usual)` : 'Usual'),
-      ...picks.map((n) => h('option', { value: String(n) }, hoursShort(n))));
+      option('', fallback ? `${hoursShort(fallback)} (usual)` : 'Usual', fallback || Infinity),
+      ...picks.map((n) => option(String(n), hoursShort(n), n)));
     select.value = own ? String(own) : '';
     let saved = select.value;
     select.addEventListener('change', async () => {
       const lifetimeHours = select.value ? Number(select.value) : null;
       select.disabled = true;
       try {
-        // The session's own idle pause stays as it is: a key left out would go back to the usual.
-        await W.postJson(`/api/sessions/${s.id}/limits`, { idleHours: currentSession?.limits?.idleHours ?? s.limits?.idleHours ?? null, lifetimeHours });
+        // The session's own idle pause stays as it is now (a key left out would go back to the usual): read from the
+        // latest copy of this session, never the offer's first, which may hold an idle pause cleared since.
+        const latest = currentSession?.id === s.id ? currentSession : s;
+        await W.postJson(`/api/sessions/${s.id}/limits`, { idleHours: latest.limits?.idleHours ?? null, lifetimeHours });
         saved = select.value;
-        W.shell.toast(`Stops after ${hoursText(lifetimeHours ?? fallback)} of running`);
+        W.shell.toast(`Stops after ${W.hoursText(lifetimeHours ?? fallback)} of running`);
         refresh();
       } catch (err) {
         select.value = saved;
@@ -517,9 +522,6 @@
     });
     return h('label', { class: 'rename-offer-ttl', title: 'How long it runs before it stops by itself. It tries to push its work first, and Resume picks it up.' },
       h('span', null, 'Stops after'), select);
-  }
-  function hoursText(n) {
-    return `${n} ${n === 1 ? 'hour' : 'hours'}`;
   }
 
   const STAR = 'M5 1.1 L5.99 3.94 L8.99 4 L6.6 5.82 L7.47 8.7 L5 6.98 L2.53 8.7 L3.4 5.82 L1.01 4 L4.01 3.94 Z';
