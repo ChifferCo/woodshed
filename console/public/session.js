@@ -404,6 +404,8 @@
     const title = slots.head.querySelector('.ptitle');
     const anchor = title?.getClientRects().length ? title : slots.head;
     const r = anchor.getBoundingClientRect();
+    // Measured from the left edge, where nothing squeezes it, then placed under the title.
+    offer.el.style.left = '8px';
     const width = offer.el.offsetWidth;
     offer.el.style.top = `${Math.round(r.bottom + 6)}px`;
     offer.el.style.left = `${Math.round(Math.max(8, Math.min(r.left, window.innerWidth - width - 8)))}px`;
@@ -419,6 +421,7 @@
     if (was === s.namedAt) {
       if (offer) {
         if (!offer.editing) offer.name.textContent = s.title;
+        offer.ttl?.sync(s);
         placeRenameOffer();
       }
       return;
@@ -440,6 +443,8 @@
       keep();
       if (offer.editing) return;
       offer.editing = true;
+      // The name's field needs the row: the pickers go under it, at any width.
+      el.classList.add('is-editing');
       const input = h('input', { class: 'field', value: currentSession?.title ?? s.title, maxlength: '120', 'aria-label': 'Session name', autocomplete: 'off' });
       const save = h('button', { type: 'submit', class: 'btn btn-plain btn-sm' }, 'Save');
       const form = h('form', { class: 'rename-offer-form' }, input, save,
@@ -468,8 +473,10 @@
     const body = h('div', { class: 'rename-offer-body', onclick: (e) => { if (!e.target.closest('form')) edit(); } },
       h('span', { class: 'rename-offer-line' }, 'Named ', name),
       h('button', { type: 'button', class: 'btn btn-plain btn-sm', onclick: edit }, 'Rename'));
+    const ttl = limitPicks(s);
     const el = h('div', { class: 'rename-offer', role: 'dialog', 'aria-label': 'Rename this session' },
       body,
+      ttl?.el,
       h('button', { type: 'button', class: 'rename-offer-close', 'aria-label': 'Close', title: 'Keep this name', onclick: (e) => { e.stopPropagation(); closeRenameOffer(); } }, '\u00d7'),
       h('span', { class: 'rename-offer-timer', 'aria-hidden': 'true', style: `animation-duration: ${RENAME_OFFER_MS}ms` }));
     el.addEventListener('pointerdown', keep);
@@ -480,8 +487,108 @@
       closeRenameOffer();
     });
     document.body.append(el);
-    offer = { id: s.id, el, name, kept: false, editing: false, timer: setTimeout(closeRenameOffer, RENAME_OFFER_MS) };
+    offer = { id: s.id, el, name, ttl, kept: false, editing: false, timer: setTimeout(closeRenameOffer, RENAME_OFFER_MS) };
     placeRenameOffer();
+  }
+
+  // The offer's other questions, while the session is new: how long it waits for input before it pauses, and how long
+  // it runs before it stops by itself (its own `idleHours` and `lifetimeHours`, as Pause and stop… sets them). Offered
+  // to whoever may change them (W.ownsLimits); each one's first option is what it runs on otherwise, and a pick is saved
+  // at once, with the other kept as it is. Each refresh draws them again from the latest copy of the session and the
+  // latest settings, while the offer stays open: a change made in Pause and stop… or My settings meanwhile shows here.
+  const LIMIT_PICKS = {
+    idleHours: [0.25, 0.5, 1, 2, 4],
+    lifetimeHours: [1, 2, 4, 8, 12, 24],
+  };
+  // How far along a clock is as the console counts it (sessions.mjs pauseAt): from its start, whatever claude is doing,
+  // and nothing while an Extend from this run still holds the session.
+  const clockPast = (x, from) => {
+    if (x.status !== 'running' || !from) return 0;
+    const held = Date.parse(x.extendedAt) >= Date.parse(x.startedAt) ? Date.parse(x.extendedUntil) : NaN;
+    if (Number.isFinite(held) && held > Date.now()) return 0;
+    return (Date.now() - Date.parse(from)) / 3_600_000;
+  };
+  const limitText = (n) => (n < 1 ? `${Math.round(n * 60)} min` : `${n} h`);
+  const limitWords = (n) => (n < 1 ? `${Math.round(n * 60)} minutes` : W.hoursText(n));
+  function limitPicks(s) {
+    if (s.kind === 'ask' || !data || !W.ownsLimits(s, data)) return null;
+    let latest = s;
+    let pending = false;
+    // How far the session already is along each clock: a pick at or under it would pause or stop it within seconds, so
+    // those are not offered (Pause and stop… still can).
+    const KINDS = {
+      idleHours: {
+        label: 'Pauses after', aria: 'Pause it after waiting for input for', cls: 'rename-offer-idle-pick',
+        fallback: () => (s.owner && data.myIdleHours) || data.idleHours,
+        past: (x) => clockPast(x, x.lastActiveAt),
+        saved: (n) => `Pauses after ${limitWords(n)} waiting for input`,
+        refused: (n) => `it has already waited for input for more than ${limitWords(n)}`,
+        title: 'How long it waits for input before it pauses. Resume picks it up where it was.',
+      },
+      lifetimeHours: {
+        label: 'Stops after', aria: 'Stop it after', cls: 'rename-offer-ttl-pick',
+        fallback: () => (s.owner && data.myLifetimeHours) || data.lifetimeHours,
+        past: (x) => clockPast(x, x.startedAt),
+        saved: (n) => `Stops after ${limitWords(n)} of running`,
+        refused: (n) => `it has already run past ${limitWords(n)}`,
+        title: 'How long it runs before it stops by itself. It tries to push its work first, and Resume picks it up.',
+      },
+    };
+    const selects = {};
+    const draw = (key) => {
+      const kind = KINDS[key];
+      const select = selects[key];
+      const own = latest.limits?.[key] ?? null;
+      const past = kind.past(latest);
+      const fallback = kind.fallback();
+      const picks = [...new Set([...LIMIT_PICKS[key], ...(own ? [own] : [])])].sort((a, b) => a - b);
+      const option = (value, text, hours) => h('option', { value, disabled: hours <= past && value !== String(own ?? '') }, text);
+      select.replaceChildren(
+        option('', fallback ? `${limitText(fallback)} (usual)` : 'Usual', fallback || Infinity),
+        ...picks.map((n) => option(String(n), limitText(n), n)));
+      select.value = own ? String(own) : '';
+    };
+    const drawAll = () => { for (const key of Object.keys(KINDS)) if (document.activeElement !== selects[key]) draw(key); };
+    const labels = Object.entries(KINDS).map(([key, kind]) => {
+      const select = selects[key] = h('select', { class: `field ${kind.cls}`, 'aria-label': kind.aria });
+      draw(key);
+      select.addEventListener('change', async () => {
+        const value = select.value ? Number(select.value) : null;
+        const effective = value ?? kind.fallback();
+        // Checked again now: the offer may have been open long enough for the session to get past the pick.
+        if (effective <= kind.past(latest)) {
+          W.shell.toast(`Not saved: ${kind.refused(effective)}. Pause and stop… can do it now.`, { ms: 6000 });
+          draw(key);
+          return;
+        }
+        for (const other of Object.values(selects)) other.disabled = true;
+        pending = true;
+        try {
+          // The other limit stays as it is now (a key left out would go back to the usual): read from the latest copy
+          // of this session, never the offer's first, which may hold one changed since.
+          const limits = { idleHours: latest.limits?.idleHours ?? null, lifetimeHours: latest.limits?.lifetimeHours ?? null, [key]: value };
+          await W.postJson(`/api/sessions/${s.id}/limits`, limits);
+          latest = { ...latest, limits };
+          W.shell.toast(kind.saved(effective));
+          refresh();
+        } catch (err) {
+          W.shell.toast(`Not saved: ${err.message}`, { ms: 6000 });
+        }
+        pending = false;
+        for (const other of Object.values(selects)) other.disabled = false;
+        draw(key);
+      });
+      return h('label', { class: 'rename-offer-limit', title: kind.title }, h('span', null, kind.label), select);
+    });
+    const el = h('div', { class: 'rename-offer-limits' }, ...labels);
+    // The latest copy is kept on every refresh; a picker's options are drawn again only when no save is on its way and
+    // its list cannot be open.
+    const sync = (next) => {
+      if (pending) return;
+      latest = next;
+      drawAll();
+    };
+    return { el, sync };
   }
 
   const STAR = 'M5 1.1 L5.99 3.94 L8.99 4 L6.6 5.82 L7.47 8.7 L5 6.98 L2.53 8.7 L3.4 5.82 L1.01 4 L4.01 3.94 Z';

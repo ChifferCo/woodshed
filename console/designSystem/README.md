@@ -179,6 +179,10 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   `btn-plain` **Rename** and a quiet ×. A 2px `slate` line along its foot runs down over 10 s, when it goes. A click
   anywhere on it keeps it and drops the line; **Rename** turns it into a field with a `btn-plain` Save and a quiet
   Cancel. Never orange: renaming is not the session's primary action.
+- To whoever may change when the session pauses and stops (its owner, or a shared one's assignee), the offer also asks
+  how long it waits for input and how long it runs: `Pauses after` and `Stops after`, each in `sub` with a small `field`
+  select, set off together by a `line` rule on their left (on their own row on a phone). Each one's first option is the
+  usual number, `1 h (usual)`; a pick is saved at once, with a toast, and a time the session is already past is greyed.
 
 ## Commands to copy
 

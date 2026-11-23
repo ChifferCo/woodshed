@@ -1008,6 +1008,13 @@ table.layer-table { width: 100%; min-width: 460px; border-collapse: collapse; fo
 .rename-offer .btn { flex: none; }
 .rename-offer-form { display: flex; align-items: center; gap: 6px; cursor: auto; }
 .rename-offer-form .field { width: min(320px, calc(100vw - 180px)); min-height: 28px; padding: 3px 8px; font-size: 13px; }
+.rename-offer-limits { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding-left: 10px; border-left: 1px solid var(--line); }
+.rename-offer-limit { display: flex; align-items: center; gap: 6px; color: var(--sub); white-space: nowrap; }
+.rename-offer-limit .field { width: auto; min-height: 28px; padding: 3px 6px; font-size: 13px; }
+/* Renaming: the name's field takes the first row and the pickers the second, the offer as wide as the wider of them. */
+.rename-offer.is-editing { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: 6px; }
+.rename-offer.is-editing .rename-offer-limits { grid-column: 1 / -1; grid-row: 2; padding-left: 0; border-left: 0; }
+@media (max-width: 560px) { .rename-offer { flex-wrap: wrap; } .rename-offer-limits { order: 1; flex-basis: 100%; padding-left: 0; border-left: 0; } }
 .rename-offer-close { flex: none; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--meta); font: inherit; font-size: 16px; cursor: pointer; }
 .rename-offer-close:hover { background: var(--stopped); color: var(--ink); }
 /* What is left of the 10 s: gone once a click keeps the offer. */
