@@ -37,12 +37,12 @@ test('every typed word has to match, and nonsense finds nothing', () => {
 
 test('a page the person cannot open is left out', () => {
   const mine = search('', { allowed: (page) => !PAGES[page].admin });
-  assert.ok(mine.length > 0 && mine.every((e) => e.page === '/settings'));
+  assert.ok(mine.length > 0 && mine.every((e) => e.page === '/settings' || e.page === '/usage'));
   assert.deepEqual(search('webhook', { allowed: (page) => page === '/settings' }), []);
 });
 
 test('each section has a card with its id in its page, so the link lands on it', () => {
-  const source = { '/settings': ['mySettings.js', 'myRepoSettings.js'], '/console-settings': ['consoleSettings.js'], '/secrets': ['secrets.js'], '/people': ['people.js'], '/events': ['events.js'] };
+  const source = { '/settings': ['mySettings.js', 'myRepoSettings.js'], '/console-settings': ['consoleSettings.js'], '/secrets': ['secrets.js'], '/people': ['people.js'], '/events': ['events.js'], '/usage': ['usage.js'] };
   for (const e of ENTRIES) {
     assert.ok(PAGES[e.page], `${e.id}: unknown page ${e.page}`);
     const text = source[e.page].map((f) => readFileSync(new URL(`./public/${f}`, import.meta.url), 'utf8')).join('\n');

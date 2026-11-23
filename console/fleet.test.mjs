@@ -16,7 +16,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null, qaRecordings = null, reviewAgents = null, reviewGates = undefined } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null, qaRecordings = null, reviewAgents = null, reviewGates = undefined, usage = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
@@ -111,7 +111,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, qaRecordings, now: () => clock,
-    pings, pullRequests: async () => gates, ...(reviewGates !== undefined ? { reviewGates: typeof reviewGates === 'function' ? reviewGates : async () => reviewGates } : {}), projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, reviewAgents, ...(consoleLinks ? { consoleLinks } : {}),
+    pings, pullRequests: async () => gates, ...(reviewGates !== undefined ? { reviewGates: typeof reviewGates === 'function' ? reviewGates : async () => reviewGates } : {}), projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, reviewAgents, usage, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
       isAssignable: (login) => assignables.some((e) => e.toLowerCase() === String(login).toLowerCase()),
@@ -298,6 +298,25 @@ test('a stop from the console records who stopped it, an idle pause no one, and 
   await fleet.tick();
   await fleet.stop(session, 'idle for 1 h');
   assert.deepEqual([session.status, session.stoppedBy], ['stopped', null]);
+});
+
+test('each status read hands the tokens the session spent to the Usage page, and a failure there stops nothing', async () => {
+  const recorded = [];
+  let failing = false;
+  const usage = { record: (session, report) => { if (failing) throw new Error('disk full'); recorded.push([session.id, report.billing]); } };
+  const { fleet, statuses } = setup({ usage });
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working', tokenUsage: { agent: 'claude', billing: 'key', since: '2026-11-23T00:00:00Z', days: {} } };
+  await fleet.tick();
+  assert.deepEqual(recorded, [[session.id, 'key']]);
+  failing = true;
+  await fleet.tick();
+  assert.equal(session.status, 'running');
+  statuses[session.id] = { state: 'working' };
+  failing = false;
+  await fleet.tick();
+  assert.equal(recorded.length, 1, 'a statusd from before it reports none');
 });
 
 test('stopping a session that paused by itself moves it to Stopped, and only once', async () => {

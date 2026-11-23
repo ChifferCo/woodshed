@@ -976,6 +976,11 @@ URL on top of each env file's Repo settings values
   reason; the console logs `console: statusd unreachable` with `path: '/diff'`. `baseFetched: false` means the default branch
   could not be fetched, so the diff is against the copy of it the checkout already had. A file `.gitignore` names never
   shows. A session from an image before `session/sessionDiff.mjs` answers 404.
+- **The Usage page shows nothing for a session, or too little.** Its statusd counts from the agent's transcripts
+  (session/README.md, `tokenUsage` in `/status`): `statusd: token usage not read` in the session's log says why, and a
+  session from an image before the count reports none. Only what was spent since its Claude home was restored counts,
+  so a private session's earlier conversations are their own sessions'. `fleet: token usage failed` is the console
+  failing to keep a report. `no price` on a model is one `shared/apiPrices.mjs` does not list yet.
 - **The App log tab is empty.** statusd's `GET /applog` reads
   `/tmp/woodshed-app.log` and the project file's `app.logs` in the session; the tab says `Nothing logged yet` until Start app ran.
 - **New session's Codex models are old, or say `codex's built-in list`.** The line under the menus says why. The console

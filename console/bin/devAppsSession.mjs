@@ -65,8 +65,13 @@ export async function startDevAppsSession({ id, token }) {
   git('add', '-A');
   git('commit', '-q', '-m', 'two apps');
   const port = await freePort();
+  // A home of its own: in this machine's, its token count (session/tokenUsage.mjs) would read this machine's own
+  // transcripts onto the made-up Usage page.
+  const home = path.join(root, 'home');
+  fs.mkdirSync(home);
   const child = spawn(process.execPath, [STATUSD], {
-    env: { ...process.env, SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '' },
+    env: { ...process.env, HOME: home, SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '',
+      WOODSHED_CLAUDE_AUTH: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   // Its app decisions only: tmux and gh are not here, which it warns of on every status read.

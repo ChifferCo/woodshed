@@ -61,6 +61,15 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - Each settings page has a quiet `Only you` or `Everyone` tag beside its title, and the settings rail has a search at its top (`components/SettingsSearch`).
   Name a card by whose it is when the same thing exists on both sides: "My repo settings", "My session timeouts".
 
+## Usage
+
+- The Usage page is a page of numbers, not a dashboard: two cards (On a plan, On an API key), each a mono dollar figure
+  over a `sub` line saying what it means, then plain tables (the Webhook events table, with numbers right-aligned in
+  mono) and a day list.
+- A day is a bar against the busiest day: `slate` for a plan, `ink` for an API key, never a status colour or a project
+  colour, with the dollars beside it in mono and the split in words on hover. A legend under it names both.
+- A plan's figure always says it is what its tokens would have cost on a key, not what the plan costs.
+
 ## Menus and presses
 
 - A ⋯ menu is a `ground` panel with the `menu` shadow beside its button on a desktop, and a sheet from the bottom of the

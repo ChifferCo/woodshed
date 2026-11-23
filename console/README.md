@@ -1163,6 +1163,26 @@ test it.
 Without the label, as when someone removed it, the APPROVE goes out at once. A QA session that never reports leaves the
 approval held: removing and adding the label runs QA again, which releases it.
 
+## Usage
+
+**Usage** (`/usage`, under My settings in the avatar menu and the settings list) shows the tokens sessions' agents spent,
+split by what pays for them, and what they cost at the providers' API list prices (`shared/apiPrices.mjs`, dated in
+`PRICES_AS_OF`): **On a plan** is what a Claude plan's or a ChatGPT login's tokens would have cost on an API key, and
+**On an API key** what the team key or a person's own key was charged, near enough. Then the same by model (input,
+cache writes, cache reads and output), by person (an admin's Everyone), by day, and the sessions that spent the most.
+Everyone sees their own: private sessions they own, shared ones they started or that ran on their plan. An admin may
+switch to Everyone. 7, 30 or 90 days, in UTC.
+
+Nothing is asked of Anthropic or OpenAI. Each session's statusd counts what its agent spent from the agent's own
+transcripts and says whether a plan or a key pays (`tokenUsage` in its `/status`, session/README.md); the fleet hands
+each report to `console/usage.mjs`, which keeps it in `state.json` under `tokenUsage`, by session and by run (a Resume
+reports from its own start), apart from the session list, so a deleted session's usage stays for 90 days. A model
+with no price in the list shows its tokens and `no price`, never a guess: add its row when it ships. A session from an
+image before the count reports nothing. A review or QA run is the console's, whoever's sign-in its codex used.
+
+`GET /api/usage?days=30` answers the page: `{ everyone, from, to, days, pricesAsOf, totals: { plan, key }, unpricedModels,
+byModel, byPerson, byDay, bySession }`, with `everyone=1` for an admin's whole console (anyone else gets their own).
+
 ## Webhook events, secrets and the GitHub App's webhook
 
 In AWS the console has two more pages: Secrets & webhooks, a tab of Settings under Console in the menu under your

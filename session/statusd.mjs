@@ -72,6 +72,7 @@ import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs
 import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
+import { billingOf, tokenCounter } from './tokenUsage.mjs';
 import { TAINTED_CLAUDE_FLAGS, applyTaint, isTaintSetUp, isTainted, markTaintSetUp } from './taint.mjs';
 import { paneState, stateReader } from './agentState.mjs';
 import { agentPane } from './agentPane.mjs';
@@ -894,6 +895,7 @@ async function status() {
     agentOnlySend: true,
     usage: await usage(),
     planUsage: await (CODEX ? readCodexPlanUsage() : readPlanUsage()).catch(planUsageFailed),
+    tokenUsage: await tokenUsage(),
     ...(await appStatus()),
     ...appsStatus(),
   };
@@ -905,6 +907,37 @@ function planUsageFailed(error) {
   if (error.message !== planUsageError) console.log('statusd: plan usage not read', { error: error.message });
   planUsageError = error.message;
   return null;
+}
+
+// The tokens the agent spent in this session, by day and model, and whether a plan or a key pays for them
+// (tokenUsage.mjs), for the console's Usage page. Counted from the time the entrypoint began restoring the Claude home:
+// what the home brought was an earlier session's. Read again at most every 30 s; the console asks every few.
+const TOKEN_USAGE_EVERY_MS = 30_000;
+let tokenCounterOf = null;
+let tokenUsageAnswer = null;
+let tokenUsageAt = 0;
+let tokenUsageError = null;
+async function tokenUsage() {
+  if (Date.now() - tokenUsageAt < TOKEN_USAGE_EVERY_MS) return tokenUsageAnswer;
+  tokenUsageAt = Date.now();
+  tokenCounterOf ??= tokenCounter({ since: OWN_TRANSCRIPTS.writtenFrom, agent: CODEX ? 'codex' : 'claude' });
+  try {
+    let codexAuth = null;
+    if (CODEX) {
+      try {
+        codexAuth = JSON.parse(readFileSync(CODEX_AUTH_FILE, 'utf8'));
+      } catch {
+        // No sign-in of its own: the team key, through the console.
+      }
+    }
+    const { since, days } = await tokenCounterOf.read();
+    tokenUsageAnswer = { agent: CODEX ? 'codex' : 'claude', billing: billingOf(process.env, CODEX ? 'codex' : 'claude', codexAuth), since, days };
+    tokenUsageError = null;
+  } catch (error) {
+    if (error.message !== tokenUsageError) console.log('statusd: token usage not read', { error: error.message });
+    tokenUsageError = error.message;
+  }
+  return tokenUsageAnswer;
 }
 
 // A sample within 2 s of the last gives the last answer back, without moving the baseline: the console's quick

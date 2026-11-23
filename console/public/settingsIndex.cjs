@@ -13,6 +13,7 @@
   // sessions alone, `everyone` the console's. `words` are what people type that the title and note do not say.
   const PAGES = {
     '/settings': { label: 'My settings', scope: 'you' },
+    '/usage': { label: 'Usage', scope: 'you' },
     '/console-settings': { label: 'Settings', scope: 'everyone', admin: true },
     '/secrets': { label: 'Secrets & webhooks', scope: 'everyone', admin: true },
     '/people': { label: 'People', scope: 'everyone', admin: true },
@@ -55,6 +56,10 @@
       words: 'shell bash zsh alias aliases bashrc zshrc bash_aliases dotfiles' },
     { page: '/settings', id: 'my-remove', title: 'Remove My Woodshed', note: 'Stop your private sessions and delete everything saved for you.',
       words: 'delete leave wipe reset account remove everything uninstall clean up' },
+
+    // Usage
+    { page: '/usage', id: 'usage', title: 'Usage', note: 'Tokens your sessions spent on a Claude or ChatGPT plan and on API keys, and what they cost at API prices.',
+      words: 'usage tokens spend spent cost costs billing bill dollars price prices pricing api key plan subscription max pro chatgpt codex claude model models budget how much' },
 
     // Settings, General (admins)
     { page: '/console-settings', id: 'card-updates', title: 'Update Woodshed', note: 'Newer Woodshed commits, and the Update button.',

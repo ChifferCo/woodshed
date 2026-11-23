@@ -254,7 +254,7 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'publ
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
 // The most one message to an agent may be: statusd's own limit (session/statusd.mjs, MAX_SEND_CHARS).
 export const MAX_MESSAGE_CHARS = 8000;
-const SETTINGS_SCRIPTS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
+const SETTINGS_SCRIPTS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js', 'usage.js'];
 const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
@@ -283,6 +283,7 @@ const STATIC_FILES = {
   'appShare.js': 'text/javascript; charset=utf-8',
   'session.js': 'text/javascript; charset=utf-8',
   'events.js': 'text/javascript; charset=utf-8',
+  'usage.js': 'text/javascript; charset=utf-8',
   'secrets.js': 'text/javascript; charset=utf-8',
   'webhookSetup.js': 'text/javascript; charset=utf-8',
   'slackSetup.js': 'text/javascript; charset=utf-8',
@@ -308,7 +309,7 @@ const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 // A repo's settings page: its project's name, as Console settings' Repos card links it.
 const REPO_SETTINGS_PAGE_RE = /^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
 // The console's own settings pages, served as one page with /settings (SETTINGS_SCRIPTS).
-const SETTINGS_PAGE_RE = new RegExp(`^/(?:events|secrets|people|console-settings)$|${REPO_SETTINGS_PAGE_RE.source}`);
+const SETTINGS_PAGE_RE = new RegExp(`^/(?:events|secrets|people|console-settings|usage)$|${REPO_SETTINGS_PAGE_RE.source}`);
 const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove|reviews))?$/;
 const MY_LIMITS_PATH = '/api/my/limits';
 const PROJECTS_PATH = '/api/console-settings/projects';
@@ -740,7 +741,7 @@ export function createHandler({
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
-  cli = null, reviewReadiness = null,
+  cli = null, reviewReadiness = null, usage = null,
 }) {
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
   const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
@@ -2658,6 +2659,15 @@ export function createHandler({
     if (fileRead && !fileRead[2]) return fileReply(res, user.login, fileRead[1]);
     const reviewMatch = REVIEW_RE.exec(pathname);
     if (reviewMatch) return reviewReply(res, findFor(reviewMatch[1], user.login));
+    // The Usage page (usage.mjs): the viewer's own sessions', or with ?everyone=1 an admin's whole console's.
+    if (pathname === '/api/usage') {
+      if (!usage) return reply(res, 404, { error: 'this console keeps no usage' });
+      const admin = isAdmin(user);
+      const view = usage.summary({ login: user?.login ?? null, admin, everyone: url.searchParams.get('everyone') === '1', days: Number(url.searchParams.get('days')) || 30 });
+      const listed = new Set(fleet.sessions().map((s) => s.id));
+      const bySession = view.bySession.map((row) => ({ ...row, listed: listed.has(row.sessionId) }));
+      return reply(res, 200, { ...view, bySession, admin, names: namesFor(view.byPerson.map((p) => p.person).filter(Boolean)) });
+    }
     if (pathname === '/api/webhook-events') {
       const list = events.list();
       const state = webhookState();

@@ -134,9 +134,10 @@ function restoreEarlierHome(recordDir, restoredFile) {
 
 /**
  * restoredHome: the session starts from a Claude home holding an earlier session's conversation (restoreEarlierHome),
- * as a private session started while another runs does, and its stand-in writes nothing until it is sent a message
+ * as a private session started while another runs does, and its stand-in writes nothing until it is sent a message;
+ * claudeAuth: WOODSHED_CLAUDE_AUTH for its statusd, which says whether a plan or a key pays for its tokens
  */
-export async function startDevChatSession({ id, token, agent, nextPath, real = false, terminalToken = '', restoredHome = false }) {
+export async function startDevChatSession({ id, token, agent, nextPath, real = false, terminalToken = '', restoredHome = false, claudeAuth = '' }) {
   if (!onPath('tmux') || (real && (!onPath(agent) || !onPath('ttyd')))) return null;
   const ownCodexAuth = path.join(os.homedir(), '.codex', 'auth.json');
   if (real && agent === 'codex' && !fs.existsSync(ownCodexAuth)) {
@@ -212,6 +213,8 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
     env: {
       ...tmuxEnv, SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, CODEX_HOME: codexHome,
       AGENT: agent === 'codex' ? 'codex' : '', APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '',
+      // How claude pays, as the entrypoint's chooseClaudeAuth says it: `own` for a private session on its owner's plan.
+      WOODSHED_CLAUDE_AUTH: claudeAuth,
       // An ordinary session's, whatever kind of session the dev console itself runs in (a QA one's would never say done).
       SESSION_MODE: '',
     },

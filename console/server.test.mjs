@@ -626,6 +626,54 @@ test('a member who is not an admin loads the console\'s own pages, and every cal
   assert.equal((await (await fetch(`http://127.0.0.1:${port}/api/me`, { headers: mia })).json()).admin, true);
 });
 
+test('the Usage page is everyone\'s: a member reads their own sessions\' usage, and only an admin everyone\'s', async (t) => {
+  const { createMembers } = await import('./members.mjs');
+  const { createUsage } = await import('./usage.mjs');
+  const store = { state: { members: { 'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true }, 'sam-ops': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' } } }, save() {} };
+  const members = createMembers({ store });
+  const today = new Date().toISOString().slice(0, 10);
+  const usage = createUsage(store);
+  const spent = (billing, model) => ({ agent: 'claude', billing, since: `${today}T00:00:00Z`, days: { [today]: { [model]: { input: 1_000_000, output: 0 } } } });
+  usage.record({ id: 'aaaa1111', owner: 'sam-ops', title: 'Sam\'s' }, spent('plan', 'claude-opus-5-5'));
+  usage.record({ id: 'bbbb2222', owner: 'mia-dev', title: 'Mia\'s' }, spent('key', 'claude-sonnet-5-5'));
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+  };
+  const auth = {
+    enabled: () => true,
+    available: () => true,
+    sessionFor: async (cookie) => {
+      const login = /woodshed_session=(\w[\w-]*)/.exec(String(cookie))?.[1];
+      return members.isMember(login) ? { login } : null;
+    },
+  };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, usage });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const sam = { cookie: 'woodshed_session=sam-ops' };
+  const mia = { cookie: 'woodshed_session=mia-dev' };
+
+  const page = await fetch(`http://127.0.0.1:${port}/usage`, { headers: { ...sam, accept: 'text/html' } });
+  assert.equal(page.status, 200);
+  assert.match(await page.text(), /<script src="\/static\/usage\.js\?v=[0-9a-f]+"><\/script>/);
+  const own = await (await fetch(`http://127.0.0.1:${port}/api/usage?everyone=1`, { headers: sam })).json();
+  assert.equal(own.everyone, false, 'a member asking for everyone gets their own');
+  assert.deepEqual(own.bySession.map((r) => r.sessionId), ['aaaa1111']);
+  assert.equal(own.totals.plan.cost, 4, '1M input on Opus 5.5 at its API price');
+  const all = await (await fetch(`http://127.0.0.1:${port}/api/usage?everyone=1&days=7`, { headers: mia })).json();
+  assert.equal(all.everyone, true);
+  assert.equal(all.days, 7);
+  assert.deepEqual(all.bySession.map((r) => r.sessionId).sort(), ['aaaa1111', 'bbbb2222']);
+  assert.equal(all.totals.key.cost, 2);
+  const none = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members });
+  const bare = http.createServer((req, res) => { none(req, res); });
+  const barePort = await listen(bare);
+  t.after(() => bare.close());
+  assert.equal((await getWith(barePort, '/api/usage', sam)).status, 404, 'a console that keeps no usage says so');
+});
+
 test('the setup page\'s Restart is an admin\'s, from the console\'s own origin, and says who asked', async (t) => {
   const { createMembers } = await import('./members.mjs');
   const store = { state: { members: { 'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true }, 'sam-ops': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' } } }, save() {} };
@@ -905,7 +953,7 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.match(await getBody(port, '/static/dictation.js', as('octocat')), /W\.dictation = /);
   // The settings pages are one page: each address loads every settings page's script, so common.js moves between
   // them in place. My settings' Repo settings card draws its layers with the repo page's parts, loaded before both.
-  const SETTINGS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
+  const SETTINGS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js', 'usage.js'];
   for (const page of ['/settings', '/console-settings', '/console-settings/repos/app', '/secrets', '/people', '/events']) {
     const settingsScripts = [...(await getBody(port, page, as('octocat'))).matchAll(/<script src="\/static\/([\w.]+)\?v=[0-9a-f]{12}"/g)].map((m) => m[1]);
     assert.deepEqual(settingsScripts.slice(-SETTINGS.length), SETTINGS, `${page} is the settings page`);

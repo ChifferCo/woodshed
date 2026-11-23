@@ -35,14 +35,30 @@ if (format === 'codex') {
 const write = (record) => fs.appendFileSync(file, `${JSON.stringify(record)}\n`);
 
 // ---- One record line for each thing said or run, in the agent's own shape.
+// Each reply carries made-up token counts in the agent's own shape, for the Usage page (session/tokenUsage.mjs):
+// claude's answer its `usage`, codex a `token_count` event with its running total after a `turn_context` naming the model.
 let call = 0;
+let answer = 0;
+const codexTotal = { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 };
 function said(role, text) {
   if (format === 'codex') {
     write({ timestamp: now(), type: 'response_item', payload: { type: 'message', role, content: [{ type: role === 'user' ? 'input_text' : 'output_text', text }] } });
+    if (role === 'assistant') spentCodex();
+  } else if (role === 'assistant') {
+    answer += 1;
+    write({ type: role, timestamp: now(), uuid: crypto.randomUUID(), message: { id: `msg_dev${id.slice(0, 8)}${answer}`, model: 'claude-opus-5-5', role, content: [{ type: 'text', text }],
+      usage: { input_tokens: 6, cache_read_input_tokens: 42_000, cache_creation_input_tokens: 2_400, output_tokens: 850,
+        cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 2_400 } } } });
   } else {
-    write({ type: role, timestamp: now(), uuid: crypto.randomUUID(), message: { role, content: role === 'user' ? text : [{ type: 'text', text }] } });
+    write({ type: role, timestamp: now(), uuid: crypto.randomUUID(), message: { role, content: text } });
   }
 }
+function spentCodex() {
+  const last = { input_tokens: 38_000, cached_input_tokens: 30_000, output_tokens: 1_200, reasoning_output_tokens: 400, total_tokens: 39_200 };
+  for (const k of Object.keys(codexTotal)) codexTotal[k] += last[k];
+  write({ timestamp: now(), type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { ...codexTotal }, last_token_usage: last, model_context_window: 272_000 }, rate_limits: null } });
+}
+if (format === 'codex') write({ timestamp: now(), type: 'turn_context', payload: { cwd: repo, model: 'gpt-6.1-sol' } });
 // An edit: a file, the line it starts at, and the line it replaces with another, with a line of context each side.
 const FILE = 'console/webhookDispatch.mjs';
 const edit = (from, to) => ({ file: FILE, at: 12, before: '// How long each retry waits.', old: `const BACKOFF_MS = ${from};`, new: `const BACKOFF_MS = ${to};`, after: '' });

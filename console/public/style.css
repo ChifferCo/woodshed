@@ -1514,3 +1514,20 @@ h1.title .pill { vertical-align: middle; font-family: "Red Hat Display", system-
   .chat-field { min-height: 22px; font-size: 16px; }
   .chat-user { max-width: 90%; }
 }
+
+/* ---- usage (usage.js) ---- */
+.usage-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.usage-total .usage-money { margin: 0; font-family: var(--mono); font-size: 28px; font-weight: 500; color: var(--ink); }
+.usage-section { display: flex; flex-direction: column; gap: 8px; }
+.usage-section > h2 { margin: 0; }
+.usage-table .num, .usage-table th.num { text-align: right; font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.usage-table th.num { font-family: inherit; font-size: 11px; }
+.usage-days { display: flex; flex-direction: column; gap: 3px; max-height: 420px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.usage-day { display: grid; grid-template-columns: 44px 1fr 84px; align-items: center; gap: 10px; font-size: 12px; }
+.usage-bar { display: flex; height: 10px; border-radius: 2px; overflow: hidden; }
+.usage-bar i, .usage-key { display: block; height: 100%; }
+.usage-bar .is-plan, .usage-key.is-plan { background: var(--slate); }
+.usage-bar .is-key, .usage-key.is-key { background: var(--ink); }
+.usage-key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; }
+.usage-day-cost { text-align: right; }
+.usage-legend { display: flex; gap: 16px; }

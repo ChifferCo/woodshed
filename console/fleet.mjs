@@ -274,7 +274,7 @@ export function createFleet({
   userSettings = null, people = null, autoName = null, attachments = null, qaRecordings = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, reviewGates = async (name) => withDefaultReview(await pullRequests(name)), projectBlocker = async () => null, githubFor = null,
   consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null, repoTriggers = null, reviewAgents = null,
-  mcpServers = null, appShares = null, egress = null,
+  mcpServers = null, appShares = null, egress = null, usage = null,
 }) {
   const { state } = store;
   // Each repo's label and whether its label and /woodshed comments start anything (repoTriggers.mjs).
@@ -997,6 +997,8 @@ export function createFleet({
       const wasStarting = session.status === 'starting';
       const wasAsking = session.state === 'needs-you';
       update(session, statusUpdate(session, status, nowIso()));
+      // The tokens its agent spent, for the Usage page (usage.mjs): kept apart from the session, which is deleted.
+      if (usage && status.tokenUsage) await safely('token usage', () => usage.record(session, status.tokenUsage));
       // A message left in the box: sent or cleared in the TUI tab once the box is empty again.
       if (session.leftInBox && status.boxText === false) {
         update(session, { leftInBox: null });
