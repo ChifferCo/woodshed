@@ -2029,7 +2029,7 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   comments})}`, as `reviewerApp.mjs`'s, through which review sessions' verdicts are submitted and trusted. Give it
   `installedOn(repo)` (true or false, throwing when GitHub fails) and `view()` (`{installUrl}`) too: without them
   `woodshed setup` and `woodshed review status` say of every repo that the console cannot tell whether it is
-  installed (`reviewer-installed-unknown`), with no install link and nothing logged. Without it
+  installed (`reviewer-installed-unknown`), with no install link and nothing logged. Without a `reviewer`,
   no verdict counts (above, "The reviewer App"), and the console offers no reviewer App setup of its own. Logged as
   `console: GitHub App from the host`.
 - `mcpServers: {list(), save({server, by}), remove({name, by})}`: where the program keeps the MCP servers sessions get
