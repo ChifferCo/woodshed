@@ -68,9 +68,15 @@ It goes in this order:
    API key), and where to paste it. It opens My settings at that row (`/settings#claude`, `#codex`), with the caret in
    its box. On a terminal it then waits: press Enter once you pressed Save, and setup asks the console and goes on (or
    says it does not have it yet), or type `skip`. Otherwise it exits 2 with the steps in the message and in `--json`'s
-   `steps`, keyed by agent. Setup never runs those commands or handles a token itself, so none passes through it or a
-   coding agent running it. Use only one? Pass `--agent claude` or `--agent codex`, or answer so on a terminal, and
-   setup does not ask for the other.
+   `steps`, keyed by agent. With `--wait` (15 minutes) or `--wait=<N>m` (1 to 60) it waits instead, on a terminal or
+   not, and asks nothing: it prints the same entry with `status: "waiting"` (with its `url`, `wanted`, `missing`,
+   `steps` and `waitMinutes`), asks the console every 5 seconds, reports each agent as it connects (`status:
+   "connected"`, with `agent`), then the step `done`, and goes on. A status call that fails is said once (`waiting`)
+   and the wait carries on. When the time runs out it exits 2 with the same message and fields as without `--wait`.
+   A coding agent running setup uses it after showing you the steps, so you need not tell it you are done. Setup
+   never runs those commands or handles a token itself, so none passes through it or a coding agent running it. Use
+   only one? Pass `--agent claude` or `--agent codex`, or answer so on a terminal, and setup does not ask for the
+   other.
 3. **Review on the repo.** Every repo is reviewed by default, on a commit whose message has `[woodshed-review]`
    (sessions add it for you), with no checkout, project file or pull request: for each repo setup runs `woodshed review
    status --repo <repo>`, stops with the link when the console's reviewer App still has to be made or installed, and
@@ -98,7 +104,7 @@ It goes in this order:
 Use `--prompt=--help` for a prompt that looks like an option. `--skip-reviews` skips steps 3 and 4, and `--no-session`
 step 6.
 
-`--yes` and runs without a terminal never prompt. `--json` prints one checklist entry per line with
+`--yes`, `--wait` at its step, and runs without a terminal never prompt. `--json` prints one checklist entry per line with
 `event: "setup"`, `step` (`login`, `repos`, `agent`, `repo-review`, `review-choice`, `pr-reviews`, `terminal`,
 `session`, `reviews`), `status`, `message`, and a `url` when relevant; `pr-reviews` and `reviews` carry `reviews`, each
 with its `number`, `url` and `pullUrl`. When this CLI lacks a repo, review, or config command, setup skips that step and

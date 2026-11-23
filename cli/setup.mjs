@@ -8,6 +8,11 @@ import { ORIGIN_RE } from './credentials.mjs';
 // With --yes, setup reviews this many of the person's open pull requests, the ones updated last: enough to see reviews
 // work on their own code, without spending their plan on a long tail of old branches.
 export const REVIEW_PRS_DEFAULT = 5;
+// With --wait, setup waits this long at the agent step for the person to connect Claude Code and Codex, asking the
+// console every few seconds: long enough to run a sign-in and paste it, short enough for a coding agent's tool call.
+export const WAIT_DEFAULT_MINUTES = 15;
+export const WAIT_MAX_MINUTES = 60;
+export const WAIT_POLL_SECONDS = 5;
 
 export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--no-browser] [options]
 
@@ -23,6 +28,8 @@ export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--
   --terminal <name>      optional: agent terminal for new private sessions, herdr or tmux
   --prompt <text>        optional: start a first coding session on this
   --no-session           finish without starting a session
+  --wait[=<N>m]          when Claude Code or Codex is not connected yet, print the steps and wait until it is,
+                         checking every ${WAIT_POLL_SECONDS} s, then go on: ${WAIT_DEFAULT_MINUTES} minutes, or N from 1 to ${WAIT_MAX_MINUTES}. It never asks for Enter
 
 When you need to do something, setup prints what is needed and exits 2. Run it again with the same options after that.`;
 
@@ -80,6 +87,13 @@ function options(args, fail) {
     const [name, inline] = args[i].split(/=(.*)/s);
     if (['--yes', '--skip-reviews', '--no-session'].includes(name) && inline === undefined) {
       out[name] = true;
+      continue;
+    }
+    // Only --wait and --wait=<N>m: a bare --wait never takes the next argument as its time.
+    if (name === '--wait') {
+      const minutes = inline === undefined ? WAIT_DEFAULT_MINUTES : Number(/^([1-9][0-9]?)m$/.exec(inline)?.[1]);
+      if (!(minutes >= 1 && minutes <= WAIT_MAX_MINUTES)) throw fail(`--wait takes no value (${WAIT_DEFAULT_MINUTES} minutes), or minutes as --wait=<N>m, from 1m to ${WAIT_MAX_MINUTES}m.`);
+      out['--wait'] = minutes;
       continue;
     }
     if (!['--repo', '--reviews', '--review-prs', '--agent', '--terminal', '--prompt'].includes(name)) throw fail(`Unknown setup option ${name}. Run woodshed setup --help.`);
@@ -150,6 +164,9 @@ export async function setupCommand(args, ctx) {
     ? (ctx.ask ?? ((question) => askTerminal(question, ctx.stderr)))
     : null;
   const run = ctx.run ?? ((words) => runCli(ctx.self, words, env));
+  // The clock and the pause of --wait, which the tests replace.
+  const now = ctx.now ?? Date.now;
+  const sleep = ctx.sleep ?? ((ms) => new Promise((resolve) => { setTimeout(resolve, ms); }));
   function report(step, status, message, fields = {}) {
     if (args.json) emit({ event: 'setup', step, status, message, ...fields });
     else say(`[${status.replace('-', ' ')}] ${message}${fields.url ? ` ${fields.url}` : ''}`);
@@ -243,13 +260,15 @@ export async function setupCommand(args, ctx) {
   // Reviews from Claude Code and Codex are what setup gives first: on a console with no team keys they run on the pull
   // request's author's own Claude token and Codex sign-in (console/reviewAgents.mjs), so setup asks for both, unless the
   // person says they use only one.
-  const signIns = me.sessionSignIns;
+  let signIns = me.sessionSignIns;
   let wanted = opts['--agent'] ? [opts['--agent']] : ['claude', 'codex'];
   if (!signIns) {
     report('agent', 'skipped', 'This console does not report agent sign-ins. Connect Claude Code and Codex on My settings.', { url: `${origin}/settings` });
   } else {
     let missing = wanted.filter((name) => signIns[name] !== true);
-    if (missing.length && !opts['--agent'] && choose) {
+    // --wait asks nothing here: it waits for whichever is missing, both unless --agent names one.
+    const wait = opts['--wait'];
+    if (missing.length && !opts['--agent'] && choose && !wait) {
       const have = wanted.filter((name) => signIns[name] === true).map((name) => AGENT_NAMES[name]);
       const intro = `Connect Claude Code and Codex: with both connected, your pull requests get reviews from both.${have.length ? ` ${have[0]} is connected.` : ''}`;
       if (args.json) ctx.stderr.write(`${intro}\n`);
@@ -265,7 +284,7 @@ export async function setupCommand(args, ctx) {
     // On a terminal, setup walks through each one and waits while the person does it, then checks with the console.
     const tell = (line) => (args.json ? ctx.stderr.write(`${line}\n`) : say(line));
     let walked = false;
-    if (missing.length && choose) {
+    if (missing.length && choose && !wait) {
       walked = true;
       const todo = [...missing];
       for (const [i, name] of todo.entries()) {
@@ -293,15 +312,42 @@ export async function setupCommand(args, ctx) {
         if (missing.includes(name)) break;
       }
     }
-    if (missing.length) {
-      if (args.browser && !walked) open(rowUrl(missing[0]));
+    // What the person has to do for each one still missing, and how setup goes on after it.
+    const handoff = (then) => {
       const why = both ? ': with both connected, your pull requests get reviews from both' : '';
+      const how = missing.map((name) => `${AGENT_NAMES[name]}:\n${numbered(stepsOf(name))}`).join('\n');
+      return [`Connect ${missing.map((name) => AGENT_NAMES[name]).join(' and ')} on My settings${why}.\n${how}\n${then}`, {
+        url: rowUrl(missing[0]), wanted, missing, steps: Object.fromEntries(missing.map((name) => [name, stepsOf(name)])),
+      }];
+    };
+    if (missing.length && args.browser && !walked) open(rowUrl(missing[0]));
+    // With --wait, setup tells the same steps, then asks the console every few seconds until each is connected.
+    if (missing.length && wait) {
+      const [message, fields] = handoff(`Setup is waiting up to ${wait} minute${wait === 1 ? '' : 's'} for ${missing.length === 2 ? 'them' : 'it'}, checking every ${WAIT_POLL_SECONDS} seconds.`);
+      report('agent', 'waiting', message, { ...fields, waitMinutes: wait });
+      const deadline = now() + wait * 60_000;
+      let unread = false;
+      while (missing.length && now() < deadline) {
+        await sleep(Math.max(0, Math.min(WAIT_POLL_SECONDS * 1000, deadline - now())));
+        const checked = await call('status', 'status');
+        const seen = checked.code === EXIT.done && checked.last?.signedIn === true ? checked.last.sessionSignIns : null;
+        if (!seen || typeof seen !== 'object') {
+          // Once: the console may be restarting, and the next call may well answer.
+          if (!unread) report('agent', 'waiting', `Could not ask the console whether ${missing.length === 2 ? 'they are' : 'it is'} saved${printable(checked.error?.error) ? ` (${printable(checked.error.error)})` : ''}. Still asking.`);
+          unread = true;
+          continue;
+        }
+        signIns = seen;
+        for (const name of missing.filter((other) => seen[other] === true)) {
+          missing = missing.filter((other) => other !== name);
+          report('agent', 'connected', `${AGENT_NAMES[name]} is connected.`, { agent: name, missing });
+        }
+      }
+    }
+    if (missing.length) {
       const onlyOne = both ? ' Use only one? Rerun setup with --agent claude or --agent codex.' : '';
       const again = resume(...(!both && !opts['--agent'] ? [`--agent ${wanted[0]}`] : []));
-      const how = missing.map((name) => `${AGENT_NAMES[name]}:\n${numbered(stepsOf(name))}`).join('\n');
-      return stop('agent', EXIT.waiting, `Connect ${missing.map((name) => AGENT_NAMES[name]).join(' and ')} on My settings${why}.\n${how}\n${onlyOne.trim() ? `${onlyOne.trim()} ` : ''}Then ${again}.`, {
-        url: rowUrl(missing[0]), wanted, missing, steps: Object.fromEntries(missing.map((name) => [name, stepsOf(name)])),
-      });
+      return stop('agent', EXIT.waiting, ...handoff(`${onlyOne.trim() ? `${onlyOne.trim()} ` : ''}Then ${again}.`));
     }
     const names = wanted.map((name) => AGENT_NAMES[name]).join(' and ');
     report('agent', 'done', `${names} ${wanted.length === 2 ? 'are' : 'is'} connected: your pull requests get reviews from ${wanted.length === 2 ? 'both' : names}.`, { agent: wanted[0], wanted });
