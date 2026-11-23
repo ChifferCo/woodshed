@@ -241,7 +241,7 @@ export function createReviewHost({
         };
         const started = offer('analysis', () => shed.startReviewAnalysisIfNone({ ctx, sessionName: reviewName }));
         const qaStarted = offer('Q&A', () => shed.startReviewQaIfNone?.({ ctx, sessionName: reviewName }) ?? false);
-        console.log('review: analysis on opening', { reqId, review: reviewName, started, qaStarted });
+        console.log('review: analysis on opening', { reqId, pr, started, qaStarted });
       }
       // The first read would otherwise answer before the shed has asked GitHub for the branch's pull request.
       await shed.warmLivePr?.({ sessionName: reviewName });
