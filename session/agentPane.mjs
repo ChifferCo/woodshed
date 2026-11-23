@@ -108,10 +108,11 @@ export function hcPane(run, { terminal = HC_TERMINAL, bin = 'hc' } = {}) {
     paste: async () => { throw new Error('hc types no text without its Enter: use send or line'); },
     /**
      * A message, pasted and sent with its Enter, never into a prompt: not while the screen asks a person anything (a
-     * question, an approval, a numbered menu: what typeMessage refuses in tmux), and only while the agent says it is idle
-     * (hc's own `send --if idle`, which also refuses a blocked program and waits for a person's unsent draft in an
-     * attached client). codex sends no 7501 records, so hc never calls it idle: with no record, the screen must show the
-     * agent at its prompt.
+     * question, an approval, a numbered menu: what typeMessage refuses in tmux), and only while the agent says it is at
+     * its prompt. claude's record says `idle` before its first turn and after one it stopped, and `done` after every
+     * turn it finished: both are its prompt. hc's `--if` takes `idle` alone, so `done` is checked here and sent with no
+     * `--if`; hc's own send still refuses a blocked program and waits for a person's unsent draft in an attached client.
+     * codex sends no 7501 records: with no record, the screen must show the agent at its prompt.
      * @returns {Promise<{sent: true}|{sent: false, why: string, kind?: string|null}>}
      */
     async send(text) {
@@ -120,7 +121,9 @@ export function hcPane(run, { terminal = HC_TERMINAL, bin = 'hc' } = {}) {
         const kind = asking(screen);
         if (kind) return { sent: false, why: 'prompt-open', kind };
         if (!status && classifyCodexPane(screen) !== 'done' && paneState(screen) !== 'done') return { sent: false, why: 'not-at-prompt' };
-        await hc('send', status ? ['--if', 'idle'] : [], text);
+        // As hc says it when `--if` does not match: working, blocked, or a turn that ended in an error.
+        if (status && status.state !== 'idle' && status.state !== 'done') return { sent: false, why: 'status_mismatch' };
+        await hc('send', status?.state === 'idle' ? ['--if', 'idle'] : [], text);
         return { sent: true };
       } catch (err) {
         return { sent: false, why: refusedSend(err) };
