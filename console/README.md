@@ -1038,6 +1038,16 @@ names none, so the pull requests sessions open carry it. Someone who wants no re
 none on My settings ("Who reviews"). `GET /api/review-readiness`
 says what runs in `review` (`{runner, rerun, from}`, `from` being `project file` or `default`).
 
+**A push that dismissed the review's approval is reviewed again, tag or not.** Where the repo dismisses stale
+approvals, a commit pushed after the review approved takes the approval away, and nothing else gives it back: a merge of
+the default branch with git's own message (`Merge branch 'main'`, `Merge remote-tracking branch 'origin/main'`) carries
+no tag. So when the review's own last verdict on the pull request is an APPROVE of an older commit and GitHub lists that
+review as `DISMISSED`, the next pull request event (the push, or the dismissal itself) starts a review of the head
+(`approvalDismissed` in `fleet.mjs`; it logs `fleet: the review's approval was dismissed by a push, reviewing it again`).
+A fix after changes were asked for still waits for the tag, so a session can push its fixes in several commits for one
+review, and a repo that keeps stale approvals is not reviewed again, since its approval stands. The tag is read from the
+commit's whole message, not GitHub's shortened headline, and a merge commit's counts like any other.
+
 At each verdict the console finds the reviewer App's installation on the repo, mints a token narrowed to pull requests,
 and submits the review at the reviewed commit. It logs `fleet: review verdict submitted` with `as: 'reviewer App'`, or
 `as: 'console App'` when no reviewer App was made, in which case GitHub refuses an approval of the App's own pull
