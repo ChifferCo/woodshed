@@ -420,3 +420,35 @@ test('a note from the program is listed beside the person, as text cut to its le
   const dropped = warned.mock.calls.filter((call) => call.arguments[0] === 'members: entries of the program\'s list left out');
   assert.equal(dropped.length, 0, 'a bad note drops no entry');
 });
+
+test('behind a proxy, the host\'s matchSlack links a member\'s Slack user by email, and nobody the list does not have', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-people-'));
+  t.after(() => fs.rmSync(stateDir, { recursive: true, force: true }));
+  // Slack's users.lookupByEmail, as the bot's token asks it: Sam's email is a Slack user.
+  const asked = [];
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    const u = new URL(String(url));
+    asked.push([u.pathname, u.searchParams.get('email')]);
+    const found = u.pathname.endsWith('/users.lookupByEmail') && u.searchParams.get('email') === 'sam@example.com';
+    const answer = found ? { ok: true, user: { id: 'U0SAM12345', name: 'sam', profile: { display_name: 'Sam M' } } } : { ok: false, error: 'users_not_found' };
+    return new Response(JSON.stringify(answer), { status: 200, headers: { 'content-type': 'application/json' } });
+  });
+  const store = { state: {}, save() {} };
+  const memory = { read: async (name) => (name === 'slack-bot-token' ? 'xoxb-test' : null), save: async () => {}, remove: async () => {} };
+  const installation = await createInstallation({
+    config: { ...CONFIG, stateDir, sessionEnv: {}, sessionApi: {} }, store,
+    provider: { name: 'test', launcher: {}, secrets: memory },
+    trusted: createTrustedIdentity({ secret: SECRET }), members: fakeProgram(),
+  });
+  let read = 0;
+  const emails = async () => { read += 1; return ['sam@example.com']; };
+  assert.equal(await installation.matchSlack({ login: 'sam-member', emails }), 'linked');
+  assert.deepEqual(store.state.slackAccounts['sam-member'], { slackId: 'U0SAM12345', name: 'Sam M', how: 'email', checkedAt: store.state.slackAccounts['sam-member'].checkedAt });
+  assert.equal(await installation.matchSlack({ login: 'sam-member', emails }), 'skipped', 'not asked again within the day');
+  assert.equal(read, 1, 'the emails are read only when a look is due');
+  assert.equal(await installation.matchSlack({ login: 'lee-stranger', emails: async () => ['lee@example.com'] }), 'skipped');
+  assert.equal(store.state.slackAccounts['lee-stranger'], undefined, 'someone the program does not list leaves nothing behind');
+  assert.deepEqual(asked, [['/api/users.lookupByEmail', 'sam@example.com']]);
+});

@@ -2073,6 +2073,13 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   program connects people on its own (on their first page, say): My settings then shows the connection as a status,
   "Pushes as @you", or, unconnected, says it did not happen and offers Connect as the way back. Without a secret store it is off
   (`console: Connect GitHub off, the host gave no secret store to keep tokens in`).
+- The installation's `matchSlack({login, emails})`, for a program that signs people in itself: the Slack match core's
+  own sign-in makes (`slackPeople.mjs`), which links a member's Slack user from the verified emails on their GitHub
+  account so People shows it and assignment pings reach them. Call it as they sign in, with `emails()` answering those
+  emails (GitHub's `/user/emails`, which a GitHub App's user token reads only with the account permission Email
+  addresses: read); it is called only when a look is due, at most once a day, and never over a link set by hand on
+  People. Someone the program's `members` list does not have is not matched (`skipped`). It never throws, and answers
+  `linked`, `unmatched`, `manual` or `skipped`; Slack's bot needs `users:read.email`.
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
   such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
