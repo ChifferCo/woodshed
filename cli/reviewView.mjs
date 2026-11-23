@@ -720,6 +720,35 @@ function followUpLines(state, id, columns, indent, nowMs) {
   return lines;
 }
 
+const RISK_TONE = { Low: 'green', Medium: 'yellow', High: 'red' };
+const QA_WORD = {
+  success: ['green', 'passed'], failure: ['red', 'failed'], timed_out: ['red', 'timed out'], cancelled: ['dim', 'cancelled'],
+  skipped: ['dim', 'skipped'], neutral: ['dim', 'not tested'], action_required: ['yellow', 'needs you'],
+};
+
+/**
+ * The merge risk and QA over the reviews, as the page's boxes say them: the word, then the check's title, one line
+ * each (shared/review/prChecks.mjs). Nothing when the shed sent neither.
+ */
+export function checkLines(checks, columns) {
+  const lines = [];
+  const risk = checks?.mergeRisk;
+  if (risk) {
+    const said = risk.missing ? [['dim', ' not run on the latest commit yet']]
+      : [[RISK_TONE[risk.tier] ?? 'dim', ` ${risk.tier ? risk.tier.toLowerCase() : 'not rated'}`],
+        ...(risk.fromLabel ? [['yellow', ' · older commit, from the label']] : risk.reason || risk.title ? [['dim', ' · '], [null, clean(risk.reason || risk.title)]] : [])];
+    lines.push(...wrapSegments([['bold', 'Merge risk'], ...said], columns, { first: '', rest: '  ' }));
+  }
+  const qa = checks?.qa;
+  if (qa) {
+    const [tone, word] = qa.missing ? ['dim', 'not run on the latest commit yet']
+      : qa.status !== 'completed' ? ['yellow', 'running'] : QA_WORD[qa.conclusion] ?? ['dim', clean(qa.conclusion ?? 'done')];
+    lines.push(...wrapSegments([['bold', 'QA'], [tone, ` ${word}`], ...(!qa.missing && qa.title ? [['dim', ' · '], [null, clean(qa.title)]] : [])], columns, { first: '', rest: '  ' }));
+  }
+  if (lines.length) lines.push([]);
+  return lines;
+}
+
 /**
  * The AI reviews tab, as renderAiReviews draws it: each review's verdict and parts, its findings on their lines, and
  * under each the follow-ups asked about it. `items` gives each line its point in aiPoints, for the cursor.
@@ -728,8 +757,9 @@ function followUpLines(state, id, columns, indent, nowMs) {
 export function aiLines(state, columns, nowMs = Date.now()) {
   if (state.draftLoading) return { lines: [[['dim', 'Loading the AI reviews from GitHub…']]], items: null, cursor: -1 };
   const reviews = state.draft?.aiReviews ?? [];
+  const checks = checkLines(state.draft?.checks, columns);
   if (!reviews.length) {
-    return { lines: wrapText('No AI review has been posted on this pull request yet. Claude Code and Codex review a commit whose message carries the review’s tag, [woodshed-review] by default, and what they say shows here.', columns, 'dim'), items: null, cursor: -1 };
+    return { lines: [...checks, ...wrapText('No AI review has been posted on this pull request yet. Claude Code and Codex review a commit whose message carries the review’s tag, [woodshed-review] by default, and what they say shows here.', columns, 'dim')], items: null, cursor: -1 };
   }
   const points = aiPoints(state);
   const cursor = Math.min(Math.max(0, state.ai?.cursor ?? 0), points.length - 1);
@@ -739,6 +769,7 @@ export function aiLines(state, columns, nowMs = Date.now()) {
     lines.push(line);
     items.push(item);
   };
+  for (const l of checks) add(l);
   for (const l of wrapText('What Claude Code and Codex said, newest first. i on a review or a finding asks the session’s agent a follow-up about it, checked against the code.', columns, 'dim')) add(l);
   let at = 0;
   reviews.forEach((review, index) => {

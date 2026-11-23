@@ -2,7 +2,8 @@
 // pull request on the session's branch, kept in a JSON file beside it, answering each call the shed's review makes
 // (shared/review/github.mjs, merge.mjs, shared/prStatus.mjs) as GitHub would for it: the pull request's status, the
 // draft review and its comments, a verdict, a rename and a squash-merge. It carries a made-up review by Claude Code and
-// Codex, as the console's reviewer App posts one (shared/review/aiReviews.mjs reads it), for the AI reviews tab. Nothing reaches GitHub: any other call fails
+// Codex, as the console's reviewer App posts one (shared/review/aiReviews.mjs reads it), and a Merge risk and a QA check
+// (shared/review/prChecks.mjs), for the AI reviews tab. Nothing reaches GitHub: any other call fails
 // with what it was, so a call this does not know is seen rather than sent to a real gh.
 
 import fs from 'node:fs';
@@ -135,13 +136,22 @@ if (args[0] === 'api' && args[1] === 'graphql') {
       verdicts: { nodes: (o.verdicts || []).map((v) => ({ id: v.id, author: { login: v.author }, state: v.state, body: v.body, url: urlOf(o), submittedAt: v.at, isMinimized: false, viewerDidAuthor: v.author === s.login })) },
     } } } });
   }
+  // The merge risk and QA checks by name (shared/review/github.mjs fetchPrChecks), one suite each.
+  if (q.includes('checkSuites')) {
+    const run = (r, i) => ({ databaseId: i + 1, name: r.name, status: 'COMPLETED', conclusion: r.conclusion, title: r.title, summary: r.summary, detailsUrl: null, permalink: url + '/checks', startedAt: s.createdAt, completedAt: s.createdAt });
+    const named = (name) => (s.checkRuns || []).map(run).filter((r) => r.name === name);
+    out({ data: { repository: { pullRequest: { commits: { nodes: [{ commit: { oid: head(), checkSuites: { pageInfo: { hasNextPage: false }, nodes: [
+      { risk: { nodes: named(fields.risk) }, qa: { nodes: named(fields.qa) } },
+    ] } } }] } } } } });
+  }
   if (q.includes('reviewThreads')) {
     const pendingThreads = (s.pending ? s.pending.comments : []).map((c) => ({ id: 'T' + c.id, path: c.path, diffSide: c.side, line: c.line, startLine: null, isResolved: false, isOutdated: false,
       comments: { pageInfo: { hasNextPage: false }, nodes: [{ id: c.id, fullDatabaseId: null, author: { login: s.login }, body: c.body, state: 'PENDING', url: null, createdAt: at(), viewerCanDelete: true, viewerDidAuthor: true }] } }));
     const posted = s.threads.map((t) => ({ id: t.id, path: t.path, diffSide: t.side, line: t.line, originalLine: t.line, startLine: null, isResolved: !!t.resolved, isOutdated: false,
       comments: { pageInfo: { hasNextPage: false }, nodes: t.comments.map((c, i) => ({ id: c.id, fullDatabaseId: null, author: { login: c.author }, body: c.body, state: 'SUBMITTED', url: url, createdAt: c.at, viewerCanDelete: c.author === s.login, viewerDidAuthor: c.author === s.login, pullRequestReview: i === 0 && t.review ? { id: t.review } : null })) } }));
     out({ data: { repository: { pullRequest: {
-      id: 'PR_dev', headRefOid: head(), body: s.body, bodyHTML: '', author: { login: s.login }, createdAt: s.createdAt, url,
+      id: 'PR_dev', headRefOid: head(), baseRefName: s.base, body: s.body, bodyHTML: '', author: { login: s.login }, createdAt: s.createdAt, url,
+      labels: { nodes: (s.labels || []).map((name) => ({ name })) },
       reviews: { nodes: s.pending ? [{ id: s.pending.id, comments: { nodes: s.pending.comments.map((c) => ({ id: c.id, path: c.path, line: c.line, originalLine: c.line, body: c.body })) } }] : [] },
       verdicts: { nodes: s.verdicts.map((v) => ({ id: v.id, author: { __typename: v.bot ? 'Bot' : 'User', login: v.author }, state: v.state, body: v.body, url, submittedAt: v.at, isMinimized: false, viewerDidAuthor: v.author === s.login, commit: { oid: v.commit === 'head' ? head() : v.commit || head() } })) },
       comments: { nodes: s.comments.map((c) => ({ id: c.id, fullDatabaseId: '1', author: { login: c.author }, body: c.body, url, createdAt: c.at, isMinimized: false, viewerCanDelete: false, viewerDidAuthor: false })) },
@@ -167,6 +177,14 @@ export function writeDevReviewGh(dir, { repo, branch, base, slug, number, title,
     repo, branch, base, slug, number, title, login, others, state: 'OPEN', createdAt: now,
     body: 'Subscribers that answer 5xx or 429 used to miss the event. This retries them with backoff.\n\n- `retry.mjs` holds the policy\n- `deliver.mjs` loops on it',
     checks: ['SUCCESS', 'SUCCESS', 'SUCCESS'],
+    // The review's Merge risk check and its label, and a QA run's check, on the head commit (shared/review/prChecks.mjs).
+    labels: ['merge risk: medium'],
+    checkRuns: [
+      { name: 'Merge risk', conclusion: 'NEUTRAL', title: 'Medium: retries change how every webhook is delivered',
+        summary: 'Every delivery now goes through the retry loop, so a bug in it reaches every subscriber. The policy is small and tested, and nothing outside \`src/webhooks/\` changes.\n\nSet by the AI review. It does not block merging.' },
+      { name: 'QA', conclusion: 'SUCCESS', title: '3 of 3 test cases passed',
+        summary: 'Passed\n\n| Test case | Result |\n| --- | --- |\n| A 503 is retried, then delivered | passed |\n| A 404 is not retried | passed |\n| Retry-After is honoured | passed |' },
+    ],
     // As the reviewer App posts a review by both (console/fleet.mjs submitReview, codeReview.mjs mergeVerdicts).
     verdicts: [{
       id: 'PRR_devai', author: 'woodshed-reviewer', bot: true, state: 'CHANGES_REQUESTED', at: now, commit: 'head',

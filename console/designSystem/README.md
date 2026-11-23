@@ -179,6 +179,10 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   `btn-plain` **Rename** and a quiet ×. A 2px `slate` line along its foot runs down over 10 s, when it goes. A click
   anywhere on it keeps it and drops the line; **Rename** turns it into a field with a `btn-plain` Save and a quiet
   Cancel. Never orange: renaming is not the session's primary action.
+- To whoever may change when the session pauses and stops (its owner, or a shared one's assignee), the offer also asks
+  how long it waits for input and how long it runs: `Pauses after` and `Stops after`, each in `sub` with a small `field`
+  select, set off together by a `line` rule on their left (on their own row on a phone). Each one's first option is the
+  usual number, `1 h (usual)`; a pick is saved at once, with a toast, and a time the session is already past is greyed.
 
 ## Commands to copy
 
@@ -309,7 +313,9 @@ button, never orange. A question they asked says "you asked" in `meta`.
 Its **AI reviews** tab (`components/AiReviews`) shows what Claude Code and Codex posted on the pull request, newest
 first, each a Discussion `saidbox` whose head is a keyboard disclosure, with each finding as a card and the follow-ups
 asked about it under it. A resolved or outdated finding is dashed and labelled, never faded, so its text keeps 4.5:1.
-Its **Ask** buttons are quiet, like the Q&A's, never orange.
+Its **Ask** buttons are quiet, like the Q&A's, never orange. Over the reviews, the pull request's **Merge risk** and **QA**
+checks sit as two smaller `saidbox`es, the tier or the QA verdict as a `verdictword` in its tone (`amber-ink` for
+`medium` and `running`), the check's title under it and its summary behind a **Details** disclosure.
 
 A session with more than one pull request has a review of each: the review switch (`components/ReviewSwitch`), a quiet
 row above the title, only with two or more, lists them as mono pills, the one on screen in `ink` with no link and the

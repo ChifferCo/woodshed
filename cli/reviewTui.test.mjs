@@ -468,6 +468,22 @@ test('6 opens AI reviews: each reviewer\'s verdict and part, the findings on the
   for (const line of tui.frame()) assert.ok(width(line) <= 80, line);
 });
 
+test('6 shows the merge risk and QA over the reviews, and says one the project file asks for that has not run', async (t) => {
+  const checks = {
+    mergeRisk: { name: 'Merge risk', status: 'completed', conclusion: 'neutral', title: 'High: touches billing', tier: 'High', reason: 'touches billing', current: true, fromLabel: false },
+    qa: { name: 'QA', missing: true },
+  };
+  const tui = await tuiOver(t, baseRoutes({
+    'GET /comments': () => ({ ok: true, prId: 'P', headSha: 'aaaa', reviewId: null, comments: [], threads: [], said: [], aiReviews: [AI_REVIEW], checks }),
+  }), { columns: 80, rows: 40 });
+  await tui.until(() => tui.frame().some((l) => l.includes('6 AI reviews')), 'the tab');
+  tui.type('6');
+  await tui.until(() => tui.frame().some((l) => l.startsWith('Merge risk')), 'the merge risk');
+  const text = tui.frame().join('\n');
+  assert.match(text, /Merge risk high · touches billing\nQA not run on the latest commit yet\n\nWhat Claude Code and Codex said/);
+  assert.match(text, /▾ Claude Code and Codex requests changes/, 'the cursor still starts on the newest review');
+});
+
 test('i on a finding asks the session\'s agent about it, and the answer shows under the finding and on Chat', async (t) => {
   let messages = [];
   const tui = await tuiOver(t, baseRoutes({

@@ -285,7 +285,7 @@ there. A paused one is resumed first, as `session connect` does. It draws, in th
   suggestions). The shed does not stream an answer: the chat says how long it has been reading, then draws it. A
   follow-up asked on AI reviews is a turn here too, under `About <the point>`. **6 AI reviews** (with a pull request):
   what Claude Code and Codex posted on the pull request (the console's review, by its reviewer App), newest first, as
-  the page's AI reviews tab: each review's verdict, whether it read the latest commit, each reviewer's part and its
+  the page's AI reviews tab: the merge risk and QA checks on the head commit first, a line each, then each review's verdict, whether it read the latest commit, each reviewer's part and its
   findings on their lines, with the replies on their threads. Older reviews are folded. `↑`/`↓` choose a review or a
   finding, `Enter` folds or opens a review, and `i` asks the session's agent a follow-up about it: the shed reads the
   point from GitHub by its ids, and the agent checks it against the code and says whether it holds. The answer is drawn
