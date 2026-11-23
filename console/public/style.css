@@ -270,7 +270,7 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 /* The agent switch beside the tabs, while Chat or TUI shows (session.js agentSwitch): the agent shown, how many the
    session has, and how many of the others need you, in the bar's needs-you colour as the status word has it. */
 .pbtn.pagent { gap: 6px; color: var(--bar-ink); border-color: var(--bar-well-line); }
-.pbtn.pagent .pagent-count { font-weight: 500; color: var(--bar-sub); }
+.pbtn.pagent .pagent-word, .pbtn.pagent .pagent-count { font-weight: 500; color: var(--bar-sub); }
 .pbtn.pagent .pagent-needs { color: var(--bar-amber); }
 .pbtn.pagent.is-needs { border-color: var(--bar-amber-line); }
 .pphone-meta .ptimer { font-family: var(--mono); color: var(--bar-amber); }

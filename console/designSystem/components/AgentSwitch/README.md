@@ -2,9 +2,9 @@ Which agent the Chat and TUI tabs show, when a private session's owner started m
 (`session/agents.mjs`). `session.js` draws it (`agentSwitch`) on the pane bar, after the tabs, while Chat or TUI shows,
 and only for the owner of a running private session whose image can start them.
 
-- **The switch**: a `pbtn` with a `bar-well-line` border, in `bar-ink`: the agent shown and its model when one was
-  picked (`Claude · opus`), then in `bar-sub` how many agents the session has (`3 agents`) once it has more than one, and
-  ▾. When another agent than the one shown needs you, `1 needs you` in `bar-amber`, the bar's needs-you colour, and the
+- **The switch**: a `pbtn` with a `bar-well-line` border: `Agent` in `bar-sub`, then in `bar-ink` the agent shown and
+  its model when one was picked (`Claude · opus`), then in `bar-sub` how many agents the session has (`3 agents`), or
+  `+ add` while it has only its own, so the switch says it is where another starts, and ▾. When another agent than the one shown needs you, `1 needs you` in `bar-amber`, the bar's needs-you colour, and the
   border turns `bar-amber-line`. A status is a word here too: never the colour alone.
 - **Its menu** is the page's one menu (MenuGroups): under **Agents**, a row each, the session's own first (`Codex (the
   session's own)`), the one shown with ✓, each with its state word and, for one started beside it, its permission mode
