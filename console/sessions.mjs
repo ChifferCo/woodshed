@@ -440,6 +440,26 @@ export function planUsageFrom(usage) {
 
 const MAX_PR_URLS = 20;
 
+/**
+ * Which of Woodshed's own runs are at work on each pull request now: a review or QA session the console started on
+ * it, waiting in line or running. A pull request's checks say nothing of them until they report, so its chip would
+ * show a tick while its review is still being written.
+ * @param {object[]} sessions  every session, whoever may see it: a run says only that it is at work
+ * @returns {(prUrl: string) => ('review'|'qa')[]}  the runs on that pull request, review first
+ */
+export function woodshedRunsOn(sessions) {
+  const runs = new Map();
+  for (const s of sessions) {
+    if (!ACTIVE_STATUSES.has(s.status) || !s.repo || !Number.isInteger(s.number) || !(isReview(s) || isQa(s))) continue;
+    const key = `https://github.com/${s.repo}/pull/${s.number}`.toLowerCase();
+    runs.set(key, { ...runs.get(key), [isReview(s) ? 'review' : 'qa']: true });
+  }
+  return (prUrl) => {
+    const found = runs.get(String(prUrl ?? '').toLowerCase());
+    return ['review', 'qa'].filter((kind) => found?.[kind]);
+  };
+}
+
 /** @returns {string[]}  the session's pull requests, oldest first; one from before the list is its only `prUrl` */
 export function prUrlsOf(session) {
   if (Array.isArray(session?.prUrls) && session.prUrls.length) return session.prUrls;

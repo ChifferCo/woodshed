@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  parseCommand, publicSession, sharedRunningCount, routeQa, routeTrigger, sessionsToStart, statusUpdate, stopReason, pauseAt, withSessionLimits, canSee, activePrivateCount, parseWorkOn, sessionOptions,
+  parseCommand, publicSession, sharedRunningCount, routeQa, routeTrigger, sessionsToStart, statusUpdate, woodshedRunsOn, stopReason, pauseAt, withSessionLimits, canSee, activePrivateCount, parseWorkOn, sessionOptions,
   keptIds, pullNumber, planUsageFrom, sessionLink,
 } from './sessions.mjs';
 
@@ -255,6 +255,25 @@ test('statusUpdate takes the pull requests of the session\'s other branches, in 
   assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrls: 'no' }, 'now').prUrls, []);
   const many = Array.from({ length: 30 }, (_, i) => url(i + 1));
   assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrls: many }, 'now').prUrls, many.slice(-20), 'the 20 newest');
+});
+
+test('a pull request says which of Woodshed\'s review and QA are at work on it', () => {
+  const url = (n) => `https://github.com/o/r/pull/${n}`;
+  const run = (number, extra) => session({ repo: 'o/r', kind: 'pr', number, status: 'running', ...extra });
+  const runsOn = woodshedRunsOn([
+    run(7, { review: { sha: 'a' } }), run(7, { qa: { sha: 'a' }, status: 'queued' }),
+    run(8, { qa: { sha: 'b' } }),
+    run(9, { review: { sha: 'c', conclusion: 'APPROVE' }, status: 'stopped' }),
+    run(10, {}),
+    session({ repo: 'o/other', kind: 'pr', number: 11, status: 'running', review: {} }),
+  ]);
+  assert.deepEqual(runsOn(url(7)), ['review', 'qa'], 'one waiting in line counts');
+  assert.deepEqual(runsOn(url(8)), ['qa']);
+  assert.deepEqual(runsOn(url(9)), [], 'a finished review is in the checks');
+  assert.deepEqual(runsOn(url(10)), [], 'a session working on the pull request is no reviewer');
+  assert.deepEqual(runsOn(url(11)), [], 'another repo\'s pull request of that number');
+  assert.deepEqual(runsOn('https://github.com/O/R/pull/8'), ['qa']);
+  assert.deepEqual(runsOn(null), []);
 });
 
 test('publicSession drops the token and the endpoint', () => {

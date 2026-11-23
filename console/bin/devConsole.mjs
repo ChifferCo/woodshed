@@ -149,6 +149,15 @@ const sessions = [
     prUrl: 'https://github.com/example-org/example-repo/pull/26333',
     prUrls: [26331, 26332, 26333].map((n) => `https://github.com/example-org/example-repo/pull/${n}`),
   }),
+  // Woodshed's own review and QA at work on two of those pull requests: each chip says so, with the ring, where its
+  // checks alone would show a tick.
+  session('7d7d7d7d', 26332, 'Review: Split the billing page into steps', {
+    trigger: 'review', prUrl: null, status: 'running', state: 'working', stoppedAt: null, stopReason: null, assignee: null,
+    review: { base: 'main', sha: 'f00d332', heading: null, author: null, check: null, commentId: null },
+  }),
+  session('9c9c9c9c', 26333, 'QA: Split the billing page into steps', {
+    trigger: 'qa', prUrl: null, status: 'running', state: 'working', stoppedAt: null, stopReason: null, assignee: null, head: 'f00d333', qa: {},
+  }),
   session('cccc3333', 26327, 'A failed start', { status: 'failed', error: 'The container did not start.' }),
   // Running, for the top bar's buttons. With no container behind it the app's links and the terminal go nowhere.
   session('dddd4444', 26328, 'Keep background shell alive for cap', { status: 'running', stoppedAt: null, stopReason: null, app: 'stopped', appServers: { frontend: false, backend: false, frontendPort: 5173, backendPort: 8080 }, hasShell: true, editor: true,

@@ -935,6 +935,10 @@ URL on top of each env file's Repo settings values
   logs `prChips: read` with how many it asked for and found whenever some are due, or
   `console: pull request chips failed` with gh's error. A chip only shows
   once statusd has reported the session's PR URL.
+- **A pull request's chip shows ✓ while Woodshed's review or QA is still running, or says `review` or `QA` with none
+  running.** The word and its ring come from the console's own sessions, not GitHub: a review or QA session on that
+  repo and number that is queued, starting, running or stopping (Reviews and QA on the rail's Everyone). A review the
+  repo runs as a GitHub workflow instead shows as a check that is still running.
 - **A session opened several pull requests and its card shows one.** A merged or closed one is hidden once a newer
   one came after it (Details lists every one). Otherwise statusd did not report it: it reports the pull request of
   the branch checked out and those of the checkout's other local branches (`prUrls`), from the session's own repo
