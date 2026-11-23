@@ -5,6 +5,10 @@
 // to. A closed row says what it holds. Admins only: the API refuses anyone else, and the page says so. Values stay
 // hidden until Show, as on Secrets & webhooks, and never reach the table, which names keys alone. ?file=<key> opens
 // one env file's row, #slack the channel's and #github the label's, so a link can point at them.
+// The scripts a program named for its groups (its `repoPage` hook), loaded once for the document: the settings pages are
+// one page, and this one starts again on each visit to a repo's settings, which would run them again and stack their
+// listeners.
+const repoPageScripts = new Set();
 window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/, (app, life) => {
   'use strict';
   const W = window.Woodshed;
@@ -492,7 +496,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
   let hostNode = null;
   let hostText = null;
   let hostRedrawn = false;
-  const hostScripts = new Set();
+  const hostScripts = repoPageScripts;
   function hostGroups() {
     if (!view.host?.html) return null;
     if (view.host.html !== hostText) {

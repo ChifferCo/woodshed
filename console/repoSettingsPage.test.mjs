@@ -161,9 +161,13 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
     for (const c of children.flat(Infinity)) if (c !== null && c !== undefined && c !== false) el.append(typeof c === 'object' ? c : String(c));
     return el;
   };
+  let started = null;
+  const life = () => ({ nav: () => element('nav'), interval: (fn, ms) => context.setInterval?.(fn, ms), timeout: (fn, ms) => context.setTimeout(fn, ms), on: (target, type, fn) => target.addEventListener?.(type, fn) });
   const W = {
     h, nav: () => element('nav'), scopePill: () => element('span'), when: (iso) => `at ${iso}`, providerWords: {},
-    settingsPage: (_match, start) => start(app, { nav: () => element('nav'), interval: (fn, ms) => context.setInterval?.(fn, ms), timeout: (fn, ms) => context.setTimeout(fn, ms), on: (target, type, fn) => target.addEventListener?.(type, fn) }),
+    settingsPage: (_match, start) => { started = start; start(app, life()); },
+    // Another visit to the page in the same document, as common.js starts it again: a new node of its own to draw in.
+    restart: () => { const next = element('div'); started(next, life()); return next; },
     getJson: (path) => consoleCall('GET', path),
     postJson: (path, body) => consoleCall('POST', path, body),
     confirmChange: (opts) => { confirms.push(opts); },
@@ -678,6 +682,12 @@ test('the scripts a program names for its groups are loaded once, after them', a
   page.context.window.Woodshed.postJson('/api/console-settings/repos/app/instructions', { text: 'Be brief.' });
   await settle();
   assert.equal(walk(page.app).filter((e) => e.tag === 'script').length, 1, 'not loaded again by a redraw');
+  // Another visit to a repo's page in the same document (Settings, then the repo again): the page starts anew, the
+  // script is already in the document, and it is not loaded twice.
+  const again = page.context.window.Woodshed.restart();
+  await settle();
+  assert.equal(walk(again).filter((e) => e.tag === 'script').length, 0, 'not loaded again by another visit');
+  assert.ok(walk(again).some((e) => e.className === 'host-groups'), 'its groups drawn again all the same');
 });
 
 test('with no program\'s groups, or one that fails, the repo\'s page is the console\'s alone', async () => {
