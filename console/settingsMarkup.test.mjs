@@ -87,12 +87,12 @@ test('a checklist is the session start\'s: its marks, the step now named for a s
 
 test('a page that stands alone: the settings frame drawn by the server, with the program\'s links, sign-out and dialog', () => {
   const page = standalonePage({
-    title: 'Get started', body: pageHead({ title: 'Get started' }).text, brand: { label: 'Woodshed Cloud', href: '/account' },
+    title: 'Get started', body: pageHead({ title: 'Get started' }).text, brand: { label: 'Woodshed Cloud', href: '/account', icon: '/assets/logo.svg' },
     groups: [{ label: 'You', items: [{ label: 'Your workspaces', href: '/account' }, { label: 'Away', href: 'https://x.test' }, { label: 'Protocol', href: '//x.test' }] }],
     current: '/account', login: 'joel', signOut: '/account/sign-out', dialog: '<div class="host-dialog">step</div>', refresh: 4,
     styles: ['/assets/own.css', 'https://x.test/a.css'], scripts: ['/assets/own.js'],
   });
-  assert.match(page, /<a class="side-back" href="\/account"><b>Woodshed Cloud<\/b><\/a>/, 'its name heads the side list');
+  assert.match(page, /<a class="side-back" href="\/account"><img src="\/assets\/logo.svg" width="20" height="20" alt="" class="side-brand-icon"><b>Woodshed Cloud<\/b><\/a>/, 'its mark and name head the side list');
   assert.match(page, /<a class="side-item" href="\/account" aria-current="page">Your workspaces<\/a>/);
   assert.doesNotMatch(page, /x\.test/, 'only paths on its own address');
   assert.match(page, /<span class="side-item side-who">@joel<\/span><form class="inline-form" method="post" action="\/account\/sign-out"><button type="submit" class="side-item">Sign out<\/button><\/form>/);
@@ -103,8 +103,8 @@ test('a page that stands alone: the settings frame drawn by the server, with the
   assert.match(page, /<link rel="stylesheet" href="\/assets\/own\.css">/);
   assert.match(page, /<script src="\/assets\/own\.js"><\/script>/);
   assert.doesNotMatch(page, /common\.js|\/api\/me/, 'nothing on it asks a console anything');
-  const bare = standalonePage({ title: 'x', body: '', brand: { label: 'W', href: 'javascript:alert(1)' }, login: 'not a login!', signOut: '/out' });
-  assert.match(bare, /<a class="side-back" href="\/">/, 'a home that is not a path goes to /');
+  const bare = standalonePage({ title: 'x', body: '', brand: { label: 'W', href: 'javascript:alert(1)', icon: 'https://x.test/i.svg' }, login: 'not a login!', signOut: '/out' });
+  assert.match(bare, /<a class="side-back" href="\/"><b>W<\/b>/, 'a home that is not a path goes to /, and an icon from elsewhere is left out');
   assert.doesNotMatch(bare, /Sign out|inert|refresh/);
 });
 

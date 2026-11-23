@@ -607,7 +607,7 @@ export function settingsFrame({ title, body, current, heading = null, tabs = nul
  * settings pages' frame drawn by the server, with the design system's stylesheet and hostRows.js: the side list holds
  * the program's own links under its name in place of Back to sessions, and the body is the program's, made with
  * settingsMarkup.mjs and escaped by it. No console script runs, so nothing on it asks a console anything.
- * @param {{title: string, body: string, brand: {label: string, href: string}, groups?: {label: string, items: {label: string, href: string}[]}[],
+ * @param {{title: string, body: string, brand: {label: string, href: string, icon?: string}, groups?: {label: string, items: {label: string, href: string}[]}[],
  *          current?: string|null, login?: string|null, signOut?: string|null, dialog?: string|null, refresh?: number|null,
  *          styles?: string[], scripts?: string[]}} page
  *   `groups` are the side list's, each link marked when its `href` is `current`; `signOut` is the path a form posts to
@@ -633,6 +633,8 @@ export function standalonePage({ title, body, brand, groups = [], current = null
     ? `<div class="side-group">Signed in</div><span class="side-item side-who">@${who}</span><form class="inline-form" method="post" action="${escapeHtml(path(signOut))}"><button type="submit" class="side-item">Sign out</button></form>`
     : '';
   const home = path(brand?.href) ?? '/';
+  // The program's mark beside its name, from its own address (a path), as the console's own head has none.
+  const icon = path(brand?.icon) ? `<img src="${escapeHtml(path(brand.icon))}" width="20" height="20" alt="" class="side-brand-icon">` : '';
   const seconds = Number.isInteger(refresh) && refresh > 0 ? refresh : null;
   const own = (list, tag) => (Array.isArray(list) ? list : []).map(path).filter(Boolean).map(tag).join('');
   return `<!doctype html>
@@ -649,7 +651,7 @@ export function standalonePage({ title, body, brand, groups = [], current = null
 </head>
 <body>
 <div id="app"><div class="settings-view"><div class="page"${dialog ? ' inert aria-hidden="true"' : ''}>
-<aside class="settings-side" aria-label="${escapeHtml(menuText(brand?.label) || 'Settings')}"><div class="side-head"><a class="side-back" href="${escapeHtml(home)}"><b>${escapeHtml(menuText(brand?.label))}</b></a></div><nav class="side-list">${side}${out}</nav></aside>
+<aside class="settings-side" aria-label="${escapeHtml(menuText(brand?.label) || 'Settings')}"><div class="side-head"><a class="side-back" href="${escapeHtml(home)}">${icon}<b>${escapeHtml(menuText(brand?.label))}</b></a></div><nav class="side-list">${side}${out}</nav></aside>
 ${String(body ?? '')}
 </div>${dialog ? `\n${String(dialog)}` : ''}</div></div>
 <script src="${staticUrl('hostRows.js')}" data-wire="app"></script>${own(scripts, (s) => `\n<script src="${escapeHtml(s)}"></script>`)}

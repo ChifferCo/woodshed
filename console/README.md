@@ -1979,9 +1979,9 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   groups anew (a save answering with new ones). Its forms post to the program, which sends the page back to
   `/console-settings/repos/<project>#<row>`, opening that row. A hook that throws, or answers anything else, adds none
   and logs `repoSettings: the program's groups not given`; the page is shown without them.
-- `standalonePage({title, body, brand, groups?, current?, login?, signOut?, dialog?, refresh?, styles?, scripts?})`
+- `standalonePage({title, body, brand: {label, href, icon?}, groups?, current?, login?, signOut?, dialog?, refresh?, styles?, scripts?})`
   from `server.mjs`: a page of the program's that stands outside any console, such as a first visit before there is a
-  console to be in. It is the settings pages' frame drawn by the server, the program's name heading the side list in
+  console to be in. It is the settings pages' frame drawn by the server, the program's name (and its mark, `icon`, a path) heading the side list in
   place of Back to sessions, its `groups` of links under it and Sign out posting to `signOut`, with the design system's
   stylesheet and `hostRows.js` and no console script, so it asks no console anything. `dialog` is a step drawn over it
   (`settingsMarkup.mjs`'s `dialog`), the page inert behind; `refresh` reloads it after that many seconds.

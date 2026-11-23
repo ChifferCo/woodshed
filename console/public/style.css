@@ -753,6 +753,7 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .set-form > .set-actions, .set-form > .check-line { align-self: flex-start; }
 /* Who is signed in, on a program's page that stands alone (server.mjs, standalonePage): a line, not a link. */
 .side-who { color: var(--sub); cursor: default; }
+.side-brand-icon { width: 20px; height: 20px; margin-right: 8px; vertical-align: -4px; }
 .side-who:hover { background: none; }
 /* A checkbox with its words, in a program's server-drawn form (settingsMarkup.mjs, checkbox). */
 .check-line { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
