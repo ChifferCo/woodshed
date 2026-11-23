@@ -9,6 +9,8 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
+
 const run = promisify(execFile);
 
 // The wrapper run over a stand-in for the agent, which prints its arguments and the key variables it got.
@@ -16,24 +18,24 @@ async function wrapped(t, name, { auth = null, env = {} } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${name}-wrapper-`));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const real = path.join(dir, name);
-  fs.writeFileSync(real, '#!/bin/bash\nnode -e \'console.log(JSON.stringify({argv: process.argv.slice(1), xai: process.env.XAI_API_KEY ?? null, gemini: process.env.GEMINI_API_KEY ?? null, update: process.env.AGY_CLI_DISABLE_AUTO_UPDATE ?? null, dbus: process.env.DBUS_SESSION_BUS_ADDRESS ?? null}))\' -- "$@"\n', { mode: 0o755 });
+  fs.writeFileSync(real, '#!/bin/bash\nnode -e \'console.log(JSON.stringify({argv: process.argv.slice(1), xai: process.env.XAI_API_KEY ?? null, gemini: process.env.GEMINI_API_KEY ?? null, update: process.env.AGY_CLI_DISABLE_AUTO_UPDATE ?? null, dbus: process.env.DBUS_SESSION_BUS_ADDRESS ?? null, projectConfig: process.env.OPENCODE_DISABLE_PROJECT_CONFIG ?? null}))\' -- "$@"\n', { mode: 0o755 });
   const authFile = path.join(dir, 'agent-auth');
   if (auth !== null) fs.writeFileSync(authFile, auth, { mode: 0o600 });
   const variable = { grok: 'WOODSHED_REAL_GROK', agy: 'WOODSHED_REAL_AGY', opencode: 'WOODSHED_REAL_OPENCODE' }[name];
   const { stdout } = await run(fileURLToPath(new URL(`./bin/${name}`, import.meta.url)), ['--model', 'm', 'hi there'], {
-    env: { PATH: process.env.PATH, HOME: dir, [variable]: real, WOODSHED_AGENT_AUTH_FILE: authFile, ...env },
+    env: isolatedEnv({ PATH: process.env.PATH, HOME: dir, [variable]: real, WOODSHED_AGENT_AUTH_FILE: authFile, ...env }),
   });
   return JSON.parse(stdout);
 }
 
 test('grok gets an xAI key in XAI_API_KEY, and nothing for a login, which is in its own auth.json', async (t) => {
-  assert.deepEqual(await wrapped(t, 'grok', { auth: 'xai-abc123' }), { argv: ['--model', 'm', 'hi there'], xai: 'xai-abc123', gemini: null, update: null, dbus: null });
+  assert.deepEqual(await wrapped(t, 'grok', { auth: 'xai-abc123' }), { argv: ['--model', 'm', 'hi there'], xai: 'xai-abc123', gemini: null, update: null, dbus: null, projectConfig: null });
   assert.equal((await wrapped(t, 'grok', { auth: '{"x":{"key":"k"}}' })).xai, null);
   assert.equal((await wrapped(t, 'grok')).xai, null);
 });
 
 test('agy gets a Gemini key in GEMINI_API_KEY, and never updates itself', async (t) => {
-  assert.deepEqual(await wrapped(t, 'agy', { auth: 'AIzaSyExample' }), { argv: ['--model', 'm', 'hi there'], xai: null, gemini: 'AIzaSyExample', update: 'true', dbus: null });
+  assert.deepEqual(await wrapped(t, 'agy', { auth: 'AIzaSyExample' }), { argv: ['--model', 'm', 'hi there'], xai: null, gemini: 'AIzaSyExample', update: 'true', dbus: null, projectConfig: null });
 });
 
 test('agy gets no key for a Google sign-in, and no D-Bus, so it keeps that sign-in in its file', async (t) => {
@@ -42,8 +44,8 @@ test('agy gets no key for a Google sign-in, and no D-Bus, so it keeps that sign-
   assert.deepEqual([out.gemini, out.dbus, out.update], [null, null, 'true']);
 });
 
-test('opencode is run as it is', async (t) => {
-  assert.deepEqual(await wrapped(t, 'opencode', { auth: '{"anthropic":{"type":"api","key":"k"}}' }), { argv: ['--model', 'm', 'hi there'], xai: null, gemini: null, update: null, dbus: null });
+test('opencode never reads the repo\'s own config, which could send the owner\'s key elsewhere', async (t) => {
+  assert.deepEqual(await wrapped(t, 'opencode', { auth: '{"anthropic":{"type":"api","key":"k"}}' }), { argv: ['--model', 'm', 'hi there'], xai: null, gemini: null, update: null, dbus: null, projectConfig: '1' });
 });
 
 // woodshed-sign-in over a stand-in agy, which signs in by writing its file where it is told HOME is, and a stand-in
@@ -69,10 +71,10 @@ test('woodshed-sign-in sends the Google sign-in agy saved to the console, never 
   const ownKey = path.join(dir, 'agent-auth');
   fs.writeFileSync(ownKey, 'AIzaSyTheSessionsOwnKey', { mode: 0o600 });
   const { stdout, stderr } = await run(fileURLToPath(new URL('./bin/woodshed-sign-in', import.meta.url)), ['antigravity'], {
-    env: {
+    env: isolatedEnv({
       PATH: process.env.PATH, HOME: dir, WOODSHED_REAL_AGY: real, WOODSHED_AGENT_AUTH_FILE: ownKey, GEMINI_API_KEY: 'AIzaSyExported', TMPDIR: dir,
       WOODSHED_CONSOLE_URL: `http://127.0.0.1:${server.address().port}`, SESSION_TOKEN: 'session-token',
-    },
+    }),
   });
   assert.deepEqual(got, [{ url: '/agent-sign-in', auth: 'Bearer session-token', agent: 'antigravity', body: login }]);
   assert.equal(fs.readFileSync(path.join(dir, 'seen'), 'utf8'), 'none {"consumerOnboardingComplete":true,"enterpriseOnboardingComplete":false,"onboardingComplete":true} -p Say ok.');
@@ -88,8 +90,8 @@ test('woodshed-sign-in says so when agy did not sign in, and sends nothing', asy
   const real = path.join(dir, 'agy');
   fs.writeFileSync(real, '#!/bin/bash\nexit 1\n', { mode: 0o755 });
   await assert.rejects(run(fileURLToPath(new URL('./bin/woodshed-sign-in', import.meta.url)), ['antigravity'], {
-    env: { PATH: process.env.PATH, HOME: dir, WOODSHED_REAL_AGY: real, WOODSHED_CONSOLE_URL: 'http://127.0.0.1:9', SESSION_TOKEN: 't' },
+    env: isolatedEnv({ PATH: process.env.PATH, HOME: dir, WOODSHED_REAL_AGY: real, WOODSHED_CONSOLE_URL: 'http://127.0.0.1:9', SESSION_TOKEN: 't' }),
   }), (err) => /No sign-in was saved/.test(err.stderr));
-  await assert.rejects(run(fileURLToPath(new URL('./bin/woodshed-sign-in', import.meta.url)), ['grok'], { env: { PATH: process.env.PATH } }),
+  await assert.rejects(run(fileURLToPath(new URL('./bin/woodshed-sign-in', import.meta.url)), ['grok'], { env: isolatedEnv({ PATH: process.env.PATH }) }),
     (err) => err.code === 2 && /usage/.test(err.stderr));
 });

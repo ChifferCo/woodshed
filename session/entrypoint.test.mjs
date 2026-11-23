@@ -1474,6 +1474,18 @@ test('OpenCode: its auth.json, its config with the effort as each agent\'s varia
   assert.equal(configureAgent('configureOpencode', 'sk-ant-x').failed, true, 'a bare key is not its auth.json');
 });
 
+test('OpenCode: the repo\'s AGENTS.md, or its CLAUDE.md, is named in the owner\'s config, since its own config is off', (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-oc-repo-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const auth = '{"anthropic":{"type":"api","key":"sk-ant-x"}}';
+  const instructions = () => JSON.parse(configureAgent('configureOpencode', auth, { REPO_DIR: repo }).read('.config/opencode/opencode.json')).instructions;
+  assert.equal(instructions(), undefined, 'none to name');
+  fs.writeFileSync(path.join(repo, 'CLAUDE.md'), '# Claude rules\n');
+  assert.deepEqual(instructions(), [path.join(repo, 'CLAUDE.md')]);
+  fs.writeFileSync(path.join(repo, 'AGENTS.md'), '# Agent rules\n');
+  assert.deepEqual(instructions(), [path.join(repo, 'AGENTS.md')], 'AGENTS.md first, as opencode reads them');
+});
+
 test('an own-sign-in agent\'s start stops without its sign-in, and keeps the copy it was given', () => {
   const settings = fn('fetchOwnerSettings');
   assert.match(settings, /grok \| antigravity \| opencode\)/);

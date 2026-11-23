@@ -1209,7 +1209,13 @@ configureOpencode() {
   done
   ! ownAgentAuthIsKey || die "OpenCode takes its auth.json, and the console sent something else"
   (umask 077 && cp "$OWN_AGENT_AUTH_FILE" "$OPENCODE_DATA_DIR/auth.json")
-  jq -n --arg effort "${EFFORT:-}" '{"$schema": "https://opencode.ai/config.json", autoupdate: false, share: "disabled"}
+  # session/bin/opencode turns the repo's own config off (OPENCODE_DISABLE_PROJECT_CONFIG): an opencode.json in the
+  # repo could point a provider at another address, which would get the owner's key. That also leaves out the repo's
+  # AGENTS.md (measured with 1.19.6), so it is named here, or CLAUDE.md where the repo has none, as opencode reads them.
+  local repoRules=''
+  if [ -f "$REPO_DIR/AGENTS.md" ]; then repoRules=$REPO_DIR/AGENTS.md; elif [ -f "$REPO_DIR/CLAUDE.md" ]; then repoRules=$REPO_DIR/CLAUDE.md; fi
+  jq -n --arg effort "${EFFORT:-}" --arg rules "$repoRules" '{"$schema": "https://opencode.ai/config.json", autoupdate: false, share: "disabled"}
+    + (if $rules == "" then {} else {instructions: [$rules]} end)
     + (if $effort == "" then {} else {agent: {build: {variant: $effort}, plan: {variant: $effort}}} end)' \
     > "$OPENCODE_CONFIG_DIR/opencode.json"
   cp /tmp/woodshed-rules.md "$OPENCODE_CONFIG_DIR/AGENTS.md"

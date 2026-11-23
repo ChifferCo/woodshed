@@ -734,6 +734,37 @@ test('the owner\'s own session saves an Antigravity Google sign-in made in its t
   assert.equal(saved.length, 1);
 });
 
+test('a sign-in from a session is not saved when the session is locked down before or during its upload', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const session = { id: 'aaaaaaaa', status: 'running', token: 'own-token', owner: 'joel', options: { agent: 'grok' } };
+  const saved = [];
+  let locking = false;
+  const fleet = { sessions: () => [session], isLocked: () => locking };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({}) }, userSettings: { setAgentAuth: async (...args) => { saved.push(args); } } });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const login = JSON.stringify({ token: { access_token: 'at', refresh_token: 'rt' }, auth_method: 'consumer' });
+  const headers = { authorization: 'Bearer own-token', 'x-woodshed-agent': 'antigravity', 'content-type': 'application/json' };
+
+  locking = true;
+  assert.equal((await request(port, { path: '/agent-sign-in', authorization: 'Bearer own-token', body: login, headers: { 'x-woodshed-agent': 'antigravity' } })).status, 403, 'a lockdown under way');
+  locking = false;
+  // The upload's first half, then the session's first production call, then the rest.
+  const status = await new Promise((resolve, reject) => {
+    const req = http.request({ port, host: '127.0.0.1', method: 'POST', path: '/agent-sign-in', headers }, (res) => { res.resume(); resolve(res.statusCode); });
+    req.on('error', reject);
+    req.write(login.slice(0, 20));
+    setTimeout(() => {
+      session.taintedAt = new Date().toISOString();
+      req.end(login.slice(20));
+    }, 50);
+  });
+  assert.equal(status, 403, 'tainted while its body was on its way');
+  assert.deepEqual(saved, []);
+});
+
 test('a session gets the token of the project it runs on', async (t) => {
   const sessions = [
     { id: 'aaaaaaaa', status: 'running', token: 'on-app', project: 'app', repo: 'acme/app' },

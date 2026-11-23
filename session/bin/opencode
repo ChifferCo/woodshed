@@ -1,8 +1,13 @@
 #!/bin/bash
 # opencode (OpenCode), on its owner's own provider sign-ins, which the entrypoint wrote as its own auth.json
 # (configureOpencode). Run by its full path, so tmux names the pane's command `opencode` (session/agentPane.mjs). Its
-# global AGENTS.md holds the rules, so it never falls back to ~/.claude/CLAUDE.md; a repo's own CLAUDE.md it still reads
-# when the repo has no AGENTS.md.
+# global AGENTS.md holds the rules, so it never falls back to ~/.claude/CLAUDE.md.
+#
+# Never the repo's own opencode.json or .opencode/: one could point a provider at another address (`baseURL`), which
+# would then get the owner's own key. The repo's AGENTS.md (or CLAUDE.md where it has none), which this also leaves
+# out, configureOpencode names in the owner's config instead.
 set -euo pipefail
+
+export OPENCODE_DISABLE_PROJECT_CONFIG=1
 
 exec "${WOODSHED_REAL_OPENCODE:-/usr/local/bin/opencode}" "$@"

@@ -225,7 +225,7 @@ export function createSessionApi({
     if (pathname === '/repo-settings') return repoSettingsReply(req, res, session, repoSettings);
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings);
     if (pathname === '/agent-auth') return agentAuthReply(req, res, session, userSettings);
-    if (pathname === '/agent-sign-in') return agentSignInReply(req, res, session, userSettings);
+    if (pathname === '/agent-sign-in') return agentSignInReply(req, res, session, userSettings, fleet);
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
     if (pathname === '/answer') return answerReply(req, res, session, asks);
     if (pathname === '/qa-report') return qaReportReply(req, res, session, fleet);
@@ -518,12 +518,14 @@ async function agentAuthReply(req, res, session, userSettings) {
  * shown in the terminal. Never from a shared session, a question, QA or a review, and never from a tainted session,
  * whose data stays in it.
  */
-async function agentSignInReply(req, res, session, userSettings) {
+async function agentSignInReply(req, res, session, userSettings, fleet) {
+  // A session being locked down (its first production call) counts as tainted, before the upload and again after it.
+  const locked = () => Boolean(session.taintedAt) || Boolean(fleet?.isLocked?.(session));
   const id = String(req.headers['x-woodshed-agent'] ?? '');
   const agent = agents.isAgent(id) ? agents.agent(id) : null;
   const refused = !userSettings || !agent?.signIn?.inSession ? `no ${agent?.product ?? 'such agent'} sign-in is made in a session`
     : !session.owner || isAsk(session) || isQa(session) || isReview(session) ? 'only its owner\'s own My Woodshed session saves a sign-in'
-      : session.taintedAt ? 'a session that has seen production data saves nothing outside it' : null;
+      : locked() ? 'a session that has seen production data saves nothing outside it' : null;
   if (refused) {
     req.resume();
     console.log('sessionApi: sign-in from a session refused', { sessionId: session.id, agent: id, why: refused });
@@ -533,6 +535,10 @@ async function agentSignInReply(req, res, session, userSettings) {
   for await (const chunk of req) {
     text += chunk;
     if (text.length > agent.signIn.maxChars) return reply(res, 413, { error: 'too large' });
+  }
+  if (locked()) {
+    console.log('sessionApi: sign-in from a session refused', { sessionId: session.id, agent: id, why: 'locked down during the upload' });
+    return reply(res, 403, { error: 'a session that has seen production data saves nothing outside it' });
   }
   try {
     if (!agents.checkSignIn(agent.id, text).startsWith('{')) throw Object.assign(new Error(`that is a key, which My settings takes as it is`), { shown: true });
