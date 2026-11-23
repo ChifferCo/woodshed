@@ -1157,7 +1157,9 @@
       text: line.text.length > MAX ? `${line.text.slice(0, MAX - 1).trimEnd()}…` : line.text,
       error: Boolean(line.error),
     };
-    const prs = shownPrs(s).map(({ url, pr }) => ({
+    // Every pull request it opened, a merged or closed one the chips no longer show too, as Details lists them.
+    const allPrs = s.prs?.length ? s.prs : s.prUrl ? [{ url: s.prUrl, pr: s.pr ?? null }] : [];
+    const prs = allPrs.map(({ url, pr }) => ({
       number: prNumber(url), title: pr?.title ?? null,
       state: pr ? (pr.state === 'queued' && pr.queuePosition ? `${PR_STATE_WORD.queued}, position ${pr.queuePosition}` : PR_STATE_WORD[pr.state]) : null,
       checks: pr ? checksWord(pr.checks) : null,

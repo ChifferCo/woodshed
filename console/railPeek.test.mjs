@@ -106,3 +106,12 @@ test('an unassigned shared session says Nobody; a review run has no assignee row
   assert.equal(rows(W.peekView(shared({ assignee: null }), data))['Assigned to'], 'Nobody');
   assert.equal(rows(W.peekView(shared({ assignee: null, trigger: 'review' }), data))['Assigned to'], undefined);
 });
+
+test('every pull request it opened is listed, a merged one the chips no longer show too', () => {
+  const old = 'https://github.com/o/r/pull/8';
+  const v = W.peekView(shared({
+    prUrl: PR,
+    prs: [{ url: old, pr: { title: 'First try', state: 'merged' } }, { url: PR, pr: { title: 'Second', state: 'open' } }],
+  }), data);
+  assert.deepEqual(v.prs.map((p) => `${p.number} ${p.state}`), ['#8 Merged', '#9 Open']);
+});

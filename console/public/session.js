@@ -809,7 +809,8 @@
   function peekable() {
     return hoverable.matches && !narrow.matches;
   }
-  const peek = { el: h('div', { class: 'rail-peek', id: 'rail-peek', role: 'tooltip', hidden: true }), id: null, timer: null, shown: false };
+  // `by` is what opened it, the pointer or the keyboard's focus: focus moving elsewhere hides only a card focus opened.
+  const peek = { el: h('div', { class: 'rail-peek', id: 'rail-peek', role: 'tooltip', hidden: true }), id: null, timer: null, shown: false, by: null };
   document.body.append(peek.el);
 
   function peekBody(s) {
@@ -850,7 +851,7 @@
   function showPeek() {
     const s = data?.sessions.find((x) => x.id === peek.id);
     const card = peek.id && cardOf(peek.id);
-    if (!s || !card || !card.getClientRects().length) return hidePeek();
+    if (!peekable() || !s || !card || !card.getClientRects().length) return hidePeek();
     peek.el.replaceChildren(...peekBody(s));
     peek.el.hidden = false;
     peek.shown = true;
@@ -862,14 +863,16 @@
     clearTimeout(peek.timer);
     if (peek.id) cardOf(peek.id)?.querySelector('.rname')?.removeAttribute('aria-describedby');
     peek.id = null;
+    peek.by = null;
     peek.shown = false;
     peek.el.hidden = true;
   }
 
-  function peekSoon(sessionId) {
+  function peekSoon(sessionId, by) {
     if (sessionId === peek.id) return;
     hidePeek();
     peek.id = sessionId;
+    peek.by = by;
     peek.timer = setTimeout(showPeek, PEEK_DELAY_MS);
   }
 
@@ -885,15 +888,19 @@
     if (!peekable()) return;
     const card = e.target.closest?.('.rail .rcard');
     // A chip, the star, ⋯ or a button on the card has its own tooltip.
-    const control = card && e.target.closest('a:not(.rname), button');
-    if (card && !control) peekSoon(card.dataset.session);
+    const control = card && e.target.closest('a:not(.rname), button, .prchip');
+    if (card && !control) peekSoon(card.dataset.session, 'pointer');
     else if (peek.id) hidePeek();
   });
   document.addEventListener('focusin', (e) => {
     const name = peekable() && e.target.closest?.('.rail .rcard .rname');
-    if (name && name.matches(':focus-visible')) peekSoon(name.closest('.rcard').dataset.session);
-    else if (peek.id) hidePeek();
+    if (name && name.matches(':focus-visible')) peekSoon(name.closest('.rcard').dataset.session, 'focus');
+    // The redraw giving a project chip its focus back is not the person moving on from the card the pointer rests on.
+    else if (peek.by === 'focus') hidePeek();
   });
+  // A window made phone-wide, or a pointer that can no longer hover, takes the card away.
+  narrow.addEventListener('change', hidePeek);
+  hoverable.addEventListener('change', hidePeek);
   document.documentElement.addEventListener('mouseleave', hidePeek);
   document.addEventListener('mousedown', hidePeek, true);
   document.addEventListener('keydown', (e) => { if (e.key !== 'Tab' && e.key !== 'Shift') hidePeek(); }, true);
@@ -2324,7 +2331,6 @@
     slots.railBody.replaceChildren(...railBody());
     if (focusedChip !== null) slots.railBody.querySelector(`.rail-projects [data-project="${CSS.escape(focusedChip)}"]`)?.focus();
     syncCardMenu();
-    syncPeek();
     // A tab's own page puts what it is in the pane: Shared's sessions on /all, New session on /.
     const tabPage = onMy || onShared;
     slots.shell.classList.toggle('is-launcher', tabPage);
@@ -2338,6 +2344,8 @@
       // A list already at its end moves nothing and gets no scroll event: a later scroll is someone's.
       requestAnimationFrame(() => requestAnimationFrame(() => delete railList.dataset.restored));
     }
+    // Measured once the list is back at its place, or the card would sit beside the card that was there at the top.
+    syncPeek();
     slots.launch.hidden = !onMy;
     if (onMy) launcher.update(me);
     else launcher.stopDictating();
