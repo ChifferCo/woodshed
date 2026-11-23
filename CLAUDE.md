@@ -524,8 +524,8 @@ URL on top of each env file's Repo settings values
   `hc get claude --json` its `status` (the agent's own word, which statusd logs as `source: 'herdr'`) and `hc read
   claude` its screen; the TUI tab is ttyd running `hc attach claude`. A Chat message that Herdr refused logs `statusd:
   Herdr did not send the message` with `why` (`prompt-open`, a question, approval or menu on screen, with `kind`;
-  `blocked`; `status_mismatch`, not idle; `not-at-prompt`). Shared sessions, questions, reviews and QA runs use tmux
-  whatever the pick.
+  `blocked`, hc's own refusal; `status_mismatch`, claude's record working, blocked or in error; `not-at-prompt`, its
+  screen not at the prompt). Shared sessions, questions, reviews and QA runs use tmux whatever the pick.
 - **`woodshed session new --herdr --parent` left the session's agent with no parent, or its agent sat unstarted for
   minutes.** The console logs `fleet: session created` (or `resuming a private session`) with `herdrParent`, and the
   session's log `Herdr started` with `made by: its parent`, then `Agent's terminal made by its parent` with the
