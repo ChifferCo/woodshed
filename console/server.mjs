@@ -216,7 +216,7 @@ import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
 import { shareNext } from './appShares.mjs';
 import { safeNext, signInFailure } from './auth.mjs';
 import { handleDesktopSignIn } from './desktopSignIn.mjs';
-import { handleCliApi, handleCliPage } from './cliSignIn.mjs';
+import { handleCliApi, handleCliPage, sessionSignInsOf } from './cliSignIn.mjs';
 import { CLI_REPOS_PATH, handleCliRepos } from './cliRepos.mjs';
 import { carriesCliToken, handleCliCall } from './cliSessions.mjs';
 import { REVIEW_READINESS_PATH, reviewReadinessReply } from './reviewReadiness.mjs';
@@ -2532,12 +2532,7 @@ export function createHandler({
         return handleCliRepos({ req, res, url, cli, reply, readJson, addedProjects, roleFor: cliRepoRole, projectsView, removeRepo });
       }
       if (await handleCliSettings({ req, res, url, cli, claudeSettings, repoSettingsApi, userSettings })) return;
-      return handleCliApi({ req, res, url, cli, publicUrl: config.publicUrl, about: cliAbout, sessionSignIns: async (login) => {
-        // As on My settings, a sign-in saved directly to the store also counts. refresh caches the check.
-        await userSettings?.refresh?.(login);
-        const view = userSettings?.view(login);
-        return { claude: view?.claudeToken?.set === true, codex: view?.codexAuth?.set === true };
-      } });
+      return handleCliApi({ req, res, url, cli, publicUrl: config.publicUrl, about: cliAbout, sessionSignIns: sessionSignInsOf(userSettings) });
     }
     // `woodshed review <id>`: the review's calls with the token, checked and carried as the page's are (reviewProxy.mjs).
     if (carriesCliToken(req.headers) && isReviewPath(url.pathname)) return proxyReview.forCli(req, res, url);

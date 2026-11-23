@@ -63,10 +63,14 @@ It goes in this order:
 2. **Claude Code and Codex.** Setup asks for both: with both connected, your pull requests get reviews from both. On a
    console with no team keys (a new org on console.woodshed.run), reviews run on the pull request author's own saved
    Claude token and Codex sign-in, each used for reviews from the moment it is saved (console/reviewAgents.mjs). While
-   one is missing, setup exits 2 with the My settings link and what to run for it: `claude setup-token` for Claude,
-   whose token you paste under Claude; `codex login`, then all of `~/.codex/auth.json` (or an OpenAI API key) under
-   Codex. Setup never handles a token itself. Use only one? Pass `--agent claude` or `--agent codex`, or answer so on a
-   terminal, and setup does not ask for the other.
+   one is missing, setup lists the steps for each, numbered: what to run in another terminal (`claude setup-token`,
+   whose token you copy; `codex login`, then `pbcopy < ~/.codex/auth.json` on macOS or `cat` elsewhere, or an OpenAI
+   API key), and where to paste it. It opens My settings at that row (`/settings#claude`, `#codex`), with the caret in
+   its box. On a terminal it then waits: press Enter once you pressed Save, and setup asks the console and goes on (or
+   says it does not have it yet), or type `skip`. Otherwise it exits 2 with the steps in the message and in `--json`'s
+   `steps`, keyed by agent. Setup never runs those commands or handles a token itself, so none passes through it or a
+   coding agent running it. Use only one? Pass `--agent claude` or `--agent codex`, or answer so on a terminal, and
+   setup does not ask for the other.
 3. **Review on the repo.** Every repo is reviewed by default, on a commit whose message has `[woodshed-review]`
    (sessions add it for you), with no checkout, project file or pull request: for each repo setup runs `woodshed review
    status --repo <repo>`, stops with the link when the console's reviewer App still has to be made or installed, and

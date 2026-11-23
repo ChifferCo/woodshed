@@ -1998,7 +1998,9 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   page names the org it signs in to, and asks again if the browser has moved to another installation since it showed,
   told by the installation's own id (`cli.id`), so two with the same name and org are still told apart.
   Every later call carries the token: `inst.cli.owns(headers)` says which installation holds it (no check of `allowed`,
-  nothing written), and the program sends the request there, which answers or refuses it as its own.
+  nothing written), and the program sends the request there, which answers or refuses it as its own. A program that
+  answers `GET /api/cli/me` itself passes the installation's `sessionSignIns` to `handleCliApi`: without it the answer
+  has none, and `woodshed setup` cannot tell whether Claude Code and Codex are connected.
 - `repos: {list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`: where the program keeps the
   installation's repos, which it built `config.projects` from, so Console settings' Repos card changes them there and
   core keeps no list of its own (`addedProjects`, above under the Repos card). `list` answers what Add a repo offers:

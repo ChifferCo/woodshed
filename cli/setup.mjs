@@ -30,11 +30,27 @@ const REPO = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\/(?!\.{1,2}$)[\w.-]+$/i;
 const REVIEW_CHOICES = ['none', 'claude', 'codex', 'both', 'default'];
 const TERMINAL_CHOICES = CONFIG_KEYS.terminal.values;
 const AGENT_NAMES = { claude: 'Claude Code', codex: 'Codex' };
-// What My settings takes for each (console/public/mySettings.js): setup never handles a token itself.
-const AGENT_HOW = {
-  claude: 'For Claude Code, run claude setup-token and paste the token it prints under Claude',
-  codex: 'For Codex, run codex login, then paste all of ~/.codex/auth.json (or an OpenAI API key, sk-…) under Codex',
-};
+// How to connect each, as My settings' own rows say it (console/public/mySettings.js): what to run in a terminal of the
+// person's own, then where to paste. Setup never runs these or handles a token itself, so none passes through this
+// process, a coding agent running setup, or its captured output. `/settings#claude` and `#codex` open that row with
+// the caret in its box.
+export function agentSteps(name, url, platform) {
+  if (name === 'claude') {
+    return [
+      'In another terminal, run: claude setup-token',
+      'It signs you in to Claude in your browser, then prints a token that starts with sk-ant-oat01-. Copy it.',
+      `On My settings (${url}), paste it in the Claude row's box and press Save.`,
+    ];
+  }
+  return [
+    'In another terminal, run: codex login (skip it if Codex is already signed in on this computer)',
+    platform === 'darwin'
+      ? 'Copy the sign-in it saved, without printing it: pbcopy < ~/.codex/auth.json'
+      : 'Print the sign-in it saved and copy all of it: cat ~/.codex/auth.json',
+    `On My settings (${url}), paste it in the Codex row's box and press Save. An OpenAI API key (sk-…) works there too.`,
+  ];
+}
+const numbered = (steps) => steps.map((step, i) => `  ${i + 1}. ${step}`).join('\n');
 // A pull request in --review-prs or the terminal's answer: 12, #12, or owner/name#12 for one repo of several.
 const PICK = '(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?/[\\w.-]+)?#?[1-9][0-9]{0,8}';
 const REVIEW_PRS_RE = new RegExp(`^(?:all|none|${PICK}(?:\\s*,\\s*${PICK})*)$`, 'i');
@@ -243,14 +259,44 @@ export async function setupCommand(args, ctx) {
       else if (answer && answer !== 'both') return stop('agent', EXIT.waiting, 'Answer both, claude or codex, or rerun setup with --agent claude or --agent codex.');
       missing = wanted.filter((name) => signIns[name] !== true);
     }
+    const both = wanted.length === 2;
+    const rowUrl = (name) => `${origin}/settings#${name}`;
+    const stepsOf = (name) => agentSteps(name, rowUrl(name), ctx.platform);
+    // On a terminal, setup walks through each one and waits while the person does it, then checks with the console.
+    const tell = (line) => (args.json ? ctx.stderr.write(`${line}\n`) : say(line));
+    let walked = false;
+    if (missing.length && choose) {
+      walked = true;
+      const todo = [...missing];
+      for (const [i, name] of todo.entries()) {
+        tell(`\nConnect ${AGENT_NAMES[name]}${todo.length > 1 ? ` (${i + 1} of ${todo.length})` : ''}:\n${numbered(stepsOf(name))}`);
+        if (args.browser) {
+          open(rowUrl(name));
+          tell(`My settings is open in your browser at the ${name === 'claude' ? 'Claude' : 'Codex'} row.`);
+        }
+        for (;;) {
+          const answer = (await choose('Press Enter once it is saved, or type skip to finish setup later. '))?.toLowerCase();
+          if (answer === undefined || answer === 'skip') break;
+          const now = (await call('status', 'status')).last?.sessionSignIns;
+          if (now?.[name] === true) {
+            missing = missing.filter((other) => other !== name);
+            tell(`${AGENT_NAMES[name]} is connected.`);
+            break;
+          }
+          tell(`The console does not have ${AGENT_NAMES[name]}'s sign-in yet: check that Save on My settings said Saved.`);
+        }
+        if (missing.includes(name)) break;
+      }
+    }
     if (missing.length) {
-      const url = `${origin}/settings`;
-      if (args.browser) open(url);
-      const both = wanted.length === 2;
+      if (args.browser && !walked) open(rowUrl(missing[0]));
       const why = both ? ': with both connected, your pull requests get reviews from both' : '';
       const onlyOne = both ? ' Use only one? Rerun setup with --agent claude or --agent codex.' : '';
       const again = resume(...(!both && !opts['--agent'] ? [`--agent ${wanted[0]}`] : []));
-      return stop('agent', EXIT.waiting, `Connect ${missing.map((name) => AGENT_NAMES[name]).join(' and ')} on My settings${why}. ${missing.map((name) => AGENT_HOW[name]).join('. ')}.${onlyOne} Then ${again}.`, { url, wanted, missing });
+      const how = missing.map((name) => `${AGENT_NAMES[name]}:\n${numbered(stepsOf(name))}`).join('\n');
+      return stop('agent', EXIT.waiting, `Connect ${missing.map((name) => AGENT_NAMES[name]).join(' and ')} on My settings${why}.\n${how}\n${onlyOne.trim() ? `${onlyOne.trim()} ` : ''}Then ${again}.`, {
+        url: rowUrl(missing[0]), wanted, missing, steps: Object.fromEntries(missing.map((name) => [name, stepsOf(name)])),
+      });
     }
     const names = wanted.map((name) => AGENT_NAMES[name]).join(' and ');
     report('agent', 'done', `${names} ${wanted.length === 2 ? 'are' : 'is'} connected: your pull requests get reviews from ${wanted.length === 2 ? 'both' : names}.`, { agent: wanted[0], wanted });

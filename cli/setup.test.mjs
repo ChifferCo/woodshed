@@ -13,7 +13,7 @@ const help = (commands) => ({ code: 0, stdout: commands.map((command) => `  ${co
 const result = (code, ...events) => ({ code, stdout: events.map((event) => JSON.stringify(event)).join('\n') });
 
 function fake({
-  commands = [], answers = {}, here = null, checkouts = {}, browser = false, json = true, tty = false, input = [],
+  commands = [], answers = {}, here = null, checkouts = {}, browser = false, json = true, tty = false, input = [], platform = 'test',
 } = {}) {
   const events = [];
   const lines = [];
@@ -28,7 +28,7 @@ function fake({
     calls.push(words);
     if (words[0] === '--help') return help(commands);
     const command = words[0] === 'login' || words[0] === 'status' ? words[0] : words.slice(0, 2).join(' ');
-    if (answers[command]) return answers[command];
+    if (answers[command]) return typeof answers[command] === 'function' ? answers[command]() : answers[command];
     if (command === 'status') return result(0, ready);
     if (command === 'config get') return result(0, { key: 'terminal', value: 'tmux' });
     // Review is on by default (console/defaultReview.mjs), for the tests that are about a later step.
@@ -39,7 +39,7 @@ function fake({
     const code = await setupCommand({ origin, args, rest: null, json, browser }, {
       EXIT, emit: (event) => events.push(event), say: (line) => lines.push(line), fail: (message) => new Error(message),
       stderr: { write: (line) => lines.push(line) },
-      cwd, run, open: (url) => opened.push(url), tty, platform: 'test',
+      cwd, run, open: (url) => opened.push(url), tty, platform,
       ask: async (question) => {
         questions.push(question);
         return input.shift() ?? null;
@@ -104,8 +104,8 @@ test('setup opens My settings for a missing session sign-in and respects --no-br
     const { invoke } = fake({ browser, answers: { status: result(0, { ...ready, sessionSignIns: { claude: false, codex: false } }) } });
     const after = await invoke('--yes');
     assert.equal(after.code, 2);
-    assert.deepEqual(after.opened, browser ? [`${origin}/settings`] : []);
-    assert.equal(after.events.at(-1).url, `${origin}/settings`);
+    assert.deepEqual(after.opened, browser ? [`${origin}/settings#claude`] : [], 'opens My settings at the first row to fill');
+    assert.equal(after.events.at(-1).url, `${origin}/settings#claude`);
     assert.equal(after.events.at(-1).step, 'agent');
   }
 });
@@ -339,10 +339,12 @@ test('setup asks for both Claude Code and Codex, and names how to get each sign-
   assert.equal(last.step, 'agent');
   assert.deepEqual(last.missing, ['claude', 'codex']);
   assert.match(last.message, /Connect Claude Code and Codex on My settings: with both connected, your pull requests get reviews from both/);
-  assert.match(last.message, /claude setup-token/);
-  assert.match(last.message, /codex login.*~\/\.codex\/auth\.json/);
+  assert.match(last.message, /Claude Code:\n {2}1\. In another terminal, run: claude setup-token\n {2}2\. .*sk-ant-oat01-.*\n {2}3\. On My settings \(https:\/\/console\.example\/settings#claude\), paste it in the Claude row's box and press Save\./);
+  assert.match(last.message, /Codex:\n {2}1\. In another terminal, run: codex login.*\n {2}2\. .*cat ~\/\.codex\/auth\.json\n {2}3\. On My settings \(https:\/\/console\.example\/settings#codex\)/);
   assert.match(last.message, /--agent claude or --agent codex/);
-  assert.equal(last.url, `${origin}/settings`);
+  assert.equal(last.url, `${origin}/settings#claude`);
+  assert.deepEqual(Object.keys(last.steps), ['claude', 'codex']);
+  assert.equal(last.steps.claude[0], 'In another terminal, run: claude setup-token');
   assert.doesNotMatch(JSON.stringify(after.calls), /token/, 'setup never handles a token');
 });
 
@@ -368,8 +370,31 @@ test('on a terminal, setup lets the person answer that they use only one agent',
   const claudeMissing = { status: result(0, { ...ready, sessionSignIns: { claude: false, codex: true } }) };
   const missing = await fake({ tty: true, input: ['claude'], answers: claudeMissing }).invoke('--repo', repo);
   assert.equal(missing.code, EXIT.waiting);
-  assert.match(missing.events.at(-1).message, /Connect Claude Code on My settings\. For Claude Code, run claude setup-token.*rerun setup with --repo acme\/app --agent claude/);
+  assert.match(missing.events.at(-1).message, /Connect Claude Code on My settings\.\nClaude Code:\n {2}1\. In another terminal, run: claude setup-token[^]*rerun setup with --repo acme\/app --agent claude/);
   assert.doesNotMatch(missing.events.at(-1).message, /Codex/);
+});
+
+test('on a terminal, setup walks through connecting each agent and goes on once the console has it', async () => {
+  const seen = [{ claude: false, codex: false }, { claude: false, codex: false }, { claude: true, codex: false }, { claude: true, codex: true }];
+  const { invoke } = fake({ tty: true, browser: true, platform: 'darwin', input: ['', '', '', ''], answers: {
+    status: () => result(0, { ...ready, sessionSignIns: seen.length > 1 ? seen.shift() : seen[0] }),
+  } });
+  const after = await invoke('--repo', repo, '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done);
+  assert.deepEqual(after.opened, [`${origin}/settings#claude`, `${origin}/settings#codex`]);
+  const text = after.lines.join('\n');
+  assert.match(text, /Connect Claude Code \(1 of 2\):\n {2}1\. In another terminal, run: claude setup-token/);
+  assert.match(text, /The console does not have Claude Code's sign-in yet/, 'the first Enter came before Save');
+  assert.match(text, /Claude Code is connected\.[^]*Connect Codex \(2 of 2\):[^]*pbcopy < ~\/\.codex\/auth\.json[^]*Codex is connected\./);
+  assert.equal(after.events.find((event) => event.step === 'agent').status, 'done');
+});
+
+test('on a terminal, skip stops setup at the agent with every step still to do', async () => {
+  const { invoke } = fake({ tty: true, input: ['', 'skip'], answers: { status: result(0, { ...ready, sessionSignIns: { claude: false, codex: false } }) } });
+  const after = await invoke('--repo', repo);
+  assert.equal(after.code, EXIT.waiting);
+  assert.deepEqual(after.events.at(-1).missing, ['claude', 'codex']);
+  assert.match(after.events.at(-1).message, /Claude Code:\n[^]*Codex:\n/);
 });
 
 const pull = (number, more = {}) => ({ number, title: `Change ${number}`, draft: false, url: `https://github.com/${repo}/pull/${number}`, ...more });
