@@ -14,7 +14,7 @@ const result = (code, ...events) => ({ code, stdout: events.map((event) => JSON.
 
 function fake({
   commands = [], answers = {}, here = null, checkouts = {}, browser = false, json = true, tty = false, input = [], platform = 'test',
-  clock = null,
+  clock = null, env = {},
 } = {}) {
   const events = [];
   const lines = [];
@@ -40,7 +40,7 @@ function fake({
     const code = await setupCommand({ origin, args, rest: null, json, browser }, {
       EXIT, emit: (event) => events.push(event), say: (line) => lines.push(line), fail: (message) => new Error(message),
       stderr: { write: (line) => lines.push(line) },
-      cwd, run, open: (url) => opened.push(url), tty, platform,
+      cwd, run, open: (url) => opened.push(url), tty, platform, env,
       // After the calls already answered (setImmediate), as a real timer would be, and not at all once aborted.
       ...(clock ? { now: () => clock.t, sleep: (ms, { signal } = {}) => new Promise((resolve, reject) => setImmediate(() => {
         if (signal?.aborted) return reject(new Error('aborted'));
@@ -192,13 +192,14 @@ test('setup skips already enabled reviews, applies a changed personal choice and
     'config list': result(0, { config: { reviews: 'default' } }),
     'config set': result(0, { event: 'set', key: 'reviews', value: 'both' }),
     'session list': result(0, { sessions: [] }),
+    'session watch': result(0, { event: 'herdr', action: 'started', terminal: 'woodshed-watch', add: true }),
     'session new': result(0, { event: 'connected', session: { id: '12345678', url } }),
   } });
   const after = await invoke('--yes', '--repo', repo, '--repo', 'acme/lib', '--reviews', 'both', '--prompt=-v is broken');
   assert.equal(after.code, 0);
   assert.deepEqual(after.calls.slice(3), [
     ['review', 'status', '--repo', repo], ['review', 'status', '--repo', 'acme/lib'],
-    ['config', 'list'], ['config', 'set', 'reviews', 'both'], ['config', 'get', 'terminal'], ['session', 'list'],
+    ['config', 'list'], ['config', 'set', 'reviews', 'both'], ['config', 'get', 'terminal'], ['session', 'watch', '--herdr', '--add'], ['session', 'list'],
     ['session', 'new', '--herdr', '--repo', repo, '--agent', 'claude', '--', '-v is broken'],
   ]);
   assert.equal(after.events.at(-1).url, url);
@@ -294,14 +295,66 @@ test('setup saves the interactive Herdr choice before starting and attaching the
   const { invoke } = fake({ tty: true, input: ['Herdr'], commands: ['config'], answers: {
     'config set': result(0, { event: 'set', key: 'terminal', value: 'herdr' }),
     'session list': result(0, { sessions: [] }),
+    'session watch': result(0, { event: 'herdr', action: 'started', terminal: 'woodshed-watch', add: true }),
     'session new': result(0, { event: 'connected', session }),
   } });
   const after = await invoke('--skip-reviews', '--repo', repo, '--prompt', 'Fix the redirect.');
   assert.equal(after.code, EXIT.done);
-  assert.deepEqual(after.calls.slice(-4), [
-    ['config', 'get', 'terminal'], ['config', 'set', 'terminal', 'herdr'], ['session', 'list'],
+  assert.deepEqual(after.calls.slice(-5), [
+    ['config', 'get', 'terminal'], ['config', 'set', 'terminal', 'herdr'], ['session', 'watch', '--herdr', '--add'], ['session', 'list'],
     ['session', 'new', '--herdr', '--repo', repo, '--agent', 'claude', '--', 'Fix the redirect.'],
   ]);
+});
+
+test('setup --terminal herdr starts the watch that adds each session to Herdr, and says so; --no-herdr-add starts it without', async () => {
+  const watched = result(0, { event: 'herdr', action: 'started', terminal: 'woodshed-watch', address: 't3', add: true });
+  const { invoke } = fake({ commands: ['config'], answers: {
+    'config get': result(0, { key: 'terminal', value: 'herdr' }),
+    'session watch': watched,
+  } });
+  const after = await invoke('--yes', '--terminal', 'herdr', '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done);
+  assert.deepEqual(after.calls.slice(-2), [['config', 'get', 'terminal'], ['session', 'watch', '--herdr', '--add']]);
+  const step = after.events.find((event) => event.step === 'herdr-watch');
+  assert.equal(step.status, 'done');
+  assert.equal(step.add, true);
+  assert.match(step.message, /Each of your private sessions is added to Herdr's sidebar as it starts or resumes, wherever it was started/);
+  assert.match(step.message, /hc terminal woodshed-watch runs woodshed session watch --herdr --add --console "https:\/\/console\.example"/);
+  assert.match(step.message, /hc kill woodshed-watch, or rerun setup with --no-herdr-add/);
+
+  const off = await invoke('--yes', '--terminal', 'herdr', '--no-herdr-add', '--skip-reviews', '--no-session');
+  assert.equal(off.code, EXIT.done);
+  assert.deepEqual(off.calls.at(-1), ['session', 'watch', '--herdr']);
+  assert.equal(off.events.findLast((event) => event.step === 'herdr-watch').add, false);
+
+  // One already running is kept as it was started, and setup says how to have it add sessions.
+  const { invoke: again } = fake({ commands: ['config'], answers: {
+    'config get': result(0, { key: 'terminal', value: 'herdr' }),
+    'session watch': result(0, { event: 'herdr', action: 'kept', terminal: 'woodshed-watch', add: true }),
+  } });
+  const kept = await again('--yes', '--terminal', 'herdr', '--skip-reviews', '--no-session');
+  assert.match(kept.events.find((event) => event.step === 'herdr-watch').message, /already runs.*started without --add, run hc kill woodshed-watch/);
+
+  // tmux: no watch.
+  const { invoke: onTmux } = fake({ commands: ['config'], answers: { 'config set': result(0, { event: 'set', key: 'terminal', value: 'tmux' }) } });
+  const tmux = await onTmux('--yes', '--terminal', 'tmux', '--skip-reviews', '--no-session');
+  assert.equal(tmux.code, EXIT.done);
+  assert.ok(!tmux.calls.some(([group, sub]) => group === 'session' && sub === 'watch'));
+});
+
+test('setup inside a Woodshed session adds nothing to Herdr: no watch and no --herdr, and says to run the watch on the computer', async () => {
+  const { invoke } = fake({ commands: ['config'], env: { SESSION_ID: 'abcd1234', WOODSHED_TERMINAL: 'herdr', HC_TERMINAL_ID: 't1' }, answers: {
+    'config get': result(0, { key: 'terminal', value: 'herdr' }),
+    'session list': result(0, { sessions: [] }),
+    'session new': result(0, { event: 'running', session: { id: '12345678', url: `${origin}/s/12345678` } }),
+  } });
+  const after = await invoke('--yes', '--terminal', 'herdr', '--skip-reviews', '--repo', repo, '--prompt', 'Fix the redirect.');
+  assert.equal(after.code, EXIT.done);
+  assert.ok(!after.calls.some(([group, sub]) => group === 'session' && sub === 'watch'));
+  assert.deepEqual(after.calls.at(-1), ['session', 'new', '--repo', repo, '--agent', 'claude', '--', 'Fix the redirect.']);
+  const step = after.events.find((event) => event.step === 'herdr-watch');
+  assert.equal(step.status, 'skipped');
+  assert.match(step.message, /inside Woodshed session abcd1234.*On your computer, run woodshed session watch --herdr --add/);
 });
 
 test('setup accepts a terminal choice in agent mode even without a first session', async () => {

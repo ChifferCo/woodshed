@@ -10,13 +10,13 @@
 //   woodshed session app <id> [start [--app <name>] [--no-wait]|stop]
 //   woodshed session app <id> share [--members on|off | --link [--hours 1|24|168] [--path /page] | --revoke <link id>]
 //   woodshed session stop <id>
-//   woodshed session resume <id> [--no-wait]
+//   woodshed session resume <id> [--no-wait|--herdr]
 //   woodshed session handoff <id> --agent claude|codex [--model M] [--note "..."] [--no-conversation] [--no-wait]
 //   woodshed session remove <id> [--yes]
 //   woodshed session prune
 //   woodshed session extend <id>
 //   woodshed session limits <id> [--idle-hours <n>|default] [--lifetime-hours <n>|default]
-//   woodshed session watch [--kind review,qa,...] [--everyone] [--every <seconds>] [--herdr]
+//   woodshed session watch [--kind review,qa,...] [--everyone] [--every <seconds>] [--herdr] [--add]
 //
 // list, get and watch name each session's kind: your own private one, a shared one, a review or QA run the console
 // started on a pull request (pullRequests.review or .qa with runner: woodshed), or a question from Slack. A review's
@@ -25,7 +25,14 @@
 // person, pauses, stops, finishes or fails (watch.mjs), for a Herdr mod or a script to turn into notifications. A session
 // of yours that is a machine in Herdr is said to be unreachable when it pauses or stops, until `session herdr` brings it
 // back. --herdr runs the watch in a terminal of hc's own that reports each session as an OSC 7501 record, so Herdr tells
-// of them as of its own agents without any session being opened as a machine.
+// of them as of its own agents without any session being opened as a machine. --add also adds each of your own private
+// sessions to Herdr as `session herdr` does, as it starts running or resumes, wherever it was started (the console's
+// page, Slack, an agent in another session): `woodshed setup --terminal herdr` starts the watch so.
+//
+// Inside a Woodshed session (hc.mjs, sessionHere), hc is that session's own Herdr core: a machine added there is nested in
+// a machine, which the person's computer's Herdr never shows. So there nothing is added to Herdr: herdr, --herdr and
+// watch --add say that the person's computer adds it, and --parent, whose parent would be a terminal in that core, is
+// refused.
 //
 // Nothing here keeps a session awake: it pauses when idle and stops at its lifetime, as its limits say, unless its
 // person (or their agent) asks for more time with extend or limits. list and get say when each will.
@@ -46,7 +53,7 @@
 
 import {
   HC_MINIMUM, WATCH_SPACE, WATCH_TERMINAL, addMachine, agentOn, hcVersion, leftoverMachines, machineName, nameAgentPlace, parentTerminal, removeMachine,
-  shellQuote, startAgentTerminal, startWatcher, tunnelMachines,
+  sessionHere, shellQuote, startAgentTerminal, startWatcher, tunnelMachines,
 } from './hc.mjs';
 import { changes, eventDetail, herdrClear, herdrRecord, parseEvery, parseKinds, unreachableText } from './watch.mjs';
 
@@ -66,6 +73,8 @@ const RECONNECT_HELD_MS = 10_000;
 const POLL_MS = 2000;
 // A stop answers once the session's work is pushed and its container gone: its checkpoint alone may take 90 s.
 const STOP_DEADLINE_MS = 180_000;
+// How many reads `watch --add` tries to add a session to Herdr before it says to add it by hand.
+const ADD_TRIES = 3;
 const UNREACHABLE_GIVE_UP_MS = 60_000;
 
 // A hand-off answers once the old session stopped, its checkpoint pushed (up to 90 s at the console), and the new one
@@ -82,7 +91,8 @@ Commands:
       --model <model>        the agent's model (default the agent's own)
       --no-wait              print the session and return once the console has it
       --connect              once it runs, put this terminal on its agent's, as connect does
-      --herdr                once it runs, add it to Herdr as herdr does
+      --herdr                once it runs, add it to Herdr as herdr does. Inside a Woodshed session nothing is added:
+                             your computer adds it (herdr there, or watch --herdr --add)
       --parent[=<t>]         with --herdr: make its agent's terminal a child of a terminal here, this one (HC_TERMINAL_ID)
                              or <t>, so it can hc wait --children on it; run it from a Herdr terminal. The agent starts
                              as Woodshed starts it, in Herdr whatever My settings says, and outlives its parent
@@ -92,7 +102,8 @@ Commands:
                              its shell (the Terminal tab); a paused one is resumed first. Ctrl-\\ disconnects, and the
                              session goes on
   herdr <id>                 make one of your sessions a machine in Herdr (hc ${HC_MINIMUM} or newer), woodshed-<id>,
-                             reached through woodshed tunnel; a paused one is resumed first, and waited for
+                             reached through woodshed tunnel; a paused one is resumed first, and waited for. Run on
+                             your computer: inside a Woodshed session it adds nothing and says so (exit 3)
       --parent[=<t>]         resume it with its agent's terminal a child of a terminal here, as new's --parent does
       --no-notify            (and --no-notify, --end-with-parent as there). A running session's terminal is there
       --end-with-parent      already, with no parent, and hc gives a terminal its parent only as it starts: only one
@@ -115,6 +126,7 @@ Commands:
       --revoke <link id>     end one link at once
   stop <id>                  stop a session; a running one's work is pushed as it stops
   resume <id> [--no-wait]    start one of your stopped sessions again, its conversation and all, and wait for it
+      --herdr                once it runs, add it to Herdr again as herdr does (not inside a Woodshed session)
   handoff <id> [options]     hand one of your running sessions' work to another agent: it stops, pushing its work,
                              and a new session starts on its branch with that agent, its conversation attached as a
                              file; then wait for the new one as new does
@@ -141,6 +153,10 @@ Commands:
       --every <seconds>      how often it asks the console (default 15, at least 5)
       --herdr                run it in Herdr instead, in hc terminal ${WATCH_TERMINAL}, which reports each session's
                              state as Herdr's own agents report theirs (OSC 7501), and return
+      --add                  also add each of your own private sessions to Herdr as herdr does, as it starts running
+                             or resumes, wherever it was started; never a shared one, a review, QA run or question, one
+                             that saw production, or one already connected, and never resumes one to add it. Run on
+                             your computer: inside a Woodshed session it is refused (exit 3)
 
 Exit codes: 0 done, 2 waiting on a person (sign in, a session that needs you, a confirmation), 3 refused, 1 anything else.`;
 
@@ -541,6 +557,24 @@ export async function sessionCommand({ origin, rest }, ctx) {
     throw fail(`${s.id} is a shared session: the command line can ${verb} only your own My Woodshed sessions. Open ${origin}/s/${s.id}`, { code: EXIT.refused, status: 'refused' });
   }
 
+  // Inside a Woodshed session, hc is that session's own Herdr core, which the person's computer never shows: nothing is
+  // added to it, and the person's computer is named as where it is added.
+  const here = sessionHere(ctx.env ?? {});
+  const onYourComputer = (id) => `woodshed session herdr ${id} --console ${shellQuote(origin)}`;
+  const insideText = (id) => `This runs inside Woodshed session ${here}, where hc is that session's own Herdr: a machine added there never shows in your computer's Herdr sidebar`;
+  const yourComputerAdds = (id) => `Your computer adds it: run ${onYourComputer(id)} there, or keep woodshed session watch --herdr --add running there, which adds each of your sessions as it starts or resumes.`;
+  function refuseParentInside() {
+    if (!here || !opts.parent) return;
+    throw fail(`--parent makes the session's agent a child of a terminal in this computer's Herdr, and this runs inside Woodshed session ${here}, whose Herdr your computer never shows. Run it from a terminal on your computer; here, leave out --herdr and --parent, and follow the session with woodshed session get <id> --json.`, { code: EXIT.refused, status: 'in-session' });
+  }
+  // After a start or resume with --herdr inside a session: said instead of the add, and the start's own exit stands.
+  function skippedInside(id, code) {
+    const text = `${insideText(id)}, so ${id} was not added. ${yourComputerAdds(id)}`;
+    if (json) emit({ event: 'herdr', action: 'skipped', status: 'in-session', session: id, insideSession: here, onYourComputer: onYourComputer(id), message: text });
+    else say(text);
+    return code;
+  }
+
   // A start, followed until the session runs, fails, stops or needs its person. Each step is said once it is done.
   async function follow(id) {
     const said = new Set();
@@ -644,20 +678,17 @@ export async function sessionCommand({ origin, rest }, ctx) {
   // does: waiting on you when the session asks for you.
   // With `parent` (parentTerminal's address here), its agent's terminal is made from here as that terminal's child, when
   // the session waits for it; one that does not already has its terminal, which hc cannot give a parent now.
-  async function connect(s, login, parent = null) {
+  // A running session of yours made a machine in hc, its agent given a space and tab, and those named after it in the
+  // Herdr app's window: what `session herdr` and `watch --add` do. `afterAdd` runs once the machine is there, before the
+  // agent is looked for. With `keptAsIs`, a machine already connected through this same line is left as it is, its agent
+  // not looked for. hc's own failures are thrown with `hc` set.
+  async function addToHerdr(s, login, { afterAdd = null, keptAsIs = false } = {}) {
     const name = machineName(s.id);
-    if (!json) say(`Adding ${s.id} to Herdr as ${name}…`);
-    let added;
-    let child = null;
-    try {
-      added = await addMachine(ctx.hc, { name, via: ctx.via(s.id) });
-      if (parent) child = await startAgentTerminal(ctx.hc, { machine: name, parent, notify: !opts['no-notify'], outlive: !opts['end-with-parent'] });
-    } catch (err) {
-      if (!err.hc) throw err;
-      throw fail(printable(err.message, 500));
-    }
-    const agent = await agentOn(ctx.hc, name, { place: ctx.placeHerdrAgent !== false }).catch(() => ({ inHerdr: null, address: null }));
+    const added = await addMachine(ctx.hc, { name, via: ctx.via(s.id) });
     const shown = summary(s, { origin, login, appsOn });
+    if (keptAsIs && added.action === 'kept') return { name, added, shown, agent: null, after: null };
+    const after = afterAdd ? await afterAdd(name) : null;
+    const agent = await agentOn(ctx.hc, name, { place: ctx.placeHerdrAgent !== false }).catch(() => ({ inHerdr: null, address: null }));
     // Its space named after the session's title and its tab after its agent, in the Herdr app's window. The console
     // names a session a few seconds after it starts: running this again picks the title up. Not for move, which lays
     // out its own spaces.
@@ -666,6 +697,24 @@ export async function sessionCommand({ origin, rest }, ctx) {
         .catch((err) => ({ space: null, tab: null, error: err.message }));
       if (named.space || named.tab) agent.named = { space: named.space, tab: named.tab };
       if (named.error) agent.namingError = printable(named.error, 500);
+    }
+    return { name, added, shown, agent, after };
+  }
+
+  async function connect(s, login, parent = null) {
+    const name = machineName(s.id);
+    if (!json) say(`Adding ${s.id} to Herdr as ${name}…`);
+    let added;
+    let child = null;
+    let agent;
+    let shown;
+    try {
+      ({ added, agent, shown, after: child } = await addToHerdr(s, login, {
+        afterAdd: parent ? () => startAgentTerminal(ctx.hc, { machine: name, parent, notify: !opts['no-notify'], outlive: !opts['end-with-parent'] }) : null,
+      }));
+    } catch (err) {
+      if (!err.hc) throw err;
+      throw fail(printable(err.message, 500));
     }
     let code = shown.state === 'needs-you' ? EXIT.waiting : EXIT.done;
     // Asked for and not given: the machine stays added, and the exit says the parent was not.
@@ -780,7 +829,8 @@ export async function sessionCommand({ origin, rest }, ctx) {
     if (opts.parent && !opts.herdr) throw fail('--parent makes the agent\'s terminal in Herdr: add --herdr');
     if (opts.herdr) {
       if (opts.wait === false) throw fail('--herdr waits for the session to run: leave out --no-wait');
-      await hcReady();
+      refuseParentInside();
+      if (!here) await hcReady();
     }
     const parent = opts.parent ? await parentHere() : null;
     // With no --repo, the one New session opens on for this person (a default they saved), never the console's own.
@@ -799,6 +849,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
     if (opts.wait === false) return EXIT.done;
     const started = await follow(shown.id);
     if ((!opts.herdr && !opts.connect) || (started !== EXIT.done && started !== EXIT.waiting)) return started;
+    if (opts.herdr && here) return skippedInside(shown.id, started);
     const found = await find(shown.id);
     if (opts.connect) return onTerminal(found.s, 'term');
     return connect(found.s, found.login, parent);
@@ -917,6 +968,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
       ...(opts.kinds ? ['--kind', [...opts.kinds].join(',')] : []),
       ...(opts.everyone ? ['--everyone'] : []),
       ...(opts.every !== undefined ? ['--every', String(opts.everyMs / 1000)] : []),
+      ...(opts.add ? ['--add'] : []),
     ];
   }
 
@@ -929,6 +981,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
   // OSC 7501 record, so the Herdr app tells of them as of its own agents, with no session opened as a machine.
   async function watch() {
     const inHerdr = Boolean(opts.herdr) && ctx.env?.[WATCH_IN_HERDR] === '1';
+    if (opts.add && here) {
+      throw fail(`--add adds your sessions to the Herdr on this computer, and this runs inside Woodshed session ${here}, where hc is that session's own Herdr: a machine added there never shows in your computer's Herdr sidebar. Run woodshed session watch --herdr --add on your computer.`, { code: EXIT.refused, status: 'in-session' });
+    }
     if (opts.herdr && !inHerdr) {
       await hcReady();
       let started;
@@ -938,12 +993,14 @@ export async function sessionCommand({ origin, rest }, ctx) {
         if (!err.hc) throw err;
         throw fail(printable(err.message, 500));
       }
-      if (json) emit({ event: 'herdr', action: started.action, terminal: WATCH_TERMINAL, address: started.address });
+      if (json) emit({ event: 'herdr', action: started.action, terminal: WATCH_TERMINAL, address: started.address, add: Boolean(opts.add) });
+      const adds = opts.add ? ' It also adds each of your own private sessions to Herdr as it starts running or resumes.' : '';
       say(started.action === 'kept'
         ? `Herdr already has ${WATCH_TERMINAL} watching: it goes on as it was started. To start it again with these options: hc kill ${WATCH_TERMINAL}, then run this again.`
-        : `Watching in Herdr: hc terminal ${WATCH_TERMINAL}, in the app's ${WATCH_SPACE} space. It reports each session's state there as Herdr's own agents report theirs. Stop it with: hc kill ${WATCH_TERMINAL}`);
+        : `Watching in Herdr: hc terminal ${WATCH_TERMINAL}, in the app's ${WATCH_SPACE} space. It reports each session's state there as Herdr's own agents report theirs.${adds} Stop it with: hc kill ${WATCH_TERMINAL}`);
       return EXIT.done;
     }
+    if (opts.add) await hcReady();
     const wanted = (s, login) => (!opts.kinds || opts.kinds.has(kindOf(s))) && (opts.everyone || inMine(s, login));
     const stamp = () => new Date(now()).toISOString();
     // Herdr's hc, when it is here: a session of yours that is a machine there is said to be unreachable when it pauses or
@@ -958,6 +1015,39 @@ export async function sessionCommand({ origin, rest }, ctx) {
         return null;
       }
     };
+    // With --add: each of your own private sessions that started running or resumed, to add to Herdr, with the tries it
+    // took. A try that fails is made again at the next read while the session runs, up to ADD_TRIES.
+    const addable = (s, login) => kindOf(s) === 'private' && Boolean(s.owner) && s.owner === login && !s.taintedAt;
+    const toAdd = new Map();
+    async function addPending(got) {
+      const listed = new Map(got.sessions.map((s) => [s.id, s]));
+      for (const [id, tries] of toAdd) {
+        const s = listed.get(id);
+        // Never resumed to be added: one that paused or stopped meanwhile waits for its next start.
+        if (!s || s.status !== 'running' || s.taintedAt) {
+          toAdd.delete(id);
+          continue;
+        }
+        let out;
+        try {
+          out = await addToHerdr(s, got.login, { keptAsIs: true });
+        } catch (err) {
+          if (!err.hc) throw err;
+          const last = tries + 1 >= ADD_TRIES;
+          if (last) toAdd.delete(id);
+          else toAdd.set(id, tries + 1);
+          const error = printable(err.message, 500);
+          if (json) emit({ event: 'herdr-not-added', at: stamp(), session: summary(s, { origin, login: got.login, appsOn }), error, again: !last, ...(last ? { bringBack: `woodshed session herdr ${id}` } : {}) });
+          else say(`${stamp().slice(11, 19)}  ${id}  not added to Herdr: ${error}${last ? `. Add it with: woodshed session herdr ${id}` : '; trying again'}`);
+          continue;
+        }
+        toAdd.delete(id);
+        // Already connected through this same line: nothing was done, and nothing is said.
+        if (out.added.action === 'kept') continue;
+        if (json) emit({ event: 'herdr-added', at: stamp(), session: out.shown, machine: { name: out.name, action: out.added.action }, agent: out.agent });
+        else say(`${stamp().slice(11, 19)}  ${id}  added to Herdr as ${out.name}${out.agent?.inHerdr ? `: hc attach ${out.agent.address}` : ''}`);
+      }
+    }
     // Each session's record on this terminal, with when it ended: an ended one's is kept a while, then cleared.
     const records = new Map();
     let phases = null;
@@ -988,10 +1078,12 @@ export async function sessionCommand({ origin, rest }, ctx) {
       if (!phases) {
         const watched = got.sessions.filter((s) => wanted(s, got.login)).length;
         const what = opts.kinds ? [...opts.kinds].join(', ') : 'all';
-        if (json) emit({ event: 'watching', at: stamp(), console: origin, login: got.login, kinds: opts.kinds ? [...opts.kinds] : null, everyone: Boolean(opts.everyone), everySeconds: opts.everyMs / 1000, sessions: watched, herdr: inHerdr });
-        else say(`Watching ${opts.everyone ? 'every session you can see' : 'your sessions (Mine)'} on ${origin}, kinds: ${what}, every ${opts.everyMs / 1000} s${inHerdr ? ', for Herdr' : ''}. Ctrl-C stops.`);
+        if (json) emit({ event: 'watching', at: stamp(), console: origin, login: got.login, kinds: opts.kinds ? [...opts.kinds] : null, everyone: Boolean(opts.everyone), everySeconds: opts.everyMs / 1000, sessions: watched, herdr: inHerdr, add: Boolean(opts.add) });
+        else say(`Watching ${opts.everyone ? 'every session you can see' : 'your sessions (Mine)'} on ${origin}, kinds: ${what}, every ${opts.everyMs / 1000} s${inHerdr ? ', for Herdr' : ''}${opts.add ? ', adding each of your private sessions to Herdr as it starts or resumes' : ''}. Ctrl-C stops.`);
       }
       phases = next;
+      // Whatever --kind and --everyone watch: a session of yours is added as it starts running, a resume included.
+      if (opts.add) for (const e of events) if (e.event === 'started' && addable(e.session, got.login)) toAdd.set(e.session.id, 0);
       for (const e of events) {
         if (!wanted(e.session, got.login)) continue;
         // Back at work after a question or a turn: nothing to tell, but Herdr's record of it is put right.
@@ -1013,6 +1105,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
         say([stamp().slice(11, 19), x.id, `${e.event}${detail ? ` (${detail})` : ''}`, kindText(x), x.title ?? '', x.url].join('  '));
         if (machine) say(`          ${unreachableText(machine, x.id)}`);
       }
+      if (toAdd.size) await addPending(got);
       if (inHerdr) {
         // Gone from the list or from what is watched, or ended an hour ago: its record goes from the terminal.
         const listed = new Map(got.sessions.map((s) => [s.id, s]));
@@ -1065,7 +1158,14 @@ export async function sessionCommand({ origin, rest }, ctx) {
 
   if (sub === 'resume') {
     ownPrivate(s, login, 'resume');
-    return resumeAndWait();
+    if (!opts.herdr) return resumeAndWait();
+    if (s.taintedAt) throw fail(`Session ${id} has seen production data: nothing opens a pipe into it from this computer.`, { code: EXIT.refused, status: 'refused' });
+    if (!here) await hcReady();
+    const resumed = await resumeAndWait();
+    if (resumed !== EXIT.done && resumed !== EXIT.waiting) return resumed;
+    if (here) return skippedInside(id, resumed);
+    const found = await find(id);
+    return connect(found.s, found.login);
   }
 
   if (sub === 'handoff') {
@@ -1101,6 +1201,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
     // The tunnel opens only into your own private sessions, never one that has seen production data.
     ownPrivate(s, login, 'add to Herdr');
     if (s.taintedAt) throw fail(`Session ${id} has seen production data: nothing opens a pipe into it from this computer.`, { code: EXIT.refused, status: 'refused' });
+    // Inside a session nothing is resumed or added: the person's computer adds it.
+    refuseParentInside();
+    if (here) throw fail(`${insideText(id)}, so nothing was added. ${yourComputerAdds(id)}`, { code: EXIT.refused, status: 'in-session' });
     await hcReady();
     const parent = opts.parent ? await parentHere() : null;
     // A running one is taken as it is: only one still waiting for its terminal takes a parent (connect says so).
@@ -1387,11 +1490,11 @@ export function parseSessionArgs(sub, words, fail) {
     extend: { values: [], flags: [], words: 'id' },
     limits: { values: ['idle-hours', 'lifetime-hours'], flags: [], words: 'id' },
     stop: { values: [], flags: [], words: 'id' },
-    resume: { values: [], flags: ['no-wait'], words: 'id' },
+    resume: { values: [], flags: ['no-wait', 'herdr'], words: 'id' },
     handoff: { values: ['agent', 'model', 'note'], flags: ['no-wait', 'no-conversation'], words: 'id' },
     remove: { values: [], flags: ['yes'], words: 'id' },
     prune: { values: [], flags: [], words: null },
-    watch: { values: ['kind', 'every'], flags: ['everyone', 'herdr'], words: null },
+    watch: { values: ['kind', 'every'], flags: ['everyone', 'herdr', 'add'], words: null },
   };
   // Its own keys only: `constructor` or `toString` is no command.
   const takes = Object.hasOwn(commands, sub) ? commands[sub] : null;
@@ -1428,6 +1531,7 @@ export function parseSessionArgs(sub, words, fail) {
     } else throw fail(`unknown option ${word} for session ${sub}\n\n${SESSION_USAGE}`);
   }
   for (const flag of PARENT_FLAGS) if (out[flag] && !out.parent) throw fail(`--${flag} goes with --parent`);
+  if (sub === 'resume' && out.herdr && out.wait === false) throw fail('--herdr waits for the session to run: leave out --no-wait');
   if (sub === 'limits' && out['idle-hours'] === undefined && out['lifetime-hours'] === undefined) throw fail('session limits needs --idle-hours or --lifetime-hours (a number, or default)');
   if (out.agent !== undefined && !['claude', 'codex'].includes(out.agent)) throw fail('--agent must be claude or codex');
   if (sub === 'handoff' && out.agent === undefined) throw fail('session handoff needs --agent claude or --agent codex: the agent the work goes to');
