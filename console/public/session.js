@@ -1412,7 +1412,11 @@
       row('Visible to', W.isPrivate(s) ? 'Only you' : 'Everyone on the console'),
       W.isPrivate(s) && s.kind !== 'ask' && s.branch && !['pr', 'branch'].includes(inviteTargetOf(s).state)
         && row('Invite', 'Invite shows in the bar once GitHub has the branch: the session pushes when it commits and when it stops'),
-      s.taintedAt && row('Production data', `Since ${W.ago(s.taintedAt)}: it reaches only the console, its databases and your organization's private repos, and all it kept is deleted when it is removed`));
+      s.taintedAt && row('Production data', `Since ${W.ago(s.taintedAt)}: it reaches only the console, its databases and your organization's private repos, and all it kept is deleted when it is removed`),
+      // Each a link: the session it came from, and those it started, which are the same person's own.
+      ...W.startedLinks(s, data.sessions).map(([term, list]) => row(term, list.flatMap((x, i) => [
+        i ? ', ' : null, x.id ? h('a', { href: sessionHref(x) }, x.title) : x.title,
+      ]).filter(Boolean))));
   }
 
   // When it pauses and stops by itself, and whether those are its own, with the next one while it runs.

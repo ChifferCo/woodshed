@@ -1365,3 +1365,23 @@ test('while the agent\'s terminal is not there yet, the TUI tab says so and atta
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test('the start token leaves the environment for a file only its user reads, before anything starts', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'start-token-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const file = path.join(tmp, 'woodshed-start-token');
+  const script = (token) => [
+    'set -euo pipefail', 'log() { :; }',
+    `START_TOKEN_FILE=${file}`, fn('keepStartToken').replace(/^START_TOKEN_FILE=.*$/m, ''),
+    'keepStartToken', 'env | grep -c "^WOODSHED_START_TOKEN=" || true', 'bash -c \'echo "child: ${WOODSHED_START_TOKEN:-none}"\'',
+  ].join('\n');
+  const run = (token) => spawnSync('bash', ['-c', script(token)], { encoding: 'utf8', env: { PATH: process.env.PATH, ...(token ? { WOODSHED_START_TOKEN: token } : {}) } });
+  const given = run('wst_abc');
+  assert.equal(given.status, 0, given.stderr);
+  assert.equal(given.stdout, '0\nchild: none\n', 'nothing started after it inherits the token, statusd and the app included');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'wst_abc');
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  const none = run(null);
+  assert.equal(none.status, 0, none.stderr);
+  assert.equal(fs.existsSync(file), false, 'a run with no token leaves none from an earlier one');
+});

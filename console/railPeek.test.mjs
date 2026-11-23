@@ -115,3 +115,14 @@ test('every pull request it opened is listed, a merged one the chips no longer s
   }), data);
   assert.deepEqual(v.prs.map((p) => `${p.number} ${p.state}`), ['#8 Merged', '#9 Open']);
 });
+
+test('a session started by another of its person\'s says so, and the other names the ones it started', () => {
+  const from = { id: 'aaaa0001', title: 'Plan the billing page', owner: 'me', kind: 'task', status: 'running', state: 'working', startedAt: minutesAgo(30) };
+  const child = { id: 'bbbb0002', title: 'CSV export', owner: 'me', kind: 'task', status: 'running', state: 'done', startedAt: minutesAgo(5), startedFrom: from.id };
+  const second = { ...child, id: 'cccc0003', title: 'Rename the helper' };
+  const sessions = [from, child, second];
+  assert.equal(rows(W.peekView(child, { ...data, sessions }))['Started from'], 'Plan the billing page');
+  assert.equal(rows(W.peekView(from, { ...data, sessions }))['Started here'], 'CSV export, Rename the helper');
+  assert.equal(rows(W.peekView(child, { ...data, sessions: [child] }))['Started from'], 'a session no longer on the list');
+  assert.equal(rows(W.peekView(from, { ...data, sessions: [from] }))['Started here'], undefined);
+});

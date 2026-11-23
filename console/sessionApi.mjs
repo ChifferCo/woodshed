@@ -47,6 +47,8 @@
 //                        the call goes on, or refused (503) and left untainted when the lockdown fails
 //   POST /egress         ->  {"proxy", "ca"}: a tainted session's way out, the console's egress proxy (egressProxy.mjs),
 //                        and the certificate authority it shows for GitHub. 404 for a session that is not tainted
+//   *    /sessions[/<id>] a person's own session starting sessions of theirs, and following them, with its start token
+//                        rather than SESSION_TOKEN (sessionStarts.mjs)
 //
 // A tainted session's Claude home is its own alone: /home keeps it for its Resume and never copies it to its owner's,
 // /home/restore hands back only its own, and /claude-settings refuses it (409), so nothing it saw reaches its owner's
@@ -161,7 +163,7 @@ export function sessionForToken(given, sessions) {
  */
 export function createSessionApi({
   fleet, tokens, userSettings = null, githubUser = null, homes = null, databases = null, claudeSettings = null, anthropic = null, openai = null,
-  attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, repoSettings = null,
+  attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, repoSettings = null, sessionStarts = null,
   ownerTokenRepos = null, mcpRelay = null, egress = null,
 }) {
   // The access last logged for each session: a session asks for a token on every git and gh call, so the decision is
@@ -207,6 +209,8 @@ export function createSessionApi({
       }
       return mcpRelay.handle(req, res, sessionForAuthorization(req.headers.authorization, fleet.sessions()));
     }
+    // Its own token, not the session token (sessionStarts.mjs).
+    if (sessionStarts?.isPath(pathname)) return sessionStarts.handle(req, res);
     const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/qa-video', '/qa-poster', '/review-report', '/egress'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());

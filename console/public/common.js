@@ -1132,6 +1132,22 @@
    *   prs: {number: string, title: string|null, state: string|null, checks: string|null, level: string|null, review: string|null}[],
    *   rows: [string, string][]}}
    */
+  /**
+   * The sessions of the same person's that started this one, and that this one started (console/sessionStarts.mjs),
+   * as the hover card and Details name them. One no longer on the list is named so, never left out.
+   * @returns {[string, {id: string|null, title: string}[]][]}  'Started from' and 'Started here', each when it has any
+   */
+  function startedLinks(s, sessions) {
+    const out = [];
+    if (s.startedFrom) {
+      const from = sessions.find((x) => x.id === s.startedFrom);
+      out.push(['Started from', [from ? { id: from.id, title: from.title } : { id: null, title: 'a session no longer on the list' }]]);
+    }
+    const here = sessions.filter((x) => x.startedFrom === s.id).map((x) => ({ id: x.id, title: x.title }));
+    if (here.length) out.push(['Started here', here]);
+    return out;
+  }
+
   function peekView(s, data, { project = null, nowMs = Date.now() } = {}) {
     const st = displayStatus(s);
     const live = isLive(s);
@@ -1181,6 +1197,7 @@
       ['Started', s.startedAt ? [startedBy, ago(s.startedAt)].filter(Boolean).join(', ') : null],
       ['Assigned to', !isPrivate(s) && s.kind !== 'ask' && !['review', 'qa'].includes(s.trigger) ? (s.assignee ? personText(s.assignee) : 'Nobody') : null],
       ['Production data', s.taintedAt ? `Since ${ago(s.taintedAt)}` : null],
+      ...startedLinks(s, data.sessions ?? []).map(([term, list]) => [term, list.map((x) => x.title).join(', ')]),
     ].filter(([, value]) => value);
     return { title: s.title, key: st.key, word: capitalised(st.word), next, last, prs, rows };
   }
@@ -1957,6 +1974,6 @@
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, peekView, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
+    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, peekView, startedLinks, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
 })();

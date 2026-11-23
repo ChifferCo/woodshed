@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { sharedHomeName } from './homes.mjs';
 import { withDefaultReview } from './defaultReview.mjs';
 
+import { sessionForStartToken, startTokenHash } from './sessionStarts.mjs';
 import { commentConsoleUrl, createFleet, failedComment, failureReason, refusalComment, resumeComment, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
 
 const APPROVAL_GRACE_MS = 5 * 60_000;
@@ -1173,6 +1174,41 @@ test('a session started or resumed for a parent in its person\'s Herdr is told t
   await fleet.stop(child, 'stopped from the console', { by: 'joel' });
   await fleet.resumePrivate({ owner: 'joel', id: child.id, herdrParent: true });
   assert.equal(envOf(child).WOODSHED_HERDR_PARENT, '1', 'woodshed session herdr --parent resumes it waiting');
+});
+
+test('each run of a person\'s own session gets a start token, kept only as its hash, and none once it stops', async () => {
+  const { fleet, calls, statuses, store } = setup();
+  const envOf = (session) => calls.started.filter((c) => c.env.SESSION_ID === session.id).at(-1).env;
+  const mine = await fleet.startPrivate({ owner: 'joel', prompt: 'Plan the billing page' });
+  const token = envOf(mine).WOODSHED_START_TOKEN;
+  assert.match(token, /^wst_[0-9a-f]{64}$/);
+  assert.equal(mine.startTokenHash, startTokenHash(token));
+  assert.ok(!JSON.stringify(store.state).includes(token), 'the console keeps the hash, never the token');
+  assert.equal(sessionForStartToken(token, fleet.sessions())?.id, mine.id);
+
+  const shared = await fleet.createSession({ kind: 'task', number: null, title: 's', startedBy: 'joel', trigger: 'console', prompt: 'p' });
+  assert.equal(envOf(shared).WOODSHED_START_TOKEN, undefined, 'a shared session has no one person to start sessions as');
+
+  const child = await fleet.startPrivate({ owner: 'joel', prompt: 'Add CSV export', startedFrom: mine.id });
+  assert.equal(child.startedFrom, mine.id);
+
+  statuses[mine.id] = { state: 'working' };
+  await fleet.tick();
+  await fleet.stop(mine, 'stopped from the console', { by: 'joel' });
+  assert.equal(mine.startTokenHash, null, 'a stopped session starts nothing more');
+  assert.equal(sessionForStartToken(token, fleet.sessions()), null);
+  assert.equal(fleet.find(child.id).status, 'starting', 'stopping it does nothing to the session it started');
+
+  await fleet.resumePrivate({ owner: 'joel', id: mine.id });
+  const again = envOf(mine).WOODSHED_START_TOKEN;
+  assert.ok(again && again !== token, 'a resume is a new run, with a token of its own');
+  assert.equal(sessionForStartToken(token, fleet.sessions()), null, 'the last run\'s token still does nothing');
+  assert.equal(sessionForStartToken(again, fleet.sessions())?.id, mine.id);
+  assert.equal(mine.startsThisRun, 0);
+
+  // Once it has seen production data it starts nothing, whatever token it holds.
+  mine.taintedAt = new Date().toISOString();
+  assert.equal(sessionForStartToken(again, fleet.sessions()), null);
 });
 
 test('Resume starts a private session whose start failed again, with the conversation it had before', async () => {
