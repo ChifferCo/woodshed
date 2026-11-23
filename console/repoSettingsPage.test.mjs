@@ -179,7 +179,7 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
     window: {
       Woodshed: W, location, confirm: (text) => { asked.push(text); return confirmAnswer; },
       WoodshedHostRows: { wire: (node, opts) => wired.push({ node, opts }), reveal: (node, id) => revealed.push({ node, id }) },
-      dispatchEvent: (e) => events.push(e),
+      dispatchEvent: (e) => events.push({ type: e.type, inPage: walk(app).includes(e.detail?.node) }),
     }, console, location, history, URL, URLSearchParams, TextEncoder,
     CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init?.detail; } },
     document: { getElementById: (id) => walk(app).find((e) => e.attrs.id === id) ?? null, activeElement: null, createElement: (tag) => (tag === 'template' ? template() : element(tag)) },
@@ -667,7 +667,7 @@ test('a program\'s own groups follow the repo\'s, put in as its markup, and stay
   await settle();
   assert.ok(walk(page.app).includes(host), 'kept across a redraw');
   assert.equal(page.wired.length, 1, 'wired once');
-  assert.deepEqual(page.events.map((e) => e.type), ['woodshed:host-groups'], 'drawn once, so said once, for a script that wires what it finds');
+  assert.deepEqual(page.events, [{ type: 'woodshed:host-groups', inPage: true }], 'drawn once, so said once, once its groups are in the page, for a script that wires what it finds');
 });
 
 test('the scripts a program names for its groups are loaded once, after them', async () => {

@@ -474,6 +474,11 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
       githubGroup(),
       slackGroup(),
       hostGroups()));
+    // A script loaded once listens on the document, or for this: the program's groups were drawn anew, and are in the page.
+    if (hostRedrawn) {
+      hostRedrawn = false;
+      window.dispatchEvent(new CustomEvent('woodshed:host-groups', { detail: { node: hostNode } }));
+    }
     for (const key of editors.keys()) updateCounts(key);
     if (focused && focused === document.activeElement) {
       try { if (caret?.[0] !== undefined && caret?.[0] !== null) focused.setSelectionRange(...caret); } catch { /* not a text field */ }
@@ -486,6 +491,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
   // scripts it names (paths on the console's address) are loaded once, after its groups are first drawn.
   let hostNode = null;
   let hostText = null;
+  let hostRedrawn = false;
   const hostScripts = new Set();
   function hostGroups() {
     if (!view.host?.html) return null;
@@ -502,8 +508,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
         hostScripts.add(src);
         hostNode.append(h('script', { src }));
       }
-      // A script loaded once listens on the document, or for this: the program's groups were drawn anew.
-      window.dispatchEvent(new CustomEvent('woodshed:host-groups', { detail: { node: hostNode } }));
+      hostRedrawn = true;
     }
     return hostNode;
   }
