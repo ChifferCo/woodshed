@@ -8,6 +8,8 @@
 //                                Handed to their private Codex sessions, which write a refreshed login back (sessionApi.mjs)
 //   users/<login>/tmux-conf      ~/.tmux.conf, which their sessions write after the console's shared file, so a change to
 //                                that still reaches them. Readable by them, since their sessions hold the same text anyway
+//   users/<login>/gitconfig, inputrc, bash-aliases   their own lines for those files, the same way: only what
+//                                shared/dotfiles.mjs takes, which never holds a credential, an identity or a path
 //   users/<login>/own-files      legacy: their own whole files from before they were per repo, which repoSettings.mjs moves
 //                                into the default project's (moveOwnFiles); deleted here with the rest by Remove My Woodshed
 //   users/<login>/github         their GitHub user token, from Connect GitHub (githubUser.mjs), as JSON
@@ -17,11 +19,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import logins from './public/logins.cjs';
+import { DOTFILES, dotfileProblem } from '../shared/dotfiles.mjs';
 import { SETTINGS, settingProblem } from './consoleSettings.mjs';
 const { loginKey } = logins;
 
 // Who may review a person's pull requests, as reviewAgents.mjs reads it.
 const REVIEW_CHOICES = ['none', 'claude', 'codex', 'both'];
+// What the person's private sessions run their agent in (session/agentPane.mjs): tmux, as every session does, or Herdr's
+// terminal runtime, which their own Herdr can attach to. tmux is the default, and the only one for every other session.
+export const TERMINALS = Object.freeze(['tmux', 'herdr']);
 
 const CLAUDE_TOKEN = 'claude-token';
 const CODEX_AUTH = 'codex-auth';
@@ -41,11 +47,12 @@ const OWN_LIMIT_KEYS = ['idleHours', 'lifetimeHours'];
 const OWN_LIMITS = SETTINGS.filter((setting) => OWN_LIMIT_KEYS.includes(setting.key));
 const TMUX_DEFAULT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'session', 'tmux.conf');
 
-const TMUX_FILE = { label: '~/.tmux.conf' };
+const TMUX_FILE = { label: '~/.tmux.conf', shared: TMUX_DEFAULT };
 
 // The files a person may add their own lines to: tmux's, which is the session image's own tmux.conf (the console image
-// carries it too). Their own lines for the repo's env files are Repo settings (repoSettings.mjs).
-const FILES = { 'tmux-conf': TMUX_FILE };
+// carries it too), and a few dotfiles the image has none of its own for (shared/dotfiles.mjs). Their own lines for the
+// repo's env files are Repo settings (repoSettings.mjs).
+const FILES = { 'tmux-conf': TMUX_FILE, ...Object.fromEntries(Object.entries(DOTFILES).map(([key, { label }]) => [key, { label, shared: null }])) };
 
 /**
  * @param {unknown} text
@@ -132,8 +139,8 @@ export function checkLimits(values) {
 export function checkIdentity({ name, email }) {
   const n = String(name ?? '').trim();
   const e = String(email ?? '').trim();
-  if (!n || n.length > MAX_IDENTITY_CHARS || /[<>\n]/.test(n)) throw Object.assign(new Error('the name must be one line, without < or >'), { shown: true });
-  if (!/^[^\s@<>]+@[^\s@<>]+$/.test(e) || e.length > MAX_IDENTITY_CHARS) throw Object.assign(new Error('that is not an email address'), { shown: true });
+  if (!n || n.length > MAX_IDENTITY_CHARS || /[<>\n]/.test(n)) throw Object.assign(new Error('the name must be one line, without < or >'), { shown: true, status: 400 });
+  if (!/^[^\s@<>]+@[^\s@<>]+$/.test(e) || e.length > MAX_IDENTITY_CHARS) throw Object.assign(new Error('that is not an email address'), { shown: true, status: 400 });
   return { name: n, email: e };
 }
 
@@ -214,6 +221,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
       ownTokenForShared: record?.ownTokenForShared !== false,
       ownCodexForReviews: record?.ownCodexForReviews !== false,
       reviewAgents: REVIEW_CHOICES.includes(record?.reviewAgents) ? record.reviewAgents : null,
+      terminal: terminal(login),
       limits: { ...record?.limits },
       github: { connected: Boolean(github?.connectedAt), connectedAt: github?.connectedAt ?? null, name: github?.name ?? null, email: github?.email ?? null },
       home: { saved: Boolean(record?.home?.savedAt), savedAt: record?.home?.savedAt ?? null, bytes: record?.home?.bytes ?? 0 },
@@ -224,13 +232,13 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   function requireFile(key) {
-    if (!FILES[key]) throw Object.assign(new Error(`no file called ${key}`), { shown: true });
+    if (!Object.hasOwn(FILES, key)) throw Object.assign(new Error(`no file called ${key}`), { shown: true });
   }
 
-  /** @returns {string}  the image's file: what every session starts from */
+  /** @returns {string}  the image's file: what every session starts from; empty for one the image has none of */
   function sharedFile(key) {
     requireFile(key);
-    return fs.readFileSync(TMUX_DEFAULT, 'utf8');
+    return FILES[key].shared ? fs.readFileSync(FILES[key].shared, 'utf8') : '';
   }
 
   /** @returns {Promise<string|null>}  the person's own lines, or null while they have none */
@@ -254,6 +262,11 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     requireFile(key);
     const value = checkFile(text);
     if (!value) return resetFile(login, key);
+    const problem = Object.hasOwn(DOTFILES, key) ? dotfileProblem(key, value) : null;
+    if (problem) {
+      console.log('userSettings: file refused', { login, key, why: problem.split(':')[0] });
+      throw Object.assign(new Error(problem), { shown: true });
+    }
     await secrets.save(userSecretName(login, key), value, `Woodshed: @${login}'s ${FILES[key].label}, for their My Woodshed sessions only`);
     const record = recordFor(login);
     touch(login, { files: { ...record?.files, [key]: new Date(now()).toISOString() } });
@@ -409,6 +422,23 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     return REVIEW_CHOICES.includes(saved) ? saved : null;
   }
 
+  /**
+   * What the person's private sessions run their agent in: `tmux` (the default) or `herdr`. Their next session reads it
+   * from the /settings answer (sessionApi.mjs); one running keeps what it started with.
+   * @throws {Error}  shown on the page, for anything else
+   */
+  function setTerminal(login, choice) {
+    if (!TERMINALS.includes(choice)) throw Object.assign(new Error(`the terminal must be one of ${TERMINALS.join(', ')}`), { shown: true, status: 400 });
+    touch(login, { terminal: choice === 'tmux' ? null : choice });
+    console.log('userSettings: terminal changed', { login, terminal: choice });
+  }
+
+  /** @returns {'tmux'|'herdr'}  the person's choice, tmux when they made none */
+  function terminal(login) {
+    const saved = recordFor(login)?.terminal;
+    return TERMINALS.includes(saved) ? saved : 'tmux';
+  }
+
   /** Replaces the person's own idle and lifetime hours; an empty object goes back to the console's numbers. */
   function setLimits(login, values) {
     const limits = checkLimits(values);
@@ -437,7 +467,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     if (secrets) {
       // Own lines saved on My settings' env file tabs before Repo settings (`users/<login>/<env secret>`) are known only
       // by this record's `files`, which goes below: they go first, or nothing would know of them again.
-      const old = Object.keys(recordFor(login)?.files ?? {}).filter((key) => !FILES[key] && /^[a-z0-9-]+$/.test(key));
+      const old = Object.keys(recordFor(login)?.files ?? {}).filter((key) => !Object.hasOwn(FILES, key) && /^[a-z0-9-]+$/.test(key));
       for (const key of [CLAUDE_TOKEN, CODEX_AUTH, GITHUB, OWN_FILES, 'database', ...Object.keys(FILES), ...old]) await secrets.remove(userSecretName(login, key));
     }
     delete people()[loginKey(login)];
@@ -446,7 +476,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   return {
-    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setReviewAgents, reviewAgents, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
+    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setReviewAgents, reviewAgents, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }

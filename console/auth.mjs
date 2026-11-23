@@ -487,5 +487,7 @@ export function createAuth({
   return {
     available, enabled, disarm, start, callback, sessionFor, visitorFor, signOut, redirectUri,
     appCode, claimAppCode, appSessionFor, appCookie, desktopCode, claimDesktopCode,
+    // The same check of write access, for the command line's token (cliSessions.mjs), which has no session here.
+    canWrite,
   };
 }

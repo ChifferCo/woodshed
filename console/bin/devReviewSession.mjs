@@ -9,6 +9,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
+import { writeDevReviewGh } from './devReviewGh.mjs';
+
 // A made-up author, and no signing: a signing setup of the person running it must not stop the dev console starting.
 const AUTHOR = ['-c', 'user.email=dev@example.com', '-c', 'user.name=Dev Console', '-c', 'commit.gpgsign=false'];
 
@@ -206,9 +208,12 @@ function writeFiles(dir, files) {
   }
 }
 
-/** A bare remote with the default branch, and a checkout on `branch` one commit ahead of it. */
-function makeCheckout(root, branch, defaultBranch) {
-  const remote = path.join(root, 'remote.git');
+/**
+ * A bare remote with the default branch, and a checkout on `branch` one commit ahead of it. `remote` names the bare
+ * repo's folder: under github.com/<owner>/<name>.git, the shed reads its slug from it as from a GitHub remote.
+ */
+function makeCheckout(root, branch, defaultBranch, remote = path.join(root, 'remote.git')) {
+  fs.mkdirSync(path.dirname(remote), { recursive: true });
   const repo = path.join(root, 'repo');
   const git = (...args) => execFileSync('git', [...AUTHOR, '-C', repo, ...args], { stdio: 'pipe' });
   execFileSync('git', ['init', '-q', '--bare', '-b', defaultBranch, remote]);
@@ -227,13 +232,19 @@ function makeCheckout(root, branch, defaultBranch) {
 }
 
 /**
- * @param {{id: string, branch: string}} opts  the made-up session's id and branch
- * @returns {Promise<{port: number, close: () => void}>}
+ * @param {{id: string, branch: string, pr?: {number: number, title: string, login: string, slug: string}|null}} opts
+ *   the made-up session's id and branch. With `pr`, the session is its person's own (`login`) and its branch has that
+ *   open pull request on `slug`, answered by a stand-in gh (devReviewGh.mjs) put first on this process's PATH, so the
+ *   review's comment, verdict, rename and merge run; without it, the review is a shared session's, read-only, as before.
+ * @returns {Promise<{port: number, close: () => void, ghState?: string}>}
  */
-export async function startDevReview({ id, branch }) {
+export async function startDevReview({ id, branch, pr = null }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-review-'));
   // A session's own DEFAULT_BRANCH, when this runs in one, is what the shed diffs against.
-  const repo = makeCheckout(root, branch, process.env.DEFAULT_BRANCH || 'main');
+  const defaultBranch = process.env.DEFAULT_BRANCH || 'main';
+  const repo = makeCheckout(root, branch, defaultBranch, pr ? path.join(root, 'github.com', `${pr.slug}.git`) : undefined);
+  const gh = pr ? writeDevReviewGh(path.join(root, 'gh'), { repo, branch, base: defaultBranch, ...pr }) : null;
+  if (gh) process.env.PATH = [gh.dir, process.env.PATH].join(path.delimiter);
   // The shed's store reads this when it loads, so before the host is imported.
   process.env.WOODSHED_REVIEWS = path.join(root, 'reviews');
   const sessionDir = path.join(process.env.WOODSHED_REVIEWS, `claude-${id}`);
@@ -241,7 +252,7 @@ export async function startDevReview({ id, branch }) {
   // On disk before the first open, which then reads it as the finished analysis (restoreState).
   fs.writeFileSync(path.join(sessionDir, 'review.json'), JSON.stringify(ARTIFACT));
   const { createReviewHost } = await import('../../session/reviewShed/host.mjs');
-  const host = createReviewHost({ repoDir: repo, sessionId: id, sessionKind: 'shared' });
+  const host = createReviewHost({ repoDir: repo, sessionId: id, sessionKind: pr ? 'private' : 'shared' });
   const server = http.createServer((req, res) => {
     host.handle(req, res).then((done) => {
       if (done) return;
@@ -259,6 +270,7 @@ export async function startDevReview({ id, branch }) {
   console.log('dev console: review session ready', { id, port });
   return {
     port,
+    ghState: gh?.state,
     close() {
       server.close();
       fs.rmSync(root, { recursive: true, force: true });

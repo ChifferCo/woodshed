@@ -1,11 +1,15 @@
-// Each person's shared Claude settings (session/settingsSync.mjs has which items): the copy their running My Woodshed
+// Each person's shared Claude and Codex settings (session/settingsSync.mjs has which items): the copy their running My Woodshed
 // sessions keep in step with, a few seconds apart. Held here and saved to the homes bucket after each change, as
 // `<login>/claude-settings.json`, so a console restart loses nothing; a person's is read back the first time one of
 // their sessions asks.
 //
 // Merged item by item: a session sends what it changed since the version it last had, and gets back the whole copy
-// whenever another session changed something in between.
+// whenever another session changed something in between. Servers sent by a computer are kept in a separate map in
+// the same object. The session API never returns that map, so importing a laptop's server cannot install it there.
 
+import { CODEX_CONFIG, configCredential, isCodexMcp, readToml, withEntries } from '../shared/codexConfig.mjs';
+import { isCarriedSource } from '../shared/pluginSource.mjs';
+import { redact, secretContent } from '../shared/secretLike.mjs';
 import logins from './public/logins.cjs';
 const { loginKey } = logins;
 
@@ -17,8 +21,42 @@ function settingsKey(login) {
 }
 
 // The session checks each id against what it syncs; this keeps a path out of the shared copy that could reach outside
-// ~/.claude in the owner's other sessions.
-const ITEM_ID_RE = /^\.claude(?:\/[^/\\\0]+)+$|^\.claude\.json#mcpServers\/[^\0]+$/;
+// ~/.claude and ~/.codex in the owner's other sessions. A plugin's item is under ~/.claude too (its list's file).
+const ITEM_ID_RE = /^\.(?:claude|codex)(?:\/[^/\\\0]+)+$|^\.claude\.json#mcpServers\/[^\0]+$/;
+const isMcpServerItem = (id) => id.startsWith('.claude.json#mcpServers/');
+
+/** Whether a credential field holds text other than variable references and an optional auth scheme. */
+export function hasLiteralCredential(value) {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  // Remove only complete references without a fallback value. Anything malformed or literal remains.
+  return value.replace(/\$\{[A-Za-z_][A-Za-z0-9_]*(:-)?\}/g, '').replace(/^\s*(Bearer|Basic|Token)\s+/i, '').trim() !== '';
+}
+
+/** An MCP service or an HTTP hook can use any header for auth. Carry only references and empty headers. */
+export function hasLiteralHttpHeader(config) {
+  return Object.values(config?.headers ?? {}).some((value) => typeof value !== 'string' || hasLiteralCredential(value));
+}
+
+function laptopMcpProblem(value) {
+  let server;
+  try {
+    server = JSON.parse(value);
+  } catch {}
+  if (!server || typeof server !== 'object' || Array.isArray(server)) return 'expected an MCP server definition as a JSON object';
+  if (hasLiteralHttpHeader(server)) return 'an MCP server sends a literal HTTP header: use a variable reference';
+  return null;
+}
+
+function hasLiteralHookHeader(value) {
+  let settings;
+  try {
+    settings = JSON.parse(Buffer.from(value, 'base64').toString('utf8'));
+  } catch {
+    return false;
+  }
+  return Object.values(settings?.hooks ?? {}).some((groups) => Array.isArray(groups)
+    && groups.some((group) => Array.isArray(group?.hooks) && group.hooks.some(hasLiteralHttpHeader)));
+}
 
 function isItemId(id) {
   const filePart = id.split('#')[0];
@@ -28,6 +66,36 @@ function isItemId(id) {
 function isItemMap(value) {
   return value && typeof value === 'object' && !Array.isArray(value)
     && Object.entries(value).every(([id, v]) => isItemId(id) && typeof v === 'string');
+}
+
+const PLUGIN_ITEM = '.claude/plugins/installed_plugins.json#plugins/';
+
+/**
+ * Why the shared copy may not hold an item as sent, or null. A session and a computer leave out what this refuses
+ * (session/settingsSync.mjs, cli/settings.mjs): a client that does not is refused here, so the copy, which the person's
+ * computer and every one of their sessions read, never holds codex config with a credential in it or a plugin's
+ * marketplace with more than a session can add again.
+ */
+export function itemProblem(id, value, { fromLaptop = false } = {}) {
+  if (id === '.codex/auth.json') return 'a Codex sign-in stays where it was set';
+  if (id === CODEX_CONFIG) {
+    const text = Buffer.from(value, 'base64').toString('utf8');
+    const credential = configCredential(text);
+    if (credential) return `~/.codex/config.toml ${credential}: a credential stays where it was set`;
+    if (fromLaptop && readToml(text).some(isCodexMcp)) return 'Codex MCP servers from a computer stay on that computer';
+    return null;
+  }
+  if (id.startsWith(PLUGIN_ITEM)) {
+    // Its name is said back and logged: one with a key's shape is refused without it.
+    if (secretContent(id)) return 'a plugin\'s name holds what looks like a key';
+    let item = null;
+    try {
+      item = JSON.parse(value);
+    } catch {}
+    const fine = item && typeof item === 'object' && Object.keys(item).join() === 'marketplace' && isCarriedSource(item.marketplace);
+    return fine ? null : `${redact(id.slice(PLUGIN_ITEM.length))}'s marketplace is not one a session can add`;
+  }
+  return null;
 }
 
 /**
@@ -61,33 +129,70 @@ export function createClaudeSettings({ store }) {
     if (held.has(login)) return held.get(login);
     const text = await store.getText(settingsKey(login));
     const saved = text ? JSON.parse(text) : null;
-    const copy = saved && isItemMap(saved.items) ? saved : { version: 0, items: {} };
+    const { version, items } = Number.isInteger(saved?.version) && isItemMap(saved.items) ? saved : { version: 0, items: {} };
+    const laptopMcp = isItemMap(saved?.laptopMcp) && Object.keys(saved.laptopMcp).every(isMcpServerItem) ? saved.laptopMcp : {};
+    const cliVersion = Number.isInteger(saved?.cliVersion) ? saved.cliVersion : version;
+    const copy = { version, items, laptopMcp, cliVersion };
     held.set(login, copy);
     return copy;
   }
 
   /**
    * @param {{login: string, sessionId: string, version: number|null, changed: Record<string, string>, removed: string[]}} args
-   * @returns {Promise<{version: number, items?: Record<string, string>}>}  items when the session's copy is behind
+   * @param {{fromLaptop?: boolean}} [opts]  set by the command line route after authenticating its caller
+   * @returns {Promise<{version: number, items?: Record<string, string>}>}  items when the caller's copy is behind
    */
-  function sync({ login, sessionId, version, changed, removed }) {
+  function sync({ login, sessionId, version, changed, removed }, { fromLaptop = false } = {}) {
     return inTurn(login, async () => {
       const copy = await load(login);
-      const current = version === copy.version;
-      const changes = Object.keys(changed).length + removed.length;
-      if (!changes) return current ? { version: copy.version } : { version: copy.version, items: copy.items };
-      const items = { ...copy.items, ...changed };
-      for (const id of removed) delete items[id];
-      const text = JSON.stringify({ version: copy.version + 1, items, updatedAt: new Date().toISOString(), updatedBy: sessionId });
+      const versionOf = (state) => fromLaptop ? state.cliVersion : state.version;
+      const current = version === versionOf(copy);
+      const answer = (state) => current ? { version: versionOf(state) } : {
+        version: versionOf(state), items: fromLaptop ? { ...state.items, ...state.laptopMcp } : state.items,
+      };
+      const changes = Object.entries(changed);
+      if (!changes.length && !removed.length) return answer(copy);
+      const items = { ...copy.items };
+      const laptopMcp = { ...copy.laptopMcp };
+      const laptopItem = (id) => fromLaptop && isMcpServerItem(id);
+      let sessionChanges = false;
+      for (const [id, value] of changes) {
+        if (fromLaptop && id === '.claude/settings.json' && hasLiteralHookHeader(value)) {
+          throw Object.assign(new Error('a hook sends a literal HTTP header: use a variable reference'), { shown: true, status: 400 });
+        }
+        const fromComputer = laptopItem(id);
+        const problem = fromComputer ? laptopMcpProblem(value) : itemProblem(id, value, { fromLaptop });
+        if (problem) throw Object.assign(new Error(problem), { shown: true, status: 400 });
+        if (fromComputer) {
+          laptopMcp[id] = value;
+        } else {
+          let nextValue = value;
+          if (fromLaptop && id === CODEX_CONFIG && items[id] !== undefined) {
+            const previous = readToml(Buffer.from(items[id], 'base64').toString('utf8'));
+            const servers = previous?.filter(isCodexMcp) ?? [];
+            if (servers.length) nextValue = Buffer.from(withEntries(Buffer.from(value, 'base64').toString('utf8'), servers)).toString('base64');
+          }
+          items[id] = nextValue;
+          sessionChanges = true;
+        }
+      }
+      for (const id of removed) {
+        if (laptopItem(id)) delete laptopMcp[id];
+        else {
+          delete items[id];
+          sessionChanges = true;
+        }
+      }
+      // A laptop-only edit does not make an empty session copy look initialized to a first session.
+      const next = { version: copy.version + Number(sessionChanges), items, laptopMcp, cliVersion: copy.cliVersion + 1 };
+      const text = JSON.stringify({ ...next, updatedAt: new Date().toISOString(), updatedBy: sessionId });
       if (Buffer.byteLength(text) > MAX_SETTINGS_BYTES) {
         throw Object.assign(new Error(`the shared Claude settings would be over ${MAX_SETTINGS_BYTES / 1024 / 1024} MB`), { shown: true });
       }
       await store.putText(settingsKey(login), text);
-      const next = { version: copy.version + 1, items };
       held.set(login, next);
-      console.log('claudeSettings: changed', { login, sessionId, version: next.version, changed: Object.keys(changed).length, removed: removed.length, wasCurrent: current });
-      // A session that was current has every item already: its own changes are the only new ones.
-      return current ? { version: next.version } : next;
+      console.log('claudeSettings: changed', { login, sessionId, version: versionOf(next), changed: changes.length, removed: removed.length, wasCurrent: current });
+      return answer(next);
     });
   }
 

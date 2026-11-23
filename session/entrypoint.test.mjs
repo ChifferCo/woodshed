@@ -35,7 +35,7 @@ fs.writeFileSync(path.join(REPO, '.woodshed/rules.md'), `- ${PROJECT_RULE}\n`);
 // The notes' title and the blank line after it, which a shared session's inline copy drops.
 fs.writeFileSync(path.join(REPO, '.woodshed/setup.md'), `Environment notes:\n\n- ${PROJECT_NOTE}\n`);
 
-function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDir = REPO, defaultBranch = 'main', sessionUrl = null, hostDocker = null, appDomain = null }) {
+function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDir = REPO, defaultBranch = 'main', sessionUrl = null, hostDocker = null, appDomain = null, reviewTag = null }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-prompt-'));
   const script = [
     'set -euo pipefail',
@@ -56,7 +56,7 @@ function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDi
   try {
     const out = execFileSync('bash', ['-c', script], {
       encoding: 'utf8',
-      env: { PATH: process.env.PATH, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}), ...(sessionUrl ? { SESSION_URL: sessionUrl } : {}), ...(hostDocker !== null ? { WOODSHED_SESSION_DOCKER: hostDocker, SESSION_ID: '0a1b2c3d' } : {}), ...(appDomain !== null ? { SESSION_APP_DOMAIN: appDomain, SESSION_ID: '0a1b2c3d' } : {}) },
+      env: { PATH: process.env.PATH, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}), ...(sessionUrl ? { SESSION_URL: sessionUrl } : {}), ...(hostDocker !== null ? { WOODSHED_SESSION_DOCKER: hostDocker, SESSION_ID: '0a1b2c3d' } : {}), ...(appDomain !== null ? { SESSION_APP_DOMAIN: appDomain, SESSION_ID: '0a1b2c3d' } : {}), ...(reviewTag !== null ? { WOODSHED_REVIEW_TAG: reviewTag } : {}) },
     });
     return {
       out,
@@ -83,7 +83,7 @@ test('a review-only session writes no prompt, and claude starts with none', () =
   assert.match(out, /after writePrompt/);
   assert.equal(prompt, null);
   assert.match(rules, /You are running in a Woodshed session/);
-  assert.match(fn('startClaude'), /REVIEW_ONLY:-\}" = 1 \]; then\n\s+tmux send-keys -t claude "\$SESSION_DIR\/bin\/claude\$\(claudeFlags\)" Enter/);
+  assert.match(fn('startAgent'), /REVIEW_ONLY:-\}" = 1 \]; then\n\s+agentRun "\$SESSION_DIR\/bin\/claude\$\(claudeFlags\)"\n/);
 });
 
 test('attached files are listed under the prompt', () => {
@@ -199,9 +199,20 @@ test('a project with a review tag tells its sessions to end each push\'s last co
       assert.doesNotMatch(tagged.rules, /\{\{/);
       assert.match(tagged.out, /review tag: \[run-review\]/);
     }
+    // The console's tag fills in only where the file names no review (console/defaultReview.mjs).
+    assert.ok(writePrompt({ attachments: false, repoDir: repo, reviewTag: '[woodshed-review]' }).rules.includes('` [run-review]`'), 'the file\'s own wins');
+    fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ pullRequests: { review: { ...review, rerun: null }, suites: [], qa: null, mergeRisk: null } }));
+    assert.doesNotMatch(writePrompt({ attachments: false, repoDir: repo, reviewTag: '[woodshed-review]' }).rules, /code review runs on a push/, 'a file reviewing every commit asks for no tag');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
+  // No project file at all: the console's tag, so the pull requests the session opens are reviewed.
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-bare-tag-'));
+  after(() => fs.rmSync(bare, { recursive: true, force: true }));
+  fixtureCheckout(bare);
+  const byDefault = writePrompt({ attachments: false, repoDir: bare, reviewTag: '[woodshed-review]' });
+  assert.ok(byDefault.rules.includes('end the subject of the last commit of each push with ` [woodshed-review]`'));
+  assert.match(byDefault.out, /review tag: \[woodshed-review\]/);
 });
 
 test('a project file with consoleLinks: false keeps the session\'s link out of its pull requests, on any repo', () => {
@@ -343,9 +354,9 @@ test('the forwarder of the machine\'s ports starts only with the machine\'s Dock
 
 test('a QA session writes no prompt, and runs qa.sh in claude\'s pane once statusd answers, working from the start', () => {
   assert.match(ENTRYPOINT, /if \[ "\$\{SESSION_MODE:-\}" = qa \]; then\n    log "Prompt skipped"/);
-  const start = fn('startClaude');
+  const start = fn('startAgent');
   const qa = start.slice(start.indexOf('SESSION_MODE:-}" = qa'), start.indexOf('elif [ "${AGENT:-claude}" = codex ]'));
-  assert.ok(qa.indexOf('touch /tmp/qa-running') < qa.indexOf('tmux send-keys'), 'the session reads as working before the run starts');
+  assert.ok(qa.indexOf('touch /tmp/qa-running') < qa.indexOf('agentRun'), 'the session reads as working before the run starts');
   assert.match(qa, /until curl -s -o \/dev\/null http:\/\/127\.0\.0\.1:.*; do sleep 1; done; SESSION_DIR=\$SESSION_DIR bash \$SESSION_DIR\/qa\.sh/);
 });
 
@@ -891,13 +902,149 @@ test('a seed with no --project writes the env files from the repo alone, in the 
   assert.deepEqual([empty.api, empty.web], [bare.api, bare.web], 'repo settings with no value give the same bytes');
 });
 
-test('a Codex session starts codex with the picked flags, and the rules go in codex\'s own AGENTS.md', () => {
+test('a Codex session starts codex with the picked flags, and the rules go in codex\'s own AGENTS.override.md', () => {
   const flags = execFileSync('bash', ['-c', `${fn('codexFlags')}\ncodexFlags`], {
     encoding: 'utf8', env: { PATH: process.env.PATH, PERMISSION_MODE: 'plan', MODEL: 'gpt-5.5', EFFORT: 'high' },
   });
-  assert.equal(flags, ' --add-dir /tmp/uploads --sandbox read-only --ask-for-approval on-request --model gpt-5.5 -c model_reasoning_effort=\\"high\\"');
-  assert.match(fn('configureCodex'), /cp \/tmp\/woodshed-rules\.md "\$CODEX_HOME_DIR\/AGENTS\.md"/);
+  assert.equal(flags, ' --sandbox read-only --ask-for-approval on-request --model gpt-5.5 -c model_reasoning_effort=\\"high\\"');
   assert.ok(ENTRYPOINT.indexOf('  writeRules\n  if [ "${AGENT:-claude}" = codex ]') > 0, 'the rules are written before codex is configured');
+  assert.ok(ENTRYPOINT.indexOf('  pullSettings\n') < ENTRYPOINT.indexOf('    configureCodex\n'), 'the owner\'s synced config is there before codex is configured');
+});
+
+// configureCodex as the entrypoint has it, in a codex home of the test's own, after a pull wrote `pulled` into it.
+function configureCodex({ pulled = {}, linkedInstructions = false } = {}) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-codex-'));
+  const codexHome = path.join(tmp, 'codex');
+  fs.mkdirSync(codexHome);
+  for (const [name, text] of Object.entries(pulled)) fs.writeFileSync(path.join(codexHome, name), text);
+  if (linkedInstructions) fs.symlinkSync('auth.json', path.join(codexHome, 'AGENTS.md'));
+  fs.writeFileSync(path.join(tmp, 'woodshed-rules.md'), '# Woodshed rules\n\nOpen a pull request.\n');
+  const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { echo "ERROR: $*"; exit 1; }',
+    fn('configureCodex').replaceAll('/tmp/', `${tmp}/`), 'configureCodex'].join('\n');
+  try {
+    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: tmp, SESSION_DIR, SHARED_DIR, REPO_DIR: '/work/app', CODEX_HOME_DIR: codexHome } });
+    const read = (name) => (fs.existsSync(path.join(codexHome, name)) ? fs.readFileSync(path.join(codexHome, name), 'utf8') : null);
+    return { out, config: read('config.toml'), agents: read('AGENTS.md'), override: read('AGENTS.override.md') };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+test('a Codex session trusts its checkout in the owner\'s own config.toml, and the rules come before the owner\'s AGENTS.md', () => {
+  const fresh = configureCodex();
+  assert.equal(fresh.config, '[projects."/work/app"]\ntrust_level = "trusted"\n', 'a first session: its checkout alone');
+  assert.equal(fresh.override, '# Woodshed rules\n\nOpen a pull request.\n');
+  assert.equal(fresh.agents, null, 'AGENTS.md is the owner\'s alone, and they have none');
+
+  const owner = configureCodex({ pulled: { 'config.toml': 'model = "gpt-5.5"\n\n[tui]\nnotifications = true\n', 'AGENTS.md': 'Use pnpm.\n' } });
+  assert.equal(owner.config, 'model = "gpt-5.5"\n\n[tui]\nnotifications = true\n\n[projects."/work/app"]\ntrust_level = "trusted"\n', 'the owner\'s settings stay, with the checkout trusted');
+  assert.equal(owner.agents, 'Use pnpm.\n', 'the synced file is left as it is');
+  assert.equal(owner.override, '# Woodshed rules\n\nOpen a pull request.\n\n\n# Your own instructions, from ~/.codex/AGENTS.md\n\nUse pnpm.\n', 'codex reads this in place of AGENTS.md: the rules, then theirs');
+});
+
+test('Codex startup does not copy a linked sign-in into the model instructions', () => {
+  const owner = configureCodex({ pulled: { 'auth.json': '{"access_token":"dummy-sign-in"}' }, linkedInstructions: true });
+  assert.equal(owner.override === '# Woodshed rules\n\nOpen a pull request.\n', true, 'only Woodshed rules reach the instructions');
+});
+
+// installSyncedPlugins with a stand-in claude that records each call, in a home of the test's own whose start pulled
+// `synced` (the state file settingsSync.mjs writes).
+function installSyncedPlugins({ kind = 'private', synced = {}, installed = null, known = null, offered = null, settings = null, failMarketplace = false }) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-synced-plugins-'));
+  const sessionDir = path.join(tmp, 'session');
+  const home = path.join(tmp, 'home');
+  fs.mkdirSync(path.join(sessionDir, 'bin'), { recursive: true });
+  fs.mkdirSync(path.join(home, '.claude', 'plugins'), { recursive: true });
+  for (const name of ['syncedPlugins.mjs', 'defaultPlugins.mjs', 'settingsSync.mjs', 'missingPlugins.mjs']) {
+    fs.copyFileSync(path.join(SESSION_DIR, name), path.join(sessionDir, name));
+  }
+  // Beside it, in the image's layout: ../shared/.
+  fs.cpSync(SHARED_DIR, path.join(tmp, 'shared'), { recursive: true });
+  fs.writeFileSync(path.join(sessionDir, 'bin', 'claude'),
+    `#!/bin/bash\necho "$*" >> ${tmp}/calls\n${failMarketplace ? '[ "$2" = marketplace ] && { echo "repo not found" >&2; exit 1; }\n' : ''}exit 0\n`, { mode: 0o755 });
+  // The tests' macOS has no `timeout`: the image's coreutils one runs the command.
+  fs.writeFileSync(path.join(sessionDir, 'bin', 'timeout'), '#!/bin/bash\nshift\nexec "$@"\n', { mode: 0o755 });
+  const state = path.join(tmp, 'woodshed-settings-sync.json');
+  fs.writeFileSync(state, JSON.stringify({ version: 3, synced }));
+  if (installed) fs.writeFileSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'), JSON.stringify(installed));
+  if (known) fs.writeFileSync(path.join(home, '.claude', 'plugins', 'known_marketplaces.json'), JSON.stringify(known));
+  if (offered) fs.writeFileSync(path.join(home, '.claude', 'woodshed-default-plugins.json'), JSON.stringify(offered));
+  if (settings) fs.writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify(settings));
+  const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'tainted() { return 1; }',
+    fn('installSyncedPlugins').replace('"$SESSION_DIR/syncedPlugins.mjs" "$HOME" "$offered"', `"$SESSION_DIR/syncedPlugins.mjs" "$HOME" "$offered" ${state}`),
+    'installSyncedPlugins', 'echo "start goes on"'].join('\n');
+  try {
+    const out = execFileSync('bash', ['-c', script], {
+      encoding: 'utf8',
+      env: { PATH: `${sessionDir}/bin:${process.env.PATH}`, HOME: home, SESSION_DIR: sessionDir, REPO_DIR: tmp, ...(kind ? { SESSION_KIND: kind } : {}) },
+    });
+    const calls = fs.existsSync(path.join(tmp, 'calls')) ? fs.readFileSync(path.join(tmp, 'calls'), 'utf8') : '';
+    const offeredFile = path.join(home, '.claude', 'woodshed-default-plugins.json');
+    assert.match(out, /start goes on\n$/, 'the start goes on under set -e');
+    return { out: out.replace(/start goes on\n$/, ''), calls, offered: fs.existsSync(offeredFile) ? JSON.parse(fs.readFileSync(offeredFile, 'utf8')) : null };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+const PLUGIN = (name) => `.claude/plugins/installed_plugins.json#plugins/${name}`;
+
+test('a private session installs the plugins its owner has elsewhere, adding a marketplace claude does not know first, once each', () => {
+  const synced = {
+    [PLUGIN('review@acme-tools')]: JSON.stringify({ marketplace: { source: 'github', repo: 'acme/claude-tools' } }),
+    [PLUGIN('pr-review-toolkit@claude-plugins-official')]: JSON.stringify({ marketplace: { source: 'github', repo: 'anthropics/claude-plugins-official' } }),
+    [PLUGIN('notes@laptop-only')]: JSON.stringify({ marketplace: { source: 'directory', path: '/Users/mia/plugins' } }),
+    [PLUGIN('off@acme-tools')]: JSON.stringify({ marketplace: { source: 'github', repo: 'acme/claude-tools' } }),
+    '.claude/settings.json': Buffer.from('{}').toString('base64'),
+  };
+  const run = installSyncedPlugins({ synced, settings: { enabledPlugins: { 'off@acme-tools': false } } });
+  assert.equal(run.calls, [
+    'plugin marketplace add acme/claude-tools',
+    'plugin install --scope user review@acme-tools',
+    'plugin marketplace add anthropics/claude-plugins-official',
+    'plugin install --scope user pr-review-toolkit@claude-plugins-official',
+  ].map((l) => `${l}\n`).join(''), 'each marketplace this home has not is added first, the official one too; one turned off is not installed');
+  assert.match(run.out, /WARNING: a plugin from your other sessions was not installed \(plugin: notes@laptop-only, why: its marketplace is a folder/);
+  assert.match(run.out, /Plugins from your other sessions installed \(installed: 2, failed: 0, skipped: 1\)/);
+  assert.deepEqual(run.offered, ['review@acme-tools', 'pr-review-toolkit@claude-plugins-official']);
+
+  const again = installSyncedPlugins({ synced, offered: run.offered, settings: { enabledPlugins: { 'off@acme-tools': false } } });
+  assert.equal(again.calls.includes('install --scope user review@acme-tools'), false, 'one offered before, kept or uninstalled since, is not installed again');
+
+  const failed = installSyncedPlugins({ synced: { [PLUGIN('review@acme-tools')]: synced[PLUGIN('review@acme-tools')] }, failMarketplace: true });
+  assert.match(failed.out, /WARNING: a plugin's marketplace could not be added \(plugin: review@acme-tools, error: repo not found\)/);
+  assert.equal(failed.offered, null, 'tried again at the next start');
+  assert.deepEqual(installSyncedPlugins({ kind: '', synced }), { out: '', calls: '', offered: null }, 'a shared session gets none');
+});
+
+// writeOwnDotfiles as fetchOwnerSettings calls it, in a home holding the image's own files.
+function writeOwnDotfiles(files) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dotfiles-'));
+  fs.writeFileSync(path.join(home, '.gitconfig'), '[credential]\n\thelper = "!f() { echo; }; f"\n');
+  fs.writeFileSync(path.join(home, '.bashrc'), '# the image\'s\nif [ -f ~/.bash_aliases ]; then\n    . ~/.bash_aliases\nfi\n');
+  const script = ['set -euo pipefail', fn('writeOwnDotfiles'), 'owned=tmux-conf', 'writeOwnDotfiles "$1"', 'echo "owned: $owned"'].join('\n');
+  try {
+    const out = execFileSync('bash', ['-c', script, 'bash', JSON.stringify({ files })], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home } });
+    const read = (name) => (fs.existsSync(path.join(home, name)) ? fs.readFileSync(path.join(home, name), 'utf8') : null);
+    return { out, gitconfig: read('.gitconfig'), inputrc: read('.inputrc'), aliases: read('.bash_aliases'), bashrc: read('.bashrc') };
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test('a private session writes its owner\'s own dotfile lines after the image\'s, and none it was not given', () => {
+  const run = writeOwnDotfiles({ 'tmux-conf': null, gitconfig: '[alias]\n\tco = checkout\n', inputrc: 'set editing-mode vi\n', 'bash-aliases': "alias ll='ls -la'\n" });
+  assert.equal(run.out, 'owned: tmux-conf, gitconfig, inputrc, bash-aliases\n');
+  assert.equal(run.gitconfig, '[credential]\n\thelper = "!f() { echo; }; f"\n\n# Your own lines, from My settings\n[alias]\n\tco = checkout\n', 'after the start\'s credential helper, which they cannot touch');
+  assert.equal(run.inputrc, '$include /etc/inputrc\n\n# Your own lines, from My settings\nset editing-mode vi\n', 'readline\'s own defaults first');
+  assert.equal(run.aliases, "# Your own aliases, from My settings\nalias ll='ls -la'\n");
+  assert.equal(run.bashrc.match(/bash_aliases/g).length, 2, 'the image\'s .bashrc reads them already: nothing added');
+
+  assert.equal(writeOwnDotfiles({ inputrc: '$include /etc/inputrc\nset bell-style none\n' }).inputrc, '\n# Your own lines, from My settings\n$include /etc/inputrc\nset bell-style none\n',
+    'the system\'s once, where theirs already reads it');
+  const none = writeOwnDotfiles({ 'tmux-conf': null, gitconfig: null, inputrc: null, 'bash-aliases': null });
+  assert.deepEqual([none.out, none.inputrc, none.aliases], ['owned: tmux-conf\n', null, null], 'a console from before them, or nothing saved');
+  assert.ok(fn('fetchOwnerSettings').includes('writeOwnDotfiles "$answer"'));
 });
 
 
@@ -1068,4 +1215,153 @@ test('writeOwnFiles writes the owner\'s files git ignores, logs what it skipped,
   assert.equal(fs.existsSync(path.join(repo, 'notes.txt')), false);
   assert.equal(fs.existsSync(json), false);
   assert.equal(execFileSync('bash', ['-c', script], { encoding: 'utf8' }), '', 'nothing to write without the JSON');
+});
+
+// The entrypoint's choice of the agent's terminal and what it types there, with stand-in hc and tmux that record each
+// call: the owner's pick on My settings (OWNER_TERMINAL, from the /settings answer) in a private coding session, tmux
+// for anything else.
+function agentTerminalRun({ terminal = null, kind = 'private', mode = '', hc = 'ok', hcScript = null, env = {}, body }) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-terminal-'));
+  const repo = path.join(tmp, 'repo');
+  const bin = path.join(tmp, 'bin');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.mkdirSync(bin);
+  const calls = path.join(tmp, 'calls');
+  const record = (name, fails) => `#!/bin/bash\necho "${name} $*" >> ${calls}\n${fails ? 'echo "hc: the core did not start" >&2; exit 1\n' : ''}[ "$1" != --version ] || echo "hc 0.1.21"\n`;
+  if (hc !== 'none') fs.writeFileSync(path.join(bin, 'hc'), hcScript ? `#!/bin/bash\necho "hc $*" >> ${calls}\nT=${tmp}\n${hcScript}` : record('hc', hc === 'fails'), { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'tmux'), record('tmux', false), { mode: 0o755 });
+  // node by itself, never its folder: in a session image /usr/local/bin holds the real hc beside it, which `hc: 'none'`
+  // would find, and run.
+  fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+  const script = [
+    'set -euo pipefail',
+    'log() { echo "[woodshed] $*"; }',
+    fn('agentTerminal'),
+    `AGENT_TERMINAL_WAIT=${tmp}/woodshed-agent-terminal.json`,
+    // The test's own wait, in place of the entrypoint's constant.
+    'HERDR_PARENT_WAIT_SECONDS=${TEST_WAIT_SECONDS:-300}',
+    fn('startHerdr').replaceAll('/tmp/', `${tmp}/`),
+    fn('awaitAgentTerminal').replaceAll('/tmp/', `${tmp}/`),
+    fn('agentRun'),
+    body,
+  ].join('\n');
+  try {
+    const out = execFileSync('bash', ['-c', script], {
+      encoding: 'utf8',
+      env: { PATH: `${bin}:/usr/bin:/bin`, HOME: tmp, REPO_DIR: repo, SESSION_MODE: mode, SESSION_KIND: kind, ...(terminal ? { OWNER_TERMINAL: terminal } : {}), ...env },
+    });
+    return { out, calls: fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8') : '', config: fs.existsSync(path.join(tmp, '.config/herdr-core/config.toml')) ? fs.readFileSync(path.join(tmp, '.config/herdr-core/config.toml'), 'utf8') : null };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+test('the agent runs in Herdr only in a private session whose owner picked it, and in tmux everywhere else', () => {
+  assert.equal(agentTerminalRun({ body: 'agentTerminal' }).out.trim(), 'tmux', 'an owner who picked nothing, or a console from before the setting');
+  assert.equal(agentTerminalRun({ terminal: 'tmux', body: 'agentTerminal' }).out.trim(), 'tmux');
+  assert.equal(agentTerminalRun({ terminal: 'herdr', body: 'agentTerminal' }).out.trim(), 'herdr');
+  assert.equal(agentTerminalRun({ terminal: 'herdr', kind: '', body: 'agentTerminal' }).out.trim(), 'tmux', 'a shared session');
+  for (const mode of ['ask', 'qa', 'review']) {
+    assert.equal(agentTerminalRun({ terminal: 'herdr', mode, body: 'agentTerminal' }).out.trim(), 'tmux', mode);
+  }
+});
+
+test('the owner\'s terminal comes from the /settings answer, read where the other own settings are', () => {
+  const fetch = fn('fetchOwnerSettings');
+  assert.match(fetch, /OWNER_TERMINAL=\$\(jq -r '\.terminal \/\/ empty' <<< "\$answer"\)/);
+  assert.match(fetch, /terminal: \$\{OWNER_TERMINAL:-tmux\}/);
+});
+
+test('in Herdr, the agent\'s terminal is a kept shell named claude in the checkout, and its command goes in through hc', () => {
+  const { out, calls, config } = agentTerminalRun({ terminal: 'herdr', body: 'startHerdr && WOODSHED_TERMINAL=herdr agentRun "claude --resume x"' });
+  assert.match(out, /Herdr started \(version: 0\.1\.21, terminal: claude\)/);
+  assert.match(calls, /^hc server start$/m);
+  assert.match(calls, /^hc run --bg --no-parent --keep --name claude --cwd \S+\/repo$/m);
+  assert.match(calls, /^hc send claude claude --resume x$/m);
+  assert.doesNotMatch(calls, /^tmux/m);
+  assert.equal(config, 'notes = false\nshell = ["/bin/bash", "-l"]\n', 'hc types nothing into the agent on its own, and its shell is tmux\'s');
+});
+
+test('a core that does not start, or no hc at all, leaves the agent in tmux, saying why', () => {
+  const failed = agentTerminalRun({ terminal: 'herdr', hc: 'fails', body: 'startHerdr || echo "in tmux"' });
+  assert.match(failed.out, /WARNING: Herdr did not start, the agent runs in tmux \(hc: the core did not start\)/);
+  assert.match(failed.out, /in tmux/);
+  const none = agentTerminalRun({ terminal: 'herdr', hc: 'none', body: 'startHerdr || echo "in tmux"' });
+  assert.match(none.out, /WARNING: no hc in this image, the agent runs in tmux/);
+  const tmux = agentTerminalRun({ body: 'WOODSHED_TERMINAL=tmux agentRun "claude"' });
+  assert.equal(tmux.calls, 'tmux send-keys -t claude claude Enter\n', 'tmux as it always was');
+});
+
+test('a session whose terminal its owner\'s Herdr makes runs in Herdr whatever My settings says, but only a private coding one', () => {
+  const parent = { WOODSHED_HERDR_PARENT: '1' };
+  assert.equal(agentTerminalRun({ env: parent, body: 'agentTerminal' }).out.trim(), 'herdr', 'an owner who picked nothing');
+  assert.equal(agentTerminalRun({ terminal: 'tmux', env: parent, body: 'agentTerminal' }).out.trim(), 'herdr', 'nor tmux: the start asked for Herdr');
+  assert.equal(agentTerminalRun({ kind: '', env: parent, body: 'agentTerminal' }).out.trim(), 'tmux', 'a shared session');
+  for (const mode of ['ask', 'qa', 'review']) assert.equal(agentTerminalRun({ env: parent, mode, body: 'agentTerminal' }).out.trim(), 'tmux', mode);
+});
+
+// hc as the session's core answers about the agent's terminal: there once `made` exists (the owner's Herdr made it, or
+// the session's own run), with the parent the owner's side gave it.
+const WAITING_HC = `case "$1" in
+  --version) echo "hc 0.1.21" ;;
+  get) [ -f "$T/made" ] || { echo '{"error":{"kind":"not_found"}}'; exit 3; }; cat "$T/made" ;;
+  run) [ -n "\${RUN_TAKEN:-}" ] && { echo '{"parent":"core1/t4","die_with_parent":false}' > "$T/made"; echo '{"error":{"kind":"name_taken"}}'; exit 1; }
+       echo '{"parent":null,"die_with_parent":false}' > "$T/made" ;;
+esac
+`;
+
+test('with a parent, the session starts Herdr but leaves the agent\'s terminal to it, saying where and for how long', () => {
+  const { out, calls } = agentTerminalRun({ hcScript: WAITING_HC, env: { WOODSHED_HERDR_PARENT: '1' }, body: 'startHerdr && cat "$AGENT_TERMINAL_WAIT"' });
+  assert.match(calls, /^hc server start$/m);
+  assert.doesNotMatch(calls, /^hc run/m, 'no terminal of its own: hc gives one its parent only as it starts');
+  assert.match(out, /Herdr started \(version: 0\.1\.21, terminal: claude, made by: its parent, waits up to: 300s\)/);
+  const wait = JSON.parse(out.slice(out.indexOf('{')));
+  assert.equal(wait.terminal, 'claude');
+  assert.match(wait.cwd, /\/repo$/, 'the checkout, where its own terminal would be');
+  assert.equal(wait.waitSeconds, 300);
+});
+
+test('the agent is typed into the terminal its parent made, once it is there, and the wait file goes', () => {
+  const body = 'startHerdr; (sleep 1; echo \'{"parent":"core1/t4","die_with_parent":false}\' > "$HOME/made") & awaitAgentTerminal && WOODSHED_TERMINAL=herdr agentRun "claude go"; [ -f "$AGENT_TERMINAL_WAIT" ] && echo "still waiting" || true';
+  const { out, calls } = agentTerminalRun({ hcScript: WAITING_HC, env: { WOODSHED_HERDR_PARENT: '1' }, body });
+  assert.match(out, /Agent's terminal made by its parent \(parent: core1\/t4, outlives it: yes, waited: \d+s\)/);
+  assert.doesNotMatch(out, /still waiting/);
+  assert.doesNotMatch(calls, /^hc run/m);
+  assert.match(calls, /^hc send claude claude go$/m, 'typed as into the session\'s own terminal');
+});
+
+test('with no parent in time, the session makes the terminal itself, with none, and the agent starts all the same', () => {
+  const env = { WOODSHED_HERDR_PARENT: '1', TEST_WAIT_SECONDS: '1' };
+  const body = 'startHerdr; awaitAgentTerminal && WOODSHED_TERMINAL=herdr agentRun "claude go"; [ -f "$AGENT_TERMINAL_WAIT" ] && echo "still waiting" || true';
+  const alone = agentTerminalRun({ hcScript: WAITING_HC, env, body });
+  assert.match(alone.out, /WARNING: no parent made the agent's terminal \(waited: 1s, started: with no parent\)/);
+  assert.match(alone.calls, /^hc run --bg --no-parent --keep --name claude --cwd \S+\/repo$/m, 'the terminal startHerdr makes without a parent');
+  assert.match(alone.calls, /^hc send claude claude go$/m);
+  assert.doesNotMatch(alone.out, /still waiting/, 'a late `session herdr --parent` finds no wait');
+  // The owner's side made it while the session's own run was on its way: theirs is the agent's.
+  const raced = agentTerminalRun({ hcScript: WAITING_HC, env: { ...env, RUN_TAKEN: '1' }, body });
+  assert.match(raced.out, /Agent's terminal made by its parent \(parent: core1\/t4/);
+  assert.match(raced.calls, /^hc send claude claude go$/m);
+});
+
+test('startClaude types the agent at once, or once its parent made its terminal, in the background past statusd\'s start', () => {
+  const start = fn('startClaude');
+  assert.match(start, /if \[ -f "\$AGENT_TERMINAL_WAIT" \]; then\n\s+\( \{ awaitAgentTerminal && startAgent; \} & \)\n\s+else\n\s+startAgent\n\s+fi/,
+    'handed to the init: the shell becomes statusd, which reaps nothing');
+  assert.match(ENTRYPOINT, /^HERDR_PARENT_WAIT_SECONDS=300$/m, 'a constant: no per-session variable for the ECS launcher to drop');
+});
+
+test('while the agent\'s terminal is not there yet, the TUI tab says so and attaches once it is', () => {
+  assert.match(fn('startClaude'), /\[ ! -f "\$AGENT_TERMINAL_WAIT" \] \|\| attach=\(bash -c "\$TUI_WAIT_THEN_ATTACH"\)/);
+  const line = /^TUI_WAIT_THEN_ATTACH=(.*)$/m.exec(ENTRYPOINT)[1];
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-tui-wait-'));
+  try {
+    // hc that has the terminal once `made` exists, and records the attach.
+    fs.writeFileSync(path.join(tmp, 'hc'), `#!/bin/bash\ncase "$1" in get) [ -f ${tmp}/made ] ;; attach) echo "attached to $2" ;; esac\n`, { mode: 0o755 });
+    const script = `TUI_WAIT_THEN_ATTACH=${line}\n(sleep 1; touch ${tmp}/made) &\nbash -c "$TUI_WAIT_THEN_ATTACH"`;
+    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: `${tmp}:/usr/bin:/bin` } });
+    assert.match(out, /^Waiting for your Herdr to make the agent's terminal \(woodshed session new --herdr --parent\)\.\.\.\r\nattached to claude\n$/);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });

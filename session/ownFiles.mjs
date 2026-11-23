@@ -6,7 +6,7 @@
 //
 // The JSON file is deleted once read, whatever happens next: it holds the person's secrets.
 
-import { execFileSync } from 'node:child_process';
+import { runGit } from '../shared/git.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isMain } from '../shared/isMain.mjs';
@@ -14,7 +14,7 @@ import { ownFilePathProblem } from '../shared/ownFiles.mjs';
 
 function git(repoDir, args) {
   try {
-    execFileSync('git', ['-C', repoDir, ...args], { stdio: 'ignore' });
+    runGit(repoDir, args, { stdio: 'ignore' });
     return true;
   } catch {
     return false;

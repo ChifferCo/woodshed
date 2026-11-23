@@ -357,7 +357,15 @@ with **Project**, the repo the session works on. With one project it only names 
 can write to (`console/projectAccess.mjs`; GitHub is asked once every 10 minutes per person
 and project, so a person just given write access waits up to 10 minutes for it to show), opening on your default, marked **— your default**. **Make my default** beside
 another one saves it (`POST /api/my/projects/default`, kept per person in `viewPrefs`), as does
-the **My default project** row on My settings, saved as it is picked; `?project=<name>` picks one for that visit. Resume asks again, so a session on a project whose repo you can no longer write
+the **My default project** row on My settings, saved as it is picked; `?project=<name>` picks one for that visit.
+The **Agent terminal** row beside it picks what your private sessions run claude or codex in, saved as it is picked
+(`POST /api/my/terminal {"terminal": "tmux"|"herdr"}`, kept per person with the Reviews choice, `userSettings: terminal
+changed` in the log): **tmux**, the default, or **Herdr**, the session image's pinned herdr-core, whose terminal the
+TUI tab attaches to and your own Herdr can too (session/README.md, "What a container does"). It reaches your next
+private session in the session API's `/settings` answer (`terminal`); shared sessions, reviews, QA runs and questions
+are in tmux whatever it says. `woodshed session new --herdr --parent` sends `herdrParent: true` with the start (and
+`session herdr <id> --parent` with the resume), for that run alone: the session runs in Herdr and waits for its agent's
+terminal from the person's own (`WOODSHED_HERDR_PARENT`; session/README.md). Resume asks again, so a session on a project whose repo you can no longer write
 to does not start (403). The form
 asks for a prompt and, optionally, the rest below. It asks for no name: the session starts named after the prompt's
 first line, and the console asks Claude Haiku for a better one on the team's Anthropic key (`console/autoName.mjs`).
@@ -576,13 +584,34 @@ conversation.
 (`session/settingsSync.mjs`): `settings.json`, `CLAUDE.md`, `keybindings.json`,
 `agents/`, `commands/` and `skills/` under `~/.claude`, your MCP logins (the
 `mcpOAuth` entries of `~/.claude/.credentials.json`) and your user-scope MCP
-servers (the `mcpServers` entries of `~/.claude.json`). Every 20 seconds
+servers (the `mcpServers` entries of `~/.claude.json`); codex's `config.toml`,
+`AGENTS.md`, `prompts/` and `skills/` under `~/.codex` (never `auth.json`, nor
+codex's own `skills/.system`); and the plugins you installed for your whole
+home. Every 20 seconds
 statusd sends the session API (`POST /claude-settings`) what changed in that
 session and gets back what your other sessions changed, which the console
 merges item by item and keeps as `<login>/claude-settings.json` in the same
 bucket. A new or resumed session applies the latest before claude starts, over
 whatever its home held. Transcripts and the rest of claude's state stay each
-session's own.
+session's own. Your computer joins the same copy with `woodshed settings`
+(cli/README.md, "Settings").
+- **Codex:** each session keeps the folders it trusts (`[projects."…"]` in
+  `config.toml`) and any entry holding a credential (an MCP server's key) out of
+  what it sends, and its own in what it writes (`shared/codexConfig.mjs`), so its
+  checkout stays trusted and a key stays where it was typed. The console refuses
+  a `config.toml` holding a credential, and a plugin's marketplace beyond what a
+  session can add: it logs `sessionApi: shared Claude settings refused` (or
+  `cliSettings: refused`) with the reason. The session's rules win over
+  your `AGENTS.md`: codex reads `AGENTS.override.md` in its place, which the
+  start writes as the rules followed by your `AGENTS.md`, left as it is.
+  Synced changes to `AGENTS.md` reach Codex's instructions the next time the Woodshed session starts.
+- **Plugins** go as their name and marketplace (`installed_plugins.json#plugins/<name@marketplace>`),
+  never their files: a new session installs each its home lacks before claude
+  starts (`session/syncedPlugins.mjs`), adding the marketplace first, logged as
+  `Plugins from your other sessions installed`. Each is offered once, in the
+  default plugins' list, so one you uninstalled or turned off in a session is
+  not put back. A plugin installed for one repo alone, or from a marketplace
+  that is a folder, a pinned ref or a URL with a sign-in, stays where it is.
 - **When claude sees a change:** the files change on disk within 20 seconds.
   Claude Code reloads `settings.json`, keybindings, skills and agents while it
   runs; `CLAUDE.md` and the MCP servers it reads as it starts, so a running
@@ -599,6 +628,18 @@ session's own.
   session's own, and a file over 1 MB is not sent: your other sessions keep the
   last version that was. Forget it and Remove My Woodshed delete
   the shared copy with your homes.
+- **From your computer:** `woodshed settings push` sends your laptop's items into the same copy, and `pull` writes
+  the copy's into your laptop (cli/README.md, "Settings"), through `GET/POST /api/cli/settings` with the command
+  line's token (`cliSettings.mjs`). A computer never sends or gets an MCP login, and never removes an item. Claude MCP server
+  definitions pushed from a computer are kept in the same stored settings object in a map only the CLI can read. They
+  take precedence on computers if a session has saved the same server name. The session API returns only the session's
+  copy. Codex MCP server definitions from a computer stay on that computer. A model or other Codex setting pushed from
+  a computer keeps the session copy's existing MCP definitions. Admin-configured MCPs reach sessions through the
+  relay. The console logs `cliSettings: pushed` with the token's
+  id and the counts, `cliSettings: refused` when the copy exceeds 5 MB or an MCP definition or hook has a literal header, and
+  `cliSettings: refused, a removal from a computer` or
+  `MCP logins from a computer` for a client other than the command line's. `--own-files` saves into your own files on My settings
+  through the Repo settings routes, with their checks and log lines.
 
 **Resume**, on a stopped private session's rail card or page, starts the same
 session again, with its page, branch and options, and runs
@@ -627,9 +668,16 @@ handed out):
 - The entrypoint still writes the session's own lines last (the databases, Redis, ports and URLs, listed on the page),
   so those always win. A running session keeps the files it started with.
 
-**tmux**, on My settings, adds your own lines to `~/.tmux.conf`, after the session image's `tmux.conf`, so a setting in
-both uses yours. Saving keeps them at `<prefix>/users/<login>/tmux-conf`; **Clear mine**, or saving nothing, deletes
-them. `/api/my/files/tmux-conf` is its route; your own lines for the env files are Repo settings, above.
+**tmux and dotfiles.** **tmux**, on My settings, adds your own lines to `~/.tmux.conf`, after the session image's
+`tmux.conf`, so a setting in both uses yours. Saving keeps them at `<prefix>/users/<login>/tmux-conf`; **Clear mine**, or
+saving nothing, deletes them. `/api/my/files/tmux-conf` is its route; your own lines for the env files are Repo settings,
+above. **git**, **readline** and **Shell aliases** do the same for `~/.gitconfig`, `~/.inputrc` and `~/.bash_aliases`
+(`gitconfig`, `inputrc`, `bash-aliases`), written after what the session sets in your private sessions only, and hold
+less than those files can (`shared/dotfiles.mjs`): git's aliases, colors and how diff, merge, pull, push and rebase
+behave, never `[user]`, `[credential]`, `[url]` or `[include]`, since a session commits as you and signs in to GitHub
+by itself; readline's lines; and `alias` lines alone, never an export or a command. Anything holding a credential is
+refused, saying which line and why (`userSettings: file refused` in the log, with the key). `woodshed settings push`
+fills them from your computer's files (cli/README.md, "Settings").
 
 **Your files**, in each repo's tab on Repo settings, are whole files of your own for that repo, by their path in it (an
 `app/.env.production` that your MCP servers read, a tool's local config), which every private session of yours on that
@@ -945,16 +993,45 @@ review only from an App that can write to the repo. Each review still goes out w
 A reviewer App made before it asked for contents needs it added in its settings on GitHub, then accepted on each
 installation.
 
+**Is it ready for a repo?** `GET /api/review-readiness?repo=<owner/name>` (`reviewReadiness.mjs`) says, for a repo the
+asker may start sessions on: the project, the console App's login, whether the reviewer App is made and installed on
+the repo (with its install link), what the default branch's project file says of `review`, `qa` and `runsOn`, and each
+missing step with who takes it (`missing: [{key, step, by}]`, keys `repo`, `reviewer-app`, `reviewer-installed`,
+`reviewer-installed-unknown` when its installation could not be read, and `runs-on` when the default branch's `runsOn`
+names another console, read as the fleet reads it, App and name). Of any other repo it says only that the console does
+not have it for them, and asks GitHub nothing more. Anyone signed in may read it, and so may the command line's token
+(`woodshed review enable` and `status`, cli/README.md, "Review"), as its person. Each call, a cookie's or a token's, is
+held to write access on the repo, asked of GitHub then (a command asks once), so a person who lost it reads nothing
+more of the repo, even with a cookie sign-in has not rechecked yet (`reviewReadiness: refused, no write access to the
+repo`). A token's call that carries an Origin is a page's, and is
+refused. A hosting program's proxy passes it through
+when it carries `Authorization: Bearer wsc_…`, as it does `/api/cli/*`. A host's reviewer App may give
+`installedOn(repo)`; without it, whether it is installed is `null`. It logs `reviewReadiness: reviewer App
+installation not read` when GitHub did not answer.
+
+**On by default.** Every repo the console has is reviewed in a session, with nothing to turn on or commit: where the
+project file the console reads names no `pullRequests.review` (or there is no file), the console runs by
+`console/defaultReview.mjs`'s review, `runner: woodshed` on a commit whose message has `[woodshed-review]`, added by
+`reviewGatesOf` in `installation.mjs` (the fleet's `reviewGates`). It only starts reviews: what a pull request waits for,
+its Slack post and QA, stays the file's alone, so a repo whose file names no review posts once out of draft and green,
+as before, whatever a default review said. `woodshed review start` (`reviewOnDemand`) runs by it too. The file's own
+`review`, on any runner, wins; it is where a team reviews every commit, uses another tag, or adds QA (`woodshed review
+enable`). The default is the review alone: `suites`, `qa`, `mergeRisk` and `runsOn` stay the file's. Each coding session
+is told the tag in `WOODSHED_REVIEW_TAG` (fleet.mjs, decided at each start), which its rules use when its checkout's file
+names none, so the pull requests sessions open carry it. Someone who wants no review of their own pull requests picks
+none on My settings ("Who reviews"). `GET /api/review-readiness`
+says what runs in `review` (`{runner, rerun, from}`, `from` being `project file` or `default`).
+
 At each verdict the console finds the reviewer App's installation on the repo, mints a token narrowed to pull requests,
 and submits the review at the reviewed commit. It logs `fleet: review verdict submitted` with `as: 'reviewer App'`, or
 `as: 'console App'` when no reviewer App was made, in which case GitHub refuses an approval of the App's own pull
 requests.
 
-### The review in a session, as in Actions
+### The review in a session
 
-A review session does what `review.yml` does, so a repo can move from one to the other without losing anything. Its
-prompt (`shared/codeReview/prompt.txt`) is the workflow's word for word, apart from paths, and a test fails when they
-part. The session cannot write to GitHub, so it writes files and the console posts them:
+The session and the reusable Actions workflow share the common review instructions. The session prompt
+(`shared/codeReview/prompt.txt`) has its own verdict and merge-risk criteria. The session writes files for the
+console to post to GitHub:
 
 - **Inline comments** (`inline-comments.json`) go on the diff's lines with the verdict. GitHub refuses a whole review
   when one comment is on a line the diff does not show, so the console then submits the verdict with the comments in
@@ -993,7 +1070,9 @@ review that runs on it later clears the skip.
 
 The two verdicts become one (`codeReview.mjs merge`):
 
-- The stricter conclusion and the higher merge risk win, so a pull request is approved only when both approve.
+- The stricter conclusion wins, so a pull request is approved only when both approve.
+- The highest reported merge risk wins. When both rate it High, the check prefers a report with a failure reason
+  and a pre-merge check.
 - The comment and summary have a section from each, and each inline comment says whose it is.
 - An earlier comment is resolved when the reviewer who wrote it (its `**Claude Code:**` or `**Codex:**`, read from the
   comment records `review.sh` keeps in `earlier-comments.jsonl`) found it fixed;
@@ -1047,6 +1126,21 @@ The console logs:
 In the session's pane: `Codex reviews on the author's ChatGPT login, which the console adds to its calls` or `on a key
 the console adds to its calls`, then `Codex ended (exit=…)`, and `Codex took longer than … minutes and was stopped`
 when it did. Codex's own log is at `.review/logs/codex.jsonl`.
+
+**A review asked for by hand.** `woodshed review start` (cli/README.md, "Reviewing your open pull requests now", and
+`woodshed setup`'s last review step) calls `POST /api/my/pulls/<number>/review` with the project's name, which the
+command line's token reaches (cliSessions.mjs). The project must be one the person may start sessions on, which asks
+GitHub for their write access to its repo (projectAccess.mjs), and the fleet's `reviewOnDemand` then starts the same
+review session a tagged commit does (`startReview`), on the pull request's head as it is, tag or not. It runs by the
+review the fleet's gates carry: the project file's, or every repo's default where the file names none. It refuses
+(`fleet: review asked for, refused` with the `reason`): 409 where the project file itself chooses another runner for
+its review (`runs its review in GitHub Actions`), or its `pullRequests.runsOn` names another console, 403 a pull request whose author (or, for one a session opened, that session's starter) is
+someone else, since the review runs on the author's sign-ins and choice, 409 one closed or a draft, and 409 with
+`startReview`'s own reason (a review running on an older commit, the author chose no review), and 409 while another ask
+for the same pull request, or a tagged commit's review of it, is still starting (one guard for both, so they start
+one session). A head commit a review session is reviewing, or gave its verdict on,
+answers 200 with that session instead of starting another; one whose review failed, stopped with no verdict, or whose
+verdict GitHub did not take (`review.posted` false) may be asked again. A new one answers 201 (`fleet: review asked for` with the `outcome` and its `id`).
 
 ### The approval waits for QA
 
@@ -1444,8 +1538,10 @@ with them beside `WOODSHED_REQUIRE_SIGN_IN`, a hosting proxy, a host past loopba
 
 ### Sharing the app
 
-A My Woodshed session's app is its owner's alone, as the session is. **Share the app…** in the session's ⋯ menu lets
-the owner open it to more people. Only the app: the terminal, Review, the Redis and database viewers, Start/Stop and
+A My Woodshed session's app is its owner's alone, as the session is. **Share**, beside the app's button in the
+session's pane bar (**Share the app…** in its ⋯ on a phone or a narrow window, and in the palette's actions for it),
+lets the owner open it to more people. While members or a live link can open the app the button reads **Shared**, its
+title saying who. Only the app: the terminal, Review, the Redis and database viewers, Start/Stop and
 the share controls themselves stay owner-only (`canOpenApp` in `server.mjs` adds to `canOpen` for the app's name and
 nothing else, and the proxy hands the app's path only the session's status port and token). The owner chooses the
 audience each time, and either can be turned off:
@@ -1456,7 +1552,15 @@ audience each time, and either can be turned off:
   an expiry (1 hour to 7 days) and gets `https://<id>.woodshed.example.com/__woodshed/share?t=<token>`, shown once.
   Opening it trades the token for a `__Host-woodshed_view` cookie for that one app and redirects to `/`, so the token
   leaves the address bar. The cookie holds the same token and every request checks it again, so **Revoke**, the expiry
-  and the session stopping end access at once, websockets included. A session has at most ten links.
+  and the session stopping end access at once, websockets included. A session has at most ten links. The owner may
+  name a page of the app for a link to land on (`{"path": "/landing-a"}`, which adds `&next=/landing-a`): after the
+  trade it redirects there rather than to `/`. `shareNext` in `appShares.mjs` keeps it to a path on the app's own
+  name, never another site's (`//host`, `/\host`, a scheme) nor the console's `/__woodshed/` paths, and a `next` added
+  by hand that is not one lands on `/`.
+
+The command line does the same with `woodshed session app <id> share` (cli/README.md, "Sharing a session's app"): the four
+routes take its token through `cliSessions.mjs`'s gate and answer as the page's, by the same code, owner and private
+session only, refused once it has seen production data.
 
 `state.json` keeps `appShares` (the switch, and for each link its id, a SHA-256 of the secret, who made it and when it
 ends), never a token. A session that is no longer active loses all its shares at the console's next tick, so a
@@ -1489,6 +1593,98 @@ answers none of these, and the app signs in inside its window there, unless the 
 ("Embedding the console": `handleDesktopSignIn` with its own sign-in). The ready answer's `signInPaths` are the paths the
 console's pages sign in at (`/auth/start` here), which the app sends to the browser. The console logs `auth: desktop sign-in code
 issued`, `auth: desktop signed in`, or `auth: desktop sign-in code refused` with `known` and `verified`.
+
+**The woodshed command line** (`cli/`) signs in by a device code (`console/cliSignIn.mjs`), as `gh auth login` does.
+`woodshed login` asks `POST /api/cli/device` for a code, prints it, and opens `/cli?code=` in the browser, which signs in
+as usual if it has to, then asks **Sign in the woodshed command line?**, naming the computer, the code and when it was
+asked. Only that page's button, a form POST from the console's own page (Origin checked, never framed),
+approves it; Deny refuses it. The CLI asks `POST /api/cli/token` every 5 seconds meanwhile, and gets its token once.
+`woodshed setup` uses `login --no-wait` to return the approval link immediately and collect the result on the next run.
+`GET /api/cli/me` reports `sessionSignIns`, one boolean per personal agent sign-in of the CLI token's owner.
+The device-flow POST routes (`/api/cli/device` and `/api/cli/token`) refuse a call with an Origin header, so no web page
+starts a sign-in to hand someone the link of. The code lasts 10 minutes. The token (`wsc_…`) is its own kind, not the
+database tunnel's: one per computer, 90 days, sent as `Authorization: Bearer`. Besides `/api/cli/*` (including
+`/api/cli/settings` for shared Claude settings and own files) and
+`/api/tunnel/exec/*` the token signs in to the routes listed in `console/cliSessions.mjs`. For `woodshed session` these
+are `GET /api/sessions`, `GET /api/my/projects`,
+`POST /api/my/sessions`, `POST /api/my/sessions/<id>/resume|remove`, `POST /api/sessions/<id>/stop|extend|limits` and
+`POST /api/sessions/<id>/app/start|stop` (Start app and Stop app; Set up app stays the page's),
+while `woodshed review` uses `GET /api/review-readiness` ("The reviewer App"). For `woodshed config`
+(`console/cliConfig.mjs`), `GET /api/cli/config` returns the person's choices on My settings and
+never a secret, and `POST /api/my/terminal`, `/api/my/reviews`, `/api/my/codex-auth/reviews`,
+`/api/my/claude-token/shared`, `/api/my/projects/default` and `/api/my/github/identity`, which answer the token with
+that same view rather than the page's whole My settings answer. Each is answered by the page's own code as the token's
+person, so it sees and changes exactly what they could on the page.
+Every other route refuses it with 403, and so do those for a call with an Origin header (a page's). Those writes need no
+`x-woodshed` header or Origin, which only stand between another site and the browser's cookie; each logs
+`cliSessions: call` with the login, the token's id and the path, and a refusal `cliSessions: refused, not a route the
+command line may call`. Like a browser's sign-in, its person must still have write access on GitHub, asked at the
+token's first use and then hourly by the one check every call with a token goes through (`authenticate` in
+`cliSignIn.mjs`: `/api/cli/me`, `/api/cli/logout`, these routes and the pipe into a session alike): when GitHub says no,
+every command line sign-in of theirs ends (`cliSignIn: refused, write access gone`), and a `woodshed logout` that finds
+it so answers that the token ended, as it asked. GitHub not answering lets the call through and is asked again 5
+minutes later (`cliSignIn: write access not rechecked`). A session a terminal is connected to is not kept awake by it: `woodshed session extend` and
+`limits` ask for more time, as Extend and the session's own Pause and stop do on its page. The console
+keeps only its SHA-256, in `state.json` under `cliTokens`, and My settings' Command line row lists each computer with
+Revoke. Remove My Woodshed, People's Remove and leaving a hosting program's list end them all. The console logs
+`cliSignIn: sign-in started`, `sign-in approved` or `denied`, `token made`, `token revoked` with `by`, and `refused, a
+browser's call` or `refused, the token's person is no longer a member`.
+
+Starting a sign-in needs no identity, so at most 5 may wait from one client address (an IPv6 one counted by its /64),
+and 200 on the console as a backstop: one client filling its share leaves the rest to everyone else. Past either,
+`/api/cli/device` answers 429 with `Retry-After`, the seconds until the oldest of those waiting expires, and `scope`
+(`client` or `console`). A code stops counting once it is collected, or denied in the browser (a denied one is kept for its CLI's next
+poll, at most 200 of them, the oldest dropped first). The console logs `cliSignIn:
+sign-in refused, too many waiting` at most once a minute for each `scope`, with how many it `refused` since (from any
+address) and `lastFrom`, the address of the one that wrote the line. The client's address is the socket's, or, when that is a trusted
+proxy, the last entry of `X-Forwarded-For` that no trusted proxy wrote (`console/clientAddress.mjs`). Caddy writes the
+address it saw there and drops what the client sent, and the console's own Caddy (AWS's base box,
+providers/local/README.md) and Tailscale's serve reach it from loopback, which is trusted by default. A proxy that reaches
+the console from another address (Caddy in a container of its own, a load balancer) is listed in
+`WOODSHED_TRUSTED_PROXIES`; until it is, every client behind it is one address. The header from anyone else is ignored,
+so nobody makes up an address to get more places.
+
+**Into a session from the command line**: `woodshed tunnel <id> -- <line>` (cli/README.md) is one request,
+`/api/tunnel/exec/<id>` with `Upgrade: woodshed-tunnel`, that token, and the line base64'd in `x-woodshed-exec`
+(`console/execPipe.mjs`). The console checks, as it opens and every 15 seconds after, that the token is live and its
+person still on People with write access (`authenticate`, above), that the session is running and is theirs (a My Woodshed session's owner: shares come later),
+and that it is not tainted or being locked down; then it sends the request to the session's statusd `/exec` with the
+session's token in place of the person's, as it reaches statusd for the viewers, and copies bytes both ways once statusd
+answers 101. statusd runs `sh -c <line>` as the session's user in the checkout, without `SESSION_TOKEN` or
+`TERMINAL_TOKEN` in its environment, in a process group of its own. Both ways are framed (`session/execPipe.mjs`,
+`shared/execFrames.mjs`): stdin and its end in, stdout, stderr and the exit code out. stdin's end is a frame, so Caddy
+never carries a half-closed connection, and a connection that ends early is a disconnect, which hangs up the line's
+whole process group. `pipe()` on both hops, and each end pausing on a full buffer, hold a slow side back end to end. Revoking the token (My settings, `woodshed logout`, Remove My Woodshed, People's Remove, leaving a
+hosting program's list) closes its pipes at once, and so does a session's lockdown starting (`fleet.onLocking`). A
+pipe is not activity: the session pauses when idle as it does without one, which ends it: keeping a session up is
+done explicitly (its Extend), never by holding a pipe open. Nothing new is open: it is the console's port, through Caddy, and statusd's,
+which the console already reaches. The console logs `execPipe: opened` with who, the session, the token's id and the
+computer, `execPipe: closed` with its seconds, bytes and `why`, `execPipe: refused` with `why` (`not theirs`,
+`tainted`, `not running`), `refused, no valid token`, `refused by the session` with statusd's status, and `session
+unreachable`; statusd logs `statusd: exec opened` with the line's length (never the line) and `exec closed` with its
+exit code.
+
+**A terminal from the command line**: `woodshed session connect <id> [--shell]` (cli/README.md) is a websocket,
+`/api/tunnel/term/<id>` (the TUI tab's terminal, the agent's) or `/api/tunnel/shell/<id>` (the Terminal tab's shell),
+with the same token and the size it opens at in `x-woodshed-terminal-size` (`<columns>x<rows>`). The console checks it
+as it does a pipe, as it opens and every 15 seconds after, and closes it on the same revokes and lockdown. It sends it
+on to the session's ttyd for that tab with ttyd's credential in place of the person's token, as `terminalProxy.mjs`
+does the page's. ttyd 1.7.7 also wants its credential in the terminal's first message, which a page reads from ttyd's
+`/token`: the console sends that message itself, with the size asked for, so `TERMINAL_TOKEN` never leaves it. No
+compression is asked for. Then it copies bytes both ways. The log lines are the pipe's, with `kind` (`term` or
+`shell`; `exec` for a pipe). It is the same terminal as the tab's: the agent's tmux or Herdr terminal, or the shell's
+tmux, so what is typed in one shows in the other.
+
+**A review from the command line**: `woodshed review <id>` (cli/README.md) makes the Review tab's own calls,
+`/reviews/claude-<id>/...`, with the command line's token in place of the browser's sign-in, and no Origin. The review
+proxy's `forCli` (`reviewProxy.mjs`) checks the token with cliSignIn's `authenticate` (live, its person on People with
+write access), then lets through only a running session of that person's own: never a question from Slack, a shared
+session, one that has seen production data or is being locked down (409), nor the page itself (`/review`). It forwards
+as the page's calls are, with the session's token in place of the person's; what the review may write to GitHub stays
+the session's rule. The console logs `console: review call from the command line` for each write, with who, the
+token's id, the session and the path, and `console: review call from the command line refused` with `why` (`not
+theirs`, `tainted`, `no valid token`, `a browser's call`). `woodshed session list` reads `GET /api/my/pulls` with the
+same token (cliSessions.mjs), for the person's open pull requests with no session.
 
 **A console with no repo yet** (neither `WOODSHED_REPO` nor `WOODSHED_PROJECTS`, and nothing added on the
 Repos card) has no repository to ask about. It lets in the owner of the account its GitHub App is installed on: that
@@ -1789,11 +1985,29 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   the browser is signed in as, `desktopCode` issues a code for them when they press Sign in, `claimDesktopCode` makes
   the app a session of the program's), the codes from `createDesktopCodes` (`auth.mjs`), and `signInUrl(back)` and
   `signInPaths` for the program's sign-in page.
+- The command line's routes are core's own (`cliSignIn.mjs`): `/cli` is behind the program's sign-in like any page, and
+  `/api/cli/*` carries its own token in `Authorization`, so the program's proxy passes those through without its
+  sign-in, as it does `/api/tunnel/*`. When a request carries `Authorization: Bearer wsc_…`, also pass through the
+  session routes listed in `cliSessions.mjs` and the six settings writes listed in `cliConfig.mjs`. The console checks
+  the token itself and refuses it on other routes.
+- `cliDevices`, from `createCliDevices()` (`cliSignIn.mjs`): for a program serving several installations at one address,
+  one waiting room for the command line's sign-ins that it gives them all. `POST /api/cli/device` and `/api/cli/token`
+  carry no sign-in, so the program answers them itself, with `handleCliApi` and a `createCliSignIn` on that same room;
+  the installation whose `/cli` page the person approves the code on makes the token, in its own state and checked by
+  its own `allowed`, when the command line next asks, and the token's answer says that installation's `about`. The
+  page names the org it signs in to, and asks again if the browser has moved to another installation since it showed,
+  told by the installation's own id (`cli.id`), so two with the same name and org are still told apart.
+  Every later call carries the token: `inst.cli.owns(headers)` says which installation holds it (no check of `allowed`,
+  nothing written), and the program sends the request there, which answers or refuses it as its own. A program that
+  answers `GET /api/cli/me` itself passes the installation's `sessionSignIns` to `handleCliApi`: without it the answer
+  has none, and `woodshed setup` cannot tell whether Claude Code and Codex are connected.
 - `repos: {list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`: where the program keeps the
   installation's repos, which it built `config.projects` from, so Console settings' Repos card changes them there and
   core keeps no list of its own (`addedProjects`, above under the Repos card). `list` answers what Add a repo offers:
-  `{repos: [{repo, private}] (or owner/name strings), grant: [{account, href}], install}`, the links `https://` only,
-  less the projects (core takes those out). `add` checks the repo, keeps it, and answers the project as the program
+  `{repos: [{repo, private}] (or owner/name strings), grant: [{account, href}], install, complete?}`, the links
+  `https://` only. Core takes connected repos out of the Add a repo picker. Set `complete: true` only when the list
+  includes every repo the App can reach, including connected ones. The CLI can then tell when a repo has lost access.
+  `add` checks the repo, keeps it, and answers the project as the program
   named it, `{name, repo}`; `remove` takes one off. Either throws an error with `shown: true` (and `link: {href, text}`
   where the fix is a page, such as giving the GitHub App access) for a refusal the page shows as it is; core refuses
   the default project, a repo with sessions on it, and a repo or name already there before it asks. `names: false` when
@@ -1812,7 +2026,10 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   cannot ask GitHub about itself. `login()` answers its `<slug>[bot]` (or null while unknown), asked each time, so the
   console trusts its comments, the QA label it adds (`qa.autoLabel`) and a review session's PR comment as that App's.
   `reviewer` is the program's reviewer App: `{login(), configured(), submitReview({repo, number, event, body, sha,
-  comments})}`, as `reviewerApp.mjs`'s, through which review sessions' verdicts are submitted and trusted. Without it
+  comments})}`, as `reviewerApp.mjs`'s, through which review sessions' verdicts are submitted and trusted. Give it
+  `installedOn(repo)` (true or false, throwing when GitHub fails) and `view()` (`{installUrl}`) too: without them
+  `woodshed setup` and `woodshed review status` say of every repo that the console cannot tell whether it is
+  installed (`reviewer-installed-unknown`), with no install link and nothing logged. Without a `reviewer`,
   no verdict counts (above, "The reviewer App"), and the console offers no reviewer App setup of its own. Logged as
   `console: GitHub App from the host`.
 - `mcpServers: {list(), save({server, by}), remove({name, by})}`: where the program keeps the MCP servers sessions get
@@ -2389,6 +2606,13 @@ name field. The change applies to the installation at once, until the program bu
 program's refusal is shown under the field with its link, and a failure that is not a refusal answers `The change failed;
 the console log says why`.
 
+`woodshed repo` uses `GET /api/cli/repos` to list, `POST /api/cli/repos` with `{repo, name?}` to add, and
+`POST /api/cli/repos/remove` with `{repo}` to remove. Each authenticates the `wsc_` token and refuses any `Origin`
+header. The add and remove go through the same project code as the Repos card, including the hosting program's `repos`
+hook and the usual settings cleanup on remove. Hosted CLI requests check current membership and role when the host
+supplies the `members` hook. Hosted changes require a verified owner role. Other signed-in members see only the
+repos they can start sessions on.
+
 Each repo on the card has a row of six colours, its colour on the rail (`public/projectColors.cjs` holds the palette and
 the rule, for the server and the pages alike). A pick is saved at once (`POST /api/console-settings/projects/color`,
 `{"name", "color"}`), checked against the palette, and refused when another repo has that colour, whose swatch is
@@ -2523,6 +2747,7 @@ Remove My Woodshed.
 | `WOODSHED_ONE_PERSON` | tells by itself | `1`: one person uses this console, so the rail shows one list of every session with no Mine \| Everyone switch; `0`: always the two views. Unset, a console nobody signs in to or with one member on People is one person's. Hosted mode has no People list, so its host sets it. See "Hosted mode" |
 | `WOODSHED_LOCAL_LOGIN` | `local` | The handle a local console with no sign-in gives the person using it, so My settings (their Claude token, private sessions) works there. Ignored with a GitHub App or on AWS |
 | `WOODSHED_REQUIRE_SIGN_IN` | off | `1` requires GitHub sign-in on every route from the start, with or without a client secret. Set on the base box |
+| `WOODSHED_TRUSTED_PROXIES` | loopback (`127.0.0.0/8, ::1`) | The proxies whose `X-Forwarded-For` names a request's client, for limits kept per client (the command line's waiting sign-ins, "Sign-in"): addresses or CIDR ranges, comma-separated, replacing loopback, which must then be listed itself if it is still wanted; `none` trusts no proxy. A value that is not one stops the console at start (`clientAddress.mjs`). List only what reaches the console in front of everyone else: a proxy listed here can name any client |
 | `WOODSHED_TRUSTED_IDENTITY_SECRET` | none | Hosted mode: the secret a trusted proxy in front of the console signs each request's `X-Woodshed-Identity` header with, at least 32 characters. Set, that header is the only sign-in, and it is required; `role: owner` is an admin. See "Hosted mode" |
 | `WOODSHED_GITHUB_BROKER_URL`, `_GITHUB_BROKER_TOKEN_FILE` | none | Hosted mode: where the console asks its host for every installation token, and a file holding the bearer it asks with. Both or neither, and never with `WOODSHED_GITHUB_APP_ID`. See "Hosted mode" |
 | `WOODSHED_SUPERVISED` | on under systemd, else off | `1` says something starts the console again when it exits (a container with a restart policy), so the GitHub App setup page offers Restart; `0` says nothing does, even under systemd. See "Setting up the GitHub App from the console" |

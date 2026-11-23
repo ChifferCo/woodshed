@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
 import { AGENT_PANE_FORMAT, sendNotAfter, sendWithinMs, stillThePull, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps, typeableText } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
@@ -192,7 +193,7 @@ test('statusd forwards the Redis, Postgres, Mongo and editor paths with the toke
   await fs.writeFile(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ env: { REDIS_URL: 'redis://127.0.0.1:6379' }, editor: true }));
   const child = spawn(process.execPath, [fileURLToPath(new URL('./statusd.mjs', import.meta.url))], {
     env: {
-      ...process.env, SESSION_TOKEN: 'sess', STATUSD_PORT: String(port), REPO_DIR: repo, REDIS_VIEWER_PORT: String(viewerPort),
+      ...isolatedEnv(), SESSION_TOKEN: 'sess', STATUSD_PORT: String(port), REPO_DIR: repo, REDIS_VIEWER_PORT: String(viewerPort),
       PG_VIEWER_PORT: String(viewerPort), MONGO_VIEWER_PORT: String(viewerPort), MONGO_COPY_VIEWER_PORT: String(viewerPort),
       CODE_EDITOR_PORT: String(viewerPort),
     },
@@ -265,7 +266,7 @@ async function statusdWithApp(t, { app = true, project = {}, env = {} } = {}) {
   await git('commit', '-q', '--allow-empty', '-m', 'init');
   const port = await freePort();
   const child = spawn(process.execPath, [fileURLToPath(new URL('./statusd.mjs', import.meta.url))], {
-    env: { ...process.env, SESSION_TOKEN: 'sess', STATUSD_PORT: String(port), REPO_DIR: repo, APP_PORT: String(await freePort()), APP_API_PORT: String(await freePort()), ...env },
+    env: { ...isolatedEnv(), SESSION_TOKEN: 'sess', STATUSD_PORT: String(port), REPO_DIR: repo, APP_PORT: String(await freePort()), APP_API_PORT: String(await freePort()), ...env },
     stdio: ['ignore', 'pipe', 'inherit'],
   });
   t.after(() => child.kill());
@@ -591,6 +592,38 @@ function upgradeThrough({ token, headers }) {
   });
 }
 
+// One raw upgrade to statusd's handleUpgrade at `path`, and what came back before it closed.
+function rawUpgradeTo(path, headers, { port = null } = {}) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer();
+    server.on('upgrade', (req, socket, head) => handleUpgrade(req, socket, head, { token: 'tok', port }));
+    server.listen(0, '127.0.0.1', () => {
+      const client = net.connect(server.address().port, '127.0.0.1', () => {
+        const lines = [`GET ${path} HTTP/1.1`, 'Host: statusd', 'Connection: Upgrade', ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`)];
+        client.write(`${lines.join('\r\n')}\r\n\r\n`);
+      });
+      let got = Buffer.alloc(0);
+      client.on('data', (chunk) => { got = Buffer.concat([got, chunk]); });
+      client.on('close', () => {
+        server.close();
+        resolve(got);
+      });
+      client.on('error', reject);
+    });
+  });
+}
+
+test('handleUpgrade sends /exec, with the session token, to the exec pipe, and never an app\'s request', async () => {
+  const line = Buffer.from('echo routed').toString('base64');
+  const exec = { upgrade: 'woodshed-tunnel', 'x-woodshed-exec': line };
+  const ran = await rawUpgradeTo('/exec', { ...exec, authorization: 'Bearer tok' });
+  assert.match(ran.toString('latin1'), /^HTTP\/1\.1 101/);
+  assert.ok(ran.includes(Buffer.from('routed\n')), 'the line ran');
+  assert.match((await rawUpgradeTo('/exec', { ...exec, authorization: 'Bearer wrong' })).toString(), /^HTTP\/1\.1 401/);
+  // An app's request carries the token in x-woodshed-app: it goes to the app, here none (503), never to the pipe.
+  assert.match((await rawUpgradeTo('/exec', { ...exec, 'x-woodshed-app': 'Bearer tok' })).toString(), /^HTTP\/1\.1 503/);
+});
+
 test('handleUpgrade passes an app websocket through without the session token, and refuses one without it', async () => {
   const through = await upgradeThrough({ token: 'tok', headers: { 'x-woodshed-app': 'Bearer tok', authorization: 'Bearer app-token' } });
   assert.match(through, /^HTTP\/1\.1 101/);
@@ -694,7 +727,7 @@ test('handleUpgrade passes the editor\'s websocket through with the statusd toke
 test('Sign in for Remote Control types /woodshed:remote-control into claude, or woodshed-login at the Terminal tab without the command', async (t) => {
   // A tmux server of the test's own, never the session's: claude's pane and the Terminal tab's keep what is typed.
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-login-'));
-  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmuxEnv = { ...isolatedEnv(), TMUX: '', TMUX_TMPDIR: dir };
   const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
   t.after(async () => {
     await tmux('kill-server').catch(() => {});
@@ -737,7 +770,7 @@ test('Sign in for Remote Control types /woodshed:remote-control into claude, or 
 
 test('POST /interrupt sends Esc to the agent\'s pane, which ends its turn, with the token only', async (t) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-interrupt-'));
-  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmuxEnv = { ...isolatedEnv(), TMUX: '', TMUX_TMPDIR: dir };
   const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
   t.after(async () => {
     await tmux('kill-server').catch(() => {});
@@ -775,7 +808,7 @@ test('parseAnswerBody takes a question\'s picks or an approval\'s decision, and 
 // and types as in a session: what it picked is written to a file once the picker closes.
 async function pickerPane(t, spec) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-answer-'));
-  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmuxEnv = { ...isolatedEnv(), TMUX: '', TMUX_TMPDIR: dir };
   const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
   t.after(async () => {
     await tmux('kill-server').catch(() => {});
@@ -912,7 +945,7 @@ const CLAUDE_IDLE = `\n\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m\n❯\u00a0\x1b[
 
 async function promptPane(t, state, { screen = CLAUDE_IDLE, menuOnInput = false, env = {}, asClaude = false, inShell = false } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-held-'));
-  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmuxEnv = { ...isolatedEnv(), TMUX: '', TMUX_TMPDIR: dir };
   const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
   t.after(async () => {
     await tmux('kill-server').catch(() => {});
@@ -1236,6 +1269,87 @@ test('a Chat message sent while the lockdown restarts claude is refused as busy,
   for (let i = 0; i < 50 && !(await got()).includes('during the restart'); i++) await new Promise((r) => setTimeout(r, 100));
   assert.equal((await got()).match(/during the restart/g)?.length, 1, 'once');
   assert.match(await fs.readFile(path.join(taintDir, 'tainted'), 'utf8'), /"at"/, 'the taint\'s files in the test\'s folder');
+});
+
+// A stand-in hc for a session whose claude runs in Herdr: its terminal `claude` is the test's own tmux pane of that name,
+// so the stand-in claude and the waits are the tmux test's. It answers what statusd's Herdr adapter calls (agentPane.mjs,
+// hcPane): get, read, keys and send, each with its options before `--`, and records every call.
+async function standInHc(dir) {
+  const file = path.join(dir, 'hc');
+  const calls = path.join(dir, 'hc-calls');
+  await fs.writeFile(file, `#!${process.execPath}
+const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const argv = process.argv.slice(2);
+const sep = argv.indexOf('--');
+const [command, options, [terminal, ...rest]] = [argv[0], argv.slice(1, sep), argv.slice(sep + 1)];
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify([command, ...options, '--', terminal, ...rest]) + '\\n');
+const tmux = (...args) => execFileSync('tmux', args, { encoding: 'utf8' });
+const KEYS = { enter: 'Enter', esc: 'Escape', up: 'Up', down: 'Down', space: 'Space', tab: 'Tab', backspace: 'BSpace' };
+if (command === 'get') {
+  const [pid, name] = tmux('display', '-p', '-t', terminal, '#{pane_pid} #{pane_current_command}').trim().split(' ');
+  console.log(JSON.stringify({ address: 't1', name: terminal, pid: Number(pid), status: null, foreground: { pid: 0, name, argv: [name], cwd: '' } }));
+} else if (command === 'read') {
+  console.log(JSON.stringify({ text: tmux('capture-pane', '-p', '-t', terminal), complete: true, how: 'screen' }));
+} else if (command === 'keys') {
+  tmux('send-keys', '-t', terminal, ...rest.map((k) => KEYS[k] ?? k.replace(/^ctrl\\+/, 'C-')));
+  console.log('{"turn":1}');
+} else if (command === 'send') {
+  tmux('send-keys', '-t', terminal, '-l', rest[0]);
+  tmux('send-keys', '-t', terminal, 'Enter');
+  console.log('{"turn":1}');
+} else {
+  process.exit(2);
+}
+`, { mode: 0o755 });
+  return { file, calls: async () => (await fs.readFile(calls, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) };
+}
+
+test('in Herdr, the lockdown stops claude, starts the locked-down one through hc, and a Chat message sent meanwhile goes in once', { skip: spawnSync('tmux', ['-V']).status !== 0 && 'no tmux here' }, async (t) => {
+  const taintDir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-taint-'));
+  t.after(() => fs.rm(taintDir, { recursive: true, force: true }));
+  const launcher = path.join(taintDir, 'claude-launch');
+  const flags = path.join(taintDir, 'flags');
+  const hc = await standInHc(taintDir);
+  const { call, tmux, got, program, script, stateFile, setState } = await promptPane(t, 'done', {
+    asClaude: true, inShell: true,
+    env: { WOODSHED_TERMINAL: 'herdr', WOODSHED_HC_BIN: hc.file, WOODSHED_TAINT_DIR: taintDir, WOODSHED_CLAUDE_BIN: launcher, WOODSHED_CLAUDE_FLAGS_FILE: flags },
+  });
+  const hook = (state) => `${process.execPath} -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({ state: process.argv[2], event: "x", at: Date.now(), shells: 0 }))' ${stateFile} ${state}`;
+  await fs.writeFile(launcher, `#!/bin/sh\n( sleep 1.5; ${hook('working')}; sleep 1.5; ${hook('done')} ) &\nexec ${program} ${script}\n`, { mode: 0o755 });
+  const send = () => call('POST', '/send', 'sess', JSON.stringify({ text: 'during the restart' }));
+  const paneCommand = async () => (await tmux('display', '-p', '-t', 'claude', '#{pane_current_command}')).stdout.trim();
+  const panePid = (await tmux('display', '-p', '-t', 'claude', '#{pane_pid}')).stdout.trim();
+  const oldClaude = Number(spawnSync('pgrep', ['-P', panePid], { encoding: 'utf8' }).stdout.trim().split('\n')[0]);
+  assert.ok(oldClaude > 0, 'the running claude, under the pane\'s shell');
+  await setState('done');
+
+  assert.deepEqual((await call('POST', '/taint', 'sess', '{}')).body, { tainted: true, egress: false });
+  for (let i = 0; i < 100 && (await paneCommand()) === 'claude'; i++) await new Promise((r) => setTimeout(r, 50));
+  const during = await send();
+  assert.deepEqual([during.status, during.body.why, during.body.busy], [409, 'typing', true], 'busy: the console holds it');
+
+  let answer = during;
+  const tries = [];
+  for (let i = 0; i < 60 && answer.status !== 200; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    answer = await send();
+    tries.push(answer.body.why ?? answer.status);
+  }
+  assert.equal(answer.status, 200, `typed in at last (tries: ${tries.join(', ')})`);
+  assert.equal(await paneCommand(), 'claude', 'into the new claude');
+  assert.throws(() => process.kill(oldClaude, 0), 'the old claude was stopped');
+  for (let i = 0; i < 50 && !(await got()).includes('during the restart'); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.equal((await got()).match(/during the restart/g)?.length, 1, 'once');
+
+  const calls = await hc.calls();
+  const sends = calls.filter((c) => c[0] === 'send').map((c) => c.at(-1));
+  assert.ok(calls.some((c) => c[0] === 'get' && c.at(-1) === 'claude'), 'the shell under claude, from hc');
+  const reopen = sends.find((text) => text.startsWith(`${launcher} `));
+  assert.ok(reopen, 'the locked-down claude started through hc');
+  assert.match(reopen, /"\$\(cat \S+message\.md\)"$/, 'with the lockdown\'s message');
+  assert.equal(sends.filter((text) => text === 'during the restart').length, 1, 'the Chat message through hc, once');
+  for (const c of calls) assert.ok(c.indexOf('--') > 0 && c.indexOf('--') < c.length - 1, `options before -- in ${JSON.stringify(c)}`);
 });
 
 test('POST /send with agentOnly types into a running agent and never into a shell, with the token only', { skip: spawnSync('tmux', ['-V']).status !== 0 && 'no tmux here' }, async (t) => {

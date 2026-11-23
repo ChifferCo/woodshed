@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
 
 const HERE = import.meta.dirname;
 const REVIEW_SH = path.join(HERE, 'review.sh');
@@ -64,7 +65,7 @@ function listen(handler) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', agents = null, codex = FAKE_CODEX, via = null, account = null, codexMinutes = null, relay = null } = {}) {
+async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', agents = null, claude = FAKE_CLAUDE, codex = FAKE_CODEX, via = null, account = null, codexMinutes = null, relay = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-sh-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const sessionDir = path.join(dir, 'session');
@@ -74,7 +75,7 @@ async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', ag
   const repo = path.join(dir, 'repo');
   fs.mkdirSync(path.join(sessionDir, 'bin'), { recursive: true });
   fs.mkdirSync(bin);
-  fs.writeFileSync(path.join(sessionDir, 'bin', 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+  fs.writeFileSync(path.join(sessionDir, 'bin', 'claude'), claude, { mode: 0o755 });
   fs.writeFileSync(path.join(sessionDir, 'bin', 'codex'), codex, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/bash\necho "# Pull request: Add GTM"\n', { mode: 0o755 });
   execFileSync('bash', ['-c', `git init -q -b main "${repo}" && cd "${repo}" && echo hi > README.md && git add -A &&
@@ -90,7 +91,7 @@ async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', ag
   });
   t.after(() => consoleServer.close());
   const env = {
-    ...process.env, PATH: `${bin}:${process.env.PATH}`, SESSION_DIR: sessionDir, REPO_DIR: repo, PR: '7', REVIEW_BASE: 'main',
+    ...isolatedEnv(), PATH: `${bin}:${process.env.PATH}`, SESSION_DIR: sessionDir, REPO_DIR: repo, PR: '7', REVIEW_BASE: 'main',
     SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`, REVIEW_SCRIPT: REVIEW_MJS,
     REVIEW_RUNNING: path.join(dir, 'running'), REVIEW_AUTHOR: 'rev[bot]', GIT_ALLOW_PROTOCOL: 'file',
   };
@@ -137,9 +138,32 @@ test('with Codex beside Claude Code, both review the same diff and the stricter 
   assert.equal(reports.length, 1);
   const { body } = reports[0];
   assert.equal(body.conclusion, 'REQUEST_CHANGES');
+  assert.deepEqual(body.agents, ['claude', 'codex']);
   assert.equal(body.mergeRisk.tier, 'Medium');
   assert.equal(body.costUsd, 0.25, 'Claude\'s cost, which codex does not report');
   assert.deepEqual(body.inlineComments.map((c) => c.body), ['**Claude Code:** Say what it is for.', '**Codex:** This link 404s.']);
+});
+
+test('a disputed High without a pre-merge check stays High without changing the verdict', async (t) => {
+  const codex = FAKE_CODEX.replace('MEDIUM', 'HIGH');
+  const { reports, output } = await runReview(t, { agents: 'claude codex', codex });
+  assert.match(output, /Verdict sent to the console \(status: 204\)/);
+  const { body } = reports.find((r) => r.path === '/review-report');
+  assert.equal(body.mergeRisk.tier, 'High');
+  assert.match(body.mergeRisk.summary, /The higher of the reviewers' tiers: Codex's/);
+  assert.equal(body.conclusion, 'REQUEST_CHANGES');
+});
+
+test('a disputed High with a pre-merge check is reported with the evidence', async (t) => {
+  const check = '- Verify before merging: A second account cannot read the private session.';
+  const codex = FAKE_CODEX.replace('MEDIUM', 'HIGH')
+    .replace('A link people follow.', `The new route could expose a private session.\\n${check}`);
+  const { reports, output } = await runReview(t, { agents: 'claude codex', codex });
+  assert.match(output, /Verdict sent to the console \(status: 204\)/);
+  const { body } = reports.find((r) => r.path === '/review-report');
+  assert.equal(body.mergeRisk.tier, 'High');
+  assert.ok(body.mergeRisk.summary.includes(check));
+  assert.equal(body.conclusion, 'REQUEST_CHANGES');
 });
 
 test('a Codex that fails leaves Claude Code\'s review, which says Codex wrote none', async (t) => {
@@ -147,6 +171,16 @@ test('a Codex that fails leaves Claude Code\'s review, which says Codex wrote no
   assert.match(output, /Codex ended \(exit=1\)/);
   assert.equal(reports[0].body.conclusion, 'APPROVE');
   assert.match(reports[0].body.summary, /Codex wrote no verdict/);
+  assert.deepEqual(reports[0].body.agents, ['claude']);
+});
+
+test('a Claude Code failure reports Codex as the sole contributor to a dual review', async (t) => {
+  const { reports, output } = await runReview(t, { agents: 'claude codex', claude: '#!/bin/bash\nexit 1\n' });
+  assert.match(output, /Verdict sent to the console \(status: 204\)/);
+  const { body } = reports[0];
+  assert.equal(body.conclusion, 'REQUEST_CHANGES');
+  assert.deepEqual(body.agents, ['codex']);
+  assert.match(body.summary, /Claude Code wrote no verdict/);
 });
 
 test('with Codex alone, claude is never run and Codex\'s verdict is the one sent, as its own', async (t) => {
@@ -155,6 +189,7 @@ test('with Codex alone, claude is never run and Codex\'s verdict is the one sent
   assert.doesNotMatch(output, /Claude ended/);
   const { body } = reports.find((r) => r.path === '/review-report');
   assert.equal(body.conclusion, 'REQUEST_CHANGES');
+  assert.deepEqual(body.agents, ['codex']);
   assert.equal(body.summary, 'The link is wrong.', 'no sections: one reviewer');
   assert.deepEqual(body.inlineComments, [{ path: 'README.md', line: 1, body: 'This link 404s.' }]);
 });

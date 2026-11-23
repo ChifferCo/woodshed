@@ -342,7 +342,7 @@ test('the routes: each path names one, and nothing else is one', () => {
 });
 
 
-test('the old route of an env file\'s own lines is gone: /api/my/files names tmux-conf alone, and an old own-lines secret is never read', async (t) => {
+test('the old route of an env file\'s own lines is gone: /api/my/files names tmux-conf and the dotfiles alone, and an old own-lines secret is never read', async (t) => {
   const secrets = memorySecrets({ 'api-env': 'API_URL=http://legacy\n', 'users/sam-ops/api-env': `OLD=${SECRET_MARK}\n` });
   const { call } = await startConsole(t, { secrets, people: { 'sam-ops': { files: { 'api-env': '2026-10-01T00:00:00.000Z' } } } });
   const old = await call('sam-ops', 'GET', '/api/my/files/api-env');

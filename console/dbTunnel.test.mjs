@@ -6,6 +6,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
 import { createTunnel, parseTarget, tunnelTargetsFor } from './dbTunnel.mjs';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public', 'woodshed-db.mjs');
@@ -199,7 +200,7 @@ test('woodshed-db.mjs prints the connection strings and carries a local connecti
   const { token } = tunnel.issue('mia-dev');
   const [pgPort, mongoPort] = [await freePort(), await freePort()];
   const child = spawn(process.execPath, [SCRIPT, `http://127.0.0.1:${port}`, '--pg-port', String(pgPort), '--mongo-port', String(mongoPort)], {
-    env: { ...process.env, WOODSHED_TOKEN: token },
+    env: { ...isolatedEnv(), WOODSHED_TOKEN: token },
   });
   t.after(() => child.kill());
   const printed = await new Promise((resolve, reject) => {
@@ -218,7 +219,7 @@ test('woodshed-db.mjs prints the connection strings and carries a local connecti
 
 test('woodshed-db.mjs stops with the console\'s reason when the token is wrong', async (t) => {
   const { port } = await consoleWith(t);
-  const child = spawn(process.execPath, [SCRIPT, `http://127.0.0.1:${port}`], { env: { ...process.env, WOODSHED_TOKEN: `wt_${'2'.repeat(64)}` } });
+  const child = spawn(process.execPath, [SCRIPT, `http://127.0.0.1:${port}`], { env: { ...isolatedEnv(), WOODSHED_TOKEN: `wt_${'2'.repeat(64)}` } });
   let err = '';
   child.stderr.on('data', (chunk) => { err += chunk; });
   const code = await new Promise((resolve) => child.on('exit', resolve));

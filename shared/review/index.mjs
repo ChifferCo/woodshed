@@ -51,6 +51,7 @@ import {
   validateExplainRequest, explainArgv, buildExplainPrompt, extractAnswer,
 } from './explain.mjs';
 import { validateChatRequest, buildChatPrompt } from './chat.mjs';
+import { aboutFinding, findAiPoint } from './aiReviews.mjs';
 import {
   MAX_DEPTH as QA_MAX_DEPTH, juniorArgv, seniorArgv, buildTopQuestionsPrompt, buildFollowupsPrompt,
   buildAnswersPrompt, extractStructured, topQuestions, followupQuestions, applyAnswers,
@@ -86,6 +87,14 @@ const MAX_INFLIGHT_CHECKOUTS = 2;
 
 let inflightRequests = 0;
 let inflightCheckouts = 0;
+
+function startReviewJob(ctx, { files, ...spec }) {
+  const options = ctx.reviewAgent;
+  return startJob({
+    ...spec, ...options, log: ctx.log, readMeminfo: ctx.readMeminfo,
+    files: options?.agent === 'codex' ? (files ?? readDiff(spec.session)?.files) : undefined,
+  });
+}
 
 function delay(ms) {
   return new Promise(function wait(resolve) {
@@ -752,6 +761,20 @@ export function startReviewAnalysisIfNone({ ctx, sessionName }) {
 }
 
 /**
+ * Start the Q&A when the review is opened, alongside the analysis, so it is written before the reader opens its tab.
+ * Only when this diff has none: one going is joined, and one finished, failed or cut off is kept (its Ask again is the
+ * person's to press). A take in progress starts the new diff's itself.
+ *
+ * @returns {boolean}  whether it started one
+ */
+export function startReviewQaIfNone({ ctx, sessionName }) {
+  if (DISABLED || takes.has(sessionName)) return false;
+  const review = readSessionReview(sessionName);
+  if (!review) return false;
+  return Boolean(startQa({ ctx, session: sessionName, review, first: true }).started);
+}
+
+/**
  * Everything a killed session's review owns: its jobs, its state on disk, its
  * worktree and its branch.
  *
@@ -1251,6 +1274,7 @@ async function handleCommentsRead(res, ctx, session) {
     threads: draft.threads,
     outdated: draft.outdated,
     said: draft.said,
+    aiReviews: draft.aiReviews,
     truncated: draft.truncated,
   });
 }
@@ -1469,6 +1493,8 @@ async function takeWorktreeReview(res, ctx, session) {
   qaRuns.delete(session);
   qaAsks.delete(session);
   beginAnalysis({ ctx, session, review: made.review });
+  // The Q&A alongside it, for this diff: what the reader opens the tab to find should be written by then.
+  startQaAfterTake({ ctx, session, review: made.review });
 
   log('review.worktree_started', { reqId, session, cancelled, files: made.review.meta.changedFiles });
   return json(res, 200, {
@@ -1519,6 +1545,7 @@ async function takeRefreshReview(res, ctx, session) {
   qaRuns.delete(session);
   qaAsks.delete(session);
   beginAnalysis({ ctx, session, review: done.review });
+  startQaAfterTake({ ctx, session, review: done.review });
 
   log('review.refresh_started', {
     reqId, session, cancelled, headSha: done.headSha?.slice(0, 8), files: done.review?.meta?.changedFiles,
@@ -1770,7 +1797,7 @@ async function runAnalysis({ ctx, session, review, diff, gen }) {
         return;
       }
       const reason = attempt === 0 ? null : reviewState.get(session)?.retryReason || 'no structured output';
-      const prompt = buildAnalysisPrompt({ meta: review.meta, files: diff.files, retryReason: reason });
+      const prompt = buildAnalysisPrompt({ meta: review.meta, files: diff.files, retryReason: reason, diffOnly: ctx.reviewAgent?.agent === 'codex' });
 
       const started = await startWithBackoff({ ctx, session, review, prompt, gen });
       if (!started) return;
@@ -1892,14 +1919,12 @@ async function startWithBackoff({ ctx, session, review, prompt, gen }) {
   const { log } = ctx;
   for (let tries = 0; tries < START_RETRIES; tries += 1) {
     if (!claimIsLive(session, gen)) return null;
-    const started = startJob({
+    const started = startReviewJob(ctx, {
       kind: 'analysis',
       session,
       argv: analysisArgv({ prompt }),
       cwd: review.worktree,
-      log,
       onLine: onAnalysisLine,
-      readMeminfo: ctx.readMeminfo,
     });
     if (started.ok) return started;
     if (started.status !== 503 && started.status !== 429) return started;
@@ -1955,16 +1980,14 @@ async function handleExplain(payload, res, ctx, session) {
   }
 
   const prompt = buildExplainPrompt({
-    meta: review.meta, file: valid.file, filePath: valid.filePath,
+    meta: review.meta, file: valid.file, filePath: valid.filePath, diffOnly: ctx.reviewAgent?.agent === 'codex',
     line: valid.line, endLine: valid.endLine, side: valid.side, question: valid.question, history: valid.history,
   });
-  const started = startJob({
+  const started = startReviewJob(ctx, {
     kind: 'explain',
     session,
     argv: explainArgv({ prompt }),
     cwd: review.worktree,
-    log,
-    readMeminfo: ctx.readMeminfo,
   });
   if (!started.ok) return json(res, started.status, { ok: false, error: started.error });
 
@@ -2059,6 +2082,23 @@ function handleChatRead(res, ctx, session) {
   return json(res, 200, { ok: true, messages: readChat(session), running: chatInFlight(session) });
 }
 
+/**
+ * The AI review point a follow-up is about, read live from the pull request:
+ * the review by `about.review`, and its finding by `about.finding` (none: the
+ * review as a whole).
+ *
+ * @returns {Promise<{ok: true, about: {id: string, label: string, text: string}} | {ok: false, status: number, error: string}>}
+ */
+async function aiReviewPoint(ctx, session, about) {
+  const got = await prContextFor(ctx, session);
+  if (!got.ok) return { ok: false, status: got.status, error: got.status === 409 ? 'this review has no pull request with AI reviews on it' : got.error };
+  const draft = await fetchReviewState({ pr: got.live.number, slug: got.slug });
+  if (!draft.ok) return { ok: false, status: draft.status, error: draft.error };
+  const found = findAiPoint(draft.aiReviews, about, { truncated: draft.truncated });
+  if (!found.ok) return { ok: false, status: 409, error: found.error };
+  return { ok: true, about: aboutFinding(found.review, found.finding) };
+}
+
 async function handleChat(payload, res, ctx, session) {
   const { json, log, reqId } = ctx;
   const review = readSessionReview(session);
@@ -2072,20 +2112,42 @@ async function handleChat(payload, res, ctx, session) {
   const inFlight = chatInFlight(session);
   if (inFlight) return json(res, 409, { ok: false, error: 'still answering the previous message' });
 
+  // A follow-up on an AI review's finding (or on the review as a whole): the
+  // point is read from GitHub here, by its ids, rather than taken from the
+  // page, so what the agent is told is what the review said.
+  let about = null;
+  if (valid.about) {
+    const found = await aiReviewPoint(ctx, session, valid.about);
+    if (!found.ok) {
+      log('review.chat_about_refused', { reqId, session, why: found.error });
+      return json(res, found.status, { ok: false, error: found.error });
+    }
+    about = found.about;
+    // Again after the read: a turn another client started meanwhile would
+    // otherwise run beside this one, and only one of them is kept in chatJobs.
+    if (chatInFlight(session)) return json(res, 409, { ok: false, error: 'still answering the previous message' });
+  }
+
   const prompt = buildChatPrompt({
     meta: review.meta,
     artifact: readArtifact(session),
     files: diff.files,
     history: readChat(session),
+    diffOnly: ctx.reviewAgent?.agent === 'codex',
     question: valid.question,
+    about,
   });
-  const started = startJob({
+  const started = startReviewJob(ctx, {
     kind: 'chat',
     session,
+    files: ctx.reviewAgent?.agent === 'codex'
+      ? [
+        ...diff.files.filter((file) => valid.question.includes(file.path) || about?.label.includes(file.path)),
+        ...diff.files.filter((file) => !valid.question.includes(file.path) && !about?.label.includes(file.path)),
+      ]
+      : undefined,
     argv: explainArgv({ prompt }),
     cwd: review.worktree,
-    log,
-    readMeminfo: ctx.readMeminfo,
   });
   if (!started.ok) return json(res, started.status, { ok: false, error: started.error });
 
@@ -2094,7 +2156,7 @@ async function handleChat(payload, res, ctx, session) {
   // Polled through the explain endpoint, which already knows how to turn a
   // finished job into an answer. The jobId is a valid askId by construction.
   explainJobs.set(job.jobId, job);
-  log('review.chat', { reqId, session, question: valid.question.slice(0, 80), jobId: job.jobId });
+  log('review.chat', { reqId, session, question: valid.question.slice(0, 80), jobId: job.jobId, about: about?.id });
 
   job.done
     .then(function settled(done) {
@@ -2113,8 +2175,8 @@ async function handleChat(payload, res, ctx, session) {
         appendChat({
           session,
           entries: [
-            { role: 'user', text: valid.question, at },
-            { role: 'assistant', text: answer.text, at, steps: answer.steps, durationMs, costUsd: answer.costUsd },
+            { role: 'user', text: valid.question, at, ...(about ? { about: { id: about.id, label: about.label } } : {}) },
+            { role: 'assistant', text: answer.text, at, steps: answer.steps, durationMs, costUsd: answer.costUsd, ...(about ? { about: { id: about.id, label: about.label } } : {}) },
           ],
         });
       }
@@ -2286,7 +2348,7 @@ async function answerUserQuestion({ ctx, session, review, item }) {
       ctx, session, review, gen: null, live, kind: 'qa-ask',
       argv: seniorArgv({
         prompt: buildAnswersPrompt({
-          meta: review.meta, files, overview: readArtifact(session)?.overview || '', items, open: [{ ...item, answer: null }],
+          meta: review.meta, files, diffOnly: ctx.reviewAgent?.agent === 'codex', overview: readArtifact(session)?.overview || '', items, open: [{ ...item, answer: null }],
         }),
       }),
       cwd: snapshot.dir,
@@ -2353,12 +2415,39 @@ function handleQaStart(res, ctx, session, forDiff, first = false) {
     log('review.qa_refused_retaking', { reqId, session });
     return json(res, 409, { ok: false, code: 'retaking', error: 'this review is being taken again: ask once that has finished' });
   }
+  const started = startQa({ ctx, session, review, first });
+  if (started.refused) return json(res, 409, { ok: false, code: 'retaking', error: 'a Q&A of the previous diff is still stopping: ask again in a moment' });
+  return json(res, 200, started.kept ? { ok: true, status: started.status, kept: true } : { ok: true, status: 'running' });
+}
+
+/**
+ * The take's own Q&A, best effort: by now the new diff is saved and its analysis started, so a Q&A that cannot start
+ * (qa.json unreadable, say) is logged rather than answered as a failed take. The tab's Ask then says why.
+ */
+function startQaAfterTake({ ctx, session, review }) {
+  try {
+    startQa({ ctx, session, review, first: true });
+  } catch (err) {
+    ctx.log('review.qa_not_started_after_take', { reqId: ctx.reqId, session, error: err?.message });
+  }
+}
+
+/**
+ * Start this diff's Q&A, or join or keep the one it has. Shared by the route and by the review's own start (the
+ * review opened, or taken again), which is why it answers rather than writes a response.
+ *
+ * `first`: keep a Q&A this diff already has, whatever its state, rather than pay for another (see handleQaStart).
+ *
+ * @returns {{joined: true} | {refused: true} | {kept: true, status: string} | {started: true}}
+ */
+function startQa({ ctx, session, review, first }) {
+  const { log, reqId } = ctx;
   const going = qaRuns.get(session);
   if (going) {
     // Joined only when it is this diff's.
-    if ((going.forDiff ?? null) === (review.createdAt ?? null)) return json(res, 200, { ok: true, status: 'running' });
+    if ((going.forDiff ?? null) === (review.createdAt ?? null)) return { joined: true };
     log('review.qa_refused_old_run', { reqId, session });
-    return json(res, 409, { ok: false, code: 'retaking', error: 'a Q&A of the previous diff is still stopping: ask again in a moment' });
+    return { refused: true };
   }
   if (first) {
     const had = readQa(session);
@@ -2367,7 +2456,7 @@ function handleQaStart(res, ctx, session, forDiff, first = false) {
     // Ask again for each, and a first ask is not a person choosing to pay again.
     if (had && (had.forDiff ?? null) === (review.createdAt ?? null)) {
       log('review.qa_first_ask_kept', { reqId, session, status: had.status });
-      return json(res, 200, { ok: true, status: had.status, kept: true });
+      return { kept: true, status: had.status };
     }
   }
   qaGen += 1;
@@ -2391,7 +2480,7 @@ function handleQaStart(res, ctx, session, forDiff, first = false) {
     .finally(function release() {
       if (qaIsLive(session, gen)) qaRuns.delete(session);
     });
-  return json(res, 200, { ok: true, status: 'running' });
+  return { started: true };
 }
 
 /**
@@ -2416,7 +2505,7 @@ const QA_START_RETRY_MS = 15_000;
 async function qaRun({ ctx, session, review, gen, argv, cwd = review.worktree, live = () => qaIsLive(session, gen), kind = 'qa' }) {
   for (let tries = 0; tries < QA_START_RETRIES; tries += 1) {
     if (!live()) return null;
-    const started = startJob({ kind, session, argv, cwd, log: ctx.log, readMeminfo: ctx.readMeminfo });
+    const started = startReviewJob(ctx, { kind, session, argv, cwd });
     if (started.ok) {
       const job = await started.job.done;
       if (!live()) return null;
@@ -2509,7 +2598,7 @@ async function runQaRounds({ ctx, session, review, gen, pin }) {
     save();
     const answered = await qaRun({
       ctx, session, review, gen,
-      argv: seniorArgv({ prompt: buildAnswersPrompt({ meta: review.meta, files, overview: overviewNow(), items: qa.items, open }) }),
+      argv: seniorArgv({ prompt: buildAnswersPrompt({ meta: review.meta, files, overview: overviewNow(), items: qa.items, open, diffOnly: ctx.reviewAgent?.agent === 'codex' }) }),
       cwd: snapshot.dir,
     });
     if (!answered) return;

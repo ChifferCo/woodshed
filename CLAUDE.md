@@ -133,7 +133,7 @@ All in us-east-1, everything named `<prefix>*` and tagged
 | `users/<login>/claude-token` | The Claude plan of one person's My Woodshed sessions, and the shared sessions they start while their switch for it is on. Made by the console on My settings, never by Terraform; write-only there. Handed to that person's private sessions alone, in the `/settings` answer, for claude to call Anthropic with directly (the Artifact tool needs a real token). Never handed to a shared session: the console's Anthropic proxy adds it to the calls of a shared session whose `plan` is that login and who started it | The session's log says `could not get the owner's settings` and it fails. The console logs `sessionApi: no Claude token for the owner`, or `anthropicProxy: no Claude token saved for the plan` when it was removed mid-session from a shared session's starter. A running private session keeps the token it started with until it stops. claude asks to log in when the token was revoked: save a new one |
 | `users/<login>/codex-auth` | One person's Codex sign-in from My settings: an OpenAI API key, or `~/.codex/auth.json`. Handed to their private Codex sessions alone, in the `/settings` answer; a session writes a refreshed ChatGPT login back at stop (`POST /codex-auth`) since OpenAI rotates it. Never handed to a review: while their switch for reviews is on, the console's OpenAI proxy adds it to the calls of a review of their pull request (`review.codexLogin`), the access token and account of a ChatGPT login on `/chatgpt`, a key on `/openai`, and never refreshes it | The console logs `sessionApi: Codex sign-in decided` with `own`, and `Codex sign-in kept` or `refused` at stop; statusd logs `statusd: Codex sign-in sent back` with the status. For a review, `fleet: review session started` with `codex` (`own ChatGPT login`, `own key` or `team key`), `fleet: review runs other than the author chose` with `why` (an expired login), and `openaiProxy: refused, the author's sign-in not usable` when it was turned off or expired mid-review. codex asking to log in means the saved login expired or a session never stopped cleanly to save the rotated one: save a new one |
 | `repos/<project>/env/<key>`, `repos/<project>/instructions`, `users/<login>/repos/<project>/...` | Repo settings (`console/repoSettings.mjs`, console/README.md "Repo settings"): the installation's values for each env file of a repo and its instructions, and each person's own. Made, read and deleted by the console, and the only place an env file's values are kept: no Terraform secret or task definition holds them. What each file must hold is the installation's: its `.woodshed/install/README.md`. Handed out by the session API's `POST /repo-settings`, the personal ones to that person's private sessions alone, which write them into the env files and the rules. The db-admin task's seed reads the default project's `repos/<project>/env/<key>` for its databases' env files itself (its entryPoint's `--project`; on AWS its role reads that project's and no other's) | The console logs `repoSettings: handed out` with the keys each layer gave. The session logs `Repo settings fetched` with the keys and sizes it got, and `Env files written` with each file's layers; `Repo settings not offered by the console` means a console from before them, and its env files get the repo's defaults alone. The db-admin task logs `Seed env files read` with where each key came from (`repo settings` or `none`), and its seed the same `Env files written` line; `none` for a key that Console settings → Repos shows a value for means the entryPoint's `--project` is not the console's default project (Terraform names it from `projects`, else from `github_repo`). Never print a value: these lines carry keys and sizes only |
-| `users/<login>/tmux-conf` | One person's own lines for tmux config, from My settings' tmux card, written after the image's `tmux.conf` in their private sessions only. Readable by them, since their sessions hold the same text. A `users/<login>/<env secret>` left from before Repo settings is read by nothing | A bad line breaks only that person's sessions: the session's log says `Owner's settings fetched` with `own lines in: ...`; **Clear mine** on My settings (tmux, or the env file under Repo settings) fixes it. The rules above apply to these too: no production credentials |
+| `users/<login>/tmux-conf`, `…/gitconfig`, `…/inputrc`, `…/bash-aliases` | One person's own lines for tmux config and those dotfiles, from My settings' rows or `woodshed settings push`, written after the image's (or the start's) in their private sessions only. Readable by them, since their sessions hold the same text. The dotfiles take only what `shared/dotfiles.mjs` allows, which never holds an identity, a credential helper, a path or a credential. A `users/<login>/<env secret>` left from before Repo settings is read by nothing | A bad line breaks only that person's sessions: the session's log says `Owner's settings fetched` with `own lines in: ...`; **Clear mine** on My settings (the row, or the env file under Repo settings) fixes it. A refused save logs `userSettings: file refused` with the key (`cliSettings: dotfile refused` from a computer). The rules above apply to these too: no production credentials |
 | `users/<login>/github` | One person's GitHub App user token from Connect GitHub (JSON: the token, its expiry, the refresh token), for their private sessions' git and `gh`. Made and rotated by the console (`githubUser.mjs`); never in a session | Their next push fails with `GitHub no longer accepts @<login>'s authorization`: the console logs `githubUser: GitHub refused the refresh, disconnecting`. Connect GitHub again on My settings. A session whose project file says `githubAccess: repo` gets it scoped to that project's repo (`githubUser: scoped token made`); `githubUser: GitHub refused a scoped token` or `no scoped token, the console has no client secret`, then `sessionApi: no scoped owner token for the session's project`, means it pushes as the App instead |
 | `sessions/<id>/database`, `users/<login>/database` | The password of each database's own user: `woodshed__<id>` for that shared session and the viewers inside it, deleted with its databases; `woodshed_<login>` for that person's private sessions and the viewers inside them. Made by the console. Not on the Secrets tab | See the database symptoms below |
 | RDS's own master secret, `<prefix>-root/mongo` | Each only where the installation runs that database (`databases` in Terraform). Root, for the db-admin task alone, through its execution role. Not the console, not the base box (which writes Mongo's once and cannot read it back), not a session | The db-admin task's log (`/<prefix>/sessions`, stream `db-admin/...`) fails at its first connection. A Mongo root password that could not be saved is in `/root/<prefix>-mongo-root` on the base box: put it in the secret, then delete the file |
@@ -226,6 +226,18 @@ URL on top of each env file's Repo settings values
   they did. On the box, `sudo docker system df`, then `sudo docker image prune -af`
   (running containers keep theirs) and re-run the job. The console keeps running on
   its old image meanwhile.
+- **`woodshed review enable` says something is missing, or will not write the project file.** Exit 2 lists the
+  console's steps, from `GET /api/review-readiness` (console/README.md, "The reviewer App"): `reviewer-app` is no
+  reviewer App made (`/setup/github`), `reviewer-installed` one not installed on the repo, `reviewer-installed-unknown`
+  its installation not read (`reviewerApp: key not read, installation not known` for the console's own reviewer App;
+  `reviewReadiness: reviewer App installation not read` when GitHub failed; nothing logged when a host's reviewer App
+  has no `installedOn`, console/README.md, "Embedding the console"), `runs-on` a default branch whose
+  `runsOn` names another console, and `repo` a repo the console does not have, or the person cannot start sessions on
+  or no longer writes to (`reviewReadiness: refused, no write access to the repo`). `Console: not asked` says why it was not: no sign-in, an origin
+  not on GitHub, or a console from before the route. Exit 1 with `does not read as a project file` or `project check
+  found problems` left the file as it was; `written inline` is a `pullRequests` or `review` written as `{…}`, which it
+  does not edit. Exit 1 with `the console did not say it can run the review` kept the edit, but the console was not
+  reached, has no GitHub App (404), or could not read the default branch's project file (`was not read`, with why). It writes no workflow, secret or key: a repo with no console uses `scripts/enable-review.sh`.
 - **A label or `/woodshed` comment does nothing.** A label on a pull request
   never starts a session (console/README.md, "How sessions start"): the console logs
   `fleet: trigger routed` with `action: ignore`. Otherwise `docker compose logs
@@ -332,6 +344,57 @@ URL on top of each env file's Repo settings values
   at that time. No `console: stopping` before the new console's `console: listening`
   means it was killed, not stopped: a crash, an out-of-memory kill or the box
   rebooting. A status other than 000 is the console's own answer, given after it.
+- **`woodshed login` or `woodshed status` fails.** The CLI's own message says which step (cli/README.md): `answered
+  404` is a console from before the command line could sign in, or a hosting proxy that does not pass `/api/cli/*`
+  through. The console logs `cliSignIn: sign-in started` with the computer's name, then `sign-in approved` or `denied`
+  and `token made`; `refused, a browser's call` is a call with an Origin header (a page, never the CLI). `status`
+  exiting 2 with `ended` is a token revoked on My settings' Command line row (`cliSignIn: token revoked` with `by`),
+  expired after 90 days, one whose person left People (`refused, the token's person is no longer a member`), or one
+  whose person lost write access to the repo (`refused, write access gone`, which ends all their sign-ins): sign in
+  again. `Too many sign-ins from this address are waiting` is 5 codes from one address still holding their places: a
+  code holds one until its CLI collects it, it is denied, or its 10 minutes pass, so an approved code not yet collected
+  counts (`cliSignIn: sign-in refused, too many waiting` with `scope: 'client'` and `lastFrom`); the same refusal for many people
+  at once, all with one `lastFrom`, is a proxy in front that reaches the console from an address `WOODSHED_TRUSTED_PROXIES`
+  does not list (loopback is trusted by default), so its `X-Forwarded-For` is not read. The token is in the macOS
+  Keychain or libsecret, else in the file `woodshed status --json` names (`credentialsFile`; on Windows, sealed with
+  DPAPI, or a plain file when `store` is `file`); never print it. On Windows `login` refusing with `could not be made a
+  folder only you can open` says why: the SIDs still allowed on `%LOCALAPPDATA%\woodshed` besides the person's own,
+  SYSTEM's and Administrators', or that it could not be made theirs.
+- **`woodshed settings` skips or refuses an item.** The list says why (cli/README.md, "Settings"). The console logs
+  `cliSettings: pushed` or `cliSettings: refused`. A 404 from `/api/cli/settings` means the console has nowhere to keep
+  Claude homes or predates the command.
+- **`woodshed tunnel` exits 255.** Its stderr says why (cli/README.md, "The tunnel into a session"): `refused (401)`
+  is a sign-in revoked or expired, or its person's write access gone (`woodshed login` again), `refused (404)` a session that is not that person's own,
+  `refused (409)` one not running (resume it) or one that has seen production data, which never gets a pipe. The
+  console logs `execPipe: refused` with `why`, `execPipe: session unreachable` when statusd's port did not answer, and
+  for a pipe that opened, `execPipe: closed` with `why` (`ended`, `the token was revoked`, `the token ended`, `the
+  session is being locked down`, `not running`). A pipe cut while the session ran on, with `why: 'ended'`, is the
+  computer's side or the network going; one cut when the session paused is the idle pause, which a pipe does not hold
+  off. In the session, statusd logs `statusd: exec opened` and `exec closed` with the exit code.
+- **`woodshed session connect` does not open, or drops.** It is the same path as the tunnel, a websocket to the
+  session's ttyd (console/README.md, "A terminal from the command line"), and the same lines with `kind: 'term'` or
+  `'shell'`: `execPipe: refused` with `why` (`no terminal` is a session image from before the Terminal tab, for
+  `--shell`), `refused by the session` with ttyd's status, `closed` with `why`. A terminal that opens and closes at
+  once with 1008 is ttyd refusing the console's first message: a ttyd other than 1.7.7's protocol. A drop says
+  `connecting again` and tries for a minute while the session runs; one that says the session is paused or stopped
+  needs `session connect` again, which resumes it.
+- **`woodshed session` fails, or a start it waits on never ends.** Each command's message says what the console
+  answered (cli/README.md, "Sessions"): exit 3 with `does not reach this` is a route its token may not call
+  (`cliSessions: refused, not a route the command line may call`; the list is in `console/cliSessions.mjs`), and
+  `answered 404` a console from before it, or a hosting proxy that does not pass the session routes through with a
+  `wsc_` token. Exit 2 with `no longer have write access` is GitHub saying the person lost write access to the repo
+  (`cliSignIn: refused, write access gone`), which ends all their command line sign-ins. The console logs `cliSessions: call` with the login, the token's id and the path for each write, then
+  what the page's own call would: `fleet: starting session`, `fleet: session extended`, `fleet: session limits
+  changed`. A wait that stays at `Waiting in line` is the person's limit (`fleet: private session waits in line, at the
+  limit`); otherwise it reads the same start steps as the page's checklist, above. Ctrl-C stops the wait, not the
+  session. `extend` refused with `Extend is offered in the last 15 min` is the console's rule: `session get` says when
+  it pauses.
+- **`woodshed config set` is refused.** Exit 3 with `Valid:` is a value the console's own check refused (the same as
+  My settings'); with `On My settings:` a step only the page does first (save a Claude token or Codex sign-in, connect
+  GitHub); `is a secret` is a key it never sends. The console logs `cliSessions: call` with the path, then the page's
+  own line (`userSettings: terminal changed`, `reviews of my pull requests`, `own token for shared sessions`, `own
+  Codex sign-in for reviews`, `git identity changed`). `answered 404` or `does not let the command line change` is a
+  console from before `GET /api/cli/config` (cli/README.md, "Your choices on My settings").
 - **A private session starts without its MCP logins, or Resume opens a blank
   claude.** The session's log says `Claude home restored`, `No Claude home
   saved yet` or `WARNING: Claude home not restored` with the status. Every 5
@@ -354,6 +417,15 @@ URL on top of each env file's Repo settings values
   claude is one it reads only at start (console/README.md, "Your Claude settings").
   `sessionApi: shared Claude settings refused` means the copy went over 5 MB,
   almost always something large in `skills/`.
+- **A plugin or a Codex setting from another session or the person's computer is missing.** Plugins are installed as a
+  session starts, never while it runs: its log says `Plugins from your other sessions installed` with the counts, and
+  `WARNING: a plugin from your other sessions was not installed` (a marketplace that is a folder, a pinned ref or a URL a
+  session does not add), `a plugin's marketplace could not be added` or `could not be installed` with claude's error. A
+  plugin already offered once is not installed again (`~/.claude/woodshed-default-plugins.json`): one uninstalled in a
+  session stays so. Codex's `config.toml` keeps each side's trusted folders, and the start adds the checkout's
+  (`codex's config.toml could not be written` stops it); `[projects]`, providers, entries with a credential or a home
+  path are never carried from a computer (`woodshed settings plan` names each). The rules are in
+  `~/.codex/AGENTS.override.md`, with the person's `AGENTS.md` after them.
 - **My Woodshed's Pull requests group is empty or stale.** It is GitHub's
   search, asked with the console's App token at most once a minute per person;
   a failure logs `console: pull requests not readable` and keeps the last list.
@@ -443,6 +515,25 @@ URL on top of each env file's Repo settings values
   the console has not reached the session`, once for the start: `address: false` with `launching: true` is a launcher
   whose start call has not come back (no `fleet: machine ready` either), and `address: true` gives the statusd read's
   error in `message`. It stays there until the start timeout fails it.
+- **A private session runs its agent in tmux though its owner picked Herdr, or its TUI tab is blank.** The pick is
+  My settings' Agent terminal (`userSettings: terminal changed` in the console's log), handed to the person's private
+  sessions in the `/settings` answer: the session's log says `Owner's settings fetched` with `terminal`, then `Herdr
+  started` with hc's version, or `WARNING: Herdr did not start, the agent runs in tmux` with `hc`'s last line
+  (`/tmp/woodshed-herdr.log` in the session has the rest), and `Claude started` gives the `terminal` it used. A
+  session started before the pick keeps its terminal. In the session's Terminal, `hc ls` lists the `claude` terminal,
+  `hc get claude --json` its `status` (the agent's own word, which statusd logs as `source: 'herdr'`) and `hc read
+  claude` its screen; the TUI tab is ttyd running `hc attach claude`. A Chat message that Herdr refused logs `statusd:
+  Herdr did not send the message` with `why` (`prompt-open`, a question, approval or menu on screen, with `kind`;
+  `blocked`; `status_mismatch`, not idle; `not-at-prompt`). Shared sessions, questions, reviews and QA runs use tmux
+  whatever the pick.
+- **`woodshed session new --herdr --parent` left the session's agent with no parent, or its agent sat unstarted for
+  minutes.** The console logs `fleet: session created` (or `resuming a private session`) with `herdrParent`, and the
+  session's log `Herdr started` with `made by: its parent`, then `Agent's terminal made by its parent` with the
+  `parent`, or after 5 minutes `WARNING: no parent made the agent's terminal` (the command line never made it: it was
+  stopped, or not in a Herdr terminal) and the session made its own. Meanwhile statusd logs `capture-pane failed`: the
+  terminal is not there yet. The command line exits 1 saying the terminal was already there when the session did not
+  wait (a running one, an image from before it, or a wait run out): hc cannot give a running terminal a parent.
+  `hc get woodshed-<id>/claude --json` on the laptop shows `parent` and `die_with_parent`.
 - **The app inside a session will not start or log in.** That is about the repo's own app, and its installation
   says what to check: `.woodshed/install/README.md` in the repo. The env files get the databases through the project
   file's env file overrides, from each engine's variables (`PGHOST`, `PGPASSWORD`, `MONGODB_URI`; docs/reference.md, "Databases"):
@@ -993,6 +1084,10 @@ image from the worktree and pass its tag. For another kind of session, copy it: 
 the stand-in session API serves.
 `providers/aws/bin/qaInImage.mjs <image> <pull request number>` is that copy for a QA session: it keeps the report
 instead of writing the pull request's comment and check.
+`providers/aws/bin/herdrParentInImage.mjs <image> [entrypoint.sh]` is the copy for a private session started with
+`woodshed session new --herdr --parent`: it runs the whole start under ECS's init (`--init`) and waits for the agent's
+terminal, which a terminal in this computer's Herdr makes once the machine is added with `--via 'docker exec -i
+woodshed-herdr-parent-in-image sh -c'` (cli/hc.mjs, `startAgentTerminal`).
 
 ## Checking a console page change in a browser
 
@@ -1001,7 +1096,8 @@ three made-up sessions and no AWS, GitHub, Docker or sign-in. Open `http://local
 Playwright browser. The rail folds its stopped zones, so run
 `localStorage['woodshed-rail-zones']='{"ended":false,"stopped":false,"merged":false}'` and reload to see the
 cards. Pull request chips show without their state or checks, since polling GitHub is off. New session's Work on lists made-up open
-pull requests, from a stand-in `gh` that answers that one read (`console/bin/devGh.mjs`). `/s/dddd4444` is running,
+pull requests, from a stand-in `gh` that answers that read and each repo's default branch (`console/bin/devGh.mjs`), so
+`woodshed session new` against it gets as far as the launcher. `/s/dddd4444` is running,
 for the pane bar's buttons, but has no container: it cannot show a live terminal, and the app and database links go
 nowhere. `/s/5a5a5a5a` is starting, for the start checklist in the local provider's words, until the start timeout
 fails it. `/s/c0ffee11` is running with a live TUI where ttyd and tmux are on the PATH (as in a Woodshed
@@ -1037,6 +1133,19 @@ with `admin: false` from the Playwright browser (`page.route`).
 `example-org/example-tools`, whose project files its stand-in `gh` answers, so My settings' Repo settings card saves:
 env file values, instructions and Your files, each per repo. The first's file names a Deploy workflow link, which the
 avatar menu shows over the installation's `WOODSHED_ACTIONS_WORKFLOWS` (Run infrastructure).
+`DEV_CONSOLE_REVIEWER=none|made|installed` gives it a made-up GitHub App and reviewer App, lent as a host lends its own
+(`scripts/devReviewerConsole.mjs`), for `woodshed review enable` and `status` from a checkout of
+`example-org/example-repo`: no reviewer App, one not installed there, or one installed. Its default branch's project
+file, from the stand-in `gh`, has no review.
+`DEV_CONSOLE_REVIEW_ON=1` (with `DEV_CONSOLE_REVIEWER=installed`, and `DEV_CONSOLE_REPO_SETTINGS=1` for a secret store
+that keeps a made-up Claude token and Codex key) turns review on in `example-org/example-repo`'s default branch, and
+gives @local three open pull requests there from the stand-in `gh`, for `woodshed review pulls|start` and `woodshed
+setup`'s reviews. A review started on one queues and never runs: no session image runs here. @local needs Sessions from
+GitHub on People (on for everyone on a hosted console) for a review to use their own sign-ins. `DEV_CONSOLE_REVIEW_ON=default`
+gives the repo a project file that names no review, for the console's default review.
+`DEV_CONSOLE_REVIEW_PR=1` makes `/s/beadfeed` @local's own My Woodshed session whose branch has a made-up open pull
+request, #26701, answered by a stand-in `gh` (`console/bin/devReviewGh.mjs`), for `woodshed review beadfeed` and the
+review's comment, verdict, rename and merge, and a made-up review by Claude Code and Codex for the AI reviews tab (cli/README.md, "Reviewing a session on this terminal").
 `DEV_CONSOLE_WEBHOOKS=1` names a webhook receiver (which never listens, since polling is off), so the Console
 settings page shows its GitHub webhooks switch (Slack's needs a console that answers Slack questions).
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on

@@ -164,3 +164,79 @@ test('already on the login, start only types /remote-control once the turn ends'
   await until(() => fs.existsSync(path.join(runDir, 'typed')), '/remote-control typed in');
   assert.equal(fs.readFileSync(path.join(runDir, 'typed'), 'utf8'), '/remote-control\n');
 });
+
+// A stand-in hc for a session whose claude runs in Herdr: its terminal is the test's tmux pane of the same name, so the
+// stand-in claude and the waits are as above. hc types text only as a paste with its Enter (`send`), presses named keys
+// (`keys`) and reads the screen as text (`read`); it is told no other command.
+const FAKE_HC = `#!/bin/bash
+cmd=$1; t=$2; shift 2
+echo "$cmd $t $*" >> "$WOODSHED_LOGIN_RUN_DIR/hc-calls"
+case "$cmd" in
+  send)
+    if [ -n "\${FAKE_HC_REFUSE_ALL:-}" ]; then echo '{"error":{"kind":"blocked","message":"t1 is blocked (auth)"}}'; exit 9; fi
+    # The first /remote-control is refused, as hc refuses a claude whose record says blocked.
+    if [ "$1" = /remote-control ] && [ ! -e "$WOODSHED_LOGIN_RUN_DIR/hc-refused" ]; then
+      touch "$WOODSHED_LOGIN_RUN_DIR/hc-refused"
+      echo '{"error":{"kind":"blocked","message":"t1 is blocked (auth)"}}'
+      exit 9
+    fi
+    tmux send-keys -t "$t" -l "$1"; tmux send-keys -t "$t" Enter; echo '{"turn":1}' ;;
+  keys) [ "$1" = ctrl+u ] || { echo '{"error":{"kind":"invalid_params"}}'; exit 1; }; tmux send-keys -t "$t" C-u; echo '{"turn":1}' ;;
+  read) tmux capture-pane -p -t "$t" ;;
+  *) echo "hc: no $cmd here" >&2; exit 2 ;;
+esac
+`;
+
+test('in Herdr, a code that works reopens claude and types /remote-control through hc', { skip: !hasTmux && 'no tmux' }, async (t) => {
+  const { bin, login, tmux, runDir, until, hook } = setUp(t);
+  fs.writeFileSync(path.join(bin, 'hc'), FAKE_HC, { mode: 0o755 });
+  const herdr = { WOODSHED_TERMINAL: 'herdr' };
+  fs.writeFileSync(path.join(runDir, 'woodshed-claude-flags'), ' --settings /x/hooks.json');
+  tmux('new-session', '-d', '-s', 'claude', '-x', '200', '-y', '50', 'bash --norc');
+  tmux('send-keys', '-t', 'claude', 'sleep 300', 'Enter');
+  const panePid = tmux('display', '-p', '-t', 'claude', '#{pane_pid}').trim();
+  let claudePid = '';
+  await until(() => {
+    try {
+      claudePid = execFileSync('pgrep', ['-P', panePid, 'sleep'], { encoding: 'utf8' }).trim();
+    } catch {}
+    return Boolean(claudePid);
+  }, 'the running claude started');
+
+  assert.equal((await login(['start'], herdr)).code, 0, 'the sign-in itself is in tmux either way');
+  const signed = await login(['code', 'good-code'], { ...herdr, CLAUDE_PID: claudePid, CLAUDE_CODE_SESSION_ID: 'sess-5678' });
+  assert.equal(signed.code, 0, signed.stderr);
+  hook({ state: 'done', event: 'Stop' });
+  await until(() => /\/remote-control typed in/.test(fs.existsSync(path.join(runDir, 'woodshed-login.log')) ? fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8') : ''), '/remote-control typed into the reopened claude');
+  assert.equal(fs.readFileSync(path.join(runDir, 'claude-args'), 'utf8').trim(), '--settings /x/hooks.json --resume sess-5678');
+  assert.equal(fs.readFileSync(path.join(runDir, 'typed'), 'utf8'), '/remote-control\n');
+  const calls = fs.readFileSync(path.join(runDir, 'hc-calls'), 'utf8');
+  assert.match(calls, new RegExp(`^send claude ${bin}/claude --settings /x/hooks.json --resume sess-5678$`, 'm'), 'claude reopened through hc');
+  assert.match(calls, /^keys claude ctrl\+u$/m);
+  assert.equal(calls.match(/^send claude \/remote-control$/gm)?.length, 2, 'the refused try, then the one that went in');
+  assert.match(fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8'), /Herdr did not type \/remote-control \(\{"error":\{"kind":"blocked"[^\n]*\n[^\n]*\/remote-control typed in \(tries: 2\)/);
+});
+
+test('in Herdr, a reopen hc refuses is said in the log, not left silent', { skip: !hasTmux && 'no tmux' }, async (t) => {
+  const { bin, login, tmux, runDir, until, hook } = setUp(t);
+  fs.writeFileSync(path.join(bin, 'hc'), FAKE_HC, { mode: 0o755 });
+  fs.writeFileSync(path.join(runDir, 'woodshed-claude-flags'), ' --settings /x/hooks.json');
+  tmux('new-session', '-d', '-s', 'claude', '-x', '200', '-y', '50', 'bash --norc');
+  tmux('send-keys', '-t', 'claude', 'sleep 300', 'Enter');
+  const panePid = tmux('display', '-p', '-t', 'claude', '#{pane_pid}').trim();
+  let claudePid = '';
+  await until(() => {
+    try {
+      claudePid = execFileSync('pgrep', ['-P', panePid, 'sleep'], { encoding: 'utf8' }).trim();
+    } catch {}
+    return Boolean(claudePid);
+  }, 'the running claude started');
+  const herdr = { WOODSHED_TERMINAL: 'herdr', FAKE_HC_REFUSE_ALL: '1' };
+  assert.equal((await login(['start'], herdr)).code, 0);
+  assert.equal((await login(['code', 'good-code'], { ...herdr, CLAUDE_PID: claudePid, CLAUDE_CODE_SESSION_ID: 'sess-9' })).code, 0);
+  hook({ state: 'done', event: 'Stop' });
+  const log = () => (fs.existsSync(path.join(runDir, 'woodshed-login.log')) ? fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8') : '');
+  await until(() => /claude not reopened/.test(log()), 'the refusal logged');
+  assert.match(log(), /claude not reopened \(\{"error":\{"kind":"blocked"/);
+  assert.doesNotMatch(log(), /claude reopened/);
+});

@@ -73,7 +73,12 @@ change to the stage by the workflow's run, about the time the build takes.
    owner) when its home has none of them and its owner has not turned one off,
    logged as `Default plugins installed` or `Default plugins already there`.
    Each is offered once (`~/.claude/woodshed-default-plugins.json` in the saved
-   home), so one its owner uninstalls stays uninstalled.
+   home), so one its owner uninstalls stays uninstalled. The plugins its owner
+   installed for the whole home elsewhere (the shared settings' plugin items) are
+   installed the same way, once each (`session/syncedPlugins.mjs`), logged as
+   `Plugins from your other sessions installed`. The owner's own lines for
+   `~/.gitconfig`, `~/.inputrc` and `~/.bash_aliases` from My settings are
+   written after the image's (`writeOwnDotfiles`).
    A shared session never gets them: it holds no integration token.
 2. Writes the project file's env files in layers, later ones winning (`shared/repoSettings.mjs`): each file's
    `defaults` from the project file, the installation's values, a private session's owner's own lines, then the
@@ -107,7 +112,22 @@ change to the stage by the workflow's run, about the time the build takes.
    (what Set up app does, for claude to offer it in a private session, and in a shared one to run the app for its proof without committing the file;
    `appRules`), then the project's own (`.woodshed/rules.md` here), then the installation's instructions for the
    repo and the private session's owner's own from the repo settings, with which of them win (`Instructions added to
-   the rules` in the log, with their sizes), as a system prompt, then `ttyd` on 7681 and `statusd` on 7682. Auto mode runs
+   the rules` in the log, with their sizes), as a system prompt, then `ttyd` on 7681 and `statusd` on 7682. A private
+   session whose owner picked Herdr on My settings (Agent terminal, the `/settings` answer's `terminal`, logged in
+   `Owner's settings fetched`) runs claude or codex in Herdr instead of tmux: the image's pinned herdr-core
+   (`hc`, `HERDR_CORE_VERSION` in the `Dockerfile`) starts a core, a kept shell terminal named `claude` in the checkout,
+   and the agent's command typed into it (`Herdr started` in the log; `WARNING: Herdr did not start, the agent runs in
+   tmux` with `hc`'s last line otherwise, and `/tmp/woodshed-herdr.log` has the rest). The TUI tab's ttyd then runs
+   `hc attach claude`. A shared session, a question, a review and a QA run use tmux either way, and so does the
+   Terminal tab. A private session started or resumed with `woodshed session new --herdr --parent` (or `session herdr
+   <id> --parent`; `WOODSHED_HERDR_PARENT=1`) runs in Herdr whatever its owner picked, and leaves the `claude` terminal
+   to its owner's Herdr, which makes it from a terminal of theirs with `hc run --on`, its parent (cli/README.md, "The
+   session's agent as a child of a terminal here"): hc gives a terminal its parent only as it starts, and only from the
+   caller's side. It writes `/tmp/woodshed-agent-terminal.json` with the checkout, starts statusd (the tunnel the
+   terminal comes through), and types the agent in once the terminal is there (`Agent's terminal made by its parent`
+   with the parent), or after 5 minutes makes it itself with none (`WARNING: no parent made the agent's terminal`). The choice
+   reaches statusd, claude and `woodshed-login` as `WOODSHED_TERMINAL` (`tmux` or `herdr`); `Claude started` logs it as
+   `terminal`. Auto mode runs
    routine work without asking and refuses risky actions; a session stuck on
    one shows as needing you. A shared session does not stop to ask: it follows
    the project's rules for working unattended (a repo's own pipeline may approve
@@ -162,7 +182,7 @@ schema on them. Its log ends `Owner's databases migrated`, never `Templates read
 | `WOODSHED_PROJECT_FILES_DIR` | session | The installation's folder of project files, set by the docker launcher to `/run/woodshed-project-files`, where it mounts the session's repo's file and the image's repo's read-only, when the installation has them (`../providers/local/README.md`). Read only for a repo with no `.woodshed/project.yaml` of its own on the checkout or default branch, or one whose own file Woodshed cannot read; the log's `Project file read` then says `from: installation` (`../docs/reference.md`, "The project file"). The db-admin task takes the same folder as `--project-files-dir`, never from its environment, and hands it to `entrypoint.sh seed` |
 | `PROJECT_REPO` | session | `owner/name`, set by the console for a session on a project other than the installation's default (`WOODSHED_PROJECTS`). Every project runs in the default project's image for now, so the entrypoint clones that repo at start next to the image's checkout (`/work/<name>`, or `/work/<name>-project` when the image's checkout has that name), through the credential helper, and uses it as `REPO_DIR`; its log says `Cloning the project's repo` and `Project repo cloned`. The project's installs run then, as for any install the image has no record of. Unset, or the image's own repo, the image's checkout is used as before. The console also sets it for the default project when that is a repo an admin added on Console settings (a console that started with no repo), since no image holds its checkout. An image built with no repo (`REPO` empty in the Dockerfile, as install.sh builds `woodshed-session:generic` for a local install that names none) has no checkout: every session clones its repo, keeps the secrets the console handed it, and runs its installs at start; one with no `PROJECT_REPO` stops with `the session image has no checkout and the console named no repo` |
 | `RESUME_SESSION` | session | Resume on a stopped private session: claude's conversation id, reopened with `claude --resume` from the restored Claude home, in place of a prompt |
-| `AGENT` | session | `codex`: a private session runs OpenAI's Codex CLI (`session/bin/codex`) in place of claude, in the same tmux pane. It signs in with the owner's own Codex sign-in (`codexAuth` in the `/settings` answer, written to `~/.codex/auth.json`) or, with none, through the console's `/openai` proxy on the team key. The rules go in `~/.codex/AGENTS.md`; permissions map to codex's sandbox and approval flags (`codexFlags`). statusd reads its state from the pane alone (`codexState.mjs`: no hooks), and writes a refreshed ChatGPT login back at stop. A Codex conversation is not kept for Resume, and it has no plugins. Its Plan chip reads the rate limits from local Codex rollout events (`codexPlanUsage.mjs`); no chip appears when Codex reports no plan limits |
+| `AGENT` | session | `codex`: a private session runs OpenAI's Codex CLI (`session/bin/codex`) in place of claude, in the same tmux pane. It signs in with the owner's own Codex sign-in (`codexAuth` in the `/settings` answer, written to `~/.codex/auth.json`) or, with none, through the console's `/openai` proxy on the team key. The rules go in `~/.codex/AGENTS.override.md`, which codex reads in place of `AGENTS.md`, followed by the owner's own `AGENTS.md` (synced, `settingsSync.mjs`); the checkout is trusted in the owner's synced `config.toml` (`shared/codexConfig.mjs`); permissions map to codex's sandbox and approval flags (`codexFlags`). statusd reads its state from the pane alone (`codexState.mjs`: no hooks), and writes a refreshed ChatGPT login back at stop. A Codex conversation is not kept for Resume, and it has no plugins. Its Plan chip reads the rate limits from local Codex rollout events (`codexPlanUsage.mjs`); no chip appears when Codex reports no plan limits |
 | `MODEL`, `EFFORT`, `PERMISSION_MODE` | session | Optional: `claude --model`, `--effort` and `--permission-mode` (default `auto`; `default` passes none), from New session |
 | `PGHOST`, `PGPORT` (5432 by default), `PGSSLMODE`, `PGSSLROOTCERT` | both | Postgres's server, set only where the installation hosts it (the postgres engine, `shared/databases/postgres.mjs`). A session needs it only when the project file's `databases` has a postgres one, and stops at start, naming it, without it. With no engine's server, a shared session asks the console for no databases |
 | `WOODSHED_MONGO_HOST` | both | Mongo's server, as `host:port`, set only where the installation hosts it (`shared/databases/mongo.mjs`); `MONGODB_URI` is made from it and the console's user and password |
@@ -197,6 +217,7 @@ The console's only way into a running session besides the terminal:
 | `POST /interrupt` | Esc typed into the agent's pane, which ends claude's or codex's turn: the Chat tab's Stop. Logs `statusd: agent interrupted` |
 | `GET /prompt` | `{ prompt }`: what the agent's pane asks now, read from `tmux capture-pane` (`panePrompt.mjs`): claude's AskUserQuestion picker (`{ kind: 'question', step, question, options, multiSelect, questions }`, or `step: 'review'` on its Review your answers screen), an approval (`{ kind: 'approval', agent, key, complete, what, title, detail, approve, deny }`: claude's permission dialog or codex's approval, with the labels of the rows that say Yes and No; `key`, the sha256 of exactly what it asks, as drawn from its head to its first option; `complete: false` when it is longer than the page shows, so the page offers only the TUI tab), or `null`. A pane that could not be captured answers 503 `{ why: 'pane-unread' }`, never `null`, and logs `statusd: prompt not read, the pane could not be read`. The Chat tab's Needs you line |
 | `POST /answer` | The Chat tab's answer: `{ kind: 'question', questions: [{ question, options, pick }] }` or `{ kind: 'approval', decision: 'approve'\|'deny', key }`, the `key` `GET /prompt` gave. Nothing is typed blind: the pane must show that prompt (the question's text and every option's label, or an approval whose key is that one: the same text, to the space, whole), the arrow keys are counted from the row it highlights, and the pane is read again after each step (the highlight where it should be, the next question, the review of the answers, the prompt gone). A pane that is not what it should be stops it with a 409 `{ error, why, typed }` (`why`: `no-picker`, `other-question`, `other-options`, `multi-select`, `other-approval`, `incomplete`, `not-moved`, `still-there`…; `typed`: questions answered before it stopped). One answer at a time. Logs `statusd: answer typed` with the picks' numbers or the decision and the arrow keys it took, or `statusd: answer refused` with `why`, never an answer's text |
+| `UPGRADE /exec` | The exec pipe, for `woodshed tunnel` (`session/execPipe.mjs`): with `Upgrade: woodshed-tunnel` and the line base64'd in `x-woodshed-exec` (8 KB at most, so the request stays under Node's 16 KB of headers), it answers 101 and runs `sh -c <line>` as the session's user in the checkout, in a process group of its own, with statusd's environment less `SESSION_TOKEN` and `TERMINAL_TOKEN`. Both ways are framed (`shared/execFrames.mjs`): `[kind][length, 4 bytes][bytes]`. In: 4 stdin, 5 stdin's end. Out: 1 stdout, 2 stderr, 3 the exit code (128+n for signal n), then the socket closes. stdin ends only by its frame, so no proxy has to carry a half-closed connection: a connection that ends or closes before the line does is a disconnect, and the whole process group gets SIGHUP. The program's output waits while the socket's buffer is full, and the socket while the program is not reading. 409 in a tainted session, 404 in an ask session. Logs `statusd: exec opened` with the line's length, never the line, and `exec closed` with its exit code. The console opens it for a My Woodshed session's owner alone (`console/execPipe.mjs`) |
 | `*` with `x-woodshed-app: Bearer <token>` | Any path, websockets too, forwarded without that header to the app's frontend, on the running app's `frontendPort` (`APP_PORT` overrides it). The token has its own header because the app's requests carry an `Authorization` of their own |
 
 `state` comes from Claude's own hooks: `session/claudeHooks.json`, passed with
@@ -213,6 +234,22 @@ The console's only way into a running session besides the terminal:
 - `not-running` when the pane holds a shell after that.
 
 Before the first hook, Woodshed's `classifyPane` reads the pane instead.
+
+Each source is a reader in `session/agentState.mjs`: claude's (above), codex's (its pane alone, `codexState.mjs`), a
+QA run's (its marker file), and Herdr's. An agent in Herdr (`WOODSHED_TERMINAL=herdr`) is read by Herdr first: the status
+herdr-core keeps for its terminal, the agent's own OSC 7501 record (`hc get claude`; claude sends them, codex 0.167
+does not), `idle` or `done` as `done`, `working` as `working` and `blocked` as `needs-you` (`source: 'herdr'`). Its own
+reader stays behind it and wins when it says more: claude's PermissionRequest hook on a prompt the record does not call
+blocked, or a background agent still running after its Stop. With no record (`error`, a shell, codex) the agent's own
+reader stands alone.
+
+statusd reads and types into the agent's terminal through `session/agentPane.mjs`, tmux's `claude` pane or Herdr's
+`claude` terminal through `hc`. Herdr reads the screen without its colours and types text only as a paste with its
+Enter, so in Herdr `POST /send` is `hc send --if idle` (`--if` left out for codex, which reports no status), which also
+holds for a person's draft in an attached client; `boxText` is null, as statusd cannot tell a draft from claude's dim
+suggestion; a file dropped on the TUI tab is saved and not typed in; and `POST /scroll` on the agent answers 409, as the
+attached `hc` client takes the wheel itself. `POST /answer`, `GET /prompt` and `POST /interrupt` work as in tmux, with
+`hc keys` and `hc read`.
 
 ## A tainted session
 

@@ -139,6 +139,25 @@ test('MCP servers in ~/.claude.json reach a session as it starts, and a running 
   assert.deepEqual([json.mcpServers.aws.command, json.numStartups], ['v2', 9], 'the next start has it, and the rest of the file is its own');
 });
 
+test('a laptop MCP never reaches a session or overwrites a same-named session server', async () => {
+  const c = fakeConsole();
+  const id = '.claude.json#mcpServers/docs';
+  const laptop = JSON.stringify({ command: 'laptop-docs' });
+  const native = { command: 'session-docs' };
+  await c.settings.sync({ login: 'octocat', sessionId: 'cli:computer', version: 0, changed: { [id]: laptop }, removed: [] }, { fromLaptop: true });
+
+  const a = session(await makeHome({ '.claude.json': { mcpServers: { docs: native } } }), c.send('aaaaaaaa'));
+  assert.equal((await a.round({ live: false })).sent, 1, 'the first session still seeds its own copy');
+  const b = session(await makeHome({}), c.send('bbbbbbbb'));
+  await b.round({ live: false });
+  assert.deepEqual((await readJson(b.home, '.claude.json')).mcpServers, { docs: native });
+
+  const restarted = createClaudeSettings({ store: c.store });
+  const read = { login: 'octocat', sessionId: 'bbbbbbbb', version: null, changed: {}, removed: [] };
+  assert.deepEqual(await restarted.sync(read), { version: 1, items: { [id]: JSON.stringify(native) } });
+  assert.deepEqual(await restarted.sync({ ...read, sessionId: 'cli:another' }, { fromLaptop: true }), { version: 2, items: { [id]: laptop } });
+});
+
 test('a JSON file read mid-write is left out of the round, and a big file is neither sent nor deleted', async () => {
   const c = fakeConsole();
   const a = session(await makeHome({ '.claude/.credentials.json': { mcpOAuth: { 'x|1': { t: 1 } } }, '.claude/skills/big/data.bin': 'x'.repeat(MAX_ITEM_BYTES + 1) }), c.send('aaaaaaaa'));
@@ -256,4 +275,230 @@ test('each session keeps its own status line; everything else in settings.json s
   await older.round();
   await newer.round();
   assert.deepEqual(await readJson(newer.home, '.claude/settings.json'), { model: 'haiku', statusLine: newLine });
+});
+
+test('codex\'s config, instructions, prompts and skills sync too, each session keeping the folders it trusts; never its sign-in or its own skills', async () => {
+  const c = fakeConsole();
+  const a = session(await makeHome({
+    '.codex/config.toml': 'model = "gpt-5.5"\n\n[projects."/work/app"]\ntrust_level = "trusted"\n',
+    '.codex/AGENTS.md': 'Use pnpm.\n',
+    '.codex/AGENTS.override.md': 'the rules, which are each session\'s own',
+    '.codex/prompts/ship.md': 'Ship it.',
+    '.codex/skills/review/SKILL.md': '# Review',
+    '.codex/skills/.system/imagegen/SKILL.md': 'codex\'s own',
+    '.codex/auth.json': '{"OPENAI_API_KEY":"not-real"}',
+    '.codex/sessions/2026/11/20/rollout-1.jsonl': 'a conversation',
+  }), c.send('aaaaaaaa'));
+  await a.round({ live: false });
+  const shared = JSON.parse([...c.objects.values()][0]).items;
+  assert.deepEqual(Object.keys(shared).sort(), ['.codex/AGENTS.md', '.codex/config.toml', '.codex/prompts/ship.md', '.codex/skills/review/SKILL.md']);
+  assert.equal(Buffer.from(shared['.codex/config.toml'], 'base64').toString(), 'model = "gpt-5.5"\n', 'without the folders this session trusts');
+
+  const b = session(await makeHome({ '.codex/config.toml': '[projects."/work/tools"]\ntrust_level = "trusted"\n' }), c.send('bbbbbbbb'));
+  await b.round({ live: false });
+  assert.equal(await read(b.home, '.codex/config.toml'), 'model = "gpt-5.5"\n\n[projects."/work/tools"]\ntrust_level = "trusted"\n', 'its own trusted folder stays');
+  assert.equal(await read(b.home, '.codex/skills/review/SKILL.md'), '# Review');
+  await assert.rejects(read(b.home, '.codex/auth.json'), { code: 'ENOENT' });
+
+  // A change in one reaches the other, and a round with nothing new sends nothing: the trusted folders are no change.
+  await fs.writeFile(path.join(a.home, '.codex/config.toml'), 'model = "gpt-5.5"\napproval_policy = "on-request"\n\n[projects."/work/app"]\ntrust_level = "trusted"\n');
+  assert.equal((await a.round()).sent, 1);
+  await b.round();
+  assert.equal(await read(b.home, '.codex/config.toml'), 'model = "gpt-5.5"\napproval_policy = "on-request"\n\n[projects."/work/tools"]\ntrust_level = "trusted"\n');
+  assert.equal((await b.round()).sent, 0);
+  assert.equal((await a.round()).sent, 0);
+
+  // config.toml gone from the shared copy leaves a session its own trusted folder, which codex needs to start unasked.
+  await fs.rm(path.join(a.home, '.codex/config.toml'));
+  await fs.writeFile(path.join(a.home, '.codex/config.toml'), '[projects."/work/app"]\ntrust_level = "trusted"\n');
+  assert.equal((await a.round()).removed, 1);
+  await b.round();
+  assert.equal(await read(b.home, '.codex/config.toml'), '[projects."/work/tools"]\ntrust_level = "trusted"\n');
+});
+
+test('a plugin installed for the whole home goes as its marketplace, and nothing of claude\'s plugin records is written', async () => {
+  const c = fakeConsole();
+  const a = session(await makeHome({
+    '.claude/plugins/installed_plugins.json': {
+      version: 2,
+      plugins: {
+        'review@acme-tools': [{ scope: 'user', installPath: '/home/node/.claude/plugins/cache/acme-tools/review/1.0.0', version: '1.0.0' }],
+        'repo-only@acme-tools': [{ scope: 'project', projectPath: '/work/app', installPath: '/x' }],
+        'bad id;rm -rf': [{ scope: 'user' }],
+      },
+    },
+    '.claude/plugins/known_marketplaces.json': { 'acme-tools': { source: { source: 'github', repo: 'acme/claude-tools' }, installLocation: '/home/node/.claude/plugins/marketplaces/acme-tools', lastUpdated: 'x' } },
+  }), c.send('aaaaaaaa'));
+  await a.round({ live: false });
+  const shared = JSON.parse([...c.objects.values()][0]).items;
+  assert.deepEqual(shared, { '.claude/plugins/installed_plugins.json#plugins/review@acme-tools': '{"marketplace":{"source":"github","repo":"acme/claude-tools"}}' },
+    'a user install alone, without its path or version');
+
+  const b = session(await makeHome({}), c.send('bbbbbbbb'));
+  await b.round({ live: false });
+  await assert.rejects(read(b.home, '.claude/plugins/installed_plugins.json'), { code: 'ENOENT' }, 'the start installs it (syncedPlugins.mjs); the sync writes nothing');
+  assert.ok(b.state.synced['.claude/plugins/installed_plugins.json#plugins/review@acme-tools'], 'it is in what the start pulled');
+  assert.equal((await b.round()).sent, 0, 'not having it is no removal');
+  assert.ok(parseSyncBody({ version: 0, removed: [], changed: { '.codex/skills/x/SKILL.md': 'eA==', '.claude/plugins/installed_plugins.json#plugins/a@b': '{}' } }));
+  assert.equal(parseSyncBody({ version: 0, removed: [], changed: { '.codex/../.bashrc': 'eA==' } }), null);
+  assert.equal(parseSyncBody({ version: 0, removed: [], changed: { '.codexx/x': 'eA==' } }), null);
+});
+
+test('the console refuses codex config holding a credential and a plugin\'s marketplace beyond what a session can add', async () => {
+  const c = fakeConsole();
+  const b64 = (text) => Buffer.from(text).toString('base64');
+  const changed = { '.codex/config.toml': b64('[mcp_servers.x.env]\nAPI_KEY = "ABCD1234"\n') };
+  for (const fromLaptop of [false, true]) {
+    await assert.rejects(c.settings.sync({ login: 'octocat', sessionId: 'old', version: 0, removed: [], changed }, { fromLaptop }),
+      (err) => err.status === 400 && /config\.toml sets mcp_servers\.x\.env\.API_KEY/.test(err.message) && !err.message.includes('ABCD1234'));
+  }
+  for (const marketplace of [{ source: 'git', url: 'https://mia:pw@example.com/t.git' }, { source: 'directory', path: '/Users/mia/p' }, { source: 'github', repo: 'a/b', extra: 1 }]) {
+    await assert.rejects(c.settings.sync({ login: 'octocat', sessionId: 'old', version: 0, removed: [], changed: { '.claude/plugins/installed_plugins.json#plugins/p@m': JSON.stringify({ marketplace }) } }),
+      (err) => err.status === 400, JSON.stringify(marketplace));
+  }
+  assert.equal(c.objects.size, 0, 'nothing kept');
+  await c.settings.sync({ login: 'octocat', sessionId: 'new', version: 0, removed: [], changed: { '.claude/plugins/installed_plugins.json#plugins/p@m': '{"marketplace":{"source":"directory"}}' } });
+});
+
+test('dotted and quoted keys in inline Codex tables keep credentials out of sync', async () => {
+  const c = fakeConsole();
+  const model = 'model = "o3"\n';
+  const a = session(await makeHome({ '.codex/config.toml': model }), c.send('aaaaaaaa'));
+  await a.round({ live: false });
+
+  for (const [entry, field, value = 'dummy-value'] of [
+    ['env.SERVICE_TOKEN', 'env.SERVICE_TOKEN'],
+    [String.raw`'http_headers' . "Authoriz\u0061tion"`, 'http_headers.Authorization'],
+    [String.raw`http_headers."X-Internal-\U00000041uth-Code"`, 'http_headers.X-Internal-Auth-Code'],
+    ['http_headers.X-Company-Access', 'http_headers.X-Company-Access'],
+    ['http_headers.x_demo_env_var', 'http_headers.x_demo_env_var', 'FIXTURE'],
+  ]) {
+    const config = `${model}mcp_servers.demo = { command = "npx", ${entry} = ${JSON.stringify(value)} }\n`;
+    await fs.writeFile(path.join(a.home, '.codex/config.toml'), config);
+    assert.equal((await a.round()).sent, 0, 'the configured server stays local');
+    assert.equal(await read(a.home, '.codex/config.toml'), config);
+    await assert.rejects(c.settings.sync({
+      login: 'octocat', sessionId: 'old', version: 1, removed: [], changed: { '.codex/config.toml': Buffer.from(config).toString('base64') },
+    }), (err) => err.status === 400 && err.message.includes(`sets mcp_servers.demo.${field}`) && !err.message.includes(value));
+  }
+});
+
+test('a literal curl OAuth bearer credential keeps its Codex server local', async (t) => {
+  const c = fakeConsole();
+  const model = 'model = "o3"\n';
+  const config = model + '[mcp_servers.api]\ncommand = "curl"\nargs = ["--oauth2-bearer", "-dummy-bearer", "https://example.com/mcp"]\n';
+  const home = await makeHome({ '.codex/config.toml': config });
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  await session(home, c.send('aaaaaaaa')).round({ live: false });
+  const shared = JSON.parse([...c.objects.values()][0]).items['.codex/config.toml'];
+  assert.ok(Buffer.from(shared, 'base64').toString() === model, 'only the model is shared');
+  await assert.rejects(c.settings.sync({
+    login: 'octocat', sessionId: 'old', version: 1, removed: [], changed: { '.codex/config.toml': Buffer.from(config).toString('base64') },
+  }), (err) => err.status === 400 && err.message.includes('--oauth2-bearer') && !err.message.includes('dummy-bearer'));
+});
+
+test('a local Codex credential shadows a shared server without changing the shared copy', async (t) => {
+  const c = fakeConsole();
+  const shared = '[mcp_servers.demo]\ncommand = "shared-server"\n';
+  const privateServer = '[mcp_servers.demo]\ncommand = "local-server"\nenv = { SERVICE_TOKEN = "dummy-value" }\n';
+  const source = session(await makeHome({ '.codex/config.toml': shared }), c.send('aaaaaaaa'));
+  const local = session(await makeHome({ '.codex/config.toml': privateServer }), c.send('bbbbbbbb'));
+  t.after(async () => {
+    await fs.rm(source.home, { recursive: true, force: true });
+    await fs.rm(local.home, { recursive: true, force: true });
+  });
+  await source.round();
+  await local.round({ live: false });
+  const held = await local.round();
+  assert.deepEqual([held.sent, held.removed], [0, 0]);
+  assert.equal(await read(local.home, '.codex/config.toml'), privateServer);
+
+  const model = 'model = "new-model"\n';
+  await fs.writeFile(path.join(local.home, '.codex/config.toml'), `${model}\n${privateServer}`);
+  assert.equal((await local.round()).sent, 1);
+  const next = await local.round();
+  assert.deepEqual([next.sent, next.removed], [0, 0]);
+  await source.round();
+  assert.equal(await read(source.home, '.codex/config.toml'), `${model}\n${shared}`);
+});
+
+test('a session never syncs through a link to its Codex sign-in or a linked settings directory', async (t) => {
+  const c = fakeConsole();
+  const auth = '{"access_token":"dummy-sign-in"}';
+  const home = await makeHome({
+    '.codex/auth.json': auth,
+    '.codex/config.toml': 'model = "o3"\n',
+    '.codex/local-skills/private/SKILL.md': '# Local only\n',
+  });
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  await fs.symlink('auth.json', path.join(home, '.codex/AGENTS.md'));
+  await fs.symlink('local-skills', path.join(home, '.codex/skills'));
+
+  const a = session(home, c.send('aaaaaaaa'));
+  const started = await a.round({ live: false });
+  assert.equal(started.sent, 1);
+  assert.deepEqual(Object.keys(JSON.parse([...c.objects.values()][0]).items), ['.codex/config.toml']);
+  await assert.rejects(c.settings.sync({
+    login: 'octocat', sessionId: 'old', version: 1, removed: [], changed: { '.codex/auth.json': Buffer.from(auth).toString('base64') },
+  }), (err) => err.status === 400 && err.message === 'a Codex sign-in stays where it was set');
+
+  const b = session(await makeHome({}), c.send('bbbbbbbb'));
+  t.after(() => fs.rm(b.home, { recursive: true, force: true }));
+  await b.round();
+  await fs.writeFile(path.join(b.home, '.codex/AGENTS.md'), 'Shared instructions.\n');
+  await fs.mkdir(path.join(b.home, '.codex/skills/shared'), { recursive: true });
+  await fs.writeFile(path.join(b.home, '.codex/skills/shared/SKILL.md'), '# Shared\n');
+  await b.round();
+
+  assert.equal((await a.round()).written, 0);
+  assert.equal((await a.round()).removed, 0);
+  assert.equal(await read(home, '.codex/auth.json'), auth);
+  assert.equal(await fs.readlink(path.join(home, '.codex/AGENTS.md')), 'auth.json');
+  await assert.rejects(read(home, '.codex/local-skills/shared/SKILL.md'), { code: 'ENOENT' });
+  await fs.rm(path.join(home, '.codex/config.toml'));
+  await fs.symlink('auth.json', path.join(home, '.codex/config.toml'));
+  assert.equal((await a.round()).removed, 0, 'replacing a synced file with a link does not remove the shared item');
+});
+
+test('a token folded across a multiline TOML string stays local and the console refuses that config', async (t) => {
+  const c = fakeConsole();
+  const model = 'model = "o3"\n';
+  const firstHalf = 'gh' + 'p_' + 'x1'.repeat(9);
+  const secondHalf = 'x1'.repeat(9);
+  const config = `${model}notify = ["""\n  ${firstHalf}\\\n  ${secondHalf}"""]\n`;
+  const home = await makeHome({ '.codex/config.toml': config });
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const a = session(home, c.send('aaaaaaaa'));
+  await a.round({ live: false });
+  const items = JSON.parse([...c.objects.values()][0]).items;
+  assert.equal(Buffer.from(items['.codex/config.toml'], 'base64').toString() === model, true, 'only the model is shared');
+  await assert.rejects(c.settings.sync({
+    login: 'octocat', sessionId: 'old', version: 1, removed: [], changed: { '.codex/config.toml': Buffer.from(config).toString('base64') },
+  }), (err) => err.status === 400 && err.message.includes('GitHub token') && !err.message.includes(firstHalf));
+});
+
+test('a config.toml that does not read as TOML is held out of the round, neither sent nor written over, until it reads', async () => {
+  const c = fakeConsole();
+  const a = session(await makeHome({ '.codex/config.toml': 'model = "o3"\n' }), c.send('aaaaaaaa'));
+  await a.round({ live: false });
+  await fs.writeFile(path.join(a.home, '.codex/config.toml'), 'model = "o3\n[mcp_servers.x.env]\nAPI_KEY = "ABCD1234"\n');
+  const held = await a.round();
+  assert.deepEqual([held.sent, held.removed, held.written], [0, 0, 0], 'not sent, not taken as removed, not written over');
+  assert.equal(await read(a.home, '.codex/config.toml'), 'model = "o3\n[mcp_servers.x.env]\nAPI_KEY = "ABCD1234"\n');
+  await fs.writeFile(path.join(a.home, '.codex/config.toml'), 'model = "o4"\n');
+  assert.equal((await a.round()).sent, 1, 'it goes once it reads');
+});
+
+test('a plugin named with a key\'s shape never reaches the shared copy, and the console refuses one without saying it', async () => {
+  const token = `ghp_${'x1'.repeat(18)}`;
+  const c = fakeConsole();
+  const a = session(await makeHome({
+    '.claude/plugins/installed_plugins.json': { version: 2, plugins: { [`${token}@acme-tools`]: [{ scope: 'user' }], 'review@acme-tools': [{ scope: 'user' }] } },
+  }), c.send('aaaaaaaa'));
+  await a.round({ live: false });
+  assert.deepEqual(Object.keys(JSON.parse([...c.objects.values()][0]).items), ['.claude/plugins/installed_plugins.json#plugins/review@acme-tools']);
+  await assert.rejects(c.settings.sync({ login: 'octocat', sessionId: 'old', version: 1, removed: [], changed: { [`.claude/plugins/installed_plugins.json#plugins/${token}@m`]: '{"marketplace":null}' } }),
+    (err) => err.status === 400 && err.message === 'a plugin\'s name holds what looks like a key');
+  await assert.rejects(c.settings.sync({ login: 'octocat', sessionId: 'old', version: 1, removed: [], changed: { [`.claude/plugins/installed_plugins.json#plugins/p@${token}`]: '{"marketplace":{"source":"directory","path":"/x"}}' } }),
+    (err) => err.status === 400 && !err.message.includes(token));
 });

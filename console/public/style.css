@@ -264,6 +264,9 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 /* Extend, in a session's last 15 minutes before it pauses or stops: the bar's amber, the one warning on it. */
 .pbtn.pextend { color: var(--bar-amber); border-color: var(--bar-amber-line); }
 .pbtn.pextend:hover { color: var(--bar-amber); background: var(--bar-amber-well); }
+/* Share, beside the app's button: Shared in the bar's slate, outlined, while others can open the app. Never orange. */
+.pbtn.pshare.is-shared { color: var(--bar-slate); border-color: var(--bar-well-line); }
+.pbtn.pshare.is-shared:hover { color: var(--bar-ink); }
 .pphone-meta .ptimer { font-family: var(--mono); color: var(--bar-amber); }
 .pane-bar .btn { min-height: 24px; padding: 0 8px; font-size: 11.5px; font-family: "Red Hat Display", system-ui, sans-serif; }
 .pane-bar .btn-plain { border: 1px solid var(--bar-well-line); background: transparent; color: var(--bar-ink); }
@@ -275,13 +278,13 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 @container panebar (max-width: 1080px) { .pane-bar .pmeter:not(.is-warn):not(.is-hot) { display: none; } }
 @container panebar (max-width: 960px) { .pane-bar .pinvite { display: none; } }
 .pane-bar > .ptitle { min-width: min(9em, 22cqi); }
-/* Narrower still, Details, Open and the PR chip fold into the phone's ⋯, which holds them all (Open PR ↗), at the bar's
+/* Narrower still, Details, Open, Share and the PR chip fold into the phone's ⋯, which holds them all (Open PR ↗), at the bar's
    right end, and the gaps and tabs tighten. */
 @container panebar (max-width: 780px) {
   .pane-bar { gap: 4px 6px; }
   .pane-bar .ptab { padding: 2px 8px; }
   .pane-bar > .ptitle { min-width: min(7em, 18cqi); }
-  .pane-bar .pdetails, .pane-bar .popen, .pane-bar > .prchip { display: none; }
+  .pane-bar .pdetails, .pane-bar .popen, .pane-bar .pshare, .pane-bar > .prchip { display: none; }
   .pane-bar .pmore { display: grid; place-items: center; order: 1; width: 28px; height: 24px; margin: 0; padding: 0; font: inherit; font-size: 14px; color: var(--bar-ink); background: none; border: 1px solid var(--bar-well-line); border-radius: 4px; cursor: pointer; }
 }
 /* Narrower than that (a small window with the rail open), the name and its status take a row of their own over the tabs
@@ -1510,3 +1513,29 @@ h1.title .pill { vertical-align: middle; font-family: "Red Hat Display", system-
   .chat-field { min-height: 22px; font-size: 16px; }
   .chat-user { max-width: 90%; }
 }
+
+/* ---- the rail's hover card (session.js railPeek, components/RailPeek) ---- */
+/* A menu surface beside the card, never over it: what the card has no room for. It takes no pointer, so it never
+   holds the hover or a click. */
+.rail-peek { position: fixed; z-index: 45; width: 320px; max-width: calc(100vw - 16px); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; background: var(--ground); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(27, 34, 50, 0.18); color: var(--ink); font-size: 12.5px; line-height: 1.45; pointer-events: none; }
+.rail-peek[hidden] { display: none; }
+.peek-title { font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.peek-status { color: var(--sub); }
+.peek-status b { font-weight: 600; color: var(--idle-ink); }
+.peek-status.is-needs-you b, .peek-status.is-paused b, .peek-status.is-queued b { color: var(--wait); }
+.peek-status.is-working b, .peek-status.is-starting b, .peek-status.is-review b, .peek-status.is-job b { color: var(--slate); }
+.peek-status.is-done b, .peek-status.is-finished b { color: var(--green); }
+.peek-status.is-failed b { color: var(--bad); }
+.peek-last { margin: 0; padding: 6px 8px; border-radius: 6px; background: var(--stopped); color: var(--sub); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.peek-last.is-error { color: var(--bad); }
+.peek-who { font-weight: 600; color: var(--ink); }
+.peek-prs { display: flex; flex-direction: column; gap: 4px; }
+.peek-pr-head { display: flex; gap: 6px; min-width: 0; }
+.peek-num { flex: none; font-family: var(--mono); font-size: 11.5px; color: var(--slate); line-height: 1.6; }
+.peek-pr-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.peek-pr-sub { font-family: var(--mono); font-size: 11px; color: var(--meta); }
+.peek-checks.is-fail { color: var(--bad); } .peek-checks.is-pending { color: var(--slate); } .peek-checks.is-pass { color: var(--green); }
+.peek-rows { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; margin: 0; padding-top: 6px; border-top: 1px solid var(--line-soft); }
+.peek-rows dt { color: var(--meta); }
+.peek-rows dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.peek-rows dd.is-mono { font-family: var(--mono); font-size: 11.5px; line-height: 1.6; }

@@ -65,7 +65,7 @@ import net from 'node:net';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
-import { classifyPane, parseTranscriptTail } from '../shared/sessionState.mjs';
+import { parseTranscriptTail } from '../shared/sessionState.mjs';
 import { STATE_FILE } from './hookState.mjs';
 import { STOP_TIMEOUT_MS, SYNC_EVERY_MS, exchange, readState, syncOnce, writeState } from './settingsSync.mjs';
 import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs';
@@ -73,7 +73,8 @@ import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
 import { TAINTED_CLAUDE_FLAGS, applyTaint, isTaintSetUp, isTainted, markTaintSetUp } from './taint.mjs';
-import { classifyCodexPane } from './codexState.mjs';
+import { paneState, stateReader } from './agentState.mjs';
+import { agentPane } from './agentPane.mjs';
 import { Refusal, answerApproval, answerQuestions, composerEmpty, composerText, readPrompt, typeMessage } from './panePrompt.mjs';
 import { createReviewHost } from './reviewShed/host.mjs';
 import { createCodeEditor } from './codeEditor.mjs';
@@ -82,6 +83,7 @@ import { ownClaudeTranscript, readSessionTranscript } from './sessionTranscript.
 import { ENGINE_NAMES, viewersOf } from '../shared/databases/index.mjs';
 import { expandPath, loadProject, usesVariable } from '../shared/project.mjs';
 import { isMain } from '../shared/isMain.mjs';
+import { EXEC_PATH, handleExecUpgrade } from './execPipe.mjs';
 
 const run = promisify(execFile);
 
@@ -171,20 +173,14 @@ function refreshApp({ force = false } = {}) {
 const APP_LOG_TAIL_BYTES = 48 * 1024;
 const APP_PROBE_MS = 500;
 const TOKEN = process.env.SESSION_TOKEN || '';
-const TMUX_TARGET = 'claude';
 const PR_CACHE_MS = 60_000;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_SEND_CHARS = 8000;
 const TRANSCRIPT_TAIL_BYTES = 64 * 1024;
 // What claude writes when Esc ends a turn, mid-turn ("…by user]") or on a dialog ("…by user for tool use]").
 const INTERRUPT_RECORD = '[Request interrupted by user';
-const SILENT_TURN_MS = 5 * 60_000;
-// Claude opened 16 s after statusd in a real session; this leaves room for a slow MCP server.
-const STARTING_MS = 2 * 60_000;
 // The container's start too: the entrypoint execs statusd, and the task ends when it does, so it never restarts.
 const STARTED_AT = Date.now();
-// The hooks after which claude's next sign of life is a reply written to the transcript.
-const WAITING_ON_REPLY = new Set(['UserPromptSubmit', 'PostToolUse']);
 const CONSOLE_URL = process.env.WOODSHED_CONSOLE_URL || '';
 const ASK = process.env.SESSION_MODE === 'ask';
 // A QA session (session/qa.sh) tests a pull request's branch and changes nothing on it: it pushes nothing, and the
@@ -211,9 +207,6 @@ const HOME_SAVE_TIMEOUT_MS = 30_000;
 // A task that ends without a checkpoint (a crash, Fargate taking it back) loses at most this much of the home.
 // Keep it above HOME_SAVE_TIMEOUT_MS: periodicSave tracks one periodic save, so two must never overlap.
 const HOME_SAVE_EVERY_MS = 5 * 60_000;
-// A mode footer is on screen while claude is open, whichever mode the session started in or someone has cycled to
-// since: default mode's reads `⏸ manual mode on` (Claude Code 2.1.328).
-const MODE_FOOTER = /(auto mode|bypass permissions|accept edits|plan mode|manual mode) on/;
 // cgroup v2 names it memory.peak; v1, which Fargate uses, memory.max_usage_in_bytes. Both count file
 // cache the kernel can reclaim, so this is an upper bound on what the session needs.
 const MEMORY_PEAK_FILES = ['/sys/fs/cgroup/memory.peak', '/sys/fs/cgroup/memory/memory.max_usage_in_bytes'];
@@ -230,18 +223,9 @@ export function isAuthorized(header, token) {
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
 
-/**
- * @param {string} paneText  raw `tmux capture-pane -p` output
- * @returns {'working'|'needs-you'|'done'|'not-running'}  not-running = the pane
- *   holds a shell: claude has not opened yet, or it has exited
- */
-export function paneState(paneText) {
-  const state = classifyPane(paneText);
-  if (state) return state;
-  // classifyPane wants an empty composer line to call a turn done, but claude
-  // greys a suggested next prompt into it after most turns.
-  return typeof paneText === 'string' && MODE_FOOTER.test(paneText) ? 'done' : 'not-running';
-}
+// The readers of the agent's state, and the pane they read: statusd's tests and older callers import them from here.
+export { claudeState, paneState } from './agentState.mjs';
+export { AGENT_PANE_FORMAT } from './agentPane.mjs';
 
 /**
  * @param {string} raw  request body
@@ -410,9 +394,6 @@ const AGENT_COMMANDS = new Set(['claude', 'codex']);
 export function isAgentCommand(command) {
   return AGENT_COMMANDS.has(String(command ?? '').trim());
 }
-
-// tmux's own test of the pane's command, read just before an agentOnly send types: the same names as AGENT_COMMANDS.
-export const AGENT_PANE_FORMAT = `#{||:${[...AGENT_COMMANDS].map((c) => `#{==:#{pane_current_command},${c}}`).join(',')}}`;
 
 /**
  * @param {string[]} files  cgroup files holding the peak in bytes; the first readable one wins
@@ -592,32 +573,6 @@ async function hookState() {
     // No hook has fired yet, or claude started from an image without them.
     return null;
   }
-}
-
-/**
- * What claude is doing, from its own hooks. The pane only says whether claude is open at all, and stands in until
- * the first hook fires.
- * @param {{paneText: string, hook: {state: string, event: string, at: number}|null,
- *          interruptedAt: number|null, transcriptAt: number|null, openTools: number|null, now: number,
- *          startedAt: number}} params  transcriptAt: when the transcript was last written, in ms. openTools: from
- *   openToolCalls; null, unknown, counts as open. startedAt: when statusd started, with the container
- * @returns {{state: 'starting'|'working'|'needs-you'|'done'|'not-running',
- *            source: 'pane'|'hook'|'interrupt'|'silent'}}
- */
-export function claudeState({ paneText, hook, interruptedAt, transcriptAt, openTools, now, startedAt }) {
-  const pane = paneState(paneText);
-  // SessionStart writes the state file as claude opens, so with no file and no claude on screen it is still opening,
-  // its first prompt queued behind it. Not for ever: a claude that never opens has exited.
-  if (pane === 'not-running' && !hook && now - startedAt < STARTING_MS) return { state: 'starting', source: 'pane' };
-  if (pane === 'not-running' || !hook?.state) return { state: pane, source: 'pane' };
-  if (hook.state !== 'done' && interruptedAt !== null && interruptedAt >= hook.at) return { state: 'done', source: 'interrupt' };
-  // Esc before the first word of a reply writes no interrupt record either: the prompt or the tool result, then
-  // nothing. A turn that is going writes to the transcript, or has a tool call open: the last PostToolUse can be
-  // the quick one of a parallel batch.
-  const lastSign = Math.max(hook.at, transcriptAt ?? 0);
-  const silent = WAITING_ON_REPLY.has(hook.event) && openTools === 0 && now - lastSign > SILENT_TURN_MS;
-  if (silent) return { state: 'done', source: 'silent' };
-  return { state: hook.state, source: 'hook' };
 }
 
 // A server is up when its port accepts a connection, whoever started it: claude often does.
@@ -837,12 +792,12 @@ function runStop(app, then) {
 
 let lastState = null;
 
-// Codex writes no hooks: its pane is all there is, and a pane with no codex on it is starting or has ended.
-function codexState(paneText) {
-  const state = classifyCodexPane(paneText);
-  if (state) return { state, source: 'pane' };
-  return { state: Date.now() - STARTED_AT < STARTING_MS ? 'starting' : 'not-running', source: 'pane' };
-}
+// The terminal the agent runs in, tmux's pane or Herdr's (agentPane.mjs), as the entrypoint chose it (WOODSHED_TERMINAL).
+let agentPaneIo = null;
+const agentIo = () => (agentPaneIo ??= agentPane(run));
+const TERMINAL = process.env.WOODSHED_TERMINAL === 'herdr' ? 'herdr' : 'tmux';
+// The readers of what the agent is doing (agentState.mjs): its own, and Herdr's when it runs in Herdr.
+const readAgent = stateReader({ qa: QA, codex: CODEX, terminal: TERMINAL });
 
 // ChatGPT's refresh token rotates, so the sign-in saved on My settings stops working once a session used it. The
 // console keeps the copy only for an owner who saved one, and says 409 to anyone else.
@@ -868,20 +823,28 @@ async function keepCodexAuth() {
  * @returns {Promise<{state: string, source: string, pane: string, tail: object|null, hook: object|null}>}
  */
 async function agentState({ strict = false } = {}) {
-  let pane = '';
+  let paneText = '';
   try {
-    pane = (await run('tmux', ['capture-pane', '-p', '-t', TMUX_TARGET])).stdout;
+    paneText = await agentIo().capture();
   } catch (err) {
     if (strict) throw err;
-    console.warn('statusd: capture-pane failed', { message: err?.message });
+    console.warn('statusd: capture-pane failed', { message: err?.message, terminal: TERMINAL });
   }
+  // Herdr's own word on the agent in its terminal, when it runs there. One it could not give says nothing: the agent's
+  // own reader stands alone.
+  const herdrStatus = TERMINAL === 'herdr' && !QA ? await agentIo().agent().catch((err) => {
+    console.warn('statusd: Herdr\'s status for the agent not read', { message: err?.message });
+    return null;
+  }) : null;
   const tail = CODEX ? null : await transcriptTail().catch((err) => {
     console.warn('statusd: reading the transcript failed', { message: err?.message });
     return null;
   });
   const hook = CODEX ? null : await hookState();
-  const { state, source } = QA ? { state: existsSync(QA_RUNNING) ? 'working' : 'done', source: 'qa' } : CODEX ? codexState(pane) : claudeState({
-    paneText: pane,
+  const { state, source } = readAgent({
+    paneText,
+    qaRunning: QA && existsSync(QA_RUNNING),
+    herdrStatus,
     hook,
     interruptedAt: tail ? lastInterruptAt(tail.text) : null,
     transcriptAt: tail?.writtenAt ?? null,
@@ -892,7 +855,7 @@ async function agentState({ strict = false } = {}) {
   });
   if (state !== lastState) console.log('statusd: claude state changed', { from: lastState, to: state, source });
   lastState = state;
-  return { state, source, pane, tail, hook };
+  return { state, source, pane: paneText, tail, hook };
 }
 
 async function status() {
@@ -901,7 +864,8 @@ async function status() {
   // true or false only when the box was found on the screen; null when nothing can be said of it (mid-turn, a dialog over
   // it, a pane that could not be read), for the console never to take an unseen box as emptied.
   let boxText = null;
-  if (state === 'done' && !QA) {
+  // A draft is told from claude's dim suggestion by its colours, which Herdr's read does not keep.
+  if (state === 'done' && !QA && agentIo().colours) {
     try {
       const text = composerText(await captureBox(), CODEX ? 'codex' : 'claude');
       if (text !== null) boxText = text !== '';
@@ -1001,7 +965,7 @@ async function startClaudeLogin() {
       const working = state === 'working' || (state === 'done' && !atPrompt(now));
       if (working || (state !== 'done' && state !== 'needs-you')) throw new Error(`claude is ${working ? 'working' : `not at its prompt (${state})`}: sign in once its turn ends`);
       if (!lastTaken(state, now.hook, now.pane)) throw new Error('claude has not started on the last message yet: sign in once its turn ends');
-      if (!(await boxEmpty())) throw new Error('claude\'s box holds text, unsent: send or clear it in the TUI tab first');
+      if (agentIo().colours && !(await boxEmpty())) throw new Error('claude\'s box holds text, unsent: send or clear it in the TUI tab first');
       const done = await send('/woodshed:remote-control');
       if (!done.sent) throw new Error(done.typed ? 'the command is in claude\'s box, not sent: send it from the TUI tab' : 'claude is asking something: answer it first, then sign in again');
     } finally {
@@ -1020,12 +984,12 @@ async function startClaudeLogin() {
 }
 
 async function interrupt() {
-  await run('tmux', ['send-keys', '-t', TMUX_TARGET, 'Escape']);
+  await agentIo().keys('Escape');
   console.log('statusd: agent interrupted');
 }
 
 async function capturePane() {
-  return (await run('tmux', ['capture-pane', '-p', '-t', TMUX_TARGET])).stdout;
+  return agentIo().capture();
 }
 
 // One answer at a time: two typed into one picker would each check a screen the other is changing.
@@ -1039,7 +1003,7 @@ let answering = false;
 async function answer(body) {
   if (answering) return { status: 409, body: { error: 'another answer is being typed: wait a moment' } };
   answering = true;
-  const io = { capture: capturePane, keys: async (...keys) => { await run('tmux', ['send-keys', '-t', TMUX_TARGET, ...keys]); } };
+  const io = { capture: capturePane, keys: async (...keys) => { await agentIo().keys(...keys); } };
   try {
     if (body.kind === 'question') {
       const { moves } = await answerQuestions(io, body.questions);
@@ -1090,7 +1054,7 @@ export function typingSteps(text, agent) {
  * @returns {Error & {typing: true}}
  */
 export function typingError(err, partial = false) {
-  return Object.assign(new Error(`tmux could not type the message (exit ${Number.isInteger(err?.code) ? err.code : 'unknown'})`), { typing: true, partial });
+  return Object.assign(new Error(`${TERMINAL} could not type the message (exit ${Number.isInteger(err?.code) ? err.code : 'unknown'})`), { typing: true, partial });
 }
 
 // The agent's pane, for typeMessage (panePrompt.mjs): read it, type into it, press Enter.
@@ -1102,11 +1066,9 @@ const paneIo = {
     let done = 0;
     try {
       for (const step of typingSteps(text, CODEX ? 'codex' : 'claude')) {
-        if (step.paste !== undefined) {
-          await run('tmux', ['set-buffer', '-b', 'woodshed-send', '--', step.paste]);
-          await run('tmux', ['paste-buffer', '-p', '-d', '-b', 'woodshed-send', '-t', TMUX_TARGET]);
-        } else if (step.keys !== undefined) await run('tmux', ['send-keys', '-t', TMUX_TARGET, '-l', step.keys]);
-        else await run('tmux', ['send-keys', '-t', TMUX_TARGET, step.key]);
+        if (step.paste !== undefined) await agentIo().paste(step.paste);
+        else if (step.keys !== undefined) await agentIo().literal(step.keys);
+        else await agentIo().keys(step.key);
         done++;
         await new Promise((resolve) => setTimeout(resolve, step.pauseMs));
       }
@@ -1115,7 +1077,7 @@ const paneIo = {
       throw typingError(err, done > 0);
     }
   },
-  enter: () => run('tmux', ['send-keys', '-t', TMUX_TARGET, 'Enter']),
+  enter: () => agentIo().keys('Enter'),
   // What the box holds, read with its colours: only the text typed, before the Enter.
   // A long draft runs off the top of the screen, so the box is read with scrollback enough to hold all of it.
   box: async (text = '') => composerText(await captureBox(text.split('\n').length + 100), CODEX ? 'codex' : 'claude'),
@@ -1126,11 +1088,23 @@ const paneIo = {
  * @returns {Promise<{sent: true}|{sent: false, kind: string, typed: boolean}>}
  */
 async function send(text) {
-  const done = await typeMessage(paneIo, text);
+  // hc types text only as a paste with its Enter, and only while the agent says it is idle: its own send, which also
+  // holds for a person's draft in an attached client, stands for typeMessage's reads of the box.
+  const done = agentIo().typesText ? await typeMessage(paneIo, text) : await sendThroughHerdr(text);
   if (done.sent) lastSent = { at: Date.now(), seenWorking: false };
   if (done.sent) console.log('statusd: text sent to claude', { chars: text.length, paste: CODEX });
   else console.log('statusd: text not sent, a prompt is open', { kind: done.kind, typed: done.typed, chars: text.length });
   return done;
+}
+
+async function sendThroughHerdr(text) {
+  const done = await agentIo().send(text);
+  if (done.sent) return done;
+  console.log('statusd: Herdr did not send the message', { why: done.why, kind: done.kind ?? null });
+  // A prompt on screen is said as typeMessage says it, blocked (hc's word for one) as an approval; anything else (not
+  // idle, not at its prompt, a draft held past hc's wait) is nothing typed.
+  if (done.why === 'prompt-open') return { sent: false, kind: done.kind, typed: false };
+  return { sent: false, kind: done.why === 'blocked' ? null : 'herdr', typed: false };
 }
 
 // A message goes in only between turns. A prompt (an approval, a question) only ever opens mid-turn, so one could open
@@ -1154,8 +1128,7 @@ let lastSent = null;
 // needs scrollback, to see a draft taller than the screen whole; everywhere else the screen alone is read, since the
 // agent's old frames and dialogs above it are not what it shows now.
 async function captureBox(back = 0) {
-  const scroll = back > 0 ? ['-S', String(-Math.min(back, 10_000))] : [];
-  return (await run('tmux', ['capture-pane', '-e', '-p', ...scroll, '-t', TMUX_TARGET])).stdout;
+  return agentIo().capture({ ansi: true, back });
 }
 
 async function boxEmpty() {
@@ -1422,15 +1395,13 @@ async function reopenClaude() {
 
 async function restartClaude() {
   const conversation = (await newestTranscript())?.name.replace(/\.jsonl$/, '') ?? null;
-  const panePid = (await run('tmux', ['display', '-p', '-t', TMUX_TARGET, '#{pane_pid}'])).stdout.trim();
-  const claude = await childrenOf(panePid);
+  const claude = await childrenOf(await agentIo().shellPid());
   for (const pid of claude) process.kill(pid, 'SIGTERM');
   for (let i = 0; i < 100 && claude.some(alive); i++) await new Promise((r) => setTimeout(r, 100));
   for (const pid of claude.filter(alive)) process.kill(pid, 'SIGKILL');
   const flags = (await fs.readFile(CLAUDE_FLAGS_FILE, 'utf8').catch(() => TAINTED_CLAUDE_FLAGS)).trim();
   const resume = conversation && /^[0-9a-f-]{36}$/.test(conversation) ? ` --resume ${conversation}` : '';
-  await run('tmux', ['send-keys', '-t', TMUX_TARGET, '-l', `${CLAUDE_BIN} ${flags}${resume} "$(cat ${TAINT_MESSAGE_FILE})"`]);
-  await run('tmux', ['send-keys', '-t', TMUX_TARGET, 'Enter']);
+  await agentIo().line(`${CLAUDE_BIN} ${flags}${resume} "$(cat ${TAINT_MESSAGE_FILE})"`);
   console.log('statusd: claude reopened on the console\'s proxy, tainted', { conversation: Boolean(resume), stopped: claude.length });
 }
 
@@ -1521,6 +1492,10 @@ function forwardToApp(req, res) {
  * editor, with the statusd token in Authorization as its other requests carry it.
  */
 export function handleUpgrade(req, socket, head, { token = TOKEN, port = APP_PORT, editorPort = EDITOR.port, editorOn = !ASK && PROJECT?.editor === true } = {}) {
+  // The exec pipe, from the console for the session's person (execPipe.mjs): never an app's request.
+  if (!(APP_HEADER in req.headers) && String(req.url || '/').split('?')[0] === EXEC_PATH) {
+    return handleExecUpgrade(req, socket, head, { isAuthorized: (header) => isAuthorized(header, token), cwd: REPO_DIR, tainted, ask: ASK });
+  }
   if (!(APP_HEADER in req.headers) && EDITOR_RE.test(new URL(req.url || '/', 'http://statusd').pathname)) {
     if (!isAuthorized(req.headers.authorization, token)) {
       socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
@@ -1570,8 +1545,11 @@ async function uploadReply(req, res) {
   const pane = url.searchParams.get('pane');
   try {
     const saved = await saveUpload(req, { name: url.searchParams.get('name') });
-    if (pane === 'agent' || pane === 'terminal') await typePaths(run, [saved.path], pane);
-    console.log('statusd: file uploaded', { bytes: saved.bytes, typed: pane || null });
+    // Herdr types no text without an Enter, so a file dropped on the agent there is saved and not typed in: the page
+    // says where it is. The Terminal tab's shell is tmux's always.
+    const typed = pane === 'terminal' || (pane === 'agent' && agentIo().typesText) ? pane : null;
+    if (typed) await typePaths(run, [saved.path], typed);
+    console.log('statusd: file uploaded', { bytes: saved.bytes, typed });
     return reply(res, 200, saved);
   } catch (err) {
     if (err.shown) return reply(res, err.status, { error: err.message });
@@ -1590,7 +1568,10 @@ function imageReply(req, res) {
   stream.pipe(res);
 }
 
-const reviewHost = createReviewHost({ repoDir: REPO_DIR, sessionId: process.env.SESSION_ID || '' });
+const reviewHost = createReviewHost({
+  repoDir: REPO_DIR, sessionId: process.env.SESSION_ID || '',
+  agent: process.env.AGENT, model: process.env.MODEL, effort: process.env.EFFORT,
+});
 
 async function handle(req, res) {
   if (APP_HEADER in req.headers) {
@@ -1652,7 +1633,7 @@ async function handle(req, res) {
     };
     if (!paneLock.take('send')) return busy('typing', `something else is going in to ${agentName}: this goes after it`);
     // An agent that exited leaves a shell: said so first, whatever else the pane shows.
-    const agentInPane = async () => (await run('tmux', ['display', '-p', '-t', TMUX_TARGET, AGENT_PANE_FORMAT])).stdout.trim() === '1';
+    const agentInPane = () => agentIo().agentRunning();
     const notRunning = () => {
       console.log('statusd: text not sent, the agent is not running in its pane');
       return reply(res, 409, { error: 'the agent is not running in its pane' });
@@ -1662,7 +1643,7 @@ async function handle(req, res) {
       if (agentOnly && !(await agentInPane())) return notRunning();
       const now = await agentState({ strict: true });
       const { state } = now;
-      if (!(await boxEmpty())) {
+      if (agentIo().colours && !(await boxEmpty())) {
         return busy('box-in-use', `${agentName}'s box holds text, unsent: send or clear it in the TUI tab, and this goes after it`);
       }
       // Mid-turn (its state, or its screen behind a stale hook), or the last message not yet taken (its turn may be
@@ -1689,7 +1670,7 @@ async function handle(req, res) {
     } catch (err) {
       const message = String(err?.message ?? err).split('\n')[0];
       if (err?.typing) {
-        console.warn('statusd: text not sent, tmux could not type it', { chars: text.length, partial: err.partial, message });
+        console.warn(`statusd: text not sent, ${TERMINAL} could not type it`, { chars: text.length, partial: err.partial, message });
         // Part of it went in: it is in the box, unsent, like a message a prompt cut off, and is not to be sent again.
         if (err.partial) {
           return reply(res, 409, { why: 'partly-typed', typed: true, error: 'part of the message went into the agent\'s box before typing failed: it is not sent. Send or clear it in the TUI tab' });
@@ -1704,6 +1685,9 @@ async function handle(req, res) {
     if (!done.sent) {
       const agent = CODEX ? 'codex' : 'claude';
       const ask = done.kind === 'question' ? `${agent} is asking a question` : done.kind === 'menu' ? `${agent} shows a menu to pick from` : `${agent} is waiting for an approval`;
+      if (done.kind === 'herdr') {
+        return reply(res, 409, { why: 'not-at-prompt', typed: false, error: `Herdr did not type it: ${agent} was not idle, or someone's draft is in its box. Nothing was sent` });
+      }
       if (done.kind === 'box') {
         return reply(res, 409, { why: 'prompt-open', typed: true, error: `someone typed into ${agent}'s box as this went in: both are there, not sent. Send or clear them in the TUI tab` });
       }
@@ -1791,6 +1775,8 @@ async function handle(req, res) {
   if (route === 'POST /scroll') {
     try {
       const { steps, pane } = JSON.parse((await readBody(req)) || '{}');
+      // The TUI tab is a Herdr client then, which takes the wheel itself: there is no tmux pane of the agent's to scroll.
+      if (TERMINAL === 'herdr' && (pane ?? 'agent') === 'agent') return reply(res, 409, { error: 'the agent runs in Herdr, whose client scrolls it' });
       return reply(res, 200, { via: await scrollPane(run, { steps, pane }) });
     } catch (err) {
       if (err.shown || err instanceof SyntaxError) return reply(res, 400, { error: err.message });
