@@ -892,6 +892,12 @@
     if (card && !control) peekSoon(card.dataset.session, 'pointer');
     else if (peek.id) hidePeek();
   });
+  // A pointer that leaves a card straight into the terminal, the review or another iframe sends this page no further
+  // move, so leaving the card is what hides it there.
+  document.addEventListener('mouseout', (e) => {
+    if (peek.by !== 'pointer' || !e.target.closest?.('.rail .rcard')) return;
+    if (!e.relatedTarget?.closest?.('.rail .rcard')) hidePeek();
+  });
   document.addEventListener('focusin', (e) => {
     const name = peekable() && e.target.closest?.('.rail .rcard .rname');
     if (name && name.matches(':focus-visible')) peekSoon(name.closest('.rcard').dataset.session, 'focus');
