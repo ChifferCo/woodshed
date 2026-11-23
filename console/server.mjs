@@ -1933,13 +1933,26 @@ export function createHandler({
       }
       const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
       if (prompt.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in the first message` });
-      // Allowed before the session is asked, since a Codex agent's start asks the console for its sign-in; taken back
-      // when the start fails.
-      const granted = fleet.allowAgent(session, picked.agent);
-      console.log('console: another agent asked for', { id: session.id, agent: picked.agent, model: picked.model || null, effort: picked.effort || null, permissionMode: picked.permissionMode, prompt: Boolean(prompt.trim()) });
+      // A Codex agent beside claude runs on its owner's own Codex sign-in, handed to the session with the start itself and
+      // never asked for by it; with none, on the team's key through the console's proxy, which the session may use only
+      // once the agent has started (fleet.allowAgent). A start the session refuses is allowed nothing.
+      const besideClaude = picked.agent === 'codex' && session.options?.agent !== 'codex';
+      let codexAuth = null;
+      if (besideClaude && userSettings) {
+        try {
+          codexAuth = await userSettings.codexAuth(session.owner);
+        } catch (err) {
+          console.warn('console: Codex sign-in not read for an agent', { id: session.id, message: err?.message });
+          return reply(res, 502, { error: 'the console could not read your Codex sign-in: try again' });
+        }
+      }
+      console.log('console: another agent asked for', {
+        id: session.id, agent: picked.agent, model: picked.model || null, effort: picked.effort || null, permissionMode: picked.permissionMode,
+        prompt: Boolean(prompt.trim()), ...(besideClaude && { ownCodex: Boolean(codexAuth) }),
+      });
       return toStatusd(req, res, session, {
-        method: 'POST', path: '/agents', body: { ...picked, prompt },
-        onStatus: (code) => { if (code !== 200 && granted) fleet.dropAgent(session, picked.agent); },
+        method: 'POST', path: '/agents', body: { ...picked, prompt, ...(codexAuth ? { codexAuth } : {}) },
+        onStatus: (code) => { if (code === 200 && !session.taintedAt && !fleet.isLocked?.(session)) fleet.allowAgent(session, picked.agent); },
       });
     }
     const base = `/agents/${agentId}`;

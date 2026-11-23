@@ -135,8 +135,9 @@ switch lists them all with their state words and says how many others need you; 
 conversation (`/api/sessions/<id>/agents/<agent-N>/transcript`, `send`, `interrupt`, `prompt`, `answer`) and the TUI
 tab at its terminal (`/term/<id>/?arg=agent-N`, ttyd's URL argument). The pick is kept per session in the browser tab.
 **Stop** in the switch's menu ends one. A Codex agent beside claude runs on its owner's Codex sign-in, which the
-session asks for only as it starts (`POST /codex-sign-in` on the session API), or on the team's OpenAI key through the
-console's proxy, as a Codex session does. A shared session, a question, a review and a QA run have none, nor a session
+console sends with that start alone, or on the team's OpenAI key through the console's proxy, which the session may use
+only once the agent started (`fleet.allowAgent`), as a Codex session does. A session's lockdown drops that at once and cuts
+its calls on the way (`openaiProxy: calls cut at the lockdown`). A shared session, a question, a review and a QA run have none, nor a session
 that has seen production data: its lockdown stops them. They last while the session runs: a Resume starts its own
 agent alone.
 

@@ -133,14 +133,16 @@ export async function openRollout(shellPid, codexHome, { descendants = descendan
 /**
  * @param {{run: (cmd: string, args: string[], opts?: object) => Promise<{stdout: string}>, repoDir: string,
  *          bin: string, claudeDir: string, codexHome: string, claudeFlagsFile: string, codexReady: () => Promise<boolean>,
- *          codexEnv?: () => Promise<Record<string, string>>, stateDir?: string, uploadsDir?: string,
+ *          codexEnv?: (codexAuth: string|null) => Promise<{env: Record<string, string>, undo?: () => Promise<void>}>,
+ *          stateDir?: string, uploadsDir?: string,
  *          tainted?: () => boolean, now?: () => number, openRollout?: typeof openRollout, log?: Pick<Console, 'log'|'warn'>}} deps
  *   claudeFlagsFile: the session's claude flags with no model, effort or mode (entrypoint.sh). codexReady: whether
- *   codex has a home here (configureCodex ran). codexEnv: what a codex's tmux session adds to its environment, once its
- *   sign-in is in place (statusd's codexBeside)
+ *   codex has a home here (configureCodex ran). codexEnv: given the owner's Codex sign-in the console sent with the start
+ *   (or none), puts it in place and says what a codex's tmux session adds to its environment, and how to take it back
+ *   when the start fails after it (statusd's codexBeside)
  */
 export function createAgents({
-  run, repoDir, bin, claudeDir, codexHome, claudeFlagsFile, codexReady, codexEnv = async () => ({}), stateDir = '/tmp', uploadsDir = '/tmp/uploads',
+  run, repoDir, bin, claudeDir, codexHome, claudeFlagsFile, codexReady, codexEnv = async () => ({ env: {} }), stateDir = '/tmp', uploadsDir = '/tmp/uploads',
   tainted = () => false, now = Date.now, openRollout: findRollout = openRollout, log = console,
 }) {
   /** @type {Map<string, object>} */
@@ -324,6 +326,43 @@ export function createAgents({
     for (const a of waiting) deliver(a).catch((err) => log.warn('agents: delivery failed', { id: a.id, message: err?.message }));
   }
 
+  // A start once its checks passed: its tmux session, its command line typed in, and it on the list.
+  async function launch(options, { claudeFlags, env }) {
+    let n = 2;
+    while (agents.has(`agent-${n}`)) n++;
+    const id = `agent-${n}`;
+    const stateFile = path.join(stateDir, `woodshed-${id}-state.json`);
+    const promptFile = options.prompt ? path.join(stateDir, `woodshed-${id}-prompt.md`) : null;
+    await fs.rm(stateFile, { force: true });
+    if (promptFile) await fs.writeFile(promptFile, `${options.prompt}\n`, { mode: 0o600 });
+    const conversation = options.agent === 'claude' ? randomUUID() : null;
+    const line = commandLine(options, { bin, claudeFlags, conversation, uploadsDir, promptFile });
+    // Its own tmux session, its hooks pointed at its own state file. Kept after the agent exits, as the session's is.
+    const envFlags = Object.entries({ WOODSHED_CLAUDE_STATE_FILE: stateFile, WOODSHED_AGENT_ID: id, ...env }).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+    await run('tmux', ['new-session', '-d', '-s', id, '-x', '200', '-y', '50', '-c', repoDir, ...envFlags]);
+    try {
+      await run('tmux', ['set-option', '-t', `=${id}:`, 'remain-on-exit', 'on']);
+    } catch (err) {
+      await run('tmux', ['kill-session', '-t', `=${id}`]).catch(() => {});
+      throw err;
+    }
+    const a = {
+      id, ...options, conversation, stateFile, startedAt: now(), io: tmuxPane(run, `=${id}:`), lock: createPaneLock(),
+      held: [], delivered: [], refused: [], leftInBox: null, lastSent: null, lastState: null, rollout: null, rolloutAt: 0,
+    };
+    if (conversation) claimedClaude.add(`${conversation}.jsonl`);
+    agents.set(id, a);
+    try {
+      await a.io.line(line);
+    } catch (err) {
+      agents.delete(id);
+      await run('tmux', ['kill-session', '-t', `=${id}`]).catch(() => {});
+      throw err;
+    }
+    log.log('agents: agent started', { id, agent: a.agent, model: a.model || null, effort: a.effort || null, permissionMode: a.permissionMode, prompt: Boolean(promptFile) });
+    return view(a);
+  }
+
   return {
     /** The agents running beside the session's own, oldest first. */
     async list() {
@@ -346,41 +385,22 @@ export function createAgents({
       if (agents.size >= MAX_EXTRA_AGENTS) throw Object.assign(new Error(`at most ${MAX_EXTRA_AGENTS} agents beside the session's own: stop one first`), { status: 409 });
       let claudeFlags = '';
       let env = {};
+      let undo = null;
       if (options.agent === 'claude') {
         claudeFlags = await fs.readFile(claudeFlagsFile, 'utf8').catch(() => null);
         if (claudeFlags === null) throw Object.assign(new Error('this session started before it could start another claude: start a new session'), { status: 409 });
       } else if (!(await codexReady())) {
         throw Object.assign(new Error('codex is not set up in this session: start a new session for it'), { status: 409 });
       } else {
-        env = await codexEnv();
+        // The owner's own sign-in, which the console sends with the start and never as part of what it checks.
+        ({ env, undo = null } = await codexEnv(typeof body?.codexAuth === 'string' && body.codexAuth.trim() ? body.codexAuth : null));
       }
-      let n = 2;
-      while (agents.has(`agent-${n}`)) n++;
-      const id = `agent-${n}`;
-      const stateFile = path.join(stateDir, `woodshed-${id}-state.json`);
-      const promptFile = options.prompt ? path.join(stateDir, `woodshed-${id}-prompt.md`) : null;
-      await fs.rm(stateFile, { force: true });
-      if (promptFile) await fs.writeFile(promptFile, `${options.prompt}\n`, { mode: 0o600 });
-      const conversation = options.agent === 'claude' ? randomUUID() : null;
-      const line = commandLine(options, { bin, claudeFlags, conversation, uploadsDir, promptFile });
-      // Its own tmux session, its hooks pointed at its own state file. Kept after the agent exits, as the session's is.
-      const envFlags = Object.entries({ WOODSHED_CLAUDE_STATE_FILE: stateFile, WOODSHED_AGENT_ID: id, ...env }).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
-      await run('tmux', ['new-session', '-d', '-s', id, '-x', '200', '-y', '50', '-c', repoDir, ...envFlags]);
       try {
-        await run('tmux', ['set-option', '-t', `=${id}:`, 'remain-on-exit', 'on']);
+        return await launch(options, { claudeFlags, env });
       } catch (err) {
-        await run('tmux', ['kill-session', '-t', `=${id}`]).catch(() => {});
+        await undo?.().catch(() => {});
         throw err;
       }
-      const a = {
-        id, ...options, conversation, stateFile, startedAt: now(), io: tmuxPane(run, `=${id}:`), lock: createPaneLock(),
-        held: [], delivered: [], refused: [], leftInBox: null, lastSent: null, lastState: null, rollout: null, rolloutAt: 0,
-      };
-      if (conversation) claimedClaude.add(`${conversation}.jsonl`);
-      agents.set(id, a);
-      await a.io.line(line);
-      log.log('agents: agent started', { id, agent: a.agent, model: a.model || null, effort: a.effort || null, permissionMode: a.permissionMode, prompt: Boolean(promptFile) });
-      return view(a);
     },
 
     async stop(id) {

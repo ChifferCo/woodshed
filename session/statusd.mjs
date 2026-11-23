@@ -623,28 +623,35 @@ const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.
   tainted: () => tainted(),
 }) : null;
 
-// A Codex agent beside claude: its sign-in, the owner's own from My settings when they saved one, which the console hands
-// only to a session it let start one (console/sessionApi.mjs POST /codex-sign-in), written into codex's home as configureCodex
+// A Codex agent beside claude: its sign-in, the owner's own from My settings when they saved one, which the console sends
+// with the start (console/server.mjs, agentAction) and nothing here asks for, written into codex's home as configureCodex
 // writes it; with none, the console's proxy and the team key (session/bin/codex). In a Codex session codex has its own.
-async function codexBeside() {
-  if (CODEX || !CONSOLE_URL) return {};
+// A start that fails after it takes back a sign-in it wrote.
+async function codexBeside(given) {
+  if (CODEX) return { env: {} };
   const authFile = path.join(CODEX_HOME, 'auth.json');
-  if (existsSync(authFile)) return { WOODSHED_CODEX_AUTH: '' };
-  let given = null;
-  try {
-    const res = await fetch(`${CONSOLE_URL}/codex-sign-in`, { method: 'POST', headers: { authorization: `Bearer ${TOKEN}` }, signal: AbortSignal.timeout(10_000) });
-    if (res.ok) given = (await res.json())?.codexAuth ?? null;
-    console.log('statusd: Codex sign-in asked for an agent', { status: res.status, own: Boolean(given) });
-  } catch (err) {
-    console.warn('statusd: Codex sign-in not asked for', { message: err?.message });
+  if (existsSync(authFile)) {
+    console.log('statusd: Codex agent beside claude set up', { own: true, already: true });
+    return { env: { WOODSHED_CODEX_AUTH: '' } };
   }
-  if (typeof given !== 'string' || !given.trim()) return { WOODSHED_CODEX_AUTH: 'key' };
+  if (!given) {
+    console.log('statusd: Codex agent beside claude set up', { own: false });
+    return { env: { WOODSHED_CODEX_AUTH: 'key' } };
+  }
   const body = given.startsWith('sk-') ? JSON.stringify({ OPENAI_API_KEY: given.trim() }) : given;
-  await fs.writeFile(authFile, body, { mode: 0o600, flag: 'wx' }).catch((err) => { if (err.code !== 'EEXIST') throw err; });
+  await fs.writeFile(authFile, body, { mode: 0o600, flag: 'wx' });
   // The copy given, for the stop to tell whether this session refreshed it (keepCodexAuth).
   await fs.mkdir(path.dirname(CODEX_GIVEN_FILE), { recursive: true });
   await fs.writeFile(CODEX_GIVEN_FILE, given, { mode: 0o600 });
-  return { WOODSHED_CODEX_AUTH: '' };
+  console.log('statusd: Codex agent beside claude set up', { own: true });
+  return {
+    env: { WOODSHED_CODEX_AUTH: '' },
+    undo: async () => {
+      await fs.rm(authFile, { force: true });
+      await fs.rm(CODEX_GIVEN_FILE, { force: true });
+      console.log('statusd: Codex sign-in taken back, the agent did not start');
+    },
+  };
 }
 
 // The rollout the session's own codex writes to: the one its process holds open, and with none open (it exited, or has

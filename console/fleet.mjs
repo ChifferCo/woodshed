@@ -1722,12 +1722,12 @@ export function createFleet({
   }
 
   /**
-   * Another agent started in a private session beside its own (session/agents.mjs), recorded before the session is asked
-   * to start it: a Codex one may then use its owner's Codex sign-in (sessionApi.mjs GET /codex-auth) or the team's key
-   * (openaiProxy.mjs), as a Codex session does.
+   * Another agent started in a private session beside its own (session/agents.mjs), recorded once the session started
+   * it: a Codex one may then use the team's key (openaiProxy.mjs) and send its refreshed sign-in back at the stop
+   * (sessionApi.mjs POST /codex-auth), as a Codex session does.
    * @param {object} session
    * @param {'claude'|'codex'} agent
-   * @returns {boolean}  whether it was allowed now, rather than before: a start that then fails takes it back (dropAgent)
+   * @returns {boolean}  whether it was allowed now, rather than before
    */
   function allowAgent(session, agent) {
     if ((session.extraAgents ?? []).includes(agent)) return false;
@@ -1736,12 +1736,6 @@ export function createFleet({
     return true;
   }
 
-  /** What allowAgent allowed, taken back: the start it was for did not happen. */
-  function dropAgent(session, agent) {
-    if (!(session.extraAgents ?? []).includes(agent)) return;
-    console.log('fleet: another agent no longer allowed in the session, its start failed', { id: session.id, agent });
-    update(session, { extraAgents: session.extraAgents.filter((a) => a !== agent) });
-  }
 
   /**
    * New session on My Woodshed: a session private to `owner`, on their own Claude token. The console posts no comment
@@ -2930,7 +2924,7 @@ export function createFleet({
   }
 
   return {
-    createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, allowAgent, dropAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

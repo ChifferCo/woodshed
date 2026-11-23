@@ -3,7 +3,8 @@
 // a private claude session's whole start runs in the real session image with the environment ECS would give it (the
 // fleet builds its env, the ECS launcher's allowlist filters it, the task definition's variables are added), and the
 // console's real session API answers it from here with a stand-in owner: a dummy Claude token (claude opens and is never
-// asked anything that needs it), no Codex sign-in (a Codex agent runs on the team key), no databases, no Claude home.
+// asked anything that needs it), no databases, no Claude home. The agents are started on statusd's own route, as the
+// console would with no Codex sign-in saved: the Codex agent runs on the team key.
 // Once claude is up it checks, inside the container:
 //   - the start wrote the extra agents' claude flags and made codex's home (`configureCodex beside`)
 //   - statusd's POST /agents starts a claude and a codex, each in a tmux session of its own, and GET /agents lists them
@@ -62,12 +63,10 @@ async function privateEnv() {
     sessionEnv: {}, ghToken: null, pollMs: 30_000, fallbackPollMs: 300_000, maxPrivatePerPerson: 3,
   };
   const fleet = createFleet({ config, store: { state: { sessions: [], github: null }, save() {} }, launcher, github: {}, statusd: async () => ({}) });
-  const session = await fleet.createSession({
+  await fleet.createSession({
     kind: 'task', number: null, title: 'agentsInImage', startedBy: 'in-image', trigger: 'my-woodshed', owner: 'in-image',
     prompt: 'Say hello, then stop.', options: { agent: 'claude', model: '', effort: '', permissionMode: 'auto' },
   });
-  // As the console does when the owner starts a Codex agent from the page.
-  fleet.allowAgent(session, 'codex');
   return { fleet, overrides: sessionOverrides(started[0]) };
 }
 
@@ -130,14 +129,6 @@ out.tuiOwn = { bytes: ownScreen.length, hasMark: ownScreen.includes('${MARK}'), 
 console.log(JSON.stringify(out));
 `;
 
-// What this process's session API logs (sessionApi.mjs), for the check: printed as it is.
-const said = [];
-const print = console.log;
-console.log = (...args) => {
-  said.push(String(args[0]));
-  print(...args);
-};
-
 const { fleet, overrides } = await privateEnv();
 console.log('agentsInImage: passed to the task', overrides.map((o) => o.name).join(' '));
 const server = await serve(fleet);
@@ -175,14 +166,14 @@ try {
   log = printNew();
   const files = docker('exec', CONTAINER, 'sh', '-c', 'for f in /tmp/woodshed-agent-claude-flags /tmp/woodshed-codex-ready; do [ -e "$f" ] && echo "$f: there" || echo "$f: missing"; done; ps -eo args | grep -m1 "[t]tyd --writable --url-arg" | sed "s/--credential [^ ]*/--credential <hidden>/"');
   console.log(`--- the start's files and the TUI's ttyd\n${files}`);
-  // Not execFileSync: the check's Codex agent asks this process's session API for its sign-in while it runs.
+  // Not execFileSync: the session API here answers the session (its git's token) while the check runs.
   const checked = (await promisify(execFile)('docker', ['exec', CONTAINER, 'node', '--input-type=module', '-e', CHECK], { encoding: 'utf8' })).stdout.trim();
   console.log(`--- statusd's /agents and the TUI's websocket\n${checked}`);
   const tmux = docker('exec', CONTAINER, 'tmux', 'ls');
   console.log(`--- tmux sessions\n${tmux}`);
   log = printNew();
   const out = JSON.parse(checked.split('\n').at(-1));
-  const passed = said.includes('sessionApi: Codex sign-in decided') && /statusd: Codex sign-in asked for an agent \{ status: 200/.test(log)
+  const passed = /statusd: Codex agent beside claude set up \{ own: false \}/.test(log)
     && /\/tmp\/woodshed-agent-claude-flags: there/.test(files) && /\/tmp\/woodshed-codex-ready: there/.test(files) && /woodshed-attach/.test(files)
     && out.started.every((s) => s.status === 200) && out.listed?.length === 2 && out.statusAgents === 2
     && /^agent-2:/m.test(tmux) && /^agent-3:/m.test(tmux) && /^claude:/m.test(tmux)

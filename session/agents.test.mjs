@@ -108,7 +108,8 @@ function agentsWith(overrides = {}) {
 }
 
 test('a start makes a tmux session of its own, points its hooks at its own file, and types the agent in', async () => {
-  const { agents, tmux, dir } = agentsWith({ codexEnv: async () => ({ WOODSHED_CODEX_AUTH: 'key' }) });
+  const given = [];
+  const { agents, tmux, dir } = agentsWith({ codexEnv: async (codexAuth) => { given.push(codexAuth); return { env: { WOODSHED_CODEX_AUTH: 'key' } }; } });
   try {
     const claude = await agents.start({ agent: 'claude', model: 'opus', prompt: 'review it' });
     assert.equal(claude.id, 'agent-2');
@@ -124,7 +125,8 @@ test('a start makes a tmux session of its own, points its hooks at its own file,
     const conversation = /--session-id (\S+)/.exec(line)[1];
     assert.ok(agents.claimed().claude.has(`${conversation}.jsonl`), 'its transcript is never the session\'s own');
 
-    const codex = await agents.start({ agent: 'codex' });
+    const codex = await agents.start({ agent: 'codex', codexAuth: 'sk-own' });
+    assert.deepEqual(given, ['sk-own'], 'the sign-in the console sent with the start');
     assert.equal(codex.id, 'agent-3');
     assert.ok(tmux.calls.find((c) => c[1] === 'new-session' && c.includes('agent-3')).includes('WOODSHED_CODEX_AUTH=key'), 'its sign-in, as statusd set it up');
     assert.equal(agents.ranCodex(), true);
@@ -181,6 +183,21 @@ test('a message to an agent mid-turn is held, and typed in once it is back at it
     assert.deepEqual((await agents.list())[0].heldIds, ['msg-00000001']);
   } finally {
     await agents.stopAll('test');
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a Codex start that fails once its sign-in is in place takes the sign-in back', async () => {
+  const taken = [];
+  const { agents, dir } = agentsWith({
+    run: async (cmd, args) => { if (args[0] === 'new-session') throw new Error('tmux: server exited'); return { stdout: '' }; },
+    codexEnv: async () => ({ env: {}, undo: async () => { taken.push('undone'); } }),
+  });
+  try {
+    await assert.rejects(agents.start({ agent: 'codex', codexAuth: 'sk-own' }), /server exited/);
+    assert.deepEqual(taken, ['undone']);
+    assert.deepEqual(await agents.list(), []);
+  } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

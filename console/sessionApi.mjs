@@ -18,9 +18,6 @@
 //   *    /anthropic/...  claude's calls to Anthropic, the real credential added here (anthropicProxy.mjs)
 //   *    /openai/...     a Codex session's calls to OpenAI on the team key, added here (openaiProxy.mjs)
 //   POST /codex-auth     a Codex session's refreshed ~/.codex/auth.json, kept for its owner's next session
-//   POST /codex-sign-in  {"codexAuth": "..."|null}: the owner's own Codex sign-in, for a Codex agent their private session
-//                        started beside its claude (session/agents.mjs), once its owner started one from the page
-//                        (fleet.allowAgent); null on the team key
 //   POST /home           a session's Claude home, a gzipped tar, saved on stop: a private one's for its owner, a
 //                        shared one's for its own next run
 //   POST /home/restore   that tar back, for the owner's next private session or the shared session's next run;
@@ -210,7 +207,7 @@ export function createSessionApi({
       }
       return mcpRelay.handle(req, res, sessionForAuthorization(req.headers.authorization, fleet.sessions()));
     }
-    const routes = ['/codex-auth', '/codex-sign-in', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/qa-video', '/qa-poster', '/review-report', '/egress'];
+    const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/qa-video', '/qa-poster', '/review-report', '/egress'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -219,8 +216,7 @@ export function createSessionApi({
     }
     if (pathname === '/settings') return settingsReply(res, session, userSettings, databases, repoSettings, { planOnly: req.headers[PLAN_ONLY_HEADER] === '1' });
     if (pathname === '/repo-settings') return repoSettingsReply(req, res, session, repoSettings);
-    if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings);
-    if (pathname === '/codex-sign-in') return codexSignInReply(req, res, session, userSettings);
+    if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings, fleet);
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
     if (pathname === '/answer') return answerReply(req, res, session, asks);
     if (pathname === '/qa-report') return qaReportReply(req, res, session, fleet);
@@ -405,22 +401,9 @@ function isOlderLogin({ incoming, current }) {
   }
 }
 
-// The owner's own Codex sign-in for a Codex agent beside claude: asked for as it starts, never handed to a session whose
-// owner started none, nor to one that has seen production data.
-async function codexSignInReply(req, res, session, userSettings) {
-  req.resume();
-  if (!userSettings || !session.owner || session.options?.agent === 'codex' || !runsCodex(session)) {
-    return reply(res, 404, { error: 'only a private session whose owner started a Codex agent in it gets a Codex sign-in' });
-  }
-  if (session.taintedAt) return reply(res, 409, { error: 'this session has seen production data' });
-  const codexAuth = await userSettings.codexAuth(session.owner);
-  console.log('sessionApi: Codex sign-in decided', { sessionId: session.id, owner: session.owner, own: Boolean(codexAuth), beside: true });
-  return reply(res, 200, { codexAuth: codexAuth ?? null });
-}
-
 // A private Codex session's refreshed login: ChatGPT's refresh token rotates, so the copy saved on My settings would
 // stop working once a session used it. Only the owner's own sign-in is ever replaced, and only by their own session.
-async function codexAuthReply(req, res, session, userSettings) {
+async function codexAuthReply(req, res, session, userSettings, fleet) {
   // A tainted session sends nothing back (runsCodex): what it holds never reaches the owner's later sessions.
   if (!userSettings || !session.owner || !runsCodex(session) || session.taintedAt) {
     req.resume();
@@ -439,6 +422,12 @@ async function codexAuthReply(req, res, session, userSettings) {
   if (isOlderLogin({ incoming: text, current })) {
     console.log('sessionApi: Codex sign-in not kept, the saved one is newer', { sessionId: session.id, owner: session.owner });
     return reply(res, 409, { error: 'the saved Codex sign-in is newer' });
+  }
+  // Asked again last, just before the save: a lockdown that started while it arrived or was compared takes a Codex
+  // agent's access (fleet.taint).
+  if (!runsCodex(session) || session.taintedAt || fleet?.isLocked?.(session)) {
+    console.log('sessionApi: Codex sign-in not kept, the session was locked down', { sessionId: session.id, owner: session.owner });
+    return reply(res, 404, { error: 'only a private Codex session keeps a sign-in' });
   }
   try {
     await userSettings.setCodexAuth(session.owner, text);

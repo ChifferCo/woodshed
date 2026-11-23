@@ -913,9 +913,10 @@ URL on top of each env file's Repo settings values
   mode, or the dialog says why: 409 `at most 3 agents`, `seen production data`, `started before it could start another
   claude` (no `/tmp/woodshed-agent-claude-flags`: an image from before) or `codex is not set up` (no
   `/tmp/woodshed-codex-ready`: configureCodex failed, `WARNING: codex not set up` in the session's log). A Codex agent
-  beside claude logs `statusd: Codex sign-in asked for an agent` with the status and `own`; the console logs
-  `sessionApi: Codex sign-in decided` with `beside: true`, and refuses the team key with `openaiProxy: refused, not a
-  Codex session` until the session has `extraAgents` with codex. Its state changes log `agents: agent state changed`; in
+  beside claude logs `statusd: Codex agent beside claude set up` with `own` (the console sent the owner's sign-in with
+  the start: `console: another agent asked for` with `ownCodex`); the console refuses the team key with `openaiProxy:
+  refused, not a Codex session` until the agent started (`fleet: another agent allowed in the session`), and again from
+  the moment the session's lockdown starts (`fleet: other agents' access dropped at the lockdown`). Its state changes log `agents: agent state changed`; in
   the session, `tmux ls` lists `agent-2` and the rest, `cat /tmp/woodshed-agent-2-state.json` its last hook, and its TUI
   is `tmux attach -t =agent-2`. A Chat that shows another agent's conversation means its record was not told apart:
   claude's by its `--session-id` or the transcript its hooks name, codex's by the rollout its process holds open

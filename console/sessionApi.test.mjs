@@ -644,13 +644,12 @@ test('a private Codex session needs no Claude token, gets its owner\'s Codex sig
   assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer claude-token', body: '{}' })).status, 404, 'not a Codex session');
 });
 
-test('a Codex agent beside claude gets its owner\'s sign-in only once its owner started one, and never in a tainted session', async (t) => {
+test('a Codex agent beside claude sends a refreshed sign-in back, and a tainted session never does', async (t) => {
   const sessions = [
     { id: 'aaaaaaaa', status: 'running', token: 'beside', owner: 'joel', extraAgents: ['codex'] },
     { id: 'bbbbbbbb', status: 'running', token: 'none-started', owner: 'joel', extraAgents: ['claude'] },
     { id: 'cccccccc', status: 'running', token: 'tainted', owner: 'joel', extraAgents: ['codex'], taintedAt: '2026-11-23T10:00:00Z' },
-    { id: 'dddddddd', status: 'running', token: 'shared', owner: null, extraAgents: ['codex'] },
-    { id: 'eeeeeeee', status: 'running', token: 'team', owner: 'mia', extraAgents: ['codex'] },
+    { id: 'dddddddd', status: 'running', token: 'locking', owner: 'joel', extraAgents: ['codex'] },
   ];
   const saved = [];
   const userSettings = {
@@ -660,26 +659,22 @@ test('a Codex agent beside claude gets its owner\'s sign-in only once its owner 
     ownFiles: async () => ({}),
     gitIdentity: () => null,
   };
-  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
+  const fleet = { sessions: () => sessions, isLocked: (s) => s.id === 'dddddddd' };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({}) }, userSettings });
   const server = http.createServer((req, res) => { handle(req, res); });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => server.close());
   const { port } = server.address();
-  const signIn = (token) => request(port, { path: '/codex-sign-in', authorization: `Bearer ${token}` });
+  const back = (token) => request(port, { path: '/codex-auth', authorization: `Bearer ${token}`, body: '{"tokens":{"refresh_token":"rt2"}}' });
 
-  const beside = await signIn('beside');
-  assert.equal(beside.status, 200);
-  assert.equal(beside.body.codexAuth, '{"tokens":{"refresh_token":"rt"}}');
-  assert.equal((await signIn('team')).body.codexAuth, null, 'none saved: the team key, through the console');
-  assert.equal((await signIn('none-started')).status, 404);
-  assert.equal((await signIn('shared')).status, 404);
-  assert.equal((await signIn('tainted')).status, 404, 'a tainted session runs no Codex agent');
-  assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer tainted', body: '{"tokens":{"refresh_token":"from-prod"}}' })).status, 404,
-    'a tainted session sends nothing back to the owner\'s saved sign-in');
-  assert.equal((await request(port, { path: '/settings', authorization: 'Bearer beside' })).body.codexAuth, undefined, 'never handed out with the session\'s settings');
-  // A refreshed login comes back at the stop, as a Codex session's does.
-  assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer beside', body: '{"tokens":{"refresh_token":"rt2"}}' })).status, 200);
+  assert.equal((await back('beside')).status, 200);
   assert.deepEqual(saved, [['joel', '{"tokens":{"refresh_token":"rt2"}}']]);
+  assert.equal((await back('none-started')).status, 404);
+  assert.equal((await back('tainted')).status, 404, 'a tainted session sends nothing back to the owner\'s saved sign-in');
+  assert.equal((await back('locking')).status, 404, 'nor one whose lockdown is under way');
+  assert.equal(saved.length, 1);
+  assert.equal((await request(port, { path: '/codex-sign-in', authorization: 'Bearer beside' })).status, 404, 'a session never asks for the sign-in');
+  assert.equal((await request(port, { path: '/settings', authorization: 'Bearer beside' })).body.codexAuth, undefined, 'nor gets it with its settings');
 });
 
 test('a session gets the token of the project it runs on', async (t) => {
