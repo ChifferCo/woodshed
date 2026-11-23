@@ -58,7 +58,8 @@
 //                                Codex settings, your own files for a repo, and your own dotfile lines (cliSettings.mjs)
 //   POST /api/my/cli-tokens/<id>/revoke   ends one computer's command line sign-in, from My settings
 //   Its token also signs in to GET /api/sessions, GET /api/my/projects, POST /api/my/sessions,
-//   POST /api/my/sessions/<id>/resume|remove, POST /api/sessions/<id>/stop|extend|limits and GET /api/review-readiness,
+//   POST /api/my/sessions/<id>/resume|remove, POST /api/sessions/<id>/stop|extend|limits, the agents beside a
+//   session's own (GET and POST /api/sessions/<id>/agents, POST …/agents/<agent-N>/stop) and GET /api/review-readiness,
 //   as its person (cliSessions.mjs); and to GET /api/cli/config, its person's choices on My settings and never a secret, and the
 //   writes of them: POST /api/my/terminal, /reviews, /codex-auth/reviews, /claude-token/shared, /projects/default and
 //   /github/identity, each answering with that config alone (cliConfig.mjs)
@@ -2664,6 +2665,9 @@ export function createHandler({
     if (pathname === '/api/my/pulls') return pullsReply(res, login);
     const shareRead = APP_SHARE_RE.exec(pathname);
     if (shareRead && !shareRead[2]) return appShareAction(req, res, shareRead, login);
+    // woodshed session agents: the agents beside a private session's own (agentAction checks it is theirs).
+    const agentsRead = AGENTS_RE.exec(pathname);
+    if (agentsRead && !agentsRead[2]) return agentAction(req, res, agentsRead, login);
     return reply(res, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
   }
   function cliWrite(req, res, pathname, login) {

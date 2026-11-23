@@ -140,7 +140,10 @@ console sends with that start alone, or on the team's OpenAI key through the con
 only once the agent started (`fleet.allowAgent`), as a Codex session does. A session's lockdown drops that at once and cuts
 its calls on the way (`openaiProxy: calls cut at the lockdown`). A shared session, a question, a review and a QA run have none, nor a session
 that has seen production data: its lockdown stops them. They last while the session runs: a Resume starts its own
-agent alone.
+agent alone. The command line does the same (cli/README.md, "Sessions"): `woodshed session agents <id>` lists them,
+`woodshed session agent <id> --agent codex --model … "first message"` starts one, `… stop agent-N` ends one, and
+`woodshed session connect <id> --agent agent-N` puts a terminal on one (`x-woodshed-agent` on the terminal pipe,
+`console/execPipe.mjs`).
 
 Under claude's terminal on the TUI tab, a phone has a message box
 (`public/messageBox.js`): the phone's own keyboard, so autocorrect, dictation

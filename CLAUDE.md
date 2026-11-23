@@ -908,7 +908,9 @@ URL on top of each env file's Repo settings values
   microphone. A terminal that reconnected by itself logs `terminal:
   reconnecting` in the browser's console.
 - **+ Another agent fails, or the agent switch is missing.** The switch shows only to the owner of a running My
-  Woodshed session whose statusd reports `agents` (an image from before `session/agents.mjs` reports none). A start
+  Woodshed session whose statusd reports `agents` (an image from before `session/agents.mjs` reports none). From the
+  command line it is `woodshed session agents|agent <id>`, which the console logs as `cliSessions: call` with the path,
+  then the same lines below; `session connect <id> --agent agent-N` refused with 400 is a console from before it. A start
   logs `console: another agent asked for`, then in the session `agents: agent started` with its id, agent, model and
   mode, or the dialog says why: 409 `at most 3 agents`, `seen production data`, `started before it could start another
   claude` (no `/tmp/woodshed-agent-claude-flags`: an image from before) or `codex is not set up` (no

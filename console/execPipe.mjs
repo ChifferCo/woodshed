@@ -37,6 +37,10 @@ const { loginKey } = logins;
 const PATH_RE = /^\/api\/tunnel\/exec\/([0-9a-f]{8})$/;
 const TERMINAL_RE = /^\/api\/tunnel\/(term|shell)\/([0-9a-f]{8})$/;
 export const SIZE_HEADER = 'x-woodshed-terminal-size';
+// On the TUI's terminal, `agent-2` and the rest: one of the agents started beside the session's own (session/agents.mjs),
+// which its ttyd attaches to by its URL argument (session/bin/woodshed-attach). Anything else is refused.
+export const AGENT_HEADER = 'x-woodshed-agent';
+const AGENT_ID_RE = /^agent-[2-9]$/;
 // The session's port for each terminal, as its endpoint names them.
 const TERMINAL_PORT = { term: 'termPort', shell: 'shellPort' };
 
@@ -176,7 +180,12 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
         return;
       }
       if (kind !== 'exec') {
-        forward({ kind, signedIn, session: checked.session, authorization: req.headers.authorization, socket, head, key: req.headers['sec-websocket-key'], size: terminalSize(req.headers[SIZE_HEADER]) });
+        const agent = req.headers[AGENT_HEADER];
+        if (agent !== undefined && (kind !== 'term' || !AGENT_ID_RE.test(String(agent)))) {
+          refuse(socket, 400, 'Bad Request', `${AGENT_HEADER} names an agent beside the session's own, agent-2 to agent-9, on its agent's terminal\n`);
+          return;
+        }
+        forward({ kind, signedIn, session: checked.session, authorization: req.headers.authorization, socket, head, key: req.headers['sec-websocket-key'], size: terminalSize(req.headers[SIZE_HEADER]), agent: agent ?? null });
         return;
       }
       const line = req.headers[LINE_HEADER];
@@ -193,21 +202,21 @@ export function createExecPipe({ fleet, cli, mayOpen = ownerOnly, now = Date.now
   }
 
   // A terminal's request to its ttyd, and the first message ttyd wants: its credential, and the terminal's size.
-  function terminalRequest({ kind, session, key, size, host, port }) {
-    const lines = [`GET /${kind}/${session.id}/ws HTTP/1.1`, `host: ${host}:${port}`, 'connection: Upgrade', 'upgrade: websocket',
+  function terminalRequest({ kind, session, key, size, host, port, agent = null }) {
+    const lines = [`GET /${kind}/${session.id}/ws${agent ? `?arg=${agent}` : ''} HTTP/1.1`, `host: ${host}:${port}`, 'connection: Upgrade', 'upgrade: websocket',
       `sec-websocket-key: ${key}`, 'sec-websocket-version: 13', 'sec-websocket-protocol: tty', `origin: http://${host}:${port}`,
       `authorization: ${basicAuth(session.terminalToken)}`];
     const credential = Buffer.from(`woodshed:${session.terminalToken}`).toString('base64');
     return { lines, first: encodeFrame(OP.text, JSON.stringify({ AuthToken: credential, ...size })) };
   }
 
-  function forward({ kind, signedIn, session, line, authorization, socket, head, key, size }) {
+  function forward({ kind, signedIn, session, line, authorization, socket, head, key, size, agent = null }) {
     const { host, statusPort } = session.endpoint;
     const port = kind === 'exec' ? statusPort : session.endpoint[TERMINAL_PORT[kind]];
     const pipe = { socket, upstream: null, kind, tokenId: signedIn.id, login: signedIn.login, session: session.id, authorization, openedAt: now(), why: null };
     track(pipe);
     let answered = false;
-    const terminal = kind === 'exec' ? null : terminalRequest({ kind, session, key, size, host, port });
+    const terminal = kind === 'exec' ? null : terminalRequest({ kind, session, key, size, host, port, agent });
     const upstream = net.connect(port, host);
     pipe.upstream = upstream;
     const giveUp = setTimeout(() => {
