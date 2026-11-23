@@ -5,7 +5,7 @@
 #
 # Never the repo's own opencode.json or .opencode/: one could point a provider at another address (`baseURL`), which
 # would then get the owner's own key. The repo's AGENTS.md (or CLAUDE.md where it has none), which this also leaves
-# out, configureOpencode names in the owner's config instead.
+# out, configureOpencode copies into its global AGENTS.md at start instead, never through a symlink.
 set -euo pipefail
 
 export OPENCODE_DISABLE_PROJECT_CONFIG=1

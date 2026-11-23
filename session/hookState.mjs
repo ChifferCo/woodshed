@@ -1,7 +1,7 @@
 // hookState: run by claude's own hooks (claudeHooks.json, passed with --settings), so statusd knows what claude is
-// doing from claude itself rather than from what its terminal draws. Grok Build runs it too, from the hooks file the
-// entrypoint writes for it (~/.grok/hooks/woodshed.json, configureGrok): the same events in camelCase
-// (`hookEventName`, `notificationType`, `subagentType`; docs.x.ai/build/features/hooks), and a StopCancelled for a turn
+// doing from claude itself rather than from what its terminal draws. Grok Build runs it too, from the image's policy
+// file (/etc/grok/requirements.toml, session/grokRequirements.toml), the only hooks it runs in a session: the same
+// events in camelCase (`hookEventName`, `notificationType`, `subagentType`; docs.x.ai/build/features/hooks), and a StopCancelled for a turn
 // cut short, which claude never fires.
 //
 // Each firing writes the state to STATE_FILE; statusd reads it on every /status. A file, not a socket: it outlives

@@ -1416,9 +1416,7 @@ test('Grok Build: a login as its own auth.json, a key left to the wrapper; its c
   assert.match(g.read('.grok/config.toml'), /\[compat\.claude\]\nmcps = false\nhooks = false/);
   assert.match(g.read('.grok/trusted_folders.toml'), /^\[folders\."\/work\/app"\]\ntrusted = true\ndecided_at = \d+\n$/);
   assert.equal(g.read('.grok/rules/woodshed.md'), '# Woodshed rules\n');
-  const hooks = JSON.parse(g.read('.grok/hooks/woodshed.json')).hooks;
-  assert.deepEqual(Object.keys(hooks).sort(), ['Notification', 'PostToolUse', 'PreToolUse', 'SessionStart', 'Stop', 'StopCancelled', 'StopFailure', 'UserPromptSubmit']);
-  assert.equal(hooks.Stop[0].hooks[0].command, 'node /opt/woodshed/session/hookState.mjs');
+  assert.equal(g.read('.grok/hooks/woodshed.json'), null, 'its hooks are the image\'s policy\'s, the only ones grok runs');
   assert.match(g.out, /own Grok Build login/);
   assert.doesNotMatch(g.read('.grok/config.toml'), /preferred_method/, 'a login is grok\'s own way in');
   const key = configureAgent('configureGrok', 'xai-abc');

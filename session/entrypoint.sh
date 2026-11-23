@@ -1081,7 +1081,7 @@ agentDir() {
 configureGrok() {
   agentDir "$GROK_HOME_DIR" grok
   local file
-  for file in auth.json config.toml trusted_folders.toml rules hooks; do
+  for file in auth.json config.toml trusted_folders.toml rules; do
     [ ! -L "$GROK_HOME_DIR/$file" ] || die "grok's $file is a symlink"
   done
   if ownAgentAuthIsKey; then
@@ -1110,19 +1110,10 @@ TOML
   # XAI_API_KEY holds (measured in the session image).
   if ownAgentAuthIsKey; then printf '\n[auth]\npreferred_method = "api_key"\n' >> "$GROK_HOME_DIR/config.toml"; fi
   printf '[folders.%s]\ntrusted = true\ndecided_at = %s\n' "$(jq -Rn --arg p "$REPO_DIR" '$p')" "$(date +%s)" > "$GROK_HOME_DIR/trusted_folders.toml"
-  mkdir -p "$GROK_HOME_DIR/rules" "$GROK_HOME_DIR/hooks"
+  mkdir -p "$GROK_HOME_DIR/rules"
   cp /tmp/woodshed-rules.md "$GROK_HOME_DIR/rules/woodshed.md"
-  local hook="node $SESSION_DIR/hookState.mjs"
-  jq -n --arg c "$hook" '{hooks: ({
-      SessionStart: [{hooks: [{type: "command", command: $c}]}],
-      UserPromptSubmit: [{hooks: [{type: "command", command: $c}]}],
-      PreToolUse: [{hooks: [{type: "command", command: $c}]}],
-      PostToolUse: [{hooks: [{type: "command", command: $c}]}],
-      Stop: [{hooks: [{type: "command", command: $c}]}],
-      StopFailure: [{hooks: [{type: "command", command: $c}]}],
-      StopCancelled: [{hooks: [{type: "command", command: $c}]}],
-      Notification: [{matcher: "permission_prompt|idle_prompt", hooks: [{type: "command", command: $c}]}]
-    })}' > "$GROK_HOME_DIR/hooks/woodshed.json"
+  # Its hooks, statusd's word on what it does, are in the image's /etc/grok/requirements.toml
+  # (session/grokRequirements.toml), the only hooks Grok runs in a session: none of a repo's own.
 }
 
 # Grok Build's flags for what New session picked: auto approves every call (the container is the sandbox, as for

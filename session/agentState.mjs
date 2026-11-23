@@ -4,7 +4,7 @@
 //
 //   claude  its own hooks (hookState.mjs), the transcript for a turn ended by Esc, the pane until the first hook
 //   codex   its pane alone (paneStates.mjs): codex has no hooks
-//   grok    Grok Build's own hooks (hookState.mjs, which it runs from ~/.grok/hooks/woodshed.json), its pane for an
+//   grok    Grok Build's own hooks (hookState.mjs, which it runs from /etc/grok/requirements.toml), its pane for an
 //           approval and until the first hook, and whether its program runs at all
 //   opencode  its pane alone (paneStates.mjs), and whether its program runs
 //   qa      the QA run's marker file: the run is a script, not an agent

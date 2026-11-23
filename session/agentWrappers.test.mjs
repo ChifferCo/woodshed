@@ -38,10 +38,15 @@ test('opencode never reads the repo\'s own config, which could send the owner\'s
   assert.deepEqual(await wrapped(t, 'opencode', { auth: '{"anthropic":{"type":"api","key":"k"}}' }), { argv: ['--model', 'm', 'hi there'], xai: null, projectConfig: '1' });
 });
 
-test('the image gives Grok Build a root-owned policy that lets no MCP server run, a repo\'s own included', () => {
+test('the image gives Grok Build a root-owned policy that runs no MCP server and only the session\'s own hooks', () => {
   const policy = fs.readFileSync(fileURLToPath(new URL('./grokRequirements.toml', import.meta.url)), 'utf8');
-  const settings = policy.split('\n').filter((line) => line.trim() && !line.startsWith('#'));
-  assert.deepEqual(settings, ['allow_managed_mcp_servers_only = true', 'enable_all_project_mcp_servers = false', 'allowed_mcp_servers = []']);
+  const settings = policy.split('\n').filter((line) => /^[a-z_]+ = /.test(line) && !line.startsWith('hooks = ') && !line.startsWith('matcher = '));
+  assert.deepEqual(settings, ['allow_managed_mcp_servers_only = true', 'enable_all_project_mcp_servers = false', 'allowed_mcp_servers = []', 'allow_managed_hooks_only = true']);
+  // The same events hookState.mjs reads, each to hookState alone.
+  assert.deepEqual([...policy.matchAll(/^\[\[hooks\.(\w+)\]\]$/gm)].map((m) => m[1]).sort(), ['Notification', 'PostToolUse', 'PreToolUse', 'SessionStart', 'Stop', 'StopCancelled', 'StopFailure', 'UserPromptSubmit']);
+  const commands = [...policy.matchAll(/command = "([^"]*)"/g)].map((m) => m[1]);
+  assert.equal(commands.length, 8);
+  assert.deepEqual([...new Set(commands)], ['node /opt/woodshed/session/hookState.mjs']);
   const dockerfile = fs.readFileSync(fileURLToPath(new URL('./Dockerfile', import.meta.url)), 'utf8');
   assert.match(dockerfile, /^COPY --chmod=644 woodshed\/session\/grokRequirements\.toml \/etc\/grok\/requirements\.toml$/m, 'no --chown: root owns it, so node cannot change it');
   // Its folder made first, as root, and openable by node: a COPY that made it would give it the file's 644.
