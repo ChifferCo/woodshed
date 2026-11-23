@@ -1651,7 +1651,7 @@ test('a Codex agent beside claude gets the sign-in its start brings, and the sto
 
 // The same, where the session's agent runs in Herdr: the agent beside it is a Herdr terminal of its own on the session's
 // core (the test's scratch one, isolatedEnv), driven through hc, and gone once stopped.
-test('in Herdr, an agent beside the session\'s own is a Herdr terminal of its own, asked and answered through hc', { skip: spawnSync('hc', ['--version']).status !== 0 && 'no hc here' }, async (t) => {
+test('in Herdr, an agent beside the session\'s own is a Herdr terminal of its own, asked and answered through hc', { skip: spawnSync('hc', ['--version'], { env: isolatedEnv() }).status !== 0 && 'no hc here' }, async (t) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-agents-hc-'));
   const hc = (...args) => promisify(execFile)('hc', args, { env: isolatedEnv(), cwd: dir });
   t.after(async () => {

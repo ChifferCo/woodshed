@@ -2071,7 +2071,9 @@
   const frameAgent = (s) => (s?.pickedAgent !== undefined ? s.pickedAgent : shownAgent(s));
   function agentTermKey(s) {
     const key = termKey(s);
-    return key && `${key}:${frameAgent(s)?.id ?? 'own'}`;
+    const agent = frameAgent(s);
+    // Its start too: a new agent in a stopped one's place gets a frame of its own.
+    return key && `${key}:${agent ? `${agent.id}:${agent.startedAt ?? ''}` : 'own'}`;
   }
   const agentPool = createTerminalPool({ pane: 'agent', root: () => slots.body, path: 'term', label: 'Terminal', keyOf: agentTermKey, agentOf: frameAgent });
   const shellPool = createTerminalPool({ pane: 'terminal', root: () => slots.plain, path: 'shell', label: 'Shell', keyOf: shellKey });

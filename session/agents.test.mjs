@@ -8,6 +8,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+// First: it takes the Herdr variables out of this process (test/isolatedEnv.mjs).
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
 import { MAX_EXTRA_AGENTS, commandLine, createAgents, openRollout, startOptions } from './agents.mjs';
 import { readSessionTranscript } from './sessionTranscript.mjs';
 
@@ -46,7 +48,7 @@ test('a codex\'s own rollout is the one its process holds open', async (t) => {
   fs.mkdirSync(day, { recursive: true });
   const mine = path.join(day, 'rollout-2026-11-23T10-00-00-aaaa.jsonl');
   fs.writeFileSync(path.join(day, 'rollout-2026-11-23T11-00-00-bbbb.jsonl'), '{}\n');
-  const holder = spawn(process.execPath, ['-e', `require('fs').openSync(${JSON.stringify(mine)}, 'a'); setInterval(() => {}, 1000)`], { stdio: 'ignore' });
+  const holder = spawn(process.execPath, ['-e', `require('fs').openSync(${JSON.stringify(mine)}, 'a'); setInterval(() => {}, 1000)`], { stdio: 'ignore', env: isolatedEnv() });
   try {
     let found = null;
     for (let i = 0; i < 50 && !found; i++) {
