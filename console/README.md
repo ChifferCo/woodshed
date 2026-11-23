@@ -1179,7 +1179,11 @@ Nothing is asked of Anthropic or OpenAI. Each session's statusd counts what its 
 transcripts and says whether a plan or a key pays (`tokenUsage` in its `/status`, session/README.md); the fleet hands
 each report to `console/usage.mjs`, which keeps it in `state.json` under `tokenUsage`, by session and by run (a Resume
 reports from its own start, and a review's codex beside its claude), apart from the session list, so a deleted session's
-usage stays for 90 days. A stop's checkpoint answers a fresh count, so the turns since the last status read are kept. A model
+usage stays for 90 days. A stop's checkpoint answers a fresh count, so the turns since the last status read are kept.
+A session that has seen production data keeps nothing here: its usage is dropped at its taint, what it reported before
+included, and nothing it reports after is kept. A model's id that is not shaped like Anthropic's or OpenAI's is kept as
+`other`. Prices are standard rates: a long-context turn that costs more (Haiku 5.5 past 100K input tokens, GPT-5.5 past
+272K) is counted at the standard rate, so a long session's figure is a floor. A model
 with no price in the list shows its tokens and `no price`, never a guess: add its row when it ships. A session from an
 image before the count reports nothing. A review or QA run is the console's; a review's codex on the author's ChatGPT
 login counts as a plan.

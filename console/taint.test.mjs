@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 
 import { createFleet } from './fleet.mjs';
 import { createMcpServers, mcpSettings } from './mcpServers.mjs';
+import { createUsage } from './usage.mjs';
 import { keptIds } from './sessions.mjs';
 import { TAINT_MESSAGE } from './taint.mjs';
 
 const PROD = mcpSettings({ WOODSHED_PROD_MCP_URL: 'https://prod-mcp.test/mcp', WOODSHED_PROD_MCP_PEOPLE: 'joel', WOODSHED_PROD_MCP_REPOS: 'o/r' }, 'https://console.test');
 
-function setup({ lockDown = async () => ({ host: '127.0.0.1', termPort: 11, statusPort: 12, shellPort: 13, locked: true }), docker = null, homes = null, settings = PROD, servers = [], databases = null } = {}) {
+function setup({ lockDown = async () => ({ host: '127.0.0.1', termPort: 11, statusPort: 12, shellPort: 13, locked: true }), docker = null, homes = null, settings = PROD, servers = [], databases = null, usage = null, status = { state: 'done' }, checkpoint = { tainted: true } } = {}) {
   let clock = Date.parse('2026-11-19T10:00:00.000Z');
   const calls = { lockDowns: [], statusd: [], started: [], cleared: [], homesRemoved: [] };
   const launcher = {
@@ -34,10 +35,10 @@ function setup({ lockDown = async () => ({ host: '127.0.0.1', termPort: 11, stat
   if (servers.length) store.state.mcpServers = servers;
   const mcpServers = createMcpServers({ store, settings, lockdown: () => ({ available: true }) });
   const fleet = createFleet({
-    config, store, launcher, github: {}, now: () => clock, homes, mcpServers, appShares, egress, databases,
+    config, store, launcher, github: {}, now: () => clock, homes, mcpServers, appShares, egress, databases, usage,
     statusd: async (session, method, path, opts) => {
       calls.statusd.push({ id: session.id, method, path, body: opts?.body ?? null });
-      return path === '/status' ? { state: 'done' } : { tainted: true };
+      return path === '/status' ? status : path === '/checkpoint' ? checkpoint : { tainted: true };
     },
   });
   return { fleet, store, calls, advance: (ms) => { clock += ms; } };
@@ -114,6 +115,24 @@ test('taint locks the session down before it marks it, ends its shares, tells it
   assert.ok(session.taintNoticedAt);
   await fleet.taint(session);
   assert.equal(calls.lockDowns.length, 1, 'a tainted session is not locked down again');
+});
+
+test('a tainted session\'s usage is gone from the Usage page at its taint, and none is kept after, by status read or stop', async (t) => {
+  quietly(t);
+  const ledger = { state: {}, save() {} };
+  const usage = createUsage(ledger, { now: () => Date.parse('2026-11-19T10:00:00.000Z') });
+  const report = [{ agent: 'claude', billing: 'plan', since: '2026-11-19T09:00:00Z', days: { '2026-11-19': { 'claude-opus-5-5': { input: 7, output: 7 } } } }];
+  const { fleet } = setup({ usage, status: { state: 'done', tokenUsage: report }, checkpoint: { committed: false, head: 'abc', tokenUsage: report } });
+  const session = await runningPrivate(fleet);
+  session.title = 'MARKER title';
+  await fleet.tick();
+  assert.ok(ledger.state.tokenUsage[session.id], 'an untainted session\'s is kept');
+  await fleet.taint(session, { why: 'production MCP call' });
+  assert.deepEqual(ledger.state.tokenUsage, {}, 'what it reported before the lockdown goes with it');
+  await fleet.tick();
+  await fleet.stop(session, 'stopped from the console', { by: 'joel' });
+  assert.deepEqual(ledger.state.tokenUsage, {});
+  assert.ok(!JSON.stringify(usage.summary({ login: 'joel', admin: true, everyone: true })).includes('MARKER'));
 });
 
 test('a lockdown that fails refuses, and leaves the session untainted and unlocked', async (t) => {

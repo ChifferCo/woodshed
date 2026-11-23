@@ -9,6 +9,8 @@
 //   cacheWrite1h input written to a 1-hour cache (Anthropic: 2x input)
 //   cacheRead    input read from a cache
 //   output       output, thinking and reasoning included (both bill them as output)
+// These are standard rates: a provider's long-context tier (Haiku 5.5 past 100K input tokens, GPT-5.5 past 272K) costs
+// more per token, and a transcript does not say which turns crossed it, so a long session's figure is a floor.
 // Fast mode (Claude's `speed: "fast"`) is counted under the model's id with `:fast` after it, and priced at FAST_RATE
 // times the standard row unless the row gives its own.
 
@@ -73,13 +75,15 @@ const OPENAI = {
 
 const PER = 1_000_000;
 
+const own = (table, key) => (Object.hasOwn(table, key) ? table[key] : null);
+
 function row(model) {
-  const claude = CLAUDE[model];
+  const claude = own(CLAUDE, model);
   if (claude) {
     const [input, output, cacheRead] = claude;
     return { input, output, cacheRead, cacheWrite5m: input * 1.25, cacheWrite1h: input * 2 };
   }
-  const openai = OPENAI[model];
+  const openai = own(OPENAI, model);
   if (openai) {
     const [input, output, cacheRead] = openai;
     return { input, output, cacheRead, cacheWrite5m: input, cacheWrite1h: input };

@@ -18,7 +18,9 @@ const MAX_MODELS = 40;
 const MAX_RUNS = 50;
 const MAX_TOKENS = 1e13;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
-const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:@[\]/-]{0,99}$/;
+// A model's id as Anthropic and OpenAI name them (and Bedrock's or Vertex's spellings, `:fast`, `[1m]`). Anything else
+// is kept as `other`: a label is the session's to write, and an admin reads it in Everyone.
+const MODEL_RE = /^(?:(?:us\.|eu\.|global\.)?anthropic\.)?(?:claude|gpt|o\d|codex|chatgpt)[a-z0-9.@-]{0,60}(?:\[1m\])?(?::fast)?$/;
 
 function tokensFrom(t) {
   if (!t || typeof t !== 'object') return null;
@@ -45,9 +47,12 @@ export function tokenUsageFrom(report) {
   for (const day of Object.keys(report.days).filter((d) => DAY_RE.test(d)).sort().slice(-MAX_DAYS)) {
     const models = report.days[day];
     if (!models || typeof models !== 'object') continue;
-    for (const model of Object.keys(models).filter((m) => MODEL_RE.test(m)).slice(0, MAX_MODELS)) {
+    for (const model of Object.keys(models).slice(0, MAX_MODELS)) {
       const tokens = tokensFrom(models[model]);
-      if (tokens) (days[day] ??= {})[model] = tokens;
+      if (!tokens) continue;
+      const name = MODEL_RE.test(model) ? model : 'other';
+      const into = (days[day] ??= {});
+      into[name] = into[name] ? Object.fromEntries(TOKEN_KINDS.map((k) => [k, into[name][k] + tokens[k]])) : tokens;
     }
   }
   return { agent: report.agent, billing: report.billing, since, days };
@@ -88,6 +93,8 @@ export function createUsage(store, { now = Date.now } = {}) {
    */
   function record(session, report) {
     maybePrune();
+    // A session that has seen production data keeps nothing here (CLAUDE.md, Rules): the fleet forgets it at its taint.
+    if (session.taintedAt) return forget(session.id);
     // One report per agent (a review's codex beside its claude); a statusd from before that sent one.
     const usages = (Array.isArray(report) ? report : [report]).slice(0, 4).map(tokenUsageFrom).filter((u) => u && Object.keys(u.days).length);
     if (!usages.length) return false;
@@ -111,6 +118,15 @@ export function createUsage(store, { now = Date.now } = {}) {
     if (JSON.stringify(entry) === before) return false;
     store.save();
     return true;
+  }
+
+  /** Drops a session's usage, as if it never reported any. @returns {false} */
+  function forget(id) {
+    if (ledger()[id]) {
+      delete ledger()[id];
+      store.save();
+    }
+    return false;
   }
 
   // At most once an hour, from a report, a read of the page, or the fleet's tick on a console nobody looks at.
@@ -226,5 +242,5 @@ export function createUsage(store, { now = Date.now } = {}) {
     };
   }
 
-  return { record, prune, maybePrune, summary };
+  return { record, forget, prune, maybePrune, summary };
 }

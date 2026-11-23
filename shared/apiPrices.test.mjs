@@ -27,4 +27,6 @@ test('a model with no price says so rather than guessing', () => {
   assert.equal(costOf('gpt-99-imaginary', { input: 1e6 }), null);
   assert.equal(priceOf(''), null);
   assert.equal(priceOf(undefined), null);
+  assert.equal(priceOf('constructor'), null, 'an object\'s own names are no model');
+  assert.equal(costOf('toString', { input: 1 }), null);
 });

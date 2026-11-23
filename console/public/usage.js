@@ -163,20 +163,27 @@ window.Woodshed.settingsPage('/usage', (app, life) => {
       dayChart(),
       sessionTable(),
       h('p', { class: 'foot' },
-        `Counted from each session’s own transcripts, ${data.from} to ${data.to} (UTC). Prices are the providers’ list prices of ${data.pricesAsOf}: `,
+        `Counted from each session’s own transcripts, ${data.from} to ${data.to} (UTC). Prices are the providers’ standard list prices of ${data.pricesAsOf}, so a long-context turn priced higher is counted at the standard rate: `,
         'a plan’s figure is what its tokens would have cost on a key, not what the plan costs. ',
         data.unpricedModels.length ? `No price is known for ${data.unpricedModels.join(', ')}. ` : '',
         'A session started from an image before this page counts nothing, and a session’s usage is kept 90 days.')));
   }
 
+  // Only the last read asked draws: one still on its way when the span or the view changed answers for the old one.
+  let asked = 0;
   async function refresh() {
     const { days, everyone } = params();
+    const mine = ++asked;
+    let next = null;
+    let error = null;
     try {
-      data = await W.getJson(`/api/usage?days=${days}${everyone ? '&everyone=1' : ''}`);
-      loadError = null;
+      next = await W.getJson(`/api/usage?days=${days}${everyone ? '&everyone=1' : ''}`);
     } catch (err) {
-      loadError = err.message;
+      error = err.message;
     }
+    if (mine !== asked) return;
+    data = next ?? data;
+    loadError = error;
     render();
   }
 

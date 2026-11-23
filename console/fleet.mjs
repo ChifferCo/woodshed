@@ -466,6 +466,8 @@ export function createFleet({
       console.log('fleet: session tainted', { id: session.id, owner: session.owner ?? null, taintedAt: session.taintedAt, launcher: launcher.kind, why });
       // Nobody outside the session's people sees its app from now on.
       appShares?.clearSession(session.id);
+      // And its usage, kept apart from the session to outlive it, goes now, what it reported before the lockdown too.
+      usage?.forget(session.id);
       tellTainted(session).catch(() => {});
       return session;
     })().finally(() => locking.delete(session.id));
@@ -879,7 +881,7 @@ export function createFleet({
         const result = await statusd(session, 'POST', '/checkpoint', { timeoutMs: CHECKPOINT_TIMEOUT_MS });
         console.log('fleet: checkpoint pushed', { id: session.id, committed: result?.committed, head: result?.head });
         // The tokens of the turns since the last status read, which the Usage page would otherwise never see.
-        if (usage && result?.tokenUsage) await safely('token usage', () => usage.record(session, result.tokenUsage));
+        if (usage && result?.tokenUsage && !isLocked(session)) await safely('token usage', () => usage.record(session, result.tokenUsage));
       } catch (err) {
         console.warn('fleet: checkpoint failed, stopping anyway', { id: session.id, message: firstLine(err) });
       }
@@ -1000,7 +1002,8 @@ export function createFleet({
       const wasAsking = session.state === 'needs-you';
       update(session, statusUpdate(session, status, nowIso()));
       // The tokens its agent spent, for the Usage page (usage.mjs): kept apart from the session, which is deleted.
-      if (usage && status.tokenUsage) await safely('token usage', () => usage.record(session, status.tokenUsage));
+      // Never from a session that has seen production data, or is being locked down: nothing it holds outlives it.
+      if (usage && status.tokenUsage && !isLocked(session)) await safely('token usage', () => usage.record(session, status.tokenUsage));
       // A message left in the box: sent or cleared in the TUI tab once the box is empty again.
       if (session.leftInBox && status.boxText === false) {
         update(session, { leftInBox: null });

@@ -319,6 +319,21 @@ test('each status read hands the tokens the session spent to the Usage page, and
   assert.equal(recorded.length, 1, 'a statusd from before it reports none');
 });
 
+test('a session that has seen production data reports no usage, by status read or checkpoint', async () => {
+  const recorded = [];
+  const usage = { record: (session, report) => { recorded.push(session.id); }, forget: () => {} };
+  const { fleet, statuses, answers } = setup({ usage });
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  session.taintedAt = '2026-11-23T00:00:00Z';
+  const report = [{ agent: 'claude', billing: 'key', since: '2026-11-23T00:00:00Z', days: {} }];
+  statuses[session.id] = { state: 'working', tokenUsage: report };
+  await fleet.tick();
+  answers['/checkpoint'] = { committed: false, head: 'abc', tokenUsage: report };
+  await fleet.stop(session, 'stopped from the console', { by: 'joel' });
+  assert.deepEqual(recorded, []);
+});
+
 test('a stop keeps the tokens of the turns since the last status read, from the checkpoint\'s answer', async () => {
   const recorded = [];
   const usage = { record: (session, report) => { recorded.push([session.id, report]); } };

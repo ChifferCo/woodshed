@@ -16,7 +16,7 @@ test('a report out of range or of an unknown shape is dropped, its bad parts lef
     '2026-11-22': { 'claude-opus-5-5': { input: 5, output: -3, cacheRead: 'lots' }, '<script>': { input: 1 } },
     'yesterday': { 'claude-opus-5-5': { input: 1 } },
   }));
-  assert.deepEqual(usage.days, { '2026-11-22': { 'claude-opus-5-5': t(5, 0) } });
+  assert.deepEqual(usage.days, { '2026-11-22': { 'claude-opus-5-5': t(5, 0), other: t(1, 0) } }, 'a label that is no model\'s id is kept as other');
 });
 
 test('each run of a session is kept, and an unchanged report saves nothing', () => {
@@ -43,7 +43,7 @@ test('a person sees their own sessions; an admin may see everyone, by person', (
   usage.record({ id: 'b2', owner: 'kim', options: { agent: 'codex' } }, report('key', { '2026-11-22': { 'gpt-6.1-sol': t(1e6, 1e6) } }, { agent: 'codex' }));
   // A shared session on the team key that sam started, and one on kim's plan that sam started.
   usage.record({ id: 'c3', startedBy: 'sam' }, report('key', { '2026-11-23': { 'claude-opus-5-5': t(0, 1e6) } }));
-  usage.record({ id: 'd4', startedBy: 'sam', plan: 'kim' }, report('plan', { '2026-11-23': { 'imaginary-model': t(10, 10) } }));
+  usage.record({ id: 'd4', startedBy: 'sam', plan: 'kim' }, report('plan', { '2026-11-23': { 'gpt-imaginary': t(10, 10) } }));
 
   const sam = usage.summary({ login: 'sam', admin: false, everyone: true });
   assert.equal(sam.everyone, false, 'only an admin sees everyone');
@@ -51,7 +51,7 @@ test('a person sees their own sessions; an admin may see everyone, by person', (
   assert.equal(sam.totals.plan.cost, 2);
   assert.equal(sam.totals.key.cost, 20);
   assert.equal(sam.totals.plan.unpriced, 20);
-  assert.deepEqual(sam.unpricedModels, ['imaginary-model']);
+  assert.deepEqual(sam.unpricedModels, ['gpt-imaginary']);
 
   const kim = usage.summary({ login: 'kim', admin: false });
   assert.deepEqual(kim.bySession.map((r) => r.sessionId).sort(), ['b2', 'd4'], 'a session on her plan is hers too');
@@ -63,7 +63,7 @@ test('a person sees their own sessions; an admin may see everyone, by person', (
   assert.equal(people.kim.key.cost, 12, 'gpt-6.1-sol: 1M in at $2, 1M out at $10');
   assert.equal(people.kim.plan.tokens, 20, 'd4 ran on her plan');
   assert.equal(people.sam.key.cost, 20);
-  assert.deepEqual(all.byModel.map((m) => `${m.billing} ${m.model}`), ['key claude-opus-5-5', 'key gpt-6.1-sol', 'plan claude-sonnet-5-5', 'plan imaginary-model']);
+  assert.deepEqual(all.byModel.map((m) => `${m.billing} ${m.model}`), ['key claude-opus-5-5', 'key gpt-6.1-sol', 'plan claude-sonnet-5-5', 'plan gpt-imaginary']);
 });
 
 test('the span picks the days, and days past the keep are dropped', () => {
@@ -139,4 +139,26 @@ test('a run longer than the page\'s span keeps every day in it, and a read prune
   now = Date.parse('2027-03-12T12:00:00Z');
   usage.summary({ login: 'sam', admin: false });
   assert.deepEqual(s.state.tokenUsage, {});
+});
+
+test('a session that has seen production data keeps nothing here, what it reported before its lockdown included', () => {
+  const s = store();
+  const usage = createUsage(s, { now: () => NOW });
+  const session = { id: 'p1', owner: 'sam', title: 'Reads prod', repo: 'acme/web', branch: 'woodshed/p1' };
+  usage.record(session, report('plan', { '2026-11-22': { 'claude-opus-5-5': t(1e6, 0) } }));
+  assert.ok(s.state.tokenUsage.p1);
+  session.taintedAt = '2026-11-22T10:00:00Z';
+  assert.equal(usage.record(session, report('plan', { '2026-11-22': { 'claude-opus-5-5': t(2e6, 0) } })), false);
+  assert.deepEqual(s.state.tokenUsage, {});
+  usage.record({ id: 'q1', owner: 'sam' }, report('plan', { '2026-11-22': { 'claude-opus-5-5': t(1e6, 0) } }));
+  usage.forget('q1');
+  assert.deepEqual(s.state.tokenUsage, {});
+});
+
+test('a label shaped like JavaScript\'s own names is a model with no price, never an error', () => {
+  const s = store();
+  const usage = createUsage(s, { now: () => NOW });
+  usage.record({ id: 'a1', owner: 'sam' }, report('key', { '2026-11-22': { constructor: t(1, 1), 'gpt-constructor': t(1, 1), __proto__: t(1, 1) } }));
+  const view = usage.summary({ login: 'sam', admin: false });
+  assert.deepEqual(view.byModel.map((m) => [m.model, m.priced]).sort(), [['gpt-constructor', false], ['other', false]]);
 });
