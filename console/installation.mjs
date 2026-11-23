@@ -22,7 +22,7 @@ import { createDbRestore } from './dbRestore.mjs';
 import { createSlack } from './slack.mjs';
 import { checkSlackInstall, createSlackSetup } from './slackSetup.mjs';
 import { createTunnel, tunnelTargetsFor } from './dbTunnel.mjs';
-import { createCliSignIn } from './cliSignIn.mjs';
+import { createCliSignIn, sessionSignInsOf } from './cliSignIn.mjs';
 import { createExecPipe } from './execPipe.mjs';
 import { createFleet } from './fleet.mjs';
 import { createGitHub } from './github.mjs';
@@ -651,6 +651,12 @@ export async function createInstallation({ config: loaded, store, provider, trus
     start,
     /** Stops the loops; requests already in flight finish. */
     stop: () => { members?.stop?.(); loops.stop(); },
+    /**
+     * `GET /api/cli/me`'s `sessionSignIns`, for a program that answers that route itself (a host serving several
+     * installations passes it to handleCliApi): without it, `woodshed setup` cannot tell whether Claude Code and Codex
+     * are connected.
+     */
+    sessionSignIns: sessionSignInsOf(userSettings),
     /** @returns {boolean}  whether an active session of this installation holds `token` (the session API's bearer) */
     ownsSessionToken: (token) => Boolean(sessionForToken(token, fleet.sessions())),
     /** One GitHub or Slack message, as the provider's webhook source hands it (webhookDispatch.mjs). */
@@ -665,6 +671,18 @@ export async function createInstallation({ config: loaded, store, provider, trus
     },
     /** Disconnect, for the host when the person leaves: the stored token goes and GitHub ends it. */
     disconnectGitHub: async (login) => { if (githubUser) await githubUser.disconnect(login); },
+    /**
+     * The Slack match core's own sign-in makes (slackPeople.mjs, matchOnSignIn), for a host that signs people in
+     * itself: `emails()` answers the verified emails on their GitHub account, and is only called when a look is due
+     * (at most once a day, never over a link set by hand). As at sign-in, only a member is matched, so someone the
+     * host's list does not have leaves nothing behind. Never throws.
+     * @param {{login: string, emails: () => Promise<string[]>}} args
+     * @returns {Promise<'linked'|'unmatched'|'manual'|'skipped'>}
+     */
+    matchSlack: async ({ login, emails }) => {
+      if (members && !members.isMember(login)) return 'skipped';
+      return slackPeople.matchOnSignIn({ login, emails });
+    },
     summary: () => ({
       repo: defaultProject(config).repo, projects: config.projects?.map((p) => p.name), label: config.label,
       launcher: config.launcher.kind, maxRunning: config.maxRunning, pollGitHub: config.pollGitHub,

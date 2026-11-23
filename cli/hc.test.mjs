@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  addMachine, agentOn, compareVersions, hcRunner, hcVersion, isTunnelTo, removeMachine, shellQuote, startWatcher, tunnelMachines, viaCommand, watcherArgv,
+  addMachine, agentOn, compareVersions, hcRunner, hcVersion, isTunnelTo, removeMachine, sessionHere, shellQuote, startWatcher, tunnelMachines, viaCommand, watcherArgv,
 } from './hc.mjs';
 import { selfCommand } from './woodshed.mjs';
 
@@ -157,4 +157,35 @@ test('the watch\'s terminal in hc runs this command line as words, and one alrea
   assert.deepEqual(calls[0].slice(-3), ['--', '/n', '/s']);
   assert.deepEqual(await startWatcher(run, ['/n', '/s']), { action: 'kept', address: null });
   await assert.rejects(startWatcher(run, ['/n', '/s']), (err) => err.hc && /hc could not start woodshed-watch: no core/.test(err.message));
+});
+
+test('a Woodshed session is told by the SESSION_ID and WOODSHED_TERMINAL its entrypoint leaves, and nothing less', () => {
+  assert.equal(sessionHere({ SESSION_ID: 'abcd1234', WOODSHED_TERMINAL: 'herdr', HC_TERMINAL_ID: 't1' }), 'abcd1234');
+  assert.equal(sessionHere({ SESSION_ID: 'abcd1234', WOODSHED_TERMINAL: 'tmux' }), 'abcd1234');
+  // A laptop's Herdr terminal, or another program's SESSION_ID, is not a session.
+  assert.equal(sessionHere({ HC_TERMINAL_ID: 't4' }), null);
+  assert.equal(sessionHere({ SESSION_ID: 'abcd1234' }), null);
+  assert.equal(sessionHere({ SESSION_ID: 'some-tool-session', WOODSHED_TERMINAL: 'herdr' }), null);
+  assert.equal(sessionHere({ SESSION_ID: 'abcd1234', WOODSHED_TERMINAL: 'screen' }), null);
+  assert.equal(sessionHere(), null);
+});
+
+test('a machine added meanwhile through the same line, by another run racing this one, stands: the add is kept, not failed', async () => {
+  const via = 'node woodshed.mjs tunnel --console https://c.example abcd1234 --';
+  const listed = [];
+  const run = async (args) => {
+    if (args[1] === 'ls') return { code: 0, stdout: JSON.stringify({ machines: listed }), stderr: '' };
+    // The other run's add landed between this one's ls and add.
+    listed.push({ name: 'woodshed-abcd1234', via: true, target: via, state: 'connected' });
+    return { code: 1, stdout: JSON.stringify({ error: { kind: 'name_taken', message: '"woodshed-abcd1234" is already a machine here' } }), stderr: '' };
+  };
+  assert.deepEqual(await addMachine(run, { name: 'woodshed-abcd1234', via }), { action: 'kept', state: 'connected' });
+  // Through another line, it is still a failure.
+  listed.length = 0;
+  const other = async (args) => {
+    if (args[1] === 'ls') return { code: 0, stdout: JSON.stringify({ machines: listed }), stderr: '' };
+    listed.push({ name: 'woodshed-abcd1234', via: true, target: 'ssh elsewhere', state: 'connected' });
+    return { code: 1, stdout: JSON.stringify({ error: { kind: 'name_taken', message: 'taken' } }), stderr: '' };
+  };
+  await assert.rejects(addMachine(other, { name: 'woodshed-abcd1234', via }), /hc could not add woodshed-abcd1234: taken/);
 });

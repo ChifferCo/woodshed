@@ -601,8 +601,39 @@ ${DARK_PALETTE}
       max-width: var(--prose-measure);
     }
     .saidhead.toggles { cursor: pointer; user-select: none; }
+    .saidhead.toggles:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
     .saidhead .caret { font-size: 9px; width: 0.6rem; color: var(--faint); }
     .saidbox.folded .saidhead { border-bottom: 0; }
+
+    /* The AI reviews tab: one box per review Claude Code or Codex posted, its
+       parts and its findings, each with the follow-ups asked about it. */
+    .aiintro { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 0 0 0.9rem; max-width: var(--prose-measure); }
+    .aitag {
+      font: 600 9.5px/1.6 ui-monospace, monospace; letter-spacing: 0.04em; color: var(--muted);
+      border: 1px solid var(--rule); border-radius: 3px; padding: 0 0.3rem; background: var(--panel);
+    }
+    .aitag.old { color: var(--warn); border-color: var(--warn); }
+    .aipart { padding: 0.6rem 0.7rem 0.2rem; max-width: var(--prose-measure); }
+    .aipart + .aipart { border-top: 1px dashed var(--rule); }
+    .aipart .aiwho { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.3rem; font: 600 12px/1.6 "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--ink); }
+    .aipart .prose { font-size: 13.5px; line-height: 1.55; }
+    .aifindings { border-top: 1px solid var(--rule); padding: 0.5rem 0.7rem 0.7rem; }
+    .aifindings > h4 { margin: 0.2rem 0 0.5rem; font: 600 12px/1.6 "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--muted); }
+    .aifinding { border: 1px solid var(--rule); border-radius: 5px; padding: 0.5rem 0.65rem; margin: 0 0 0.6rem; max-width: var(--prose-measure); }
+    /* Resolved or outdated: a dashed border and the state's own label, never a
+       fade, which would take muted text under 4.5:1 on white. */
+    .aifinding.done { border-style: dashed; }
+    .aifinding .aiat { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-bottom: 0.3rem; font-size: 12px; color: var(--muted); }
+    .aifinding .aiat .grow { flex: 1; }
+    .aifinding .aiat code { font-size: 12px; }
+    .aifinding .prose { font-size: 13.5px; line-height: 1.55; }
+    .aireply { margin: 0.4rem 0 0 0.8rem; padding-left: 0.6rem; border-left: 2px solid var(--rule); font-size: 13px; color: var(--muted); }
+    .aireply b { color: var(--ink); font-weight: 600; }
+    .aifollow { margin: 0.5rem 0 0; }
+    .aifollow .msg.user { margin-left: 0; }
+    .aifollow > .msg.bot { border-left: 2px solid var(--accent); padding-left: 0.6rem; }
+    .aiwhole { padding: 0 0.7rem 0.6rem; }
+    .msg.user .about { display: block; margin-bottom: 0.2rem; font-size: 11.5px; color: var(--muted); white-space: normal; }
 
     /* Always out, not revealed on hover. Hover-to-reveal was tried and it
        hides the control from anyone who does not already know it is there,
@@ -1671,7 +1702,7 @@ ${DARK_PALETTE}
     // Not a note this page keeps, for the same reason the Viewed tick is not:
     // a comment written here shows up in GitHub's review UI at once, and one
     // written there shows up here, because there is only ever one draft.
-    var draft = { prId: null, headSha: null, reviewId: null, description: null, comments: [], threads: [], outdated: 0, said: [] };
+    var draft = { prId: null, headSha: null, reviewId: null, description: null, comments: [], threads: [], outdated: 0, said: [], aiReviews: [] };
     // True until the first read from GitHub settles, either way. The
     // Discussion tab is empty until then, and empty has to look like waiting
     // rather than like a pull request nobody has said anything on.
@@ -1757,7 +1788,7 @@ ${DARK_PALETTE}
     });
 
     async function loadDraft() {
-      draft = { prId: null, headSha: null, reviewId: null, description: null, comments: [], threads: [], outdated: 0, said: [] };
+      draft = { prId: null, headSha: null, reviewId: null, description: null, comments: [], threads: [], outdated: 0, said: [], aiReviews: [] };
       if (!state.session || !state.livePr) return;
       var got = await api('GET', '/reviews/' + state.session + '/comments');
       draft = {
@@ -1769,6 +1800,7 @@ ${DARK_PALETTE}
         threads: got.threads || [],
         outdated: got.outdated || 0,
         said: got.said || [],
+        aiReviews: got.aiReviews || [],
         truncated: !!got.truncated,
       };
       // Better said than drawn: part of a conversation shown as the whole one
@@ -2025,6 +2057,11 @@ ${DARK_PALETTE}
         && document.activeElement.dataset.qaAsk !== undefined
         ? { key: document.activeElement.dataset.qaAsk, from: document.activeElement.selectionStart, to: document.activeElement.selectionEnd }
         : null;
+      // And an AI review's follow-up box.
+      var focusedAiAsk = document.activeElement && document.activeElement.dataset
+        && document.activeElement.dataset.aiAsk !== undefined
+        ? { key: document.activeElement.dataset.aiAsk, from: document.activeElement.selectionStart, to: document.activeElement.selectionEnd }
+        : null;
       content.replaceChildren();
       if (!state.meta) return;
 
@@ -2052,6 +2089,20 @@ ${DARK_PALETTE}
       content.appendChild(renderTabs(fileCount));
       if (state.tab === 'discussion' && state.livePr) {
         renderDiscussion(content);
+        keepScroll();
+        return;
+      }
+      if (state.tab === 'ai' && state.livePr) {
+        renderAiReviews(content);
+        if (focusedAiAsk) {
+          var aiBoxes = content.querySelectorAll('input[data-ai-ask]');
+          for (var a = 0; a < aiBoxes.length; a++) {
+            if (aiBoxes[a].dataset.aiAsk !== focusedAiAsk.key || aiBoxes[a].disabled) continue;
+            aiBoxes[a].focus({ preventScroll: true });
+            try { aiBoxes[a].setSelectionRange(focusedAiAsk.from, focusedAiAsk.to); } catch (e) { /* not a text box */ }
+            break;
+          }
+        }
         keepScroll();
         return;
       }
@@ -2105,6 +2156,7 @@ ${DARK_PALETTE}
       // with none has no tab rather than an empty one.
       if (state.livePr) {
         bar.appendChild(tabButton('discussion', 'Discussion', draftLoading ? 'loading' : (draft.said.length || null)));
+        bar.appendChild(tabButton('ai', 'AI reviews', draftLoading ? 'loading' : (draft.aiReviews.length || null)));
       }
       bar.appendChild(tabButton('files', 'Files changed', fileCount));
       var right = el('div', 'right');
@@ -2173,7 +2225,7 @@ ${DARK_PALETTE}
     // the page's default changes, and a bare ?session= that means "whichever
     // half is default" is not a link to anything in particular.
     function tabFromUrl(value) {
-      return value === 'files' || value === 'analysis' || value === 'discussion' || value === 'qa' ? value : null;
+      return value === 'files' || value === 'analysis' || value === 'discussion' || value === 'qa' || value === 'ai' ? value : null;
     }
 
     function stampTab(push) {
@@ -3742,6 +3794,202 @@ ${DARK_PALETTE}
       }
     }
 
+    // --- AI reviews -------------------------------------------------------------
+    //
+    // What Woodshed's review (Claude Code, Codex or both) posted on the pull
+    // request, read by the shed into a verdict, each reviewer's part and each
+    // finding on its line (aiReviews.mjs). A follow-up on a finding, or on the
+    // review as a whole, is a turn of the conversation that names the point it
+    // is about: the shed reads that point from GitHub and has the session's
+    // agent check it against the code. Its answer is drawn under the point, and
+    // in the conversation too, where it belongs to the same transcript.
+
+    var aiView = { drafts: {}, error: null, chatError: null };
+
+    var AI_WORD = {
+      APPROVE: { word: 'approves', tone: 'good' },
+      REQUEST_CHANGES: { word: 'requests changes', tone: 'bad' },
+      COMMENT: { word: 'comments', tone: '' },
+    };
+
+    function renderAiReviews(content) {
+      if (draftLoading) {
+        content.appendChild(loadingNote('Loading the AI reviews from GitHub\u2026'));
+        return;
+      }
+      // The follow-ups are the conversation's turns, so it is read once here.
+      // Once: a read that failed says so here and waits for Try again, rather
+      // than reading again on every render while the endpoint keeps failing.
+      if (!chat.loaded && !chat.loading && !aiView.chatError) {
+        chat.loading = true;
+        loadChat()
+          .catch(function failed(e) { aiView.chatError = e.message; })
+          .then(function done() { chat.loading = false; if (state.tab === 'ai') render(); });
+      }
+      if (aiView.chatError) {
+        var failed = el('p', 'askerr', 'Could not read the follow-ups asked so far: ' + aiView.chatError + '. ');
+        var again = el('button', 'quiet', 'Try again');
+        again.type = 'button';
+        again.addEventListener('click', function onAgain() { aiView.chatError = null; render(); });
+        failed.appendChild(again);
+        content.appendChild(failed);
+      }
+      var list = draft.aiReviews || [];
+      if (!list.length) {
+        content.appendChild(el('div', 'tabnote', 'No AI review has been posted on this pull request yet. Claude Code and Codex review a commit whose message carries the review\u2019s tag, [woodshed-review] by default, and what they say shows here.'));
+        return;
+      }
+      content.appendChild(el('p', 'aiintro', 'What Claude Code and Codex said about this pull request, newest first. Ask a follow-up on any finding, or on a review as a whole: the session\u2019s agent checks the point against the code and answers here.'));
+      for (var i = 0; i < list.length; i++) content.appendChild(renderAiReview(list[i], i === 0));
+    }
+
+    function renderAiReview(review, newest) {
+      var open = review.id in saidOpen ? saidOpen[review.id] : newest;
+      var verdict = AI_WORD[review.conclusion] || AI_WORD.COMMENT;
+      var box = el('div', 'saidbox aibox' + (verdict.tone ? ' ' + verdict.tone : '') + (open ? '' : ' folded'));
+      var head = el('div', 'saidhead');
+      head.appendChild(el('span', 'who', review.agents.length ? review.agents.join(' and ') : review.heading));
+      head.appendChild(el('span', 'verdictword ' + verdict.tone, verdict.word));
+      // A maintainer dismissed it on GitHub: what it said stays, and so does that.
+      if (review.state === 'dismissed') head.appendChild(el('span', 'aitag', 'dismissed'));
+      if (review.commit) {
+        var at = el('span', 'aitag' + (review.current ? '' : ' old'), review.current ? 'latest commit' : 'older commit ' + review.commit.slice(0, 7));
+        at.dataset.tip = review.current ? 'Reviewed at the pull request\u2019s head' : 'Reviewed at ' + review.commit.slice(0, 7) + '; the pull request has moved on since';
+        head.appendChild(at);
+      }
+      var n = review.findings.length;
+      head.appendChild(el('span', 'aitag', n + (n === 1 ? ' finding' : ' findings')));
+      if (review.at) head.appendChild(el('span', 'when', fmtWhen(review.at)));
+      head.appendChild(el('span', 'grow'));
+      if (review.url) head.appendChild(openOnGitHub(review.url, 'Open on GitHub'));
+      foldable(head, review.id, open);
+      box.appendChild(head);
+      if (!open) return box;
+
+      for (var p = 0; p < review.parts.length; p++) {
+        var part = review.parts[p];
+        var partBox = el('div', 'aipart');
+        if (part.agent && (review.parts.length > 1 || review.agents.length > 1)) {
+          var who = el('div', 'aiwho');
+          who.appendChild(el('span', null, part.agent));
+          var pv = AI_WORD[part.conclusion] || AI_WORD.COMMENT;
+          who.appendChild(el('span', 'verdictword ' + pv.tone, pv.word));
+          partBox.appendChild(who);
+        }
+        var prose = el('div', 'prose');
+        renderMarkdown(prose, part.body || '');
+        partBox.appendChild(prose);
+        box.appendChild(partBox);
+      }
+      var whole = el('div', 'aiwhole');
+      whole.appendChild(aiFollowUps(review, null));
+      box.appendChild(whole);
+
+      if (n) {
+        var findings = el('div', 'aifindings');
+        findings.appendChild(el('h4', null, n === 1 ? 'One finding' : n + ' findings'));
+        for (var f = 0; f < n; f++) findings.appendChild(renderAiFinding(review, review.findings[f]));
+        box.appendChild(findings);
+      }
+      return box;
+    }
+
+    function renderAiFinding(review, finding) {
+      var box = el('div', 'aifinding' + (finding.resolved || finding.outdated ? ' done' : ''));
+      var at = el('div', 'aiat');
+      if (finding.agent) at.appendChild(el('span', 'aitag', finding.agent));
+      var where = finding.line ? finding.path + ':' + finding.line : finding.path;
+      if (fileByPath()[finding.path]) {
+        var go = fileLink(finding.path);
+        go.textContent = where;
+        at.appendChild(go);
+      } else {
+        at.appendChild(el('code', null, where));
+      }
+      if (finding.resolved) at.appendChild(el('span', 'aitag', 'resolved'));
+      if (finding.outdated) at.appendChild(el('span', 'aitag old', 'outdated'));
+      if (finding.folded) {
+        var folded = el('span', 'aitag', 'in the review\u2019s body');
+        folded.dataset.tip = 'GitHub refused this as a line comment, so it went in the review\u2019s text';
+        at.appendChild(folded);
+      }
+      at.appendChild(el('span', 'grow'));
+      if (finding.url && !finding.folded) at.appendChild(openOnGitHub(finding.url));
+      box.appendChild(at);
+      var prose = el('div', 'prose');
+      renderMarkdown(prose, finding.body || '');
+      box.appendChild(prose);
+      for (var r = 0; r < (finding.replies || []).length; r++) {
+        var reply = finding.replies[r];
+        var line = el('div', 'aireply');
+        line.appendChild(el('b', null, reply.author + ': '));
+        var said = el('span', 'prose');
+        inline(said, reply.body);
+        line.appendChild(said);
+        box.appendChild(line);
+      }
+      box.appendChild(aiFollowUps(review, finding));
+      return box;
+    }
+
+    // The turns asked about one point, the one being answered, and the box to
+    // ask the next. One turn of the conversation runs at a time, wherever it
+    // was asked, so every box waits while one is answered.
+    function aiFollowUps(review, finding) {
+      var id = finding ? finding.id : review.id;
+      var wrap = el('div', 'aifollow');
+      for (var i = 0; i < chat.messages.length; i++) {
+        var m = chat.messages[i];
+        if (m.about && m.about.id === id) wrap.appendChild(renderChatMessage(m, true));
+      }
+      if (chat.pending && chat.pendingAbout === id) {
+        wrap.appendChild(renderChatMessage({ role: 'user', text: chat.pending }, true));
+        var busy = el('div', 'msg wait');
+        busy.appendChild(spinner());
+        busy.appendChild(el('span', null, 'checking it against the code\u2026'));
+        wrap.appendChild(busy);
+      }
+      var row = el('div', 'qa-ask askrow');
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.maxLength = 2000;
+      input.placeholder = finding ? 'Ask a follow-up about this finding\u2026' : 'Ask a follow-up about this review\u2026';
+      input.setAttribute('aria-label', finding ? 'Your follow-up about this finding' : 'Your follow-up about this review');
+      input.dataset.aiAsk = id;
+      input.value = aiView.drafts[id] || '';
+      var go = el('button', 'quiet', 'Ask');
+      go.type = 'button';
+      go.disabled = chat.busy;
+      if (chat.busy) go.dataset.tip = 'Once the question being answered is';
+      input.addEventListener('input', function onEdit() { aiView.drafts[id] = input.value; });
+      input.addEventListener('keydown', function onKey(ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); sendAiFollowUp(review, finding); }
+      });
+      go.addEventListener('click', function onAsk() { sendAiFollowUp(review, finding); });
+      row.appendChild(input);
+      row.appendChild(go);
+      if (aiView.error && aiView.error.id === id) row.appendChild(el('p', 'askerr', aiView.error.error));
+      wrap.appendChild(row);
+      return wrap;
+    }
+
+    async function sendAiFollowUp(review, finding) {
+      var id = finding ? finding.id : review.id;
+      var text = (aiView.drafts[id] || '').trim();
+      if (!text || chat.busy) return;
+      chat.pending = text;
+      chat.pendingAbout = id;
+      chat.busy = true;
+      chat.error = null;
+      aiView.error = null;
+      aiView.drafts[id] = '';
+      render();
+      renderChat();
+      await settleChat(
+        api('POST', '/reviews/' + state.session + '/chat', { question: text, about: { review: review.id, finding: finding ? finding.id : null } })
+          .then(function started(res) { return pollAnswer(res.askId); }));
+    }
+
     // Explicit per-entry choices only, keyed by GitHub's id. An entry absent
     // from here follows the default, so the newest bot comment stays open as
     // new ones arrive and the one it replaces folds away.
@@ -3753,13 +4001,29 @@ ${DARK_PALETTE}
 
     // The whole header toggles, except the buttons and links on it, which
     // keep doing their own job.
+    // A disclosure for the keyboard too: it takes the focus, says whether it is
+    // open, and Enter or Space folds it, keeping the focus on it after the render.
     function foldable(head, id, open) {
       head.classList.add('toggles');
       head.insertBefore(el('span', 'caret', open ? '\\u25be' : '\\u25b8'), head.firstChild);
-      head.addEventListener('click', function onFold(ev) {
-        if (ev.target.closest('button, a')) return;
+      head.tabIndex = 0;
+      head.setAttribute('role', 'button');
+      head.setAttribute('aria-expanded', open ? 'true' : 'false');
+      head.dataset.fold = id;
+      function fold() {
         saidOpen[id] = !open;
         render();
+        var again = document.querySelector('[data-fold="' + CSS.escape(id) + '"]');
+        if (again) again.focus({ preventScroll: true });
+      }
+      head.addEventListener('click', function onFold(ev) {
+        if (ev.target.closest('button, a')) return;
+        fold();
+      });
+      head.addEventListener('keydown', function onKey(ev) {
+        if (ev.target !== head || (ev.key !== 'Enter' && ev.key !== ' ')) return;
+        ev.preventDefault();
+        fold();
       });
     }
 
@@ -5136,7 +5400,7 @@ ${DARK_PALETTE}
     // reload mid-answer picks the poll back up from the askId the server
     // reports and shows the question where it was.
 
-    var chat = { messages: [], pending: null, busy: false, error: null, open: false, loaded: false };
+    var chat = { messages: [], pending: null, pendingAbout: null, busy: false, error: null, open: false, loaded: false, loading: false };
 
     function chatEls() {
       return {
@@ -5162,7 +5426,7 @@ ${DARK_PALETTE}
         els.log.appendChild(hint);
       }
       for (var i = 0; i < chat.messages.length; i++) els.log.appendChild(renderChatMessage(chat.messages[i]));
-      if (chat.pending) els.log.appendChild(renderChatMessage({ role: 'user', text: chat.pending }));
+      if (chat.pending) els.log.appendChild(renderChatMessage({ role: 'user', text: chat.pending, about: chat.pendingAbout ? { label: 'an AI review' } : null }));
       if (chat.busy) {
         var busy = el('div', 'msg wait');
         busy.appendChild(spinner());
@@ -5225,8 +5489,15 @@ ${DARK_PALETTE}
       sendChat();
     }
 
-    function renderChatMessage(m) {
-      if (m.role !== 'assistant') return el('div', 'msg user', m.text);
+    // Drawn with here set under the point it is about, on the AI reviews tab, which
+    // says what it is about already.
+    function renderChatMessage(m, here) {
+      if (m.role !== 'assistant') {
+        var mine = el('div', 'msg user');
+        if (m.about && m.about.label && !here) mine.appendChild(el('span', 'about', 'About ' + m.about.label));
+        mine.appendChild(document.createTextNode(m.text));
+        return mine;
+      }
       var box = el('div', 'msg bot');
       var body = el('div', 'prose');
       renderMarkdown(body, m.text || '');
@@ -5260,14 +5531,22 @@ ${DARK_PALETTE}
         var got = await api('GET', '/reviews/' + state.session + '/chat');
         chat.messages = got.messages || [];
       } catch (e) {
-        chat.error = e.message;
-        // The question goes back into the box: a failed turn is not on the
-        // record, and retyping it is the one thing this must not cost.
-        if (chat.pending) chatEls().input.value = chat.pending;
+        // The question goes back into the box it was asked in: a failed turn
+        // is not on the record, and retyping it is the one thing this must not
+        // cost. A follow-up on an AI review was asked on that tab, not here.
+        if (chat.pendingAbout) {
+          if (chat.pending && !aiView.drafts[chat.pendingAbout]) aiView.drafts[chat.pendingAbout] = chat.pending;
+          aiView.error = { id: chat.pendingAbout, error: 'Not answered: ' + e.message };
+        } else {
+          chat.error = e.message;
+          if (chat.pending) chatEls().input.value = chat.pending;
+        }
       }
       chat.busy = false;
       chat.pending = null;
+      chat.pendingAbout = null;
       renderChat();
+      if (state.tab === 'ai') render();
     }
 
     async function sendChat() {

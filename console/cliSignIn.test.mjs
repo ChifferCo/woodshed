@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import http from 'node:http';
 
 import { parseTrustedProxies } from './clientAddress.mjs';
-import { CLI_TOKEN_TTL_MS, createCliDevices, createCliSignIn, createWriteAccess, handleCliApi, handleCliPage, MAX_PENDING_PER_CLIENT, normalUserCode } from './cliSignIn.mjs';
+import { CLI_TOKEN_TTL_MS, createCliDevices, createCliSignIn, createWriteAccess, handleCliApi, handleCliPage, MAX_PENDING_PER_CLIENT, normalUserCode, sessionSignInsOf } from './cliSignIn.mjs';
 
 function signIn({ allowed, canWrite } = {}) {
   let clock = Date.parse('2026-11-20T10:00:00Z');
@@ -423,4 +423,15 @@ test('denied codes, which hold no place, are bounded on their own: past 200 the 
   assert.equal(cli.poll(codes[50].deviceCode).status, 'denied', 'the newest 200 still say denied');
   assert.equal(cli.poll(codes[249].deviceCode).status, 'denied');
   assert.ok(cli.start({ from: '198.51.100.9' }).deviceCode, 'and none of them held a place');
+});
+
+test('sessionSignInsOf reads each sign-in after a refresh, and says false with no settings', async () => {
+  const refreshed = [];
+  const userSettings = {
+    refresh: async (login) => refreshed.push(login),
+    view: (login) => (login === 'mia' ? { claudeToken: { set: true }, codexAuth: { set: false } } : {}),
+  };
+  assert.deepEqual(await sessionSignInsOf(userSettings)('mia'), { claude: true, codex: false });
+  assert.deepEqual(refreshed, ['mia']);
+  assert.deepEqual(await sessionSignInsOf(null)('mia'), { claude: false, codex: false });
 });

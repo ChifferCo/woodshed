@@ -2,12 +2,21 @@
 
 import { execFile } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import { CONFIG_KEYS, CONFIG_UNAVAILABLE } from './config.mjs';
 import { ORIGIN_RE } from './credentials.mjs';
+import { sessionHere } from './hc.mjs';
 
 // With --yes, setup reviews this many of the person's open pull requests, the ones updated last: enough to see reviews
 // work on their own code, without spending their plan on a long tail of old branches.
 export const REVIEW_PRS_DEFAULT = 5;
+// With --wait, setup waits this long at the agent step for the person to connect Claude Code and Codex, asking the
+// console every few seconds: long enough to run a sign-in and paste it, short enough for a coding agent's tool call.
+export const WAIT_DEFAULT_MINUTES = 15;
+export const WAIT_MAX_MINUTES = 60;
+export const WAIT_POLL_SECONDS = 5;
+// A poll with no more than this left before the deadline is skipped: the wait ends instead.
+const WAIT_MIN_CALL_MS = 1000;
 
 export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--no-browser] [options]
 
@@ -20,9 +29,14 @@ export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--
                          (with several repos, each as owner/name#12)
                          (with --yes and no --review-prs: the ${REVIEW_PRS_DEFAULT} updated last)
   --skip-reviews         skip the review check, your reviewer choice and reviews of your pull requests
-  --terminal <name>      optional: agent terminal for new private sessions, herdr or tmux
+  --terminal <name>      optional: agent terminal for new private sessions, herdr or tmux. With herdr, setup also
+                         starts woodshed session watch --herdr --add in Herdr, which adds each of your sessions to
+                         Herdr's sidebar as it starts or resumes, wherever it was started
+  --no-herdr-add         with herdr: start that watch without --add, so sessions are added only by session herdr
   --prompt <text>        optional: start a first coding session on this
   --no-session           finish without starting a session
+  --wait[=<N>m]          when Claude Code or Codex is not connected yet, print the steps and wait until it is,
+                         checking every ${WAIT_POLL_SECONDS} s, then go on: ${WAIT_DEFAULT_MINUTES} minutes, or N from 1 to ${WAIT_MAX_MINUTES}. It never asks for Enter
 
 When you need to do something, setup prints what is needed and exits 2. Run it again with the same options after that.`;
 
@@ -30,11 +44,27 @@ const REPO = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\/(?!\.{1,2}$)[\w.-]+$/i;
 const REVIEW_CHOICES = ['none', 'claude', 'codex', 'both', 'default'];
 const TERMINAL_CHOICES = CONFIG_KEYS.terminal.values;
 const AGENT_NAMES = { claude: 'Claude Code', codex: 'Codex' };
-// What My settings takes for each (console/public/mySettings.js): setup never handles a token itself.
-const AGENT_HOW = {
-  claude: 'For Claude Code, run claude setup-token and paste the token it prints under Claude',
-  codex: 'For Codex, run codex login, then paste all of ~/.codex/auth.json (or an OpenAI API key, sk-…) under Codex',
-};
+// How to connect each, as My settings' own rows say it (console/public/mySettings.js): what to run in a terminal of the
+// person's own, then where to paste. Setup never runs these or handles a token itself, so none passes through this
+// process, a coding agent running setup, or its captured output. `/settings#claude` and `#codex` open that row with
+// the caret in its box.
+export function agentSteps(name, url, platform) {
+  if (name === 'claude') {
+    return [
+      'In another terminal, run: claude setup-token',
+      'It signs you in to Claude in your browser, then prints a token that starts with sk-ant-oat01-. Copy it.',
+      `On My settings (${url}), paste it in the Claude row's box and press Save.`,
+    ];
+  }
+  return [
+    'In another terminal, run: codex login (skip it if Codex is already signed in on this computer)',
+    platform === 'darwin'
+      ? 'In that terminal, copy the sign-in it saved, without printing it: pbcopy < ~/.codex/auth.json'
+      : 'In that terminal, print the sign-in it saved and copy all of it: cat ~/.codex/auth.json',
+    `On My settings (${url}), paste it in the Codex row's box and press Save. An OpenAI API key (sk-…) works there too.`,
+  ];
+}
+const numbered = (steps) => steps.map((step, i) => `  ${i + 1}. ${step}`).join('\n');
 // A pull request in --review-prs or the terminal's answer: 12, #12, or owner/name#12 for one repo of several.
 const PICK = '(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?/[\\w.-]+)?#?[1-9][0-9]{0,8}';
 const REVIEW_PRS_RE = new RegExp(`^(?:all|none|${PICK}(?:\\s*,\\s*${PICK})*)$`, 'i');
@@ -62,8 +92,15 @@ function options(args, fail) {
   const out = { repos: [] };
   for (let i = 0; i < args.length; i++) {
     const [name, inline] = args[i].split(/=(.*)/s);
-    if (['--yes', '--skip-reviews', '--no-session'].includes(name) && inline === undefined) {
+    if (['--yes', '--skip-reviews', '--no-session', '--no-herdr-add'].includes(name) && inline === undefined) {
       out[name] = true;
+      continue;
+    }
+    // Only --wait and --wait=<N>m: a bare --wait never takes the next argument as its time.
+    if (name === '--wait') {
+      const minutes = inline === undefined ? WAIT_DEFAULT_MINUTES : Number(/^([1-9][0-9]?)m$/.exec(inline)?.[1]);
+      if (!(minutes >= 1 && minutes <= WAIT_MAX_MINUTES)) throw fail(`--wait takes no value (${WAIT_DEFAULT_MINUTES} minutes), or minutes as --wait=<N>m, from 1m to ${WAIT_MAX_MINUTES}m.`);
+      out['--wait'] = minutes;
       continue;
     }
     if (!['--repo', '--reviews', '--review-prs', '--agent', '--terminal', '--prompt'].includes(name)) throw fail(`Unknown setup option ${name}. Run woodshed setup --help.`);
@@ -85,9 +122,10 @@ function options(args, fail) {
 }
 
 // Each step runs the installed CLI here, with this process's environment.
-export function runCli({ node, script }, args, env) {
+// `signal` stops the subcommand, for a call that must end by --wait's deadline.
+export function runCli({ node, script }, args, env, { signal } = {}) {
   return new Promise((resolve, reject) => {
-    execFile(node, [script, ...args], { env, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+    execFile(node, [script, ...args], { env, maxBuffer: 4 * 1024 * 1024, signal }, (err, stdout) => {
       if (err && typeof err.code !== 'number') return reject(new Error('Could not run a Woodshed subcommand.'));
       resolve({ code: err?.code ?? 0, stdout });
     });
@@ -133,7 +171,10 @@ export async function setupCommand(args, ctx) {
   const choose = !opts['--yes'] && (ctx.tty ?? process.stdin.isTTY)
     ? (ctx.ask ?? ((question) => askTerminal(question, ctx.stderr)))
     : null;
-  const run = ctx.run ?? ((words) => runCli(ctx.self, words, env));
+  const run = ctx.run ?? ((words, options) => runCli(ctx.self, words, env, options));
+  // The clock and the pause of --wait, which the tests replace. `sleep` rejects once its `signal` aborts.
+  const now = ctx.now ?? Date.now;
+  const sleep = ctx.sleep ?? ((ms, { signal } = {}) => delay(ms, undefined, { signal }));
   function report(step, status, message, fields = {}) {
     if (args.json) emit({ event: 'setup', step, status, message, ...fields });
     else say(`[${status.replace('-', ' ')}] ${message}${fields.url ? ` ${fields.url}` : ''}`);
@@ -144,15 +185,27 @@ export async function setupCommand(args, ctx) {
     return [EXIT.waiting, EXIT.refused].includes(code) ? code : EXIT.failed;
   }
   const globals = ['--console', origin, '--json', ...(!args.browser ? ['--no-browser'] : [])];
-  async function call(step, ...words) {
+  const call = (step, ...words) => callWith({}, step, ...words);
+  async function callWith(options, step, ...words) {
     try {
-      const result = await run([...globals, ...words]);
+      const result = await run([...globals, ...words], options);
       const events = result.stdout.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line));
       if (events.some((event) => !event || typeof event !== 'object' || Array.isArray(event))) throw new Error('not a JSON event');
       return { code: result.code, events, last: events.at(-1), error: events.findLast((event) => event.event === 'error') };
     } catch {
       return { code: EXIT.failed, events: [], error: { error: `Could not read woodshed ${step} output. Run woodshed ${step} directly for details.` } };
     }
+  }
+  // A call given `ms` at most: one that takes longer is stopped, and answers as a failed call when the time is up.
+  async function callWithin(ms, step, ...words) {
+    const stopCall = new AbortController();
+    const stopTimer = new AbortController();
+    const late = { code: EXIT.failed, events: [], error: { error: 'the console did not answer before the wait ran out' } };
+    const timer = sleep(ms, { signal: stopTimer.signal }).then(() => late, () => null);
+    const result = await Promise.race([callWith({ signal: stopCall.signal }, step, ...words), timer]);
+    stopTimer.abort();
+    if (result === late) stopCall.abort();
+    return result;
   }
   function childError(step, result, message, fields) {
     return stop(step, result.code || EXIT.failed, printable(result.error?.error) || message, fields);
@@ -227,13 +280,15 @@ export async function setupCommand(args, ctx) {
   // Reviews from Claude Code and Codex are what setup gives first: on a console with no team keys they run on the pull
   // request's author's own Claude token and Codex sign-in (console/reviewAgents.mjs), so setup asks for both, unless the
   // person says they use only one.
-  const signIns = me.sessionSignIns;
+  let signIns = me.sessionSignIns;
   let wanted = opts['--agent'] ? [opts['--agent']] : ['claude', 'codex'];
   if (!signIns) {
     report('agent', 'skipped', 'This console does not report agent sign-ins. Connect Claude Code and Codex on My settings.', { url: `${origin}/settings` });
   } else {
     let missing = wanted.filter((name) => signIns[name] !== true);
-    if (missing.length && !opts['--agent'] && choose) {
+    // --wait asks nothing here: it waits for whichever is missing, both unless --agent names one.
+    const wait = opts['--wait'];
+    if (missing.length && !opts['--agent'] && choose && !wait) {
       const have = wanted.filter((name) => signIns[name] === true).map((name) => AGENT_NAMES[name]);
       const intro = `Connect Claude Code and Codex: with both connected, your pull requests get reviews from both.${have.length ? ` ${have[0]} is connected.` : ''}`;
       if (args.json) ctx.stderr.write(`${intro}\n`);
@@ -243,14 +298,80 @@ export async function setupCommand(args, ctx) {
       else if (answer && answer !== 'both') return stop('agent', EXIT.waiting, 'Answer both, claude or codex, or rerun setup with --agent claude or --agent codex.');
       missing = wanted.filter((name) => signIns[name] !== true);
     }
-    if (missing.length) {
-      const url = `${origin}/settings`;
-      if (args.browser) open(url);
-      const both = wanted.length === 2;
+    const both = wanted.length === 2;
+    const rowUrl = (name) => `${origin}/settings#${name}`;
+    const stepsOf = (name) => agentSteps(name, rowUrl(name), ctx.platform);
+    // On a terminal, setup walks through each one and waits while the person does it, then checks with the console.
+    const tell = (line) => (args.json ? ctx.stderr.write(`${line}\n`) : say(line));
+    let walked = false;
+    if (missing.length && choose && !wait) {
+      walked = true;
+      const todo = [...missing];
+      for (const [i, name] of todo.entries()) {
+        tell(`\nConnect ${AGENT_NAMES[name]}${todo.length > 1 ? ` (${i + 1} of ${todo.length})` : ''}:\n${numbered(stepsOf(name))}`);
+        if (args.browser) {
+          open(rowUrl(name));
+          tell(`My settings is open in your browser at the ${name === 'claude' ? 'Claude' : 'Codex'} row.`);
+        }
+        for (;;) {
+          const answer = (await choose('Press Enter once it is saved, or type skip to finish setup later. '))?.toLowerCase();
+          if (answer === undefined || answer === 'skip') break;
+          const checked = await call('status', 'status');
+          const now = checked.code === EXIT.done ? checked.last?.sessionSignIns : null;
+          if (!now) {
+            tell('Could not ask the console whether it is saved. Press Enter to ask again.');
+            continue;
+          }
+          if (now[name] === true) {
+            missing = missing.filter((other) => other !== name);
+            tell(`${AGENT_NAMES[name]} is connected.`);
+            break;
+          }
+          tell(`The console does not have ${AGENT_NAMES[name]}'s sign-in yet: check that Save on My settings said Saved.`);
+        }
+        if (missing.includes(name)) break;
+      }
+    }
+    // What the person has to do for each one still missing, and how setup goes on after it.
+    const handoff = (then) => {
       const why = both ? ': with both connected, your pull requests get reviews from both' : '';
+      const how = missing.map((name) => `${AGENT_NAMES[name]}:\n${numbered(stepsOf(name))}`).join('\n');
+      return [`Connect ${missing.map((name) => AGENT_NAMES[name]).join(' and ')} on My settings${why}.\n${how}\n${then}`, {
+        url: rowUrl(missing[0]), wanted, missing, steps: Object.fromEntries(missing.map((name) => [name, stepsOf(name)])),
+      }];
+    };
+    if (missing.length && args.browser && !walked) open(rowUrl(missing[0]));
+    // With --wait, setup tells the same steps, then asks the console every few seconds until each is connected.
+    if (missing.length && wait) {
+      const [message, fields] = handoff(`Setup is waiting up to ${wait} minute${wait === 1 ? '' : 's'} for ${missing.length === 2 ? 'them' : 'it'}, checking every ${WAIT_POLL_SECONDS} seconds.`);
+      report('agent', 'waiting', message, { ...fields, waitMinutes: wait });
+      const deadline = now() + wait * 60_000;
+      let unread = false;
+      // Each pause and each call is held to the time left, so exit 2 comes by the deadline even from a slow console.
+      while (missing.length && deadline - now() > WAIT_MIN_CALL_MS) {
+        await sleep(Math.min(WAIT_POLL_SECONDS * 1000, deadline - now() - WAIT_MIN_CALL_MS));
+        const checked = await callWithin(deadline - now(), 'status', 'status');
+        const seen = checked.code === EXIT.done && checked.last?.signedIn === true ? checked.last.sessionSignIns : null;
+        if (!seen || typeof seen !== 'object') {
+          // Once: the console may be restarting, and the next call may well answer.
+          if (!unread) report('agent', 'waiting', `Could not ask the console whether ${missing.length === 2 ? 'they are' : 'it is'} saved${printable(checked.error?.error) ? ` (${printable(checked.error.error)})` : ''}. Still asking.`);
+          unread = true;
+          continue;
+        }
+        signIns = seen;
+        // From the latest answer each time: a sign-in removed on My settings mid-wait is missing again.
+        const was = missing;
+        missing = wanted.filter((name) => seen[name] !== true);
+        for (const name of wanted) {
+          if (was.includes(name) && !missing.includes(name)) report('agent', 'connected', `${AGENT_NAMES[name]} is connected.`, { agent: name, missing });
+          if (!was.includes(name) && missing.includes(name)) report('agent', 'waiting', `${AGENT_NAMES[name]}'s sign-in is no longer saved on My settings: connect it again.`, { agent: name, missing, steps: { [name]: stepsOf(name) } });
+        }
+      }
+    }
+    if (missing.length) {
       const onlyOne = both ? ' Use only one? Rerun setup with --agent claude or --agent codex.' : '';
       const again = resume(...(!both && !opts['--agent'] ? [`--agent ${wanted[0]}`] : []));
-      return stop('agent', EXIT.waiting, `Connect ${missing.map((name) => AGENT_NAMES[name]).join(' and ')} on My settings${why}. ${missing.map((name) => AGENT_HOW[name]).join('. ')}.${onlyOne} Then ${again}.`, { url, wanted, missing });
+      return stop('agent', EXIT.waiting, ...handoff(`${onlyOne.trim() ? `${onlyOne.trim()} ` : ''}Then ${again}.`));
     }
     const names = wanted.map((name) => AGENT_NAMES[name]).join(' and ');
     report('agent', 'done', `${names} ${wanted.length === 2 ? 'are' : 'is'} connected: your pull requests get reviews from ${wanted.length === 2 ? 'both' : names}.`, { agent: wanted[0], wanted });
@@ -410,7 +531,10 @@ export async function setupCommand(args, ctx) {
     }
   }
 
-  const canAttach = me.hc?.ok === true && ctx.platform !== 'win32';
+  // Inside a Woodshed session hc is that session's own Herdr, which the person's computer never shows: nothing is added
+  // to it from here (sessions.mjs says the same to session herdr and --herdr).
+  const insideSession = sessionHere(env ?? {});
+  const canAttach = me.hc?.ok === true && ctx.platform !== 'win32' && !insideSession;
   let terminal = opts['--terminal'];
   const checkTerminal = canConfig && (choose || terminal || (canAttach && !opts['--no-session']));
   const currentTerminal = checkTerminal ? await call('config get terminal', 'config', 'get', 'terminal') : null;
@@ -433,6 +557,27 @@ export async function setupCommand(args, ctx) {
       if (set.code !== EXIT.done) return childError('terminal', set, 'Could not save your agent terminal preference.');
     }
     report('terminal', 'done', `New private sessions will run their agents in ${terminal === 'herdr' ? 'Herdr' : 'tmux'}.`, { terminal });
+  }
+
+  // With Herdr, each of the person's sessions shows in Herdr's sidebar by default: a watch in Herdr adds each as it starts
+  // or resumes, wherever it was started (the console's page, Slack, an agent in another session).
+  if (terminal === 'herdr') {
+    const add = !opts['--no-herdr-add'];
+    const watchWords = ['session', 'watch', '--herdr', ...(add ? ['--add'] : [])];
+    if (insideSession) {
+      report('herdr-watch', 'skipped', `This runs inside Woodshed session ${insideSession}, whose Herdr your computer never shows. On your computer, run ${command(...watchWords)} to have your sessions added to Herdr there.`);
+    } else if (!canAttach) {
+      report('herdr-watch', 'skipped', `Herdr's hc ${me.hc?.minimum ?? ''} or newer is not here, so your sessions are not added to Herdr. Once it is, run ${command(...watchWords)}.`.replace('hc  or', 'hc or'));
+    } else {
+      const watch = await call('session watch', ...watchWords);
+      if (watch.code !== EXIT.done) return childError('herdr-watch', watch, `Could not start the watch in Herdr. Run ${command(...watchWords)}.`);
+      const kept = watch.last?.action === 'kept';
+      const what = add ? 'Each of your private sessions is added to Herdr\'s sidebar as it starts or resumes, wherever it was started' : 'Herdr tells you as your sessions start, need you or stop; add one to its sidebar with woodshed session herdr <id>';
+      const message = kept
+        ? `Herdr already runs hc terminal woodshed-watch, as it was started.${add ? ' If it was started without --add, run hc kill woodshed-watch, then setup again, to have it add your sessions.' : ''}`
+        : `${what}: hc terminal woodshed-watch runs ${command(...watchWords)}. Stop it with hc kill woodshed-watch${add ? ', or rerun setup with --no-herdr-add' : ''}.`;
+      report('herdr-watch', 'done', message, { add, action: watch.last?.action ?? null });
+    }
   }
 
   const code = await firstSession();

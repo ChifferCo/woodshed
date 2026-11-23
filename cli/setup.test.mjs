@@ -13,7 +13,8 @@ const help = (commands) => ({ code: 0, stdout: commands.map((command) => `  ${co
 const result = (code, ...events) => ({ code, stdout: events.map((event) => JSON.stringify(event)).join('\n') });
 
 function fake({
-  commands = [], answers = {}, here = null, checkouts = {}, browser = false, json = true, tty = false, input = [],
+  commands = [], answers = {}, here = null, checkouts = {}, browser = false, json = true, tty = false, input = [], platform = 'test',
+  clock = null, env = {},
 } = {}) {
   const events = [];
   const lines = [];
@@ -28,7 +29,7 @@ function fake({
     calls.push(words);
     if (words[0] === '--help') return help(commands);
     const command = words[0] === 'login' || words[0] === 'status' ? words[0] : words.slice(0, 2).join(' ');
-    if (answers[command]) return answers[command];
+    if (answers[command]) return typeof answers[command] === 'function' ? answers[command]() : answers[command];
     if (command === 'status') return result(0, ready);
     if (command === 'config get') return result(0, { key: 'terminal', value: 'tmux' });
     // Review is on by default (console/defaultReview.mjs), for the tests that are about a later step.
@@ -39,7 +40,14 @@ function fake({
     const code = await setupCommand({ origin, args, rest: null, json, browser }, {
       EXIT, emit: (event) => events.push(event), say: (line) => lines.push(line), fail: (message) => new Error(message),
       stderr: { write: (line) => lines.push(line) },
-      cwd, run, open: (url) => opened.push(url), tty, platform: 'test',
+      cwd, run, open: (url) => opened.push(url), tty, platform, env,
+      // After the calls already answered (setImmediate), as a real timer would be, and not at all once aborted.
+      ...(clock ? { now: () => clock.t, sleep: (ms, { signal } = {}) => new Promise((resolve, reject) => setImmediate(() => {
+        if (signal?.aborted) return reject(new Error('aborted'));
+        clock.slept.push(ms);
+        clock.t += ms;
+        return resolve();
+      })) } : {}),
       ask: async (question) => {
         questions.push(question);
         return input.shift() ?? null;
@@ -104,8 +112,8 @@ test('setup opens My settings for a missing session sign-in and respects --no-br
     const { invoke } = fake({ browser, answers: { status: result(0, { ...ready, sessionSignIns: { claude: false, codex: false } }) } });
     const after = await invoke('--yes');
     assert.equal(after.code, 2);
-    assert.deepEqual(after.opened, browser ? [`${origin}/settings`] : []);
-    assert.equal(after.events.at(-1).url, `${origin}/settings`);
+    assert.deepEqual(after.opened, browser ? [`${origin}/settings#claude`] : [], 'opens My settings at the first row to fill');
+    assert.equal(after.events.at(-1).url, `${origin}/settings#claude`);
     assert.equal(after.events.at(-1).step, 'agent');
   }
 });
@@ -184,13 +192,14 @@ test('setup skips already enabled reviews, applies a changed personal choice and
     'config list': result(0, { config: { reviews: 'default' } }),
     'config set': result(0, { event: 'set', key: 'reviews', value: 'both' }),
     'session list': result(0, { sessions: [] }),
+    'session watch': result(0, { event: 'herdr', action: 'started', terminal: 'woodshed-watch', add: true }),
     'session new': result(0, { event: 'connected', session: { id: '12345678', url } }),
   } });
   const after = await invoke('--yes', '--repo', repo, '--repo', 'acme/lib', '--reviews', 'both', '--prompt=-v is broken');
   assert.equal(after.code, 0);
   assert.deepEqual(after.calls.slice(3), [
     ['review', 'status', '--repo', repo], ['review', 'status', '--repo', 'acme/lib'],
-    ['config', 'list'], ['config', 'set', 'reviews', 'both'], ['config', 'get', 'terminal'], ['session', 'list'],
+    ['config', 'list'], ['config', 'set', 'reviews', 'both'], ['config', 'get', 'terminal'], ['session', 'watch', '--herdr', '--add'], ['session', 'list'],
     ['session', 'new', '--herdr', '--repo', repo, '--agent', 'claude', '--', '-v is broken'],
   ]);
   assert.equal(after.events.at(-1).url, url);
@@ -286,14 +295,66 @@ test('setup saves the interactive Herdr choice before starting and attaching the
   const { invoke } = fake({ tty: true, input: ['Herdr'], commands: ['config'], answers: {
     'config set': result(0, { event: 'set', key: 'terminal', value: 'herdr' }),
     'session list': result(0, { sessions: [] }),
+    'session watch': result(0, { event: 'herdr', action: 'started', terminal: 'woodshed-watch', add: true }),
     'session new': result(0, { event: 'connected', session }),
   } });
   const after = await invoke('--skip-reviews', '--repo', repo, '--prompt', 'Fix the redirect.');
   assert.equal(after.code, EXIT.done);
-  assert.deepEqual(after.calls.slice(-4), [
-    ['config', 'get', 'terminal'], ['config', 'set', 'terminal', 'herdr'], ['session', 'list'],
+  assert.deepEqual(after.calls.slice(-5), [
+    ['config', 'get', 'terminal'], ['config', 'set', 'terminal', 'herdr'], ['session', 'watch', '--herdr', '--add'], ['session', 'list'],
     ['session', 'new', '--herdr', '--repo', repo, '--agent', 'claude', '--', 'Fix the redirect.'],
   ]);
+});
+
+test('setup --terminal herdr starts the watch that adds each session to Herdr, and says so; --no-herdr-add starts it without', async () => {
+  const watched = result(0, { event: 'herdr', action: 'started', terminal: 'woodshed-watch', address: 't3', add: true });
+  const { invoke } = fake({ commands: ['config'], answers: {
+    'config get': result(0, { key: 'terminal', value: 'herdr' }),
+    'session watch': watched,
+  } });
+  const after = await invoke('--yes', '--terminal', 'herdr', '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done);
+  assert.deepEqual(after.calls.slice(-2), [['config', 'get', 'terminal'], ['session', 'watch', '--herdr', '--add']]);
+  const step = after.events.find((event) => event.step === 'herdr-watch');
+  assert.equal(step.status, 'done');
+  assert.equal(step.add, true);
+  assert.match(step.message, /Each of your private sessions is added to Herdr's sidebar as it starts or resumes, wherever it was started/);
+  assert.match(step.message, /hc terminal woodshed-watch runs woodshed session watch --herdr --add --console "https:\/\/console\.example"/);
+  assert.match(step.message, /hc kill woodshed-watch, or rerun setup with --no-herdr-add/);
+
+  const off = await invoke('--yes', '--terminal', 'herdr', '--no-herdr-add', '--skip-reviews', '--no-session');
+  assert.equal(off.code, EXIT.done);
+  assert.deepEqual(off.calls.at(-1), ['session', 'watch', '--herdr']);
+  assert.equal(off.events.findLast((event) => event.step === 'herdr-watch').add, false);
+
+  // One already running is kept as it was started, and setup says how to have it add sessions.
+  const { invoke: again } = fake({ commands: ['config'], answers: {
+    'config get': result(0, { key: 'terminal', value: 'herdr' }),
+    'session watch': result(0, { event: 'herdr', action: 'kept', terminal: 'woodshed-watch', add: true }),
+  } });
+  const kept = await again('--yes', '--terminal', 'herdr', '--skip-reviews', '--no-session');
+  assert.match(kept.events.find((event) => event.step === 'herdr-watch').message, /already runs.*started without --add, run hc kill woodshed-watch/);
+
+  // tmux: no watch.
+  const { invoke: onTmux } = fake({ commands: ['config'], answers: { 'config set': result(0, { event: 'set', key: 'terminal', value: 'tmux' }) } });
+  const tmux = await onTmux('--yes', '--terminal', 'tmux', '--skip-reviews', '--no-session');
+  assert.equal(tmux.code, EXIT.done);
+  assert.ok(!tmux.calls.some(([group, sub]) => group === 'session' && sub === 'watch'));
+});
+
+test('setup inside a Woodshed session adds nothing to Herdr: no watch and no --herdr, and says to run the watch on the computer', async () => {
+  const { invoke } = fake({ commands: ['config'], env: { SESSION_ID: 'abcd1234', WOODSHED_TERMINAL: 'herdr', HC_TERMINAL_ID: 't1' }, answers: {
+    'config get': result(0, { key: 'terminal', value: 'herdr' }),
+    'session list': result(0, { sessions: [] }),
+    'session new': result(0, { event: 'running', session: { id: '12345678', url: `${origin}/s/12345678` } }),
+  } });
+  const after = await invoke('--yes', '--terminal', 'herdr', '--skip-reviews', '--repo', repo, '--prompt', 'Fix the redirect.');
+  assert.equal(after.code, EXIT.done);
+  assert.ok(!after.calls.some(([group, sub]) => group === 'session' && sub === 'watch'));
+  assert.deepEqual(after.calls.at(-1), ['session', 'new', '--repo', repo, '--agent', 'claude', '--', 'Fix the redirect.']);
+  const step = after.events.find((event) => event.step === 'herdr-watch');
+  assert.equal(step.status, 'skipped');
+  assert.match(step.message, /inside Woodshed session abcd1234.*On your computer, run woodshed session watch --herdr --add/);
 });
 
 test('setup accepts a terminal choice in agent mode even without a first session', async () => {
@@ -339,10 +400,12 @@ test('setup asks for both Claude Code and Codex, and names how to get each sign-
   assert.equal(last.step, 'agent');
   assert.deepEqual(last.missing, ['claude', 'codex']);
   assert.match(last.message, /Connect Claude Code and Codex on My settings: with both connected, your pull requests get reviews from both/);
-  assert.match(last.message, /claude setup-token/);
-  assert.match(last.message, /codex login.*~\/\.codex\/auth\.json/);
+  assert.match(last.message, /Claude Code:\n {2}1\. In another terminal, run: claude setup-token\n {2}2\. .*sk-ant-oat01-.*\n {2}3\. On My settings \(https:\/\/console\.example\/settings#claude\), paste it in the Claude row's box and press Save\./);
+  assert.match(last.message, /Codex:\n {2}1\. In another terminal, run: codex login.*\n {2}2\. In that terminal, .*cat ~\/\.codex\/auth\.json\n {2}3\. On My settings \(https:\/\/console\.example\/settings#codex\)/);
   assert.match(last.message, /--agent claude or --agent codex/);
-  assert.equal(last.url, `${origin}/settings`);
+  assert.equal(last.url, `${origin}/settings#claude`);
+  assert.deepEqual(Object.keys(last.steps), ['claude', 'codex']);
+  assert.equal(last.steps.claude[0], 'In another terminal, run: claude setup-token');
   assert.doesNotMatch(JSON.stringify(after.calls), /token/, 'setup never handles a token');
 });
 
@@ -368,8 +431,42 @@ test('on a terminal, setup lets the person answer that they use only one agent',
   const claudeMissing = { status: result(0, { ...ready, sessionSignIns: { claude: false, codex: true } }) };
   const missing = await fake({ tty: true, input: ['claude'], answers: claudeMissing }).invoke('--repo', repo);
   assert.equal(missing.code, EXIT.waiting);
-  assert.match(missing.events.at(-1).message, /Connect Claude Code on My settings\. For Claude Code, run claude setup-token.*rerun setup with --repo acme\/app --agent claude/);
+  assert.match(missing.events.at(-1).message, /Connect Claude Code on My settings\.\nClaude Code:\n {2}1\. In another terminal, run: claude setup-token[^]*rerun setup with --repo acme\/app --agent claude/);
   assert.doesNotMatch(missing.events.at(-1).message, /Codex/);
+});
+
+test('on a terminal, setup walks through connecting each agent and goes on once the console has it', async () => {
+  const seen = [{ claude: false, codex: false }, { claude: false, codex: false }, { claude: true, codex: false }, { claude: true, codex: true }];
+  const { invoke } = fake({ tty: true, browser: true, platform: 'darwin', input: ['', '', '', ''], answers: {
+    status: () => result(0, { ...ready, sessionSignIns: seen.length > 1 ? seen.shift() : seen[0] }),
+  } });
+  const after = await invoke('--repo', repo, '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done);
+  assert.deepEqual(after.opened, [`${origin}/settings#claude`, `${origin}/settings#codex`]);
+  const text = after.lines.join('\n');
+  assert.match(text, /Connect Claude Code \(1 of 2\):\n {2}1\. In another terminal, run: claude setup-token/);
+  assert.match(text, /The console does not have Claude Code's sign-in yet/, 'the first Enter came before Save');
+  assert.match(text, /Claude Code is connected\.[^]*Connect Codex \(2 of 2\):[^]*pbcopy < ~\/\.codex\/auth\.json[^]*Codex is connected\./);
+  assert.equal(after.events.find((event) => event.step === 'agent').status, 'done');
+});
+
+test('on a terminal, a status call that fails says so, rather than that the sign-in is not saved', async () => {
+  const seen = [result(0, { ...ready, sessionSignIns: { claude: false, codex: true } }), result(1, { event: 'error', error: 'console not reached' }), result(0, { ...ready, sessionSignIns: { claude: true, codex: true } })];
+  // Enter for both agents, then an Enter whose status call fails, then one that finds Claude Code saved.
+  const { invoke } = fake({ tty: true, input: ['', '', ''], answers: { status: () => (seen.length > 1 ? seen.shift() : seen[0]) } });
+  const after = await invoke('--repo', repo, '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done);
+  const text = after.lines.join('\n');
+  assert.match(text, /Could not ask the console whether it is saved/);
+  assert.doesNotMatch(text, /does not have Claude Code's sign-in yet/);
+});
+
+test('on a terminal, skip stops setup at the agent with every step still to do', async () => {
+  const { invoke } = fake({ tty: true, input: ['', 'skip'], answers: { status: result(0, { ...ready, sessionSignIns: { claude: false, codex: false } }) } });
+  const after = await invoke('--repo', repo);
+  assert.equal(after.code, EXIT.waiting);
+  assert.deepEqual(after.events.at(-1).missing, ['claude', 'codex']);
+  assert.match(after.events.at(-1).message, /Claude Code:\n[^]*Codex:\n/);
 });
 
 const pull = (number, more = {}) => ({ number, title: `Change ${number}`, draft: false, url: `https://github.com/${repo}/pull/${number}`, ...more });
@@ -541,4 +638,120 @@ test('the first session runs Claude Code when both are connected, and answering 
   } }).invoke('--repo', repo, '--skip-reviews', '--prompt', 'Fix it.');
   assert.equal(only.code, EXIT.waiting, 'Codex is still to connect');
   assert.match(only.events.at(-1).message, /--agent codex/);
+});
+
+// A clock for --wait that moves only when setup pauses, so a 15-minute wait runs at once.
+const fakeClock = () => ({ t: 1_000_000, slept: [] });
+const signedIn = (sessionSignIns) => result(0, { ...ready, sessionSignIns });
+
+test('with --wait, setup prints the steps, waits for each agent to connect, then goes on', async () => {
+  const seen = [{ claude: false, codex: false }, { claude: false, codex: false }, { claude: false, codex: false }, { claude: true, codex: false }, { claude: true, codex: true }];
+  const clock = fakeClock();
+  const { invoke } = fake({ clock, answers: { status: () => signedIn(seen.length > 1 ? seen.shift() : seen[0]) } });
+  const after = await invoke('--yes', '--repo', repo, '--wait', '--no-session', '--skip-reviews');
+  assert.equal(after.code, EXIT.done);
+  const agent = after.events.filter((event) => event.step === 'agent');
+  assert.deepEqual(agent.map(({ status, agent: name }) => [status, name]), [['waiting', undefined], ['connected', 'claude'], ['connected', 'codex'], ['done', 'claude']]);
+  const [waiting] = agent;
+  assert.equal(waiting.url, `${origin}/settings#claude`);
+  assert.deepEqual(waiting.wanted, ['claude', 'codex']);
+  assert.deepEqual(waiting.missing, ['claude', 'codex']);
+  assert.deepEqual(Object.keys(waiting.steps), ['claude', 'codex']);
+  assert.equal(waiting.waitMinutes, 15);
+  assert.match(waiting.message, /Claude Code:\n {2}1\. In another terminal, run: claude setup-token[^]*Codex:\n {2}1\. In another terminal, run: codex login[^]*Setup is waiting up to 15 minutes/);
+  assert.deepEqual(agent[1].missing, ['codex']);
+  assert.ok(clock.slept.every((ms) => ms === 5000), 'asks every 5 seconds');
+  assert.equal(clock.slept.length, 4, 'four status calls after the first');
+  assert.ok(after.events.some((event) => event.step === 'session' && event.status === 'skipped'), 'goes on with the rest of setup');
+  assert.equal(after.questions.length, 0);
+  assert.doesNotMatch(JSON.stringify(after.calls), /token/, 'setup never handles a token');
+});
+
+test('with --wait on a terminal, setup waits instead of asking for Enter, and prints the steps as text', async () => {
+  const seen = [{ claude: false, codex: true }, { claude: true, codex: true }];
+  const { invoke } = fake({ clock: fakeClock(), tty: true, json: false, answers: { status: () => signedIn(seen.length > 1 ? seen.shift() : seen[0]) } });
+  const after = await invoke('--repo', repo, '--wait=2m', '--no-session', '--skip-reviews');
+  assert.equal(after.code, EXIT.done);
+  assert.equal(after.questions.length, 0, 'neither "use both?" nor Enter');
+  const text = after.lines.join('\n');
+  assert.match(text, /\[waiting\] Connect Claude Code on My settings: with both connected, your pull requests get reviews from both\.\nClaude Code:\n {2}1\. In another terminal, run: claude setup-token[^]*Setup is waiting up to 2 minutes for it/);
+  assert.match(text, /\[connected\] Claude Code is connected\./);
+  assert.match(text, /\[done\] Claude Code and Codex are connected/);
+});
+
+test('when --wait runs out, setup exits 2 with the steps and the message it gives without --wait', async () => {
+  const missing = { status: signedIn({ claude: false, codex: false }) };
+  const before = await fake({ answers: missing }).invoke('--yes', '--repo', repo);
+  const clock = fakeClock();
+  const after = await fake({ clock, answers: missing }).invoke('--yes', '--repo', repo, '--wait=1m');
+  assert.equal(after.code, EXIT.waiting);
+  const waited = clock.slept.reduce((sum, ms) => sum + ms, 0);
+  assert.ok(waited >= 59_000 && waited <= 60_000, `waited the minute, and no longer (${waited} ms)`);
+  assert.equal(after.calls.filter(([word]) => word === 'status').length, 1 + 12, 'asked every 5 seconds');
+  const { status, ...last } = after.events.at(-1);
+  const { status: was, ...without } = before.events.at(-1);
+  assert.equal(status, 'needs-you');
+  assert.equal(was, 'needs-you');
+  assert.deepEqual(last, without);
+  assert.match(last.message, /Then rerun setup with --repo acme\/app\.$/);
+});
+
+test('with --wait, a status call that fails is said once, and the wait goes on', async () => {
+  const seen = [signedIn({ claude: true, codex: false }), result(1, { event: 'error', error: 'console not reached' }), result(1, { event: 'error', error: 'console not reached' }), signedIn({ claude: true, codex: true })];
+  const { invoke } = fake({ clock: fakeClock(), answers: { status: () => (seen.length > 1 ? seen.shift() : seen[0]) } });
+  const after = await invoke('--yes', '--repo', repo, '--wait', '--no-session', '--skip-reviews');
+  assert.equal(after.code, EXIT.done);
+  const said = after.events.filter((event) => /Could not ask the console/.test(event.message ?? ''));
+  assert.equal(said.length, 1);
+  assert.equal(said[0].status, 'waiting');
+  assert.match(said[0].message, /console not reached\)\. Still asking\./);
+  assert.deepEqual(after.events.filter((event) => event.step === 'agent').map((event) => event.status), ['waiting', 'waiting', 'connected', 'done']);
+});
+
+test('--wait takes only --wait or --wait=<N>m from 1 to 60, and never the next argument', async () => {
+  for (const bad of ['--wait=', '--wait=0m', '--wait=61m', '--wait=10', '--wait=5s', '--wait=1.5m', '--wait=-1m', '--wait=05m']) {
+    await assert.rejects(fake().invoke('--yes', bad), /--wait takes no value \(15 minutes\), or minutes as --wait=<N>m, from 1m to 60m\./, bad);
+  }
+  await assert.rejects(fake().invoke('--yes', '--wait', '10m'), /Unknown setup option 10m/, 'a bare --wait leaves the next argument alone');
+  const at = await fake({ clock: fakeClock() }).invoke('--yes', '--wait=60m', '--no-session', '--skip-reviews');
+  assert.equal(at.code, EXIT.done);
+});
+
+test('with --wait and both agents already connected, setup runs as it does without it', async () => {
+  const clock = fakeClock();
+  const waited = await fake({ clock }).invoke('--yes', '--repo', repo, '--wait', '--no-session', '--skip-reviews');
+  const plain = await fake().invoke('--yes', '--repo', repo, '--no-session', '--skip-reviews');
+  assert.equal(waited.code, EXIT.done);
+  assert.deepEqual(waited.events, plain.events);
+  assert.deepEqual(waited.calls, plain.calls);
+  assert.deepEqual(clock.slept, []);
+});
+
+test('with --wait, a status call slower than the time left is cut off, and setup exits 2 by the deadline', async () => {
+  const clock = fakeClock();
+  const start = clock.t;
+  let calls = 0;
+  // The first answer says Codex is missing; every later call never answers, as a console that hangs.
+  const { invoke } = fake({ clock, answers: { status: () => (calls++ ? new Promise(() => {}) : signedIn({ claude: true, codex: false })) } });
+  const after = await invoke('--yes', '--repo', repo, '--wait=1m');
+  assert.equal(after.code, EXIT.waiting);
+  assert.ok(clock.t - start <= 60_000, `exit 2 by the deadline (${clock.t - start} ms)`);
+  assert.equal(calls, 2, 'one hung call, cut off when the time ran out, and none after it');
+  assert.deepEqual(after.events.filter((event) => event.step === 'agent').map((event) => event.status), ['waiting', 'waiting', 'needs-you']);
+  assert.match(after.events[3].message, /did not answer before the wait ran out/);
+  assert.deepEqual(after.events.at(-1).missing, ['codex']);
+});
+
+test('with --wait, a sign-in removed mid-wait is reported missing again', async () => {
+  // Claude Code connects while Codex is still missing, then its sign-in is removed.
+  const both = [{ claude: false, codex: false }, { claude: true, codex: false }, { claude: false, codex: false }];
+  const { invoke } = fake({ clock: fakeClock(), answers: { status: () => signedIn(both.length > 1 ? both.shift() : both[0]) } });
+  const after = await invoke('--yes', '--repo', repo, '--wait=1m');
+  assert.equal(after.code, EXIT.waiting);
+  const agent = after.events.filter((event) => event.step === 'agent');
+  assert.deepEqual(agent.map(({ status, agent: name }) => [status, name]), [['waiting', undefined], ['connected', 'claude'], ['waiting', 'claude'], ['needs-you', undefined]]);
+  assert.deepEqual(agent[1].missing, ['codex']);
+  assert.match(agent[2].message, /^Claude Code's sign-in is no longer saved on My settings/);
+  assert.deepEqual(agent[2].missing, ['claude', 'codex']);
+  assert.deepEqual(agent.at(-1).missing, ['claude', 'codex'], 'the timeout names both again');
 });

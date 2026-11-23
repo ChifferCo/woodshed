@@ -481,8 +481,14 @@ And what the shed shows about each session:
   merged or closed, `queued` in yellow while it waits in GitHub's merge queue
   (its place on hover), and otherwise one mark for what most needs a look (✗ a failing check
   or changes requested, a spinning ring while checks run, ✓ green or approved), with the
-  counts on hover. A session that opens another pull request keeps each one
-  it reported (`prUrls`, oldest first) and shows a chip for each, but a merged
+  counts on hover. While a review or QA session the console started is at work on the pull
+  request (waiting in line or running: `woodshedRunsOn` in `console/sessions.mjs`), the chip
+  says `review`, `QA` or `review, QA` with the ring in place of the ✓, since its checks say
+  nothing of them until they report; a failing check keeps its ✗ beside the word. The hover
+  card and the chip's tooltip say `Woodshed review running`. A session that opens another pull request keeps each one
+  it reported (`prUrls`, oldest first, by number): the one of the branch checked out and
+  those of its checkout's other branches, a git worktree's included (statusd's `prUrls`,
+  session/README.md). It shows a chip for each, but a merged
   or closed one only while no newer one came after it, so the newest always
   stays. The card and pane bar show the newest two of those, a phone's bar
   the newest one, and the older fold into a `+N` chip that names each on hover;
@@ -1171,8 +1177,10 @@ Only an admin can open them (see "Sign-in"). The same menu signs
 you out.
 
 - **Webhook events** (`/events`): each message it took off the webhooks queue,
-  what it did with it (started or messaged a session, skipped one the poll
-  already handled, ignored, failed) and the delivery id. Labels and comments
+  one line each: when it came, what the console did with it (started or messaged
+  a session, skipped one the poll already handled, ignored, failed), the event,
+  what it was on, who sent it and the delivery id, and a status word (Acted on,
+  Ignored, Skipped, Failed). Labels and comments
   it does not act on, and Slack events that are not mentions, are left out.
   Each message is one line appended to `webhookEvents.jsonl`, beside
   `state.json`; the page shows the last 7 days, and a sweep every 12 hours
@@ -1180,8 +1188,8 @@ you out.
   delivery the Lambda refused never reaches the queue: GitHub's Recent
   Deliveries page shows those. When a source is switched off on Console
   settings (below), the page says so above the list.
-- **Webhooks** card on Console settings (`/console-settings#webhooks`): a
-  switch for GitHub, and on the Slack card's Questions row one for Slack, shown
+- **GitHub webhooks** row on Console settings, under This console (`/console-settings#webhooks`): a
+  switch for GitHub on the row itself, and on the Slack group's Questions row one for Slack, shown
   where webhooks reach the console (a queue, the local receiver, or the program
   it is embedded in), that turn each source off on its own. **GitHub webhooks** off, the console drops
   each GitHub delivery as it arrives, so the queue forgets it, and polls GitHub
@@ -1200,13 +1208,16 @@ you out.
   first delivery it drops, and at start `console: GitHub webhooks are switched
   off on Console settings, polling` or `console: Slack questions are switched
   off on Console settings`.
-- **Secrets & webhooks** (`/secrets`, the second tab of Settings): each secret's state and when it last
-  changed. Replace saves a new version, so the one before stays restorable as
+- **Secrets & webhooks** (`/secrets`, the second tab of Settings): groups of rows that open in place, as on My
+  settings (`public/settingsRows.js`), one row per secret. A closed row says what the secret is for, when it last
+  changed and whether it is set; open, it has the value behind Show and the form that sets or replaces it. A link to
+  `#secret-<name>` opens that row. Replace saves a new version, so the one before stays restorable as
   `AWSPREVIOUS`. Show reveals a session secret, since anyone who reaches the
   console can already read it in a session's terminal; the GitHub App's key is
   write-only. Slack's two keys are not listed: they are set on the Slack card
-  (below, "Slack"), and a line says so. A new App key is used at once, after a test token minted with it
-  succeeds. The webhook card checks four things (the App's webhook switched
+  (below, "Slack"), and a row says so. A new App key is used at once, after a test token minted with it
+  succeeds. The GitHub webhook group has three rows: Connection, Payload URL and secret, and a link to Webhook
+  events. Connection checks four things (the App's webhook switched
   on, the five events subscribed, the App connected to the Lambda with the
   stored secret, GitHub's last delivery accepted) and **Set up webhook** walks
   through them in three steps: the boxes only GitHub's settings page can tick
@@ -1214,7 +1225,7 @@ you out.
   the App with the Lambda's URL, `PATCH /app/hook/config`), and a test label
   whose delivery the modal follows from GitHub (`GET /app/hook/deliveries`) to
   the console's events log. The Lambda rereads
-  its secret when a signature fails, so Rotate under Advanced takes effect at once.
+  its secret when a signature fails, so Rotate secret on the Payload URL and secret row takes effect at once.
 
 Every change says what it changes and what that affects before it goes ahead.
 Replacing or rotating a secret needs its name typed; the server checks the
@@ -1694,7 +1705,7 @@ first to sign in is the first member and an admin, as on any new console. Once a
 what is asked again, at the next hourly check.
 
 Write access alone is not enough: a person must also be on the console's list,
-on the **People** page (`console/members.mjs`, `members` and `memberRequests`
+on the **People** tab of Settings (`console/members.mjs`, `members` and `memberRequests`
 in `state.json`). An admin can invite a handle (it must have write
 access), accept or decline someone asking to join, and remove another member;
 nobody can remove themselves. A writer who is not on the list signs in only as
@@ -1716,8 +1727,28 @@ until the first is switched on. The first person to sign in to a console with
 an empty list is its first admin. Locked out with no admin left: stop the console, set `"admin": true` on your entry under `members`
 in `/var/lib/<prefix>/console/state.json`, and start it again.
 
-**What each member can do.** People is a table, one row per member and one
-column per switch, each off for a new member and set by an admin:
+**The page** reads as the other settings pages do (`public/settingsRows.js`): **Asking to join** is a group of plain
+rows, one per person, with Accept and Decline on the row, and is left out while nobody asks; **Members** is a group
+whose box holds the table below, which scrolls sideways inside the box on a phone; and **Invite someone** (Add someone
+behind a hosting proxy) is that box's last row, which opens in place on its form (`/people#invite-card` opens it).
+
+**What each member can do.** Members is a table, one row per member, with a **Role** select and what that role can do
+beside it, in words. A role is a name for one set of three switches, which the console keeps and checks
+(`console/peopleRoles.mjs`): picking one sets all three at once (`POST /api/people/access`, `members: role set` in the
+log), and the role shown is read back from the switches, so a list from before roles shows as roles too.
+
+| Role | Admin | Sessions from GitHub | Can be assigned |
+| --- | --- | --- | --- |
+| Owner | on | on | on |
+| Member | off | on | on |
+| Contributor | off | on | off |
+| Private only | off | off | off |
+
+The first person to sign in to a new console is a full Owner. An owner with a switch off (behind a hosting proxy, where
+Can be assigned starts off, or an admin from before roles) shows as **Owner (partly)**, with what they lack in words;
+picking Owner turns the rest on. Picking any other role for yourself while you are an owner asks first, since it takes
+these pages away at once and only another owner can give them back; the last owner is refused anyway. Invite someone takes a role too, picked from a table of the roles with what each can do; without one (an older page or a script), someone new has every switch
+off, Private only. The switches:
 - *Admin*, above.
 - *Sessions from GitHub* (`githubSessions`): the `woodshed` label and
   `/woodshed` comments start or message a session for them, and they see
@@ -1732,10 +1763,10 @@ column per switch, each off for a new member and set by an admin:
   switch starts off, and sessions already assigned keep their assignee.
 
 **Behind a hosting proxy** there is no People list of the console's own, and no People page, unless the program
-embedding the console hands over its list (`members`, "Embedding the console"). With it, People is a tab of Settings,
+embedding the console hands over its list (`members`, "Embedding the console"). With it, People is a tab of Settings, as on any console,
 after General and Secrets & webhooks, for owners (the admins there). Who is in and each person's role (Owner or
-Member) are the program's: **Add someone** takes a GitHub handle and a role, Remove and the Role column change them
-there, and core keeps no copy of the list (`console/hostedMembers.mjs`). Nobody asks to join, so there is no Asking to
+Member) are the program's: **Add someone** takes a GitHub handle and a People role, Remove and the Role column change
+them there (Owner is the program's owner role, every other People role its member role), and core keeps no copy of the list (`console/hostedMembers.mjs`). Nobody asks to join, so there is no Asking to
 join, accept or decline, and no dot. The switches stay the console's, in `state.json` under `memberSwitches` by
 lowercased handle: *Sessions from GitHub* is on for everyone listed (it was never asked behind a proxy, and it also
 gates seeing shared sessions), so only those turned off are kept; *Can be assigned* is off, as above. Someone the list
@@ -1998,7 +2029,9 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   page names the org it signs in to, and asks again if the browser has moved to another installation since it showed,
   told by the installation's own id (`cli.id`), so two with the same name and org are still told apart.
   Every later call carries the token: `inst.cli.owns(headers)` says which installation holds it (no check of `allowed`,
-  nothing written), and the program sends the request there, which answers or refuses it as its own.
+  nothing written), and the program sends the request there, which answers or refuses it as its own. A program that
+  answers `GET /api/cli/me` itself passes the installation's `sessionSignIns` to `handleCliApi`: without it the answer
+  has none, and `woodshed setup` cannot tell whether Claude Code and Codex are connected.
 - `repos: {list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`: where the program keeps the
   installation's repos, which it built `config.projects` from, so Console settings' Repos card changes them there and
   core keeps no list of its own (`addedProjects`, above under the Repos card). `list` answers what Add a repo offers:
@@ -2024,7 +2057,10 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   cannot ask GitHub about itself. `login()` answers its `<slug>[bot]` (or null while unknown), asked each time, so the
   console trusts its comments, the QA label it adds (`qa.autoLabel`) and a review session's PR comment as that App's.
   `reviewer` is the program's reviewer App: `{login(), configured(), submitReview({repo, number, event, body, sha,
-  comments})}`, as `reviewerApp.mjs`'s, through which review sessions' verdicts are submitted and trusted. Without it
+  comments})}`, as `reviewerApp.mjs`'s, through which review sessions' verdicts are submitted and trusted. Give it
+  `installedOn(repo)` (true or false, throwing when GitHub fails) and `view()` (`{installUrl}`) too: without them
+  `woodshed setup` and `woodshed review status` say of every repo that the console cannot tell whether it is
+  installed (`reviewer-installed-unknown`), with no install link and nothing logged. Without a `reviewer`,
   no verdict counts (above, "The reviewer App"), and the console offers no reviewer App setup of its own. Logged as
   `console: GitHub App from the host`.
 - `mcpServers: {list(), save({server, by}), remove({name, by})}`: where the program keeps the MCP servers sessions get
@@ -2052,6 +2088,13 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   program connects people on its own (on their first page, say): My settings then shows the connection as a status,
   "Pushes as @you", or, unconnected, says it did not happen and offers Connect as the way back. Without a secret store it is off
   (`console: Connect GitHub off, the host gave no secret store to keep tokens in`).
+- The installation's `matchSlack({login, emails})`, for a program that signs people in itself: the Slack match core's
+  own sign-in makes (`slackPeople.mjs`), which links a member's Slack user from the verified emails on their GitHub
+  account so People shows it and assignment pings reach them. Call it as they sign in, with `emails()` answering those
+  emails (GitHub's `/user/emails`, which a GitHub App's user token reads only with the account permission Email
+  addresses: read); it is called only when a look is due, at most once a day, and never over a link set by hand on
+  People. Someone the program's `members` list does not have is not matched (`skipped`). It never throws, and answers
+  `linked`, `unmatched`, `manual` or `skipped`; Slack's bot needs `users:read.email`.
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
   such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
@@ -2151,8 +2194,9 @@ console only, like the App key: a session never sees it.
 
 ### Setting it up: the Slack card
 
-Console settings has one **Slack** card for all of it (`public/consoleSettings.js`, its server side
-`console/slackSetup.mjs`). Not set up, it says what Slack does and has **Set up Slack**, which opens a dialog
+Console settings has one **Slack** group for all of it, a row each for the bot, pull requests and questions
+(`public/consoleSettings.js`, its server side
+`console/slackSetup.mjs`). Not set up, it is one line that says what Slack does and has **Set up Slack**, which opens a dialog
 (`public/slackSetup.js`). Where the program embedding the console offers an install of its own (`slackInstall`,
 "Embedding the console"), the dialog first asks which way to connect; otherwise it opens on the own app's steps:
 
@@ -2188,13 +2232,14 @@ Connected, the card has a row each:
   What the card says of the saved token is kept until the token changes, and an app reinstalled with new scopes keeps
   its token: **Check again**, next to a missing scope or a refused token, asks Slack about it now and reads the
   channel list again (`POST /api/console-settings/slack/recheck`, `slack: saved token checked again`).
-- **Pull requests**: the channel, and **Change channel**, the picker again. **Limits** unfolds the two waits before a
+- **Pull requests**: the channel, which the closed row names; opened, the picker again with **Save channel** and
+  **No channel** (closing the row cancels a pick), and under **Limits** the two waits before a
   post (the review and suites, and the QA check; the table below).
 - **Questions**, only where the console answers them at all (a Slack bot and a session API): the switch that was on
   the Webhooks card (`POST /api/console-settings/webhooks` with `source: "slack"`), when the bot was last mentioned
   (from the Webhook events log), a note while no signing secret is saved, and **Limits** for the questions' own
   (below, "Questions from Slack").
-- **Disconnect Slack**, behind a typed `slack`, deletes both secrets (`POST /api/console-settings/slack/disconnect`;
+- **Disconnect Slack**, in the Bot row behind a typed `slack`, deletes both secrets (`POST /api/console-settings/slack/disconnect`;
   `slack: disconnected`). It is offered only where the secret store makes a secret on its first write
   (`createsOnWrite`, providers/README.md), as the local store does: a store whose secrets its infrastructure made, as
   Terraform makes AWS's, would be left without the one the webhooks Lambda reads, so there the keys are replaced
@@ -2480,18 +2525,23 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
 
 The Settings page (`/console-settings`, first under Console in the avatar
 menu; its General tab, beside the Secrets & webhooks tab) holds the numbers above. Only an admin can
-open it and change them. Each card saves its own values together with its Save
-button, with no typed confirm since changing a value back undoes it (the typed
+open it and change them. It is groups of rows that open in place, as My settings is (`public/settingsRows.js`,
+designSystem/components/SettingsRows): **This console** (Woodshed, GitHub webhooks), **Repos**, **Shared sessions**,
+**Kept sessions** (Retention, Sessions holding data), **Slack** and **MCP servers**. A closed row says what it is set
+to and its status word, several may be open at once, and a link or the search that names a row opens it
+(`/console-settings#card-retention`; `#card-projects` opens on Add a repo, and the older `#slack` and `#webhooks`
+still land on theirs). Each row of numbers saves its own values together with its Save
+button, sending only the ones that changed, with no typed confirm since changing a value back undoes it (the typed
 confirm is kept for what cannot be undone: Stalled's fixes below, secrets, a
-restore), and the server refuses a value out of its range, keeping none of the
-card's:
+restore), and the server refuses a value out of its range, keeping none of that
+save's. Its closed row says **Defaults**, **Changed**, or **Not saved** while a typed number waits for its Save:
 
-| Card | Setting | Range | Default |
+| Row | Setting | Range | Default |
 | --- | --- | --- | --- |
-| Sessions | Shared sessions running at once | 1 to 20 | `WOODSHED_MAX_SESSIONS`, 5 |
-| Sessions | My Woodshed sessions per person | 1 to 10 | 3 |
-| Sessions | Pause a session waiting for input after | 0.25 to 24 hours | `WOODSHED_IDLE_HOURS`, 1 |
-| Sessions | Stop a working session after | 1 to 24 hours | `WOODSHED_LIFETIME_HOURS`, 8 |
+| Shared sessions, Running at once | Shared sessions running at once | 1 to 20 | `WOODSHED_MAX_SESSIONS`, 5 |
+| Shared sessions, Running at once | My Woodshed sessions per person | 1 to 10 | 3 |
+| Shared sessions, Timeouts | Pause a session waiting for input after | 0.25 to 24 hours | `WOODSHED_IDLE_HOURS`, 1 |
+| Shared sessions, Timeouts | Stop a working session after | 1 to 24 hours | `WOODSHED_LIFETIME_HOURS`, 8 |
 | Retention | Delete a merged or closed session after | 0 to 30 days | 3 |
 | Retention | Delete a finished session whose PR stays open after | 1 to 90 days | 14 |
 | Retention | Delete a paused session with no pull request after | 1 to 60 days | 7 |
@@ -2511,19 +2561,21 @@ pane bar offer **Extend** to that same person, which puts that an hour later eac
 /api/sessions/<id>/extend`); a resume forgets it. The console logs `fleet: session extended` with `why` (`idle` or `lifetime`) and `until`, and `fleet:
 session limits changed` with who changed them. A question from Slack has neither.
 
-The Slack card's Limits are shown once Slack is set up (above, "Setting it up: the Slack card"); each Limits saves its
-own values, as a card does.
+Slack's limits are in its Pull requests and Questions rows, under Limits, once Slack is set up (above, "Setting it
+up: the Slack card"); each saves its own values, as a row of numbers does.
 
 They live in `state.json` under `settings`, and the console reads them each
 time it uses one, so a change applies on its next tick with no restart. The
 environment values are what a setting is until someone changes it.
 
-The **MCP servers** card, after Repos, lists the servers sessions get and adds, edits and removes them ("MCP servers"
-above, under the Anthropic proxy): each change applies at once, with no typed confirm, and is logged with who made it.
+The **MCP servers** group, last, has a row for each server sessions get ("MCP servers"
+above, under the Anthropic proxy). A server's row opens on its form, with **Save**, **Test** and **Remove**: there is
+no Edit button, and closing the row drops what was typed. **Add a server** is the group's last row. A server the
+installation's configuration sets is a line with Test alone. Each change applies at once, with no typed confirm, and is logged with who made it.
 A header's value is a password field, sent once and never shown again. Where the console cannot lock a session down
 the card says why and offers no Production kind.
 
-The **Woodshed** card, first on the page, follows the git clone the console runs from (`console/woodshedUpdate.mjs`;
+The **Woodshed** row, first on the page under This console, follows the git clone the console runs from (`console/woodshedUpdate.mjs`;
 `WOODSHED_CHECKOUT` names another): at start and every hour, and on **Check now** (`POST
 /api/console-settings/updates/check`), it runs `git fetch` on the remote of the branch the clone tracks, and lists the
 commits `HEAD` lacks, newest first (30, then how many more), with the count beside Console settings in the avatar menu
@@ -2547,8 +2599,9 @@ console logs `woodshedUpdate: following` with the clone, its branch and remote a
 `behindBy` and `aheadBy`, `check failed`, `update started`, `updated, restarting`, and `update failed` with the step
 (`pull`, `starts`, `image`) and whether it went back; the start check logs `console: start check passed`.
 
-The **Repos** card, next, lists the repos sessions can start on (the projects above) and adds more.
-**Add a repo** is a list of the repos the GitHub App may reach and that are not projects yet
+The **Repos** group, next, has a row for each repo sessions can start on (the projects above): closed, it says
+whether the repo is the default or who added it, its sessions and where its pull requests go; opened, it has its
+colour, the link to its own settings page and Remove. **Add a repo**, the group's last row, is a list of the repos the GitHub App may reach and that are not projects yet
 (`GET /api/console-settings/projects/repos`: each of the App's installations, `GET /app/installations`, then its repos,
 `GET /installation/repositories` with a token narrowed to reading metadata), with an optional name; **Add repo** sends
 the pick (`POST /api/console-settings/projects`). Under it, *Not listed?* links each installation's settings on GitHub,
@@ -2635,18 +2688,23 @@ On AWS the base box's role makes, reads and deletes `<prefix>/repos/*` itself (`
 `providers/aws/terraform/baseBox.tf`), so a new env file needs no Terraform.
 
 An admin sets layer 2 on the repo's own page, `/console-settings/repos/<project>` (public/repoSettings.js), which the
-**Settings** link on its row of Console settings' Repos card opens; `?file=<key>` opens one env file's tab. For each env
-file of the project file it shows its key and path, the repo's `defaults` (read only, with a link to the file on
+**Settings** link on its row of Console settings' Repos card opens. It is groups of rows that open in place, as My
+settings is (public/settingsRows.js): **Env files**, **Prompt**, **Sessions from GitHub** and **Slack**; a closed row says
+what it holds, and several may be open at once. Each env file of the project file is a row, which says how many keys this
+installation sets for it; `?file=<key>` opens one. Open, it shows its key, the repo's `defaults` (read only, with a link to the file on
 GitHub), the installation's values (hidden until **Show and edit**, since reading them is logged), the keys the session
 sets itself, and a table of which layer wins each key: key names only, never a value. Env files that name one secret
-are one tab, `app-env → api/.env, worker/.env`, with a note that the values are written to both files; each file's
+are one row, `app-env → api/.env, worker/.env`, with a note that the values are written to both files; each file's
 defaults and overrides are shown under its path where they differ, and the table has a row a file (`LOG_LEVEL in api/.env`)
 for a key the files do not agree on. Then the installation's
-Instructions, with the 16 KB count as they are typed; a save that looks like a credential is refused under the field.
-A key saved for an env file the project file no longer names is listed with **Delete**, which removes everyone's values
+Instructions, read when their row opens, with the 16 KB count as they are typed; a save that looks like a credential is
+refused under the field.
+A key saved for an env file the project file no longer names is a row marked **Unused** with **Delete**, which removes everyone's values
 for it after a typed confirm. A project file with no env files gets a short how-to in their place: an `envFiles` entry with a `path`
-(and `defaults` if any) in a pull request, no `secret` needed, and a tab here once it is on the default branch. Last,
-the repo's **Slack** card ("A channel for each project", above; `#slack` opens it). The page loads for anyone signed
+(and `defaults` if any) in a pull request, no `secret` needed, and a row here once it is on the default branch. Then
+**Sessions from GitHub**: the label's and the `/woodshed` comments' switches on their rows, and the label's name in a row
+that opens (`#github` opens it). Last, the **Slack** group's Pull request channel row ("A channel for each project",
+above; `#slack` opens it). The page loads for anyone signed
 in; its calls answer 403 to anyone but an admin, and it says so.
 
 Each person sets layer 3 on My settings' repo rows, under **Repos and files** (public/myRepoSettings.js, with the layers drawn by

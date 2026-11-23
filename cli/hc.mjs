@@ -21,6 +21,18 @@ export const AGENT_WAIT_FILE = '/tmp/woodshed-agent-terminal.json';
 const ADD_MS = 180_000;
 const CALL_MS = 30_000;
 
+/**
+ * The Woodshed session this command line runs inside, if any: SESSION_ID (the launcher's, which the entrypoint requires)
+ * and WOODSHED_TERMINAL (which the entrypoint exports before the agent starts, so the agent and what it runs have it),
+ * both set as the entrypoint sets them. Inside one, `hc` reaches the session container's own Herdr core, never the
+ * person's computer's: a machine added there is nested in a machine, which the computer's Herdr sidebar never shows.
+ * @returns {string|null}  the session's id
+ */
+export function sessionHere(env = {}) {
+  const id = typeof env.SESSION_ID === 'string' ? env.SESSION_ID : '';
+  return /^[0-9a-f]{8}$/.test(id) && ['tmux', 'herdr'].includes(env.WOODSHED_TERMINAL) ? id : null;
+}
+
 /** @returns {string}  the machine a session is in hc */
 export function machineName(id) {
   return `woodshed-${id}`;
@@ -141,6 +153,10 @@ export async function addMachine(run, { name, via }) {
   const add = await run(['machine', 'add', '--json', '--name', name, '--via', via, '--install'], { timeoutMs: ADD_MS });
   if (add.code !== 0) {
     const { kind, message } = hcError(add);
+    // Added meanwhile by another run of this command line through the same line (`session watch --add` and
+    // `session new --herdr` both add a session as it starts running): that one stands.
+    const now = await machines(run).then((list) => list.find((m) => m.name === name), () => null);
+    if (now && now.via === true && now.target === via && now.state === 'connected') return { action: 'kept', state: 'connected' };
     throw Object.assign(new Error(`hc could not add ${name}: ${message}`), { hc: true, kind });
   }
   const machine = parsed(add.stdout);

@@ -815,12 +815,15 @@
     return h('div', {
       class: `rcard is-${st.key}${live ? '' : ' is-stopped'}${project ? ` has-project${project.color ? ` proj-${project.color}` : ''}` : ''}`,
       'aria-current': s.id === id ? 'true' : null,
-      title: project ? `Project ${project.name}` : null,
+      'data-session': s.id,
+      // Where the pointer can rest, the hover card says the project and the whole title (railPeek); a tooltip too would
+      // show both.
+      title: project && !peekable() ? `Project ${project.name}` : null,
       onclick: (e) => { if (!e.target.closest('a, button')) navigate(href); },
     },
       h('div', { class: 'rtop' },
         live ? h('span', { class: `status is-${st.key}` }, h('span', { class: 'dot', 'aria-hidden': 'true' })) : h('span', { class: `dot ring is-${st.key}`, 'aria-hidden': 'true' }),
-        h('a', { class: 'rname', href, title: project ? `${s.title} · project ${project.name}` : s.title, 'aria-label': project ? `${s.title}, project ${project.name}` : null }, s.title),
+        h('a', { class: 'rname', href, title: peekable() ? null : project ? `${s.title} · project ${project.name}` : s.title, 'aria-label': project ? `${s.title}, project ${project.name}` : null }, s.title),
         // The word Assigned on Mine means yours; a session you started that someone else has names them, as on Everyone.
         showOwnerTag(s) && W.ownerTag(s, { named: !railMine() || !W.sameLogin(s.assignee, data.login) }),
         h('span', { class: 'rmarks' }, starButton(s), menuButton(s))),
@@ -832,6 +835,128 @@
         !live && W.canResumePrivate(s) && resumeButton(s, true),
         W.isResumable(s) && W.group(s) !== 'merged' && W.resumeSharedButton(s, { small: true, onDone: refresh })));
   }
+
+  // ---- the rail's hover card ----
+  // Resting the pointer on a card for a moment, or bringing the keyboard's focus to its name, shows what the card has
+  // no room for beside it (W.peekView): the status and when it next pauses or stops, the agent's last line, the pull
+  // requests and their checks, the branch, the agent, the last activity and who has it. A phone has no hover and its
+  // rail is a page of its own, so it gets none. The chips, star, ⋯ and buttons on a card keep their own tooltips: the
+  // card hides while the pointer is on one.
+  const PEEK_DELAY_MS = 500;
+  const hoverable = window.matchMedia('(hover: hover)');
+  function peekable() {
+    return hoverable.matches && !narrow.matches;
+  }
+  // `by` is what opened it, the pointer or the keyboard's focus: focus moving elsewhere hides only a card focus opened.
+  const peek = { el: h('div', { class: 'rail-peek', id: 'rail-peek', role: 'tooltip', hidden: true }), id: null, timer: null, shown: false, by: null };
+  document.body.append(peek.el);
+
+  function peekBody(s) {
+    const project = projectsShown() && s.project ? s.project : null;
+    const v = W.peekView(s, data, { project });
+    return [
+      h('div', { class: 'peek-title' }, v.title),
+      h('div', { class: `peek-status is-${v.key}` }, h('b', null, v.word), v.next && ` · ${v.next}`),
+      v.last && h('p', { class: `peek-last${v.last.error ? ' is-error' : ''}` }, v.last.who && h('span', { class: 'peek-who' }, `${v.last.who}: `), v.last.text),
+      v.prs.length > 0 && h('div', { class: 'peek-prs' }, v.prs.map((p) => h('div', { class: 'peek-pr' },
+        h('div', { class: 'peek-pr-head' }, h('span', { class: 'peek-num' }, p.number), p.title && h('span', { class: 'peek-pr-title' }, p.title)),
+        (p.state || p.checks || p.review || p.running) && h('div', { class: 'peek-pr-sub' },
+          [p.state, p.checks && h('span', { class: `peek-checks is-${p.level}` }, p.checks), p.review, p.running && h('span', { class: 'peek-checks is-pending' }, p.running)]
+            .filter(Boolean).flatMap((part, i) => (i ? [' · ', part] : [part])))))),
+      v.rows.length > 0 && h('dl', { class: 'peek-rows' }, v.rows.flatMap(([term, value]) => [h('dt', null, term), h('dd', { class: term === 'Branch' ? 'is-mono' : null }, value)])),
+    ].filter(Boolean);
+  }
+
+  function placePeek(card) {
+    const box = card.getBoundingClientRect();
+    // Past the rail's edge, not over its border.
+    const edge = Math.max(box.right, slots.rail?.getBoundingClientRect().right ?? 0);
+    const w = peek.el.offsetWidth;
+    const ht = peek.el.offsetHeight;
+    // Beside the card, on the pane's side; under it when the window has no room there.
+    const right = edge + 8 + w <= window.innerWidth - 8;
+    const left = right ? edge + 8 : Math.min(Math.max(8, box.left), window.innerWidth - w - 8);
+    const top = right ? Math.min(Math.max(8, box.top), window.innerHeight - ht - 8)
+      : (box.bottom + 6 + ht <= window.innerHeight - 8 ? box.bottom + 6 : Math.max(8, box.top - 6 - ht));
+    peek.el.style.left = `${left}px`;
+    peek.el.style.top = `${top}px`;
+  }
+
+  function cardOf(sessionId) {
+    return slots.railBody?.querySelector(`.rcard[data-session="${CSS.escape(sessionId)}"]`) ?? null;
+  }
+
+  function showPeek() {
+    const s = data?.sessions.find((x) => x.id === peek.id);
+    const card = peek.id && cardOf(peek.id);
+    if (!peekable() || !s || !card || !card.getClientRects().length) return hidePeek();
+    peek.el.replaceChildren(...peekBody(s));
+    peek.el.hidden = false;
+    peek.shown = true;
+    card.querySelector('.rname')?.setAttribute('aria-describedby', 'rail-peek');
+    placePeek(card);
+  }
+
+  function hidePeek() {
+    clearTimeout(peek.timer);
+    if (peek.id) cardOf(peek.id)?.querySelector('.rname')?.removeAttribute('aria-describedby');
+    peek.id = null;
+    peek.by = null;
+    peek.shown = false;
+    peek.el.hidden = true;
+  }
+
+  function peekSoon(sessionId, by) {
+    if (sessionId === peek.id) return;
+    hidePeek();
+    peek.id = sessionId;
+    peek.by = by;
+    peek.timer = setTimeout(showPeek, PEEK_DELAY_MS);
+  }
+
+  // The rail is drawn again on each refresh, so the card under the pointer is a new element: the open card follows it,
+  // with the new data, or goes when the session left the list.
+  function syncPeek() {
+    if (peek.shown) showPeek();
+  }
+
+  // On each move, not only on entering a card: a scroll of the rail hides the card, and the next move over it brings it
+  // back.
+  document.addEventListener('mousemove', (e) => {
+    if (!peekable()) return;
+    const card = e.target.closest?.('.rail .rcard');
+    // A chip, the star, ⋯ or a button on the card has its own tooltip.
+    const control = card && e.target.closest('a:not(.rname), button, .prchip');
+    if (card && !control) peekSoon(card.dataset.session, 'pointer');
+    else if (peek.id) hidePeek();
+  });
+  // A pointer that leaves a card straight into the terminal, the review or another iframe sends this page no further
+  // move, so leaving the card is what hides it there.
+  document.addEventListener('mouseout', (e) => {
+    if (peek.by !== 'pointer' || !e.target.closest?.('.rail .rcard')) return;
+    if (!e.relatedTarget?.closest?.('.rail .rcard')) hidePeek();
+  });
+  document.addEventListener('focusin', (e) => {
+    const name = peekable() && e.target.closest?.('.rail .rcard .rname');
+    if (name && name.matches(':focus-visible')) peekSoon(name.closest('.rcard').dataset.session, 'focus');
+    // The redraw giving a project chip its focus back is not the person moving on from the card the pointer rests on.
+    else if (peek.by === 'focus') hidePeek();
+  });
+  // A window made phone-wide, or a pointer that can no longer hover, takes the card away.
+  narrow.addEventListener('change', hidePeek);
+  hoverable.addEventListener('change', hidePeek);
+  document.documentElement.addEventListener('mouseleave', hidePeek);
+  document.addEventListener('mousedown', hidePeek, true);
+  document.addEventListener('keydown', (e) => { if (e.key !== 'Tab' && e.key !== 'Shift') hidePeek(); }, true);
+  // The rail's scroll or the page's moves the card; the App log's own scroll to its end does not.
+  document.addEventListener('scroll', (e) => {
+    if (e.target.dataset?.restored) {
+      delete e.target.dataset.restored;
+      return;
+    }
+    if (peek.id && (e.target === document || slots.rail?.contains(e.target))) hidePeek();
+  }, true);
+  window.addEventListener('blur', hidePeek);
 
   // Which zones are folded is this viewer's own choice, kept in their browser when it lets us.
   const ZONES_KEY = 'woodshed-rail-zones';
@@ -2256,7 +2381,15 @@
     slots.shell.classList.toggle('is-new', onNew);
     slots.shell.classList.toggle('is-railless', railHidden);
     const railList = slots.railBody.querySelector('.rail-list');
-    if (railList && slots.railListTop) railList.scrollTop = slots.railListTop;
+    if (railList && slots.railListTop) {
+      // The page putting the list back where it was is not someone scrolling: the hover card stays (railPeek).
+      railList.dataset.restored = 'true';
+      railList.scrollTop = slots.railListTop;
+      // A list already at its end moves nothing and gets no scroll event: a later scroll is someone's.
+      requestAnimationFrame(() => requestAnimationFrame(() => delete railList.dataset.restored));
+    }
+    // Measured once the list is back at its place, or the card would sit beside the card that was there at the top.
+    syncPeek();
     slots.launch.hidden = !onMy;
     if (onMy) launcher.update(me);
     else launcher.stopDictating();

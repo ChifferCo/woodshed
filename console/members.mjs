@@ -64,9 +64,15 @@ export function createMembers({ store, now = Date.now }) {
    */
   function claimFirst(login) {
     if (Object.keys(members()).length) return false;
-    members()[login] = { addedBy: null, addedAt: nowIso(), how: 'first to sign in', admin: true, adminBy: null, adminAt: nowIso() };
+    // A full Owner (peopleRoles.mjs): starting sessions from GitHub and being assigned too, so a new console's only
+    // person has every part of it from the start.
+    const on = { by: null, at: nowIso() };
+    members()[login] = {
+      addedBy: null, addedAt: nowIso(), how: 'first to sign in',
+      admin: true, adminBy: on.by, adminAt: on.at, githubSessions: true, githubSessionsBy: on.by, githubSessionsAt: on.at, assignable: true, assignableBy: on.by, assignableAt: on.at,
+    };
     store.save();
-    console.log('members: first member, an admin', { login });
+    console.log('members: first member, an owner', { login });
     return true;
   }
 

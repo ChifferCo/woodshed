@@ -264,12 +264,14 @@ test('Discard asks first, and only y throws the analysis and the conversation aw
 test('the tab bar numbers each tab by the key that opens it, on one line at 80 columns, and wraps only between tabs', () => {
   const bar = (state, columns) => tabBar(state, columns).map((l) => plainText(l).replace(/ /g, ' '));
   const withPr = { tab: 'analysis', status: { livePr: { number: 7 } }, draft: { comments: Array.from({ length: 12 }, () => ({})) } };
-  assert.deepEqual(bar(withPr, 80), [' 1 Overview │ 2 Q&A │ 3 Discussion │ 4 Files changed │ 5 Chat   12 drafts']);
+  // With a pull request there is AI reviews too, and Files changed is Files where its whole name would wrap the bar.
+  assert.deepEqual(bar(withPr, 80), [' 1 Overview │ 2 Q&A │ 3 Discussion │ 4 Files │ 5 Chat │ 6 AI reviews   12 drafts']);
+  assert.deepEqual(bar({ ...withPr, draft: { comments: [] } }, 80), [' 1 Overview │ 2 Q&A │ 3 Discussion │ 4 Files changed │ 5 Chat │ 6 AI reviews ']);
   // Without a pull request there is no Discussion, and every other tab keeps its number: 4 is always Files changed.
   assert.deepEqual(bar({ tab: 'files', status: {}, draft: { comments: [] } }, 80), [' 1 Overview │ 2 Q&A │ 4 Files changed │ 5 Chat ']);
   // The selected tab is one reversed block, its number in it; another tab's number is dim beside its name.
   const selected = toAnsi(tabBar({ ...withPr, tab: 'files' }, 80)[0], { columns: 80, color: true });
-  assert.match(selected, /\x1b\[[0-9;]*7[0-9;]*m 4 Files changed \x1b\[0?m/);
+  assert.match(selected, /\x1b\[[0-9;]*7[0-9;]*m 4 Files \x1b\[0?m/);
   assert.match(selected, /\x1b\[2m1\x1b\[0?m Overview/);
   for (let columns = 40; columns <= 80; columns += 1) {
     const lines = bar(withPr, columns);
@@ -277,11 +279,11 @@ test('the tab bar numbers each tab by the key that opens it, on one line at 80 c
       assert.ok(width(line) <= columns, `${columns}: ${line}`);
       assert.ok(!line.startsWith('│'), `${columns}: a line starts with a separator: ${line}`);
     }
-    for (const name of ['1 Overview', '2 Q&A', '3 Discussion', '4 Files changed', '5 Chat', '12 drafts']) {
+    for (const name of ['1 Overview', '2 Q&A', '3 Discussion', '4 Files', '5 Chat', '6 AI reviews', '12 drafts']) {
       assert.ok(lines.some((l) => l.includes(name)), `${columns}: ${name} whole on one line`);
     }
   }
-  assert.equal(bar(withPr, 40).length, 2);
+  assert.equal(bar(withPr, 40).length, 3);
 });
 
 const QA_READY = { status: 'ready', forDiff: T, items: [{ id: 'q1', parent: null, question: 'What changes?', answer: 'Things.' }] };
@@ -363,7 +365,7 @@ test('the help, on a terminal of 40 by 14, shows whole what the number keys do',
   tui.type('?');
   await tui.until(() => tui.frame().includes('Keys'), 'the help');
   const text = tui.frame().join(' ').replace(/ +/g, ' ');
-  assert.match(text, /1-5 open the numbered tabs\. In a text box, a number is text\. Tab and Shift-Tab cycle\./);
+  assert.match(text, /1-6 open the numbered tabs\. In a text box, a number is text\. Tab and Shift-Tab cycle\./);
 });
 
 // The header's pull request number as a terminal hyperlink (OSC 8), as the page's #311 is a link.
@@ -433,4 +435,83 @@ test('only an https address with nothing but printable characters in it is linke
   assert.equal(pullRequestUrl({ status: linkedStatus({ url: 'https://evil.example/' }) }, 311), null);
   // The screen as text, as a pipe or a test reads it, has no link in it.
   assert.ok(screenText(initialState({ status: linkedStatus(), diff: { files: [] }, session: 'e58a87e8' }), { columns: 80, rows: 24 }).every((l) => !/\x1b/.test(l)));
+});
+
+// The AI reviews tab: the reviews the shed read off the pull request (shared/review/aiReviews.mjs), and follow-ups on them.
+const AI_REVIEW = {
+  id: 'R1', author: 'woodshed-reviewer', heading: 'Claude Code and Codex review', conclusion: 'REQUEST_CHANGES', state: 'changes_requested',
+  agents: ['Claude Code', 'Codex'], commit: 'aaaa'.padEnd(40, '0'), current: true, at: T, url: 'https://github.com/o/r/pull/7#r1',
+  parts: [{ agent: 'Claude Code', conclusion: 'APPROVE', body: 'Looks right.' }, { agent: 'Codex', conclusion: 'REQUEST_CHANGES', body: 'The retry never stops.' }],
+  findings: [{ id: 'F1', agent: 'Codex', path: 'one.mjs', line: 1, side: 'new', body: 'This loops for ever.', url: null, resolved: false, outdated: false, folded: false, replies: [{ author: 'ana', body: 'Does it?' }] }],
+};
+const OLD_REVIEW = { ...AI_REVIEW, id: 'R0', state: 'dismissed', conclusion: 'COMMENT', agents: ['Claude Code'], heading: 'Claude review', current: false, commit: 'bbbbbbb'.padEnd(40, '0'), parts: [{ agent: 'Claude Code', conclusion: 'COMMENT', body: 'Earlier.' }], findings: [] };
+
+test('6 opens AI reviews: each reviewer\'s verdict and part, the findings on their lines, and older reviews folded', async (t) => {
+  const tui = await tuiOver(t, baseRoutes({
+    'GET /comments': () => ({ ok: true, prId: 'P', headSha: 'aaaa', reviewId: null, comments: [], threads: [], said: [], aiReviews: [AI_REVIEW, OLD_REVIEW] }),
+  }), { columns: 80, rows: 40 });
+  await tui.until(() => tui.frame().some((l) => l.includes('6 AI reviews')), 'the tab');
+  tui.type('6');
+  await tui.until(() => tui.frame().some((l) => l.includes('▾ Claude Code and Codex requests changes')), 'the newest, open');
+  const text = tui.frame().join('\n');
+  assert.match(text, /▾ Claude Code and Codex requests changes · latest commit · 1 finding\n/);
+  assert.match(text, /Claude Code approves\n {2}Looks right\./);
+  assert.match(text, /Codex requests changes\n {2}The retry never stops\./);
+  assert.match(text, / {2}• Codex one\.mjs:1\n {4}This loops for ever\.\n {4}↳ ana: Does it\?/);
+  assert.match(text, /▸ Claude Code comments · dismissed · older commit bbbbbbb · 0 findings/, 'a dismissed review keeps its verdict and says it was dismissed');
+  assert.doesNotMatch(text, /Earlier\./, 'an older review is folded');
+  // ↓ ↓ goes to the older review (past the finding), and Enter opens it.
+  tui.type('\x1b[B');
+  tui.type('\x1b[B');
+  tui.type('\r');
+  await tui.until(() => tui.frame().some((l) => l.includes('Earlier.')), 'the older review, opened');
+  for (const line of tui.frame()) assert.ok(width(line) <= 80, line);
+});
+
+test('i on a finding asks the session\'s agent about it, and the answer shows under the finding and on Chat', async (t) => {
+  let messages = [];
+  const tui = await tuiOver(t, baseRoutes({
+    'GET /comments': () => ({ ok: true, prId: 'P', headSha: 'aaaa', reviewId: null, comments: [], threads: [], said: [], aiReviews: [AI_REVIEW] }),
+    'GET /chat': () => ({ ok: true, messages }),
+    'POST /chat': (body) => {
+      messages = [
+        { role: 'user', text: body.question, about: { id: 'F1', label: 'Codex on one.mjs:1' } },
+        { role: 'assistant', text: 'It does not hold: the loop ends at one.mjs:9.', about: { id: 'F1', label: 'Codex on one.mjs:1' } },
+      ];
+      return { ok: true, askId: 'k1', status: 'running' };
+    },
+    'GET /explain/k1': () => ({ ok: true, status: 'ready', answer: { ok: true, text: 'x' } }),
+  }), { columns: 80, rows: 40 });
+  await tui.until(() => tui.frame().some((l) => l.includes('6 AI reviews')), 'the tab');
+  tui.type('6');
+  await tui.until(() => tui.frame().some((l) => l.includes('• Codex one.mjs:1')), 'the finding');
+  tui.type('\x1b[B');
+  tui.type('i');
+  await tui.until(() => tui.frame().some((l) => l.startsWith('Follow up on Codex on one.mjs:1:')), 'the box, naming the finding');
+  tui.type('Is it real?');
+  tui.type('\r');
+  await tui.until(() => tui.said('POST /chat').length === 1, 'the ask');
+  assert.deepEqual(tui.said('POST /chat')[0].body, { question: 'Is it real?', about: { review: 'R1', finding: 'F1' } });
+  await tui.until(() => tui.frame().some((l) => l.includes('It does not hold: the loop ends at one.mjs:9.')), 'the answer, under the finding');
+  const text = tui.frame().join('\n');
+  assert.match(text, /This loops for ever\.[\s\S]*You {2}Is it real\?\n {6}It does not hold/, 'under the finding it is about');
+  tui.type('5');
+  await tui.until(() => tui.frame().some((l) => l === 'About Codex on one.mjs:1'), 'on Chat, saying what it was about');
+});
+
+test('a follow-up that fails goes back to its finding\'s box, with why under the finding', async (t) => {
+  const tui = await tuiOver(t, baseRoutes({
+    'GET /comments': () => ({ ok: true, prId: 'P', headSha: 'aaaa', reviewId: null, comments: [], threads: [], said: [], aiReviews: [AI_REVIEW] }),
+    'POST /chat': () => { throw Object.assign(new Error('that finding is no longer on the pull request'), { status: 409 }); },
+  }), { columns: 80, rows: 40 });
+  await tui.until(() => tui.frame().some((l) => l.includes('6 AI reviews')), 'the tab');
+  tui.type('6');
+  await tui.until(() => tui.frame().some((l) => l.includes('• Codex one.mjs:1')), 'the finding');
+  tui.type('\x1b[B');
+  tui.type('i');
+  tui.type('Real?');
+  tui.type('\r');
+  await tui.until(() => tui.frame().some((l) => l.includes('Not answered: that finding is no longer on the pull request')), 'why, under it');
+  tui.type('i');
+  await tui.until(() => tui.frame().some((l) => /^Follow up on .*Real\?/.test(l)), 'the question, back in its box');
 });
