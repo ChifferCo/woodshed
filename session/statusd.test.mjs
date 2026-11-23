@@ -1595,3 +1595,56 @@ test('an agent beside the session\'s own starts in its own tmux session, and its
   assert.deepEqual((await call('GET', '/agents', 'sess')).body, { agents: [] });
   assert.ok((await tmux('ls')).stdout.includes('claude:'), 'the session\'s own is still there');
 });
+
+// A Codex agent beside claude on its owner's own sign-in (agents.mjs, codexBeside): written into codex's home as the
+// start brings it, and sent back at the stop's checkpoint once codex refreshed it, even after the agent was stopped.
+test('a Codex agent beside claude gets the sign-in its start brings, and the stop sends a refreshed one back', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-codex-beside-'));
+  const tmuxEnv = { ...isolatedEnv(), TMUX: '', TMUX_TMPDIR: dir };
+  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
+  const posted = [];
+  const consoleServer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      posted.push({ url: req.url, body });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    });
+  });
+  const consolePort = await listen(consoleServer);
+  t.after(async () => {
+    consoleServer.close();
+    await tmux('kill-server').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const home = path.join(dir, 'home');
+  const codexHome = path.join(home, '.codex');
+  await fs.mkdir(codexHome, { recursive: true });
+  await fs.mkdir(path.join(dir, 'bin'));
+  await fs.writeFile(path.join(dir, 'bin', 'codex'), '#!/bin/sh\nexec sleep 600\n', { mode: 0o755 });
+  await fs.writeFile(path.join(dir, 'codex-ready'), '');
+  await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '40', 'sleep 600');
+  const { call } = await statusdWithApp(t, { env: {
+    TMUX: '', TMUX_TMPDIR: dir, HOME: home, CODEX_HOME: codexHome, SESSION_KIND: 'private', SESSION_MODE: '', AGENT: '',
+    WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consolePort}`, WOODSHED_AGENT_BIN: path.join(dir, 'bin'),
+    WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'), WOODSHED_CODEX_READY_FILE: path.join(dir, 'codex-ready'),
+    WOODSHED_AGENT_STATE_DIR: dir, WOODSHED_CLAUDE_STATE_FILE: path.join(dir, 'own-state.json'),
+  } });
+
+  const login = '{"last_refresh":"2026-11-23T10:00:00Z","tokens":{"refresh_token":"rt"}}';
+  const started = await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'codex', codexAuth: login }));
+  assert.equal(started.status, 200);
+  assert.equal(await fs.readFile(path.join(codexHome, 'auth.json'), 'utf8'), login, 'the sign-in the start brought');
+  assert.equal(((await fs.stat(path.join(codexHome, 'auth.json'))).mode & 0o777), 0o600);
+  assert.ok(!posted.some((p) => p.url === '/codex-sign-in'), 'nothing asked of the console for it');
+  // codex refreshes its ChatGPT login as it runs; then the person stops the agent.
+  const refreshed = '{"last_refresh":"2026-11-23T11:00:00Z","tokens":{"refresh_token":"rt2"}}';
+  await fs.writeFile(path.join(codexHome, 'auth.json'), refreshed);
+  assert.deepEqual((await call('POST', '/agents/agent-2/stop', 'sess', '{}')).body, { stopped: 'agent-2' });
+
+  await call('POST', '/checkpoint');
+  const back = posted.filter((p) => p.url === '/codex-auth');
+  assert.equal(back.length, 1, 'the refreshed sign-in goes back once');
+  assert.equal(back[0].body, refreshed);
+});

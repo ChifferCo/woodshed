@@ -209,7 +209,11 @@ export function createAgents({
     } catch (err) {
       if (strict) throw err;
     }
-    if (a.agent === 'codex') return { ...codexState({ paneText: pane, now: now(), startedAt: a.startedAt }), pane, hook: null };
+    if (a.agent === 'codex') {
+      // Its rollout claimed with each read of the list, not only of its Chat: the session's own codex never takes it.
+      await rolloutOf(a);
+      return { ...codexState({ paneText: pane, now: now(), startedAt: a.startedAt }), pane, hook: null };
+    }
     const hook = await readJson(a.stateFile);
     const tail = await tailOf(transcriptOf(a, hook));
     const reading = claudeState({

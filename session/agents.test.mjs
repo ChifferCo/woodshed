@@ -204,3 +204,15 @@ test('a Codex start that fails once its sign-in is in place takes the sign-in ba
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a codex agent\'s rollout is claimed as the list is read, so the session\'s own never falls back to it', async () => {
+  const { agents, dir } = agentsWith({ openRollout: async () => '/home/node/.codex/sessions/2026/11/23/rollout-x.jsonl' });
+  try {
+    await agents.start({ agent: 'codex' });
+    await agents.list();
+    await agents.stop('agent-2');
+    assert.ok(agents.claimed().codex.has('/home/node/.codex/sessions/2026/11/23/rollout-x.jsonl'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -184,6 +184,8 @@ test('a Codex agent beside claude uses the team key, and its lockdown cuts a cal
     method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer beside' }, body: '{"model":"gpt-5.5"}',
   });
 
+  const files = await fetch(`http://127.0.0.1:${port}/openai/v1/files`, { headers: { authorization: 'Bearer beside' } });
+  assert.equal(files.status, 404, 'codex\'s own calls alone: none of the team key\'s files');
   const open = await call();
   assert.equal(open.status, 200);
   await reached;
