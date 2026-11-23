@@ -28,6 +28,15 @@ browser.
   (`claude setup-token` for Claude; `codex login`, then `~/.codex/auth.json` or an OpenAI API key, for Codex). They
   paste it on My settings themselves: never ask for, read, or pass a token. If they say they use only one, rerun with
   `--agent claude` or `--agent codex`, and setup does not ask for the other.
+  After showing them the steps from that exit 2, don't wait for them to say they are done: run the same setup
+  command again with `--wait` added (check `woodshed setup --help` lists it; on older builds, rerun when they say).
+  It prints the steps again (`status: "waiting"`), asks the console every 5 seconds, reports each agent as it
+  connects (`status: "connected"`), and goes on with the rest of setup once both are, for up to 15 minutes
+  (`--wait=<N>m` for 1 to 60). Where your harness can run a command in the background and notify you when it exits
+  (Claude Code's background Bash), run it that way; otherwise run it in the foreground with a timeout longer than
+  the wait (over 15 minutes for a bare `--wait`; use `--wait=<N>m` when your tool's timeout is shorter). Run it once,
+  not in a loop: when it exits 2 at `step: agent` (the time ran out), show them the steps again and stop until they
+  say. Every other exit 2 (the CLI sign-in, a GitHub App or the reviewer App) is as above: show it and stop.
 - **Review on the repo (`repo-review`, `review-choice`).** Every repo is reviewed by default, with no checkout, project
   file or pull request. Setup checks it per repo, exits 2 with the link when the console's reviewer App still has to be
   made or installed (an admin's step), and otherwise says the tag (`tag` in `--json`, `[woodshed-review]` unless the
@@ -128,7 +137,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 
 | Command | Does | Exits | Arrives in |
 | --- | --- | --- | --- |
-| `woodshed setup [--yes] [--repo R] [--agent claude\|codex] [--reviews CHOICE] [--review-prs all\|none\|N,N] [--terminal herdr\|tmux] [--prompt TEXT]` | Guides sign-in, repos, connecting Claude Code and Codex, and reviews of their open pull requests; then, optionally, the terminal and a first session | 0 done, 2 needs the person, 3 refused, 1 failed | main |
+| `woodshed setup [--yes] [--repo R] [--agent claude\|codex] [--reviews CHOICE] [--review-prs all\|none\|N,N] [--terminal herdr\|tmux] [--prompt TEXT] [--wait[=Nm]]` | Guides sign-in, repos, connecting Claude Code and Codex, and reviews of their open pull requests; then, optionally, the terminal and a first session | 0 done, 2 needs the person, 3 refused, 1 failed | main |
 | `woodshed login [--no-browser]` | Prints a code and opens the console's `/cli` page; waits up to 10 minutes for the person to approve | 0 signed in, 2 code expired, 3 denied | main |
 | `woodshed logout` | Ends this computer's sign-in | 0 | main |
 | `woodshed status` | The console, its org, who is signed in, and the Herdr `hc` here with its version | 0, 2 not signed in | main |

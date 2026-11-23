@@ -14,6 +14,7 @@ const result = (code, ...events) => ({ code, stdout: events.map((event) => JSON.
 
 function fake({
   commands = [], answers = {}, here = null, checkouts = {}, browser = false, json = true, tty = false, input = [], platform = 'test',
+  clock = null,
 } = {}) {
   const events = [];
   const lines = [];
@@ -40,6 +41,13 @@ function fake({
       EXIT, emit: (event) => events.push(event), say: (line) => lines.push(line), fail: (message) => new Error(message),
       stderr: { write: (line) => lines.push(line) },
       cwd, run, open: (url) => opened.push(url), tty, platform,
+      // After the calls already answered (setImmediate), as a real timer would be, and not at all once aborted.
+      ...(clock ? { now: () => clock.t, sleep: (ms, { signal } = {}) => new Promise((resolve, reject) => setImmediate(() => {
+        if (signal?.aborted) return reject(new Error('aborted'));
+        clock.slept.push(ms);
+        clock.t += ms;
+        return resolve();
+      })) } : {}),
       ask: async (question) => {
         questions.push(question);
         return input.shift() ?? null;
@@ -577,4 +585,120 @@ test('the first session runs Claude Code when both are connected, and answering 
   } }).invoke('--repo', repo, '--skip-reviews', '--prompt', 'Fix it.');
   assert.equal(only.code, EXIT.waiting, 'Codex is still to connect');
   assert.match(only.events.at(-1).message, /--agent codex/);
+});
+
+// A clock for --wait that moves only when setup pauses, so a 15-minute wait runs at once.
+const fakeClock = () => ({ t: 1_000_000, slept: [] });
+const signedIn = (sessionSignIns) => result(0, { ...ready, sessionSignIns });
+
+test('with --wait, setup prints the steps, waits for each agent to connect, then goes on', async () => {
+  const seen = [{ claude: false, codex: false }, { claude: false, codex: false }, { claude: false, codex: false }, { claude: true, codex: false }, { claude: true, codex: true }];
+  const clock = fakeClock();
+  const { invoke } = fake({ clock, answers: { status: () => signedIn(seen.length > 1 ? seen.shift() : seen[0]) } });
+  const after = await invoke('--yes', '--repo', repo, '--wait', '--no-session', '--skip-reviews');
+  assert.equal(after.code, EXIT.done);
+  const agent = after.events.filter((event) => event.step === 'agent');
+  assert.deepEqual(agent.map(({ status, agent: name }) => [status, name]), [['waiting', undefined], ['connected', 'claude'], ['connected', 'codex'], ['done', 'claude']]);
+  const [waiting] = agent;
+  assert.equal(waiting.url, `${origin}/settings#claude`);
+  assert.deepEqual(waiting.wanted, ['claude', 'codex']);
+  assert.deepEqual(waiting.missing, ['claude', 'codex']);
+  assert.deepEqual(Object.keys(waiting.steps), ['claude', 'codex']);
+  assert.equal(waiting.waitMinutes, 15);
+  assert.match(waiting.message, /Claude Code:\n {2}1\. In another terminal, run: claude setup-token[^]*Codex:\n {2}1\. In another terminal, run: codex login[^]*Setup is waiting up to 15 minutes/);
+  assert.deepEqual(agent[1].missing, ['codex']);
+  assert.ok(clock.slept.every((ms) => ms === 5000), 'asks every 5 seconds');
+  assert.equal(clock.slept.length, 4, 'four status calls after the first');
+  assert.ok(after.events.some((event) => event.step === 'session' && event.status === 'skipped'), 'goes on with the rest of setup');
+  assert.equal(after.questions.length, 0);
+  assert.doesNotMatch(JSON.stringify(after.calls), /token/, 'setup never handles a token');
+});
+
+test('with --wait on a terminal, setup waits instead of asking for Enter, and prints the steps as text', async () => {
+  const seen = [{ claude: false, codex: true }, { claude: true, codex: true }];
+  const { invoke } = fake({ clock: fakeClock(), tty: true, json: false, answers: { status: () => signedIn(seen.length > 1 ? seen.shift() : seen[0]) } });
+  const after = await invoke('--repo', repo, '--wait=2m', '--no-session', '--skip-reviews');
+  assert.equal(after.code, EXIT.done);
+  assert.equal(after.questions.length, 0, 'neither "use both?" nor Enter');
+  const text = after.lines.join('\n');
+  assert.match(text, /\[waiting\] Connect Claude Code on My settings: with both connected, your pull requests get reviews from both\.\nClaude Code:\n {2}1\. In another terminal, run: claude setup-token[^]*Setup is waiting up to 2 minutes for it/);
+  assert.match(text, /\[connected\] Claude Code is connected\./);
+  assert.match(text, /\[done\] Claude Code and Codex are connected/);
+});
+
+test('when --wait runs out, setup exits 2 with the steps and the message it gives without --wait', async () => {
+  const missing = { status: signedIn({ claude: false, codex: false }) };
+  const before = await fake({ answers: missing }).invoke('--yes', '--repo', repo);
+  const clock = fakeClock();
+  const after = await fake({ clock, answers: missing }).invoke('--yes', '--repo', repo, '--wait=1m');
+  assert.equal(after.code, EXIT.waiting);
+  const waited = clock.slept.reduce((sum, ms) => sum + ms, 0);
+  assert.ok(waited >= 59_000 && waited <= 60_000, `waited the minute, and no longer (${waited} ms)`);
+  assert.equal(after.calls.filter(([word]) => word === 'status').length, 1 + 12, 'asked every 5 seconds');
+  const { status, ...last } = after.events.at(-1);
+  const { status: was, ...without } = before.events.at(-1);
+  assert.equal(status, 'needs-you');
+  assert.equal(was, 'needs-you');
+  assert.deepEqual(last, without);
+  assert.match(last.message, /Then rerun setup with --repo acme\/app\.$/);
+});
+
+test('with --wait, a status call that fails is said once, and the wait goes on', async () => {
+  const seen = [signedIn({ claude: true, codex: false }), result(1, { event: 'error', error: 'console not reached' }), result(1, { event: 'error', error: 'console not reached' }), signedIn({ claude: true, codex: true })];
+  const { invoke } = fake({ clock: fakeClock(), answers: { status: () => (seen.length > 1 ? seen.shift() : seen[0]) } });
+  const after = await invoke('--yes', '--repo', repo, '--wait', '--no-session', '--skip-reviews');
+  assert.equal(after.code, EXIT.done);
+  const said = after.events.filter((event) => /Could not ask the console/.test(event.message ?? ''));
+  assert.equal(said.length, 1);
+  assert.equal(said[0].status, 'waiting');
+  assert.match(said[0].message, /console not reached\)\. Still asking\./);
+  assert.deepEqual(after.events.filter((event) => event.step === 'agent').map((event) => event.status), ['waiting', 'waiting', 'connected', 'done']);
+});
+
+test('--wait takes only --wait or --wait=<N>m from 1 to 60, and never the next argument', async () => {
+  for (const bad of ['--wait=', '--wait=0m', '--wait=61m', '--wait=10', '--wait=5s', '--wait=1.5m', '--wait=-1m', '--wait=05m']) {
+    await assert.rejects(fake().invoke('--yes', bad), /--wait takes no value \(15 minutes\), or minutes as --wait=<N>m, from 1m to 60m\./, bad);
+  }
+  await assert.rejects(fake().invoke('--yes', '--wait', '10m'), /Unknown setup option 10m/, 'a bare --wait leaves the next argument alone');
+  const at = await fake({ clock: fakeClock() }).invoke('--yes', '--wait=60m', '--no-session', '--skip-reviews');
+  assert.equal(at.code, EXIT.done);
+});
+
+test('with --wait and both agents already connected, setup runs as it does without it', async () => {
+  const clock = fakeClock();
+  const waited = await fake({ clock }).invoke('--yes', '--repo', repo, '--wait', '--no-session', '--skip-reviews');
+  const plain = await fake().invoke('--yes', '--repo', repo, '--no-session', '--skip-reviews');
+  assert.equal(waited.code, EXIT.done);
+  assert.deepEqual(waited.events, plain.events);
+  assert.deepEqual(waited.calls, plain.calls);
+  assert.deepEqual(clock.slept, []);
+});
+
+test('with --wait, a status call slower than the time left is cut off, and setup exits 2 by the deadline', async () => {
+  const clock = fakeClock();
+  const start = clock.t;
+  let calls = 0;
+  // The first answer says Codex is missing; every later call never answers, as a console that hangs.
+  const { invoke } = fake({ clock, answers: { status: () => (calls++ ? new Promise(() => {}) : signedIn({ claude: true, codex: false })) } });
+  const after = await invoke('--yes', '--repo', repo, '--wait=1m');
+  assert.equal(after.code, EXIT.waiting);
+  assert.ok(clock.t - start <= 60_000, `exit 2 by the deadline (${clock.t - start} ms)`);
+  assert.equal(calls, 2, 'one hung call, cut off when the time ran out, and none after it');
+  assert.deepEqual(after.events.filter((event) => event.step === 'agent').map((event) => event.status), ['waiting', 'waiting', 'needs-you']);
+  assert.match(after.events[3].message, /did not answer before the wait ran out/);
+  assert.deepEqual(after.events.at(-1).missing, ['codex']);
+});
+
+test('with --wait, a sign-in removed mid-wait is reported missing again', async () => {
+  // Claude Code connects while Codex is still missing, then its sign-in is removed.
+  const both = [{ claude: false, codex: false }, { claude: true, codex: false }, { claude: false, codex: false }];
+  const { invoke } = fake({ clock: fakeClock(), answers: { status: () => signedIn(both.length > 1 ? both.shift() : both[0]) } });
+  const after = await invoke('--yes', '--repo', repo, '--wait=1m');
+  assert.equal(after.code, EXIT.waiting);
+  const agent = after.events.filter((event) => event.step === 'agent');
+  assert.deepEqual(agent.map(({ status, agent: name }) => [status, name]), [['waiting', undefined], ['connected', 'claude'], ['waiting', 'claude'], ['needs-you', undefined]]);
+  assert.deepEqual(agent[1].missing, ['codex']);
+  assert.match(agent[2].message, /^Claude Code's sign-in is no longer saved on My settings/);
+  assert.deepEqual(agent[2].missing, ['claude', 'codex']);
+  assert.deepEqual(agent.at(-1).missing, ['claude', 'codex'], 'the timeout names both again');
 });
