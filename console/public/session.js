@@ -469,7 +469,7 @@
     const body = h('div', { class: 'rename-offer-body', onclick: (e) => { if (!e.target.closest('form')) edit(); } },
       h('span', { class: 'rename-offer-line' }, 'Named ', name),
       h('button', { type: 'button', class: 'btn btn-plain btn-sm', onclick: edit }, 'Rename'));
-    const ttl = lifetimePick(s);
+    const ttl = limitPicks(s);
     const el = h('div', { class: 'rename-offer', role: 'dialog', 'aria-label': 'Rename this session' },
       body,
       ttl?.el,
@@ -487,67 +487,95 @@
     placeRenameOffer();
   }
 
-  // The offer's other question, while the session is new: how long it runs before it stops by itself (its own
-  // `lifetimeHours`, as Pause and stop… sets it). Offered to whoever may change it (W.ownsLimits); the first option is
-  // what it runs on otherwise, and a pick is saved at once. Each refresh draws its options again from the latest copy of
-  // the session, while the offer stays open: a stop set in Pause and stop… meanwhile shows here.
-  const LIFETIME_PICKS = [1, 2, 4, 8, 12, 24];
-  const ranHoursOf = (s) => (s.status === 'running' && s.startedAt ? (Date.now() - Date.parse(s.startedAt)) / 3_600_000 : 0);
-  function lifetimePick(s) {
+  // The offer's other questions, while the session is new: how long it waits for input before it pauses, and how long
+  // it runs before it stops by itself (its own `idleHours` and `lifetimeHours`, as Pause and stop… sets them). Offered
+  // to whoever may change them (W.ownsLimits); each one's first option is what it runs on otherwise, and a pick is saved
+  // at once, with the other kept as it is. Each refresh draws them again from the latest copy of the session and the
+  // latest settings, while the offer stays open: a change made in Pause and stop… or My settings meanwhile shows here.
+  const LIMIT_PICKS = {
+    idleHours: [0.25, 0.5, 1, 2, 4],
+    lifetimeHours: [1, 2, 4, 8, 12, 24],
+  };
+  const BUSY = new Set(['working', 'starting']);
+  const limitText = (n) => (n < 1 ? `${Math.round(n * 60)} min` : `${n} h`);
+  const limitWords = (n) => (n < 1 ? `${Math.round(n * 60)} minutes` : W.hoursText(n));
+  function limitPicks(s) {
     if (s.kind === 'ask' || !data || !W.ownsLimits(s, data)) return null;
-    // The usual stop, read again each time from the latest settings: My settings' or the console's may change meanwhile.
-    const fallbackOf = () => (s.owner && data.myLifetimeHours) || data.lifetimeHours;
-    const hoursShort = (n) => `${n} h`;
-    const select = h('select', { class: 'field rename-offer-ttl-pick', 'aria-label': 'Stop it after' });
     let latest = s;
     let pending = false;
-    // A stop it has already run past would end it within seconds: those are not offered (Pause and stop… still can).
-    const draw = (next) => {
-      latest = next;
-      const own = next.limits?.lifetimeHours ?? null;
-      const ranHours = ranHoursOf(next);
-      const fallback = fallbackOf();
-      const picks = [...new Set([...LIFETIME_PICKS, ...(own ? [own] : [])])].sort((a, b) => a - b);
-      const option = (value, text, hours) => h('option', { value, disabled: hours <= ranHours && value !== String(own ?? '') }, text);
+    // How far the session already is along each clock: a pick at or under it would pause or stop it within seconds, so
+    // those are not offered (Pause and stop… still can). Claude working holds the idle clock at nothing.
+    const KINDS = {
+      idleHours: {
+        label: 'Pauses after', aria: 'Pause it after waiting for input for', cls: 'rename-offer-idle-pick',
+        fallback: () => (s.owner && data.myIdleHours) || data.idleHours,
+        past: (x) => (x.status === 'running' && !BUSY.has(x.state) && x.lastActiveAt ? (Date.now() - Date.parse(x.lastActiveAt)) / 3_600_000 : 0),
+        saved: (n) => `Pauses after ${limitWords(n)} waiting for input`,
+        refused: (n) => `it has already waited for input for more than ${limitWords(n)}`,
+        title: 'How long it waits for input before it pauses. Resume picks it up where it was.',
+      },
+      lifetimeHours: {
+        label: 'Stops after', aria: 'Stop it after', cls: 'rename-offer-ttl-pick',
+        fallback: () => (s.owner && data.myLifetimeHours) || data.lifetimeHours,
+        past: (x) => (x.status === 'running' && x.startedAt ? (Date.now() - Date.parse(x.startedAt)) / 3_600_000 : 0),
+        saved: (n) => `Stops after ${limitWords(n)} of running`,
+        refused: (n) => `it has already run past ${limitWords(n)}`,
+        title: 'How long it runs before it stops by itself. It tries to push its work first, and Resume picks it up.',
+      },
+    };
+    const selects = {};
+    const draw = (key) => {
+      const kind = KINDS[key];
+      const select = selects[key];
+      const own = latest.limits?.[key] ?? null;
+      const past = kind.past(latest);
+      const fallback = kind.fallback();
+      const picks = [...new Set([...LIMIT_PICKS[key], ...(own ? [own] : [])])].sort((a, b) => a - b);
+      const option = (value, text, hours) => h('option', { value, disabled: hours <= past && value !== String(own ?? '') }, text);
       select.replaceChildren(
-        option('', fallback ? `${hoursShort(fallback)} (usual)` : 'Usual', fallback || Infinity),
-        ...picks.map((n) => option(String(n), hoursShort(n), n)));
+        option('', fallback ? `${limitText(fallback)} (usual)` : 'Usual', fallback || Infinity),
+        ...picks.map((n) => option(String(n), limitText(n), n)));
       select.value = own ? String(own) : '';
     };
-    draw(s);
-    select.addEventListener('change', async () => {
-      const lifetimeHours = select.value ? Number(select.value) : null;
-      const fallback = fallbackOf();
-      // Checked again now: the offer may have been open long enough for the session to run past the pick.
-      if ((lifetimeHours ?? fallback) <= ranHoursOf(latest)) {
-        W.shell.toast(`Not saved: it has already run past ${W.hoursText(lifetimeHours ?? fallback)}. Pause and stop… can stop it now.`, { ms: 6000 });
-        draw(latest);
-        return;
-      }
-      select.disabled = true;
-      pending = true;
-      try {
-        // The session's own idle pause stays as it is now (a key left out would go back to the usual): read from the
-        // latest copy of this session, never the offer's first, which may hold an idle pause cleared since.
-        await W.postJson(`/api/sessions/${s.id}/limits`, { idleHours: latest.limits?.idleHours ?? null, lifetimeHours });
-        latest = { ...latest, limits: { ...latest.limits, lifetimeHours } };
-        W.shell.toast(`Stops after ${W.hoursText(lifetimeHours ?? fallback)} of running`);
-        refresh();
-      } catch (err) {
-        W.shell.toast(`Not saved: ${err.message}`, { ms: 6000 });
-      }
-      pending = false;
-      select.disabled = false;
-      draw(latest);
+    const drawAll = () => { for (const key of Object.keys(KINDS)) if (document.activeElement !== selects[key]) draw(key); };
+    const labels = Object.entries(KINDS).map(([key, kind]) => {
+      const select = selects[key] = h('select', { class: `field ${kind.cls}`, 'aria-label': kind.aria });
+      draw(key);
+      select.addEventListener('change', async () => {
+        const value = select.value ? Number(select.value) : null;
+        const effective = value ?? kind.fallback();
+        // Checked again now: the offer may have been open long enough for the session to get past the pick.
+        if (effective <= kind.past(latest)) {
+          W.shell.toast(`Not saved: ${kind.refused(effective)}. Pause and stop… can do it now.`, { ms: 6000 });
+          draw(key);
+          return;
+        }
+        for (const other of Object.values(selects)) other.disabled = true;
+        pending = true;
+        try {
+          // The other limit stays as it is now (a key left out would go back to the usual): read from the latest copy
+          // of this session, never the offer's first, which may hold one changed since.
+          const limits = { idleHours: latest.limits?.idleHours ?? null, lifetimeHours: latest.limits?.lifetimeHours ?? null, [key]: value };
+          await W.postJson(`/api/sessions/${s.id}/limits`, limits);
+          latest = { ...latest, limits };
+          W.shell.toast(kind.saved(effective));
+          refresh();
+        } catch (err) {
+          W.shell.toast(`Not saved: ${err.message}`, { ms: 6000 });
+        }
+        pending = false;
+        for (const other of Object.values(selects)) other.disabled = false;
+        draw(key);
+      });
+      return h('label', { class: 'rename-offer-limit', title: kind.title }, h('span', null, kind.label), select);
     });
-    const el = h('label', { class: 'rename-offer-ttl', title: 'How long it runs before it stops by itself. It tries to push its work first, and Resume picks it up.' },
-      h('span', null, 'Stops after'), select);
-    // The latest copy is kept on every refresh; its options are drawn again only when no save is on its way and its
-    // list cannot be open.
+    const el = h('div', { class: 'rename-offer-limits' }, ...labels);
+    // The latest copy is kept on every refresh; a picker's options are drawn again only when no save is on its way and
+    // its list cannot be open.
     const sync = (next) => {
       if (pending) return;
       latest = next;
-      if (document.activeElement !== select) draw(next);
+      drawAll();
     };
     return { el, sync };
   }
