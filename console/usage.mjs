@@ -111,10 +111,27 @@ export function createUsage(store, { now = Date.now } = {}) {
     };
     const before = JSON.stringify(entry);
     Object.assign(entry, meta);
-    // A run is the agent's count from one start: by when it began, and which agent.
-    for (const usage of usages) entry.runs[`${usage.since} ${usage.agent}`] = { agent: usage.agent, billing: usage.billing, days: usage.days };
-    const runs = Object.keys(entry.runs).sort();
-    for (const old of runs.slice(0, Math.max(0, runs.length - MAX_RUNS))) delete entry.runs[old];
+    // A run is the agent's count from one start: by when it began, and which agent. A day past the keep is not kept
+    // again, though a session running that long reports it on.
+    const cutoff = keepFrom();
+    for (const usage of usages) {
+      const days = Object.fromEntries(Object.entries(usage.days).filter(([day]) => day >= cutoff));
+      if (Object.keys(days).length) entry.runs[`${usage.since} ${usage.agent}`] = { agent: usage.agent, billing: usage.billing, days };
+    }
+    // Past MAX_RUNS the oldest runs, long finished, are added into one `earlier` run of the same agent and billing, so a
+    // session resumed many times keeps every day and the ledger stays small.
+    const runs = Object.keys(entry.runs).filter((key) => !key.startsWith('earlier ')).sort();
+    for (const old of runs.slice(0, Math.max(0, runs.length - MAX_RUNS))) {
+      const run = entry.runs[old];
+      const into = entry.runs[`earlier ${run.agent} ${run.billing}`] ??= { agent: run.agent, billing: run.billing, days: {} };
+      for (const [day, byModel] of Object.entries(run.days)) {
+        for (const [model, tokens] of Object.entries(byModel)) {
+          const had = ((into.days[day] ??= {})[model] ??= zero());
+          addTokens(had, tokens);
+        }
+      }
+      delete entry.runs[old];
+    }
     if (JSON.stringify(entry) === before) return false;
     store.save();
     return true;
@@ -135,9 +152,14 @@ export function createUsage(store, { now = Date.now } = {}) {
   }
 
   /** Drops the days past KEEP_DAYS, and a session left with none. */
+  /** @returns {string}  the first day kept */
+  function keepFrom() {
+    return new Date(now() - KEEP_DAYS * DAY_MS).toISOString().slice(0, 10);
+  }
+
   function prune() {
     prunedAt = now();
-    const cutoff = new Date(now() - KEEP_DAYS * DAY_MS).toISOString().slice(0, 10);
+    const cutoff = keepFrom();
     let changed = false;
     for (const [id, entry] of Object.entries(ledger())) {
       for (const [since, run] of Object.entries(entry.runs ?? {})) {

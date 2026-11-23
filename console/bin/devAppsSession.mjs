@@ -65,13 +65,14 @@ export async function startDevAppsSession({ id, token }) {
   git('add', '-A');
   git('commit', '-q', '-m', 'two apps');
   const port = await freePort();
-  // A home of its own: in this machine's, its token count (session/tokenUsage.mjs) would read this machine's own
-  // transcripts onto the made-up Usage page.
+  // A home of its own, and an ordinary claude session's agent and mode whatever the dev console runs in: its token count
+  // (session/tokenUsage.mjs) follows HOME, CODEX_HOME, AGENT and a review's REVIEW_* to the agent's records, and with
+  // the machine's (a Woodshed session's own, or a Codex one's) would put its real usage on the made-up Usage page.
   const home = path.join(root, 'home');
   fs.mkdirSync(home);
   const child = spawn(process.execPath, [STATUSD], {
     env: { ...process.env, HOME: home, SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '',
-      WOODSHED_CLAUDE_AUTH: '' },
+      WOODSHED_CLAUDE_AUTH: '', AGENT: '', SESSION_MODE: '', CODEX_HOME: path.join(home, '.codex'), REVIEW_AGENTS: '', REVIEW_CODEX_AUTH: '', REVIEW_CODEX_HOME: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   // Its app decisions only: tmux and gh are not here, which it warns of on every status read.

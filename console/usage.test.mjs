@@ -162,3 +162,18 @@ test('a label shaped like JavaScript\'s own names is a model with no price, neve
   const view = usage.summary({ login: 'sam', admin: false });
   assert.deepEqual(view.byModel.map((m) => [m.model, m.priced]).sort(), [['gpt-constructor', false], ['other', false]]);
 });
+
+test('a day past the keep is not kept again from a long session\'s report, and runs past the cap are added up, not dropped', () => {
+  const s = store();
+  const usage = createUsage(s, { now: () => NOW });
+  usage.record({ id: 'a1', owner: 'sam' }, report('key', { '2026-08-01': { 'claude-opus-5-5': t(1e6, 0) }, '2026-11-23': { 'claude-opus-5-5': t(1e6, 0) } }));
+  assert.deepEqual(Object.keys(s.state.tokenUsage.a1.runs['2026-11-22T08:00:00.000Z claude'].days), ['2026-11-23']);
+
+  const many = createUsage(store(), { now: () => NOW });
+  for (let i = 0; i < 60; i++) {
+    const since = new Date(Date.parse('2026-10-01T00:00:00Z') + i * 3_600_000).toISOString();
+    many.record({ id: 'b2', owner: 'sam' }, report('plan', { '2026-11-01': { 'claude-opus-5-5': t(1e6, 0) } }, { since }));
+  }
+  const view = many.summary({ login: 'sam', admin: false, days: 90 });
+  assert.equal(view.totals.plan.cost, 240, 'all 60 runs, 1M input each at $4');
+});
