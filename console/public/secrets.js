@@ -1,6 +1,6 @@
-// The Secrets & webhooks page. Values stay hidden until Show; every change
-// opens a dialog that says what it changes and needs the name typed to go
-// ahead. No timed refresh: it would wipe a half-filled form.
+// The Secrets & webhooks page: groups of rows that open in place (settingsRows.js), one row per secret. Values stay
+// hidden until Show; every change opens a dialog that says what it changes and needs the name typed to go ahead. No
+// timed refresh: it would wipe a half-filled form.
 window.Woodshed.settingsPage('/secrets', (app, life) => {
   'use strict';
   const W = window.Woodshed;
@@ -28,11 +28,14 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
   let manager = null;
   let managerChoice = null;
   let managerPrefix = null;
+  let managerAsked = false;
   let loadError = null;
-  let open = null;
   let lastDelivery = null;
-  let advancedOpen = false;
   let notice = null;
+  // Which rows are open is kept for the page's life: it is drawn again on each answer.
+  const rows = window.WoodshedSettingsRows.create({ render });
+  const { row, group } = rows;
+  const noteFor = (name) => notice?.name === name && h('p', { class: notice.error ? 'form-error' : 'form-ok', role: 'status' }, notice.text);
   const revealed = new Map();
   const copied = new Set();
   // Kept across renders, so a half-filled form survives another row's Show.
@@ -84,9 +87,11 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
     }
   }
 
-  // Where this console keeps its secrets, chosen here when its settings do not fix it.
+  // Where this console keeps its secrets, chosen here when its settings do not fix it. With none chosen yet the row
+  // starts open: it is the one thing to do on the page.
   function managerCard() {
     if (!manager?.canChoose) return null;
+    if (!manager.configured && !managerAsked) { managerAsked = true; rows.open.add('secrets-manager'); }
     const kind = managerChoice ?? manager.kind ?? 'local';
     const prefix = managerPrefix ?? manager.prefix ?? manager.defaultPrefix;
     const where = manager.kind === 'aws' ? `AWS Secrets Manager, under ${manager.prefix}` : manager.kind === 'local' ? `sealed files in ${manager.dir}` : 'none chosen yet';
@@ -97,20 +102,21 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
       h('option', { value: 'local', selected: kind === 'local' }, 'Local files on this machine'),
       h('option', { value: 'aws', selected: kind === 'aws' }, 'AWS Secrets Manager'));
     const prefixInput = h('input', { type: 'text', id: 'manager-prefix', class: 'field mono', value: prefix, autocomplete: 'off', spellcheck: 'false' });
-    const note = notice?.name === 'manager' ? h('p', { class: `form-note${notice.error ? ' is-error' : ''}`, role: 'status' }, notice.text) : null;
-    return h('section', { class: 'secret-group', 'aria-labelledby': 'group-manager' },
-      h('h2', { id: 'group-manager', class: 'label' }, 'Secrets manager'),
-      h('p', { class: 'sub' }, `In use: ${where}. Claude tokens, session secrets and the rest are kept there.`),
-      h('form', { class: 'secret-form', onsubmit: (e) => e.preventDefault() },
-        h('label', { class: 'field-label' }, 'Keep secrets in', select),
-        kind === 'aws' && h('label', { class: 'field-label' }, 'Name prefix', prefixInput),
-        h('p', { class: 'sub' }, kind === 'aws'
-          ? 'Uses the AWS credentials this console runs with, through the AWS CLI. Each secret is created under the prefix when it is first saved.'
-          : 'Each secret is a file sealed with a key made on first use, in this console’s state folder. Nothing leaves this machine.'),
-        h('div', { class: 'actions' },
-          h('button', { type: 'button', class: 'btn btn-open', onclick: () => chooseManager(kind, kind === 'aws' ? prefixInput.value : undefined) },
-            manager.configured ? 'Switch' : 'Use this'))),
-      note);
+    return group({ id: 'group-manager', label: 'Where secrets are kept' },
+      row({
+        id: 'secrets-manager', title: 'Secrets manager', value: `In use: ${where}. Claude tokens, session secrets and the rest are kept there.`,
+        pill: manager.configured ? h('span', { class: 'pill is-ok' }, 'In use') : h('span', { class: 'pill is-warn' }, 'Not chosen'),
+      },
+        h('form', { class: 'secret-form', onsubmit: (e) => e.preventDefault() },
+          h('label', { class: 'field-label' }, 'Keep secrets in', select),
+          kind === 'aws' && h('label', { class: 'field-label' }, 'Name prefix', prefixInput),
+          h('p', { class: 'sub' }, kind === 'aws'
+            ? 'Uses the AWS credentials this console runs with, through the AWS CLI. Each secret is created under the prefix when it is first saved.'
+            : 'Each secret is a file sealed with a key made on first use, in this console’s state folder. Nothing leaves this machine.'),
+          h('div', { class: 'actions' },
+            h('button', { type: 'button', class: 'btn btn-open', onclick: () => chooseManager(kind, kind === 'aws' ? prefixInput.value : undefined) },
+              manager.configured ? 'Switch' : 'Use this'))),
+        notice?.name === 'manager' && h('p', { class: `form-note${notice.error ? ' is-error' : ''}`, role: 'status' }, notice.text)));
   }
 
   async function reload(after) {
@@ -150,16 +156,15 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
   }
 
   function statusFor(s) {
-    if (s.set) return h('span', { class: 'status is-done' }, h('span', { class: 'dot', 'aria-hidden': 'true' }), h('span', { class: 'word' }, 'set'));
-    return h('span', { class: 'status is-needs-you' }, h('span', { class: 'dot', 'aria-hidden': 'true' }), h('span', { class: 'word' }, 'not set'));
+    return s.set ? h('span', { class: 'pill is-ok' }, 'Set') : h('span', { class: 'pill is-warn' }, 'Not set');
   }
 
   function formFor(s) {
     if (forms.has(s.name)) return forms.get(s.name);
     const fileInput = s.kind === 'line' ? null : h('input', { type: 'file', accept: s.kind === 'pem' ? '.pem' : '.env,.local,text/plain' });
     const text = s.kind === 'line'
-      ? h('input', { type: 'password', autocomplete: 'off', class: 'field mono', placeholder: 'Paste the new value' })
-      : h('textarea', { rows: '6', spellcheck: 'false', class: 'field mono', placeholder: s.kind === 'pem' ? '-----BEGIN RSA PRIVATE KEY-----' : 'KEY=value, one per line' });
+      ? h('input', { type: 'password', id: `secret-${s.name}-value`, autocomplete: 'off', class: 'field mono', placeholder: 'Paste the new value' })
+      : h('textarea', { id: `secret-${s.name}-value`, rows: '6', spellcheck: 'false', class: 'field mono', placeholder: s.kind === 'pem' ? '-----BEGIN RSA PRIVATE KEY-----' : 'KEY=value, one per line' });
     if (fileInput) {
       fileInput.addEventListener('change', async () => {
         const file = fileInput.files?.[0];
@@ -168,7 +173,7 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
     }
     const form = h('form', { class: 'secret-form', onsubmit: (e) => e.preventDefault() },
       fileInput && h('label', { class: 'field-label' }, s.kind === 'pem' ? 'Upload the App’s .pem' : 'Upload the file', fileInput),
-      h('label', { class: 'field-label' }, fileInput ? 'Or paste it' : 'New value', text),
+      h('label', { class: 'field-label' }, fileInput ? 'Or paste it' : s.set ? 'New value' : 'Value', text),
       h('p', { class: 'sub' }, s.name === 'github-app-key'
         ? 'The console mints a test token with the new key first, and keeps the old key if GitHub refuses it.'
         : effectOf(s.name)),
@@ -186,36 +191,34 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
               await W.postJson(`/api/secrets/${s.name}`, { value: text.value, confirm: s.name });
               forms.delete(s.name);
               revealed.delete(s.name);
-              open = null;
               await reload({ name: s.name, text: 'Saved as a new version.' });
             },
           }),
         }, 'Review change'),
-        h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => { open = null; forms.delete(s.name); render(); } }, 'Cancel')));
+        // Empties the form and closes the row.
+        h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => { forms.delete(s.name); rows.open.delete(`secret-${s.name}`); render(); } }, 'Cancel')));
     forms.set(s.name, form);
     return form;
   }
 
+  // One secret: the closed row says what it is for, whether it is set and when it last changed; open, its value
+  // (hidden until Show) or why it has none to show, and the form that sets or replaces it.
   function secretRow(s) {
     const value = revealed.get(s.name);
     const replaceable = s.exists || s.creatable;
-    return h('div', { class: `secret-row${open === s.name ? ' is-open' : ''}` },
-      h('div', { class: 'secret-head' },
-        h('div', { class: 'secret-main' },
-          h('div', { class: 'card-head' }, h('code', { class: 'secret-name' }, s.name), statusFor(s)),
-          s.description && h('div', { class: 'msg-plain' }, s.description),
-          h('div', { class: 'meta' }, h('span', null, changedLine(s))),
-          s.set && s.readable && h('div', { class: 'value-row' },
-            mono(value ?? MASK, value === undefined ? 'is-masked' : ''),
-            h('button', { type: 'button', class: 'btn btn-plain', 'aria-pressed': String(value !== undefined), onclick: () => reveal(s.name) }, value === undefined ? 'Show' : 'Hide'),
-            value !== undefined && copyButton(s.name, value)),
-          !s.readable && h('div', { class: 'msg-plain' }, 'Write-only: sessions never see this key, so the console never shows it either.')),
-        replaceable && h('button', {
-          type: 'button', class: 'btn btn-stop', 'aria-expanded': String(open === s.name),
-          onclick: () => { open = open === s.name ? null : s.name; render(); },
-        }, open === s.name ? 'Close' : s.set ? 'Replace' : 'Set')),
-      open === s.name && formFor(s),
-      notice?.name === s.name && h('p', { class: notice.error ? 'form-error' : 'form-ok', role: 'status' }, notice.text));
+    return row({
+      id: `secret-${s.name}`, title: h('code', { class: 'secret-name' }, s.name), pill: statusFor(s),
+      value: [s.description, s.description && ' · ', changedLine(s)],
+    },
+      s.set && s.readable && h('div', { class: 'value-row' },
+        mono(value ?? MASK, value === undefined ? 'is-masked' : ''),
+        h('button', { type: 'button', class: 'btn btn-plain', 'aria-pressed': String(value !== undefined), onclick: () => reveal(s.name) }, value === undefined ? 'Show' : 'Hide'),
+        value !== undefined && copyButton(s.name, value)),
+      !s.readable && h('p', { class: 'sub' }, 'Write-only: sessions never see this key, so the console never shows it either.'),
+      !replaceable && h('p', { class: 'sub' }, `${changedLine(s)}.`),
+      replaceable && h('h4', { class: 'secret-form-title' }, s.set ? 'Replace it' : 'Set it'),
+      replaceable && formFor(s),
+      noteFor(s.name));
   }
 
   function eventsCheck(github, wanted) {
@@ -225,44 +228,66 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
     return h('span', { class: 'warn' }, `Not subscribed yet: ${missing.join(', ')}. Tick them under Permissions & events in the GitHub App’s settings.`);
   }
 
-  // Webhook events, the log of what came in, is reached from here rather than the menus: from the webhook card, or, on a
-  // console with no App webhook (Slack's events still land in it), from the page's note.
+  // Webhook events, the log of what came in, is reached from here rather than the menus: from the webhook group's
+  // last row, or, on a console with no App webhook (Slack's events still land in it), from the page's note.
   function eventsLink() {
     return [h('a', { href: '/events' }, 'Webhook events'), ' lists what came in and what the console did with each.'];
   }
 
-  // The card says where the setup stands; the setup itself is the modal in webhookSetup.js.
-  function webhookCard() {
+  // The rows say where the setup stands; the setup itself is the modal in webhookSetup.js.
+  function webhookGroup() {
     const c = W.webhookChecks(data);
     const events = data.webhook.events;
     const last = lastDelivery;
     const lastOk = last && last.statusCode >= 200 && last.statusCode < 300;
     const connected = c.secret && c.url;
     const allDone = c.active && connected && c.missingEvents?.length === 0 && lastOk;
-    const line = (ok, text) => h('li', { class: `check ${ok ? 'is-done' : 'is-needs-you'}` },
+    const checks = [
+      [c.active, c.active ? 'The App’s webhook is switched on' : 'The App’s webhook is switched off in GitHub'],
+      [c.missingEvents?.length === 0, c.missingEvents?.length ? `Not subscribed yet: ${c.missingEvents.map(W.eventName).join(', ')}` : `Subscribed to ${events.map(W.eventName).join(', ')}`],
+      [connected, connected ? `Connected: the App posts to ${RECEIVER}, signed with the stored secret`
+        : !c.secret ? 'No secret yet' : `The App does not post to ${RECEIVER} yet`],
+      [lastOk, !last ? 'No deliveries from GitHub yet'
+        : `Last delivery ${W.when(last.deliveredAt)}: ${last.event}, ${last.statusCode ? `HTTP ${last.statusCode}` : 'not delivered'}`],
+    ];
+    const line = ([ok, text]) => h('li', { class: `check ${ok ? 'is-done' : 'is-needs-you'}` },
       h('span', { class: 'check-mark', 'aria-hidden': 'true' }, ok ? '✓' : '✗'), h('span', null, text));
-    return h('section', { class: 'settings-card', 'aria-labelledby': 'hook-title' },
-      h('h2', { id: 'hook-title', class: 'label' }, 'GitHub webhook'),
-      h('p', { class: 'sub' }, 'Labels and /woodshed comments reach the console in a second or two. Without it, the console only finds them on its 5-minute poll. ',
-        eventsLink()),
-      c.githubError
-        ? h('p', { class: 'warn' }, `GitHub’s side cannot be read: ${c.githubError}`)
-        : h('ul', { class: 'checks' },
-          line(c.active, c.active ? 'The App’s webhook is switched on' : 'The App’s webhook is switched off in GitHub'),
-          line(c.missingEvents?.length === 0, c.missingEvents?.length ? `Not subscribed yet: ${c.missingEvents.map(W.eventName).join(', ')}` : `Subscribed to ${events.map(W.eventName).join(', ')}`),
-          line(connected, connected ? `Connected: the App posts to ${RECEIVER}, signed with the stored secret`
-            : !c.secret ? 'No secret yet' : `The App does not post to ${RECEIVER} yet`),
-          line(lastOk, !last ? 'No deliveries from GitHub yet'
-            : `Last delivery ${W.when(last.deliveredAt)}: ${last.event}, ${last.statusCode ? `HTTP ${last.statusCode}` : 'not delivered'}`)),
-      h('div', { class: 'actions' },
-        h('button', {
-          type: 'button', class: allDone ? 'btn btn-plain' : 'btn btn-open',
-          onclick: () => W.openWebhookSetup({ data, storeName: storeName(), reload: async () => { await reload(); return data; }, onClose: () => reload() }),
-        }, allDone ? 'Check again' : 'Set up webhook')),
-      h('details', { class: 'advanced', open: advancedOpen, ontoggle: (e) => { advancedOpen = e.target.open; } },
-        h('summary', null, 'Advanced: the payload URL, the secret, rotating it'),
-        webhookAdvanced()),
-      notice?.name === 'webhook' && h('p', { class: notice.error ? 'form-error' : 'form-ok', role: 'status' }, notice.text));
+    // The closed row says the first check that fails, or the last delivery when none does.
+    const failing = checks.find(([ok]) => !ok);
+    const secret = data.secrets.find((s) => s.name === 'github-webhook-secret');
+    return group({
+      id: 'hook-title', label: 'GitHub webhook',
+      note: 'Labels and /woodshed comments reach the console in a second or two. Without it, the console only finds them on its 5-minute poll.',
+    },
+      row({
+        id: 'hook-connection', title: 'Connection',
+        value: c.githubError ? `GitHub’s side cannot be read: ${c.githubError}` : (failing ?? checks[3])[1],
+        pill: allDone ? h('span', { class: 'pill is-ok' }, 'Connected') : h('span', { class: 'pill is-warn' }, c.githubError ? 'Not read' : 'Needs setup'),
+      },
+        c.githubError
+          ? h('p', { class: 'warn' }, `GitHub’s side cannot be read: ${c.githubError}`)
+          : h('ul', { class: 'checks' }, checks.map(line)),
+        h('div', { class: 'actions' },
+          h('button', {
+            type: 'button', class: allDone ? 'btn btn-plain' : 'btn btn-open',
+            onclick: () => W.openWebhookSetup({ data, storeName: storeName(), reload: async () => { await reload(); return data; }, onClose: () => reload() }),
+          }, allDone ? 'Check again' : 'Set up webhook'))),
+      // What the Advanced fold held: the payload URL, the secret, rotating it.
+      row({
+        id: 'hook-payload', title: 'Payload URL and secret', value: hookState(),
+        pill: secret?.set ? h('span', { class: 'pill is-ok' }, 'Secret set') : h('span', { class: 'pill is-warn' }, 'No secret'),
+      }, webhookAdvanced(), noteFor('webhook')),
+      row({ id: 'hook-events', title: h('a', { href: '/events' }, 'Webhook events'), value: 'What came in and what the console did with each.' }));
+  }
+
+  /** @returns {string}  where the GitHub App posts, against where this console's receiver is */
+  function hookState() {
+    const wh = data.webhook;
+    const gh = wh.github;
+    if (gh.error) return `GitHub’s side could not be read: ${gh.error}`;
+    if (!gh.url) return 'The GitHub App has no webhook URL yet.';
+    if (!(wh.expectedUrl && gh.url === wh.expectedUrl)) return `The GitHub App posts to ${gh.url}, not to ${RECEIVER}.`;
+    return `The GitHub App posts to ${RECEIVER}.`;
   }
 
   function webhookAdvanced() {
@@ -273,12 +298,7 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
     const matches = Boolean(gh.url && wh.expectedUrl && gh.url === wh.expectedUrl);
     const owner = data.repo ? data.repo.split('/')[0] : '';
     const appSettings = gh.slug && owner ? `https://github.com/organizations/${owner}/settings/apps/${gh.slug}` : null;
-
-    let state;
-    if (gh.error) state = h('span', { class: 'warn' }, `GitHub’s side could not be read: ${gh.error}`);
-    else if (!gh.url) state = h('span', { class: 'warn' }, 'The GitHub App has no webhook URL yet.');
-    else if (!matches) state = h('span', { class: 'warn' }, `The GitHub App posts to ${gh.url}, not to ${RECEIVER}.`);
-    else state = h('span', null, `The GitHub App posts to ${RECEIVER}.`);
+    const state = h('span', { class: !gh.error && matches ? null : 'warn' }, hookState());
 
     return h('div', { class: 'advanced-body' },
       h('p', { class: 'sub' }, 'The URL is public by design: a delivery only counts when it is signed with the secret.'),
@@ -360,25 +380,25 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
           data && !data.webhook && [' ', eventsLink()])));
     if (!data) {
       const waiting = loadError && manager?.canChoose ? `${manager.configured ? 'The other secrets are listed here once the GitHub App is set up.' : 'Choose where to keep secrets first.'}` : null;
-      app.replaceChildren(h('div', { class: 'page' }, life.nav('/secrets'), head, managerCard(),
+      rows.draw(app, h('div', { class: 'page' }, life.nav('/secrets'), head, managerCard(),
         h('p', { class: 'empty' }, waiting ?? (loadError ? `Could not load the secrets: ${loadError}` : 'Loading secrets…'))));
       return;
     }
-    app.replaceChildren(h('div', { class: 'page' },
+    rows.draw(app, h('div', { class: 'page' },
       life.nav('/secrets'),
       head,
       managerCard(),
       // A console that borrows its GitHub access from its host has no App, so no webhook: it polls.
-      data.webhook && webhookCard(),
+      data.webhook && webhookGroup(),
       GROUPS.map((g) => [g, data.secrets.filter((s) => s.group === g.id && s.kind !== 'webhook')])
-        .map(([g, rows]) => h('section', { class: 'secret-group', 'aria-labelledby': `group-${g.id}` },
-          h('h2', { id: `group-${g.id}`, class: 'label' }, g.title),
-          h('p', { class: 'sub' }, g.note),
-          h('div', { class: 'secret-list' }, rows.filter((s) => !ON_SLACK_CARD.has(s.name)).map(secretRow)),
-          g.id === 'console' && rows.some((s) => ON_SLACK_CARD.has(s.name))
-            && h('p', { class: 'sub slack-moved' }, 'Slack\'s bot token and signing secret are set on ', h('a', { href: '/console-settings#slack' }, 'Settings → Slack'), '.'))),
+        .map(([g, list]) => group({ id: `group-${g.id}`, label: g.title, note: g.note },
+          list.filter((s) => !ON_SLACK_CARD.has(s.name)).map(secretRow),
+          // Slack's two keys keep their place in the list, as one row that says where they are set.
+          g.id === 'console' && list.some((s) => ON_SLACK_CARD.has(s.name))
+            && row({ id: 'secret-slack-keys', title: 'Slack\'s bot token and signing secret', value: ['Set on ', h('a', { href: '/console-settings#slack' }, 'Settings → Slack'), '.'] }))),
       h('p', { class: 'foot' }, 'The Postgres password is not here: RDS keeps and rotates it.')));
   }
 
+  rows.follow(life);
   reload();
 });

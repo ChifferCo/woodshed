@@ -1200,13 +1200,16 @@ you out.
   first delivery it drops, and at start `console: GitHub webhooks are switched
   off on Console settings, polling` or `console: Slack questions are switched
   off on Console settings`.
-- **Secrets & webhooks** (`/secrets`, the second tab of Settings): each secret's state and when it last
-  changed. Replace saves a new version, so the one before stays restorable as
+- **Secrets & webhooks** (`/secrets`, the second tab of Settings): groups of rows that open in place, as on My
+  settings (`public/settingsRows.js`), one row per secret. A closed row says what the secret is for, when it last
+  changed and whether it is set; open, it has the value behind Show and the form that sets or replaces it. A link to
+  `#secret-<name>` opens that row. Replace saves a new version, so the one before stays restorable as
   `AWSPREVIOUS`. Show reveals a session secret, since anyone who reaches the
   console can already read it in a session's terminal; the GitHub App's key is
   write-only. Slack's two keys are not listed: they are set on the Slack card
-  (below, "Slack"), and a line says so. A new App key is used at once, after a test token minted with it
-  succeeds. The webhook card checks four things (the App's webhook switched
+  (below, "Slack"), and a row says so. A new App key is used at once, after a test token minted with it
+  succeeds. The GitHub webhook group has three rows: Connection, Payload URL and secret, and a link to Webhook
+  events. Connection checks four things (the App's webhook switched
   on, the five events subscribed, the App connected to the Lambda with the
   stored secret, GitHub's last delivery accepted) and **Set up webhook** walks
   through them in three steps: the boxes only GitHub's settings page can tick
@@ -1214,7 +1217,7 @@ you out.
   the App with the Lambda's URL, `PATCH /app/hook/config`), and a test label
   whose delivery the modal follows from GitHub (`GET /app/hook/deliveries`) to
   the console's events log. The Lambda rereads
-  its secret when a signature fails, so Rotate under Advanced takes effect at once.
+  its secret when a signature fails, so Rotate secret on the Payload URL and secret row takes effect at once.
 
 Every change says what it changes and what that affects before it goes ahead.
 Replacing or rotating a secret needs its name typed; the server checks the
