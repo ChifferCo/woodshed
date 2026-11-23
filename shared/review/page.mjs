@@ -535,9 +535,10 @@ ${DARK_PALETTE}
     .reviewswitch .lead { color: var(--muted); margin-right: 0.2rem; }
     .reviewswitch a, .reviewswitch .on {
       border: 1px solid var(--rule); border-radius: 999px; padding: 0 0.5rem;
-      color: var(--accent); text-decoration: none; background: var(--sunk);
+      color: var(--slate); text-decoration: none; background: var(--sunk);
     }
-    .reviewswitch a:hover { border-color: var(--accent); }
+    /* Slate, the page's link colour, not the orange accent: 12px orange on the wash is under 3:1 in the light theme. */
+    .reviewswitch a:hover { border-color: var(--slate); }
     .reviewswitch .on { color: var(--ink); border-color: var(--rule-strong); background: transparent; font-weight: 600; }
     .prmeta .openedpr {
       font: 600 11.5px/1.6 ui-monospace, monospace; color: var(--accent);

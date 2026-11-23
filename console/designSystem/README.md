@@ -288,7 +288,7 @@ button, never orange. A question they asked says "you asked" in `meta`.
 
 A session with more than one pull request has a review of each: the review switch (`components/ReviewSwitch`), a quiet
 row above the title, only with two or more, lists them as mono pills, the one on screen in `ink` with no link and the
-others links in the page's accent, never orange.
+others links in `slate`, never orange.
 
 Its tab bar ends with **Submit review**, then, for an approved pull request, either **Squash and merge** or the merge
 hint (`components/MergeHint`): an Octicons info icon whose tip says why merging waits. The bar holds controls, never a
