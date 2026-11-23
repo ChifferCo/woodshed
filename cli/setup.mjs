@@ -45,8 +45,8 @@ export function agentSteps(name, url, platform) {
   return [
     'In another terminal, run: codex login (skip it if Codex is already signed in on this computer)',
     platform === 'darwin'
-      ? 'Copy the sign-in it saved, without printing it: pbcopy < ~/.codex/auth.json'
-      : 'Print the sign-in it saved and copy all of it: cat ~/.codex/auth.json',
+      ? 'In that terminal, copy the sign-in it saved, without printing it: pbcopy < ~/.codex/auth.json'
+      : 'In that terminal, print the sign-in it saved and copy all of it: cat ~/.codex/auth.json',
     `On My settings (${url}), paste it in the Codex row's box and press Save. An OpenAI API key (sk-…) works there too.`,
   ];
 }
@@ -277,8 +277,13 @@ export async function setupCommand(args, ctx) {
         for (;;) {
           const answer = (await choose('Press Enter once it is saved, or type skip to finish setup later. '))?.toLowerCase();
           if (answer === undefined || answer === 'skip') break;
-          const now = (await call('status', 'status')).last?.sessionSignIns;
-          if (now?.[name] === true) {
+          const checked = await call('status', 'status');
+          const now = checked.code === EXIT.done ? checked.last?.sessionSignIns : null;
+          if (!now) {
+            tell('Could not ask the console whether it is saved. Press Enter to ask again.');
+            continue;
+          }
+          if (now[name] === true) {
             missing = missing.filter((other) => other !== name);
             tell(`${AGENT_NAMES[name]} is connected.`);
             break;
