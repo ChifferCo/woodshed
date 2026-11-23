@@ -1177,8 +1177,10 @@ Only an admin can open them (see "Sign-in"). The same menu signs
 you out.
 
 - **Webhook events** (`/events`): each message it took off the webhooks queue,
-  what it did with it (started or messaged a session, skipped one the poll
-  already handled, ignored, failed) and the delivery id. Labels and comments
+  one line each: when it came, what the console did with it (started or messaged
+  a session, skipped one the poll already handled, ignored, failed), the event,
+  what it was on, who sent it and the delivery id, and a status word (Acted on,
+  Ignored, Skipped, Failed). Labels and comments
   it does not act on, and Slack events that are not mentions, are left out.
   Each message is one line appended to `webhookEvents.jsonl`, beside
   `state.json`; the page shows the last 7 days, and a sweep every 12 hours
