@@ -43,11 +43,15 @@ export function trusted(text) {
   return new Markup(String(text ?? ''));
 }
 
+// Elements HTML closes itself: never given a closing tag, nor children.
+const VOID = new Set(['input', 'br', 'hr', 'img', 'meta', 'link']);
+
 /** @returns {Markup}  an element; `attrs` with null, undefined or false left out and true as an empty attribute */
 function el(tag, attrs, ...children) {
   const list = Object.entries(attrs || {})
     .filter(([, v]) => v !== null && v !== undefined && v !== false)
     .map(([k, v]) => ` ${k}="${escapeHtml(v === true ? '' : v)}"`).join('');
+  if (VOID.has(tag)) return new Markup(`<${tag}${list}>`);
   return new Markup(`<${tag}${list}>${piece(children.flat(Infinity))}</${tag}>`);
 }
 

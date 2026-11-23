@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 
-import { actions, button, checklist, dialog, dialogActions, escapeHtml, group, howTo, html, line, linkButton, Markup, note, pageHead, pill, row, steps, table, trusted, valueBox } from './settingsMarkup.mjs';
+import { actions, button, checkbox, checklist, dialog, dialogActions, form, textField, escapeHtml, group, howTo, html, line, linkButton, Markup, note, pageHead, pill, row, steps, table, trusted, valueBox } from './settingsMarkup.mjs';
 import { standalonePage } from './server.mjs';
 
 // The console's own rows (public/settingsRows.js), drawn with an h() that keeps a tree, then written out as HTML the way
@@ -112,4 +112,13 @@ test('a dialog is drawn over the page with its title named for a screen reader, 
   const made = dialog({ title: 'Connect GitHub' }, dialogActions(button('Finish later', { kind: 'quiet', type: 'button' }), button('Install on GitHub', { kind: 'primary' }))).text;
   assert.match(made, /^<div class="host-dialog"><div class="host-dialog-box" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><h2 id="dialog-title">Connect GitHub<\/h2>/);
   assert.match(made, /<div class="dialog-actions"><button type="button" class="btn btn-quiet">Finish later<\/button><button type="submit" class="btn btn-primary">Install on GitHub<\/button><\/div>/);
+});
+
+test('a field is a void element, never closed, and a form carries its hidden values', () => {
+  assert.equal(checkbox({ name: 'credits', label: 'Use my $20', checked: true }).text,
+    '<label class="check-line"><input type="checkbox" name="credits" value="on" checked=""> Use my $20</label>');
+  assert.equal(textField({ name: 'name', value: 'Acme', required: true }).text,
+    '<input class="field is-text" type="text" name="name" value="Acme" required="" autocomplete="off" style="width: 100%; box-sizing: border-box">');
+  assert.equal(form({ action: '/orgs/acme/leave', hidden: { login: 'ada' } }, button('Leave')).text,
+    '<form method="post" action="/orgs/acme/leave" class="set-form"><input type="hidden" name="login" value="ada"><button type="submit" class="btn btn-plain">Leave</button></form>');
 });
