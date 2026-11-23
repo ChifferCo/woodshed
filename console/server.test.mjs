@@ -2671,9 +2671,10 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   const tainted = { ...mine, id: '2c3d4e5f', taintedAt: '2026-11-23T10:00:00Z' };
   const all = [mine, theirs, tainted];
   const allowed = [];
+  const dropped = [];
   const fleet = {
     sessions: () => all, find: (id) => all.find((s) => s.id === id) ?? null, isLocked: () => false,
-    allowAgent: (s, agent) => allowed.push([s.id, agent]),
+    allowAgent: (s, agent) => allowed.push([s.id, agent]) > 0, dropAgent: (s, agent) => dropped.push([s.id, agent]),
   };
   const config = {
     host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
@@ -2695,6 +2696,7 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   assert.equal((await call('/api/sessions/1b2c3d4e/agents', { agent: 'claude' })).status, 404, 'someone else\'s session');
   assert.equal((await call('/api/sessions/2c3d4e5f/agents', { agent: 'claude' })).status, 409, 'a tainted session starts none');
   assert.equal(asked.length, 1, 'nothing refused reached the session');
+  assert.deepEqual(dropped, [], 'a start the session took keeps what it was allowed');
 
   assert.equal((await call('/api/sessions/0a1b2c3d/agents', undefined, 'GET')).status, 200);
   assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/transcript?limit=50&since=x', undefined, 'GET')).status, 200);
@@ -2709,4 +2711,40 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
     ['POST', '/agents/agent-2/interrupt', '{}'],
     ['POST', '/agents/agent-2/stop', '{}'],
   ]);
+});
+
+test('a start of another agent the session refuses takes back what the console allowed for it', async (t) => {
+  const statusd = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(409, { 'content-type': 'application/json' });
+      res.end('{"error":"at most 3 agents beside the session\'s own: stop one first"}');
+    });
+  });
+  const statusPort = await listen(statusd);
+  t.after(() => statusd.close());
+  const mine = { id: '0a1b2c3d', status: 'running', title: 't', token: 'tok', owner: 'local', endpoint: { host: '127.0.0.1', termPort: 1, statusPort } };
+  const extra = new Set(['claude']);
+  const dropped = [];
+  const fleet = {
+    sessions: () => [mine], find: (id) => (id === mine.id ? mine : null), isLocked: () => false,
+    allowAgent: (s, agent) => !extra.has(agent) && Boolean(extra.add(agent)),
+    dropAgent: (s, agent) => { dropped.push(agent); extra.delete(agent); },
+  };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, launcher: { kind: 'docker' }, localLogin: 'local',
+  };
+  const server = http.createServer(createHandler({ config, fleet }));
+  const port = await listen(server);
+  t.after(() => server.close());
+  const start = (agent) => fetch(`http://127.0.0.1:${port}/api/sessions/0a1b2c3d/agents`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-woodshed': '1' }, body: JSON.stringify({ agent }),
+  });
+  const refused = await start('codex');
+  assert.equal(refused.status, 409);
+  assert.match((await refused.json()).error, /at most 3/);
+  assert.deepEqual(dropped, ['codex'], 'a Codex start that failed leaves the session no Codex sign-in to ask for');
+  assert.equal((await start('claude')).status, 409);
+  assert.deepEqual(dropped, ['codex'], 'one allowed before, for an agent that ran, stays');
 });

@@ -1844,12 +1844,14 @@ export function createHandler({
   }
 
   // The session's statusd, straight through: the body (a file) and the answer (a file, or JSON) are never held whole.
-  function toStatusd(req, res, session, { method, path, body = null, maxBytes = Infinity }) {
+  // onStatus: told statusd's status code, or 502 when it did not answer.
+  function toStatusd(req, res, session, { method, path, body = null, maxBytes = Infinity, onStatus = null }) {
     const { host, statusPort } = session.endpoint;
     const headers = { authorization: `Bearer ${session.token}` };
     if (body !== null) headers['content-type'] = 'application/json';
     else if (method === 'POST') headers['content-type'] = 'application/octet-stream';
     const upstream = http.request({ host, port: statusPort, method, path, headers, timeout: UPLOAD_TIMEOUT_MS }, (upRes) => {
+      onStatus?.(upRes.statusCode);
       const passed = { 'content-type': upRes.headers['content-type'] || 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
       res.writeHead(upRes.statusCode || 502, passed);
       upRes.pipe(res);
@@ -1857,6 +1859,7 @@ export function createHandler({
     upstream.on('timeout', () => upstream.destroy(new Error('statusd took too long')));
     upstream.on('error', (err) => {
       console.warn('console: statusd unreachable', { id: session.id, path: path.split('?')[0], message: err.message });
+      onStatus?.(502);
       if (!res.headersSent) reply(res, 502, { error: 'the session did not answer: try again in a moment' });
       else res.destroy();
     });
@@ -1930,9 +1933,14 @@ export function createHandler({
       }
       const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
       if (prompt.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in the first message` });
-      fleet.allowAgent(session, picked.agent);
+      // Allowed before the session is asked, since a Codex agent's start asks the console for its sign-in; taken back
+      // when the start fails.
+      const granted = fleet.allowAgent(session, picked.agent);
       console.log('console: another agent asked for', { id: session.id, agent: picked.agent, model: picked.model || null, effort: picked.effort || null, permissionMode: picked.permissionMode, prompt: Boolean(prompt.trim()) });
-      return toStatusd(req, res, session, { method: 'POST', path: '/agents', body: { ...picked, prompt } });
+      return toStatusd(req, res, session, {
+        method: 'POST', path: '/agents', body: { ...picked, prompt },
+        onStatus: (code) => { if (code !== 200 && granted) fleet.dropAgent(session, picked.agent); },
+      });
     }
     const base = `/agents/${agentId}`;
     if (req.method === 'GET' && (action === 'transcript' || action === 'prompt')) {

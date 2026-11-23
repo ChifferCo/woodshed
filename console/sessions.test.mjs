@@ -480,5 +480,6 @@ test('codex runs in a Codex session, and in a private one whose owner started a 
   assert.equal(runsCodex({ owner: 'octocat', extraAgents: ['codex'] }), true);
   assert.equal(runsCodex({ owner: 'octocat', extraAgents: ['claude'] }), false);
   assert.equal(runsCodex({ owner: null, extraAgents: ['codex'] }), false, 'a shared session starts no other agent');
+  assert.equal(runsCodex({ owner: 'octocat', extraAgents: ['codex'], taintedAt: '2026-11-23T10:00:00Z' }), false, 'nor one that has seen production data');
   assert.equal(runsCodex({}), false);
 });

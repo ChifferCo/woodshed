@@ -673,7 +673,9 @@ test('a Codex agent beside claude gets its owner\'s sign-in only once its owner 
   assert.equal((await signIn('team')).body.codexAuth, null, 'none saved: the team key, through the console');
   assert.equal((await signIn('none-started')).status, 404);
   assert.equal((await signIn('shared')).status, 404);
-  assert.equal((await signIn('tainted')).status, 409);
+  assert.equal((await signIn('tainted')).status, 404, 'a tainted session runs no Codex agent');
+  assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer tainted', body: '{"tokens":{"refresh_token":"from-prod"}}' })).status, 404,
+    'a tainted session sends nothing back to the owner\'s saved sign-in');
   assert.equal((await request(port, { path: '/settings', authorization: 'Bearer beside' })).body.codexAuth, undefined, 'never handed out with the session\'s settings');
   // A refreshed login comes back at the stop, as a Codex session's does.
   assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer beside', body: '{"tokens":{"refresh_token":"rt2"}}' })).status, 200);

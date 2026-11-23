@@ -440,6 +440,12 @@ export function createFleet({
       if (!session.mayUseProduction) {
         throw shown('this session started before it could use production, so it holds its owner\'s databases: start a new My Woodshed session, which starts ready for it');
       }
+      // The agents its owner started beside its own lose what they were allowed (a Codex one's sign-in and the team's
+      // OpenAI key) from the moment the lockdown starts, whether or not it succeeds: statusd stops them at its taint.
+      if (session.extraAgents?.length) {
+        console.log('fleet: other agents\' access dropped at the lockdown', { id: session.id, agents: session.extraAgents });
+        update(session, { extraAgents: null });
+      }
       // Whatever it has open that the lockdown does not cover (the egress proxy's tunnels, an ordinary MCP server's
       // stream) is cut before anything of production reaches it.
       for (const cut of lockingListeners) {
@@ -1721,11 +1727,20 @@ export function createFleet({
    * (openaiProxy.mjs), as a Codex session does.
    * @param {object} session
    * @param {'claude'|'codex'} agent
+   * @returns {boolean}  whether it was allowed now, rather than before: a start that then fails takes it back (dropAgent)
    */
   function allowAgent(session, agent) {
-    if ((session.extraAgents ?? []).includes(agent)) return;
+    if ((session.extraAgents ?? []).includes(agent)) return false;
     console.log('fleet: another agent allowed in the session', { id: session.id, agent });
     update(session, { extraAgents: [...(session.extraAgents ?? []), agent] });
+    return true;
+  }
+
+  /** What allowAgent allowed, taken back: the start it was for did not happen. */
+  function dropAgent(session, agent) {
+    if (!(session.extraAgents ?? []).includes(agent)) return;
+    console.log('fleet: another agent no longer allowed in the session, its start failed', { id: session.id, agent });
+    update(session, { extraAgents: session.extraAgents.filter((a) => a !== agent) });
   }
 
   /**
@@ -1800,6 +1815,9 @@ export function createFleet({
       endpoint: null, startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: session.claudeSession ?? null,
       lastActiveAt: null, checkedAt: null, app: null, appServers: null, appName: null, apps: null, resumedAt: nowIso(), resumedBy: owner, queuedAt: nowIso(),
       herdrParent: herdrParent ? true : null,
+      // A Resume starts its own agent alone: what the agents of the last run were allowed (a Codex one's sign-in) is
+      // not this run's, and the last run's list is not either.
+      extraAgents: null, agents: null,
       // Its pull request's watch ended when it stopped: it is watched again once statusd reports it.
       announcedPrUrl: null,
       // A tainted session starts locked down, its entrypoint told so (WOODSHED_TAINTED): its statusd needs no notice.
@@ -2912,7 +2930,7 @@ export function createFleet({
   }
 
   return {
-    createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, allowAgent, dropAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

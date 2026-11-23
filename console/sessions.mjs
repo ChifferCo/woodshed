@@ -399,7 +399,8 @@ const MAX_APP_LABEL = 60;
 /** Whether the session runs codex: a Codex session, or a private one whose owner started a Codex agent in it
  * (fleet.allowAgent): its owner's Codex sign-in and the team's OpenAI key are for it as for a Codex session. */
 export function runsCodex(session) {
-  return session.options?.agent === 'codex' || (Boolean(session.owner) && (session.extraAgents ?? []).includes('codex'));
+  // Never once the session has seen production data: a Codex session cannot, and a claude session's Codex agent stops.
+  return session.options?.agent === 'codex' || (Boolean(session.owner) && !session.taintedAt && (session.extraAgents ?? []).includes('codex'));
 }
 
 const AGENT_STATES = new Set(['starting', 'working', 'needs-you', 'done', 'not-running']);

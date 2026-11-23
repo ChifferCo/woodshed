@@ -1108,6 +1108,10 @@ image from the worktree and pass its tag. For another kind of session, copy it: 
 the stand-in session API serves.
 `providers/aws/bin/qaInImage.mjs <image> <pull request number>` is that copy for a QA session: it keeps the report
 instead of writing the pull request's comment and check.
+`providers/aws/bin/agentsInImage.mjs <image>` is the copy for the agents a private session's owner starts beside its own
+(`session/agents.mjs`): it copies the checkout's `session/` and `shared/` over the image's, runs a private claude start,
+then starts a claude and a codex through statusd's `/agents` and opens the TUI tab's ttyd for each, and prints PASSED or
+FAILED.
 `providers/aws/bin/herdrParentInImage.mjs <image> [entrypoint.sh]` is the copy for a private session started with
 `woodshed session new --herdr --parent`: it runs the whole start under ECS's init (`--init`) and waits for the agent's
 terminal, which a terminal in this computer's Herdr makes once the machine is added with `--via 'docker exec -i

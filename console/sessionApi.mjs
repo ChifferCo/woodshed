@@ -421,7 +421,8 @@ async function codexSignInReply(req, res, session, userSettings) {
 // A private Codex session's refreshed login: ChatGPT's refresh token rotates, so the copy saved on My settings would
 // stop working once a session used it. Only the owner's own sign-in is ever replaced, and only by their own session.
 async function codexAuthReply(req, res, session, userSettings) {
-  if (!userSettings || !session.owner || !runsCodex(session)) {
+  // A tainted session sends nothing back (runsCodex): what it holds never reaches the owner's later sessions.
+  if (!userSettings || !session.owner || !runsCodex(session) || session.taintedAt) {
     req.resume();
     return reply(res, 404, { error: 'only a private Codex session keeps a sign-in' });
   }

@@ -1543,3 +1543,55 @@ test('a guarded send carries its caller\'s own deadline', () => {
   assert.equal(sendNotAfter('{"text":"x","notAfter":1700000000000}'), 1700000000000);
   for (const raw of ['{"text":"x"}', '{"text":"x","notAfter":"soon"}', '{"text":"x","notAfter":-1}', 'nope']) assert.equal(sendNotAfter(raw), null, raw);
 });
+
+// An agent started beside the session's own (agents.mjs) through statusd's routes, in a real tmux: the stand-in picker
+// stands in for its claude, and is asked and answered on that agent's routes, never the session's own pane.
+test('an agent beside the session\'s own starts in its own tmux session, and its question is read and answered on its routes', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-agents-'));
+  const tmuxEnv = { ...isolatedEnv(), TMUX: '', TMUX_TMPDIR: dir };
+  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
+  t.after(async () => {
+    await tmux('kill-server').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const spec = { questions: [{ question: 'Which colour?', header: 'Colour', options: ['Red', 'Green', 'Blue'] }] };
+  await fs.writeFile(path.join(dir, 'spec.json'), JSON.stringify(spec));
+  const picker = fileURLToPath(new URL('../shared/__fixtures__/claudePicker.mjs', import.meta.url));
+  // The agent's `claude`, whatever flags it is given: the picker, which writes what was picked.
+  await fs.mkdir(path.join(dir, 'bin'));
+  await fs.writeFile(path.join(dir, 'bin', 'claude'), `#!/bin/sh\nexec '${process.execPath}' '${picker}' '${dir}/spec.json' '${dir}/answers.json'\n`, { mode: 0o755 });
+  await fs.writeFile(path.join(dir, 'flags'), '');
+  // The session's own pane, which nothing here may type into.
+  await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '40', 'sleep 600');
+  const { call } = await statusdWithApp(t, { env: {
+    TMUX: '', TMUX_TMPDIR: dir, SESSION_KIND: 'private', WOODSHED_AGENT_BIN: path.join(dir, 'bin'), WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'),
+    WOODSHED_CODEX_READY_FILE: path.join(dir, 'no-codex'), WOODSHED_AGENT_STATE_DIR: dir, WOODSHED_CLAUDE_STATE_FILE: path.join(dir, 'own-state.json'),
+  } });
+
+  assert.equal((await call('POST', '/agents', 'wrong', '{}')).status, 401);
+  const started = await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'claude', model: 'opus' }));
+  assert.equal(started.status, 200);
+  assert.equal(started.body.agent.id, 'agent-2');
+  assert.equal((await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'codex' }))).status, 409, 'no codex home in this session');
+  const shown = async () => (await tmux('capture-pane', '-p', '-t', '=agent-2:')).stdout;
+  for (let i = 0; i < 50 && !/Esc to cancel/.test(await shown()); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok((await tmux('ls')).stdout.includes('agent-2:'), 'its own tmux session');
+
+  const prompt = (await call('GET', '/agents/agent-2/prompt', 'sess')).body.prompt;
+  assert.equal(prompt?.question, 'Which colour?');
+  assert.equal((await call('GET', '/prompt', 'sess')).body.prompt, null, 'the session\'s own pane asks nothing');
+  assert.equal((await call('GET', '/agents/agent-9/prompt', 'sess')).status, 404);
+  const options = ['Red', 'Green', 'Blue'];
+  const answer = { kind: 'question', questions: [{ question: 'Which colour?', options, descriptions: options.map((o) => `${o} is one of the options`), pick: 2 }] };
+  assert.deepEqual((await call('POST', '/agents/agent-2/answer', 'sess', JSON.stringify(answer))).body, { ok: true });
+  let picked = null;
+  for (let i = 0; i < 50 && !picked; i++) {
+    picked = JSON.parse(await fs.readFile(path.join(dir, 'answers.json'), 'utf8').catch(() => 'null'));
+    if (!picked) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.ok(JSON.stringify(picked).includes('Blue'), JSON.stringify(picked));
+
+  assert.deepEqual((await call('POST', '/agents/agent-2/stop', 'sess', '{}')).body, { stopped: 'agent-2' });
+  assert.deepEqual((await call('GET', '/agents', 'sess')).body, { agents: [] });
+  assert.ok((await tmux('ls')).stdout.includes('claude:'), 'the session\'s own is still there');
+});

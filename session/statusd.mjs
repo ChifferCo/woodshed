@@ -905,7 +905,9 @@ const readAgent = stateReader({ qa: QA, codex: CODEX, terminal: TERMINAL });
 // ChatGPT's refresh token rotates, so the sign-in saved on My settings stops working once a session used it. The
 // console keeps the copy only for an owner who saved one, and says 409 to anyone else.
 async function keepCodexAuth() {
-  if (!(CODEX || agents?.ranCodex()) || !CONSOLE_URL || process.env.SESSION_KIND !== 'private') return;
+  // A Codex agent beside claude in a session that has since seen production data sends nothing back (the console refuses
+  // it too): its sign-in file is the session's to write.
+  if (!(CODEX || (agents?.ranCodex() && !tainted())) || !CONSOLE_URL || process.env.SESSION_KIND !== 'private') return;
   try {
     const [body, given] = await Promise.all([fs.readFile(CODEX_AUTH_FILE, 'utf8'), fs.readFile(CODEX_GIVEN_FILE, 'utf8').catch(() => null)]);
     // Only a login this session refreshed goes back: another session's newer one must not be written over by a stale copy.
