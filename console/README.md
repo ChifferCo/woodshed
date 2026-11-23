@@ -778,7 +778,7 @@ does. Their logins rotate their refresh token at each use, so a session sends th
 key or login saved since, nor another session's refresh) and does not run out before it. Their **Model** is a name their
 own `--model` takes, blank for the agent's default (OpenCode's is `provider/model`); **Effort** and **Permissions**
 offer what each one's command line has (`efforts` and `permissionModes` in the registry). None of them gets the
-console's MCP servers yet.
+console's MCP servers yet, and Grok Build runs none of a repo's own either (`session/grokRequirements.toml`).
 
 Under the token, the switch **Also use it for shared sessions I start from
 GitHub** (on by default, and only with a token saved) runs the shared

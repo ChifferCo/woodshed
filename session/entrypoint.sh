@@ -1155,14 +1155,25 @@ configureOpencode() {
   (umask 077 && cp "$OWN_AGENT_AUTH_FILE" "$OPENCODE_DATA_DIR/auth.json")
   # session/bin/opencode turns the repo's own config off (OPENCODE_DISABLE_PROJECT_CONFIG): an opencode.json in the
   # repo could point a provider at another address, which would get the owner's key. That also leaves out the repo's
-  # AGENTS.md (measured with 1.19.6), so it is named here, or CLAUDE.md where the repo has none, as opencode reads them.
-  local repoRules=''
-  if [ -f "$REPO_DIR/AGENTS.md" ]; then repoRules=$REPO_DIR/AGENTS.md; elif [ -f "$REPO_DIR/CLAUDE.md" ]; then repoRules=$REPO_DIR/CLAUDE.md; fi
-  jq -n --arg effort "${EFFORT:-}" --arg rules "$repoRules" '{"$schema": "https://opencode.ai/config.json", autoupdate: false, share: "disabled"}
-    + (if $rules == "" then {} else {instructions: [$rules]} end)
+  # AGENTS.md (measured with 1.19.6), so its text, or CLAUDE.md's where the repo has none, goes after the rules in
+  # opencode's own AGENTS.md, copied once here: never named by path, which a symlink made later in the session could
+  # turn into another file, and never through a symlink, which could point at auth.json and send every saved provider
+  # key to the model.
+  jq -n --arg effort "${EFFORT:-}" '{"$schema": "https://opencode.ai/config.json", autoupdate: false, share: "disabled"}
     + (if $effort == "" then {} else {agent: {build: {variant: $effort}, plan: {variant: $effort}}} end)' \
     > "$OPENCODE_CONFIG_DIR/opencode.json"
   cp /tmp/woodshed-rules.md "$OPENCODE_CONFIG_DIR/AGENTS.md"
+  local rules
+  for rules in AGENTS.md CLAUDE.md; do
+    if [ -L "$REPO_DIR/$rules" ]; then
+      log "WARNING: the repo's $rules is a symlink, so OpenCode does not get it"
+      break
+    fi
+    if [ -f "$REPO_DIR/$rules" ]; then
+      { printf '\n\n# The repo\x27s own %s\n\n' "$rules"; cat "$REPO_DIR/$rules"; } >> "$OPENCODE_CONFIG_DIR/AGENTS.md"
+      break
+    fi
+  done
   log "opencode runs on the owner's own provider sign-ins, directly" "(providers: $(jq -r 'keys | join(" ")' "$OWN_AGENT_AUTH_FILE"))"
 }
 

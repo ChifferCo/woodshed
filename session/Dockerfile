@@ -311,6 +311,10 @@ RUN if psql --version 2>/dev/null | grep -qE "^psql \(PostgreSQL\) ${PG_CLIENT_M
   && apt-get install -y --no-install-recommends "postgresql-client-${PG_CLIENT_MAJOR}" \
   && rm -rf /var/lib/apt/lists/*
 
+# Grok Build's policy folder, made here as root and readable by node: copying its file below into a folder that is not
+# there yet would give the folder the file's mode, 644, which node cannot open, and grok refuses to start (fail closed).
+RUN install -d -m 755 /etc/grok
+
 USER node
 
 # Claude changes every day, so it is here rather than in the runtime: on the runtime, the installs built on it would run
@@ -369,6 +373,8 @@ COPY --chown=node:node woodshed/session/tmux.conf /home/node/.tmux.conf
 # Ahead of /usr/bin/gh in every PATH, login shells included: gh gets a short-lived token each run.
 # No --link: on a one-file copy over the 4 GB tree it cost 17 s of merging.
 COPY woodshed/session/gh.sh /usr/local/bin/gh
+# Grok Build's machine policy, root-owned: no repo-defined MCP server starts in a Grok session (the file says why).
+COPY --chmod=644 woodshed/session/grokRequirements.toml /etc/grok/requirements.toml
 
 # The entrypoint and statusd read it: it is where the project file and the app are.
 ENV REPO_DIR=${REPO_DIR}

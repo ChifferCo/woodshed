@@ -37,3 +37,15 @@ test('grok gets an xAI key in XAI_API_KEY, and nothing for a login, which is in 
 test('opencode never reads the repo\'s own config, which could send the owner\'s key elsewhere', async (t) => {
   assert.deepEqual(await wrapped(t, 'opencode', { auth: '{"anthropic":{"type":"api","key":"k"}}' }), { argv: ['--model', 'm', 'hi there'], xai: null, projectConfig: '1' });
 });
+
+test('the image gives Grok Build a root-owned policy that lets no MCP server run, a repo\'s own included', () => {
+  const policy = fs.readFileSync(fileURLToPath(new URL('./grokRequirements.toml', import.meta.url)), 'utf8');
+  const settings = policy.split('\n').filter((line) => line.trim() && !line.startsWith('#'));
+  assert.deepEqual(settings, ['allow_managed_mcp_servers_only = true', 'enable_all_project_mcp_servers = false', 'allowed_mcp_servers = []']);
+  const dockerfile = fs.readFileSync(fileURLToPath(new URL('./Dockerfile', import.meta.url)), 'utf8');
+  assert.match(dockerfile, /^COPY --chmod=644 woodshed\/session\/grokRequirements\.toml \/etc\/grok\/requirements\.toml$/m, 'no --chown: root owns it, so node cannot change it');
+  // Its folder made first, as root, and openable by node: a COPY that made it would give it the file's 644.
+  const made = dockerfile.indexOf('RUN install -d -m 755 /etc/grok');
+  assert.ok(made > 0 && made < dockerfile.indexOf('/etc/grok/requirements.toml'));
+  assert.ok(dockerfile.lastIndexOf('USER node', made) < dockerfile.lastIndexOf('FROM ', made), 'made while the stage is still root');
+});

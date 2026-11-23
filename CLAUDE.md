@@ -996,7 +996,8 @@ URL on top of each env file's Repo settings values
   owner's own sign-in`). The console logs `userSettings: <Product> sign-in saved` or `removed`; at start
   `sessionApi: <Product> sign-in handed out`, or `no <Product> sign-in for the owner` with a 409, and the session's log
   says `could not get the owner's settings`. None of them gets the console's MCP servers (`mcpRelay: refused` with `a
-  <Product> session gets no MCP servers`).
+  <Product> session gets no MCP servers`), and Grok Build runs no MCP server at all, a repo's own included: the image's
+  `/etc/grok/requirements.toml` locks them down (`grok inspect` in the session lists each as `BLOCKED`).
 - **New session's Codex models are old, or say `codex's built-in list`.** The line under the menus says why. The console
   logs `codexModels: catalog read` with `source` (`own` or `team`) and how many `models`, `OpenAI refused the catalog`
   with the `status` (a 401 is a sign-in OpenAI no longer takes), `catalog not read`, `own sign-in expired, not read`

@@ -1,0 +1,9 @@
+# Grok Build's machine policy (its requirements.toml), copied root-owned to /etc/grok/requirements.toml by the image, so
+# nothing a session runs as node can change it. No MCP server runs in a Grok session: a repo's own (`.grok/config.toml`'s
+# [mcp_servers], `.mcp.json`, `.cursor/mcp.json`) would otherwise start as Grok opens, in a folder the session trusts,
+# with the owner's xAI key in its environment. Measured with 1.0.92: without this file all three start; with it none
+# does, and `grok inspect` lists each as `BLOCKED: locked down by policy`. Grok sessions get no MCP servers from the
+# console either.
+allow_managed_mcp_servers_only = true
+enable_all_project_mcp_servers = false
+allowed_mcp_servers = []

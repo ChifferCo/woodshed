@@ -1442,16 +1442,26 @@ test('OpenCode: its auth.json, its config with the effort as each agent\'s varia
   assert.equal(configureAgent('configureOpencode', 'sk-ant-x').failed, true, 'a bare key is not its auth.json');
 });
 
-test('OpenCode: the repo\'s AGENTS.md, or its CLAUDE.md, is named in the owner\'s config, since its own config is off', (t) => {
+test('OpenCode: the repo\'s AGENTS.md, or its CLAUDE.md, is copied after the rules, never through a symlink', (t) => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-oc-repo-'));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const auth = '{"anthropic":{"type":"api","key":"sk-ant-x"}}';
-  const instructions = () => JSON.parse(configureAgent('configureOpencode', auth, { REPO_DIR: repo }).read('.config/opencode/opencode.json')).instructions;
-  assert.equal(instructions(), undefined, 'none to name');
-  fs.writeFileSync(path.join(repo, 'CLAUDE.md'), '# Claude rules\n');
-  assert.deepEqual(instructions(), [path.join(repo, 'CLAUDE.md')]);
-  fs.writeFileSync(path.join(repo, 'AGENTS.md'), '# Agent rules\n');
-  assert.deepEqual(instructions(), [path.join(repo, 'AGENTS.md')], 'AGENTS.md first, as opencode reads them');
+  const start = () => configureAgent('configureOpencode', auth, { REPO_DIR: repo });
+  const none = start();
+  assert.equal(none.read('.config/opencode/AGENTS.md'), '# Woodshed rules\n', 'none to copy');
+  assert.equal(JSON.parse(none.read('.config/opencode/opencode.json')).instructions, undefined, 'never a path opencode reads again');
+  fs.writeFileSync(path.join(repo, 'CLAUDE.md'), 'Claude rules\n');
+  assert.equal(start().read('.config/opencode/AGENTS.md'), "# Woodshed rules\n\n\n# The repo's own CLAUDE.md\n\nClaude rules\n");
+  fs.writeFileSync(path.join(repo, 'AGENTS.md'), 'Agent rules\n');
+  assert.equal(start().read('.config/opencode/AGENTS.md'), "# Woodshed rules\n\n\n# The repo's own AGENTS.md\n\nAgent rules\n", 'AGENTS.md first, as opencode reads them');
+  // A branch's AGENTS.md pointing at a credential: never followed, nor CLAUDE.md taken in its place.
+  const secret = path.join(repo, 'auth.json');
+  fs.writeFileSync(secret, '{"anthropic":{"key":"sk-ant-secret"}}');
+  fs.rmSync(path.join(repo, 'AGENTS.md'));
+  fs.symlinkSync(secret, path.join(repo, 'AGENTS.md'));
+  const linked = start();
+  assert.equal(linked.read('.config/opencode/AGENTS.md'), '# Woodshed rules\n');
+  assert.match(linked.out, /WARNING: the repo's AGENTS\.md is a symlink, so OpenCode does not get it/);
 });
 
 test('an own-sign-in agent\'s start stops without its sign-in, and keeps the copy it was given', () => {
