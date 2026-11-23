@@ -1732,8 +1732,21 @@ rows, one per person, with Accept and Decline on the row, and is left out while 
 whose box holds the table below, which scrolls sideways inside the box on a phone; and **Invite someone** (Add someone
 behind a hosting proxy) is that box's last row, which opens in place on its form (`/people#invite-card` opens it).
 
-**What each member can do.** Members is a table, one row per member and one
-column per switch, each off for a new member and set by an admin:
+**What each member can do.** Members is a table, one row per member, with a **Role** select and what that role can do
+beside it, in words. A role is a name for one set of three switches, which the console keeps and checks
+(`console/peopleRoles.mjs`): picking one sets all three at once (`POST /api/people/access`, `members: role set` in the
+log), and the role shown is read back from the switches, so a list from before roles shows as roles too.
+
+| Role | Admin | Sessions from GitHub | Can be assigned |
+| --- | --- | --- | --- |
+| Owner | on | on | on |
+| Member | off | on | on |
+| Contributor | off | on | off |
+| Private only | off | off | off |
+
+An admin kept from before roles with a switch off shows as Owner, with what they lack in words; picking Owner again
+turns both on. Invite someone takes a role too; without one (an older page or a script), someone new has every switch
+off, Private only. The switches:
 - *Admin*, above.
 - *Sessions from GitHub* (`githubSessions`): the `woodshed` label and
   `/woodshed` comments start or message a session for them, and they see
@@ -1750,8 +1763,8 @@ column per switch, each off for a new member and set by an admin:
 **Behind a hosting proxy** there is no People list of the console's own, and no People page, unless the program
 embedding the console hands over its list (`members`, "Embedding the console"). With it, People is a tab of Settings,
 after General and Secrets & webhooks, for owners (the admins there). Who is in and each person's role (Owner or
-Member) are the program's: **Add someone** takes a GitHub handle and a role, Remove and the Role column change them
-there, and core keeps no copy of the list (`console/hostedMembers.mjs`). Nobody asks to join, so there is no Asking to
+Member) are the program's: **Add someone** takes a GitHub handle and a People role, Remove and the Role column change
+them there (Owner is the program's owner role, every other People role its member role), and core keeps no copy of the list (`console/hostedMembers.mjs`). Nobody asks to join, so there is no Asking to
 join, accept or decline, and no dot. The switches stay the console's, in `state.json` under `memberSwitches` by
 lowercased handle: *Sessions from GitHub* is on for everyone listed (it was never asked behind a proxy, and it also
 gates seeing shared sessions), so only those turned off are kept; *Can be assigned* is off, as above. Someone the list

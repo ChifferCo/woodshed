@@ -387,7 +387,7 @@ reported, `startedBy` who it was started as, and `inMine` whether the console's 
 private sessions, and the shared sessions, reviews and QA runs you started or have. `mine` stays your own private
 session's alone, the ones `resume`, `remove`, `connect` and `herdr` act on. Which sessions are listed at all is the
 page's rule: someone else's private session never, and shared ones, reviews and QA runs among them, only when People
-gives you Sessions from GitHub.
+gives you Sessions from GitHub (the Contributor, Member or Owner role).
 `herdr` (and `new --herdr` or `resume --herdr` after its `running`) ends with `{"event":"connected","session":{…},"machine":{"name","action","state"},"agent":{"inHerdr","address"}}`,
 or inside a Woodshed session with `{"event":"herdr","action":"skipped","status":"in-session","session","insideSession","onYourComputer","message"}`,
 and `remove`'s `removed` event has `machine`: `{"name","removed"}`, or null with no `hc` here.

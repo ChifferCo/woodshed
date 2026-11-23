@@ -2,9 +2,10 @@
 // or decline someone asking to join, and remove another member; nobody else can open it. Read again every 30 seconds, so a
 // request shows without a reload; the invite field keeps what is typed.
 // It reads as the other settings pages do (settingsRows.js): Asking to join is a group of plain rows, Members a group
-// whose box holds the table, one column per switch, and inviting is the box's last row, which opens on its form.
+// whose box holds the table, a Role select and what that role can do, and inviting is the box's last row, which opens
+// on its form with a role of its own. The roles, and what each gives, come from /api/people (peopleRoles.mjs).
 // Behind a hosting proxy whose program hands over its list (`hosted` in /api/people), it is a tab of Settings: the
-// program keeps who is in and each role, so Add someone takes a role, the Admin column is the role, and nobody asks to join.
+// program keeps who is in and whether each is an owner, so Add someone goes to it, and nobody asks to join.
 // The program may say what it did on an add (`told`, an email sent), said in place of the hint that nothing is sent, and
 // note something beside each person (`note`). Both are its plain text, drawn as text.
 window.Woodshed.settingsPage('/people', (app, life) => {
@@ -24,8 +25,10 @@ window.Woodshed.settingsPage('/people', (app, life) => {
   let told = null;
   const invite = h('input', { id: 'invite', class: 'field', placeholder: '@handle', autocomplete: 'off', spellcheck: 'false' });
   const inviteError = h('p', { class: 'form-error', role: 'alert', hidden: true });
-  const addRole = h('select', { id: 'add-role', class: 'field', 'aria-label': 'Role' },
-    h('option', { value: 'member' }, 'Member'), h('option', { value: 'owner' }, 'Owner'));
+  // Someone new starts as they did before roles: behind a proxy with Sessions from GitHub on and nothing else, on a
+  // console of its own with every switch off. The select is filled once the roles are known.
+  const addRole = h('select', { id: 'add-role', class: 'field', 'aria-label': 'Role', onchange: () => render() });
+  let addRoleFilled = false;
 
   const { row, group, draw, follow } = window.WoodshedSettingsRows.create({ render });
 
@@ -91,13 +94,13 @@ window.Woodshed.settingsPage('/people', (app, life) => {
   function inviteRow() {
     const action = hosted ? 'add' : 'invite';
     const button = h('button', { type: 'submit', class: 'btn btn-stop' }, hosted ? 'Add someone' : 'Invite');
-    const hint = hosted
-      ? h('p', { class: 'foot', id: 'add-hint' }, told ? `They can sign in straight away. An owner is an admin here. ${told}`
-        : 'They can sign in straight away. An owner is an admin here. Nothing is sent to them: tell them the link.')
-      : h('p', { class: 'foot' }, 'They can sign in straight away. Nothing is sent to them: tell them the link.');
+    const picked = roleNamed(addRole.value);
+    const hint = h('p', { class: 'foot', id: 'add-hint' },
+      picked ? `${picked.label}: ${picked.explain}. ` : '',
+      `They can sign in straight away. ${told || 'Nothing is sent to them: tell them the link.'}`);
     return row({
       id: 'invite-card', title: hosted ? 'Add someone' : 'Invite someone',
-      value: hosted ? 'By GitHub handle, as an owner or a member' : 'By GitHub handle. They need write access to the repository',
+      value: hosted ? 'By GitHub handle, with a role' : 'By GitHub handle, with a role. They need write access to the repository',
     },
       h('form', {
         class: 'field-block', id: 'invite-form',
@@ -106,11 +109,11 @@ window.Woodshed.settingsPage('/people', (app, life) => {
           inviteError.hidden = true;
           const login = invite.value.trim().replace(/^@/, '');
           if (!login) return invite.focus();
-          if (await act(action, login, button, hosted ? { role: addRole.value } : {})) invite.value = '';
+          if (await act(action, login, button, { access: addRole.value })) invite.value = '';
         },
       },
         h('label', { class: 'field-label', for: 'invite' }, hosted ? 'Add someone by GitHub handle' : 'Invite by GitHub handle'),
-        h('div', { class: 'invite-row' }, invite, hosted && addRole, button),
+        h('div', { class: 'invite-row' }, invite, addRole, button),
         inviteError,
         hint));
   }
@@ -195,40 +198,17 @@ window.Woodshed.settingsPage('/people', (app, life) => {
       h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => { editing = login; render(); } }, link ? 'Change' : 'Link'));
   }
 
-  // The table's switches, one column each. Can be assigned needs sessions from GitHub, so it is greyed out without it;
-  // the console checks the same, and turning GitHub off turns it off too. Each starts off for a new member.
-  const SWITCHES = [
-    { field: 'admin', label: 'Admin', note: 'opens these pages', path: 'admin', body: (on) => ({ admin: on }),
-      toast: (login, on) => (on ? `@${login} is an admin` : `@${login} is no longer an admin`) },
-    { field: 'githubSessions', label: 'Sessions from GitHub', note: 'label, /woodshed, Everyone', path: 'github-sessions', body: (on) => ({ on }), split: true,
-      toast: (login, on) => (on ? `@${login} can start sessions from GitHub` : `@${login} can no longer start sessions from GitHub`) },
-    { field: 'assignable', label: 'Can be assigned', note: 'has shared sessions', path: 'assignable', body: (on) => ({ on }), needs: 'githubSessions',
-      toast: (login, on) => (on ? `@${login} can be assigned sessions` : `@${login} cannot be assigned sessions`) },
-  ];
+  const roleNamed = (id) => (data?.roles ?? []).find((r) => r.id === id) ?? null;
 
-  async function setSwitch(sw, login, on, box) {
-    box.disabled = true;
-    try {
-      data = await W.postJson(`/api/people/${sw.path}`, { login, ...sw.body(on) });
-      W.shell?.toast(sw.toast(login, on));
-    } catch (err) {
-      window.alert(`Not done: ${err.message}`);
-      box.checked = !on;
-      box.disabled = false;
-      return;
-    }
-    render();
-  }
-
-  // Behind a hosting proxy the Admin column is the role, changed through the program.
-  async function setRole(login, role, select) {
+  // A role sets the person's three switches at once (Admin or the program's owner, Sessions from GitHub, Can be assigned).
+  async function setAccess(login, access, was, select) {
     select.disabled = true;
     try {
-      data = await W.postJson('/api/people/role', { login, role });
-      W.shell?.toast(role === 'owner' ? `@${login} is an owner` : `@${login} is a member`);
+      data = await W.postJson('/api/people/access', { login, access });
+      W.shell?.toast(`@${login} is ${/^[aeiou]/i.test(roleNamed(access)?.label ?? '') ? 'an' : 'a'} ${roleNamed(access)?.label ?? access}`);
     } catch (err) {
       window.alert(`Not done: ${err.message}`);
-      select.value = role === 'owner' ? 'member' : 'owner';
+      select.value = was;
       select.disabled = false;
       return;
     }
@@ -237,51 +217,38 @@ window.Woodshed.settingsPage('/people', (app, life) => {
 
   function roleCell(m) {
     return h('td', { class: 'switch-cell' },
-      h('select', { class: 'field', 'aria-label': `Role: @${m.login}`, onchange: (e) => setRole(m.login, e.currentTarget.value, e.currentTarget) },
-        h('option', { value: 'owner', selected: m.role === 'owner' }, 'Owner'),
-        h('option', { value: 'member', selected: m.role !== 'owner' }, 'Member')));
+      h('select', { class: 'field', 'aria-label': `Role: @${m.login}`, onchange: (e) => setAccess(m.login, e.currentTarget.value, m.access, e.currentTarget) },
+        (data.roles ?? []).map((r) => h('option', { value: r.id, selected: r.id === m.access }, r.label))));
   }
 
-  const ROLE_COLUMN = { label: 'Role', note: 'an owner opens these pages' };
-  // The columns shown: behind a hosting proxy the role stands in for Admin.
-  const columns = () => (hosted ? [ROLE_COLUMN, ...SWITCHES.slice(1)] : SWITCHES);
-  const cellOf = (col, m) => (col === ROLE_COLUMN ? roleCell(m) : switchCell(col, m));
-
-  function switchCell(sw, m) {
-    const on = Boolean(m[sw.field]);
-    const blocked = sw.needs && !m[sw.needs];
-    const by = m[`${sw.field}By`];
-    const title = blocked ? 'Needs Sessions from GitHub first'
-      : on && by ? `Turned on by ${isMe(by) ? 'you' : W.personText(by)}, ${day(m[`${sw.field}At`])}` : null;
-    return h('td', { class: `switch-cell${sw.split ? ' is-split' : ''}`, title },
-      h('input', {
-        type: 'checkbox', checked: on, disabled: blocked, 'aria-label': `${sw.label}: @${m.login}`,
-        onchange: (e) => setSwitch(sw, m.login, e.currentTarget.checked, e.currentTarget),
-      }));
+  // What the role gives, in words; an owner from before roles with a switch off says what they have instead.
+  function canCell(m) {
+    return h('td', { class: 'role-can' }, h('span', { class: 'foot' }, m.accessDiffers || roleNamed(m.access)?.explain || ''));
   }
 
   function memberRows(m) {
     const row = h('tr', null,
       h('td', null, who(m.login, addedLine(m))),
-      columns().map((col) => cellOf(col, m)),
+      roleCell(m),
+      canCell(m),
       data.slack !== null && h('td', null, slackLine(m.login)),
       h('td', { class: 'end-cell' }, isMe(m.login) ? h('span', { class: 'foot' }, 'you')
         : h('button', { type: 'button', class: 'btn btn-delete', onclick: (e) => act('remove', m.login, e.currentTarget) }, 'Remove')));
     if (editing !== m.login) return [row];
-    return [row, h('tr', { class: 'edit-row' }, h('td', { colspan: String(columns().length + 3) }, slackEditor(m.login, data.slack?.[m.login])))];
+    return [row, h('tr', { class: 'edit-row' }, h('td', { colspan: '5' }, slackEditor(m.login, data.slack?.[m.login])))];
   }
 
   // The table sits in the group's box, and scrolls sideways inside it on a phone.
   function membersGroup() {
     return group({
       id: 'members', label: `Members · ${data.members.length}`,
-      note: hosted ? 'A tick is on. Each change saves at once; someone new starts with Sessions from GitHub on and Can be assigned off.'
-        : 'A tick is on. Each change saves at once; new members start with all of them off.',
+      note: 'A role says what each person can do, and saves at once. An owner is an admin here.',
     },
       h('div', { class: 'table-scroll' }, h('table', { class: 'people-table' },
         h('thead', null, h('tr', null,
           h('th', { scope: 'col' }, 'Member'),
-          columns().map((sw) => h('th', { scope: 'col', class: `switch-cell${sw.split ? ' is-split' : ''}` }, sw.label, h('div', { class: 'th-note' }, sw.note))),
+          h('th', { scope: 'col', class: 'switch-cell' }, 'Role'),
+          h('th', { scope: 'col' }, 'What they can do'),
           data.slack !== null && h('th', { scope: 'col' }, 'Slack'),
           h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, 'Remove')))),
         h('tbody', null, data.members.flatMap(memberRows)))),
@@ -310,6 +277,11 @@ window.Woodshed.settingsPage('/people', (app, life) => {
       const [people, meReply] = await Promise.all([W.getJson('/api/people'), me ? null : W.getJson('/api/me')]);
       data = people;
       hosted = Boolean(people.hosted);
+      if (!addRoleFilled && people.roles?.length) {
+        addRole.replaceChildren(...people.roles.map((r) => h('option', { value: r.id, selected: r.id === (hosted ? 'contributor' : 'private') }, r.label)));
+        addRole.value = hosted ? 'contributor' : 'private';
+        addRoleFilled = true;
+      }
       if (meReply) me = meReply.login;
       loadError = null;
     } catch (err) {

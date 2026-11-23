@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
+import { ROLES, roleDiffers, roleOf } from './peopleRoles.mjs';
+
 const source = fs.readFileSync(new URL('./public/people.js', import.meta.url), 'utf8');
 const rowsSource = fs.readFileSync(new URL('./public/settingsRows.js', import.meta.url), 'utf8');
 
@@ -44,7 +46,11 @@ async function loadPage({ members, addReply, hosted = true, requests = [] }) {
     for (const c of children.flat(Infinity)) if (c !== null && c !== undefined && c !== false) el.append(typeof c === 'object' ? c : String(c));
     return el;
   };
-  const list = { members, requests, hosted, names: {}, slack: null };
+  // As /api/people answers: each member's role from their switches, and the roles with what each gives.
+  const withRoles = (reply) => (reply && Array.isArray(reply.members)
+    ? { ...reply, roles: ROLES.map(({ id, label, explain }) => ({ id, label, explain })), members: reply.members.map((m) => ({ ...m, access: roleOf(m), accessDiffers: roleDiffers(m) })) }
+    : reply);
+  const list = withRoles({ members, requests, hosted, names: {}, slack: null });
   const posted = [];
   const heard = {};
   const W = {
@@ -52,7 +58,7 @@ async function loadPage({ members, addReply, hosted = true, requests = [] }) {
     personText: (l) => `@${l}`, ago: () => 'just now', shell: { toast() {} },
     settingsPage: (_match, start) => start(app, { nav: () => element('nav'), interval: () => {}, on: (_target, name, fn) => { heard[name] = fn; } }),
     getJson: async (path) => (path === '/api/me' ? { login: 'ana-owner' } : list),
-    postJson: async (path, body) => { posted.push([path, body]); return addReply(body); },
+    postJson: async (path, body) => { posted.push([path, body]); return withRoles(await addReply(body)); },
   };
   const context = vm.createContext({ window: { Woodshed: W, confirm: () => true, alert() {} }, document: { activeElement: null } });
   vm.runInContext(rowsSource, context);
@@ -71,7 +77,8 @@ async function loadPage({ members, addReply, hosted = true, requests = [] }) {
   return { app, add, hint, rowOf, posted, find, heard };
 }
 
-const CORE_HINT = 'They can sign in straight away. An owner is an admin here. Nothing is sent to them: tell them the link.';
+const CONTRIBUTOR = 'Contributor: Starts sessions from GitHub and sees Everyone, but is never assigned a shared session. ';
+const CORE_HINT = `${CONTRIBUTOR}They can sign in straight away. Nothing is sent to them: tell them the link.`;
 
 test('a note from the program is shown under the person, muted, as text', async () => {
   const { rowOf } = await loadPage({
@@ -94,7 +101,7 @@ test('after an add, what the program says it did stands in for core\'s hint; wit
   assert.equal(hint(), CORE_HINT, 'before any add');
   await add('lee-dev');
   assert.deepEqual([posted[0][0], posted[0][1].login], ['/api/people/add', 'lee-dev']);
-  assert.equal(hint(), 'They can sign in straight away. An owner is an admin here. We emailed them a link.');
+  assert.equal(hint(), `${CONTRIBUTOR}They can sign in straight away. We emailed them a link.`);
   told = '<script>alert(1)</script>';
   await add('bo-dev');
   assert.match(hint(), /<script>alert\(1\)<\/script>$/, 'as text, since h makes a text node of it');
@@ -144,4 +151,31 @@ test('the page is groups: a plain row per person asking, the table in Members\' 
   await walk(asking).find((e) => textOf(e) === 'Accept').listeners.click({ currentTarget: {} });
   assert.equal(JSON.stringify(posted), JSON.stringify([['/api/people/accept', { login: 'lee-dev' }]]));
   assert.equal(walk(app).find((e) => e.attrs.id === 'requests'), undefined, 'the group goes when nobody asks');
+});
+
+test('each member has a Role select and what that role can do; picking one posts it, and Add someone takes one', async () => {
+  const members = [person('ana-owner', 'owner'), person('lee-dev', 'member'), person('bo-dev', 'member', { githubSessions: false })];
+  const { rowOf, posted, find, add, hint } = await loadPage({
+    members,
+    addReply: (body) => (body.access ? { members: members.map((m) => (m.login === body.login ? { ...m, assignable: true } : m)), requests: [], hosted: true, names: {}, slack: null } : null),
+  });
+  const head = walk(find((e) => e.tag === 'thead')).filter((e) => e.tag === 'th').map(textOf);
+  assert.deepEqual(head, ['Member', 'Role', 'What they can do', 'Remove'], 'one Role column in place of a tick per switch');
+  const select = (login) => walk(rowOf(login)).find((e) => e.tag === 'select');
+  assert.deepEqual(select('lee-dev').children.map(textOf), ['Owner', 'Member', 'Contributor', 'Private only']);
+  const picked = (login) => textOf(select(login).children.find((o) => 'selected' in o.attrs));
+  assert.deepEqual(['ana-owner', 'lee-dev', 'bo-dev'].map(picked), ['Owner', 'Contributor', 'Private only']);
+  const can = (login) => textOf(walk(rowOf(login)).find((e) => e.className === 'role-can'));
+  assert.match(can('lee-dev'), /^Starts sessions from GitHub and sees Everyone, but is never assigned/);
+  assert.match(can('bo-dev'), /^Their own My Woodshed sessions only/);
+  assert.equal(can('ana-owner'), 'Opens these settings pages, starts sessions from GitHub, never assigned a shared session', 'an owner with a switch off says what they have');
+
+  await select('lee-dev').listeners.change({ currentTarget: { value: 'member', disabled: false } });
+  assert.equal(JSON.stringify(posted.at(-1)), JSON.stringify(['/api/people/access', { login: 'lee-dev', access: 'member' }]));
+  assert.equal(picked('lee-dev'), 'Member', 'drawn from the answer');
+
+  assert.match(hint(), /^Contributor: /, 'someone new behind a proxy starts as a Contributor, as before roles');
+  find((e) => e.attrs.id === 'add-role').value = 'member';
+  await add('cy-dev');
+  assert.equal(JSON.stringify(posted.at(-1)), JSON.stringify(['/api/people/add', { login: 'cy-dev', access: 'member' }]));
 });

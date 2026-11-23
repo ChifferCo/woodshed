@@ -187,13 +187,14 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## People
 
-- Members are a table: the person, one centred checkbox column per switch (Admin, Sessions from GitHub, Can be assigned),
-  Slack, and Remove. Head cells are uppercase `group-label` on `stopped`, with a `meta` note under each switch's name.
-  A thin `line` rule sets the feature columns apart from Admin. A switch that needs another is a disabled checkbox at
-  45% with a title saying what it needs. Checkboxes take `slate` as their accent. The table scrolls sideways on a phone.
+- Members are a table: the person, a **Role** select (Owner, Member, Contributor, Private only), **What they can do**
+  (that role in one plain sentence, in `foot`), Slack, and Remove. A role stands for a set of switches, so there is one
+  control per person, never a checkbox per switch. Head cells are uppercase `group-label` on `stopped`. Invite someone
+  (Add someone) takes a role select beside the handle, and its hint starts with the picked role's sentence. The table
+  scrolls sideways on a phone.
 - Behind a hosting proxy whose program keeps who is in, People is a tab of Settings (below), titled Settings. The
-  Admin column is **Role**, a select of Owner and Member in its cell; adding is **Add someone**, the handle and a role
-  select (as wide as its words) beside it. There is no Asking to join card, no accept or decline, and no asking dot.
+  Role select is the same, Owner being the program's owner; adding is **Add someone**, the handle and a role select (as
+  wide as its words) beside it. There is no Asking to join card, no accept or decline, and no asking dot.
   The program's note about a person sits in their `meta` line under the name, where a console of its own says who
   added them; what it says it did on an add ends the hint under the field, in place of "Nothing is sent to them".
 

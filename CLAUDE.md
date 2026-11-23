@@ -248,7 +248,7 @@ URL on top of each env file's Repo settings values
   the repo turns it off`, and `repoTriggers: changed` with who changed it. A label of another name is not this repo's
   and starts nothing.
 - **A shared session is Unassigned, or has the wrong person.** The console logs `fleet: session starts unassigned, its
-  starter cannot be assigned` when the label or comment came from someone with Can be assigned off (People page), and `fleet:
+  starter cannot be assigned` when the label or comment came from someone whose People role is Contributor or Private only (Can be assigned off), and `fleet:
   session assigned` with `from`, `to`, `by` and `how` (`label`, `comment`, `console`, `take it`, `hand over`, `unassign`) on every
   change. Someone who can be assigned commenting on an unassigned session takes it; a later comment on an assigned one does not move it.
   `members: can be assigned changed` and `members: sessions from GitHub changed` say who turned a switch. Assign answers 409
