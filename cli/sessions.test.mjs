@@ -1269,6 +1269,11 @@ test('session watch rides out a console it cannot reach, and stops when the sign
   assert.deepEqual(ended.lines.map((l) => [l.event, l.status ?? null]), [['watching', null], ['error', 'signed-out']]);
 });
 
+// The line this command line gives hc for a session's machine, in consoleFor's config folder.
+function viaFor(c, id) {
+  return viaCommand({ node: '/usr/local/bin/node', script: '/home/mia/woodshed/cli/woodshed.mjs', origin: c.origin, session: id, configHome: c.dir });
+}
+
 // A session of mia-dev's that `session herdr` made a machine: its saved line is this command line's tunnel to it.
 function herdrMachine(c, id) {
   const via = viaCommand({ node: '/usr/local/bin/node', script: '/home/mia/woodshed/cli/woodshed.mjs', origin: c.origin, session: id });
@@ -1335,7 +1340,7 @@ test('session watch --herdr starts the watch in a terminal of hc\'s own, once', 
   const c = await consoleFor(t);
   const out = await c.run(['session', 'watch', '--herdr', '--kind', 'private,review', '--every', '30', '--json']);
   assert.equal(out.code, EXIT.done, out.err);
-  assert.deepEqual(out.lines, [{ event: 'herdr', action: 'started', terminal: 'woodshed-watch', address: 't9' }]);
+  assert.deepEqual(out.lines, [{ event: 'herdr', action: 'started', terminal: 'woodshed-watch', address: 't9', add: false }]);
   const run = c.hc.calls.find((a) => a[0] === 'run');
   assert.deepEqual(run.slice(0, run.indexOf('--') + 1), ['run', '--bg', '--json', '--name', 'woodshed-watch', '--no-parent',
     '--label', 'herdr.space=woodshed', '--label', 'herdr.tab=woodshed-watch', '--']);
@@ -1346,6 +1351,153 @@ test('session watch --herdr starts the watch in a terminal of hc\'s own, once', 
   assert.equal(again.code, EXIT.done);
   assert.match(again.out, /Herdr already has woodshed-watch watching: .*hc kill woodshed-watch/);
   assert.equal(c.hc.calls.filter((a) => a[0] === 'run').length, 2, 'asked once more, and hc kept the one it had');
+});
+
+test('session watch --add adds each of your private sessions to Herdr as it starts running or resumes, and nothing else', async (t) => {
+  const mine = (id, more = {}) => ({ id, owner: 'mia-dev', title: `Mine ${id}`, status: 'stopped', stopReason: 'idle for 2 h', ...more });
+  const out = await watching(t, {
+    extra: [
+      ...PULL_RUNS,
+      mine('7a7a0021', { taintedAt: iso(T0 - 60_000) }),
+      mine('7b7b0022', { kind: 'ask', trigger: 'slack' }),
+      mine('7c7c0023'),
+      mine('7d7d0024'),
+    ],
+    args: ['--add', '--json'],
+    before: (c) => herdrMachine(c, 'aaaa0001'),
+    moves: [
+      (s, c) => {
+        // Resumed: yours (bbbb0002), one that saw production, a question, and one a session new --herdr has added
+        // already, through this same line. Started elsewhere: a new one of yours (from the page, Slack or an agent), a
+        // shared one, octocat's, and a review of your pull request.
+        for (const id of ['bbbb0002', '7a7a0021', '7b7b0022', '7c7c0023']) Object.assign(at(s, id), { status: 'queued', stopReason: null });
+        s.push({ ...at(s, 'aaaa0001'), id: 'dddd0009', title: 'From the page', status: 'starting', state: null });
+        s.push({ ...at(s, 'cccc0003'), id: '5e5e0010', status: 'starting', state: null, assignee: 'mia-dev' });
+        s.push({ ...at(s, 'eeee0005'), id: '5f5f0011', status: 'starting', state: null });
+        s.push({ ...PULL_RUNS[0], id: '6a6a0012', status: 'starting', state: null });
+        c.hc.machines.set('woodshed-7c7c0023', { name: 'woodshed-7c7c0023', target: viaFor(c, '7c7c0023'), via: true, temporary: false, state: 'connected' });
+      },
+      (s) => { for (const id of ['bbbb0002', '7a7a0021', '7b7b0022', '7c7c0023', 'dddd0009', '5e5e0010', '5f5f0011', '6a6a0012']) Object.assign(at(s, id), { status: 'running', state: 'working' }); },
+      // aaaa0001, a machine in Herdr, pauses: its machine goes unreachable, and nothing resumes it to add it.
+      (s, c) => { Object.assign(at(s, 'aaaa0001'), { status: 'stopped', state: null, stopReason: 'idle for 2 h' }); c.hc.machines.get('woodshed-aaaa0001').state = 'unreachable'; },
+      () => {},
+      // Resumed on the page: added again, its unreachable machine forgotten first.
+      (s) => { Object.assign(at(s, 'aaaa0001'), { status: 'queued', stopReason: null }); },
+      (s) => { Object.assign(at(s, 'aaaa0001'), { status: 'running', state: 'working' }); },
+      // One that starts while you are away from a machine your computer can add, and runs: never paused or resumed.
+      (s) => { s.push({ ...at(s, 'aaaa0001'), id: '8a8a0025', status: 'stopped', stopReason: 'idle for 2 h' }); },
+    ],
+  });
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.equal(out.lines[0].add, true);
+  const added = out.lines.filter((l) => l.event === 'herdr-added');
+  assert.deepEqual(added.map((l) => [l.session.id, l.machine.action]).sort(), [['aaaa0001', 'updated'], ['bbbb0002', 'added'], ['dddd0009', 'added']]);
+  assert.deepEqual(added.at(-1).session.id, 'aaaa0001', 'the resumed one, once it runs again');
+  assert.deepEqual(out.c.hc.added().map((a) => a[4]).sort(), ['woodshed-aaaa0001', 'woodshed-bbbb0002', 'woodshed-dddd0009'],
+    'never a shared session, octocat\'s, a review, a question, one that saw production, or one already connected');
+  const bbbb = out.c.hc.added().find((a) => a[4] === 'woodshed-bbbb0002');
+  assert.equal(bbbb[6], viaFor(out.c, 'bbbb0002'), 'through this command line\'s tunnel, as session herdr adds it');
+  assert.ok(out.c.hc.calls.some((a) => a.join(' ') === 'machine rm --json woodshed-aaaa0001'), 'the unreachable machine is forgotten, then added again');
+  // With its space, as session herdr places it.
+  assert.deepEqual(added.find((l) => l.session.id === 'bbbb0002').agent, { inHerdr: true, address: 'woodshed-bbbb0002/t1' });
+  assert.deepEqual(out.c.hc.labels.get('woodshed-bbbb0002/t1'), { 'herdr.space': 'woodshed-bbbb0002', 'herdr.tab': 'woodshed-bbbb0002-agent' });
+  assert.ok(!out.c.calls.some(([kind]) => kind === 'resume'), 'nothing resumed to be added');
+  // The watch's own events go on as before.
+  assert.ok(out.lines.some((l) => l.event === 'started' && l.session.id === 'dddd0009'));
+});
+
+test('session watch --add tries a failed add again while the session runs, then says how to add it by hand', async (t) => {
+  const hc = fakeHc({ addFails: 'the via command exited 255: woodshed: the session is not running' });
+  const out = await watching(t, {
+    extra: [],
+    hc,
+    args: ['--add'],
+    moves: [
+      (s) => { Object.assign(at(s, 'bbbb0002'), { status: 'queued', stopReason: null }); },
+      (s) => { Object.assign(at(s, 'bbbb0002'), { status: 'running', state: 'working' }); },
+      () => {}, () => {}, () => {},
+    ],
+  });
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.equal(hc.added().length, 3, 'three tries, then no more');
+  assert.match(out.out, /bbbb0002 {2}not added to Herdr: hc could not add woodshed-bbbb0002: the via command exited 255[^\n]*; trying again\n/);
+  assert.match(out.out, /bbbb0002 {2}not added to Herdr: [^\n]*\. Add it with: woodshed session herdr bbbb0002\n/);
+  assert.match(out.out, /^Watching your sessions \(Mine\) on .*, adding each of your private sessions to Herdr as it starts or resumes\. Ctrl-C stops\.$/m);
+});
+
+test('session watch --herdr --add starts the watch in hc with --add, and says it adds your sessions', async (t) => {
+  const c = await consoleFor(t);
+  const out = await c.run(['session', 'watch', '--herdr', '--add']);
+  assert.equal(out.code, EXIT.done, out.err);
+  const run = c.hc.calls.find((a) => a[0] === 'run');
+  assert.deepEqual(run.slice(run.indexOf('--console') + 2), ['--add', '--herdr']);
+  assert.match(out.out, /It also adds each of your own private sessions to Herdr as it starts running or resumes\. Stop it with: hc kill woodshed-watch/);
+  const none = await consoleFor(t, { hc: fakeHc({ missing: true }) });
+  const missing = await none.run(['session', 'watch', '--add']);
+  assert.equal(missing.code, EXIT.refused, '--add needs hc, with or without --herdr');
+});
+
+// Inside a Woodshed session, as its entrypoint leaves the agent's environment: hc there is the session's own core.
+const IN_SESSION = { SESSION_ID: '0abc1234', WOODSHED_TERMINAL: 'herdr', HC_TERMINAL_ID: 't1' };
+
+test('inside a Woodshed session, session herdr adds nothing and resumes nothing, and says the person\'s computer adds it', async (t) => {
+  const c = await consoleFor(t, { env: IN_SESSION, script: [...START, { status: 'running', state: 'working' }] });
+  for (const id of ['aaaa0001', 'bbbb0002']) {
+    const out = await c.run(['session', 'herdr', id, '--json']);
+    assert.equal(out.code, EXIT.refused);
+    assert.equal(out.lines.at(-1).status, 'in-session');
+    assert.equal(out.lines.at(-1).error, `This runs inside Woodshed session 0abc1234, where hc is that session's own Herdr: a machine added there never shows in your computer's Herdr sidebar, so nothing was added. Your computer adds it: run woodshed session herdr ${id} --console ${c.origin} there, or keep woodshed session watch --herdr --add running there, which adds each of your sessions as it starts or resumes.`);
+  }
+  assert.deepEqual(c.hc.calls, [], 'hc here is never asked anything');
+  assert.ok(!c.calls.some(([kind]) => kind === 'resume'), 'the paused one is not resumed');
+  // tmux sessions too.
+  const tmux = await consoleFor(t, { env: { ...IN_SESSION, WOODSHED_TERMINAL: 'tmux', HC_TERMINAL_ID: undefined } });
+  assert.equal((await tmux.run(['session', 'herdr', 'aaaa0001'])).code, EXIT.refused);
+  assert.equal(tmux.hc.added().length, 0);
+});
+
+test('inside a Woodshed session, new --herdr and resume --herdr start the session and skip adding it, and --parent is refused', async (t) => {
+  const c = await consoleFor(t, { env: IN_SESSION, script: [...START, { status: 'running', state: 'working' }] });
+  const started = await c.run(['session', 'new', '--herdr', '--json', 'fix the login bug']);
+  assert.equal(started.code, EXIT.done, started.err);
+  assert.deepEqual(started.lines.map((l) => l.event).filter((e) => e !== 'step' && e !== 'status'), ['started', 'running', 'herdr']);
+  assert.deepEqual({ ...started.lines.at(-1), message: undefined }, {
+    event: 'herdr', action: 'skipped', status: 'in-session', session: 'dddd0004', insideSession: '0abc1234',
+    onYourComputer: `woodshed session herdr dddd0004 --console ${c.origin}`, message: undefined,
+  });
+  assert.equal(c.hc.added().length, 0);
+
+  const resumed = await c.run(['session', 'resume', 'bbbb0002', '--herdr']);
+  assert.equal(resumed.code, EXIT.done, resumed.err);
+  assert.match(resumed.out, /This runs inside Woodshed session 0abc1234, where hc is that session's own Herdr: a machine added there never shows in your computer's Herdr sidebar, so bbbb0002 was not added\. Your computer adds it: run woodshed session herdr bbbb0002 --console \S+ there/);
+  assert.deepEqual(c.calls.find(([kind]) => kind === 'resume'), ['resume', { owner: 'mia-dev', id: 'bbbb0002' }]);
+  assert.deepEqual(c.hc.calls, [], 'hc here is never asked anything');
+
+  const starts = c.calls.filter(([kind]) => kind === 'start').length;
+  const parent = await c.run(['session', 'new', '--herdr', '--parent', '--json', 'go']);
+  assert.equal(parent.code, EXIT.refused);
+  assert.equal(parent.lines.at(-1).status, 'in-session');
+  assert.match(parent.lines.at(-1).error, /--parent makes the session's agent a child of a terminal in this computer's Herdr, and this runs inside Woodshed session 0abc1234/);
+  assert.equal(c.calls.filter(([kind]) => kind === 'start').length, starts, 'nothing started');
+  const herdrParent = await c.run(['session', 'herdr', 'aaaa0001', '--parent']);
+  assert.equal(herdrParent.code, EXIT.refused);
+  assert.match(herdrParent.err, /--parent makes the session's agent a child/);
+
+  const watch = await c.run(['session', 'watch', '--herdr', '--add']);
+  assert.equal(watch.code, EXIT.refused);
+  assert.match(watch.err, /--add adds your sessions to the Herdr on this computer, and this runs inside Woodshed session 0abc1234.*Run woodshed session watch --herdr --add on your computer/);
+  assert.deepEqual(c.hc.calls, []);
+});
+
+test('resume --herdr on your computer resumes, then adds the session to Herdr as session herdr does', async (t) => {
+  const c = await consoleFor(t, { script: [...START, { status: 'running', state: 'working' }] });
+  const out = await c.run(['session', 'resume', 'bbbb0002', '--herdr', '--json']);
+  assert.equal(out.code, EXIT.done, out.err);
+  assert.equal(out.lines.at(-1).event, 'connected');
+  assert.equal(out.lines.at(-1).machine.name, 'woodshed-bbbb0002');
+  const noWait = await c.run(['session', 'resume', 'bbbb0002', '--herdr', '--no-wait']);
+  assert.equal(noWait.code, EXIT.failed);
+  assert.match(noWait.err, /--herdr waits for the session to run/);
 });
 
 test('session watch --herdr needs hc, as session herdr does', async (t) => {

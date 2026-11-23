@@ -26,8 +26,12 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - The rail head is one row: the Mine | Everyone switch, the People filter on Everyone only, and + New session on the right. The rail is 360px wide on a desktop, and 412px in the desktop app on macOS, where its head also holds the window's traffic lights (`desktop/windowChrome.mjs`, below). On a console one person uses there is no switch: the head reads My sessions, over one list of every session in Mine's groups.
 - The user menu sits in a footer and opens upward. Beside it, a square quiet button with a sidebar icon hides the rail (⌘.); while it is hidden, a strip down the left edge, on `ground` with a `line` border, holds the same button at the foot to show it again. Neither shows on a phone, where the rail is its own page.
 - With more than one project, a row of filter chips sits under the head: All with its count, then one per project with its `proj-*` swatch, name and count. They are the legend of the cards' edges, and picking one shows only that project's sessions (the zone counts follow); the pick is kept in the browser.
-- A card has two lines. Line one: the title, an ownership tag, then the star and ⋯ marks. Line two: the status word first, then a name only when the card does not already say it, with the PR chips (at most two, older ones folded into a grey `+N` chip; RailCard) or the issue number and Resume or Take it at the right end. Resume is the only filled button on a card. How long a session ran is under its Details, not on the card. With more than one project, the card's left edge is 3px of its project's `proj-*` colour, and the project's name is in its tooltip and its link's accessible name.
+- A card has two lines. Line one: the title, an ownership tag, then the star and ⋯ marks. Line two: the status word first, then a name only when the card does not already say it, with the PR chips (at most two, older ones folded into a grey `+N` chip; RailCard) or the issue number and Resume or Take it at the right end. Resume is the only filled button on a card. How long a session ran is under its Details, not on the card. With more than one project, the card's left edge is 3px of its project's `proj-*` colour, and the project's name is in its hover card (or its tooltip without hover) and its link's accessible name.
 - A whole card is the click target. A button on it must stop the click from also opening the session.
+- Resting the pointer on a card, or focusing its name, shows its hover card beside it (`components/RailPeek`): the whole
+  title, the status word and when it next pauses or stops, the agent's last line, each pull request with its checks in
+  words, then the branch, agent, last activity, who started it and who has it. It replaces the card's tooltip, holds no
+  action, and never shows on a phone.
 - With several apps, Start app is **Start app ▾**, a menu of the apps' labels, and while one runs the button beside
   Open app carries its label (`Admin ▾`), which says which app runs and opens the same menu (`components/AppPicker`).
   One app: one Start app, no menu.
@@ -285,6 +289,11 @@ Ask again, Ask the questions) are quiet buttons, never orange. A question being 
 spinner, and opening one keeps the keyboard focus on it. The reader asks too: an open answer ends with a one-line box
 for a follow-up, and the tree with one for a question of their own, each the ask panel's field and a quiet **Ask**
 button, never orange. A question they asked says "you asked" in `meta`.
+
+Its **AI reviews** tab (`components/AiReviews`) shows what Claude Code and Codex posted on the pull request, newest
+first, each a Discussion `saidbox` whose head is a keyboard disclosure, with each finding as a card and the follow-ups
+asked about it under it. A resolved or outdated finding is dashed and labelled, never faded, so its text keeps 4.5:1.
+Its **Ask** buttons are quiet, like the Q&A's, never orange.
 
 Its tab bar ends with **Submit review**, then, for an approved pull request, either **Squash and merge** or the merge
 hint (`components/MergeHint`): an Octicons info icon whose tip says why merging waits. The bar holds controls, never a

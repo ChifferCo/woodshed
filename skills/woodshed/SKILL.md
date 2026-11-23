@@ -57,8 +57,10 @@ browser.
 - **Optional, after that: the agent terminal and a first coding session.** When `woodshed status` shows a compatible
   `hc` and the person hasn't chosen a terminal, ask whether they want Herdr for new private sessions, and pass
   `--terminal herdr` or `--terminal tmux` (check `woodshed setup --help` for it first; on older builds, point them to
-  Agent terminal on My settings). Pass `--prompt "<task>"` only when they want a session now; without it setup finishes
-  and says how to start one.
+  Agent terminal on My settings). With Herdr, setup also starts `session watch --herdr --add` in their Herdr (its
+  `herdr-watch` step), which adds each of their private sessions to Herdr's sidebar as it starts or resumes, wherever
+  it was started; tell them so, and that `--no-herdr-add` (or `hc kill woodshed-watch`) turns it off. Pass
+  `--prompt "<task>"` only when they want a session now; without it setup finishes and says how to start one.
 
 Use `--skip-reviews` or `--no-session` when the person chooses to skip those steps.
 
@@ -119,9 +121,14 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 - **Stopping and removing are the person's call.** `session stop` ends the work in progress (a running one's
   work is checkpointed on the way, but exit 0 does not promise it reached GitHub: check the branch before saying so);
   `session remove` deletes the saved conversation. Do either only when asked, and pass `--yes` to `remove` only then.
-- **Inside Herdr, sessions go to Herdr.** When you yourself run in a Herdr terminal (`HC_TERMINAL_ID` is set) and
-  `woodshed status --json` reports `hc.ok: true`, add each session you start or resume to Herdr unless the person
-  says not to: pass `--herdr` to `session new`, and run `session herdr <id>` after a `resume`. Recipes below.
+- **Sessions go to the person's own Herdr, from their computer.** First check whether you yourself run inside a
+  Woodshed session: `SESSION_ID` and `WOODSHED_TERMINAL` are both set. There `hc` is that session's own Herdr, which
+  their computer never shows, so add nothing to Herdr: no `--herdr`, no `session herdr`, no `--parent`, no `watch --add`
+  (each refuses or skips, and says the person's computer adds it). Their computer's `session watch --herdr --add`, which
+  `setup --terminal herdr` starts, adds what you start; tell them to run `woodshed session herdr <id>` there when it
+  does not. Otherwise, when you run in a Herdr terminal on their computer (`HC_TERMINAL_ID` is set) and `woodshed
+  status --json` reports `hc.ok: true`, add each session you start or resume to Herdr unless the person says not to:
+  pass `--herdr` to `session new` or `session resume`. Recipes below.
 - **Reviewing is the person's, on their terminal.** When a session of theirs has work to look at, suggest they run
   `woodshed review <id>` themselves (section 5, "Review a session's change"): when a session you started or followed
   ends its turn with a pull request open, when `session list` prints `review it: woodshed review <id>`, and whenever
@@ -147,16 +154,16 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed repo list` | Shows connected repos and, for admins, repos available to add and GitHub App access | 0 listed, 2 sign in, 1 failed | main |
 | `woodshed repo add <owner/name> [--name N]` | Adds a repo to the console | 0 added, 2 needs GitHub App access or sign-in, 3 refused, 1 failed | main |
 | `woodshed repo remove <owner/name>` | Removes a repo and its Woodshed settings | 0 removed, 2 sign in, 3 refused, 1 failed | main |
-| `woodshed session new [--repo R] [--branch B] [--agent claude\|codex\|grok\|antigravity\|opencode] [--model M] [--no-wait\|--connect\|--herdr [--parent[=T] [--no-notify] [--end-with-parent]]] ["prompt"]` | Starts a private session and waits, step by step, until it runs; `--connect` then puts the terminal on its agent's, `--herdr` adds it to Herdr as below (by default when you run inside Herdr with `hc` ok), and `--parent` with it makes the session's agent a child of this Herdr terminal (section 5) | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on, no `hc`, or `--parent` outside a Herdr terminal | main |
+| `woodshed session new [--repo R] [--branch B] [--agent claude\|codex\|grok\|antigravity\|opencode] [--model M] [--no-wait\|--connect\|--herdr [--parent[=T] [--no-notify] [--end-with-parent]]] ["prompt"]` | Starts a private session and waits, step by step, until it runs; `--connect` then puts the terminal on its agent's, `--herdr` adds it to Herdr as below (by default when you run in Herdr on their computer with `hc` ok; never inside a Woodshed session, where it adds nothing and says so), and `--parent` with it makes the session's agent a child of this Herdr terminal (section 5) | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on, no `hc`, `--parent` outside a Herdr terminal or inside a Woodshed session | main |
 | `woodshed session connect <id> [--shell]` | Puts the person's own terminal on the session's agent, or its shell; resumes a paused one first. Interactive: suggest it to them, and use `tunnel` yourself | 0 disconnected, 1 could not open, 2 sign-in ended, 3 shared or saw production | main |
-| `woodshed session herdr <id> [--parent[=T] …]` | Makes a session a machine in Herdr and shows its Herdr agent in a space named after the session, in a tab named after its agent (never over names the person gave; run it again to pick up a later title). Resumes a paused session first, and re-adds the machine, which a plain `resume` leaves unreachable: run it after every `resume` inside Herdr. With `--parent`, a paused one is resumed waiting for its agent's terminal from this one | 0 connected, 2 needs the person, 1 failed, or `--parent` on a session whose agent's terminal was already there, 3 no `hc` 0.1.21 or newer, shared, saw production, or `--parent` outside a Herdr terminal | main |
+| `woodshed session herdr <id> [--parent[=T] …]` | Makes a session a machine in Herdr and shows its Herdr agent in a space named after the session, in a tab named after its agent (never over names the person gave; run it again to pick up a later title). Resumes a paused session first, and re-adds the machine, which a plain `resume` leaves unreachable. With `--parent`, a paused one is resumed waiting for its agent's terminal from this one. Run on the person's computer: inside a Woodshed session it does nothing | 0 connected, 2 needs the person, 1 failed, or `--parent` on a session whose agent's terminal was already there, 3 no `hc` 0.1.21 or newer, shared, saw production, `--parent` outside a Herdr terminal, or inside a Woodshed session (`in-session`) | main |
 | `woodshed session list [--all]` | Their sessions and the shared ones they see, with state, kind (`private`, `shared`, `review`, `qa`, `ask`) and when each pauses; each session's pull request (state, verdict, checks), `review it: woodshed review <id>` under those they can review, and their own open pull requests with no session; in `--json` also a review's or QA's `verdict` once it reported, and whether the console's Mine lists it (`inMine`); names Herdr machines of sessions no longer on the console | 0 | main |
 | `woodshed session get <id>` | One session: state, kind, branch, pull request, a review's or QA's verdict, its app and the app's link, pause, the hours it runs on, its console link | 0, 1 none they can see | main |
 | `woodshed session app <id> [start [--app NAME] [--no-wait]\|stop]` | A running session's app: whether it is up and its link; `start` starts it and waits up to 5 minutes until it is up, `stop` stops it | 0 up or asked, 2 no app in the project file, 1 not up in time, failed, or still stopping, 3 not running, `stop` with no stop command, or no session apps on this console | main |
 | `woodshed session app <id> share [--members on\|off \| --link [--hours 1\|24\|168] [--path /page] \| --revoke <link id>]` | Who besides the person can open their private session's app (the members switch, live links with id, maker and end; never a secret), as the page's Share the app; `--members` switches members on or off, `--link` makes a link anyone can open and prints it once, `--revoke` ends one. Only when they ask: see the recipe | 0, 3 shared, not running, saw production, or a console with app ports, 1 an expiry other than 1, 24 or 168, or an unknown link, 2 sign-in ended | main |
-| `woodshed session watch [--kind K,…] [--everyone] [--every S] [--herdr] [--json]` | Follows the console until stopped and prints one event per session that starts, runs, is done with its turn, needs the person, pauses (idle), stops (lifetime, a person), finishes (a review's or QA's with its verdict) or fails, and says when a session's Herdr machine is unreachable; Mine by default. `--herdr` starts it in hc terminal `woodshed-watch` instead, reporting to Herdr, and returns | runs until stopped (`--herdr`: 0 started or kept); 2 sign-in ended, 3 refused or no `hc` | main |
+| `woodshed session watch [--kind K,…] [--everyone] [--every S] [--herdr] [--add] [--json]` | Follows the console until stopped and prints one event per session that starts, runs, is done with its turn, needs the person, pauses (idle), stops (lifetime, a person), finishes (a review's or QA's with its verdict) or fails, and says when a session's Herdr machine is unreachable; Mine by default. `--herdr` starts it in hc terminal `woodshed-watch` instead, reporting to Herdr, and returns; `--add` also adds each of their private sessions to Herdr as it starts or resumes | runs until stopped (`--herdr`: 0 started or kept); 2 sign-in ended, 3 refused, no `hc`, or `--add` inside a Woodshed session | main |
 | `woodshed session stop <id>` | Stops it, checkpointing a running one's work on the way (waits up to 3 minutes) | 0, 1 not answered in time | main |
-| `woodshed session resume <id> [--no-wait]` | Starts one of their stopped sessions again, conversation and all; inside Herdr, follow it with `session herdr <id>` | as `new`; 3 a shared session | main |
+| `woodshed session resume <id> [--no-wait\|--herdr]` | Starts one of their stopped sessions again, conversation and all; `--herdr` then adds it to Herdr again (in Herdr on their computer; inside a Woodshed session it adds nothing and says so) | as `new`; 3 a shared session, or `--herdr` with no `hc` | main |
 | `woodshed session remove <id> [--yes]` | Takes it off the list with its saved conversation, and forgets its Herdr machine | 0, 2 not confirmed, 3 a shared session | main |
 | `woodshed session prune` | Forgets Herdr machines (`woodshed-<id>`, this CLI's tunnel) whose session is no longer on the console; never a paused or stopped one's | 0, 1 `hc` failed | main |
 | `woodshed session extend <id>` | Puts its pause or stop off by an hour (allowed in its last 15 minutes) | 0, 3 refused | main |
@@ -224,15 +231,24 @@ in their browser: "See and try a session's app", below. Once it has done its wor
 
 A prompt that starts with `-` goes after `--`: `woodshed session new -- "-v is broken"`.
 
-### Inside Herdr: add sessions to it
+### In Herdr on their computer: add sessions to it
 
-When `HC_TERMINAL_ID` is set (you run in a Herdr terminal) and `woodshed status --json` says `"hc":{…,"ok":true}`, the
-person sees their sessions in Herdr's sidebar, so put each one there unless they say not to:
+Inside a Woodshed session (`SESSION_ID` and `WOODSHED_TERMINAL` set) skip this section: start and resume sessions
+without `--herdr`, and tell the person their computer adds them (its `session watch --herdr --add`, or `woodshed session
+herdr <id>` run there). A `--herdr` there exits as the start does with a last line `{"event":"herdr","action":"skipped",
+"status":"in-session","onYourComputer":"woodshed session herdr <id> --console …"}`: give them that command.
+
+When `HC_TERMINAL_ID` is set (you run in a Herdr terminal), you are not inside a Woodshed session, and `woodshed status
+--json` says `"hc":{…,"ok":true}`, the person sees their sessions in Herdr's sidebar, so put each one there unless they
+say not to:
 
 ```sh
 woodshed session new --herdr --json "Fix the login redirect loop"   # starts it, then adds it to Herdr
-woodshed session resume <id> --json && woodshed session herdr <id> --json
+woodshed session resume <id> --herdr --json                         # resumes it, then adds it again
 ```
+
+When their computer runs `session watch --herdr --add` (setup starts it with `--terminal herdr`), sessions are added as
+they start, wherever they were started; `--herdr` on top does no harm: one already connected is left as it is.
 
 A resumed session runs a new `hc` core, so its old machine stays unreachable until `session herdr` adds it again; a
 Herdr machine whose tunnel says the session is not running is fixed the same way. `session herdr` names the agent's
@@ -272,6 +288,15 @@ each as a machine:
 woodshed session watch --herdr --json        # starts hc terminal woodshed-watch, and returns
 ```
 
+With `--add` it also adds each of their own private sessions to Herdr's sidebar as `session herdr` does, as it starts
+running or resumes, wherever it was started (the console's page, Slack, an agent in another session): never a shared
+one, a review, QA run or question, one that saw production, or one already connected, and it never resumes a paused
+one to add it. Run it on their computer, never inside a Woodshed session (exit 3 there):
+
+```sh
+woodshed session watch --herdr --add --json  # what setup --terminal herdr starts
+```
+
 It needs `hc` 0.1.21 or newer (exit 3 otherwise: the person installs or updates it). It returns at once with
 `{"event":"herdr","action":"started"|"kept"}`: `kept` means one already runs, as it was started; to change its options,
 the person runs `hc kill woodshed-watch` first. That terminal reports each session as an OSC 7501 record, which the
@@ -281,8 +306,8 @@ herdr <id>` brings it back: offer that command, rather than `resume` alone, when
 
 ### Start a session as your child in Herdr, and wait on it
 
-When you run in a Herdr terminal (`HC_TERMINAL_ID` is set) and want to hand work to a session and be woken when its
-agent ends a turn, blocks, errors or exits:
+When you run in a Herdr terminal on the person's computer (`HC_TERMINAL_ID` is set, and not inside a Woodshed session)
+and want to hand work to a session and be woken when its agent ends a turn, blocks, errors or exits:
 
 ```sh
 woodshed session new --herdr --parent --json "Fix the login redirect loop"
@@ -294,7 +319,9 @@ as Woodshed starts it, in a terminal that is your child and outlives you (`--end
 `--no-notify` for no notes typed into you). With any agent but claude, `parent.reportsStatus` is false: codex, grok, agy and opencode tell
 Herdr nothing of their turns, so `hc wait --children` wakes you only when it exits; poll `woodshed session get <id> --json`
 for its state instead. `hc read woodshed-<id>/claude` shows its screen; `hc send` types to it.
-Exit 3 with `no-parent`: you are not in a Herdr terminal; leave out `--parent`. Exit 1 with `no-parent` from
+Exit 3 with `no-parent`: you are not in a Herdr terminal; leave out `--parent`. Exit 3 with `in-session`: you run
+inside a Woodshed session, whose Herdr their computer does not show; nothing was started: start it without `--herdr
+--parent` and follow it with `session get <id> --json`. Exit 1 with `no-parent` from
 `session herdr <id> --parent`: that session's agent was already running (`parent.has` is the parent it has, maybe you
 from an earlier run, or null), and hc cannot give a running terminal a parent; start a new session with `--parent` instead of restarting theirs. Never run a second agent with `hc run --on
 woodshed-<id>` to get a child: it would not have the session's hooks, rules and permissions.
