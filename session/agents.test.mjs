@@ -30,7 +30,7 @@ test('the command line is the agent, the session\'s flags, its own choices, and 
   const where = { bin: '/opt/woodshed/session/bin', uploadsDir: '/tmp/uploads' };
   assert.equal(
     commandLine({ agent: 'claude', model: 'opus', effort: 'high', permissionMode: 'plan' }, { ...where, claudeFlags: ' --settings /h.json\n', conversation: 'c0ffee', promptFile: '/tmp/p.md' }),
-    '/opt/woodshed/session/bin/claude --settings /h.json --session-id c0ffee --permission-mode plan --model opus --effort high "$(cat /tmp/p.md)"');
+    '/opt/woodshed/session/bin/claude --settings /h.json --session-id c0ffee --permission-mode plan --model opus --effort high -- "$(cat /tmp/p.md)"');
   assert.equal(commandLine({ agent: 'claude', model: '', effort: '', permissionMode: 'default' }, where), '/opt/woodshed/session/bin/claude');
   assert.equal(
     commandLine({ agent: 'codex', model: 'gpt-5.5', effort: 'low', permissionMode: 'auto' }, where),
@@ -120,7 +120,7 @@ test('a start makes a tmux session of its own, points its hooks at its own file,
     assert.ok(made.includes(`WOODSHED_CLAUDE_STATE_FILE=${path.join(dir, 'woodshed-agent-2-state.json')}`));
     assert.ok(tmux.calls.some((c) => c[1] === 'set-option' && c.includes('=agent-2:') && c.includes('remain-on-exit')));
     const line = tmux.typed.get('=agent-2:');
-    assert.match(line, /^\/opt\/woodshed\/session\/bin\/claude --settings \S+ --session-id [0-9a-f-]{36} --permission-mode auto --model opus "\$\(cat \S+woodshed-agent-2-prompt\.md\)"$/);
+    assert.match(line, /^\/opt\/woodshed\/session\/bin\/claude --settings \S+ --session-id [0-9a-f-]{36} --permission-mode auto --model opus -- "\$\(cat \S+woodshed-agent-2-prompt\.md\)"$/);
     assert.equal(fs.readFileSync(path.join(dir, 'woodshed-agent-2-prompt.md'), 'utf8'), 'review it\n');
     const conversation = /--session-id (\S+)/.exec(line)[1];
     assert.ok(agents.claimed().claude.has(`${conversation}.jsonl`), 'its transcript is never the session\'s own');

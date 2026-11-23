@@ -89,7 +89,8 @@ export function commandLine({ agent, model, effort, permissionMode }, { bin, cla
     if (model) parts.push('--model', model);
     if (effort) parts.push('-c', `model_reasoning_effort=\\"${effort}\\"`);
   }
-  if (promptFile) parts.push(`"$(cat ${promptFile})"`);
+  // After `--`, which ends both CLIs' options: a message that starts with a dash (a pasted list) is the message.
+  if (promptFile) parts.push('--', `"$(cat ${promptFile})"`);
   return parts.join(' ');
 }
 
