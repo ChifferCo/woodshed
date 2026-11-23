@@ -55,7 +55,7 @@
         kinds: 'an xAI API key, or the login `grok login` saved',
         steps: [
           { text: 'Sign in to Grok Build on your laptop:', command: 'grok login' },
-          { text: 'Copy the sign-in it saved without printing it, then paste it here (on Linux, `wl-copy <` or `xclip -selection clipboard <` the same file):', command: 'pbcopy < ~/.grok/auth.json' },
+          { text: 'Copy the sign-in it saved without printing it, then paste it here (on Linux, wl-copy or xclip -selection clipboard, from the same file):', command: 'pbcopy < ~/.grok/auth.json' },
           { text: 'Or paste an xAI API key (xai-…) from console.x.ai.' },
         ],
       },
@@ -91,7 +91,7 @@
         kinds: 'the providers `opencode auth login` saved',
         steps: [
           { text: 'Sign in to a provider with OpenCode on your laptop:', command: 'opencode auth login' },
-          { text: 'Copy the sign-ins it saved without printing them, then paste them here (on Linux, `wl-copy <` or `xclip -selection clipboard <` the same file):', command: 'pbcopy < ~/.local/share/opencode/auth.json' },
+          { text: 'Copy the sign-ins it saved without printing them, then paste them here (on Linux, wl-copy or xclip -selection clipboard, from the same file):', command: 'pbcopy < ~/.local/share/opencode/auth.json' },
         ],
       },
       permissionModes: ['auto', 'plan', 'default'],
