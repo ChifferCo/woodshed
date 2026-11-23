@@ -107,7 +107,9 @@ export async function startDevAppsSession({ id, token }) {
   const ghDir = branchesWithPulls({ root, repo, id, git });
   const port = await freePort();
   const child = spawn(process.execPath, [STATUSD], {
-    env: { ...process.env, PATH: [ghDir, process.env.PATH].join(path.delimiter), SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '' },
+    env: { ...process.env, PATH: [ghDir, process.env.PATH].join(path.delimiter), SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '',
+      // A QA run or a question starts the dev console with its own mode, in which statusd reports no pull request.
+      SESSION_MODE: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   // Its app decisions only: tmux is not here, which it warns of on every status read.

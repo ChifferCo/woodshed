@@ -469,7 +469,7 @@ const BRANCH_PULLS_MAX_BRANCHES = 20;
  * A worktree's branches are the checkout's own. One GraphQL call for all of them, kept `cacheMs` while the branches and
  * their commits stay as they were. A pull request counts only when it is from this repo's own branch of that name and
  * its head commit is on the local branch, so an older pull request that once used the name is not taken for it.
- * A failed read says nothing, as a failed `gh pr view` does: the console keeps what it was told before.
+ * A failed read gives the last good list and is kept `cacheMs` too: the console keeps what it was told before.
  * @param {{branches: () => Promise<{name: string, sha: string}[]>, pullsOf: (names: string[]) => Promise<{branch: string, url: string, headSha: string, fork: boolean}[]>,
  *          isAncestor: (sha: string, branch: string) => Promise<boolean>, now?: () => number, cacheMs?: number}} deps
  *   `branches` is the local branches without the default one, the newest commit first
@@ -479,9 +479,10 @@ export function createBranchPulls({ branches, pullsOf, isAncestor, now = Date.no
   let cache = { at: -Infinity, key: null, urls: [] };
   let said = null;
   return async function branchPulls() {
+    let key = null;
     try {
       const local = (await branches()).slice(0, BRANCH_PULLS_MAX_BRANCHES);
-      const key = local.map((b) => `${b.name} ${b.sha}`).join('\n');
+      key = local.map((b) => `${b.name} ${b.sha}`).join('\n');
       if (now() - cache.at < cacheMs && key === cache.key) return cache.urls;
       const urls = [];
       for (const pull of local.length ? await pullsOf(local.map((b) => b.name)) : []) {
@@ -497,7 +498,10 @@ export function createBranchPulls({ branches, pullsOf, isAncestor, now = Date.no
       const message = String(err?.message ?? err).split('\n')[0];
       if (message !== said) console.warn('statusd: pull requests of the other branches not read', { message });
       said = message;
-      return [];
+      // Kept for its minute as a good answer is, with the last good list: a call GitHub refuses (a rate limit on a
+      // token the sessions share) is not made again at every status read. Changed branches ask again at once.
+      cache = { at: now(), key, urls: cache.urls };
+      return cache.urls;
     }
   };
 }

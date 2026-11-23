@@ -1246,21 +1246,33 @@ test('the pull requests of every local branch are read, not only the one checked
   assert.equal(reads, 3, 'and again after a minute');
 });
 
-test('a failed read of the branches\' pull requests says none, and no branch asks nothing', async () => {
+test('a failed read of the branches\' pull requests is kept a minute, with the last good list', async () => {
   let fail = true;
   let reads = 0;
+  let clock = 0;
+  let local = [{ name: 'a', sha: '1' }];
   const failing = createBranchPulls({
-    branches: async () => [{ name: 'a', sha: '1' }],
-    pullsOf: async () => { reads += 1; if (fail) throw new Error('gh: HTTP 502'); return [{ branch: 'a', url: 'https://github.com/o/r/pull/2', headSha: '1', fork: false }]; },
+    branches: async () => local,
+    pullsOf: async () => { reads += 1; if (fail) throw new Error('gh: HTTP 502'); return [{ branch: 'a', url: 'https://github.com/o/r/pull/2', headSha: local[0].sha, fork: false }]; },
     isAncestor: async () => true,
-    now: () => 0,
+    now: () => clock,
+    cacheMs: 60_000,
   });
   assert.deepEqual(await failing(), []);
   fail = false;
-  assert.deepEqual(await failing(), ['https://github.com/o/r/pull/2'], 'a failure is not kept');
+  assert.deepEqual(await failing(), [], 'not asked again at the next status read');
+  assert.equal(reads, 1);
+  clock = 61_000;
+  assert.deepEqual(await failing(), ['https://github.com/o/r/pull/2'], 'asked again after its minute');
+  fail = true;
+  local = [{ name: 'a', sha: '2' }];
+  assert.deepEqual(await failing(), ['https://github.com/o/r/pull/2'], 'a later failure keeps the last good list');
+  assert.equal(reads, 3, 'a new commit asks at once');
+  await failing();
+  assert.equal(reads, 3);
   const none = createBranchPulls({ branches: async () => [], pullsOf: async () => { reads += 1; return []; }, isAncestor: async () => true, now: () => 0 });
   assert.deepEqual(await none(), []);
-  assert.equal(reads, 2);
+  assert.equal(reads, 3, 'no branch asks nothing');
 });
 
 test('the branches\' pull requests are asked for in one query, of the repo the remote names', () => {
