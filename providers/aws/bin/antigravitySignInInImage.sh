@@ -14,7 +14,7 @@
 #   bash woodshed/providers/aws/bin/antigravitySignInInImage.sh <image>
 #
 # <image> is a session image, such as one built from the worktree. The file is left in the folder it names, for the
-# person to paste on My settings themselves (`jq . <file>`), then delete.
+# person to copy without printing it (`pbcopy <`, `wl-copy <` or `xclip -selection clipboard <` the file) and paste on My settings, then delete.
 set -euo pipefail
 
 image=${1:?usage: antigravitySignInInImage.sh <session image>}
@@ -59,4 +59,4 @@ jq '.token.expiry = "2000-01-01T00:00:00Z"' "$file" | onlyTheFile 'Reply with th
 echo "== /usage, for the plan meter"
 onlyTheFile '/usage' < "$file"
 
-echo "== Done. Paste it on My settings with: jq . $file   then: rm -r $out"
+echo "== Done. Copy it without printing it (pbcopy < $file, or wl-copy / xclip -selection clipboard on Linux) and paste it on My settings, then: rm -r $out"
