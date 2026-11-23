@@ -35,6 +35,7 @@ async function consoleFor(t, { people = null, writers = null, claudeToken = true
     startPrivate: async (args) => { calls.push(['start', args]); return { id: 'dddd0004', owner: args.owner, status: 'queued', token: 'new-secret' }; },
     resumePrivate: async (args) => { calls.push(['resume', args]); return { ...sessions.find((s) => s.id === args.id), status: 'queued' }; },
     removePrivateSession: async (args) => { calls.push(['remove', args]); },
+    handOffPrivate: async (args) => { calls.push(['handoff', args]); return { id: 'ffff0006', owner: args.owner, status: 'queued', token: 'handed-secret', options: { agent: args.agent } }; },
     stop: async (session, reason, { by }) => { calls.push(['stop', { id: session.id, by }]); },
     // As the fleet's: a shared session's pause and stop are its assignee's alone.
     limitsOf: (session) => ({ idleMs: (session.limits?.idleHours ?? 2) * 3_600_000, lifetimeMs: 12 * 3_600_000 }),
@@ -80,7 +81,7 @@ async function consoleFor(t, { people = null, writers = null, claudeToken = true
 test('the command line allows only the session, config and review routes', () => {
   for (const [method, path] of [
     ['GET', '/api/sessions'], ['GET', '/api/my/projects'], ['POST', '/api/my/sessions'],
-    ['POST', '/api/my/sessions/0a1b2c3d/resume'], ['POST', '/api/my/sessions/0a1b2c3d/remove'], ['POST', '/api/sessions/0a1b2c3d/stop'],
+    ['POST', '/api/my/sessions/0a1b2c3d/resume'], ['POST', '/api/my/sessions/0a1b2c3d/remove'], ['POST', '/api/my/sessions/0a1b2c3d/handoff'], ['POST', '/api/sessions/0a1b2c3d/stop'],
     ['POST', '/api/sessions/0a1b2c3d/extend'], ['POST', '/api/sessions/0a1b2c3d/limits'], ['GET', '/api/review-readiness'],
     ['POST', '/api/sessions/0a1b2c3d/app/start'], ['POST', '/api/sessions/0a1b2c3d/app/stop'],
     // woodshed session app share's: the page's Share the app.
@@ -139,6 +140,13 @@ test('a command line token lists, starts, stops, resumes and removes as exactly 
   assert.deepEqual(c.calls.at(-1)[1].owner, 'mia-dev');
   assert.equal((await c.call('/api/my/sessions/bbbb0002/remove', { method: 'POST', body: {} })).status, 200);
   assert.deepEqual(c.calls.at(-1), ['remove', { owner: 'mia-dev', id: 'bbbb0002' }], 'the fleet is asked for hers alone, which it refuses for another\'s');
+
+  const handed = await c.call('/api/my/sessions/aaaa0001/handoff', { method: 'POST', body: { agent: 'claude', model: 'opus', note: 'tests left', conversation: false, owner: 'octocat' } });
+  assert.equal(handed.status, 201, JSON.stringify(handed.body));
+  assert.equal(handed.body.token, undefined);
+  assert.deepEqual(c.calls.at(-1), ['handoff', { owner: 'mia-dev', id: 'aaaa0001', agent: 'claude', model: 'opus', effort: undefined, permissionMode: undefined, note: 'tests left', conversation: false }]);
+  assert.equal((await c.call('/api/my/sessions/bbbb0002/handoff', { method: 'POST', body: { agent: 'claude' } })).status, 409, 'another person\'s is not there to hand off');
+  assert.equal((await c.call('/api/my/sessions/aaaa0001/handoff', { method: 'POST', body: { agent: 'claude', conversation: 'yes' } })).status, 400);
 });
 
 test('a command line token shares its person\'s own private session\'s app as the page does, and nothing else\'s', async (t) => {

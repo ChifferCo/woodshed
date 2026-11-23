@@ -20,6 +20,7 @@ import { blockerText } from './databaseGate.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 import { TAINT_MESSAGE } from './taint.mjs';
+import { HANDOFF_FILE, agentName, handoffDocument, handoffNote, handoffPrompt } from './handoff.mjs';
 import { checkLimits } from './userSettings.mjs';
 import {
   ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, isQa, isReview, keptIds, newSessionId, newSessionToken, sessionLink,
@@ -30,6 +31,8 @@ import logins from './public/logins.cjs';
 const { findLogin, sameLogin } = logins;
 
 const CHECKPOINT_TIMEOUT_MS = 90_000;
+// Reading a session's conversation for a hand-off: a long one is megabytes of transcript to read and shape.
+const HANDOFF_READ_TIMEOUT_MS = 20_000;
 const STATUS_TIMEOUT_MS = 5_000;
 // How long statusd may take to type a private session's review feedback after getting it (it reads GitHub first).
 const GUARDED_SEND_WITHIN_MS = 20_000;
@@ -306,6 +309,8 @@ export function createFleet({
   const unreachedStarts = new Map();
   // Stops in flight in this process. A session left `stopping` by a restart has none, and tick finishes it.
   const stopsInFlight = new Set();
+  // Private sessions being handed off (handOffPrivate): a second Hand off meanwhile would start a second session.
+  const handoffsInFlight = new Set();
   // Launches in flight in this process. A session left `starting` with no task by a restart has none, and tick
   // looks for the task it began.
   const launchesInFlight = new Set();
@@ -1721,7 +1726,7 @@ export function createFleet({
    * @param {{owner: string, prompt: string, name?: string, workOn?: string, model?: string, effort?: string,
    *          permissionMode?: string, background?: boolean}} args  `workOn` is the form's optional issue, pull request or branch
    */
-  async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], background = false, project = defaultProject(config), herdrParent = false, ...picked }) {
+  async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], files = [], background = false, project = defaultProject(config), herdrParent = false, ...picked }) {
     refuseWithoutRepo(project, { kind: 'task', trigger: 'my-woodshed' });
     const on = parseWorkOn(workOn, { defaultBranch: await githubOf(project).defaultBranch?.() ?? null });
     const reviewOnly = !String(prompt ?? '').trim() && on.kind !== 'task';
@@ -1737,13 +1742,73 @@ export function createFleet({
     const given = String(name ?? '').trim().slice(0, TITLE_CHARS) || target.title || (reviewOnly ? `Review ${target.branch}` : '');
     // With no namer the first line stays, and the page offers the rename all the same.
     const naming = given ? null : (autoName?.(text) ?? Promise.resolve(null));
-    const attach = attachments && attachmentIds?.length ? (sessionId) => attachments.claim({ login: owner, ids: attachmentIds, sessionId }) : null;
+    // The files the person attached, then any the console made for it (a hand-off's conversation).
+    const attach = attachments && (attachmentIds?.length || files.length) ? async (sessionId) => {
+      const claimed = attachmentIds?.length ? await attachments.claim({ login: owner, ids: attachmentIds, sessionId }) : 0;
+      return claimed + (files.length ? await attachments.put({ sessionId, files, after: claimed }) : 0);
+    } : null;
     const session = await createSession({
       ...target, title: given || titleFrom(text), startedBy: owner, owner, trigger: 'my-woodshed', prompt: text, options, attach, background, reviewOnly, project,
       herdrParent,
     });
     if (naming) renameWhenNamed(session, naming);
     return session;
+  }
+
+  /**
+   * Hand off, on a running private session: its work goes on in a new private session of the same owner, on the same
+   * branch, run by the agent picked (handoff.mjs). Its conversation is read first, while it runs; then it stops, which
+   * commits and pushes its work as any stop does; then the new one starts on the branch with the conversation attached
+   * and a prompt that says where it came from. The old one stays on the list, stopped, and Resume picks it up as ever.
+   * @param {{owner: string, id: string, conversation?: boolean, note?: string, project?: object, agent?: string,
+   *   model?: string, effort?: string, permissionMode?: string}} args  conversation: whether it goes across
+   * @returns {Promise<object>}  the new session
+   */
+  async function handOffPrivate({ owner, id, conversation = true, note = '', project = null, ...picked }) {
+    const from = find(id);
+    if (!from || from.owner !== owner) throw shown('no session you can open with that id');
+    // Nothing a tainted session holds is copied anywhere that outlives it (CLAUDE.md, "Production data").
+    if (from.taintedAt) throw shown('it has seen production data: nothing it holds goes to another session');
+    if (handoffsInFlight.has(id)) throw shown('it is being handed off already');
+    if (from.status !== 'running' || !from.endpoint) throw shown('only a running session can be handed off: resume it first');
+    if (!from.branch) throw shown('it has no branch to hand off');
+    const text = handoffNote(note);
+    const options = sessionOptions(picked);
+    const source = { id, title: from.title, agent: from.options?.agent || 'claude', branch: from.branch };
+    handoffsInFlight.add(id);
+    try {
+      let entries = [];
+      if (conversation) {
+        try {
+          const read = await statusd(from, 'GET', '/transcript', { timeoutMs: HANDOFF_READ_TIMEOUT_MS });
+          entries = Array.isArray(read?.entries) ? read.entries : [];
+        } catch (err) {
+          console.warn('fleet: hand-off refused, the conversation not read', { id, message: firstLine(err) });
+          throw shown('its conversation could not be read: try again, or hand off without it');
+        }
+      }
+      await stop(from, `handed off to ${agentName(options.agent)}`, { by: owner });
+      if (from.status !== 'stopped') throw shown('it did not stop: try again in a moment');
+      const files = conversation ? [{ name: HANDOFF_FILE, text: handoffDocument({ from: source, to: options, entries, at: nowIso() }) }] : [];
+      let next;
+      try {
+        next = await startPrivate({
+          owner, prompt: handoffPrompt({ from: source, to: options, note: text, conversation }), name: from.title, workOn: from.branch,
+          files, background: true, project: project ?? projectFor(config, from), ...options,
+        });
+      } catch (err) {
+        console.warn('fleet: hand-off stopped the session, the new one did not start', { id, agent: options.agent, message: firstLine(err) });
+        throw shown(`it stopped with its work pushed, but the new session did not start (${err.message}): Resume picks it up again`);
+      }
+      update(from, { handedOffTo: next.id });
+      update(next, { handedOffFrom: id });
+      console.log('fleet: session handed off', {
+        id, to: next.id, owner, from: source.agent, agent: options.agent, model: options.model || null, conversation, entries: entries.length, note: Boolean(text),
+      });
+      return next;
+    } finally {
+      handoffsInFlight.delete(id);
+    }
   }
 
   // At the limit a private session waits in its owner's own line, and starts when one of their tasks stops.
@@ -2899,7 +2964,7 @@ export function createFleet({
   }
 
   return {
-    createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    createSession, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

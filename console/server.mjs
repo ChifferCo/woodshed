@@ -45,6 +45,9 @@
 //   POST /api/my/home/forget     deletes your saved Claude home: MCP logins, memory, transcripts
 //   POST /api/my/sessions/<id>/resume   a stopped private session again, claude's conversation and all; {"herdrParent": true}
 //                                       as a start's, for that run alone
+//   POST /api/my/sessions/<id>/handoff  {"agent": "codex", "model"?, "effort"?, "permissionMode"?, "note"?: "...",
+//                                       "conversation"?: true}   a running private session's work into a new one run by
+//                                       that agent, on its branch, with its conversation attached; it stops (handoff.mjs)
 //   POST /api/my/sessions/<id>/remove   a private session (a running one is stopped first) off the list, with the Claude home it kept
 //   POST /api/my/databases       your own databases, made, or copied from the template again ({"confirm": "reset"} once made)
 //   POST /api/my/databases/restore?name=<file>   a pg_dump or mongodump as the body, restored into a copy of your database to check;
@@ -58,7 +61,7 @@
 //                                Codex settings, your own files for a repo, and your own dotfile lines (cliSettings.mjs)
 //   POST /api/my/cli-tokens/<id>/revoke   ends one computer's command line sign-in, from My settings
 //   Its token also signs in to GET /api/sessions, GET /api/my/projects, POST /api/my/sessions,
-//   POST /api/my/sessions/<id>/resume|remove, POST /api/sessions/<id>/stop|extend|limits and GET /api/review-readiness,
+//   POST /api/my/sessions/<id>/resume|remove|handoff, POST /api/sessions/<id>/stop|extend|limits and GET /api/review-readiness,
 //   as its person (cliSessions.mjs); and to GET /api/cli/config, its person's choices on My settings and never a secret, and the
 //   writes of them: POST /api/my/terminal, /reviews, /codex-auth/reviews, /claude-token/shared, /projects/default and
 //   /github/identity, each answering with that config alone (cliConfig.mjs)
@@ -330,7 +333,7 @@ const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
 const PULLS_FRESH_MS = 60_000;
 const MY_FILE_RE = /^\/api\/my\/files\/([a-z-]+)(\/reset)?$/;
 const MY_GITHUB_RE = /^\/api\/my\/github\/(identity|disconnect)$/;
-const MY_SESSION_ACTION_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/(resume|remove)$/;
+const MY_SESSION_ACTION_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/(resume|remove|handoff)$/;
 const MY_PULL_REVIEW_RE = /^\/api\/my\/pulls\/([1-9][0-9]{0,8})\/review$/;
 const MY_TUNNEL_RE = /^\/api\/my\/tunnel-token(\/remove)?$/;
 const MY_CLI_REVOKE_RE = /^\/api\/my\/cli-tokens\/([0-9a-f]{16})\/revoke$/;
@@ -1532,6 +1535,42 @@ export function createHandler({
     }
   }
 
+  /**
+   * What stops the person starting a private session with that agent now, as New session's start checks it.
+   * @returns {Promise<{status: number, error: string}|null>}
+   */
+  async function startRefusal(login, { agent, model, effort }) {
+    await userSettings?.refresh?.(login, { force: true });
+    // A Codex session signs in with its own login or the team's OpenAI key: it needs no Claude token.
+    if (agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return { status: 409, error: 'save your Claude token on My settings first' };
+    if (agent === 'codex' && !userSettings?.view(login).codexAuth?.set && !(await readTeamOpenAiKey())) {
+      return { status: 409, error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' };
+    }
+    // A Codex model or effort is one OpenAI's catalog offers this person now, as New session listed it.
+    const codexRefusal = agent === 'codex' && codexModels ? await codexModels.allows(login, String(model ?? ''), String(effort ?? '')) : null;
+    if (codexRefusal) return { status: 400, error: codexRefusal };
+    if (!databasesReady(login)) return { status: 409, error: DATABASES_NOT_READY };
+    return null;
+  }
+
+  // Hand off (handoff.mjs): every check a start makes is made before the session is stopped, so a refusal leaves it
+  // running as it was.
+  async function handOff(res, login, id, body) {
+    const from = fleet.find(id);
+    if (!from || from.owner !== login) return reply(res, 409, { error: 'no session you can open with that id' });
+    const { agent, model, effort, permissionMode, note } = body;
+    if (body.conversation !== undefined && typeof body.conversation !== 'boolean') return reply(res, 400, { error: 'conversation must be true or false' });
+    const refused = await startRefusal(login, { agent, model, effort });
+    if (refused) return reply(res, refused.status, { error: refused.error });
+    const project = projectAccess ? await projectAccess.forStart(login, from.project) : undefined;
+    if (project === null) {
+      console.log('console: hand-off refused, project not open to the person', { login, sessionId: id, project: from.project ?? null });
+      return reply(res, 403, { error: `you can no longer start sessions on ${from.project}: you have no write access to its repo, or it is not one of this console's` });
+    }
+    const next = await fleet.handOffPrivate({ owner: login, id, agent, model, effort, permissionMode, note, conversation: body.conversation !== false, ...(project ? { project } : {}) });
+    return reply(res, 201, publicSession(next));
+  }
+
   function databasesReady(login) {
     return !databases?.available || databases.view(login).status === 'ready';
   }
@@ -1590,6 +1629,7 @@ export function createHandler({
           await fleet.removePrivateSession({ owner: login, id: actionMatch[1] });
           return reply(res, 200, { removed: actionMatch[1] });
         }
+        if (actionMatch[2] === 'handoff') return await handOff(res, login, actionMatch[1], body);
         const resuming = fleet.find(actionMatch[1]);
         // Whose it is before anything of it is read: someone else's private session answers as one that does not exist.
         if (!resuming || resuming.owner !== login) return reply(res, 409, { error: 'no session you can open with that id' });
@@ -1634,16 +1674,8 @@ export function createHandler({
       if (pathname === '/api/my/sessions') {
         const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
         const herdrParent = body.herdrParent === true;
-        await userSettings?.refresh?.(login, { force: true });
-        // A Codex session signs in with its own login or the team's OpenAI key: it needs no Claude token.
-        if (agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
-        if (agent === 'codex' && !userSettings?.view(login).codexAuth?.set && !(await readTeamOpenAiKey())) {
-          return reply(res, 409, { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' });
-        }
-        // A Codex model or effort is one OpenAI's catalog offers this person now, as New session listed it.
-        const codexRefusal = agent === 'codex' && codexModels ? await codexModels.allows(login, String(model ?? ''), String(effort ?? '')) : null;
-        if (codexRefusal) return reply(res, 400, { error: codexRefusal });
-        if (!databasesReady(login)) return reply(res, 409, { error: DATABASES_NOT_READY });
+        const refused = await startRefusal(login, { agent, model, effort });
+        if (refused) return reply(res, refused.status, { error: refused.error });
         const project = projectAccess ? await projectAccess.forStart(login, body.project) : undefined;
         if (project === null) {
           console.log('console: session start refused, project not open to the person', { login, project: String(body.project ?? '').slice(0, 40) });

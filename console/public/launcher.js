@@ -714,4 +714,6 @@
   }
 
   W.createLauncher = createLauncher;
+  // The agents and Claude's models, for the session page's Hand off dialog (session.js).
+  W.agentChoices = { AGENTS, MODELS };
 })();

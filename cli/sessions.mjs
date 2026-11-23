@@ -11,6 +11,7 @@
 //   woodshed session app <id> share [--members on|off | --link [--hours 1|24|168] [--path /page] | --revoke <link id>]
 //   woodshed session stop <id>
 //   woodshed session resume <id> [--no-wait]
+//   woodshed session handoff <id> --agent claude|codex [--model M] [--note "..."] [--no-conversation] [--no-wait]
 //   woodshed session remove <id> [--yes]
 //   woodshed session prune
 //   woodshed session extend <id>
@@ -67,6 +68,10 @@ const POLL_MS = 2000;
 const STOP_DEADLINE_MS = 180_000;
 const UNREACHABLE_GIVE_UP_MS = 60_000;
 
+// A hand-off answers once the old session stopped, its checkpoint pushed (up to 90 s at the console), and the new one
+// is created.
+const HANDOFF_DEADLINE_MS = 4 * 60_000;
+
 export const SESSION_USAGE = `Usage: woodshed session <command> [--console <url>] [--json]
 
 Commands:
@@ -110,6 +115,14 @@ Commands:
       --revoke <link id>     end one link at once
   stop <id>                  stop a session; a running one's work is pushed as it stops
   resume <id> [--no-wait]    start one of your stopped sessions again, its conversation and all, and wait for it
+  handoff <id> [options]     hand one of your running sessions' work to another agent: it stops, pushing its work,
+                             and a new session starts on its branch with that agent, its conversation attached as a
+                             file; then wait for the new one as new does
+      --agent claude|codex   the agent the new session runs (required)
+      --model <model>        its model (default the agent's own)
+      --note <text>          what to tell the new agent first, such as what is left to do
+      --no-conversation      leave the conversation behind: the new session starts from the branch and the note
+      --no-wait              print the new session and return once the console has it
   remove <id> [--yes]        take one of your sessions off the list, with its saved conversation (stopped first),
                              and forget its machine in Herdr
   prune                      forget the woodshed-<id> machines in Herdr whose session is no longer on this console
@@ -1055,6 +1068,23 @@ export async function sessionCommand({ origin, rest }, ctx) {
     return resumeAndWait();
   }
 
+  if (sub === 'handoff') {
+    ownPrivate(s, login, 'hand off');
+    if (s.status !== 'running') throw fail(`Session ${id} is ${stateOf(s).word}: only a running session can be handed off. Run woodshed session resume ${id} first.`, { code: EXIT.refused, status: 'refused' });
+    const body = {
+      agent: opts.agent, model: opts.model ?? '', ...(opts.note !== undefined ? { note: opts.note } : {}), conversation: !opts['no-conversation'],
+    };
+    // The console reads its conversation and stops it, pushing its work, before it answers: up to a few minutes.
+    const next = await ask(`/api/my/sessions/${id}/handoff`, { method: 'POST', body, deadlineMs: HANDOFF_DEADLINE_MS });
+    if (!ID_RE.test(String(next.id))) throw fail(`${origin} answered with no session id`);
+    const shown = summary(next, { origin, login, appsOn });
+    if (json) emit({ event: 'handed-off', from: id, session: shown });
+    say(`Handed session ${id} off to ${opts.agent === 'codex' ? 'Codex' : 'Claude Code'}: session ${shown.id}${shown.title ? `: ${shown.title}` : ''}`);
+    say(`  ${shown.url}`);
+    if (opts.wait === false) return EXIT.done;
+    return follow(shown.id);
+  }
+
   if (sub === 'connect') {
     // The console opens a terminal only on your own private sessions, never one that has seen production data.
     ownPrivate(s, login, 'connect to');
@@ -1358,6 +1388,7 @@ export function parseSessionArgs(sub, words, fail) {
     limits: { values: ['idle-hours', 'lifetime-hours'], flags: [], words: 'id' },
     stop: { values: [], flags: [], words: 'id' },
     resume: { values: [], flags: ['no-wait'], words: 'id' },
+    handoff: { values: ['agent', 'model', 'note'], flags: ['no-wait', 'no-conversation'], words: 'id' },
     remove: { values: [], flags: ['yes'], words: 'id' },
     prune: { values: [], flags: [], words: null },
     watch: { values: ['kind', 'every'], flags: ['everyone', 'herdr'], words: null },
@@ -1399,6 +1430,7 @@ export function parseSessionArgs(sub, words, fail) {
   for (const flag of PARENT_FLAGS) if (out[flag] && !out.parent) throw fail(`--${flag} goes with --parent`);
   if (sub === 'limits' && out['idle-hours'] === undefined && out['lifetime-hours'] === undefined) throw fail('session limits needs --idle-hours or --lifetime-hours (a number, or default)');
   if (out.agent !== undefined && !['claude', 'codex'].includes(out.agent)) throw fail('--agent must be claude or codex');
+  if (sub === 'handoff' && out.agent === undefined) throw fail('session handoff needs --agent claude or --agent codex: the agent the work goes to');
   // An app's name, never the next option taken for one (`--app --no-wait`).
   if (out.app !== undefined && !APP_NAME_RE.test(out.app)) throw fail(`--app needs an app's name: lowercase letters, digits and dashes, as the project file names them${out.app.startsWith('-') ? `, not ${out.app}` : ''}`);
   if (sub === 'watch') {

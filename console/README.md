@@ -655,6 +655,29 @@ what was forgotten. Forget it is refused while one of your sessions runs, since
 that session would save its home again within 5 minutes; Remove My Woodshed
 stops them first.
 
+**Hand off…**, in a running private session's ⋯ menu (or `woodshed session handoff <id> --agent codex|claude`), carries
+its work on with another agent: Claude Code to Codex, Codex to Claude Code, or a fresh run of the same one
+(`console/handoff.mjs`; `POST /api/my/sessions/<id>/handoff`). Each agent keeps its conversation in a format of its own
+that no other reads, so what goes across is agent-neutral:
+- the branch: the session stops, which commits and pushes its work as any stop does, and a new private session of yours
+  starts on that branch with the agent and model picked, under the same name;
+- the conversation, unless the dialog's switch (`--no-conversation`) leaves it behind: the console reads it first, from
+  statusd's `GET /transcript` as the Chat tab does (what was asked, said and run; tool output left out, long messages
+  cut, at most 2 MB with the oldest entries left out first), and attaches it to the new session as `handoff.md`, which the
+  entrypoint fetches into `/tmp/uploads` as any attachment;
+- your note, if you write one (at most 4000 characters), first in the new session's prompt, which then says where the
+  work came from and to read the file and the branch's `git log`.
+
+Every check a start makes (the agent's sign-in, Codex's catalog, your databases, write access to the repo) is made
+before the session stops, so a refusal leaves it running. A session that has seen production data is never handed off
+(nothing it holds goes anywhere that outlives it), and only a running one can be: its conversation is read from it. The
+old session stays on the list, stopped, its card saying `handed off to Codex`, and Resume reopens it as ever; the
+records keep `handedOffTo` and `handedOffFrom`. The console logs `fleet: session handed off` with both ids, the agents,
+`conversation`, how many `entries` went and whether there was a `note`; `fleet: hand-off refused, the conversation not
+read` when statusd did not answer (nothing stopped), and `fleet: hand-off stopped the session, the new one did not
+start` with why, which the page says too. An agent added to the console's `AGENTS` (`sessions.mjs`) can be handed off
+to and from with its product name in `handoff.mjs`'s `AGENT_NAMES`.
+
 **Repo settings**, on My settings, hold your own values for each repo's env files, your own instructions and your own
 files ("Your files" below), for your private sessions on that repo ("Repo settings" below says how they are kept and
 handed out):

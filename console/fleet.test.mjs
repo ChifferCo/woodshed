@@ -4123,3 +4123,70 @@ test('the review report credits Codex when Claude Code wrote no verdict', async 
   assert.match(posted.body, /^## Codex review — REQUEST_CHANGES\n/);
   assert.equal(reviewVerdict([posted], review), posted);
 });
+
+function fakeAttachments() {
+  const written = {};
+  return {
+    written,
+    async claim() { return 0; },
+    async put({ sessionId, files, after }) { written[sessionId] = { files, after }; return files.length; },
+  };
+}
+
+test('Hand off stops a running private session, pushing its work, and starts a new one on its branch with the agent picked and the conversation attached', async () => {
+  const attachments = fakeAttachments();
+  const { fleet, calls, statuses, answers } = setup({ attachments });
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix', name: 'Fix the login' });
+  statuses[first.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+  answers['/transcript'] = { agent: 'claude', entries: [{ role: 'user', text: 'Fix it', at: null }, { role: 'assistant', text: 'Half done.', at: null }] };
+
+  await assert.rejects(fleet.handOffPrivate({ owner: 'mia', id: first.id, agent: 'codex' }), /no session you can open/);
+  await assert.rejects(fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'gemini' }), /the agent must be one of/);
+  assert.equal(first.status, 'running', 'a refusal leaves it running');
+
+  const next = await fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'codex', model: 'gpt-6.1-sol', note: 'Only the tests are left.' });
+  assert.equal(first.status, 'stopped');
+  assert.equal(first.stopReason, 'handed off to Codex');
+  assert.equal(first.handedOffTo, next.id);
+  const paths = calls.statusd.filter((c) => c.id === first.id).map((c) => c.path);
+  assert.ok(paths.indexOf('/transcript') < paths.indexOf('/checkpoint'), 'the conversation is read before the stop, which pushes its work');
+  assert.equal(next.owner, 'joel');
+  assert.equal(next.branch, 'joel/fix', 'the same branch');
+  assert.equal(next.title, 'Fix the login');
+  assert.deepEqual(next.options, { agent: 'codex', model: 'gpt-6.1-sol', effort: '', permissionMode: 'auto' });
+  assert.equal(next.handedOffFrom, first.id);
+  assert.match(next.prompt, /^Only the tests are left\.\n/);
+  assert.match(next.prompt, /from a Claude Code session/);
+  const { files } = attachments.written[next.id];
+  assert.equal(files[0].name, 'handoff.md');
+  assert.match(files[0].text, /### The agent\n\nHalf done\./);
+  assert.equal(next.attachments, 1);
+
+  await assert.rejects(fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'claude' }), /only a running session/);
+});
+
+test('Hand off without the conversation reads none and attaches nothing; a tainted session or an unreadable conversation is refused, still running', async () => {
+  const attachments = fakeAttachments();
+  const { fleet, calls, statuses, answers } = setup({ attachments });
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix', agent: 'codex' });
+  statuses[first.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+
+  answers['/transcript'] = Promise.reject(new Error('statusd /transcript answered 500'));
+  answers['/transcript'].catch(() => {});
+  await assert.rejects(fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'claude' }), /conversation could not be read/);
+  assert.equal(first.status, 'running');
+
+  first.taintedAt = '2026-10-21T10:00:00.000Z';
+  await assert.rejects(fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'claude', conversation: false }), /production data/);
+  delete first.taintedAt;
+
+  const before = calls.statusd.filter((c) => c.path === '/transcript').length;
+  const next = await fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'claude', conversation: false });
+  assert.equal(calls.statusd.filter((c) => c.path === '/transcript').length, before, 'no read');
+  assert.equal(attachments.written[next.id], undefined);
+  assert.match(next.prompt, /from a Codex session/);
+  assert.match(next.prompt, /was not handed over/);
+  assert.equal(next.options.agent, 'claude');
+});
