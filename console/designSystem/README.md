@@ -51,6 +51,12 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   it is now and its status word; several may be open at once. The groups show under My settings in the settings list
   while it is the page shown, as Settings' tabs do under Settings: each a link to its group, none ever marked, since
   all are on the one page.
+- Every settings page is groups of rows that open in place, a program's own pages too: never a column of cards. Only a
+  list read across, such as People's members or a ledger, stays a table, in a group's box. My settings is Sign-ins,
+  Sessions, Kept for you, Repos and files, Display, then Remove My Woodshed alone.
+- A program embedding the console draws its pages with the same components, rendered on its server
+  (`console/settingsMarkup.mjs`): in the settings frame, as groups on a repo's settings page, or as a page that stands
+  alone. It adds no component of its own; one it needs is added here first, for every page to have.
 - A few things each set on or off at once, such as who reviews your pull requests on My settings, are an on/off grid (`components/OnOffGrid`): radios under Off and On, a row each, saved as they are picked.
 - Two or three exclusive choices whose difference matters, such as an MCP server's Ordinary or Production, are choice
   cards (`components/ChoiceCards`): side by side, each a title and one line saying what it does, the picked one in the
@@ -304,6 +310,10 @@ Its **AI reviews** tab (`components/AiReviews`) shows what Claude Code and Codex
 first, each a Discussion `saidbox` whose head is a keyboard disclosure, with each finding as a card and the follow-ups
 asked about it under it. A resolved or outdated finding is dashed and labelled, never faded, so its text keeps 4.5:1.
 Its **Ask** buttons are quiet, like the Q&A's, never orange.
+
+A session with more than one pull request has a review of each: the review switch (`components/ReviewSwitch`), a quiet
+row above the title, only with two or more, lists them as mono pills, the one on screen in `ink` with no link and the
+others links in `slate`, never orange.
 
 Its tab bar ends with **Submit review**, then, for an approved pull request, either **Squash and merge** or the merge
 hint (`components/MergeHint`): an Octicons info icon whose tip says why merging waits. The bar holds controls, never a

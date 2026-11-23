@@ -60,8 +60,10 @@ const REVIEW_ID = 'beadfeed';
 // DEV_CONSOLE_REVIEW_PR=1 makes /s/beadfeed @local's own My Woodshed session, whose branch has a made-up open pull
 // request, #26701, answered by a stand-in gh (devReviewGh.mjs): for `woodshed review beadfeed`, which opens your own
 // sessions only, and for the review's writes (comment, verdict, rename, merge), which a shared session's review refuses.
+// It opened #26695 before it, on a branch of its own: its Review switches between the two, each with its own review.
 const reviewPr = process.env.DEV_CONSOLE_REVIEW_PR === '1'
-  ? { number: 26701, title: 'Retry webhook deliveries with backoff', login: 'local', slug: 'example-org/example-repo' } : null;
+  ? { number: 26701, title: 'Retry webhook deliveries with backoff', login: 'local', slug: 'example-org/example-repo',
+    earlier: { number: 26695, branch: `woodshed/${REVIEW_ID}-docs`, title: 'Say what a webhook subscriber should answer' } } : null;
 // The PATH before the review's stand-in gh goes first on it: everything else here, the console's own gh among it,
 // keeps the PATH it had.
 const basePath = process.env.PATH;
@@ -273,7 +275,10 @@ const sessions = [
   session(REVIEW_ID, 26701, 'Retry webhook deliveries with backoff', {
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
     endpoint: { host: '127.0.0.1', statusPort: review.port, termPort: review.port },
-    ...(reviewPr ? { kind: 'task', trigger: 'my-woodshed', owner: 'local', assignee: null, prUrl: `https://github.com/${reviewPr.slug}/pull/${reviewPr.number}` } : {}),
+    ...(reviewPr ? {
+      kind: 'task', trigger: 'my-woodshed', owner: 'local', assignee: null, prUrl: `https://github.com/${reviewPr.slug}/pull/${reviewPr.number}`,
+      prUrls: [reviewPr.earlier.number, reviewPr.number].map((n) => `https://github.com/${reviewPr.slug}/pull/${n}`),
+    } : {}),
   }),
   // Running on a project that declares two apps, with the real statusd behind it: Start app ▾ lists them.
   // Its checkout's three branches have a pull request each, which that statusd reports: three chips on its card.

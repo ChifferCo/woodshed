@@ -23,6 +23,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { parseUnifiedDiff } from './diff.mjs';
+import { run } from './exec.mjs';
 import {
   originSlug, fetchPrMeta, submitPrReview, fetchViewedFiles, setFileViewed, ghAccount,
   setPrTitle, fetchReviewState, addPendingComment, deletePendingComment, discardPendingReview,
@@ -252,7 +253,7 @@ export function reviewOwnsBranch(session) {
  *
  * @returns {Promise<{ok: true, review: object} | {ok: false, status: number, error: string, stderr?: string}>}
  */
-export async function createReviewSession({ ctx, sessionName, sessionId, target, worktreePath }) {
+export async function createReviewSession({ ctx, sessionName, sessionId, target, worktreePath, detach = false }) {
   const { log, reqId } = ctx;
   if (DISABLED) return { ok: false, status: 503, error: 'the review feature is disabled in this instance' };
 
@@ -270,13 +271,13 @@ export async function createReviewSession({ ctx, sessionName, sessionId, target,
 
   inflightCheckouts += 1;
   try {
-    return await prepareReview({ ctx, sessionName, sessionId, target, worktreePath });
+    return await prepareReview({ ctx, sessionName, sessionId, target, worktreePath, detach });
   } finally {
     inflightCheckouts -= 1;
   }
 }
 
-async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath }) {
+async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath, detach = false }) {
   const { log, repoRoot, reqId } = ctx;
 
   const slug = await originSlug(repoRoot);
@@ -303,10 +304,14 @@ async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath
   // The pull request's own branch when it can be, so the session pushes to the
   // pull request and the rail finds it like any other session's. A fork's pull
   // request, or a branch target, gets a private review/* branch instead.
-  const prBranch = prBranchFor(prMeta);
-  const branchName = prBranch || reviewBranchFor({ target, sessionId });
+  //
+  // `detach`: no branch at all, for a review beside a checkout that is someone's work (a Woodshed session's review of
+  // another of its pull requests): the pull request's branch may be checked out there, or held locally with commits of
+  // its own, and a review must neither take it nor move it.
+  const prBranch = detach ? null : prBranchFor(prMeta);
+  const branchName = detach ? null : prBranch || reviewBranchFor({ target, sessionId });
   const created = await createReviewWorktree({
-    repoRoot, sessionId, target, baseRef, worktreePath, branchName, onPrBranch: !!prBranch,
+    repoRoot, sessionId, target, baseRef, worktreePath, branchName, onPrBranch: !!prBranch, detach,
   });
   if (!created.ok) return created;
 
@@ -430,7 +435,9 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
     };
   }
 
-  const baseRef = await defaultBranch(repoRoot);
+  // The branch's pull request's own base when its host names one (a pull request stacked on another branch), so the
+  // review shows what that pull request changes rather than the branches under it too; else the default branch.
+  const baseRef = await worktreeBaseRef(ctx) || await defaultBranch(repoRoot);
   const pulled = pull && fs.existsSync(worktreePath) ? await pullWorktreeBranch({ worktreePath }) : null;
   if (pulled && (pulled.pulled || pulled.refused)) {
     log('review.worktree_pulled', {
@@ -559,6 +566,59 @@ export async function ensureWorktreeReview({ ctx, sessionName }) {
     const made = await createWorktreeReview({ ctx, sessionName, worktreePath: ctx.worktreePathFor(sessionName) });
     return made.ok ? { ok: true, created: true } : { ok: false, status: made.status, error: made.error };
   });
+}
+
+/**
+ * The base a host names for a worktree review (`ctx.worktreeBaseRef`), when it is a branch name a refspec can carry.
+ * @returns {Promise<string|null>}
+ */
+export async function worktreeBaseRef(ctx) {
+  if (typeof ctx.worktreeBaseRef !== 'function') return null;
+  let base = null;
+  try {
+    base = await ctx.worktreeBaseRef();
+  } catch (err) {
+    ctx.log?.('review.base_not_read', { reqId: ctx.reqId, error: err?.message });
+    return null;
+  }
+  // A branch name, as git checks one (`check-ref-format --branch`): a base named `123`, or `équipe/x`, is a branch.
+  // It becomes a refspec, so never one that starts with `-`, `@` or names a ref by `@{…}`.
+  if (typeof base !== 'string' || !base || base.length > 255 || /^[-@]|@\{|[\u0000-\u001f\u007f]/.test(base)) return null;
+  const checked = await run('git', ['check-ref-format', '--branch', base], { timeoutMs: 10_000 });
+  return checked.status === 0 && (checked.stdout || '').trim() === base ? base : null;
+}
+
+/**
+ * Take a review of one pull request if `sessionName` has none, in a detached worktree of its own at
+ * `ctx.worktreePathFor(sessionName)`, without starting the analysis: a Woodshed session's review of another pull
+ * request it opened (session/reviewShed/host.mjs). Nothing of the checkout it sits beside is touched, its branches
+ * included. A review already there is kept, whatever it is of: its Re-review (`/refresh`) moves it on.
+ *
+ * @returns {Promise<{ok: true, created: boolean} | {ok: false, status: number, error: string}>}
+ */
+export async function ensurePullRequestReview({ ctx, sessionName, pr }) {
+  if (readSessionReview(sessionName)) return { ok: true, created: false };
+  const target = parseTarget(pr);
+  if (!target.ok || target.kind !== 'pr') return { ok: false, status: 400, error: 'not a pull request number' };
+  return oneTakeAtATime(sessionName, async () => {
+    if (readSessionReview(sessionName)) return { ok: true, created: false };
+    const made = await createReviewSession({
+      ctx, sessionName, sessionId: sessionName.slice('claude-'.length), target,
+      worktreePath: ctx.worktreePathFor(sessionName), detach: true,
+    });
+    return made.ok ? { ok: true, created: true } : { ok: false, status: made.status, error: made.error };
+  });
+}
+
+/**
+ * The branch a session's own worktree review was taken on, for a host deciding whether that review is of the branch
+ * checked out now: `exists` false when there is none yet.
+ * @returns {{exists: boolean, branch: string|null}}
+ */
+export function worktreeReviewBranch({ sessionName }) {
+  const review = readSessionReview(sessionName);
+  if (!review || review.kind !== 'worktree') return { exists: Boolean(review), branch: null };
+  return { exists: true, branch: review.branch || review.meta?.headRefName || null };
 }
 
 /**
@@ -916,7 +976,7 @@ export async function handleReviewRequest(req, res, ctx) {
 
   // The askId tail is bounded: unbounded, a long segment produced
   // ENAMETOOLONG rather than a miss and echoed an absolute path back in a 500.
-  const match = /^\/reviews\/(claude-[0-9a-f]{8})(\/[a-z]+)?(\/[A-Za-z0-9-]{1,64})?$/.exec(pathname);
+  const match = /^\/reviews\/(claude-[0-9a-f]{8}(?:-pr[1-9][0-9]{0,8})?)(\/[a-z]+)?(\/[A-Za-z0-9-]{1,64})?$/.exec(pathname);
   if (!match) {
     json(res, 404, { ok: false, error: 'not found' });
     return true;

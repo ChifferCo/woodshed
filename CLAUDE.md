@@ -524,8 +524,8 @@ URL on top of each env file's Repo settings values
   `hc get claude --json` its `status` (the agent's own word, which statusd logs as `source: 'herdr'`) and `hc read
   claude` its screen; the TUI tab is ttyd running `hc attach claude`. A Chat message that Herdr refused logs `statusd:
   Herdr did not send the message` with `why` (`prompt-open`, a question, approval or menu on screen, with `kind`;
-  `blocked`; `status_mismatch`, working; `not-at-prompt`, its screen not at the prompt). Shared sessions, questions, reviews and QA runs use tmux
-  whatever the pick.
+  `blocked`, hc's own refusal; `status_mismatch`, claude's record working, blocked or in error; `not-at-prompt`, its
+  screen not at the prompt). Shared sessions, questions, reviews and QA runs use tmux whatever the pick.
 - **`woodshed session new --herdr --parent` left the session's agent with no parent, or its agent sat unstarted for
   minutes.** The console logs `fleet: session created` (or `resuming a private session`) with `herdrParent`, and the
   session's log `Herdr started` with `made by: its parent`, then `Agent's terminal made by its parent` with the
@@ -1137,7 +1137,9 @@ does, and asks before it runs a command or edits a file, for the Chat tab's appr
 tab's approvals.
 `DEV_CONSOLE_HOST_REPOS=1` starts it as an embedding program would, with a made-up `repos` hook
 (`scripts/devHostConsole.mjs`): Console settings' Repos card then lists `acme/api`, `acme/web` and `acme/lib`, asks for no
-name, and refuses any other typed repo with a link to give the App access, as a hosted console does. With
+name, and refuses any other typed repo with a link to give the App access, as a hosted console does. Each repo's settings page
+then ends with two made-up groups of the program's own (the `repoPage` hook, drawn with `console/settingsMarkup.mjs`),
+whose forms post nowhere. With
 `DEV_CONSOLE_BLOCKED_REPO=acme/api` its made-up `projectReadiness` hook says that repo's image is not built, for the
 Needs setup card on New session and the Repos card; with `WOODSHED_PROJECTS` naming the three, the default can be the
 blocked one. The dev console has no sign-in, so everyone is an admin: to see the card as anyone else, answer `/api/me`

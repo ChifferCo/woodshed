@@ -743,6 +743,26 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .set-card.is-wide { max-width: 880px; }
 /* My settings: groups of rows that open in place (designSystem/components/SettingsRows). */
 .set-group { display: flex; flex-direction: column; gap: 6px; max-width: 780px; scroll-margin-top: 12px; }
+/* A program's own groups on a repo's page (repoSettings.js, hostGroups): spaced as the page's own. */
+.host-groups { display: contents; }
+/* A program's page in the settings frame made of groups (hostSettings.js, settingsMarkup.mjs): spaced as the console's own
+   page's are. A page with markup of its own keeps its own layout. */
+.host-page:has(> .set-group) { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+/* A form drawn by a program's server (settingsMarkup.mjs, form): its controls spaced as a row's body is. */
+.set-form { display: flex; flex-direction: column; align-items: stretch; gap: 10px; margin: 0; }
+.set-form > .set-actions, .set-form > .check-line { align-self: flex-start; }
+/* Who is signed in, on a program's page that stands alone (server.mjs, standalonePage): a line, not a link. */
+.side-who { color: var(--sub); cursor: default; }
+.side-brand-icon { width: 20px; height: 20px; margin-right: 8px; vertical-align: -4px; }
+.side-who:hover { background: none; }
+/* A checkbox with its words, in a program's server-drawn form (settingsMarkup.mjs, checkbox). */
+.check-line { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
+.check-line input { margin: 0; accent-color: var(--slate); }
+/* A step drawn over a program's page by its server (settingsMarkup.mjs, dialog): dialog.confirm's look, the page inert behind. */
+.host-dialog { position: fixed; inset: 0; z-index: 30; display: flex; justify-content: center; align-items: flex-start; padding: 56px 16px; overflow-y: auto; background: rgba(20, 23, 31, 0.5); }
+.host-dialog-box { width: min(500px, 100%); box-sizing: border-box; padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--ground); color: var(--ink); display: flex; flex-direction: column; gap: 12px; }
+.host-dialog-box h2 { margin: 0; font-size: 17px; }
+.host-dialog-box .start-steps { margin: 0; }
 .set-group-label { margin: 0 0 0 2px; font-size: 11.5px; line-height: 1.2; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--label); }
 .set-group-note { margin: 0 0 2px 2px; font-size: 13px; color: var(--sub); }
 .set-group-note .form-note { margin-top: 4px; }

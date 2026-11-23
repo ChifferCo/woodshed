@@ -154,8 +154,18 @@ and no Discussion tab, and the session refuses a GitHub write called directly.
 Read-only means GitHub only: anyone who can see a shared session can still start
 its analysis, ask and chat, which spend its Claude.
 
+A session with more than one pull request has a review of each. The checkout's, `claude-<id>`, is of the branch checked
+out now; each other pull request the session opened has its own, `claude-<id>-pr<n>`, taken from GitHub's head of it
+into a detached worktree under `/tmp/woodshed-review-worktrees`, so the checkout and its branches are never touched,
+with its own analysis, Q&A, comments, verdict and merge, which go to that pull request. **Pull requests** above the
+title links each; asked for the one checked out, the page opens the checkout's. The proxy names the session's pull
+requests on its own repo to statusd (`x-woodshed-pulls`, from the session's `prUrls`), and statusd opens no review of a
+pull request it did not name (`review: refused, not one of the session's pull requests`); a review of another one logs
+`review: pull request review ensured` with the number.
+
 What the page does, from the shed's own review code:
-- **The diff** is the checkout against its merge base with the default branch, with
+- **The diff** is the checkout against its merge base with the default branch (with the base of its pull request
+  instead, when it has one open on another branch, so a stacked one shows only its own change), with
   everything uncommitted and untracked (as `.gitignore` allows), read through a
   scratch index so the session's own is left alone. **Read again** reads it
   afresh.
@@ -1027,6 +1037,16 @@ is told the tag in `WOODSHED_REVIEW_TAG` (fleet.mjs, decided at each start), whi
 names none, so the pull requests sessions open carry it. Someone who wants no review of their own pull requests picks
 none on My settings ("Who reviews"). `GET /api/review-readiness`
 says what runs in `review` (`{runner, rerun, from}`, `from` being `project file` or `default`).
+
+**A push that dismissed the review's approval is reviewed again, tag or not.** Where the repo dismisses stale
+approvals, a commit pushed after the review approved takes the approval away, and nothing else gives it back: a merge of
+the default branch with git's own message (`Merge branch 'main'`, `Merge remote-tracking branch 'origin/main'`) carries
+no tag. So when the review's own last verdict on the pull request is an APPROVE of an older commit and GitHub lists that
+review as `DISMISSED`, the next pull request event (the push, or the dismissal itself) starts a review of the head
+(`approvalDismissed` in `fleet.mjs`; it logs `fleet: the review's approval was dismissed by a push, reviewing it again`).
+A fix after changes were asked for still waits for the tag, so a session can push its fixes in several commits for one
+review, and a repo that keeps stale approvals is not reviewed again, since its approval stands. The tag is read from the
+commit's whole message, not GitHub's shortened headline, and a merge commit's counts like any other.
 
 At each verdict the console finds the reviewer App's installation on the repo, mints a token narrowed to pull requests,
 and submits the review at the reviewed commit. It logs `fleet: review verdict submitted` with `as: 'reviewer App'`, or
@@ -1980,7 +2000,26 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   marks its entry in the side list and menu, and its tab in the row and among the entry's pages. `styles` are its
   stylesheets (paths), loaded after the console's, so its rules use the design system's variables and follow the
   theme; it scopes them to `.host-page`, which holds its part. Its forms and links stay the program's. Someone who is not an admin sees the program's tabs alone, and Settings in the Console group opens the
-  first of them; with no tabs, nothing changes for them.
+  first of them; with no tabs, nothing changes for them. It draws its part with the console's own components, made on
+  its server by `settingsMarkup.mjs` (designSystem/components/SettingsRows, "From a program's server"), so it looks
+  like the console's pages and follows the design system as it changes; their rows open in place (`public/hostRows.js`).
+- `repoPage({name, repo, headers})`: groups of the program's own on a repo's settings page (Console settings → Repos →
+  Repo settings), after the console's, for what it keeps about the repo: its session image's project file, the data its
+  sessions start from. Async; it answers markup from `settingsMarkup.mjs`, `{markup, scripts}`
+  where its groups need scripts to work (an upload's: paths on the console's address, at most eight), or `null` for
+  none. The admin's view of the repo carries it as `host: {html, scripts}` (`GET /api/console-settings/repos/<project>`),
+  and the page puts the markup in as a template's contents, so no `<script>` in it runs, then loads each script once:
+  markup from `settingsMarkup.mjs` alone, which escapes every value, never a string the program built some other way. A
+  script listens on the document, or for `woodshed:host-groups` on `window`, which the page fires each time it draws the
+  groups anew (a save answering with new ones). Its forms post to the program, which sends the page back to
+  `/console-settings/repos/<project>#<row>`, opening that row. A hook that throws, or answers anything else, adds none
+  and logs `repoSettings: the program's groups not given`; the page is shown without them.
+- `standalonePage({title, body, brand: {label, href, icon?}, groups?, current?, login?, signOut?, dialog?, refresh?, styles?, scripts?})`
+  from `server.mjs`: a page of the program's that stands outside any console, such as a first visit before there is a
+  console to be in. It is the settings pages' frame drawn by the server, the program's name (and its mark, `icon`, a path) heading the side list in
+  place of Back to sessions, its `groups` of links under it and Sign out posting to `signOut`, with the design system's
+  stylesheet and `hostRows.js` and no console script, so it asks no console anything. `dialog` is a step drawn over it
+  (`settingsMarkup.mjs`'s `dialog`), the page inert behind; `refresh` reloads it after that many seconds.
 - `members: {list(), add({login, role, by}), remove({login, by}), setRole({login, role, by})}`, with `trusted` only
   (given without it, `createInstallation` throws): the program's own list of who is in, for the People page (above,
   "Sign-in", behind a hosting proxy). `list()` answers `[{login, role, note?}]`, `role` `owner` or `member` (an

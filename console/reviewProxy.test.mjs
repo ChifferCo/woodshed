@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 
-import { createReviewProxy, isReviewPath, reviewTarget } from './reviewProxy.mjs';
+import { createReviewProxy, isReviewPath, reviewTarget, sessionPulls } from './reviewProxy.mjs';
 
 test('the page and its calls map to the session\'s statusd, and nothing else does', () => {
   const t = (p) => reviewTarget(new URL(p, 'http://c'));
@@ -13,6 +13,11 @@ test('the page and its calls map to the session\'s statusd, and nothing else doe
   assert.equal(t('/review?session=0a1b2c3d'), null);
   assert.equal(t('/reviews/claude-0a1b2c3d/../../etc'), null);
   assert.equal(t('/reviews/claude-xyz/diff'), null);
+  // Another pull request's review of the same session goes to the same statusd.
+  assert.deepEqual(t('/review?session=claude-0a1b2c3d-pr12&embed=1'), { id: '0a1b2c3d', path: '/shed-review/review' });
+  assert.deepEqual(t('/reviews/claude-0a1b2c3d-pr12/diff'), { id: '0a1b2c3d', path: '/shed-review/reviews/claude-0a1b2c3d-pr12/diff' });
+  assert.equal(t('/reviews/claude-0a1b2c3d-pr0/diff'), null);
+  assert.equal(t('/reviews/claude-0a1b2c3d-prx'), null);
   assert.equal(isReviewPath('/reviews/claude-0a1b2c3d'), true);
   assert.equal(isReviewPath('/api/sessions'), false);
 });
@@ -24,7 +29,7 @@ async function setup(t, { session }) {
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
-      seen.push({ method: req.method, url: req.url, auth: req.headers.authorization, body });
+      seen.push({ method: req.method, url: req.url, auth: req.headers.authorization, pulls: req.headers['x-woodshed-pulls'], body });
       if (req.url.endsWith('/review')) {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         return res.end('<html>page</html>');
@@ -92,7 +97,7 @@ async function cliSetup(t, sessions, { withCli = true } = {}) {
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
-      seen.push({ method: req.method, url: req.url, auth: req.headers.authorization, body });
+      seen.push({ method: req.method, url: req.url, auth: req.headers.authorization, pulls: req.headers['x-woodshed-pulls'], body });
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end('{"ok":true}');
     });
@@ -167,4 +172,15 @@ test('a console with no command line sign-in refuses every token call', async (t
   const { seen, call } = await cliSetup(t, mias, { withCli: false });
   assert.equal((await call('GET', '/reviews/claude-aaaa0001')).status, 404);
   assert.equal(seen.length, 0);
+});
+
+test('statusd is told the session\'s pull requests on its own repo, by number, oldest first', async (t) => {
+  assert.equal(sessionPulls({ repo: 'acme/app', prUrls: ['https://github.com/acme/app/pull/3', 'https://github.com/other/x/pull/4', 'https://github.com/Acme/App/pull/9'] }), '3,9');
+  assert.equal(sessionPulls({ repo: 'acme/app', prUrl: 'https://github.com/acme/app/pull/5' }), '5', 'a session from before the list');
+  assert.equal(sessionPulls({ repo: 'acme/app' }), '');
+  const { seen, call } = await setup(t, { session: (port) => ({ ...running(port), repo: 'acme/app', prUrls: ['https://github.com/acme/app/pull/3', 'https://github.com/acme/app/pull/9'] }) });
+  const res = await call('GET', '/reviews/claude-0a1b2c3d-pr3');
+  assert.equal(res.status, 200);
+  assert.equal(seen[0].url, '/shed-review/reviews/claude-0a1b2c3d-pr3');
+  assert.equal(seen[0].pulls, '3,9');
 });

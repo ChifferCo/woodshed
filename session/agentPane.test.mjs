@@ -93,48 +93,32 @@ const CODEX_AT_PROMPT = ['╭─────────────────
 const read = (text) => ({ text, complete: true, how: 'screen' });
 const sends = (calls) => calls.filter((c) => c[1] === 'send' || c[1] === 'keys');
 
-test('a message goes in through hc only while the agent says it is idle, and codex, which says nothing, by its screen', async () => {
+test('a message goes in through hc only while claude says it is idle or done, and codex, which says nothing, by its screen', async () => {
   let { run, calls } = fakeRun({ 'hc get': CLAUDE_RUNNING, 'hc read': read(fixture('pane-done.txt')) });
   assert.deepEqual(await hcPane(run).send('fix it\nplease'), { sent: true });
   assert.deepEqual(calls.at(-1), ['hc', 'send', '--if', 'idle', '--json', '--', 'claude', 'fix it\nplease']);
+  // After a finished turn claude says `done`, which hc's `--if idle` refuses (`t1 is done, not idle`): sent with no --if.
+  ({ run, calls } = fakeRun({ 'hc get': { ...CLAUDE_RUNNING, status: { app: 'claude-code', state: 'done' } }, 'hc read': read(fixture('pane-done.txt')) }));
+  assert.deepEqual(await hcPane(run).send('how can i test it'), { sent: true });
+  assert.deepEqual(calls.at(-1), ['hc', 'send', '--json', '--', 'claude', 'how can i test it']);
+  for (const state of ['working', 'blocked', 'error']) {
+    ({ run, calls } = fakeRun({ 'hc get': { ...CLAUDE_RUNNING, status: { app: 'claude-code', state } }, 'hc read': read(fixture('pane-done.txt')) }));
+    assert.deepEqual(await hcPane(run).send('hi'), { sent: false, why: 'status_mismatch' }, state);
+    assert.deepEqual(sends(calls), [], state);
+  }
   ({ run, calls } = fakeRun({ 'hc get': CODEX, 'hc read': read(CODEX_AT_PROMPT) }));
   assert.deepEqual(await hcPane(run).send('go on'), { sent: true });
   assert.deepEqual(calls.at(-1), ['hc', 'send', '--json', '--', 'claude', 'go on'], 'no record: codex read at its prompt');
 });
 
-// claude's record after each turn: `done`, kept until its next turn starts (measured, claude 2.1.330 on hc 0.1.21). hc's
-// `send --if` takes only idle or working, and `--if idle` refuses done with status_mismatch ("t3 is done, not idle").
+// claude's record after each turn: `done`, kept until its next turn starts (measured, claude 2.1.330 on hc 0.1.21).
 const CLAUDE_DONE = { ...CLAUDE_RUNNING, status: { app: 'claude-code', state: 'done' } };
-
-test('a message goes in through hc after claude\'s turn ended, which its record says as done, not idle', async () => {
-  // hc as it answers: `--if idle` on a done terminal is refused, and nothing is typed.
-  const hcSend = (args) => (args.includes('--if') ? refused('status_mismatch') : { started: false, status: 'done' });
-  const calls = [];
-  const run = async (cmd, args) => {
-    calls.push([cmd, ...args]);
-    if (args[0] === 'get') return { stdout: JSON.stringify(CLAUDE_DONE) };
-    if (args[0] === 'read') return { stdout: JSON.stringify(read(fixture('pane-done.txt'))) };
-    const out = hcSend(args);
-    if (out instanceof Error) throw out;
-    return { stdout: JSON.stringify(out) };
-  };
-  assert.deepEqual(await hcPane(run).send('the review asked for changes'), { sent: true });
-  assert.deepEqual(calls.at(-1), ['hc', 'send', '--json', '--', 'claude', 'the review asked for changes']);
-});
 
 test('a done record is not enough while the screen shows claude working or asking: nothing goes in', async () => {
   for (const [name, screen, why] of [['working', fixture('pane-working.txt'), 'not-at-prompt'], ['approval', fixture('pane-permission.txt'), 'prompt-open']]) {
     const { run, calls } = fakeRun({ 'hc get': CLAUDE_DONE, 'hc read': read(screen) });
     assert.equal((await hcPane(run).send('hi')).why, why, name);
     assert.deepEqual(sends(calls), [], name);
-  }
-});
-
-test('while its record says working or blocked, nothing goes in through hc', async () => {
-  for (const [state, why] of [['working', 'status_mismatch'], ['blocked', 'blocked'], ['error', 'status_mismatch']]) {
-    const { run, calls } = fakeRun({ 'hc get': { ...CLAUDE_RUNNING, status: { app: 'claude-code', state } }, 'hc read': read(fixture('pane-done.txt')) });
-    assert.deepEqual(await hcPane(run).send('hi'), { sent: false, why }, state);
-    assert.deepEqual(sends(calls), [], state);
   }
 });
 

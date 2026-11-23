@@ -108,10 +108,12 @@ export function hcPane(run, { terminal = HC_TERMINAL, bin = 'hc' } = {}) {
     paste: async () => { throw new Error('hc types no text without its Enter: use send or line'); },
     /**
      * A message, pasted and sent with its Enter, never into a prompt: not while the screen asks a person anything (a
-     * question, an approval, a numbered menu: what typeMessage refuses in tmux), and only while the agent says it is idle
-     * or done (hc's own `send --if idle` for idle; hc's send also refuses a blocked program and waits for a person's
-     * unsent draft in an attached client). codex sends no 7501 records, so hc never calls it idle: with no record, and
-     * with done, which `--if` cannot name, the screen must show the agent at its prompt.
+     * question, an approval, a numbered menu: what typeMessage refuses in tmux), and only while the agent says it is at
+     * its prompt. claude's record says `idle` before its first turn and after one it stopped, and `done` after every
+     * turn it finished: both are its prompt. hc's `--if` takes `idle` alone, so `done` is sent with no `--if`, once the
+     * screen shows the agent at its prompt (a stale `done` can sit over a turn a person started); hc's own send still
+     * refuses a blocked program and waits for a person's unsent draft in an attached client. codex sends no 7501
+     * records: with no record, the screen must show the agent at its prompt.
      * @returns {Promise<{sent: true}|{sent: false, why: string, kind?: string|null}>}
      */
     async send(text) {
@@ -119,11 +121,9 @@ export function hcPane(run, { terminal = HC_TERMINAL, bin = 'hc' } = {}) {
         const [screen, { status }] = await Promise.all([read(), get()]);
         const kind = asking(screen);
         if (kind) return { sent: false, why: 'prompt-open', kind };
-        // claude's record says idle only before its first turn, and done after every turn until the next starts. hc's
-        // `--if` takes only idle or working, so a done record is checked against the screen as no record is, and sent
-        // without it: hc's own send still refuses a blocked program and waits for a person's draft.
+        // Working, blocked, or a turn that ended in an error: said as hc says it when `--if` does not match.
         const state = status?.state ?? null;
-        if (state && state !== 'idle' && state !== 'done') return { sent: false, why: state === 'blocked' ? 'blocked' : 'status_mismatch' };
+        if (state && state !== 'idle' && state !== 'done') return { sent: false, why: 'status_mismatch' };
         if (state !== 'idle' && classifyCodexPane(screen) !== 'done' && paneState(screen) !== 'done') return { sent: false, why: 'not-at-prompt' };
         await hc('send', state === 'idle' ? ['--if', 'idle'] : [], text);
         return { sent: true };
