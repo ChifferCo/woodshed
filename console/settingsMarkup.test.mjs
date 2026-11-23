@@ -122,3 +122,13 @@ test('a field is a void element, never closed, and a form carries its hidden val
   assert.equal(form({ action: '/orgs/acme/leave', hidden: { login: 'ada' } }, button('Leave')).text,
     '<form method="post" action="/orgs/acme/leave" class="set-form"><input type="hidden" name="login" value="ada"><button type="submit" class="btn btn-plain">Leave</button></form>');
 });
+
+test('a link is a path, an anchor or an http(s) address: any other scheme, which a value from elsewhere could carry, is no link', () => {
+  for (const bad of ['javascript:alert(1)', ' JavaScript:alert(1)', 'data:text/html,x', '//evil.example/x', '/\\evil.example/x', 'vbscript:x']) {
+    assert.equal(linkButton('Go', bad).text, '<a class="btn btn-plain">Go</a>', bad);
+    assert.doesNotMatch(pageHead({ title: 't', tabs: [{ label: 'x', href: bad }], crumb: { label: 'c', href: bad } }).text, /href=/, bad);
+  }
+  assert.match(linkButton('Go', '/orgs/acme').text, /href="\/orgs\/acme"/);
+  assert.match(linkButton('Go', '#credits').text, /href="#credits"/);
+  assert.match(linkButton('Go', 'HTTPS://github.com/x').text, /href="HTTPS:\/\/github\.com\/x" target="_blank"/);
+});

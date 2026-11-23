@@ -123,8 +123,19 @@ export function button(label, { kind = 'plain', type = 'submit', name = null, va
 }
 
 /** A link that looks like a button; one that leaves for another site says so (↗) and opens beside the console. */
+/**
+ * @returns {string|null}  a link the page may follow: a path, an anchor, or an http(s) address; null for anything else
+ *   (`javascript:`, `data:`), which a value from elsewhere could carry
+ */
+export function safeHref(href) {
+  const text = String(href ?? '').trim();
+  if (/^#/.test(text) || (/^\/(?![/\\])/.test(text))) return text;
+  return /^https?:\/\//i.test(text) ? text : null;
+}
+
 export function linkButton(label, href, { kind = 'plain', small = false } = {}) {
-  const away = /^https?:/.test(String(href));
+  href = safeHref(href);
+  const away = /^https?:/i.test(String(href));
   const k = BUTTON_KINDS.has(kind) ? kind : 'plain';
   return el('a', { class: `btn btn-${k}${small ? ' btn-sm' : ''}`, href, target: away ? '_blank' : null, rel: away ? 'noopener' : null }, label, away ? ' ↗' : '');
 }
@@ -237,10 +248,10 @@ export function checklist(items) {
 /** The head of a page: its title, an optional `Only you` or `Everyone` tag, a row of tabs, and a sentence under it. */
 export function pageHead({ title, scope = null, tabs = null, current = null, lead = null, crumb = null }) {
   return el('header', { class: 'page-head' }, el('div', null,
-    crumb && el('p', { class: 'crumb' }, el('a', { href: crumb.href }, '‹ ', crumb.label)),
+    crumb && el('p', { class: 'crumb' }, el('a', { href: safeHref(crumb.href) }, '‹ ', crumb.label)),
     el('h1', { class: 'title' }, title, scope && [' ', el('span', { class: 'pill' }, scope)]),
     tabs?.length > 0 && el('nav', { class: 'rail-seg settings-tabs', 'aria-label': typeof title === 'string' ? title : null },
-      tabs.map((t) => el('a', { class: 'rail-seg-link', href: t.href, 'aria-current': t.href === current ? 'page' : null }, t.label))),
+      tabs.map((t) => el('a', { class: 'rail-seg-link', href: safeHref(t.href), 'aria-current': t.href === current ? 'page' : null }, t.label))),
     lead && el('p', { class: 'sub' }, lead)));
 }
 
