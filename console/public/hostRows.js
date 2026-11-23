@@ -82,9 +82,19 @@
     root.querySelectorAll('.repo-pick').forEach(pickText);
     if (hash) {
       reveal(root, named());
-      window.addEventListener('hashchange', () => reveal(root, named()));
+      followed.add(root);
     }
   }
+
+  // A link followed while a page is shown opens its row: one listener for the document, over the pages wired since,
+  // as the settings frame shows a program's page anew on each visit. A page no longer shown is let go.
+  const followed = new Set();
+  window.addEventListener('hashchange', () => {
+    for (const root of followed) {
+      if (root.isConnected) reveal(root, named());
+      else followed.delete(root);
+    }
+  });
 
   window.WoodshedHostRows = { wire, reveal, setOpen };
   // A page that stands alone (server.mjs, standalonePage) names its root on this script's tag: no inline script, which a
