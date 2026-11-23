@@ -122,17 +122,26 @@ export function button(label, { kind = 'plain', type = 'submit', name = null, va
   return el('button', { type, class: `btn btn-${k}${small ? ' btn-sm' : ''}`, name, value, disabled, form }, label);
 }
 
-/** A link that looks like a button; one that leaves for another site says so (↗) and opens beside the console. */
 /**
- * @returns {string|null}  a link the page may follow: a path, an anchor, or an http(s) address; null for anything else
- *   (`javascript:`, `data:`), which a value from elsewhere could carry
+ * @returns {string|null}  a link the page may follow: a path on this address, an anchor, or an http(s) address; null
+ *   for anything else (`javascript:`, `data:`, a path a browser reads as another site's, `//host` or `/\\host` or one
+ *   with a tab or a newline in it, which browsers drop), which a value from elsewhere could carry
  */
 export function safeHref(href) {
   const text = String(href ?? '').trim();
-  if (/^#/.test(text) || (/^\/(?![/\\])/.test(text))) return text;
-  return /^https?:\/\//i.test(text) ? text : null;
+  if (/[\u0000-\u001f\u007f\\]/.test(text)) return null;
+  if (text.startsWith('#')) return text;
+  if (text.startsWith('/')) {
+    try {
+      return new URL(text, 'http://console.invalid').origin === 'http://console.invalid' ? text : null;
+    } catch {
+      return null;
+    }
+  }
+  return /^https?:\/\/[^/]/i.test(text) ? text : null;
 }
 
+/** A link that looks like a button; one that leaves for another site says so (↗) and opens beside the console. */
 export function linkButton(label, href, { kind = 'plain', small = false } = {}) {
   href = safeHref(href);
   const away = /^https?:/i.test(String(href));
@@ -155,7 +164,7 @@ export function actions(...items) {
  * sends the page back where it was.
  */
 export function form({ action, method = 'post', hidden = {}, id = null, inline = false }, ...body) {
-  return el('form', { method, action, id, class: inline ? 'inline-form' : 'set-form' },
+  return el('form', { method, action: safeHref(action), id, class: inline ? 'inline-form' : 'set-form' },
     Object.entries(hidden).map(([name, value]) => el('input', { type: 'hidden', name, value })), body);
 }
 

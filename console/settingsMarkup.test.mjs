@@ -124,11 +124,12 @@ test('a field is a void element, never closed, and a form carries its hidden val
 });
 
 test('a link is a path, an anchor or an http(s) address: any other scheme, which a value from elsewhere could carry, is no link', () => {
-  for (const bad of ['javascript:alert(1)', ' JavaScript:alert(1)', 'data:text/html,x', '//evil.example/x', '/\\evil.example/x', 'vbscript:x']) {
+  for (const bad of ['javascript:alert(1)', ' JavaScript:alert(1)', 'data:text/html,x', '//evil.example/x', '/\\evil.example/x', 'vbscript:x', '/\t/evil.example/x', '/\n/evil.example/x', 'java\tscript:alert(1)']) {
     assert.equal(linkButton('Go', bad).text, '<a class="btn btn-plain">Go</a>', bad);
     assert.doesNotMatch(pageHead({ title: 't', tabs: [{ label: 'x', href: bad }], crumb: { label: 'c', href: bad } }).text, /href=/, bad);
   }
   assert.match(linkButton('Go', '/orgs/acme').text, /href="\/orgs\/acme"/);
+  assert.equal(form({ action: 'javascript:alert(1)' }, button('Go')).text, '<form method="post" class="set-form"><button type="submit" class="btn btn-plain">Go</button></form>', 'a form posts nowhere but its own address or http(s)');
   assert.match(linkButton('Go', '#credits').text, /href="#credits"/);
   assert.match(linkButton('Go', 'HTTPS://github.com/x').text, /href="HTTPS:\/\/github\.com\/x" target="_blank"/);
 });
