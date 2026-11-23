@@ -1,7 +1,8 @@
 // A `gh` for the dev console's review session (devReviewSession.mjs) with DEV_CONSOLE_REVIEW_PR=1: one made-up open
 // pull request on the session's branch, kept in a JSON file beside it, answering each call the shed's review makes
 // (shared/review/github.mjs, merge.mjs, shared/prStatus.mjs) as GitHub would for it: the pull request's status, the
-// draft review and its comments, a verdict, a rename and a squash-merge. Nothing reaches GitHub: any other call fails
+// draft review and its comments, a verdict, a rename and a squash-merge. It carries a made-up review by Claude Code and
+// Codex, as the console's reviewer App posts one (shared/review/aiReviews.mjs reads it), for the AI reviews tab. Nothing reaches GitHub: any other call fails
 // with what it was, so a call this does not know is seen rather than sent to a real gh.
 
 import fs from 'node:fs';
@@ -22,7 +23,9 @@ const head = () => execFileSync('git', ['-C', s.repo, 'rev-parse', 'HEAD']).toSt
 const at = () => new Date().toISOString();
 const id = (p) => p + '_' + Math.random().toString(36).slice(2, 10);
 const rollup = () => s.checks.map((c) => ({ status: 'COMPLETED', conclusion: c }));
-const decision = () => (s.verdicts.some((v) => v.state === 'CHANGES_REQUESTED') ? 'CHANGES_REQUESTED' : s.verdicts.some((v) => v.state === 'APPROVED') ? 'APPROVED' : 'REVIEW_REQUIRED');
+// The made-up AI review is left out, so the review and merge @local try here start from review required, as before it.
+const people = () => s.verdicts.filter((v) => !v.bot);
+const decision = () => (people().some((v) => v.state === 'CHANGES_REQUESTED') ? 'CHANGES_REQUESTED' : people().some((v) => v.state === 'APPROVED') ? 'APPROVED' : 'REVIEW_REQUIRED');
 const url = 'https://github.com/' + s.slug + '/pull/' + s.number;
 // The session's earlier pull requests, on branches of their own: no comments or verdicts, only what a review reads.
 const other = (n) => (s.others || []).find((o) => String(o.number) === String(n)) || null;
@@ -135,12 +138,12 @@ if (args[0] === 'api' && args[1] === 'graphql') {
   if (q.includes('reviewThreads')) {
     const pendingThreads = (s.pending ? s.pending.comments : []).map((c) => ({ id: 'T' + c.id, path: c.path, diffSide: c.side, line: c.line, startLine: null, isResolved: false, isOutdated: false,
       comments: { pageInfo: { hasNextPage: false }, nodes: [{ id: c.id, fullDatabaseId: null, author: { login: s.login }, body: c.body, state: 'PENDING', url: null, createdAt: at(), viewerCanDelete: true, viewerDidAuthor: true }] } }));
-    const posted = s.threads.map((t) => ({ id: t.id, path: t.path, diffSide: t.side, line: t.line, startLine: null, isResolved: false, isOutdated: false,
-      comments: { pageInfo: { hasNextPage: false }, nodes: t.comments.map((c) => ({ id: c.id, fullDatabaseId: null, author: { login: c.author }, body: c.body, state: 'SUBMITTED', url: url, createdAt: c.at, viewerCanDelete: c.author === s.login, viewerDidAuthor: c.author === s.login })) } }));
+    const posted = s.threads.map((t) => ({ id: t.id, path: t.path, diffSide: t.side, line: t.line, originalLine: t.line, startLine: null, isResolved: !!t.resolved, isOutdated: false,
+      comments: { pageInfo: { hasNextPage: false }, nodes: t.comments.map((c, i) => ({ id: c.id, fullDatabaseId: null, author: { login: c.author }, body: c.body, state: 'SUBMITTED', url: url, createdAt: c.at, viewerCanDelete: c.author === s.login, viewerDidAuthor: c.author === s.login, pullRequestReview: i === 0 && t.review ? { id: t.review } : null })) } }));
     out({ data: { repository: { pullRequest: {
       id: 'PR_dev', headRefOid: head(), body: s.body, bodyHTML: '', author: { login: s.login }, createdAt: s.createdAt, url,
       reviews: { nodes: s.pending ? [{ id: s.pending.id, comments: { nodes: s.pending.comments.map((c) => ({ id: c.id, path: c.path, line: c.line, originalLine: c.line, body: c.body })) } }] : [] },
-      verdicts: { nodes: s.verdicts.map((v) => ({ id: v.id, author: { login: v.author }, state: v.state, body: v.body, url, submittedAt: v.at, isMinimized: false, viewerDidAuthor: v.author === s.login })) },
+      verdicts: { nodes: s.verdicts.map((v) => ({ id: v.id, author: { __typename: v.bot ? 'Bot' : 'User', login: v.author }, state: v.state, body: v.body, url, submittedAt: v.at, isMinimized: false, viewerDidAuthor: v.author === s.login, commit: { oid: v.commit === 'head' ? head() : v.commit || head() } })) },
       comments: { nodes: s.comments.map((c) => ({ id: c.id, fullDatabaseId: '1', author: { login: c.author }, body: c.body, url, createdAt: c.at, isMinimized: false, viewerCanDelete: false, viewerDidAuthor: false })) },
       reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [...posted, ...pendingThreads] },
     } } } });
@@ -164,9 +167,17 @@ export function writeDevReviewGh(dir, { repo, branch, base, slug, number, title,
     repo, branch, base, slug, number, title, login, others, state: 'OPEN', createdAt: now,
     body: 'Subscribers that answer 5xx or 429 used to miss the event. This retries them with backoff.\n\n- `retry.mjs` holds the policy\n- `deliver.mjs` loops on it',
     checks: ['SUCCESS', 'SUCCESS', 'SUCCESS'],
-    verdicts: [],
+    // As the reviewer App posts a review by both (console/fleet.mjs submitReview, codeReview.mjs mergeVerdicts).
+    verdicts: [{
+      id: 'PRR_devai', author: 'woodshed-reviewer', bot: true, state: 'CHANGES_REQUESTED', at: now, commit: 'head',
+      body: '## Claude Code and Codex review — REQUEST_CHANGES\n\n### Claude Code: APPROVE\n\nThe retry policy is small and tested: \`shouldRetry\`, \`backoffMs\` and \`retryAfterMs\` each have a case. Every attempt carries the same \`x-event-id\`, so a subscriber can drop repeats.\n\n### Codex: REQUEST_CHANGES\n\nA delivery that fails on a network error is retried, but one cut off by its own timeout is too: \`AbortSignal.timeout\` throws, \`res\` stays null, and \`shouldRetry(undefined)\` is true. That is intended, but nothing caps the total time a delivery can take.',
+    }],
     comments: [{ id: 'IC_dev1', author: 'octocat', body: 'Does this need a dead-letter queue before it ships?', at: now }],
-    threads: [{ id: 'PRRT_dev1', path: 'src/webhooks/retry.mjs', line: 3, side: 'RIGHT', comments: [{ id: 'PRRC_dev1', author: 'octocat', body: 'Should 408 be here? Some proxies send it for a slow upload.', at: now }] }],
+    threads: [
+      { id: 'PRRT_devai1', review: 'PRR_devai', path: 'src/webhooks/deliver.mjs', line: 14, side: 'RIGHT', comments: [{ id: 'PRRC_devai1', author: 'woodshed-reviewer', body: '**Codex:** Each attempt waits up to \`config.timeoutMs\` and then up to \`config.maxDelayMs\`, for \`maxRetries + 1\` attempts: a slow subscriber holds the worker for minutes. Cap the whole delivery, not only each wait.', at: now }, { id: 'PRRC_devai1r', author: 'octocat', body: 'The worker has its own deadline, I think?', at: now }] },
+      { id: 'PRRT_devai2', review: 'PRR_devai', path: 'src/webhooks/retry.mjs', line: 3, side: 'RIGHT', comments: [{ id: 'PRRC_devai2', author: 'woodshed-reviewer', body: '**Claude Code:** 408 is retried. That is right for a proxy timing out, but a subscriber that answers 408 on purpose will be called five times.', at: now }] },
+      { id: 'PRRT_dev1', path: 'src/webhooks/retry.mjs', line: 3, side: 'RIGHT', comments: [{ id: 'PRRC_dev1', author: 'octocat', body: 'Should 408 be here? Some proxies send it for a slow upload.', at: now }] },
+    ],
     pending: null,
   }, null, 2));
   const gh = path.join(dir, 'gh');

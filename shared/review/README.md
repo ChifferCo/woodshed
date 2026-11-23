@@ -148,6 +148,7 @@ highlight.mjs  tokenizeLine — also runs in the browser, see below
 analyze.mjs    schema, prompt, NDJSON reducer, reconciliation
 explain.mjs    prompt, validation, answer extraction
 chat.mjs       the conversation about the change as a whole: prompt, history bound
+aiReviews.mjs  the AI reviews on the pull request (Claude Code, Codex) read into verdicts and findings
 qa.mjs         the Q&A tab: a newcomer's questions and their answers, as a tree
 jobs.mjs       `claude -p` child lifecycle, concurrency, orphan reaping
 store.mjs      on-disk layout under $REVIEWS_DIR, one directory per session
@@ -584,6 +585,23 @@ longer just about not fighting for ports, because an instance reaps stale ttyds
 across its whole range at boot, so sharing a range kills the live service's
 terminals. But note that its worktrees still land in the **real** repo, because
 that is the thing under test.
+
+## AI reviews and their follow-ups
+
+The **AI reviews** tab (and `woodshed review`'s `6 AI reviews`) draws what Woodshed's review posted on the pull
+request: no new data, only GitHub's reviews read back. `aiReviews.mjs` takes a review as an AI review only when an App
+wrote it and its body opens `## <name> review — <CONCLUSION>`, so a person writing that heading is never read as one.
+Its `### Claude Code: …` / `### Codex: …` sections become the reviewers' parts, its inline comments (each thread whose
+first comment's `pullRequestReview` is the review) the findings, each given to the reviewer its `**Claude Code:**` or
+`**Codex:**` mark names, and comments GitHub refused, which the console folded into the body under `**Inline
+comments**`, findings too. These come in `GET /comments` as `aiReviews`, newest first, each saying whether it read the
+pull request's head (`current`).
+
+A follow-up is a chat turn with `about: {review, finding}`: ids only. The shed reads the point again from GitHub
+(`aiReviewPoint` in index.mjs), refuses one no longer there (409), and puts it in the prompt fenced like the rest,
+asking the agent to say first whether it holds. Both turns are kept in chat.json with `about: {id, label}`, which is how
+the tab finds the follow-ups under each point, and how the chat's replay says what each was about. It is the chat's one
+turn at a time, so a question asked in the panel and one asked on a finding wait for each other.
 
 ## A second host: Woodshed sessions
 
