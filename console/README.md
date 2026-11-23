@@ -130,7 +130,8 @@ its own: the agent switch on the pane bar, after the tabs while Chat or TUI show
 **+ Another agent**, a dialog with New session's Agent, Model, Effort and Permissions and an optional first message
 (`POST /api/sessions/<id>/agents`, checked as New session checks its form; the console logs `console: another agent
 asked for`, and `fleet: another agent allowed in the session` the first time a session runs that agent). Up to three
-run beside the session's own, each in the same checkout in a tmux session of its own (`session/agents.mjs`). The
+run beside the session's own, each in the same checkout in a terminal of its own (`session/agents.mjs`): a tmux
+session, or a Herdr terminal when the owner's Agent terminal is Herdr, which their own Herdr then shows beside `claude`. The
 switch lists them all with their state words and says how many others need you; picking one points Chat at its own
 conversation (`/api/sessions/<id>/agents/<agent-N>/transcript`, `send`, `interrupt`, `prompt`, `answer`) and the TUI
 tab at its terminal (`/term/<id>/?arg=agent-N`, ttyd's URL argument). The pick is kept per session in the browser tab.

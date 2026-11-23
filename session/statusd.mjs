@@ -621,6 +621,9 @@ const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.
   uploadsDir: process.env.UPLOADS_DIR || '/tmp/uploads',
   stateDir: process.env.WOODSHED_AGENT_STATE_DIR || '/tmp',
   tainted: () => tainted(),
+  // Where the session's own agent runs, the agents beside it run too: tmux, or Herdr (agentPane.mjs).
+  terminal: process.env.WOODSHED_TERMINAL === 'herdr' ? 'herdr' : 'tmux',
+  hcBin: process.env.WOODSHED_HC_BIN || 'hc',
 }) : null;
 
 // A Codex agent beside claude: its sign-in, the owner's own from My settings when they saved one, which the console sends
@@ -1644,7 +1647,7 @@ async function uploadReply(req, res) {
     // Herdr types no text without an Enter, so a file dropped on the agent there is saved and not typed in: the page
     // says where it is. The Terminal tab's shell is tmux's always.
     // An agent beside the session's own (agents.mjs) is in tmux always, under its own name.
-    const typed = pane === 'terminal' || (pane === 'agent' && agentIo().typesText) || (agents && AGENT_ID_RE.test(pane ?? '')) ? pane : null;
+    const typed = pane === 'terminal' || (pane === 'agent' && agentIo().typesText) || (agents && TERMINAL === 'tmux' && AGENT_ID_RE.test(pane ?? '')) ? pane : null;
     if (typed) await typePaths(run, [saved.path], typed);
     console.log('statusd: file uploaded', { bytes: saved.bytes, typed });
     return reply(res, 200, saved);
@@ -1877,7 +1880,7 @@ async function handle(req, res) {
     try {
       const { steps, pane } = JSON.parse((await readBody(req)) || '{}');
       // The TUI tab is a Herdr client then, which takes the wheel itself: there is no tmux pane of the agent's to scroll.
-      if (TERMINAL === 'herdr' && (pane ?? 'agent') === 'agent') return reply(res, 409, { error: 'the agent runs in Herdr, whose client scrolls it' });
+      if (TERMINAL === 'herdr' && ((pane ?? 'agent') === 'agent' || AGENT_ID_RE.test(pane ?? ''))) return reply(res, 409, { error: 'the agent runs in Herdr, whose client scrolls it' });
       return reply(res, 200, { via: await scrollPane(run, { steps, pane }) });
     } catch (err) {
       if (err.shown || err instanceof SyntaxError) return reply(res, 400, { error: err.message });

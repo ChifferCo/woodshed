@@ -14,6 +14,9 @@
 //
 //   node woodshed/providers/aws/bin/agentsInImage.mjs <image>
 //
+// With IN_IMAGE_TERMINAL=herdr the owner's Agent terminal is Herdr (My settings): the session's agent runs in a Herdr
+// terminal, and so do the agents beside it, which the check then looks for with `hc ls` rather than `tmux ls`.
+//
 // The checkout's session/ and shared/ are copied over the image's, to try a start change before the image is built.
 // Needs Docker. The container runs the repo's code, so it is handed no GitHub credential of yours: its session API hands
 // out a placeholder, and git fetches a public repo without one. For a private repo, IN_IMAGE_GH_TOKEN gives the token
@@ -48,6 +51,7 @@ const HOST = process.env.IN_IMAGE_CONSOLE_HOST || 'host.docker.internal';
 const WOODSHED = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 // The agent's first message, which its pane shows: how the TUI's websocket tells it from the session's own.
 const MARK = 'agents-in-image-marker';
+const TERMINAL = process.env.IN_IMAGE_TERMINAL === 'herdr' ? 'herdr' : 'tmux';
 
 async function privateEnv() {
   const started = [];
@@ -82,7 +86,7 @@ function serve(fleet) {
       codexAuth: async () => null,
       ownFiles: async () => ({}),
       gitIdentity: () => ({ name: null, email: null }),
-      terminal: () => 'tmux',
+      terminal: () => TERMINAL,
     },
   });
   const server = http.createServer((req, res) => { handle(req, res); });
@@ -171,14 +175,17 @@ try {
   // Not execFileSync: the session API here answers the session (its git's token) while the check runs.
   const checked = (await promisify(execFile)('docker', ['exec', CONTAINER, 'node', '--input-type=module', '-e', CHECK], { encoding: 'utf8' })).stdout.trim();
   console.log(`--- statusd's /agents and the TUI's websocket\n${checked}`);
-  const tmux = docker('exec', CONTAINER, 'tmux', 'ls');
-  console.log(`--- tmux sessions\n${tmux}`);
+  const tmux = TERMINAL === 'herdr'
+    ? JSON.parse(docker('exec', CONTAINER, 'hc', 'ls', '--json')).terminals.map((x) => `${x.name}: ${x.state}`).join('\n')
+    : docker('exec', CONTAINER, 'tmux', 'ls');
+  console.log(`--- ${TERMINAL === 'herdr' ? 'Herdr terminals' : 'tmux sessions'}\n${tmux}`);
   log = printNew();
   const out = JSON.parse(checked.split('\n').at(-1));
   const passed = /statusd: Codex agent beside claude set up \{ own: false \}/.test(log)
     && /\/tmp\/woodshed-agent-claude-flags: there/.test(files) && /\/tmp\/woodshed-codex-ready: there/.test(files) && /woodshed-attach/.test(files)
     && out.started.every((s) => s.status === 200) && out.listed?.length === 2 && out.statusAgents === 2
     && /^agent-2:/m.test(tmux) && /^agent-3:/m.test(tmux) && /^claude:/m.test(tmux)
+    && new RegExp(`Claude started .*terminal: ${TERMINAL}\\)`).test(log)
     && out.tuiAgent.hasMark && !out.tuiOwn.hasMark && out.tuiOwn.bytes > 0;
   console.log(passed ? '--- PASSED: the start wrote what the agents need, statusd started a claude and a codex beside its own, and the TUI attaches to each'
     : '--- FAILED: see above');

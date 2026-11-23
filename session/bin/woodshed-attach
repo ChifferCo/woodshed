@@ -2,11 +2,18 @@
 # The TUI tab's terminal, as ttyd runs it for each browser that connects (startClaude in entrypoint.sh): the session's
 # own agent, as WOODSHED_TUI_ATTACH says to attach to it (tmux's pane, Herdr's terminal, or the wait for a parent's
 # Herdr), or the agent started beside it that the page names (session/agents.mjs): ttyd passes the URL's `arg` (its
-# --url-arg), `/term/<id>/?arg=agent-2`, as this script's one argument. Anything else is the session's own.
+# --url-arg), `/term/<id>/?arg=agent-2`, as this script's one argument. That agent is a Herdr terminal of that name where
+# the session's agent runs in Herdr (WOODSHED_TERMINAL), and a tmux session of that name otherwise. Anything else is the
+# session's own.
 set -uo pipefail
 
 if [ $# -gt 0 ] && [[ "$1" =~ ^agent-[2-9]$ ]]; then
-  if tmux has-session -t "=$1" 2> /dev/null; then exec tmux attach -t "=$1"; fi
+  if [ "${WOODSHED_TERMINAL:-tmux}" = herdr ]; then
+    hc=${WOODSHED_HC_BIN:-hc}
+    if "$hc" get --json -- "$1" > /dev/null 2>&1; then exec "$hc" attach "$1"; fi
+  elif tmux has-session -t "=$1" 2> /dev/null; then
+    exec tmux attach -t "=$1"
+  fi
   printf 'That agent has stopped: pick another one above the tabs.\r\n'
   exec sleep infinity
 fi

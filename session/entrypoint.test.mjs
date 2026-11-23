@@ -1380,6 +1380,13 @@ test('the TUI tab attaches to the agent the page names, and to the session\'s ow
     assert.equal(attach('agent-2'), 'tmux attach =agent-2\n');
     assert.equal(attach(), 'own agent\n');
     for (const bad of ['agent-1', 'claude', 'agent-2; reboot', '../agent-2']) assert.equal(attach(bad), 'own agent\n', bad);
+    // In Herdr, the agent's Herdr terminal of that name.
+    fs.writeFileSync(path.join(tmp, 'hc'), '#!/bin/bash\ncase "$1" in get) [ "$4" = agent-3 ] ;; attach) echo "hc attach $2" ;; esac\n', { mode: 0o755 });
+    const inHerdr = (...args) => execFileSync(path.join(SESSION_DIR, 'bin', 'woodshed-attach'), args, {
+      encoding: 'utf8', env: { PATH: `${tmp}:/usr/bin:/bin`, WOODSHED_TUI_ATTACH: 'echo own agent', WOODSHED_TERMINAL: 'herdr', WOODSHED_HC_BIN: path.join(tmp, 'hc') }, timeout: 5000,
+    });
+    assert.equal(inHerdr('agent-3'), 'hc attach agent-3\n');
+    assert.equal(inHerdr(), 'own agent\n');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

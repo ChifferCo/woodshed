@@ -917,8 +917,9 @@ URL on top of each env file's Repo settings values
   the start: `console: another agent asked for` with `ownCodex`); the console refuses the team key with `openaiProxy:
   refused, not a Codex session` until the agent started (`fleet: another agent allowed in the session`), and again from
   the moment the session's lockdown starts (`fleet: other agents' access dropped at the lockdown`). Its state changes log `agents: agent state changed`; in
-  the session, `tmux ls` lists `agent-2` and the rest, `cat /tmp/woodshed-agent-2-state.json` its last hook, and its TUI
-  is `tmux attach -t =agent-2`. A Chat that shows another agent's conversation means its record was not told apart:
+  the session, `tmux ls` lists `agent-2` and the rest (`hc ls` where the session runs in Herdr: `agents: agent started`
+  says which `terminal`), `cat /tmp/woodshed-agent-2-state.json` its last hook, and its TUI is `tmux attach -t =agent-2`
+  (`hc attach agent-2`). A Chat that shows another agent's conversation means its record was not told apart:
   claude's by its `--session-id` or the transcript its hooks name, codex's by the rollout its process holds open
   (`ls -l /proc/<codex pid>/fd`).
 - **Chat's Send says `Not sent: this session started before Chat could send safely`.** Its statusd predates the
@@ -1112,7 +1113,7 @@ instead of writing the pull request's comment and check.
 `providers/aws/bin/agentsInImage.mjs <image>` is the copy for the agents a private session's owner starts beside its own
 (`session/agents.mjs`): it copies the checkout's `session/` and `shared/` over the image's, runs a private claude start,
 then starts a claude and a codex through statusd's `/agents` and opens the TUI tab's ttyd for each, and prints PASSED or
-FAILED.
+FAILED. `IN_IMAGE_TERMINAL=herdr` runs it with the owner's Agent terminal set to Herdr.
 `providers/aws/bin/herdrParentInImage.mjs <image> [entrypoint.sh]` is the copy for a private session started with
 `woodshed session new --herdr --parent`: it runs the whole start under ECS's init (`--init`) and waits for the agent's
 terminal, which a terminal in this computer's Herdr makes once the machine is added with `--via 'docker exec -i

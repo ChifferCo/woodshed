@@ -1648,3 +1648,70 @@ test('a Codex agent beside claude gets the sign-in its start brings, and the sto
   assert.equal(back.length, 1, 'the refreshed sign-in goes back once');
   assert.equal(back[0].body, refreshed);
 });
+
+// The same, where the session's agent runs in Herdr: the agent beside it is a Herdr terminal of its own on the session's
+// core (the test's scratch one, isolatedEnv), driven through hc, and gone once stopped.
+test('in Herdr, an agent beside the session\'s own is a Herdr terminal of its own, asked and answered through hc', { skip: spawnSync('hc', ['--version']).status !== 0 && 'no hc here' }, async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-agents-hc-'));
+  const hc = (...args) => promisify(execFile)('hc', args, { env: isolatedEnv(), cwd: dir });
+  t.after(async () => {
+    await hc('kill', '--json', '--', 'agent-2').catch(() => {});
+    await hc('rm', '--json', '--', 'agent-2').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const spec = { questions: [{ question: 'Which colour?', header: 'Colour', options: ['Red', 'Green', 'Blue'] }] };
+  await fs.writeFile(path.join(dir, 'spec.json'), JSON.stringify(spec));
+  const picker = fileURLToPath(new URL('../shared/__fixtures__/claudePicker.mjs', import.meta.url));
+  await fs.mkdir(path.join(dir, 'bin'));
+  // Records the variable the start put before it, then is the picker.
+  await fs.writeFile(path.join(dir, 'bin', 'claude'), `#!/bin/sh\necho "$WOODSHED_CLAUDE_STATE_FILE" > '${dir}/state-file'\nexec '${process.execPath}' '${picker}' '${dir}/spec.json' '${dir}/answers.json'\n`, { mode: 0o755 });
+  await fs.writeFile(path.join(dir, 'flags'), '');
+  const { call } = await statusdWithApp(t, { env: {
+    WOODSHED_TERMINAL: 'herdr', SESSION_KIND: 'private', SESSION_MODE: '', WOODSHED_AGENT_BIN: path.join(dir, 'bin'),
+    WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'), WOODSHED_CODEX_READY_FILE: path.join(dir, 'no-codex'), WOODSHED_AGENT_STATE_DIR: dir,
+  } });
+
+  const started = await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'claude' }));
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  const terminal = JSON.parse((await hc('get', '--json', '--', 'agent-2')).stdout);
+  assert.equal(terminal.name, 'agent-2');
+  assert.equal(terminal.parent ?? null, null, 'no parent: it outlives nothing');
+  const shown = async () => JSON.parse((await hc('read', '--json', '--', 'agent-2')).stdout).text;
+  for (let i = 0; i < 80 && !/Esc to cancel/.test(await shown()); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal((await fs.readFile(path.join(dir, 'state-file'), 'utf8')).trim(), path.join(dir, 'woodshed-agent-2-state.json'), 'its hooks write its own state file');
+
+  assert.equal((await call('GET', '/agents/agent-2/prompt', 'sess')).body.prompt?.question, 'Which colour?');
+  const options = ['Red', 'Green', 'Blue'];
+  const answer = { kind: 'question', questions: [{ question: 'Which colour?', options, descriptions: options.map((o) => `${o} is one of the options`), pick: 1 }] };
+  assert.deepEqual((await call('POST', '/agents/agent-2/answer', 'sess', JSON.stringify(answer))).body, { ok: true });
+  let picked = null;
+  for (let i = 0; i < 50 && !picked; i++) {
+    picked = JSON.parse(await fs.readFile(path.join(dir, 'answers.json'), 'utf8').catch(() => 'null'));
+    if (!picked) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.ok(JSON.stringify(picked).includes('Green'), JSON.stringify(picked));
+  assert.equal((await call('POST', '/scroll', 'sess', JSON.stringify({ steps: -3, pane: 'agent-2' }))).status, 409, 'Herdr\'s client scrolls it');
+
+  assert.deepEqual((await call('POST', '/agents/agent-2/stop', 'sess', '{}')).body, { stopped: 'agent-2' });
+  await assert.rejects(hc('get', '--json', '--', 'agent-2'), 'its terminal is gone');
+
+  // A message from Chat goes in through hc's own send, once the agent is at its prompt: the dev console's stand-in claude.
+  const standIn = fileURLToPath(new URL('../console/bin/devChatAgent.mjs', import.meta.url));
+  const records = path.join(dir, 'records');
+  await fs.writeFile(path.join(dir, 'bin', 'claude'), `#!/bin/sh
+exec '${process.execPath}' '${standIn}' claude '${records}' "$PWD" "$@"
+`, { mode: 0o755 });
+  assert.equal((await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'claude' }))).status, 200);
+  for (let i = 0; i < 80 && !/auto mode on/.test(await shown()); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  const sent = await call('POST', '/agents/agent-2/send', 'sess', JSON.stringify({ text: 'hello from Chat', id: 'msg-00000001' }));
+  assert.equal(sent.status, 200, JSON.stringify(sent.body));
+  let typed = false;
+  for (let i = 0; i < 100 && !typed; i++) {
+    const files = await fs.readdir(records).catch(() => []);
+    for (const f of files) if ((await fs.readFile(path.join(records, f), 'utf8')).includes('hello from Chat')) typed = true;
+    if (!typed) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.ok(typed, 'the agent got the message');
+  assert.deepEqual((await call('GET', '/agents', 'sess')).body.agents[0].deliveredIds, ['msg-00000001']);
+  await call('POST', '/agents/agent-2/stop', 'sess', '{}');
+});

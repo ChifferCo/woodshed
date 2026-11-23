@@ -33,6 +33,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const STATUSD = path.join(HERE, '..', '..', 'session', 'statusd.mjs');
 const AGENT = path.join(HERE, 'devChatAgent.mjs');
 const ATTACH = path.join(HERE, '..', '..', 'session', 'bin', 'woodshed-attach');
+const HERDR_VARIABLES = ['WOODSHED_TERMINAL', 'WOODSHED_HC_BIN', 'HC_TERMINAL_ID', 'HC_TERMINAL_SOCKET', 'HC_SCOPE', 'HC_SESSION'];
 const WOODSHED = path.join(HERE, '..', '..');
 const HOOKS = path.join(WOODSHED, 'session', 'claudeHooks.json');
 const HOOK_STATE = path.join(WOODSHED, 'session', 'hookState.mjs');
@@ -179,7 +180,10 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   const restoredFile = path.join(root, 'home-restored-from');
   if (restoredHome && agent === 'claude' && !real) restoreEarlierHome(recordDir, restoredFile);
   // A tmux server of its own (TMUX_TMPDIR), so it never meets the session's own claude.
-  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: root, HOME: home, WOODSHED_CLAUDE_STATE_FILE: stateFile, WOODSHED_HOME_RESTORED_FILE: restoredFile,
+  // Never the variables that reach a Herdr core (test/isolatedEnv.mjs): a dev console run in a Woodshed session whose
+  // agent runs in Herdr would otherwise read, and its agents type into, that session's own terminals.
+  const ownEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !HERDR_VARIABLES.includes(name)));
+  const tmuxEnv = { ...ownEnv, TMUX: '', TMUX_TMPDIR: root, HOME: home, WOODSHED_CLAUDE_STATE_FILE: stateFile, WOODSHED_HOME_RESTORED_FILE: restoredFile,
     ...(restoredHome && { DEV_CHAT_AGENT_FRESH: '1' }),
     ...(realCodex && { CODEX_HOME: codexHome }) };
   let paneCommand = `${process.execPath} ${AGENT} ${agent} ${recordDir} ${repo}`;

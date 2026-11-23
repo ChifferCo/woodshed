@@ -1,8 +1,9 @@
 // The agents a person starts beside a session's own (statusd's /agents): another claude or codex, with the model,
-// effort and permission mode they pick, in the same checkout, each in a tmux session of its own (`agent-2`, `agent-3`,
-// ...) next to the session's `claude`. The page's Chat and TUI tabs switch between them: Chat reads each one's own record
+// effort and permission mode they pick, in the same checkout, each in a terminal of its own (`agent-2`, `agent-3`, ...)
+// next to the session's `claude`: a tmux session, or where the session's agent runs in Herdr (its owner's Agent
+// terminal, agentPane.mjs), a Herdr terminal on the session's own core, which the owner's Herdr shows beside it. The page's Chat and TUI tabs switch between them: Chat reads each one's own record
 // of its conversation and types into its own pane, as statusd does for the session's agent, and the TUI tab attaches to
-// its tmux session (session/bin/woodshed-attach, through ttyd's URL argument).
+// its terminal (session/bin/woodshed-attach, through ttyd's URL argument).
 //
 // Each one is told apart from the session's agent, and from the others, by what it writes:
 //   claude  its own hook state file (WOODSHED_CLAUDE_STATE_FILE, hookState.mjs), and the transcript its hooks name, or
@@ -19,8 +20,8 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { tmuxPane } from './agentPane.mjs';
-import { claudeState, codexState, lastInterruptAt, openToolCalls, paneState } from './agentState.mjs';
+import { hcPane, tmuxPane } from './agentPane.mjs';
+import { claudeState, codexState, herdrState, lastInterruptAt, openToolCalls, paneState, withHerdr } from './agentState.mjs';
 import { Refusal, answerApproval, answerQuestions, composerEmpty, composerText, readPrompt, typeMessage, typingSteps } from './panePrompt.mjs';
 import { createPaneLock } from './paneLock.mjs';
 import { readSessionTranscript } from './sessionTranscript.mjs';
@@ -136,16 +137,46 @@ export async function openRollout(shellPid, codexHome, { descendants = descendan
  *          bin: string, claudeDir: string, codexHome: string, claudeFlagsFile: string, codexReady: () => Promise<boolean>,
  *          codexEnv?: (codexAuth: string|null) => Promise<{env: Record<string, string>, undo?: () => Promise<void>}>,
  *          stateDir?: string, uploadsDir?: string,
- *          tainted?: () => boolean, now?: () => number, openRollout?: typeof openRollout, log?: Pick<Console, 'log'|'warn'>}} deps
+ *          tainted?: () => boolean, now?: () => number, openRollout?: typeof openRollout, log?: Pick<Console, 'log'|'warn'>,
+ *          terminal?: 'tmux'|'herdr', hcBin?: string}} deps
  *   claudeFlagsFile: the session's claude flags with no model, effort or mode (entrypoint.sh). codexReady: whether
  *   codex has a home here (configureCodex ran). codexEnv: given the owner's Codex sign-in the console sent with the start
  *   (or none), puts it in place and says what a codex's tmux session adds to its environment, and how to take it back
- *   when the start fails after it (statusd's codexBeside)
+ *   when the start fails after it (statusd's codexBeside). terminal: what the session's own agent runs in, and so its
+ *   agents too (statusd's WOODSHED_TERMINAL)
  */
 export function createAgents({
   run, repoDir, bin, claudeDir, codexHome, claudeFlagsFile, codexReady, codexEnv = async () => ({ env: {} }), stateDir = '/tmp', uploadsDir = '/tmp/uploads',
-  tainted = () => false, now = Date.now, openRollout: findRollout = openRollout, log = console,
+  tainted = () => false, now = Date.now, openRollout: findRollout = openRollout, log = console, terminal = 'tmux', hcBin = 'hc',
 }) {
+  // Where an agent runs: its tmux session, or its Herdr terminal. Either is made with a shell in the checkout, the agent
+  // typed into it.
+  const terms = terminal === 'herdr' ? {
+    kind: 'herdr',
+    // No --keep: a stopped agent's terminal goes, rather than coming back as a shell. hc takes no environment for one,
+    // so the agent's own variables go before its command line (prefix).
+    make: async (id) => { await run(hcBin, ['run', '--bg', '--no-parent', '--name', id, '--cwd', repoDir, '--json']); },
+    io: (id) => hcPane(run, { terminal: id, bin: hcBin }),
+    prefix: (env) => Object.entries(env).map(([k, v]) => `${k}='${String(v).replace(/'/g, `'\\''`)}' `).join(''),
+    async end(id) {
+      await run(hcBin, ['kill', '--json', '--', id]).catch(() => {});
+      await run(hcBin, ['rm', '--json', '--', id]).catch(() => {});
+    },
+  } : {
+    kind: 'tmux',
+    async make(id, env) {
+      await run('tmux', ['new-session', '-d', '-s', id, '-x', '200', '-y', '50', '-c', repoDir, ...Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`])]);
+      try {
+        await run('tmux', ['set-option', '-t', `=${id}:`, 'remain-on-exit', 'on']);
+      } catch (err) {
+        await run('tmux', ['kill-session', '-t', `=${id}`]).catch(() => {});
+        throw err;
+      }
+    },
+    io: (id) => tmuxPane(run, `=${id}:`),
+    prefix: () => '',
+    end: async (id) => { await run('tmux', ['kill-session', '-t', `=${id}`]).catch(() => {}); },
+  };
   /** @type {Map<string, object>} */
   const agents = new Map();
   // Every record one of them wrote, kept after it stops: the session's own agent never takes one for its own.
@@ -210,10 +241,12 @@ export function createAgents({
     } catch (err) {
       if (strict) throw err;
     }
+    // Herdr's own word on it, where it runs there: its agent's last status record (agentState.mjs, withHerdr).
+    const herdr = terms.kind === 'herdr' ? herdrState({ herdrStatus: await a.io.agent().catch(() => null) }) : null;
     if (a.agent === 'codex') {
       // Its rollout claimed with each read of the list, not only of its Chat: the session's own codex never takes it.
       await rolloutOf(a);
-      return { ...codexState({ paneText: pane, now: now(), startedAt: a.startedAt }), pane, hook: null };
+      return { ...withHerdr(herdr, codexState({ paneText: pane, now: now(), startedAt: a.startedAt })), pane, hook: null };
     }
     const hook = await readJson(a.stateFile);
     const tail = await tailOf(transcriptOf(a, hook));
@@ -224,7 +257,7 @@ export function createAgents({
       openTools: tail ? openToolCalls(tail.text, { partial: tail.partial }) : 0,
       now: now(), startedAt: a.startedAt,
     });
-    return { ...reading, pane, hook };
+    return { ...withHerdr(herdr, reading), pane, hook };
   }
 
   function find(id) {
@@ -295,10 +328,19 @@ export function createAgents({
       const shown = paneState(now_.pane);
       const atPrompt = now_.state === 'done' && (a.agent === 'codex' || (shown !== 'working' && shown !== 'needs-you'));
       if (!atPrompt || !lastTaken(a, now_)) return;
-      // A draft in its box (someone typing in the TUI tab) is theirs: this waits behind it.
-      const colored = await a.io.capture({ ansi: true });
-      if (!readPrompt(colored.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')) && composerEmpty(colored, a.agent) !== true) return;
-      const done = await typeMessage(paneIo(a), message.text);
+      // A draft in its box (someone typing in the TUI tab) is theirs: this waits behind it. Herdr keeps no colours to
+      // tell one by, and its own send waits for a person's draft and types only while the agent is idle (hcPane).
+      let done;
+      if (a.io.typesText) {
+        const colored = await a.io.capture({ ansi: true });
+        if (!readPrompt(colored.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')) && composerEmpty(colored, a.agent) !== true) return;
+        done = await typeMessage(paneIo(a), message.text);
+      } else {
+        const sent = await a.io.send(message.text);
+        // Not idle, or a prompt on screen: nothing typed, and it waits for the next tick.
+        if (!sent.sent) return;
+        done = sent;
+      }
       if (done.sent) {
         a.held.shift();
         keep(a.delivered, message.id);
@@ -333,7 +375,7 @@ export function createAgents({
     for (const a of waiting) deliver(a).catch((err) => log.warn('agents: delivery failed', { id: a.id, message: err?.message }));
   }
 
-  // A start once its checks passed: its tmux session, its command line typed in, and it on the list.
+  // A start once its checks passed: its terminal, its command line typed in, and it on the list.
   async function launch(options, { claudeFlags, env }) {
     let n = 2;
     while (agents.has(`agent-${n}`)) n++;
@@ -344,30 +386,25 @@ export function createAgents({
     if (promptFile) await fs.writeFile(promptFile, `${options.prompt}\n`, { mode: 0o600 });
     const conversation = options.agent === 'claude' ? randomUUID() : null;
     const line = commandLine(options, { bin, claudeFlags, conversation, uploadsDir, promptFile });
-    // Its own tmux session, its hooks pointed at its own state file. Kept after the agent exits, as the session's is.
-    const envFlags = Object.entries({ WOODSHED_CLAUDE_STATE_FILE: stateFile, WOODSHED_AGENT_ID: id, ...env }).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
-    await run('tmux', ['new-session', '-d', '-s', id, '-x', '200', '-y', '50', '-c', repoDir, ...envFlags]);
-    try {
-      await run('tmux', ['set-option', '-t', `=${id}:`, 'remain-on-exit', 'on']);
-    } catch (err) {
-      await run('tmux', ['kill-session', '-t', `=${id}`]).catch(() => {});
-      throw err;
-    }
+    // Its own terminal, its hooks pointed at its own state file. A tmux one is kept after the agent exits, as the
+    // session's is.
+    const agentEnv = { WOODSHED_CLAUDE_STATE_FILE: stateFile, WOODSHED_AGENT_ID: id, ...env };
+    await terms.make(id, agentEnv);
     const a = {
-      id, ...options, conversation, stateFile, startedAt: now(), io: tmuxPane(run, `=${id}:`), lock: createPaneLock(),
+      id, ...options, conversation, stateFile, startedAt: now(), io: terms.io(id), lock: createPaneLock(),
       held: [], delivered: [], refused: [], leftInBox: null, lastSent: null, lastState: null, rollout: null, rolloutAt: 0,
     };
     if (conversation) claimedClaude.add(`${conversation}.jsonl`);
     if (a.agent === 'codex') codexStarted = true;
     agents.set(id, a);
     try {
-      await a.io.line(line);
+      await a.io.line(`${terms.prefix(agentEnv)}${line}`);
     } catch (err) {
       agents.delete(id);
-      await run('tmux', ['kill-session', '-t', `=${id}`]).catch(() => {});
+      await terms.end(id);
       throw err;
     }
-    log.log('agents: agent started', { id, agent: a.agent, model: a.model || null, effort: a.effort || null, permissionMode: a.permissionMode, prompt: Boolean(promptFile) });
+    log.log('agents: agent started', { id, terminal: terms.kind, agent: a.agent, model: a.model || null, effort: a.effort || null, permissionMode: a.permissionMode, prompt: Boolean(promptFile) });
     return view(a);
   }
 
@@ -414,7 +451,7 @@ export function createAgents({
     async stop(id) {
       const a = find(id);
       agents.delete(id);
-      await run('tmux', ['kill-session', '-t', `=${id}`]).catch(() => {});
+      await terms.end(id);
       log.log('agents: agent stopped', { id, agent: a.agent });
       return { stopped: id };
     },
@@ -424,7 +461,7 @@ export function createAgents({
       const ids = [...agents.keys()];
       for (const id of ids) {
         agents.delete(id);
-        await run('tmux', ['kill-session', '-t', `=${id}`]).catch(() => {});
+        await terms.end(id);
       }
       if (ids.length) log.log('agents: every agent stopped', { why, stopped: ids.length });
     },
