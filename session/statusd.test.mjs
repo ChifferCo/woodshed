@@ -1422,11 +1422,11 @@ test('POST /send with agentOnly types into a running agent and never into a shel
   assert.equal(await got(), 'The review asks for changes\nFix PR 9\n', 'only the one on its pull request, once');
   await taken();
 
-  // A hand-off's checkpoint whose push fails (this checkout has nowhere to push to) leaves the session running: its
-  // sends go on, and the console does not stop it.
+  // A hand-off's checkpoint that fails (this checkout has nowhere to push to, and CI's git no identity to commit as)
+  // leaves the session running: its sends go on, and the console does not stop it.
   const handoff = await call('POST', '/checkpoint', undefined, JSON.stringify({ keepRunningOnFailure: true }));
   assert.equal(handoff.status, 500);
-  assert.match(handoff.body.error, / push -u origin HEAD/);
+  assert.match(handoff.body.error, /^Command failed: git /, 'its commit or its push');
   assert.equal((await send(forNine)).status, 200, 'it sends again');
   for (let i = 0; i < 50 && !(await got()).includes('Fix PR 9\nFix PR 9'); i++) await new Promise((resolve) => setTimeout(resolve, 100));
   await taken();
