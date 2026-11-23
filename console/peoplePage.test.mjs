@@ -163,7 +163,7 @@ test('each member has a Role select and what that role can do; picking one posts
   const select = (login) => walk(rowOf(login)).find((e) => e.tag === 'select');
   assert.deepEqual(select('lee-dev').children.map(textOf), ['Owner', 'Member', 'Contributor', 'Private only']);
   const picked = (login) => textOf(select(login).children.find((o) => 'selected' in o.attrs));
-  assert.deepEqual(['ana-owner', 'lee-dev', 'bo-dev'].map(picked), ['Owner', 'Contributor', 'Private only']);
+  assert.deepEqual(['ana-owner', 'lee-dev', 'bo-dev'].map(picked), ['Owner (partly)', 'Contributor', 'Private only']);
   const can = (login) => textOf(walk(rowOf(login)).find((e) => e.className === 'role-can'));
   assert.match(can('lee-dev'), /^Starts sessions from GitHub and sees Everyone, but is never assigned/);
   assert.match(can('bo-dev'), /^Their own My Woodshed sessions only/);
@@ -195,4 +195,20 @@ test('on a console of its own, someone invited starts as Private only unless ano
   const { add, posted } = await loadPage({ members, hosted: false, addReply: () => ({ members, requests: [], hosted: false, names: {}, slack: null }) });
   await add('lee-dev');
   assert.equal(JSON.stringify(posted.at(-1)), JSON.stringify(['/api/people/invite', { login: 'lee-dev', access: 'private' }]));
+});
+
+test('an owner whose switches are not all on reads as Owner (partly), and picking Owner sends the change', async () => {
+  const first = { login: 'ana-owner', admin: true, addedBy: null, addedAt: '2026-11-01T00:00:00.000Z', how: 'first to sign in' };
+  const { rowOf, posted } = await loadPage({
+    members: [first], hosted: false,
+    addReply: () => ({ members: [{ ...first, githubSessions: true, assignable: true }], requests: [], hosted: false, names: {}, slack: null }),
+  });
+  const select = () => walk(rowOf('ana-owner')).find((e) => e.tag === 'select');
+  const picked = () => select().children.filter((o) => 'selected' in o.attrs).map(textOf);
+  assert.deepEqual(select().children.map(textOf), ['Owner (partly)', 'Owner', 'Member', 'Contributor', 'Private only']);
+  assert.deepEqual(picked(), ['Owner (partly)'], 'not Owner, so Owner can be picked');
+  await select().listeners.change({ currentTarget: { value: 'owner', disabled: false } });
+  assert.equal(JSON.stringify(posted.at(-1)), JSON.stringify(['/api/people/access', { login: 'ana-owner', access: 'owner' }]));
+  assert.deepEqual(picked(), ['Owner'], 'a full Owner now, with no partly');
+  assert.equal(select().children.length, 4);
 });

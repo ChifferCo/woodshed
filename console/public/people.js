@@ -244,10 +244,15 @@ window.Woodshed.settingsPage('/people', (app, life) => {
     render();
   }
 
+  // An owner whose switches are not all on (a hosted owner, or an admin from before roles) is "Owner (partly)", an
+  // option of its own that is not Owner, so picking Owner sends the change and turns the rest on.
   function roleCell(m) {
+    const partly = Boolean(m.accessDiffers);
+    const shown = partly ? '' : m.access;
     return h('td', { class: 'switch-cell' },
-      h('select', { class: 'field', 'aria-label': `Role: @${m.login}`, onchange: (e) => setAccess(m.login, e.currentTarget.value, m.access, e.currentTarget) },
-        (data.roles ?? []).map((r) => h('option', { value: r.id, selected: r.id === m.access }, r.label))));
+      h('select', { class: 'field', 'aria-label': `Role: @${m.login}`, onchange: (e) => e.currentTarget.value && setAccess(m.login, e.currentTarget.value, shown, e.currentTarget) },
+        partly && h('option', { value: '', selected: true, disabled: true }, `${roleNamed(m.access)?.label ?? 'Owner'} (partly)`),
+        (data.roles ?? []).map((r) => h('option', { value: r.id, selected: !partly && r.id === m.access }, r.label))));
   }
 
   // What the role gives, in words; an owner from before roles with a switch off says what they have instead.
