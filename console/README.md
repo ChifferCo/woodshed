@@ -481,8 +481,14 @@ And what the shed shows about each session:
   merged or closed, `queued` in yellow while it waits in GitHub's merge queue
   (its place on hover), and otherwise one mark for what most needs a look (✗ a failing check
   or changes requested, a spinning ring while checks run, ✓ green or approved), with the
-  counts on hover. A session that opens another pull request keeps each one
-  it reported (`prUrls`, oldest first) and shows a chip for each, but a merged
+  counts on hover. While a review or QA session the console started is at work on the pull
+  request (waiting in line or running: `woodshedRunsOn` in `console/sessions.mjs`), the chip
+  says `review`, `QA` or `review, QA` with the ring in place of the ✓, since its checks say
+  nothing of them until they report; a failing check keeps its ✗ beside the word. The hover
+  card and the chip's tooltip say `Woodshed review running`. A session that opens another pull request keeps each one
+  it reported (`prUrls`, oldest first, by number): the one of the branch checked out and
+  those of its checkout's other branches, a git worktree's included (statusd's `prUrls`,
+  session/README.md). It shows a chip for each, but a merged
   or closed one only while no newer one came after it, so the newest always
   stays. The card and pane bar show the newest two of those, a phone's bar
   the newest one, and the older fold into a `+N` chip that names each on hover;

@@ -19,7 +19,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - **Spacing and radius.** Gaps are `space-2` between cards and head controls, `space-3` for rail padding. Cards are `radius-lg`, rail buttons `radius-md`, form buttons `radius-sm`, the People filter and count chips `radius-pill`.
 - **Contrast.** Text meets 4.5:1 on the grounds named in its token note, in both themes. White on `action` is 4.8:1 in light; use `action-ink` in dark.
 - **Dark.** Dark follows the device unless My settings' Display card picked light. Both themes use the same token names.
-- **Motion.** None beyond the spinning ring on a PR chip while checks run, and the same ring on a control waiting on the console (Starting…). A checklist's marks stay still: it is drawn again every second.
+- **Motion.** None beyond the spinning ring on a PR chip while checks run or Woodshed's own review or QA is at work on it (then after the word `review` or `QA`, since a status is always a word), and the same ring on a control waiting on the console (Starting…). A checklist's marks stay still: it is drawn again every second.
 
 ## The rail
 

@@ -461,6 +461,103 @@ export async function prLookupKey(gitRun) {
   ].join(' ');
 }
 
+const BRANCH_PULLS_MAX_BRANCHES = 20;
+
+/**
+ * The pull requests of every local branch of the checkout, not only the one checked out: a branch a session opened a
+ * pull request from in a git worktree, or pushed and left for the next, is never the branch `gh pr view` asks about.
+ * A worktree's branches are the checkout's own. One GraphQL call for all of them, kept `cacheMs` while the branches and
+ * their commits stay as they were. A pull request counts only when it is from this repo's own branch of that name and
+ * its head commit is on the local branch, so an older pull request that once used the name is not taken for it.
+ * A failed read gives the last good list and is kept `cacheMs` too: the console keeps what it was told before.
+ * @param {{branches: () => Promise<{name: string, sha: string}[]>, pullsOf: (names: string[]) => Promise<{branch: string, url: string, headSha: string, fork: boolean}[]>,
+ *          isAncestor: (sha: string, branch: string) => Promise<boolean>, now?: () => number, cacheMs?: number}} deps
+ *   `branches` is the local branches without the default one, the newest commit first
+ * @returns {() => Promise<string[]>}  their pull requests' URLs, the lowest number first
+ */
+export function createBranchPulls({ branches, pullsOf, isAncestor, now = Date.now, cacheMs = PR_CACHE_MS }) {
+  let cache = { at: -Infinity, key: null, urls: [] };
+  let said = null;
+  return async function branchPulls() {
+    let key = null;
+    try {
+      const local = (await branches()).slice(0, BRANCH_PULLS_MAX_BRANCHES);
+      key = local.map((b) => `${b.name} ${b.sha}`).join('\n');
+      if (now() - cache.at < cacheMs && key === cache.key) return cache.urls;
+      const urls = [];
+      for (const pull of local.length ? await pullsOf(local.map((b) => b.name)) : []) {
+        if (pull.fork || !/\/pull\/\d+$/.test(pull.url ?? '')) continue;
+        if (await isAncestor(pull.headSha, pull.branch).catch(() => false)) urls.push(pull.url);
+      }
+      const number = (url) => Number(url.split('/').pop());
+      cache = { at: now(), key, urls: [...new Set(urls)].sort((a, b) => number(a) - number(b)) };
+      said = null;
+      return cache.urls;
+    } catch (err) {
+      // Asked at every status read: each reason is said once.
+      const message = String(err?.message ?? err).split('\n')[0];
+      if (message !== said) console.warn('statusd: pull requests of the other branches not read', { message });
+      said = message;
+      // Kept for its minute as a good answer is, with the last good list: a call GitHub refuses (a rate limit on a
+      // token the sessions share) is not made again at every status read. Changed branches ask again at once.
+      cache = { at: now(), key, urls: cache.urls };
+      return cache.urls;
+    }
+  };
+}
+
+/**
+ * @param {string} remoteUrl  the checkout's remote, as `git ls-remote --get-url` gives it
+ * @returns {{owner: string, name: string}|null}  the GitHub repo it names
+ */
+export function githubRepoOf(remoteUrl) {
+  const match = /github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/.exec(String(remoteUrl ?? '').trim());
+  return match ? { owner: match[1], name: match[2] } : null;
+}
+
+/**
+ * @param {string[]} names  branch names
+ * @returns {{query: string, variables: Record<string, string>}}  one aliased `pullRequests` per branch
+ */
+export function branchPullsQuery(names) {
+  const fields = names.map((_, i) => `b${i}: pullRequests(first: 5, orderBy: {field: CREATED_AT, direction: DESC}, headRefName: $b${i}) { nodes { url headRefName headRefOid isCrossRepository } }`);
+  const declared = names.map((_, i) => `$b${i}: String!`).join(', ');
+  return {
+    query: `query($owner: String!, $name: String!, ${declared}) { repository(owner: $owner, name: $name) { ${fields.join(' ')} } }`,
+    variables: Object.fromEntries(names.map((branch, i) => [`b${i}`, branch])),
+  };
+}
+
+async function localBranches() {
+  const defaultBranch = (await git('symbolic-ref', '--short', 'refs/remotes/origin/HEAD').catch(() => '')).replace(/^origin\//, '');
+  const refs = await git('for-each-ref', '--sort=-committerdate', '--format=%(refname:short) %(objectname)', 'refs/heads');
+  return refs.split('\n').filter(Boolean).map((line) => {
+    const at = line.lastIndexOf(' ');
+    return { name: line.slice(0, at), sha: line.slice(at + 1) };
+  }).filter((b) => b.name !== defaultBranch);
+}
+
+async function ghBranchPulls(names) {
+  const repo = githubRepoOf(await git('ls-remote', '--get-url'));
+  if (!repo) return [];
+  const { query, variables } = branchPullsQuery(names);
+  const fields = Object.entries({ owner: repo.owner, name: repo.name, ...variables }).flatMap(([key, value]) => ['-f', `${key}=${value}`]);
+  const { stdout } = await run('gh', ['api', 'graphql', '-f', `query=${query}`, ...fields], { cwd: REPO_DIR, maxBuffer: 4 * 1024 * 1024 });
+  return Object.values(JSON.parse(stdout).data?.repository ?? {}).flatMap((found) => found?.nodes ?? [])
+    .map((pull) => ({ branch: pull.headRefName, url: pull.url, headSha: pull.headRefOid, fork: pull.isCrossRepository === true }));
+}
+
+const lookupBranchPulls = createBranchPulls({
+  branches: localBranches,
+  pullsOf: ghBranchPulls,
+  isAncestor: async (sha, branch) => { await git('merge-base', '--is-ancestor', sha, `refs/heads/${branch}`); return true; },
+});
+
+async function prUrls() {
+  if (ASK || QA) return [];
+  return lookupBranchPulls();
+}
+
 const ghPrUrl = async () => (await run('gh', ['pr', 'view', '--json', 'url', '--jq', '.url'], { cwd: REPO_DIR })).stdout.trim();
 const lookupPrUrl = createPrLookup({ branch: () => prLookupKey(git), lookup: ghPrUrl });
 // The pull request of the branch checked out, read afresh for a guarded send.
@@ -890,6 +987,8 @@ async function status() {
     branch: await git('branch', '--show-current'),
     head: await git('rev-parse', '--short', 'HEAD'),
     prUrl: await prUrl(),
+    // The pull requests of every local branch, worktrees' included: the card shows each (console/sessions.mjs).
+    prUrls: await prUrls(),
     // POST /send takes agentOnly: the console types a private session's review feedback only into a statusd that does.
     agentOnlySend: true,
     usage: await usage(),
