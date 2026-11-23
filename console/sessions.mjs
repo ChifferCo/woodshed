@@ -455,15 +455,39 @@ export function planUsageFrom(usage) {
 
 const MAX_PR_URLS = 20;
 
+/**
+ * Which of Woodshed's own runs are at work on each pull request now: a review or QA session the console started on
+ * it, waiting in line or running. A pull request's checks say nothing of them until they report, so its chip would
+ * show a tick while its review is still being written.
+ * @param {object[]} sessions  every session, whoever may see it: a run says only that it is at work
+ * @returns {(prUrl: string) => ('review'|'qa')[]}  the runs on that pull request, review first
+ */
+export function woodshedRunsOn(sessions) {
+  const runs = new Map();
+  for (const s of sessions) {
+    if (!ACTIVE_STATUSES.has(s.status) || !s.repo || !Number.isInteger(s.number) || !(isReview(s) || isQa(s))) continue;
+    const key = `https://github.com/${s.repo}/pull/${s.number}`.toLowerCase();
+    runs.set(key, { ...runs.get(key), [isReview(s) ? 'review' : 'qa']: true });
+  }
+  return (prUrl) => {
+    const found = runs.get(String(prUrl ?? '').toLowerCase());
+    return ['review', 'qa'].filter((kind) => found?.[kind]);
+  };
+}
+
 /** @returns {string[]}  the session's pull requests, oldest first; one from before the list is its only `prUrl` */
 export function prUrlsOf(session) {
   if (Array.isArray(session?.prUrls) && session.prUrls.length) return session.prUrls;
   return session?.prUrl ? [session.prUrl] : [];
 }
 
-function withPrUrl(session, prUrl) {
-  const known = prUrlsOf(session);
-  return prUrl && !known.includes(prUrl) ? [...known, prUrl].slice(-MAX_PR_URLS) : known;
+/**
+ * The session's list with what its statusd reports now: the pull request of the branch checked out, and those of its
+ * other branches (`prUrls`, from a statusd that reads them). Oldest first, which is the lowest number first.
+ */
+function withPrUrls(session, reported) {
+  const all = [...new Set([...prUrlsOf(session), ...reported.filter(Boolean)])];
+  return all.sort((a, b) => pullNumber(a) - pullNumber(b)).slice(-MAX_PR_URLS);
 }
 
 /**
@@ -484,6 +508,9 @@ export function statusUpdate(session, status, nowIso) {
   const prUrl = typeof status.prUrl === 'string' && status.prUrl.startsWith(`https://github.com/${session.repo}/pull/`)
     ? status.prUrl
     : null;
+  // The pull requests of its other branches, a worktree's included. `prUrl` stays the checked-out branch's alone.
+  const otherPrUrls = (Array.isArray(status.prUrls) ? status.prUrls.slice(-MAX_PR_URLS) : [])
+    .filter((url) => typeof url === 'string' && url.startsWith(`https://github.com/${session.repo}/pull/`) && pullNumber(url));
   const update = {
     state: status.state,
     shells: Number.isInteger(status.shells) && status.shells > 0 ? Math.min(status.shells, 99) : 0,
@@ -499,8 +526,9 @@ export function statusUpdate(session, status, nowIso) {
     // Whether its statusd types only into a running agent when asked (`agentOnly`): an older image's would type into
     // the shell an exited agent leaves, so its private session's pull request is not watched.
     agentOnlySend: status.agentOnlySend === true,
-    // Every pull request the session has reported, oldest first: a session can open another after one merged.
-    prUrls: withPrUrl(session, prUrl),
+    // Every pull request the session has reported, oldest first: a session can open another after one merged, or
+    // several from branches of their own.
+    prUrls: withPrUrls(session, [...otherPrUrls, prUrl]),
     app: APP_STATES.has(status.app) ? status.app : null,
     // Claude's own id for the conversation, which Resume hands back to `claude --resume`.
     claudeSession: CLAUDE_SESSION_RE.test(status.claudeSession ?? '') ? status.claudeSession : session.claudeSession ?? null,

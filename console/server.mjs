@@ -117,6 +117,10 @@
 //   POST /api/people/github-sessions  {"login": "<handle>", "on": true|false}   who starts sessions from GitHub and sees shared ones
 //   POST /api/people/assignable  {"login": "<handle>", "on": true|false}   who may be assigned a shared session (needs the above)
 //   POST /api/people/admin      {"login": "<handle>", "admin": true|false}   who is an admin; the last one keeps it
+//   POST /api/people/access     {"login": "<handle>", "access": "owner"|"member"|"contributor"|"private"}   a role on People,
+//                                which sets the three switches above at once (peopleRoles.mjs); behind a hosting proxy
+//                                Owner is the program's owner role and the rest its member role. Invite and add take
+//                                `access` too
 //   POST /api/people/add|role   {"login": "<handle>", "role": "owner"|"member"}   behind a hosting proxy with the program's
 //                                list (hostedMembers.mjs): add someone, or change their role, through the program; remove
 //                                takes them off there. Invite, accept, decline and admin are not there
@@ -233,7 +237,7 @@ import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
 import agentsRegistry from '../shared/agents.cjs';
 import { applyStored, createGitHubAppSetup, supervisorOf } from './githubAppSetup.mjs';
 import { createInstallation } from './installation.mjs';
-import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf, publicSession, sharedRunningCount } from './sessions.mjs';
+import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf, publicSession, sharedRunningCount, woodshedRunsOn } from './sessions.mjs';
 import { WEBHOOK_SECRET } from './settings.mjs';
 import { openStore } from './store.mjs';
 import { parseHandle } from './members.mjs';
@@ -250,6 +254,7 @@ import { createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
 import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
 import { createMcpTester } from './mcpTest.mjs';
+import { ROLES, roleById, roleDiffers, roleOf } from './peopleRoles.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
@@ -257,7 +262,7 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'publ
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
 // The most one message to an agent may be: statusd's own limit (session/statusd.mjs, MAX_SEND_CHARS).
 export const MAX_MESSAGE_CHARS = 8000;
-const SETTINGS_SCRIPTS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
+const SETTINGS_SCRIPTS = ['settingsRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
 const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
@@ -293,6 +298,7 @@ const STATIC_FILES = {
   'login.js': 'text/javascript; charset=utf-8',
   'launcher.js': 'text/javascript; charset=utf-8',
   'mySettings.js': 'text/javascript; charset=utf-8',
+  'settingsRows.js': 'text/javascript; charset=utf-8',
   'dbRestore.js': 'text/javascript; charset=utf-8',
   'dbRestoreStates.js': 'text/javascript; charset=utf-8',
   'consoleSettings.js': 'text/javascript; charset=utf-8',
@@ -311,7 +317,7 @@ const staticPath = (file) => STATIC_ELSEWHERE[file] ?? path.join(PUBLIC_DIR, fil
 const MAX_BODY_BYTES = 16 * 1024;
 // A whole .env file, JSON-escaped, under Secrets Manager's 64 KB.
 const MAX_SECRET_BODY_BYTES = 160 * 1024;
-const PEOPLE_RE = /^\/api\/people\/(invite|accept|decline|remove|slack|assignable|github-sessions|admin|add|role)$/;
+const PEOPLE_RE = /^\/api\/people\/(invite|accept|decline|remove|slack|assignable|github-sessions|admin|add|role|access)$/;
 const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 // A repo's settings page: its project's name, as Console settings' Repos card links it.
 const REPO_SETTINGS_PAGE_RE = /^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -876,6 +882,8 @@ export function createHandler({
         // Without sign-in turned on the server lets everyone through (signedIn gives no login), so the menu says the same.
         admin: !auth?.enabled() || Boolean(user && isAdmin(user)),
         asking: user && members && isAdmin(user) ? members.view().requests.length : 0,
+        // People, as a tab of Settings, when the console keeps a list of who is in.
+        people: Boolean(members),
         // Admins see how many Woodshed commits the console lacks, on the menu's Console settings.
         ...(woodshedUpdate && { updates: !auth?.enabled() || (user && isAdmin(user)) ? woodshedUpdate.behindBy() : 0 }),
         names: namesFor([user?.login ?? visitor?.login]),
@@ -977,8 +985,10 @@ export function createHandler({
     }
     const view = members.view();
     const logins = [...view.members, ...view.requests].flatMap((p) => [p.login, p.addedBy]).filter(Boolean);
+    // Each member's role, named from their switches, and the roles People offers with what each gives.
+    view.members = view.members.map((m) => ({ ...m, access: roleOf(m), accessDiffers: roleDiffers(m) }));
     return reply(res, 200, {
-      ...view, hosted: Boolean(members.hosted), names: namesFor(logins), slack: slackPeople ? slackPeople.links(view.members.map((m) => m.login)) : null, ...extra,
+      ...view, roles: ROLES.map(({ id, label, explain, privateSessions, admin, githubSessions, assignable }) => ({ id, label, explain, privateSessions, admin, githubSessions, assignable })), hosted: Boolean(members.hosted), names: namesFor(logins), slack: slackPeople ? slackPeople.links(view.members.map((m) => m.login)) : null, ...extra,
     });
   }
 
@@ -1031,11 +1041,52 @@ export function createHandler({
     return peopleReply(res);
   }
 
+  // A role sets the three switches at once. The admin part goes first, behind a proxy through the program, so a refusal
+  // there (the last owner) changes nothing; Sessions from GitHub goes before Can be assigned, which needs it.
+  async function applyRole({ handle, role, by, adminDone = false }) {
+    if (!adminDone) {
+      if (members.hosted) await members.setRole({ login: handle, role: role.admin ? 'owner' : 'member', by });
+      else members.setAdmin({ login: handle, admin: role.admin, by });
+    }
+    members.setGithubSessions({ login: handle, on: role.githubSessions, by });
+    members.setAssignable({ login: handle, on: role.assignable, by });
+    console.log('members: role set', { login: handle, access: role.id, by });
+    // Whoever can no longer be assigned gives their shared sessions back to Unassigned.
+    if (!role.assignable) fleet.releaseAssignments?.({ login: handle, by });
+  }
+
+  function roleOrRefuse(res, access) {
+    const role = roleById(access);
+    if (!role) reply(res, 400, { error: `access is one of ${ROLES.map((r) => r.id).join(', ')}` });
+    return role;
+  }
+
+  async function peopleAccess(res, { handle, access, by }) {
+    const role = roleOrRefuse(res, access);
+    if (!role) return;
+    try {
+      if (members.hosted) await members.load();
+      await applyRole({ handle, role, by });
+    } catch (err) {
+      if (err.shown) return reply(res, 409, { error: err.message });
+      if (members.hosted) return reply(res, 500, { error: 'not done: try again' });
+      throw err;
+    }
+    return peopleReply(res);
+  }
+
   // Behind a hosting proxy with the program's list, the program adds, removes and sets each role (hostedMembers.mjs).
   // Its refusal is shown as it said it; any other failure was logged there, and is a 500 here.
   async function hostedPeopleWrite(res, { action, handle, body, by }) {
+    // An add with a People role gives the program its owner or member role, then sets the switches here.
+    const role = action === 'add' && body?.access !== undefined ? roleOrRefuse(res, body.access) : null;
+    if (action === 'add' && body?.access !== undefined && !role) return;
     const call = {
-      add: () => members.add({ login: handle, role: body?.role, by }),
+      add: async () => {
+        const done = await members.add({ login: handle, role: role ? (role.admin ? 'owner' : 'member') : body?.role, by });
+        if (role) await applyRole({ handle: done.login, role, by, adminDone: true });
+        return done;
+      },
       remove: () => members.remove({ login: handle, by }),
       role: () => members.setRole({ login: handle, role: body?.role, by }),
     }[action];
@@ -1068,6 +1119,7 @@ export function createHandler({
     if (!handle) return reply(res, 400, { error: 'login must be a GitHub handle' });
     const action = pathname.split('/').pop();
     if (action === 'slack') return peopleSlack(res, { handle, value: body?.slack, by: login });
+    if (action === 'access') return peopleAccess(res, { handle, access: body?.access, by: login });
     if (action === 'assignable') return peopleSwitch(res, { handle, on: body?.on, by: login, set: members.setAssignable });
     if (action === 'github-sessions') return peopleSwitch(res, { handle, on: body?.on, by: login, set: members.setGithubSessions });
     if (members.hosted && ['add', 'remove', 'role', 'admin', 'invite', 'accept', 'decline'].includes(action)) {
@@ -1086,8 +1138,12 @@ export function createHandler({
       }
       if (!writes) return reply(res, 400, { error: `@${handle} has no write access to the repository, so could not sign in` });
     }
+    // An invite may name a People role; without one, someone new has every switch off (Private only).
+    const role = action === 'invite' && body?.access !== undefined ? roleOrRefuse(res, body.access) : null;
+    if (action === 'invite' && body?.access !== undefined && !role) return;
     try {
-      members[action]({ login: handle, by: login });
+      const invited = members[action]({ login: handle, by: login });
+      if (role) await applyRole({ handle: invited, role, by: login });
     } catch (err) {
       if (err.shown) return reply(res, 409, { error: err.message });
       throw err;
@@ -1248,6 +1304,7 @@ export function createHandler({
   function sessionsBody(login) {
     const all = fleet.sessions();
     const sessions = all.filter((s) => canOpen(s, login, access));
+    const runsOn = woodshedRunsOn(all);
     const slackWaiting = fleet.slackWaiting?.() ?? new Set();
     return {
       repo: defaultProject(config).repo,
@@ -1283,8 +1340,9 @@ export function createHandler({
         // A port is lent once the app is up or starting; until then `appUrl` is null and the page opens it through
         // /auth/app, which lends one.
         ...(appPorts && s.status === 'running' && s.kind !== 'ask' ? { appUrl: APP_HOLDS_PORT.has(s.app) ? appPorts.urlFor(s.id) : null } : {}),
-        // Every pull request it opened, oldest first, for its chips (common.js shownPrs).
-        prs: prUrlsOf(s).map((url) => ({ url, pr: prChips?.view(url) ?? null })) })).reverse(),
+        // Every pull request it opened, oldest first, for its chips (common.js shownPrs). `runs` is Woodshed's review
+        // and QA at work on it now, which its checks do not show until they report.
+        prs: prUrlsOf(s).map((url) => ({ url, pr: prChips?.view(url) ?? null, runs: runsOn(url) })) })).reverse(),
       // Who may have a shared session, and whether the asker is one: the Assign menu and the rail's Mine read them.
       // `shared` is whether the rail has an Everyone tab.
       assignables: members?.assignables() ?? [],

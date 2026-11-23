@@ -70,57 +70,9 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     render();
   }
 
-  // The page is groups of rows (designSystem/components/SettingsRows): a row says a setting's name, what it is now and
-  // its status word, and opens in place on its form. Several may be open at once; which are is kept for the page's
-  // life, since it is drawn again on each answer. A link or the search that names a row opens it.
-  const open = new Set();
-  if (window.location.hash) open.add(window.location.hash.slice(1));
-
-  function toggle(id) {
-    if (open.has(id)) open.delete(id);
-    else open.add(id);
-    render();
-  }
-
-  /**
-   * One row. With nothing in `body` it is a plain line: there is nothing to open.
-   * `opens` is for a row whose body is drawn only while it is open (a repo's, which is read then).
-   * @param {{id: string, title: string, value?: *, pill?: *, danger?: boolean, opens?: boolean, onOpen?: () => void}} row
-   */
-  function row({ id, title, value, pill, danger = false, opens = false, onOpen }, ...body) {
-    const parts = body.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false);
-    const text = h('span', { class: 'set-fold-text' }, h('span', { class: 'set-name' }, title), value && h('span', { class: 'set-help' }, value));
-    if (!parts.length && !opens) return h('section', { class: 'set-fold is-plain', id }, h('div', { class: 'set-fold-head' }, text, pill));
-    const isOpen = open.has(id);
-    return h('section', { class: `set-fold${isOpen ? ' is-open' : ''}${danger ? ' is-danger' : ''}`, id },
-      // Its id is what gives the button its focus back after the redraw that opens or closes it (render).
-      h('h3', { class: 'set-fold-h' }, h('button', {
-        type: 'button', class: 'set-fold-head', id: `${id}-head`, 'aria-expanded': String(isOpen), 'aria-controls': `${id}-body`,
-        // Told before the draw that opens it, so what it sets (a repo to read again) is drawn.
-        onclick: () => { if (!open.has(id)) onOpen?.(); toggle(id); },
-      }, text, pill, h('span', { class: 'set-fold-chev', 'aria-hidden': 'true' }, '▸'))),
-      isOpen && h('div', { class: 'set-fold-body', id: `${id}-body` }, parts));
-  }
-
-  /** A row whose control is on the row itself: nothing to open. */
-  function line(name, help, control, attrs = {}) {
-    return h('section', { class: 'set-line', ...attrs }, h('div', null, h('div', { class: 'set-name' }, name), h('div', { class: 'set-help' }, help)), h('div', { class: 'set-value' }, control));
-  }
-
-  /** A group of rows under its label. Rows that are not drawn (null) are left out, and a group with none is too. */
-  function group({ id, label, note }, ...rows) {
-    const drawn = rows.flat(Infinity).filter(Boolean);
-    if (!drawn.length) return null;
-    return h('div', { class: 'set-group', id },
-      label && h('h2', { class: 'set-group-label' }, label),
-      note && h('div', { class: 'set-group-note' }, note),
-      h('div', { class: 'set-rows-box' }, drawn));
-  }
-
-  // Commands a person needs again after the first time stay under a fold (designSystem/README.md, "Commands to copy").
-  function howTo(summary, ...body) {
-    return h('details', { class: 'set-how' }, h('summary', null, summary), body);
-  }
+  // The page is groups of rows (settingsRows.js): which are open is kept for the page's life, since it is drawn again
+  // on each answer. A link or the search that names a row opens it.
+  const { open, row, line, group, howTo } = window.WoodshedSettingsRows.create({ render });
 
   function change(path, body, done, working) {
     return act({
