@@ -456,6 +456,19 @@ async function readJsonBody(req) {
 }
 
 /**
+ * Whether `login` has saved each personal agent sign-in, for `GET /api/cli/me`'s `sessionSignIns` (setup's agent step).
+ * As on My settings, a sign-in saved directly to the store also counts: refresh re-reads it, and caches the check.
+ * @returns {(login: string|null) => Promise<{claude: boolean, codex: boolean}>}
+ */
+export function sessionSignInsOf(userSettings) {
+  return async (login) => {
+    await userSettings?.refresh?.(login);
+    const view = userSettings?.view(login);
+    return { claude: view?.claudeToken?.set === true, codex: view?.codexAuth?.set === true };
+  };
+}
+
+/**
  * The CLI's own calls, which carry no cookie: a device code or a token is their sign-in.
  * @param {{req, res, url: URL, cli: ReturnType<typeof createCliSignIn>, publicUrl: string,
  *          about: (login: string|null) => {console: string, org: string|null},

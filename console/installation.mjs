@@ -22,7 +22,7 @@ import { createDbRestore } from './dbRestore.mjs';
 import { createSlack } from './slack.mjs';
 import { checkSlackInstall, createSlackSetup } from './slackSetup.mjs';
 import { createTunnel, tunnelTargetsFor } from './dbTunnel.mjs';
-import { createCliSignIn } from './cliSignIn.mjs';
+import { createCliSignIn, sessionSignInsOf } from './cliSignIn.mjs';
 import { createExecPipe } from './execPipe.mjs';
 import { createFleet } from './fleet.mjs';
 import { createGitHub } from './github.mjs';
@@ -651,6 +651,12 @@ export async function createInstallation({ config: loaded, store, provider, trus
     start,
     /** Stops the loops; requests already in flight finish. */
     stop: () => { members?.stop?.(); loops.stop(); },
+    /**
+     * `GET /api/cli/me`'s `sessionSignIns`, for a program that answers that route itself (a host serving several
+     * installations passes it to handleCliApi): without it, `woodshed setup` cannot tell whether Claude Code and Codex
+     * are connected.
+     */
+    sessionSignIns: sessionSignInsOf(userSettings),
     /** @returns {boolean}  whether an active session of this installation holds `token` (the session API's bearer) */
     ownsSessionToken: (token) => Boolean(sessionForToken(token, fleet.sessions())),
     /** One GitHub or Slack message, as the provider's webhook source hands it (webhookDispatch.mjs). */
