@@ -231,7 +231,19 @@ window.Woodshed.settingsPage('/people', (app, life) => {
   const roleNamed = (id) => (data?.roles ?? []).find((r) => r.id === id) ?? null;
 
   // A role sets the person's three switches at once (Admin or the program's owner, Sessions from GitHub, Can be assigned).
+  // Giving up your own Owner takes these pages away at once, with no way back from here: it is asked first, as Remove is.
+  function confirmLeavingOwner(login, access) {
+    const mine = isMe(login) && data.members.find((m) => W.sameLogin(m.login, login));
+    if (!mine?.admin || access === 'owner') return true;
+    const label = roleNamed(access)?.label ?? access;
+    return window.confirm(`Make yourself ${/^[aeiou]/i.test(label) ? 'an' : 'a'} ${label}? You stop being an owner at once and lose these settings pages. Only another owner can make you one again.`);
+  }
+
   async function setAccess(login, access, was, select) {
+    if (!confirmLeavingOwner(login, access)) {
+      select.value = was;
+      return;
+    }
     select.disabled = true;
     try {
       data = await W.postJson('/api/people/access', { login, access });

@@ -1746,7 +1746,8 @@ log), and the role shown is read back from the switches, so a list from before r
 
 The first person to sign in to a new console is a full Owner. An owner with a switch off (behind a hosting proxy, where
 Can be assigned starts off, or an admin from before roles) shows as **Owner (partly)**, with what they lack in words;
-picking Owner turns the rest on. Invite someone takes a role too, picked from a table of the roles with what each can do; without one (an older page or a script), someone new has every switch
+picking Owner turns the rest on. Picking any other role for yourself while you are an owner asks first, since it takes
+these pages away at once and only another owner can give them back; the last owner is refused anyway. Invite someone takes a role too, picked from a table of the roles with what each can do; without one (an older page or a script), someone new has every switch
 off, Private only. The switches:
 - *Admin*, above.
 - *Sessions from GitHub* (`githubSessions`): the `woodshed` label and

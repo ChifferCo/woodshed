@@ -32,7 +32,8 @@ function walk(el, out = []) {
 
 const person = (login, role, fields = {}) => ({ login, role, admin: role === 'owner', githubSessions: true, assignable: false, ...fields });
 
-async function loadPage({ members, addReply, hosted = true, requests = [] }) {
+async function loadPage({ members, addReply, hosted = true, requests = [], confirm = () => true }) {
+  const asked = [];
   const app = element('div');
   const h = (tag, attrs, ...children) => {
     const el = element(tag);
@@ -60,7 +61,7 @@ async function loadPage({ members, addReply, hosted = true, requests = [] }) {
     getJson: async (path) => (path === '/api/me' ? { login: 'ana-owner' } : list),
     postJson: async (path, body) => { posted.push([path, body]); return withRoles(await addReply(body)); },
   };
-  const context = vm.createContext({ window: { Woodshed: W, confirm: () => true, alert() {} }, document: { activeElement: null } });
+  const context = vm.createContext({ window: { Woodshed: W, confirm: (text) => { asked.push(text); return confirm(text); }, alert() {} }, document: { activeElement: null } });
   vm.runInContext(rowsSource, context);
   vm.runInContext(source, context);
   for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
@@ -74,7 +75,7 @@ async function loadPage({ members, addReply, hosted = true, requests = [] }) {
   }
   const hint = () => { openInvite(); return textOf(find((e) => e.attrs.id === 'add-hint')); };
   const rowOf = (login) => find((e) => e.tag === 'tr' && textOf(e).includes(`@${login}`));
-  return { app, add, hint, rowOf, posted, find, heard };
+  return { asked, app, add, hint, rowOf, posted, find, heard };
 }
 
 const CORE_HINT = 'They can sign in straight away. Nothing is sent to them: tell them the link.';
@@ -211,4 +212,28 @@ test('an owner whose switches are not all on reads as Owner (partly), and pickin
   assert.equal(JSON.stringify(posted.at(-1)), JSON.stringify(['/api/people/access', { login: 'ana-owner', access: 'owner' }]));
   assert.deepEqual(picked(), ['Owner'], 'a full Owner now, with no partly');
   assert.equal(select().children.length, 4);
+});
+
+test('making yourself anything but an owner is asked first; a no leaves the select and sends nothing', async () => {
+  let answer = false;
+  const members = [person('ana-owner', 'owner', { assignable: true }), person('lee-dev', 'owner', { assignable: true })];
+  const { rowOf, posted, asked } = await loadPage({
+    members, confirm: () => answer,
+    addReply: (body) => ({ members: members.map((m) => (m.login === body.login ? { ...m, admin: false, role: 'member' } : m)), requests: [], hosted: true, names: {}, slack: null }),
+  });
+  const select = (login) => walk(rowOf(login)).find((e) => e.tag === 'select');
+  const mine = { value: 'member', disabled: false };
+  await select('ana-owner').listeners.change({ currentTarget: mine });
+  assert.deepEqual(asked, ['Make yourself a Member? You stop being an owner at once and lose these settings pages. Only another owner can make you one again.']);
+  assert.equal(posted.length, 0, 'nothing sent on a no');
+  assert.deepEqual([mine.value, mine.disabled], ['owner', false], 'and the select is back on Owner');
+
+  answer = true;
+  await select('ana-owner').listeners.change({ currentTarget: { value: 'contributor', disabled: false } });
+  assert.match(asked.at(-1), /^Make yourself a Contributor\?/);
+  assert.equal(JSON.stringify(posted.at(-1)), JSON.stringify(['/api/people/access', { login: 'ana-owner', access: 'contributor' }]), 'sent on a yes');
+
+  await select('lee-dev').listeners.change({ currentTarget: { value: 'member', disabled: false } });
+  assert.equal(asked.length, 2, 'someone else\'s role is not asked about');
+  assert.equal(posted.length, 2);
 });
