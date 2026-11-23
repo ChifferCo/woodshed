@@ -9,6 +9,7 @@ import { MAX_QA_POSTER_BYTES } from './qaRecordings.mjs';
 import { MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES } from './qaSessions.mjs';
 import { createSessionApi, sessionForAuthorization } from './sessionApi.mjs';
 import { createUserSettings } from './userSettings.mjs';
+import agents from '../shared/agents.cjs';
 import { readRepoSettings, writeEnvFiles } from '../shared/project.mjs';
 
 const SESSIONS = [
@@ -679,15 +680,23 @@ test('a private Grok Build, Antigravity or OpenCode session runs on its owner\'s
   assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer none-token' }),
     { status: 409, body: { error: '@mia has no OpenCode sign-in saved on My settings' } });
 
+  const given = (text) => ({ 'x-woodshed-given-sign-in': agents.signInDigest(text) });
   const newer = JSON.stringify({ scope: { key: 'at2', refresh_token: 'rt2', expires_at: '2026-12-02T00:00:00Z' } });
-  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer grok-token', body: newer })).status, 200);
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer grok-token', body: newer })).status, 409, 'a session that does not say which sign-in it was given keeps nothing');
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer grok-token', body: newer, headers: given(` ${JSON.stringify(JSON.parse(own.grok), null, 2)}\n`) })).status, 200,
+    'the one it was given, whatever its spacing');
   assert.deepEqual(saved, [['joel', 'grok', newer]]);
+  // A key saved on My settings while the session ran: a key has no expiry, so only which sign-in it was tells them apart.
+  const given0 = own.grok;
+  own.grok = 'xai-replacement-key-0123456789';
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer grok-token', body: newer, headers: given(given0) })).status, 409, 'a sign-in saved since is never written over');
+  assert.equal(own.grok, 'xai-replacement-key-0123456789');
   const older = JSON.stringify({ openai: { type: 'oauth', refresh: 'r0', access: 'a0', expires: 1_000 } });
-  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer oc-token', body: older })).status, 409, 'an older login never replaces a newer one');
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer oc-token', body: older, headers: given(own.opencode) })).status, 409, 'an older login never replaces a newer one');
   assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer agy-token', body: 'AIza-x' })).status, 404, 'a key does not rotate');
   assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer none-token', body: older })).status, 409, 'no sign-in saved, nothing to replace');
   assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer grok-token', body: 'x'.repeat(20_001) })).status, 413);
-  assert.equal(saved.length, 1);
+  assert.equal(saved.length, 1, 'only the refresh of the sign-in it was given');
 });
 
 test('a session gets the token of the project it runs on', async (t) => {

@@ -166,5 +166,23 @@
     return JSON.stringify(json);
   }
 
-  return { AGENTS, AGENT_IDS, OWN_SIGN_IN_AGENTS, PROCESS_NAMES, isAgent, agent, agentOfSession, modelShapeOk, checkSignIn };
+  /**
+   * Which sign-in this is, whatever its spacing: the sha256 of a login file as compact JSON, or of a key as it is. A
+   * session sends the one it was given back with a refreshed login, and the console keeps the refresh only while that is
+   * still what it holds (sessionApi.mjs, /agent-auth): a sign-in saved since, or another session's refresh, is never
+   * written over. Node only: the pages never call it.
+   * @param {string} text
+   * @returns {string}
+   */
+  function signInDigest(text) {
+    let canonical = String(text ?? '').trim();
+    try {
+      if (canonical.startsWith('{')) canonical = JSON.stringify(JSON.parse(canonical));
+    } catch {
+      // Not JSON after all: digested as it is.
+    }
+    return require('node:crypto').createHash('sha256').update(canonical).digest('hex');
+  }
+
+  return { AGENTS, AGENT_IDS, OWN_SIGN_IN_AGENTS, PROCESS_NAMES, isAgent, agent, agentOfSession, modelShapeOk, checkSignIn, signInDigest };
 });

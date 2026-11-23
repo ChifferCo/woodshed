@@ -839,6 +839,9 @@ async function keepCodexAuth() {
 // Grok Build's and OpenCode's refreshed login, sent back for My settings to keep, as codex's is: a refresh token they
 // used here works once, so the copy saved there stops working. Only a login this session refreshed goes back, never a
 // key, and never over a newer one (the console keeps only its owner's own, and says 409 to anyone else).
+// The header naming the sign-in the session was given (shared/agents.cjs, signInDigest), as sessionApi.mjs reads it.
+export const GIVEN_SIGN_IN_HEADER = 'x-woodshed-given-sign-in';
+
 async function keepAgentAuth() {
   const file = OWN_AUTH_FILES[AGENT];
   if (!file || !CONSOLE_URL || process.env.SESSION_KIND !== 'private') return;
@@ -849,7 +852,9 @@ async function keepAgentAuth() {
       console.log(`statusd: ${name} sign-in unchanged, not sent back`);
       return;
     }
-    const res = await fetch(`${CONSOLE_URL}/agent-auth`, { method: 'POST', headers: { authorization: `Bearer ${TOKEN}` }, body, signal: AbortSignal.timeout(10_000) });
+    // Which sign-in it was given: the console keeps the refresh only while that is still the one it holds.
+    const headers = { authorization: `Bearer ${TOKEN}`, [GIVEN_SIGN_IN_HEADER]: AGENTS.signInDigest(given) };
+    const res = await fetch(`${CONSOLE_URL}/agent-auth`, { method: 'POST', headers, body, signal: AbortSignal.timeout(10_000) });
     console.log(`statusd: ${name} sign-in sent back`, { status: res.status });
   } catch (err) {
     console.warn(`statusd: ${name} sign-in not sent back`, { message: err?.message });

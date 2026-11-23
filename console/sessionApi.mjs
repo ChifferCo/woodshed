@@ -466,6 +466,9 @@ function loginExpiry(text) {
  * once, so the copy saved on My settings stops working once a session used it. Only the owner's own sign-in is replaced,
  * only by their own session of that agent, and never by a login that runs out before the saved one.
  */
+// The sign-in a session says it was given (session/statusd.mjs, keepAgentAuth).
+const GIVEN_SIGN_IN_HEADER = 'x-woodshed-given-sign-in';
+
 async function agentAuthReply(req, res, session, userSettings) {
   const agent = agents.isAgent(session.options?.agent) ? agents.agent(session.options.agent) : null;
   if (!userSettings || !session.owner || !agent?.signIn?.rotates) {
@@ -481,6 +484,13 @@ async function agentAuthReply(req, res, session, userSettings) {
   if (!current) {
     console.log(`sessionApi: ${agent.product} sign-in not kept, the owner has none saved`, { sessionId: session.id, owner: session.owner });
     return reply(res, 409, { error: `the owner saved no ${agent.product} sign-in` });
+  }
+  // Only over the sign-in this session was given: one saved on My settings since (a key has no expiry to compare), or
+  // another session's refresh, stays. A session that does not say which it was given keeps nothing.
+  const given = String(req.headers[GIVEN_SIGN_IN_HEADER] ?? '');
+  if (given !== agents.signInDigest(current)) {
+    console.log(`sessionApi: ${agent.product} sign-in not kept, the saved one is not the one the session was given`, { sessionId: session.id, owner: session.owner, said: Boolean(given) });
+    return reply(res, 409, { error: `the saved ${agent.product} sign-in changed since this session started` });
   }
   const [incoming, saved] = [loginExpiry(text), loginExpiry(current)];
   if (incoming !== null && saved !== null && incoming < saved) {

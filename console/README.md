@@ -759,8 +759,9 @@ which a session cannot carry) or `opencode-auth` (`~/.local/share/opencode/auth.
 with `POST /api/my/agent-auth/<agent>` and removed with `…/remove`. It is handed to that person's private sessions of
 that agent alone (`/settings`'s `agentAuth`), never to a shared session, a question, QA or a review: so they review
 nothing, and a resume needs it saved as a start does. Grok's and OpenCode's logins rotate their refresh token at each
-use, so a session sends the refreshed one back at stop (`POST /agent-auth`), kept unless it runs out before the saved
-one. Their **Model** is a name their own `--model` takes, blank for the agent's default (OpenCode's is
+use, so a session sends the refreshed one back at stop (`POST /agent-auth`, with the digest of the sign-in it was
+given), kept only while the saved one is still that sign-in (not a key or login saved since, nor another session's
+refresh) and does not run out before it. Their **Model** is a name their own `--model` takes, blank for the agent's default (OpenCode's is
 `provider/model`); **Effort** and **Permissions** offer what each one's command line has (`efforts` and
 `permissionModes` in the registry). None of them gets the console's MCP servers yet.
 

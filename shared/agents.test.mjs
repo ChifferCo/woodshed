@@ -60,3 +60,11 @@ test('own sign-ins: a key or a login file each agent writes, checked before it i
   assert.throws(() => agents.checkSignIn('grok', `xai-${'a'.repeat(30_000)}`), /too long/);
   assert.throws(() => agents.checkSignIn('codex', 'sk-x'), /no own sign-in/);
 });
+
+test('a sign-in\'s digest is the same whatever its spacing, and differs for another sign-in', () => {
+  const login = { s: { key: 'k', refresh_token: 'r' } };
+  assert.equal(agents.signInDigest(JSON.stringify(login)), agents.signInDigest(`\n${JSON.stringify(login, null, 2)}  `));
+  assert.notEqual(agents.signInDigest(JSON.stringify(login)), agents.signInDigest(JSON.stringify({ s: { key: 'k', refresh_token: 'r2' } })));
+  assert.equal(agents.signInDigest('xai-abc\n'), agents.signInDigest('xai-abc'));
+  assert.match(agents.signInDigest('{not json'), /^[0-9a-f]{64}$/);
+});
