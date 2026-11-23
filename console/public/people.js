@@ -1,6 +1,8 @@
 // The People page: who may sign in, on top of write access to the repository. An admin can invite a handle, accept
 // or decline someone asking to join, and remove another member; nobody else can open it. Read again every 30 seconds, so a
 // request shows without a reload; the invite field keeps what is typed.
+// It reads as the other settings pages do (settingsRows.js): Asking to join is a group of plain rows, Members a group
+// whose box holds the table, one column per switch, and inviting is the box's last row, which opens on its form.
 // Behind a hosting proxy whose program hands over its list (`hosted` in /api/people), it is a tab of Settings: the
 // program keeps who is in and each role, so Add someone takes a role, the Admin column is the role, and nobody asks to join.
 // The program may say what it did on an add (`told`, an email sent), said in place of the hint that nothing is sent, and
@@ -24,6 +26,8 @@ window.Woodshed.settingsPage('/people', (app, life) => {
   const inviteError = h('p', { class: 'form-error', role: 'alert', hidden: true });
   const addRole = h('select', { id: 'add-role', class: 'field', 'aria-label': 'Role' },
     h('option', { value: 'member' }, 'Member'), h('option', { value: 'owner' }, 'Owner'));
+
+  const { row, group, draw, follow } = window.WoodshedSettingsRows.create({ render });
 
   function isMe(login) {
     return W.sameLogin(me, login);
@@ -67,53 +71,48 @@ window.Woodshed.settingsPage('/people', (app, life) => {
     return true;
   }
 
-  function requestsCard() {
-    if (!data.requests.length) return null;
-    return h('section', { class: 'people-card is-asking', id: 'requests' },
-      h('div', { class: 'set-head' }, h('b', null, `Asking to join · ${data.requests.length}`)),
-      data.requests.map((r) => h('div', { class: 'person-row' },
-        who(r.login, `asked ${W.ago(r.askedAt)}`),
-        h('button', { type: 'button', class: 'btn btn-open', onclick: (e) => act('accept', r.login, e.currentTarget) }, 'Accept'),
-        h('button', { type: 'button', class: 'btn btn-quiet', onclick: (e) => act('decline', r.login, e.currentTarget) }, 'Decline'))));
+  // One plain row per person asking, with the answer on the row: there is nothing to open.
+  function requestsGroup() {
+    if (hosted || !data.requests.length) return null;
+    return group({ id: 'requests', label: `Asking to join · ${data.requests.length}` },
+      data.requests.map((r) => {
+        const named = data.names?.[r.login];
+        return row({
+          id: `request-${r.login}`, title: named || `@${r.login}`, value: [named && `@${r.login}`, `asked ${W.ago(r.askedAt)}`].filter(Boolean).join(' · '),
+          pill: h('span', { class: 'person-acts' },
+            h('button', { type: 'button', class: 'btn btn-open', onclick: (e) => act('accept', r.login, e.currentTarget) }, 'Accept'),
+            h('button', { type: 'button', class: 'btn btn-quiet', onclick: (e) => act('decline', r.login, e.currentTarget) }, 'Decline')),
+        });
+      }));
   }
 
-  // Behind a hosting proxy: a handle and a role, kept by the program.
-  function addCard() {
-    const button = h('button', { type: 'submit', class: 'btn btn-stop' }, 'Add someone');
-    return h('form', {
-      class: 'field-block', id: 'invite-card',
-      onsubmit: async (e) => {
-        e.preventDefault();
-        inviteError.hidden = true;
-        const login = invite.value.trim().replace(/^@/, '');
-        if (!login) return invite.focus();
-        if (await act('add', login, button, { role: addRole.value })) invite.value = '';
-      },
+  // The last row of Members' box, which opens on the form. Behind a hosting proxy it takes a handle and a role, kept by
+  // the program.
+  function inviteRow() {
+    const action = hosted ? 'add' : 'invite';
+    const button = h('button', { type: 'submit', class: 'btn btn-stop' }, hosted ? 'Add someone' : 'Invite');
+    const hint = hosted
+      ? h('p', { class: 'foot', id: 'add-hint' }, told ? `They can sign in straight away. An owner is an admin here. ${told}`
+        : 'They can sign in straight away. An owner is an admin here. Nothing is sent to them: tell them the link.')
+      : h('p', { class: 'foot' }, 'They can sign in straight away. Nothing is sent to them: tell them the link.');
+    return row({
+      id: 'invite-card', title: hosted ? 'Add someone' : 'Invite someone',
+      value: hosted ? 'By GitHub handle, as an owner or a member' : 'By GitHub handle. They need write access to the repository',
     },
-      h('label', { class: 'field-label', for: 'invite' }, 'Add someone by GitHub handle'),
-      h('div', { class: 'invite-row' }, invite, addRole, button),
-      inviteError,
-      h('p', { class: 'foot', id: 'add-hint' }, told ? `They can sign in straight away. An owner is an admin here. ${told}`
-        : 'They can sign in straight away. An owner is an admin here. Nothing is sent to them: tell them the link.'));
-  }
-
-  function inviteCard() {
-    if (hosted) return addCard();
-    const button = h('button', { type: 'submit', class: 'btn btn-stop' }, 'Invite');
-    return h('form', {
-      class: 'field-block', id: 'invite-card',
-      onsubmit: async (e) => {
-        e.preventDefault();
-        inviteError.hidden = true;
-        const login = invite.value.trim().replace(/^@/, '');
-        if (!login) return invite.focus();
-        if (await act('invite', login, button)) invite.value = '';
+      h('form', {
+        class: 'field-block', id: 'invite-form',
+        onsubmit: async (e) => {
+          e.preventDefault();
+          inviteError.hidden = true;
+          const login = invite.value.trim().replace(/^@/, '');
+          if (!login) return invite.focus();
+          if (await act(action, login, button, hosted ? { role: addRole.value } : {})) invite.value = '';
+        },
       },
-    },
-      h('label', { class: 'field-label', for: 'invite' }, 'Invite by GitHub handle'),
-      h('div', { class: 'invite-row' }, invite, button),
-      inviteError,
-      h('p', { class: 'foot' }, 'They can sign in straight away. Nothing is sent to them: tell them the link.'));
+        h('label', { class: 'field-label', for: 'invite' }, hosted ? 'Add someone by GitHub handle' : 'Invite by GitHub handle'),
+        h('div', { class: 'invite-row' }, invite, hosted && addRole, button),
+        inviteError,
+        hint));
   }
 
   function addedLine(m) {
@@ -272,18 +271,21 @@ window.Woodshed.settingsPage('/people', (app, life) => {
     return [row, h('tr', { class: 'edit-row' }, h('td', { colspan: String(columns().length + 3) }, slackEditor(m.login, data.slack?.[m.login])))];
   }
 
-  function membersCard() {
-    return h('section', { class: 'people-card', id: 'members' },
-      h('div', { class: 'set-head' }, h('b', null, `Members · ${data.members.length}`),
-        h('span', { class: 'foot' }, hosted ? 'A tick is on. Each change saves at once; someone new starts with Sessions from GitHub on and Can be assigned off.'
-          : 'A tick is on. Each change saves at once; new members start with all of them off.')),
+  // The table sits in the group's box, and scrolls sideways inside it on a phone.
+  function membersGroup() {
+    return group({
+      id: 'members', label: `Members · ${data.members.length}`,
+      note: hosted ? 'A tick is on. Each change saves at once; someone new starts with Sessions from GitHub on and Can be assigned off.'
+        : 'A tick is on. Each change saves at once; new members start with all of them off.',
+    },
       h('div', { class: 'table-scroll' }, h('table', { class: 'people-table' },
         h('thead', null, h('tr', null,
           h('th', { scope: 'col' }, 'Member'),
           columns().map((sw) => h('th', { scope: 'col', class: `switch-cell${sw.split ? ' is-split' : ''}` }, sw.label, h('div', { class: 'th-note' }, sw.note))),
           data.slack !== null && h('th', { scope: 'col' }, 'Slack'),
           h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, 'Remove')))),
-        h('tbody', null, data.members.flatMap(memberRows)))));
+        h('tbody', null, data.members.flatMap(memberRows)))),
+      inviteRow());
   }
 
   function render() {
@@ -297,9 +299,10 @@ window.Woodshed.settingsPage('/people', (app, life) => {
         : h('div', null,
           h('h1', { class: 'title' }, 'People ', W.scopePill('/people')),
           h('p', { class: 'sub' }, 'Only these people can sign in, and each still needs write access to the repository. Admins choose what each member can do.')));
-    const body = data ? [hosted ? null : requestsCard(), inviteCard(), membersCard()]
+    const body = data ? [requestsGroup(), membersGroup()]
       : h('p', { class: 'empty' }, loadError ? `Could not load the list: ${loadError}` : 'Loading…');
-    app.replaceChildren(h('div', { class: 'page' }, life.nav('/people'), head, body));
+    // A row's head is a new node after each draw: draw gives it its focus back.
+    draw(app, h('div', { class: 'page' }, life.nav('/people'), head, body));
   }
 
   async function load() {
@@ -318,5 +321,7 @@ window.Woodshed.settingsPage('/people', (app, life) => {
 
   render();
   load();
+  // The search, or a link, that names the invite row opens it.
+  follow(life);
   life.interval(load, REFRESH_MS);
 });

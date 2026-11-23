@@ -19,7 +19,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - **Spacing and radius.** Gaps are `space-2` between cards and head controls, `space-3` for rail padding. Cards are `radius-lg`, rail buttons `radius-md`, form buttons `radius-sm`, the People filter and count chips `radius-pill`.
 - **Contrast.** Text meets 4.5:1 on the grounds named in its token note, in both themes. White on `action` is 4.8:1 in light; use `action-ink` in dark.
 - **Dark.** Dark follows the device unless My settings' Display card picked light. Both themes use the same token names.
-- **Motion.** None beyond the spinning ring on a PR chip while checks run, and the same ring on a control waiting on the console (Starting…). A checklist's marks stay still: it is drawn again every second.
+- **Motion.** None beyond the spinning ring on a PR chip while checks run or Woodshed's own review or QA is at work on it (then after the word `review` or `QA`, since a status is always a word), and the same ring on a control waiting on the console (Starting…). A checklist's marks stay still: it is drawn again every second.
 
 ## The rail
 
@@ -105,12 +105,14 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## Woodshed card
 
-- First on Console settings. The state is a sentence: "Up to date with …" in `green`, or "N commits behind …" in
+- First on Console settings, as a settings row (`components/SettingsRows`): closed, it says the running commit, when
+  it was checked and its pill (**Up to date** `is-ok`, **N commits behind** `is-warn`, Updating, Restarting, Failed),
+  and it stays open while an update runs. Opened, the state is a sentence: "Up to date with …" in `green`, or "N commits behind …" in
   `set-name` weight, the running commit as a mono `rref`. The newer commits are a list, newest first: mono `slate` sha,
   the title cut to one line, then the author and age in `meta`; it scrolls past about ten.
 - An update is a checklist (`components/Checklist`) under an Update head with its pill: Updating or Restarting
   (`is-work`), Failed (`is-bad`). Commands and a build's last lines are mono on `stopped`.
-- **Update to latest** is the card's one orange button; **Check now** is quiet.
+- **Update to latest** is the row's one orange button; **Check now** is quiet.
 
 ## Setup card
 
@@ -127,8 +129,8 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   with Add a repo (admin) or a line saying an admin can connect another; a blocked repo stays in the list with
   `— needs setup`, and picking it puts the card in place of the prompt and Start. Nothing on the rail or the New
   session button changes for it.
-- Console settings' Repos card says **Ready** (`pill is-ok`) or **Needs setup** on each row, with the card's reason and
-  fix under a row that needs it.
+- Console settings' Repos group says **Ready** (`pill is-ok`) or **Needs setup** on each repo's row, with the card's
+  reason and fix inside a row that needs it.
 
 ## Checklists
 
@@ -159,9 +161,9 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   under the list names it.
 - Where Slack will not list them (an app without the scopes), the picker is the channel ID field, with a `cap-note`
   that says which scopes to add. It never shows an empty list as if the workspace had no channels.
-- The Slack card is one card in rows (Bot, Pull requests, Questions), each with its sentence and its action on the
-  right; a group's numbers fold under its row behind a quiet **Limits ▾**. Not set up, it is one sentence and the
-  orange **Set up Slack**, its primary action. The dialog's way to connect is a radio card list; an option not yet
+- Slack on Console settings is one group of settings rows (Bot, Pull requests, Questions), each saying what it is
+  now on its closed row; a row's numbers are in it under a **Limits** head, with no fold of their own. Not set up, it
+  is one line with its sentence and the orange **Set up Slack**, its primary action. The dialog's way to connect is a radio card list; an option not yet
   available is disabled, and its own description says why.
 
 ## Naming a session
@@ -215,6 +217,10 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   program's there, beside its own pages. Webhook events is a log, not a setting, and not a
   navigation entry either: Secrets & webhooks links to it (in the GitHub webhook card, or the page's note when there is
   none), its page has a `‹ Secrets & webhooks` crumb above the title, and Settings is marked current in the list on it.
+  Its deliveries are plain rows of one box (Settings rows), never a table: when it came in `meta` mono, then what the
+  console did (`ink`, 600) over one mono line with the event, what it was on, who sent it and the delivery's id, then a
+  pill with the status word: Acted on (`green`), Ignored or Skipped (neutral), Failed (`bad`). On a phone the time
+  sits over the text and the pill under it.
 - Keyboard shortcuts is in the settings list's This browser group, not in the avatar menu: the menu holds pages, and
   `?` and the command palette open the sheet anywhere. The theme, review files and a session's default view are a group
   on My settings (Display, `⇧⌘,` from anywhere), not a sheet: one place for what is yours, and the group says which of
@@ -227,11 +233,13 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - A row of the Repos card is the repo's name, where it was set, its sessions and, with Slack, where its pull requests go
   (`PRs to C…` or `PRs to the console's channel`, a link to the Slack card), then **Settings** and, for an added repo,
   **Remove**. No field: the channel is set on the repo's page.
-- Three cards: **Env files** (a tab per env file, by path), **Instructions** and **Slack**. The first two are a layered file
+- Four groups of rows that open in place (`components/SettingsRows`): **Env files** (a row per env file, by path),
+  **Prompt** (Instructions), **Sessions from GitHub** (its two switches on their rows, then the label's name) and **Slack**
+  (the pull request channel). A closed row says what it holds. An env file and the instructions are a layered file
   (`components/LayeredFile`): the layers in the order a session writes them, the layer's word as a grey tag, and for an
   env file a table of which layer wins each key. Values never appear in the table, a log or a tooltip: only in their
   own layer's field, behind **Show and edit** once saved.
-- With no env files, the Env files card is a short how-to in the same box: numbered steps (`cmd-steps`), the YAML in a
+- With no env files, the Env files group's box holds a short how-to: numbered steps (`cmd-steps`), the YAML in a
   mono `stopped` block, a link to the project file on GitHub (↗), and where the docs are.
 - **Slack** is one box of the same shape: the channel ID field (mono), a `meta` mono line saying where the next pull
   request goes, Save and a quiet Clear (back to the console's channel), then a `sub` line on finding the ID and inviting

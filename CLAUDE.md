@@ -941,6 +941,17 @@ URL on top of each env file's Repo settings values
   logs `prChips: read` with how many it asked for and found whenever some are due, or
   `console: pull request chips failed` with gh's error. A chip only shows
   once statusd has reported the session's PR URL.
+- **A pull request's chip shows ✓ while Woodshed's review or QA is still running, or says `review` or `QA` with none
+  running.** The word and its ring come from the console's own sessions, not GitHub: a review or QA session on that
+  repo and number that is queued, starting, running or stopping (Reviews and QA on the rail's Everyone). A review the
+  repo runs as a GitHub workflow instead shows as a check that is still running.
+- **A session opened several pull requests and its card shows one.** A merged or closed one is hidden once a newer
+  one came after it (Details lists every one). Otherwise statusd did not report it: it reports the pull request of
+  the branch checked out and those of the checkout's other local branches (`prUrls`), from the session's own repo
+  alone. In the session, `curl -s -H "Authorization: Bearer $SESSION_TOKEN" localhost:7682/status` shows `prUrls`;
+  none there is an image from before it, which reports only the branch checked out. `statusd: pull requests of the
+  other branches not read` gives gh's error. A pull request whose branch was never a local branch of the checkout
+  (opened from a second clone, or on another repo) is not found.
 - **A pull request's chip or Slack post lags by minutes after a change.**
   With pull request webhooks arriving, a change is read within seconds: the
   console logs `pullWebhooks: pull request marked due` with the numbers, what
@@ -1110,7 +1121,9 @@ fails it. `/s/c0ffee11` is running with a live TUI where ttyd and tmux are on th
 session): `devTerminalSession.mjs` runs them on `session/tmux.conf` over a made-up conversation, for find, copy, links
 and scrolling back. `/s/beadfeed?tab=review` is running with a Review tab that works: `devReviewSession.mjs` answers it with
 the shed's real review page over a made-up change it commits to a scratch repo, with an analysis already written. Its
-chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and app go nowhere. Add a session to
+chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and app go nowhere. `/s/abbaabba` is running on a project with two apps behind the real statusd,
+whose checkout has three branches with a pull request each (one checked out, one pushed and left, one in a git
+worktree) behind a stand-in `gh`: its card shows a chip for each (`devAppsSession.mjs`). Add a session to
 `devConsole.mjs` to cover another state.
 `/s/c0de5e55` (codex) and `/s/c1a0de00` (claude) open on a Chat tab that works: the real statusd over a private tmux,
 whose pane runs a stand-in agent (`devChatAgent.mjs`) writing the agents' real record formats. `/s/c1a0de02` is that
@@ -1153,7 +1166,10 @@ gives the repo a project file that names no review, for the console's default re
 request, #26701, answered by a stand-in `gh` (`console/bin/devReviewGh.mjs`), for `woodshed review beadfeed` and the
 review's comment, verdict, rename and merge, and a made-up review by Claude Code and Codex for the AI reviews tab (cli/README.md, "Reviewing a session on this terminal").
 `DEV_CONSOLE_WEBHOOKS=1` names a webhook receiver (which never listens, since polling is off), so the Console
-settings page shows its GitHub webhooks switch (Slack's needs a console that answers Slack questions).
+settings page shows its GitHub webhooks switch (Slack's needs a console that answers Slack questions), and the
+Webhook events page lists made-up deliveries: acted on, ignored, skipped and failed.
+`DEV_CONSOLE_PEOPLE=1` gives the People page four made-up members, with their switches every way, and two people asking
+to join.
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
 7690 with `DEV_CONSOLE_SESSION_APP=1` so it also answers under the session's app name, behind **Open app**.
 

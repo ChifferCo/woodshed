@@ -15,7 +15,7 @@ back at its scroll position. `common.js` `peekView` says what goes in it.
 - The agent's last line on `stopped`, cut to three lines, its speaker (`Claude:`, `Codex:`, `Asked:`) in `ink` 600. A
   failed start's reason is in `bad`.
 - Every pull request the session opened, a merged or closed one its chips no longer show too: the mono `slate` number and its title on one line, then in `meta` mono its state, its checks in
-  their color (`bad` failing, `slate` running, `green` passing) and its review, in words. One the console has not read
+  their color (`bad` failing, `slate` running, `green` passing) and its review, in words, then `Woodshed review running` (or `QA`, or `review and QA`) in `slate` while the console's own run is at work on it. One the console has not read
   yet is its number alone.
 - Then rows over a `line-soft` rule, `meta` terms and `ink` values: Project, Works on (an issue, or a pull request it did
   not open), Branch (mono), Agent (with its model and effort when picked), Last activity (`Working now`, or how long

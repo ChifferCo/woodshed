@@ -230,7 +230,7 @@ import { checkGh } from './github.mjs';
 import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
 import { applyStored, createGitHubAppSetup, supervisorOf } from './githubAppSetup.mjs';
 import { createInstallation } from './installation.mjs';
-import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf, publicSession, sharedRunningCount } from './sessions.mjs';
+import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf, publicSession, sharedRunningCount, woodshedRunsOn } from './sessions.mjs';
 import { WEBHOOK_SECRET } from './settings.mjs';
 import { openStore } from './store.mjs';
 import { parseHandle } from './members.mjs';
@@ -254,7 +254,7 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'publ
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
 // The most one message to an agent may be: statusd's own limit (session/statusd.mjs, MAX_SEND_CHARS).
 export const MAX_MESSAGE_CHARS = 8000;
-const SETTINGS_SCRIPTS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
+const SETTINGS_SCRIPTS = ['settingsRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
 const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
@@ -290,6 +290,7 @@ const STATIC_FILES = {
   'login.js': 'text/javascript; charset=utf-8',
   'launcher.js': 'text/javascript; charset=utf-8',
   'mySettings.js': 'text/javascript; charset=utf-8',
+  'settingsRows.js': 'text/javascript; charset=utf-8',
   'dbRestore.js': 'text/javascript; charset=utf-8',
   'dbRestoreStates.js': 'text/javascript; charset=utf-8',
   'consoleSettings.js': 'text/javascript; charset=utf-8',
@@ -1237,6 +1238,7 @@ export function createHandler({
   function sessionsBody(login) {
     const all = fleet.sessions();
     const sessions = all.filter((s) => canOpen(s, login, access));
+    const runsOn = woodshedRunsOn(all);
     const slackWaiting = fleet.slackWaiting?.() ?? new Set();
     return {
       repo: defaultProject(config).repo,
@@ -1272,8 +1274,9 @@ export function createHandler({
         // A port is lent once the app is up or starting; until then `appUrl` is null and the page opens it through
         // /auth/app, which lends one.
         ...(appPorts && s.status === 'running' && s.kind !== 'ask' ? { appUrl: APP_HOLDS_PORT.has(s.app) ? appPorts.urlFor(s.id) : null } : {}),
-        // Every pull request it opened, oldest first, for its chips (common.js shownPrs).
-        prs: prUrlsOf(s).map((url) => ({ url, pr: prChips?.view(url) ?? null })) })).reverse(),
+        // Every pull request it opened, oldest first, for its chips (common.js shownPrs). `runs` is Woodshed's review
+        // and QA at work on it now, which its checks do not show until they report.
+        prs: prUrlsOf(s).map((url) => ({ url, pr: prChips?.view(url) ?? null, runs: runsOn(url) })) })).reverse(),
       // Who may have a shared session, and whether the asker is one: the Assign menu and the rail's Mine read them.
       // `shared` is whether the rail has an Everyone tab.
       assignables: members?.assignables() ?? [],
