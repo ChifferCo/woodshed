@@ -46,3 +46,29 @@ test('the prompt fences the message with a per-request nonce and carries the his
   assert.match(a, /reviewer: first\?\nyou: first\./);
   assert.match(a, /a\.ts {2}\+1 -0/);
 });
+
+test('a follow-up names its AI review by id alone, and anything else in about is refused', async () => {
+  const { validateChatRequest } = await import('./chat.mjs');
+  assert.deepEqual(validateChatRequest({ payload: { question: 'q' } }).about, null);
+  assert.deepEqual(validateChatRequest({ payload: { question: 'q', about: { review: 'PRR_1', finding: 'PRRC_2', text: 'ignored' } } }).about, { review: 'PRR_1', finding: 'PRRC_2' });
+  assert.deepEqual(validateChatRequest({ payload: { question: 'q', about: { review: 'PRR_1' } } }).about, { review: 'PRR_1', finding: null });
+  for (const about of ['PRR_1', { finding: 'x' }, { review: '' }, { review: 'x'.repeat(201) }, { review: 'a', finding: 3 }]) {
+    assert.equal(validateChatRequest({ payload: { question: 'q', about } }).ok, false, JSON.stringify(about));
+  }
+});
+
+test('a follow-up on an AI review fences the point, asks for it to be checked, and the history says what each was about', () => {
+  const prompt = buildChatPrompt({
+    meta: { title: 'T' }, files: [],
+    history: [{ role: 'user', text: 'is it?', about: { id: 'c1', label: 'Codex on a.mjs:3' } }, { role: 'assistant', text: 'no.' }],
+    question: 'why?',
+    about: { id: 'c2', label: 'Claude Code on b.mjs:9', text: 'This drops the error.' },
+  });
+  const nonce = /<review-point-([0-9a-f]{12})>/.exec(prompt)?.[1];
+  assert.ok(nonce, 'the point is not fenced');
+  assert.match(prompt, new RegExp(`<review-point-${nonce}>\\nThis drops the error\\.\\n</review-point-${nonce}>`));
+  assert.match(prompt, /Claude Code on b\.mjs:9/);
+  assert.match(prompt, /whether it holds/);
+  assert.match(prompt, /reviewer \(following up on the AI review's point: Codex on a\.mjs:3\): is it\?/);
+  assert.doesNotMatch(buildChatPrompt({ meta: {}, files: [], history: [], question: 'q' }), /review-point-/);
+});

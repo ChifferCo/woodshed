@@ -246,9 +246,10 @@ would land there, so open that session by its id instead. A paused one is resume
   Code terminals open on a click (most with Cmd or Ctrl held) and others draw as plain text. Its address is the one the
   review has for that number (else the session's pull request with it, as the console lists it), and only an https
   one with no control character or space in it, whose path ends `/pull/<number>`, is linked.
-- **The tab bar**, each tab after its number: `1 Overview │ 2 Q&A │ 3 Discussion │ 4 Files changed │ 5 Chat`, on one
-  line at 80 columns. The number opens the tab (`Tab` and `Shift-Tab` move to the next and the one before); a tab keeps
-  its number when there is no Discussion. While you type in a box (the chat, a question, a comment, a sheet's comment
+- **The tab bar**, each tab after its number: `1 Overview │ 2 Q&A │ 3 Discussion │ 4 Files changed │ 5 Chat │ 6 AI
+  reviews`, on one line at 80 columns (`4 Files` where the whole name would wrap it, as with a count of drafts). The
+  number opens the tab (`Tab` and `Shift-Tab` move to the next and the one before); a tab keeps its number when there
+  is no Discussion or AI reviews. While you type in a box (the chat, a question, a comment, a sheet's comment
   or title), a number is text.
 - **1 Overview**: the pull request's description, the overview, the decisions and the architecture, its diagram as a
   list of what connects to what, marked added, removed or changed. **2 Q&A**: the questions someone new to the code
@@ -263,7 +264,15 @@ would land there, so open that session by its id instead. A paused one is resume
   `n`/`p` the next file, `Esc` back to the list); `i`, on the list or in a diff, starts a chat about that file (and
   line), as the page's Send to the conversation does. **5 Chat**: the page's
   conversation panel, with the session's agent reading the branch (`Enter` asks, `↑`/`↓` in the box offer the page's
-  suggestions). The shed does not stream an answer: the chat says how long it has been reading, then draws it.
+  suggestions). The shed does not stream an answer: the chat says how long it has been reading, then draws it. A
+  follow-up asked on AI reviews is a turn here too, under `About <the point>`. **6 AI reviews** (with a pull request):
+  what Claude Code and Codex posted on the pull request (the console's review, by its reviewer App), newest first, as
+  the page's AI reviews tab: each review's verdict, whether it read the latest commit, each reviewer's part and its
+  findings on their lines, with the replies on their threads. Older reviews are folded. `↑`/`↓` choose a review or a
+  finding, `Enter` folds or opens a review, and `i` asks the session's agent a follow-up about it: the shed reads the
+  point from GitHub by its ids, and the agent checks it against the code and says whether it holds. The answer is drawn
+  under the point. One question is answered at a time, wherever it was asked, and one that fails goes back in its
+  point's box with why under the point.
 - **The actions**, offered where the page offers them, the GitHub ones only with a pull request: `c` a line comment
   (into your draft review, or `Tab` to post it at once while there is no draft), `s` submit your review (comment,
   approve or request changes, with your draft comments; `Ctrl-D` twice discards the draft), `m` merge (after GitHub's

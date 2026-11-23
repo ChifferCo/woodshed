@@ -2,7 +2,8 @@
 // terminal, in the page's order. The header and its facts, the note on what was read with the analysis's state under
 // it, then the tabs: Overview (the pull request's description, the overview, the decisions, the architecture), Q&A,
 // Discussion (with a pull request), Files changed (one file at a time, in the analysis's reading order, with the
-// conversations beside their lines), and Chat, the page's conversation panel, which a terminal has no room beside.
+// conversations beside their lines), Chat, the page's conversation panel, which a terminal has no room beside, and AI
+// reviews (with a pull request): what Claude Code and Codex posted on it, each finding with its follow-ups.
 //
 // Everything here is pure: a state in, lines out. A line is a list of segments, [style, text], and `toAnsi` makes the
 // escape codes. Only the terminal's own palette is used (bold, dim, reverse and the eight basic colours, foreground
@@ -435,13 +436,14 @@ export const TABS = [
   { key: 'analysis', label: 'Overview', n: '1' },
   { key: 'qa', label: 'Q&A', n: '2' },
   { key: 'discussion', label: 'Discussion', n: '3' },
-  { key: 'files', label: 'Files changed', n: '4' },
+  { key: 'files', label: 'Files changed', short: 'Files', n: '4' },
   { key: 'chat', label: 'Chat', n: '5' },
+  { key: 'ai', label: 'AI reviews', n: '6' },
 ];
 
-/** The tabs there are: Discussion only with a pull request, as the page has it. */
+/** The tabs there are: Discussion and AI reviews only with a pull request, as the page has them. */
 export function tabsOf(state) {
-  return TABS.filter((t) => t.key !== 'discussion' || state.status?.livePr);
+  return TABS.filter((t) => (t.key !== 'discussion' && t.key !== 'ai') || state.status?.livePr);
 }
 
 /**
@@ -450,9 +452,17 @@ export function tabsOf(state) {
  * a line never starts with a separator; at 80 columns it is one line, a count of draft comments with it.
  */
 export function tabBar(state, columns) {
+  const long = tabLines(state, columns, false);
+  // Files changed is Files where its whole name would wrap the bar, as it does at 80 columns with drafts.
+  if (long.length === 1) return long;
+  const short = tabLines(state, columns, true);
+  return short.length < long.length ? short : long;
+}
+
+function tabLines(state, columns, short) {
   const units = tabsOf(state).map((t) => {
     // No-break spaces: the selected tab's padding is kept in its reversed block.
-    const name = `${t.label.replace(/ /g, NBSP)}${NBSP}`;
+    const name = `${((short && t.short) || t.label).replace(/ /g, NBSP)}${NBSP}`;
     return state.tab === t.key ? [['rev bold', `${NBSP}${t.n}${NBSP}${name}`]] : [[null, NBSP], ['dim', t.n], [null, `${NBSP}${name}`]];
   });
   const drafts = state.status?.livePr ? state.draft?.comments?.length ?? 0 : 0;
@@ -668,6 +678,109 @@ export function discussionLines(state, columns) {
   return lines;
 }
 
+// --- AI reviews ----------------------------------------------------------------------------
+
+const AI_WORD = { APPROVE: ['green', 'approves'], REQUEST_CHANGES: ['red', 'requests changes'], COMMENT: ['dim', 'comments'] };
+
+/**
+ * The points the AI reviews tab's cursor stands on, in order: each review, and under each open one its findings. The
+ * newest review is open until it is folded; older ones are folded until opened (`state.ai.open`, by review id).
+ * @returns {{review: object, finding: object|null}[]}
+ */
+export function aiPoints(state) {
+  const out = [];
+  (state.draft?.aiReviews ?? []).forEach((review, i) => {
+    out.push({ review, finding: null });
+    if (aiOpen(state, review, i)) for (const finding of review.findings ?? []) out.push({ review, finding });
+  });
+  return out;
+}
+
+export function aiOpen(state, review, index) {
+  const open = state.ai?.open ?? {};
+  return review.id in open ? open[review.id] : index === 0;
+}
+
+/** The follow-ups asked about one point, from the conversation's transcript, and the one being answered. */
+function followUpLines(state, id, columns, indent, nowMs) {
+  const chat = state.chat ?? {};
+  const lines = [];
+  for (const m of chat.messages ?? []) {
+    if (m.about?.id !== id) continue;
+    if (m.role !== 'assistant') lines.push(...wrapSegments([['bold', clean(m.text)]], columns, { first: `${indent}You  `, firstStyle: 'cyan bold', rest: `${indent}     ` }));
+    else lines.push(...markdownLines(m.text ?? '', columns, { indent: `${indent}  ` }));
+  }
+  if (chat.pending && chat.pendingAbout === id) {
+    lines.push(...wrapSegments([['bold', clean(chat.pending)]], columns, { first: `${indent}You  `, firstStyle: 'cyan bold', rest: `${indent}     ` }));
+    const seconds = chat.since ? Math.max(0, Math.round((nowMs - chat.since) / 1000)) : 0;
+    lines.push([[null, indent], ['yellow', `⋯ checking it against the code… ${seconds}s`]]);
+  }
+  const failed = state.ai?.error;
+  if (failed?.id === id) lines.push(...wrapText(failed.error, columns, 'red', indent));
+  return lines;
+}
+
+/**
+ * The AI reviews tab, as renderAiReviews draws it: each review's verdict and parts, its findings on their lines, and
+ * under each the follow-ups asked about it. `items` gives each line its point in aiPoints, for the cursor.
+ * @returns {{lines: Array<Array<[string|null, string]>>, items: number[]|null, cursor: number}}
+ */
+export function aiLines(state, columns, nowMs = Date.now()) {
+  if (state.draftLoading) return { lines: [[['dim', 'Loading the AI reviews from GitHub…']]], items: null, cursor: -1 };
+  const reviews = state.draft?.aiReviews ?? [];
+  if (!reviews.length) {
+    return { lines: wrapText('No AI review has been posted on this pull request yet. Claude Code and Codex review a commit whose message carries the review’s tag, [woodshed-review] by default, and what they say shows here.', columns, 'dim'), items: null, cursor: -1 };
+  }
+  const points = aiPoints(state);
+  const cursor = Math.min(Math.max(0, state.ai?.cursor ?? 0), points.length - 1);
+  const lines = [];
+  const items = [];
+  const add = (line, item = -1) => {
+    lines.push(line);
+    items.push(item);
+  };
+  for (const l of wrapText('What Claude Code and Codex said, newest first. i on a review or a finding asks the session’s agent a follow-up about it, checked against the code.', columns, 'dim')) add(l);
+  let at = 0;
+  reviews.forEach((review, index) => {
+    const open = aiOpen(state, review, index);
+    const [tone, word] = AI_WORD[review.conclusion] ?? AI_WORD.COMMENT;
+    const n = review.findings?.length ?? 0;
+    const facts = [[tone, ` ${word}`]];
+    if (review.commit) facts.push(['dim', ' · '], [review.current ? 'dim' : 'yellow', review.current ? 'latest commit' : `older commit ${clean(review.commit).slice(0, 7)}`]);
+    facts.push(['dim', ` · ${n} finding${n === 1 ? '' : 's'}`]);
+    add([]);
+    const me = at;
+    for (const l of wrapSegments([['bold', clean(review.agents?.length ? review.agents.join(' and ') : review.heading)], ...facts], columns, { first: `${open ? '▾' : '▸'} `, rest: '  ' })) add(l, me);
+    at += 1;
+    if (!open) return;
+    for (const part of review.parts ?? []) {
+      if (part.agent && ((review.parts?.length ?? 0) > 1 || (review.agents?.length ?? 0) > 1)) {
+        const [ptone, pword] = AI_WORD[part.conclusion] ?? AI_WORD.COMMENT;
+        add([[null, '  '], ['bold', clean(part.agent)], [ptone, ` ${pword}`]]);
+      }
+      for (const l of markdownLines(part.body ?? '', columns, { indent: '  ' })) add(l);
+    }
+    for (const l of followUpLines(state, review.id, columns, '  ', nowMs)) add(l);
+    for (const finding of review.findings ?? []) {
+      add([]);
+      const where = finding.line ? `${clean(finding.path)}:${finding.line}` : clean(finding.path);
+      const tags = [];
+      if (finding.resolved) tags.push(['green', ' · resolved']);
+      if (finding.outdated) tags.push(['yellow', ' · outdated']);
+      if (finding.folded) tags.push(['dim', ' · in the review’s body']);
+      const fme = at;
+      for (const l of wrapSegments([...(finding.agent ? [['magenta', `${clean(finding.agent)} `]] : []), ['cyan', where], ...tags], columns, { first: '  • ', rest: '    ' })) add(l, fme);
+      for (const l of markdownLines(finding.body ?? '', columns, { indent: '    ' })) add(l);
+      for (const reply of finding.replies ?? []) {
+        for (const l of wrapSegments([['bold', `${clean(reply.author)}: `], ...inlineSegments(reply.body ?? '', 'dim')], columns, { first: '    ↳ ', rest: '      ' })) add(l);
+      }
+      for (const l of followUpLines(state, finding.id, columns, '    ', nowMs)) add(l);
+      at += 1;
+    }
+  });
+  return { lines, items, cursor };
+}
+
 // --- Files changed ------------------------------------------------------------------------
 
 /** The files in the analysis's reading order, each once, then any it did not place in git order (groupsToRender). */
@@ -835,10 +948,11 @@ export function chatLines(state, columns, nowMs = Date.now()) {
     lines.push(...wrapText('A conversation about the change as a whole, with the branch checked out to read from. Enter starts a question; ↑ and ↓ in the box offer these:', columns, 'dim'));
     for (const s of chatStarters(state.status?.review)) lines.push(...wrapSegments([[null, s]], columns, { first: '  • ', rest: '    ' }));
   }
-  const all = [...(chat.messages ?? []), ...(chat.pending ? [{ role: 'user', text: chat.pending }] : [])];
+  const all = [...(chat.messages ?? []), ...(chat.pending ? [{ role: 'user', text: chat.pending, about: chat.pendingLabel ? { label: chat.pendingLabel } : null }] : [])];
   for (const m of all) {
     if (lines.length) lines.push([]);
     if (m.role !== 'assistant') {
+      if (m.about?.label) lines.push([['dim', `About ${clean(m.about.label)}`]]);
       lines.push(...wrapSegments([['bold', clean(m.text)]], columns, { first: 'You  ', firstStyle: 'cyan bold', rest: '     ' }));
       continue;
     }

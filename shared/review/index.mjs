@@ -51,6 +51,7 @@ import {
   validateExplainRequest, explainArgv, buildExplainPrompt, extractAnswer,
 } from './explain.mjs';
 import { validateChatRequest, buildChatPrompt } from './chat.mjs';
+import { aboutFinding } from './aiReviews.mjs';
 import {
   MAX_DEPTH as QA_MAX_DEPTH, juniorArgv, seniorArgv, buildTopQuestionsPrompt, buildFollowupsPrompt,
   buildAnswersPrompt, extractStructured, topQuestions, followupQuestions, applyAnswers,
@@ -1273,6 +1274,7 @@ async function handleCommentsRead(res, ctx, session) {
     threads: draft.threads,
     outdated: draft.outdated,
     said: draft.said,
+    aiReviews: draft.aiReviews,
     truncated: draft.truncated,
   });
 }
@@ -2080,6 +2082,25 @@ function handleChatRead(res, ctx, session) {
   return json(res, 200, { ok: true, messages: readChat(session), running: chatInFlight(session) });
 }
 
+/**
+ * The AI review point a follow-up is about, read live from the pull request:
+ * the review by `about.review`, and its finding by `about.finding` (none: the
+ * review as a whole).
+ *
+ * @returns {Promise<{ok: true, about: {id: string, label: string, text: string}} | {ok: false, status: number, error: string}>}
+ */
+async function aiReviewPoint(ctx, session, about) {
+  const got = await prContextFor(ctx, session);
+  if (!got.ok) return { ok: false, status: got.status, error: got.status === 409 ? 'this review has no pull request with AI reviews on it' : got.error };
+  const draft = await fetchReviewState({ pr: got.live.number, slug: got.slug });
+  if (!draft.ok) return { ok: false, status: draft.status, error: draft.error };
+  const review = (draft.aiReviews || []).find((r) => r.id === about.review);
+  if (!review) return { ok: false, status: 409, error: 'that AI review is no longer on the pull request' };
+  const finding = about.finding ? review.findings.find((f) => f.id === about.finding) : null;
+  if (about.finding && !finding) return { ok: false, status: 409, error: 'that finding is no longer on the pull request' };
+  return { ok: true, about: aboutFinding(review, finding) };
+}
+
 async function handleChat(payload, res, ctx, session) {
   const { json, log, reqId } = ctx;
   const review = readSessionReview(session);
@@ -2093,6 +2114,19 @@ async function handleChat(payload, res, ctx, session) {
   const inFlight = chatInFlight(session);
   if (inFlight) return json(res, 409, { ok: false, error: 'still answering the previous message' });
 
+  // A follow-up on an AI review's finding (or on the review as a whole): the
+  // point is read from GitHub here, by its ids, rather than taken from the
+  // page, so what the agent is told is what the review said.
+  let about = null;
+  if (valid.about) {
+    const found = await aiReviewPoint(ctx, session, valid.about);
+    if (!found.ok) {
+      log('review.chat_about_refused', { reqId, session, why: found.error });
+      return json(res, found.status, { ok: false, error: found.error });
+    }
+    about = found.about;
+  }
+
   const prompt = buildChatPrompt({
     meta: review.meta,
     artifact: readArtifact(session),
@@ -2100,14 +2134,15 @@ async function handleChat(payload, res, ctx, session) {
     history: readChat(session),
     diffOnly: ctx.reviewAgent?.agent === 'codex',
     question: valid.question,
+    about,
   });
   const started = startReviewJob(ctx, {
     kind: 'chat',
     session,
     files: ctx.reviewAgent?.agent === 'codex'
       ? [
-        ...diff.files.filter((file) => valid.question.includes(file.path)),
-        ...diff.files.filter((file) => !valid.question.includes(file.path)),
+        ...diff.files.filter((file) => valid.question.includes(file.path) || about?.label.includes(file.path)),
+        ...diff.files.filter((file) => !valid.question.includes(file.path) && !about?.label.includes(file.path)),
       ]
       : undefined,
     argv: explainArgv({ prompt }),
@@ -2120,7 +2155,7 @@ async function handleChat(payload, res, ctx, session) {
   // Polled through the explain endpoint, which already knows how to turn a
   // finished job into an answer. The jobId is a valid askId by construction.
   explainJobs.set(job.jobId, job);
-  log('review.chat', { reqId, session, question: valid.question.slice(0, 80), jobId: job.jobId });
+  log('review.chat', { reqId, session, question: valid.question.slice(0, 80), jobId: job.jobId, about: about?.id });
 
   job.done
     .then(function settled(done) {
@@ -2139,8 +2174,8 @@ async function handleChat(payload, res, ctx, session) {
         appendChat({
           session,
           entries: [
-            { role: 'user', text: valid.question, at },
-            { role: 'assistant', text: answer.text, at, steps: answer.steps, durationMs, costUsd: answer.costUsd },
+            { role: 'user', text: valid.question, at, ...(about ? { about: { id: about.id, label: about.label } } : {}) },
+            { role: 'assistant', text: answer.text, at, steps: answer.steps, durationMs, costUsd: answer.costUsd, ...(about ? { about: { id: about.id, label: about.label } } : {}) },
           ],
         });
       }

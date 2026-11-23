@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { run } from './exec.mjs';
+import { aiReviewsOf } from './aiReviews.mjs';
 
 const GH_TIMEOUT_MS = 30_000;
 // The three things a review can say, and nothing else reaches argv. A map
@@ -278,7 +279,7 @@ const PENDING_QUERY = `query($owner:String!,$repo:String!,$pr:Int!){
         }
       }
       verdicts: reviews(first:30,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]){
-        nodes{ id author{ login } state body url submittedAt isMinimized viewerDidAuthor }
+        nodes{ id author{ __typename login } state body url submittedAt isMinimized viewerDidAuthor commit{ oid } }
       }
       comments(first:30){
         nodes{ id fullDatabaseId author{ login } body url createdAt isMinimized viewerCanDelete viewerDidAuthor }
@@ -286,10 +287,10 @@ const PENDING_QUERY = `query($owner:String!,$repo:String!,$pr:Int!){
       reviewThreads(first:100){
         pageInfo{ hasNextPage }
         nodes{
-          id path diffSide line startLine isResolved isOutdated
+          id path diffSide line originalLine startLine isResolved isOutdated
           comments(first:50){
             pageInfo{ hasNextPage }
-            nodes{ id fullDatabaseId author{ login } body state url createdAt viewerCanDelete viewerDidAuthor }
+            nodes{ id fullDatabaseId author{ login } body state url createdAt viewerCanDelete viewerDidAuthor pullRequestReview{ id } }
           }
         }
       }
@@ -469,6 +470,9 @@ export async function fetchReviewState({ pr, slug }) {
     threads,
     outdated,
     said,
+    // The reviews Woodshed's review (Claude Code, Codex or both) posted, read
+    // into verdicts and findings: aiReviews.mjs.
+    aiReviews: aiReviewsOf({ verdicts: node.verdicts?.nodes || [], threads: node.reviewThreads?.nodes || [], headSha: node.headRefOid || null }),
     truncated,
   };
 }
