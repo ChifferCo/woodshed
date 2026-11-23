@@ -72,7 +72,8 @@ import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs
 import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
-import { TAINTED_CLAUDE_FLAGS, applyTaint, isTaintSetUp, isTainted, markTaintSetUp } from './taint.mjs';
+import { createTokenUsage } from './tokenUsage.mjs';
+import { TAINTED_CLAUDE_FLAGS, TAINT_MARKER, applyTaint, isTaintSetUp, isTainted, markTaintSetUp } from './taint.mjs';
 import { paneState, stateReader } from './agentState.mjs';
 import { agentPane } from './agentPane.mjs';
 import { Refusal, answerApproval, answerQuestions, composerEmpty, composerText, readPrompt, typeMessage } from './panePrompt.mjs';
@@ -799,6 +800,25 @@ const TERMINAL = process.env.WOODSHED_TERMINAL === 'herdr' ? 'herdr' : 'tmux';
 // The readers of what the agent is doing (agentState.mjs): its own, and Herdr's when it runs in Herdr.
 const readAgent = stateReader({ qa: QA, codex: CODEX, terminal: TERMINAL });
 
+// The tokens the agent used, for the console's Usage page (tokenUsage.mjs). Only a private session's agent on its owner's
+// own sign-in calls its provider directly; the console's proxies count every other call. A session that is tainted goes
+// through the console from then on: what came after the taint is the proxy's.
+const readTokenUsage = createTokenUsage({
+  agent: CODEX ? 'codex' : 'claude',
+  direct: () => process.env.SESSION_KIND === 'private' && (CODEX ? process.env.WOODSHED_CODEX_AUTH !== 'key' : process.env.WOODSHED_CLAUDE_AUTH === 'own'),
+  // An own Codex sign-in is an OpenAI API key (sk-…, billed per token) or a ChatGPT login (a subscription).
+  billing: () => (CODEX && codexGivenKey ? 'api' : 'plan'),
+  until: async () => (isTainted() ? (await fs.stat(TAINT_MARKER).catch(() => null))?.mtime.toISOString() ?? new Date().toISOString() : null),
+});
+let codexGivenKey = false;
+if (CODEX) fs.readFile(CODEX_GIVEN_FILE, 'utf8').then((text) => { codexGivenKey = text.startsWith('sk-'); }).catch(() => {});
+let tokenUsageError = null;
+function tokenUsageFailed(error) {
+  if (error.message !== tokenUsageError) console.log('statusd: token usage not read', { error: error.message });
+  tokenUsageError = error.message;
+  return null;
+}
+
 // ChatGPT's refresh token rotates, so the sign-in saved on My settings stops working once a session used it. The
 // console keeps the copy only for an owner who saved one, and says 409 to anyone else.
 async function keepCodexAuth() {
@@ -894,6 +914,7 @@ async function status() {
     agentOnlySend: true,
     usage: await usage(),
     planUsage: await (CODEX ? readCodexPlanUsage() : readPlanUsage()).catch(planUsageFailed),
+    tokenUsage: await readTokenUsage().catch(tokenUsageFailed),
     ...(await appStatus()),
     ...appsStatus(),
   };
