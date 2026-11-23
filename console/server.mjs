@@ -299,7 +299,12 @@ const STATIC_FILES = {
   'people.js': 'text/javascript; charset=utf-8',
   // Run on people's own computers, so it is served before sign-in; it holds nothing secret.
   'woodshed-db.mjs': 'text/javascript; charset=utf-8',
+  // The agents a session can run, which the session image and the command line read too (shared/agents.cjs).
+  'agents.cjs': 'text/javascript; charset=utf-8',
 };
+// Static files kept outside public/, since the session image and the command line read them as well.
+const STATIC_ELSEWHERE = { 'agents.cjs': path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'shared', 'agents.cjs') };
+const staticPath = (file) => STATIC_ELSEWHERE[file] ?? path.join(PUBLIC_DIR, file);
 const MAX_BODY_BYTES = 16 * 1024;
 // A whole .env file, JSON-escaped, under Secrets Manager's 64 KB.
 const MAX_SECRET_BODY_BYTES = 160 * 1024;
@@ -495,7 +500,7 @@ export function menuOf(userMenu, headers) {
 // fetching every script again on each page. Keyed by mtime, so an edited file gets a new hash without a restart.
 const staticHashes = new Map();
 function staticHash(file) {
-  const full = path.join(PUBLIC_DIR, file);
+  const full = staticPath(file);
   const { mtimeMs } = fs.statSync(full);
   if (staticHashes.get(file)?.mtimeMs !== mtimeMs) {
     staticHashes.set(file, { mtimeMs, hash: createHash('sha256').update(fs.readFileSync(full)).digest('hex').slice(0, 12) });
@@ -554,6 +559,7 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <body>
 <div id="app"></div>${hostPage}
 <script src="${staticUrl('logins.cjs')}"></script>
+<script src="${staticUrl('agents.cjs')}"></script>
 <script src="${staticUrl('setupSteps.cjs')}"></script>
 <script src="${staticUrl('inviteLink.cjs')}"></script>
 <script src="${staticUrl('openPulls.cjs')}"></script>
@@ -619,7 +625,7 @@ export function servePublic(req, res, url, consoleName = DEFAULT_CONSOLE_NAME) {
   // Only the version a page names is kept: an old or missing ?v= is asked for again each time.
   const current = url.searchParams.get('v') === staticHash(file);
   res.writeHead(200, { 'content-type': STATIC_FILES[file], 'cache-control': current ? 'public, max-age=31536000, immutable' : 'no-cache' });
-  res.end(fs.readFileSync(path.join(PUBLIC_DIR, file)));
+  res.end(fs.readFileSync(staticPath(file)));
   return true;
 }
 

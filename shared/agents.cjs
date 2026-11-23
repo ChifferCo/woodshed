@@ -1,0 +1,170 @@
+// The agents a session can run, in one place: Claude Code, Codex, Grok Build, Antigravity and OpenCode. One file for
+// the console (imported), its pages (served as /static/agents.cjs, a script that sets `WoodshedAgents`), the command line
+// and the session image (/opt/woodshed/shared), so each names, offers and checks the same agents the same way.
+//
+// Claude Code and Codex are the two the console can run on a team's credential, through its own proxies
+// (anthropicProxy.mjs, openaiProxy.mjs). The three others run only on their owner's own sign-in, saved on My settings as
+// `users/<login>/<agent>-auth` and handed to that person's private sessions alone (sessionApi.mjs, /settings): never to a
+// shared session, a question from Slack, a QA run or a review, which hold no one's sign-in. That is why they review
+// nothing either: a review is a shared session.
+(function (root, factory) {
+  const agents = factory();
+  if (typeof module === 'object' && module.exports) module.exports = agents;
+  else root.WoodshedAgents = agents;
+})(typeof globalThis === 'undefined' ? this : globalThis, function () {
+  'use strict';
+
+  /**
+   * @typedef {{text: string, command?: string}} Step
+   * @typedef {{secret: string, label: string, placeholder: string, steps: Step[], maxChars: number, rotates: boolean,
+   *   kinds: string}} SignIn
+   *   secret: the name under `users/<login>/`. rotates: the agent refreshes a login and its refresh token works once, so a
+   *   session sends the refreshed one back at stop (sessionApi.mjs, /agent-auth). kinds: what the card says it takes.
+   * @typedef {{id: string, name: string, product: string, command: string, processNames: string[], quit: string,
+   *   teamCredential: boolean, signIn: SignIn|null, permissionModes: string[], efforts: string[]|null, modelHint: string,
+   *   modelRe: RegExp|null, reviews: boolean, usageUrl: string|null, docsUrl: string}} Agent
+   *   processNames: what tmux names the pane's command, and hc the program, while the agent runs. modelRe: the shape of a
+   *   model name the console accepts for it (null: its own fixed list, sessions.mjs MODELS). efforts: what its effort
+   *   menu offers, the default first (null: none, the agent has no such setting on its command line).
+   */
+
+  // A model name as each agent's own `--model` takes it: letters, digits, dots, dashes and underscores, and for OpenCode
+  // its `provider/model`. Never a space or a quote: it ends up on a command line.
+  const MODEL_NAME = /^[a-z0-9][a-z0-9._:-]{0,63}$/i;
+  const PROVIDER_MODEL = /^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._:\/-]{0,127}$/i;
+
+  /** @type {Record<string, Agent>} */
+  const AGENTS = {
+    claude: {
+      id: 'claude', name: 'Claude', product: 'Claude Code', command: 'claude', processNames: ['claude'], quit: '/exit',
+      teamCredential: true, signIn: null, permissionModes: ['auto', 'acceptEdits', 'plan', 'default'],
+      efforts: ['', 'low', 'medium', 'high', 'xhigh', 'max'], modelHint: '', modelRe: null, reviews: true,
+      usageUrl: 'https://claude.ai/settings/usage', docsUrl: 'https://code.claude.com/docs',
+    },
+    codex: {
+      id: 'codex', name: 'Codex', product: 'Codex', command: 'codex', processNames: ['codex'], quit: '/quit',
+      teamCredential: true, signIn: null, permissionModes: ['auto', 'plan', 'default'],
+      efforts: null, modelHint: '', modelRe: /^[a-z0-9][a-z0-9._-]{0,63}$/, reviews: true,
+      usageUrl: 'https://chatgpt.com/codex/settings/usage', docsUrl: 'https://developers.openai.com/codex',
+    },
+    grok: {
+      id: 'grok', name: 'Grok', product: 'Grok Build', command: 'grok', processNames: ['grok'], quit: '/quit',
+      teamCredential: false,
+      signIn: {
+        secret: 'grok-auth', label: 'Grok Build', placeholder: 'xai-… or the contents of ~/.grok/auth.json', maxChars: 20_000, rotates: true,
+        kinds: 'an xAI API key, or the login `grok login` saved',
+        steps: [
+          { text: 'Sign in to Grok Build on your laptop:', command: 'grok login' },
+          { text: 'Print the sign-in it saved:', command: 'cat ~/.grok/auth.json' },
+          { text: 'Or paste an xAI API key (xai-…) from console.x.ai.' },
+        ],
+      },
+      permissionModes: ['auto', 'acceptEdits', 'plan', 'default'],
+      efforts: ['', 'low', 'medium', 'high', 'xhigh', 'max'], modelHint: 'grok-build', modelRe: MODEL_NAME, reviews: false,
+      usageUrl: 'https://grok.com/build', docsUrl: 'https://docs.x.ai/build/overview',
+    },
+    antigravity: {
+      id: 'antigravity', name: 'Antigravity', product: 'Antigravity CLI', command: 'agy', processNames: ['agy', 'antigravity'], quit: '/exit',
+      teamCredential: false,
+      signIn: {
+        secret: 'antigravity-auth', label: 'Antigravity', placeholder: 'AIza… (a Gemini API key)', maxChars: 200, rotates: false,
+        kinds: 'a Gemini API key',
+        steps: [
+          { text: 'Make a Gemini API key in Google AI Studio (aistudio.google.com/apikey), then paste it here.' },
+          { text: 'Antigravity’s Google sign-in keeps its login in the machine’s keyring, which a session cannot carry: sessions run on a key.' },
+        ],
+      },
+      permissionModes: ['auto', 'acceptEdits', 'plan', 'default'],
+      efforts: ['', 'low', 'medium', 'high', 'max'], modelHint: 'auto', modelRe: MODEL_NAME, reviews: false,
+      usageUrl: 'https://aistudio.google.com/usage', docsUrl: 'https://antigravity.google/docs/cli/reference/',
+    },
+    opencode: {
+      id: 'opencode', name: 'OpenCode', product: 'OpenCode', command: 'opencode', processNames: ['opencode', 'opencode.exe'], quit: '/exit',
+      teamCredential: false,
+      signIn: {
+        secret: 'opencode-auth', label: 'OpenCode', placeholder: 'the contents of ~/.local/share/opencode/auth.json', maxChars: 20_000, rotates: true,
+        kinds: 'the providers `opencode auth login` saved',
+        steps: [
+          { text: 'Sign in to a provider with OpenCode on your laptop:', command: 'opencode auth login' },
+          { text: 'Print the sign-ins it saved:', command: 'cat ~/.local/share/opencode/auth.json' },
+        ],
+      },
+      permissionModes: ['auto', 'plan', 'default'],
+      efforts: ['', 'low', 'medium', 'high', 'max'], modelHint: 'anthropic/claude-sonnet-4-5', modelRe: PROVIDER_MODEL, reviews: false,
+      usageUrl: null, docsUrl: 'https://opencode.ai/docs',
+    },
+  };
+
+  /** Every agent's id, Claude Code first: the order menus offer them in. */
+  const AGENT_IDS = Object.freeze(Object.keys(AGENTS));
+  /** The agents that run only on their owner's own sign-in. */
+  const OWN_SIGN_IN_AGENTS = Object.freeze(AGENT_IDS.filter((id) => AGENTS[id].signIn));
+  /** Every name tmux or hc gives the agent's program, whichever agent it is. */
+  const PROCESS_NAMES = Object.freeze([...new Set(AGENT_IDS.flatMap((id) => AGENTS[id].processNames))]);
+
+  /** @returns {boolean}  whether this is an agent's id */
+  function isAgent(id) {
+    return typeof id === 'string' && Object.hasOwn(AGENTS, id);
+  }
+
+  /** @returns {Agent}  the agent of that id, or Claude Code for anything else: what a session with no agent runs */
+  function agent(id) {
+    return isAgent(id) ? AGENTS[id] : AGENTS.claude;
+  }
+
+  /** @returns {string}  the agent a session runs, from its options: claude unless it was started on another */
+  function agentOfSession(s) {
+    return isAgent(s?.options?.agent) ? s.options.agent : 'claude';
+  }
+
+  /**
+   * Whether a model name is one this agent's command line takes. Claude Code's are a fixed list, checked elsewhere.
+   * @returns {boolean}
+   */
+  function modelShapeOk(id, model) {
+    const re = agent(id).modelRe;
+    return !model || (re ? re.test(model) : false);
+  }
+
+  /**
+   * An own sign-in, as the person pasted it, checked and made the form it is stored in: a key as it is, a login file as
+   * compact JSON. Throws with a message the page shows.
+   * @param {string} id  the agent
+   * @param {unknown} value
+   * @returns {string}
+   */
+  function checkSignIn(id, value) {
+    const a = agent(id);
+    const fail = (message) => Object.assign(new Error(message), { shown: true });
+    if (!a.signIn) throw fail(`${a.product} has no own sign-in here`);
+    if (typeof value !== 'string') throw fail('the sign-in must be text');
+    const text = value.trim();
+    if (!text) throw fail(`paste your ${a.product} sign-in first`);
+    if (text.length > a.signIn.maxChars) throw fail(`that is too long for a ${a.product} sign-in`);
+    if (id === 'antigravity') {
+      if (/^AIza[0-9A-Za-z_-]{20,80}$/.test(text)) return text;
+      throw fail('paste a Gemini API key (AIza…) from Google AI Studio');
+    }
+    if (id === 'grok' && /^xai-[0-9A-Za-z_-]{10,200}$/.test(text)) return text;
+    let json;
+    try {
+      // zsh ends output with no final newline in a `%`, which a copy of `cat …auth.json` takes along.
+      json = JSON.parse(text.replace(/\}\s*%$/, '}'));
+    } catch {
+      throw fail(id === 'grok' ? 'paste an xAI API key (xai-…) or the contents of ~/.grok/auth.json' : 'paste the contents of ~/.local/share/opencode/auth.json');
+    }
+    if (typeof json !== 'object' || json === null || Array.isArray(json) || !Object.keys(json).length) throw fail(`that is not a ${a.product} auth.json`);
+    const entries = Object.values(json);
+    if (id === 'grok') {
+      // A map of scope to login: each with the token Grok calls with (`key`), and a refresh token for a login.
+      if (!entries.every((e) => e && typeof e === 'object' && typeof e.key === 'string' && e.key)) {
+        throw fail('that is not a Grok Build auth.json: run grok login, then paste ~/.grok/auth.json');
+      }
+    } else if (!entries.every((e) => e && typeof e === 'object' && ['api', 'oauth', 'wellknown'].includes(e.type))) {
+      throw fail('that is not an OpenCode auth.json: run opencode auth login, then paste ~/.local/share/opencode/auth.json');
+    }
+    return JSON.stringify(json);
+  }
+
+  return { AGENTS, AGENT_IDS, OWN_SIGN_IN_AGENTS, PROCESS_NAMES, isAgent, agent, agentOfSession, modelShapeOk, checkSignIn };
+});
