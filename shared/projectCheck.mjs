@@ -2,7 +2,7 @@
 // is in, so a repo needs no tests of its own against Woodshed's code. Read-only, and offline: files in the checkout,
 // and git only to ask what it ignores and tracks. Every problem is named with its field, all of them at once.
 
-import { execFileSync } from 'node:child_process';
+import { runGit } from './git.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -82,7 +82,7 @@ function leavesRepo(file) {
 // Whether git ignores or tracks a file: an env file holds its secret's text, so a session must never commit it.
 function gitStatusOf(repoDir, file) {
   if (leavesRepo(file)) return 'outside';
-  const git = (args) => execFileSync('git', ['-C', repoDir, ...args], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
+  const git = (args) => runGit(repoDir, args, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
   try {
     git(['rev-parse', '--git-dir']);
   } catch {
@@ -173,7 +173,7 @@ function databaseProblems(project, repoDir) {
 // is one (what it names is read as the file, which can be anything the reader may read: a CI runner's environment, a
 // file in the machine owner's home); `file` for the repo's own file; `missing` when the checkout has none, so the
 // default branch's is read; `other` for a folder, or a path through a file (`README.md/init.sh`).
-function checkoutEntry(repoDir, file) {
+export function checkoutEntry(repoDir, file) {
   const parts = file.split('/');
   for (let i = 1; i <= parts.length; i += 1) {
     let stat;

@@ -22,6 +22,7 @@ here use `woodshed.example.com` for an installation's domain.
 | `shared/` | Modules the console and the sessions both run, and other tools can embed: review, the project file's reader, the terminal and same-origin helpers | [shared/README.md](../shared/README.md) |
 | `providers/` | Where Woodshed runs. `providers/console.mjs` picks one and starts the console on it | [providers/README.md](../providers/README.md), and "Providers", below |
 | `desktop/` | The desktop app: the console in a window of its own, with notifications and a Dock badge, signing in through the browser. The one folder with dependencies (Electron, as dev dependencies) | [desktop/README.md](../desktop/README.md) |
+| `skills/` | Skills for the agents on a person's own computer: `woodshed/` teaches Claude Code and Codex the `woodshed` command line | [skills/README.md](../skills/README.md) |
 | `test/` | Checks across the folders: `layout.test.mjs` | |
 | `scripts/` | Tools for working on Woodshed itself: `prAssets.sh` attaches screenshots to a pull request, on a `refs/pr-assets/` ref that `.github/workflows/prAssetsCleanup.yml` deletes when the pull request is closed unmerged | |
 
@@ -368,7 +369,7 @@ quote a number (`PORT: '9000'`).
 | `workflowLinks[]` | the console's avatar menu, from the default branch of the default project's repo | The menu's links to the repo's GitHub Actions workflows, each opening its page and its **Run workflow** button: a `label` (1 to 40 printable characters, each its own) and its `workflow` file, directly in `.github/workflows/` (`.github/workflows/deploy.yml`), which `check` finds in the checkout or on the default branch. Left out (`null`), the menu keeps the installation's `WOODSHED_ACTIONS_WORKFLOWS` (console/README.md), as it does when the file cannot be read; `[]` is none, whatever that says |
 | `githubAccess` | the session API's `/github-token`, from the default branch | `full` or `repo`, default `full`. A private session acts as its owner, whose connected GitHub token it gets. `full` hands it the token as GitHub issued it, reaching every repo the GitHub App is on that the owner can write to. `repo` has GitHub scope it to this repo and the session permissions (`githubUser.scopedTokenFor`; the App's token when GitHub makes none): for a repo whose content outsiders write, such as public issues, where a prompt injection should reach no other repo. Shared sessions and questions use the App's token either way. When the file cannot be read, a session on the installation's default project gets `full` and one on another project `repo`. On a console behind a host whose App is on other consoles' repos too (`githubConnect`), the token is never handed out as GitHub issued it: `full` scopes it to the console's repos of this repo's owner, and an unreadable file means `repo`. `repo` is only as strong as the protection on the repo's default branch: the setting lives in the repo it guards, so someone who can change that branch's project file can switch it back to `full` |
 | `rules`, `setup` | `writeRules` | The project's rules, after `prompt.md`, and its environment notes: inline in a shared session's rules, in `/tmp/woodshed-setup.md` for a private one, which claude reads without asking (a `Read` rule in `session/claudeHooks.json`). Notes that point claude at a file outside the repo other than `/tmp/woodshed-deps` make auto mode ask a person once, at its first read (session/README.md, "Why permissions are off"). The installation's instructions for the repo and a private session's owner's own (repo settings) come after all of it, with a paragraph saying which win; with neither, the rules are byte for byte what they were before them |
-| `pullRequests` | the console's pull request announcer, from the default branch's copy | What a pull request waits for before the console posts it (console/README.md, "Slack"): its `review`, test `suites`, `qa` and `mergeRisk` check. Each field is described in `project.reference.yaml`. With none of them, the console posts a pull request once it is out of draft and no check is running or failed. `runsOn`, for a repo connected to more than one console, names the one that starts sessions from a label or a comment and runs review and QA: the login of the App it acts as (`acme-woodshed[bot]`), or one of that App's consoles by the name it is given (`acme-woodshed[bot]/staging`, `WOODSHED_RUNS_ON_NAME`; console/README.md, "Which console does the automatic work") |
+| `pullRequests` | the console's pull request announcer, from the default branch's copy | What a pull request waits for before the console posts it (console/README.md, "Slack"): its `review`, test `suites`, `qa` and `mergeRisk` check. Each field is described in `project.reference.yaml`. With none of them, the console posts a pull request once it is out of draft and no check is running or failed. A file with no `review`, or no file at all, still gets every repo's default review in a session on a commit whose message has `[woodshed-review]` (`console/defaultReview.mjs`), which the console tells sessions to add; the post does not wait for it. `runsOn`, for a repo connected to more than one console, names the one that starts sessions from a label or a comment and runs review and QA: the login of the App it acts as (`acme-woodshed[bot]`), or one of that App's consoles by the name it is given (`acme-woodshed[bot]/staging`, `WOODSHED_RUNS_ON_NAME`; console/README.md, "Which console does the automatic work") |
 
 ## Using it on another repo
 
@@ -428,10 +429,22 @@ Still specific to one repo, and not yet settings:
 - The db-admin task's drivers, borrowed from each database's `dir`'s `node_modules` (`pg`, and `mongoose` for Mongo),
   until the image ships its own.
 
+## Merge risk in a review session
+
+This rubric applies to every repository reviewed in a Woodshed session. For High, the reviewer should identify a
+plausible serious failure introduced by the change, who or what it affects, and a verification step. Medium covers
+meaningful changes with contained or reversible consequences, or changes that need more than a quick check. Low
+covers narrow changes with limited consequences that are easy to verify. The base branch's `.woodshed/riskAreas.md`
+serves as guidance for finding repository-specific failures. The reviewer still evaluates each change against the
+rubric.
+
+The highest reported tier wins even if the reviewer omits the failure reason or verification step. When both reviewers
+rate the change High, the check prefers a report with both details.
+
 ## The review in another repo
 
-`.github/workflows/review.yml` reviews Woodshed's own pull requests, and any repo can run the same review on its own by
-calling it. A workflow of the repo's, with a `pull_request` trigger, calls it pinned to a commit:
+A repo can run the reusable `.github/workflows/review.yml` review instead of a Woodshed session. A workflow of the
+repo's, with a `pull_request` trigger, calls it pinned to a commit:
 
 ```yaml
 on:
@@ -454,7 +467,7 @@ jobs:
 - `rules`: the repo's rule files, separated by spaces (default `CLAUDE.md .woodshed/rules.md CONTRIBUTING.md`).
 - `instructions`: a file saying what this repo wants a review to look for, added to the prompt (default
   `.woodshed/review.md`; none is fine).
-- `risk-areas`: a file listing the changes this repo always counts as High merge risk (default
+- `risk-areas`: a file listing changes the reusable workflow always counts as High merge risk (default
   `.woodshed/riskAreas.md`; none is fine).
 - `allowed-bots`: bots whose pull requests are reviewed, such as the App an installation opens them as (default none,
   or the calling repo's `REVIEW_ALLOWED_BOTS` variable).

@@ -86,12 +86,31 @@ test('a private session gets its own owner\'s settings and Claude token, and a s
       files: { 'tmux-conf': 'set -g mouse on # octocat' },
       ownFiles: { 'app/.env.production': 'NOTION_TOKEN=x # octocat bbbbbbbb' },
       git: { name: 'Mona Octocat', email: '1+octocat@users.noreply.github.com' }, database: null, claudeToken: 'sk-ant-joel',
+      terminal: 'tmux',
     },
   });
   assert.equal((await settings('Bearer shared-token')).status, 404, 'a shared session has no owner to ask for');
   assert.equal((await settings('Bearer mia-token')).status, 409, 'an owner with no token saved');
   assert.equal((await settings('Bearer nobody')).status, 401);
   assert.deepEqual(asked, ['octocat', 'mia-dev'], 'each session asked for its own owner, and only its own');
+});
+
+test('a private session gets the terminal its own owner picked on My settings, and tmux when they picked none', async (t) => {
+  const sessions = [
+    { id: 'bbbbbbbb', status: 'running', token: 'joel-token', owner: 'octocat' },
+    { id: 'cccccccc', status: 'running', token: 'mia-token', owner: 'mia-dev' },
+  ];
+  const userSettings = {
+    claudeToken: async () => 'sk-ant-x', ownFiles: async () => ({}), gitIdentity: () => null,
+    terminal: (login) => (login === 'octocat' ? 'herdr' : 'tmux'),
+  };
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  assert.equal((await request(port, { path: '/settings', authorization: 'Bearer joel-token' })).body.terminal, 'herdr');
+  assert.equal((await request(port, { path: '/settings', authorization: 'Bearer mia-token' })).body.terminal, 'tmux');
 });
 
 test('a private session gets its owner\'s own databases, and none until they are ready', async (t) => {

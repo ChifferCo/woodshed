@@ -139,6 +139,7 @@ highlight.mjs  tokenizeLine — also runs in the browser, see below
 analyze.mjs    schema, prompt, NDJSON reducer, reconciliation
 explain.mjs    prompt, validation, answer extraction
 chat.mjs       the conversation about the change as a whole: prompt, history bound
+aiReviews.mjs  the AI reviews on the pull request (Claude Code, Codex) read into verdicts and findings
 qa.mjs         the Q&A tab: a newcomer's questions and their answers, as a tree
 jobs.mjs       `claude -p` child lifecycle, concurrency, orphan reaping
 store.mjs      on-disk layout under $REVIEWS_DIR, one directory per session
@@ -399,8 +400,11 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
   job's id is its askId; it has its own breadcrumb kind so an orphaned chat
   cannot clear the analysis's.
 
-- **The Q&A is two voices, and the newcomer cannot read the code.** `POST /reviews/<session>/qa` (the page sends it
-  the first time the Q&A tab opens) runs rounds of `claude -p`: a newcomer, whose whole system prompt is a junior
+- **The Q&A is two voices, and the newcomer cannot read the code.** The shed starts it when the review opens, with the
+  analysis (`startReviewQaIfNone`, which session/reviewShed/host.mjs calls on the page's or the terminal's first status
+  read in the container), and when a take or Re-review starts a new diff's analysis; `POST /reviews/<session>/qa?first=1`,
+  which the page and the terminal send when the Q&A tab opens, joins or keeps that run, so a commit gets one. It runs
+  rounds of `claude -p`: a newcomer, whose whole system prompt is a junior
   developer new to the codebase who knows none of its jargon (`--system-prompt`, `--tools ''`), asks up to six
   questions from the title, description, file list and overview; an answerer with the explain's containment (Read,
   Grep and Glob) answers them all in one run, quoting real code where it helps. Unlike every other run here, the
@@ -573,6 +577,23 @@ across its whole range at boot, so sharing a range kills the live service's
 terminals. But note that its worktrees still land in the **real** repo, because
 that is the thing under test.
 
+## AI reviews and their follow-ups
+
+The **AI reviews** tab (and `woodshed review`'s `6 AI reviews`) draws what Woodshed's review posted on the pull
+request: no new data, only GitHub's reviews read back. `aiReviews.mjs` takes a review as an AI review only when an App
+wrote it and its body opens `## <name> review — <CONCLUSION>`, so a person writing that heading is never read as one.
+Its `### Claude Code: …` / `### Codex: …` sections become the reviewers' parts, its inline comments (each thread whose
+first comment's `pullRequestReview` is the review) the findings, each given to the reviewer its `**Claude Code:**` or
+`**Codex:**` mark names, and comments GitHub refused, which the console folded into the body under `**Inline
+comments**`, findings too. These come in `GET /comments` as `aiReviews`, newest first, each saying whether it read the
+pull request's head (`current`).
+
+A follow-up is a chat turn with `about: {review, finding}`: ids only. The shed reads the point again from GitHub
+(`aiReviewPoint` in index.mjs), refuses one no longer there (409), and puts it in the prompt fenced like the rest,
+asking the agent to say first whether it holds. Both turns are kept in chat.json with `about: {id, label}`, which is how
+the tab finds the follow-ups under each point, and how the chat's replay says what each was about. It is the chat's one
+turn at a time, so a question asked in the panel and one asked on a finding wait for each other.
+
 ## A second host: Woodshed sessions
 
 `index.mjs` and `page.mjs` also run inside Woodshed sessions
@@ -582,3 +603,11 @@ session's own checkout without the launcher. The session image ships every
 file this module imports from an allow-list, and a session test fails when a new
 import is missing from it: when you add one, add it to
 `woodshed/session/Dockerfile` and `Dockerfile.dockerignore`.
+
+Woodshed sessions pass their launch-time agent, model and reasoning effort to
+Review tab jobs. Codex runs through the session's existing Codex sign-in or
+console proxy, with an ephemeral run outside the checkout. Analysis,
+explanations, chat and Q&A answers use the saved diff as code context. Codex
+receives a bounded excerpt of that diff with shell, MCP, image and web tools
+disabled. Claude keeps its review tool restrictions. When the session has no
+explicit model, Codex uses its CLI default and Claude uses the review default.

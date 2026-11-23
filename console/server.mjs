@@ -11,7 +11,9 @@
 //   GET  /api/sessions           every shared session and your own private ones, without their tokens
 //   GET  /api/my                 your settings' state (never a value), your running count and limit, and each of your
 //                                projects that cannot start sessions with why and how to fix it (`projectBlockers`)
-//   POST /api/my/sessions        {"prompt", "name", "workOn", "model", "effort", "permissionMode", "project"}  a private session
+//   POST /api/my/sessions        {"prompt", "name", "workOn", "model", "effort", "permissionMode", "project", "herdrParent"}  a private session;
+//                                herdrParent: its agent's terminal is made from the person's Herdr, as a child of theirs
+//                                (`woodshed session new --herdr --parent`), and the session waits for it
 //   GET  /api/my/projects        the projects you can start sessions on, and the one New session opens on for you
 //   GET  /api/my/codex-models    the Codex models New session offers you: OpenAI's catalog, read on your Codex sign-in or the team key
 //   POST /api/my/projects/default {"project": "<name>"}   New session opens on it for you
@@ -21,13 +23,17 @@
 //   POST /api/my/codex-auth/reviews  {"on": true|false}   reviews of my pull requests run Codex on this sign-in (reviewAgents.mjs)
 //   GET  /api/my/reviews              who reviews my pull requests, and the choices this console can run for me
 //   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|null}   null is the most there is
+//   POST /api/my/terminal             {"terminal": "tmux"|"herdr"}   what my private sessions run their agent in
 //   POST /api/my/claude-token/remove
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
 //   POST /api/my/remove          {"confirm": "<your login>"}  Remove My Woodshed: stops your sessions, deletes your settings
 //   GET  /api/my/pulls           your open pull requests on every repo you may start on, and those waiting on your review, for the rail
-//   GET  /api/my/files/tmux-conf the image's tmux.conf, and your own lines added after it
-//   POST /api/my/files/tmux-conf {"text": "..."}   your own lines, for your next sessions; empty clears them
-//   POST /api/my/files/tmux-conf/reset             clears them: the image's file alone again
+//   POST /api/my/pulls/<number>/review {"project": "<name>"}   the console's review of your own open pull request, now
+//                                (fleet.mjs reviewOnDemand): 201 started, 200 already running or done on its head commit
+//   GET  /api/my/files/<key>     tmux-conf: the image's tmux.conf, and your own lines added after it; gitconfig, inputrc,
+//                                bash-aliases: your own lines for those (shared/dotfiles.mjs)
+//   POST /api/my/files/<key> {"text": "..."}   your own lines, for your next sessions; empty clears them
+//   POST /api/my/files/<key>/reset             clears them: the image's file alone again
 //   GET  /api/my/repos[/<project>[/env/<key>|/instructions|/files]]   your own repo settings, for a repo you can write to (repoSettings.mjs)
 //   POST /api/my/repos/<project>/env/<key>|/instructions   {"text": "..."}   yours; empty clears them
 //   POST /api/my/repos/<project>/files   {"path": "app/.env.production", "text": "..."}   one of your own whole files, which your
@@ -37,13 +43,25 @@
 //   POST /api/my/github/identity {"name": "...", "email": "..."}   what your sessions' commits say
 //   POST /api/my/github/disconnect
 //   POST /api/my/home/forget     deletes your saved Claude home: MCP logins, memory, transcripts
-//   POST /api/my/sessions/<id>/resume   a stopped private session again, claude's conversation and all
+//   POST /api/my/sessions/<id>/resume   a stopped private session again, claude's conversation and all; {"herdrParent": true}
+//                                       as a start's, for that run alone
 //   POST /api/my/sessions/<id>/remove   a private session (a running one is stopped first) off the list, with the Claude home it kept
 //   POST /api/my/databases       your own databases, made, or copied from the template again ({"confirm": "reset"} once made)
 //   POST /api/my/databases/restore?name=<file>   a pg_dump or mongodump as the body, restored into a copy of your database to check;
 //                                POST /api/my/databases/restore/apply {"confirm": "apply"} swaps it in, /discard drops it (dbRestore.mjs)
 //   POST /api/my/tunnel-token    a token for woodshed-db.mjs, shown once; POST /api/my/tunnel-token/remove revokes it
 //   GET  /api/tunnel/connection, UPGRADE /api/tunnel/pg|mongo   your databases from your computer, by that token (dbTunnel.mjs)
+//   POST /api/cli/device, /api/cli/token, GET /api/cli/me, POST /api/cli/logout   the woodshed command line's sign-in by a
+//                                device code, and its token's calls (cliSignIn.mjs); GET/POST /cli is the page the code is
+//                                approved on, signed in
+//   GET/POST /api/cli/settings[/repos|/files/<project>|/dotfiles[/<key>]]   that token's turn at your shared Claude and
+//                                Codex settings, your own files for a repo, and your own dotfile lines (cliSettings.mjs)
+//   POST /api/my/cli-tokens/<id>/revoke   ends one computer's command line sign-in, from My settings
+//   Its token also signs in to GET /api/sessions, GET /api/my/projects, POST /api/my/sessions,
+//   POST /api/my/sessions/<id>/resume|remove, POST /api/sessions/<id>/stop|extend|limits and GET /api/review-readiness,
+//   as its person (cliSessions.mjs); and to GET /api/cli/config, its person's choices on My settings and never a secret, and the
+//   writes of them: POST /api/my/terminal, /reviews, /codex-auth/reviews, /claude-token/shared, /projects/default and
+//   /github/identity, each answering with that config alone (cliConfig.mjs)
 //   POST /api/sessions           {"number": 123, "startedBy": "login", "prompt": "..."}
 //   POST /api/sessions/<id>/stop
 //   POST /api/sessions/<id>/pin     {"on": true}   pinned to the top of your rail; yours alone
@@ -152,8 +170,8 @@
 //   GET  /login, /auth/start, /auth/callback, POST /auth/sign-out   sign-in with GitHub (auth.mjs); behind a hosting
 //                                proxy, POST /auth/sign-out alone, which the program embedding the console answers
 //   GET  /api/me                 who is signed in, and whether sign-in is on
-//   POST /api/sessions/<id>/app/start  start the session's app: {"app": "<name>"} picks one of several
-//   POST /api/sessions/<id>/app/stop   stop it
+//   POST /api/sessions/<id>/app/start  start the session's app: {"app": "<name>"} picks one of several; the answer has `started`, false when the session took no start
+//   POST /api/sessions/<id>/app/stop   stop it; the answer has `stopping`, false when no stop ran
 //   POST /api/sessions/<id>/app/setup  ask its claude to write the project file's app, when it has none
 //   POST /api/sessions/<id>/claude-login   type woodshed-login at the session's Terminal tab (a My Woodshed session)
 //   GET  /api/sessions/<id>/review     what the session's branch changes, from GitHub (review.mjs)
@@ -163,9 +181,12 @@
 //   GET  https://<id>.<app domain>/__woodshed/auth   claims the code: the app's own sign-in cookie
 //   GET  /api/sessions/<id>/app-share   who else may open a My Woodshed session's app, and its links (owner only; appShares.mjs)
 //   POST /api/sessions/<id>/app-share/members  {"on": true}   every signed-in member may open the app
-//   POST /api/sessions/<id>/app-share/links    {"hours": 24}  a link anyone can open, with its expiry; the token is shown once
+//   POST /api/sessions/<id>/app-share/links    {"hours": 24, "path"?: "/landing"}  a link anyone can open, with its
+//        expiry and, if asked, the app's page it lands on; the token is shown once
 //   POST /api/sessions/<id>/app-share/links/<linkId>/revoke   ends one link
-//   GET  https://<id>.<app domain>/__woodshed/share?t=<token>   claims a link: a cookie for that one app, until the link ends
+//        These four take the command line's token too, for woodshed session app <id> share (cliSessions.mjs)
+//   GET  https://<id>.<app domain>/__woodshed/share?t=<token>[&next=<path>]   claims a link: a cookie for that one app,
+//        until the link ends, then the app's `next` page (shareNext in appShares.mjs: a path on the app, or /)
 //   *    https://<id>.<app domain>/__woodshed/code/...   the session's VS Code, through its statusd, websockets too:
 //        Editor ↗, for whoever can open the session itself (editorProxy.mjs)
 //
@@ -192,8 +213,15 @@ import { ENGINE_NAMES, viewersOf } from '../shared/databases/index.mjs';
 import { handlePwaRequest, MANIFEST } from '../shared/pwa.mjs';
 import { createReviewProxy, isReviewPath } from './reviewProxy.mjs';
 import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
+import { shareNext } from './appShares.mjs';
 import { safeNext, signInFailure } from './auth.mjs';
 import { handleDesktopSignIn } from './desktopSignIn.mjs';
+import { handleCliApi, handleCliPage, sessionSignInsOf } from './cliSignIn.mjs';
+import { CLI_REPOS_PATH, handleCliRepos } from './cliRepos.mjs';
+import { carriesCliToken, handleCliCall } from './cliSessions.mjs';
+import { REVIEW_READINESS_PATH, reviewReadinessReply } from './reviewReadiness.mjs';
+import { answerWithView, CLI_CONFIG_PATH, configView, isConfigWrite } from './cliConfig.mjs';
+import { handleCliSettings } from './cliSettings.mjs';
 import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
 import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
 import { QA_POSTER_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
@@ -304,7 +332,9 @@ const PULLS_FRESH_MS = 60_000;
 const MY_FILE_RE = /^\/api\/my\/files\/([a-z-]+)(\/reset)?$/;
 const MY_GITHUB_RE = /^\/api\/my\/github\/(identity|disconnect)$/;
 const MY_SESSION_ACTION_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/(resume|remove)$/;
+const MY_PULL_REVIEW_RE = /^\/api\/my\/pulls\/([1-9][0-9]{0,8})\/review$/;
 const MY_TUNNEL_RE = /^\/api\/my\/tunnel-token(\/remove)?$/;
+const MY_CLI_REVOKE_RE = /^\/api\/my\/cli-tokens\/([0-9a-f]{16})\/revoke$/;
 const MY_RESTORE_RE = /^\/api\/my\/databases\/restore\/(apply|discard)$/;
 // A whole .env file, JSON-escaped, under Secrets Manager's 64 KB; own files' limit follows the secret store's.
 const MAX_FILE_BODY_BYTES = 160 * 1024;
@@ -711,6 +741,7 @@ export function createHandler({
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
+  cli = null, reviewReadiness = null,
 }) {
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
   const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
@@ -762,6 +793,13 @@ export function createHandler({
     return Boolean(members) && !members.hosted && members.view().members.length === 1;
   }
 
+  // What `woodshed status` says of the console besides who is signed in: its name, and the GitHub account its repos are
+  // on (the default project's owner), as the org. Null with no repo yet.
+  function cliAbout() {
+    const repo = defaultProject(config).repo || null;
+    return { console: consoleName, org: repo ? repo.split('/')[0] : null };
+  }
+
   // Who is signed in to the console: the hosting proxy's identity, or the browser's session cookie.
   async function consoleUser(headers) {
     if (trusted) return trusted.userFor(headers);
@@ -775,6 +813,11 @@ export function createHandler({
     if (trusted) return user?.role === 'owner';
     const login = user?.login;
     return !auth?.enabled() || !login || !members || !members.hasAdmin() || members.isAdmin(login);
+  }
+
+  function cliRepoRole(login) {
+    if (!trusted) return isAdmin({ login }) ? 'owner' : 'member';
+    return members?.hosted ? members.currentRole(login) : undefined;
   }
 
   function redirect(res, location, setCookie) {
@@ -1043,6 +1086,7 @@ export function createHandler({
       fleet.releaseAssignments?.({ login: handle, by: login });
       // Their token is refused from now on (createTunnel's `allowed`); this also closes the tunnels already open.
       tunnel?.revoke(handle);
+      cli?.revokeAll(handle, `People, by @${login}`);
     }
     return peopleReply(res);
   }
@@ -1089,7 +1133,7 @@ export function createHandler({
         return res.end(shareLinkEndedPage(id, config.publicUrl));
       }
       // The token leaves the address bar at once, and no page the app links to is told where it came from.
-      res.writeHead(302, { location: '/', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', 'set-cookie': claimed.setCookie });
+      res.writeHead(302, { location: shareNext(url.searchParams.get('next')) ?? '/', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', 'set-cookie': claimed.setCookie });
       return res.end();
     }
     const viewer = await appViewerFor({ auth, trusted, appShares, headers: req.headers, appId: id });
@@ -1180,7 +1224,7 @@ export function createHandler({
     return !login || !access || access.hasGithubSessions(login);
   }
 
-  const proxyReview = createReviewProxy({ findFor });
+  const proxyReview = createReviewProxy({ findFor, fleet, cli });
 
   /** @returns {object[]}  every project, the default first, each with its colour key (null past the palette's six) */
   function projectsWithColors() {
@@ -1207,6 +1251,8 @@ export function createHandler({
       appDomain: config.appDomain || (appPorts ? new URL(config.publicUrl).hostname : null),
       // With app ports each running session carries its `appUrl`, and an app is not shared: nobody signs in to it.
       appPorts: Boolean(appPorts),
+      // Whether a browser must sign in to open a session's app, as to open the console: the command line says so.
+      signIn: signInOn(),
       // The databases the console makes each session a copy of, and every engine's viewers. Open ▾ offers a session
       // the viewers it says it runs (its `viewers`, statusd's), which is also how a session given its databases by
       // its environment gets them; one from an image before statusd said so gets those of `databases`.
@@ -1433,6 +1479,8 @@ export function createHandler({
       agents: { claude: Boolean(view.claudeToken?.set), codex: Boolean(view.codexAuth?.set) || teamOpenAiKey }, databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last(defaultProject(config).name) ?? null,
       // Each project the person may start on that is not ready, by name (databaseGate.mjs), as last read.
       projectBlockers: blockersSeen.get(login) ?? {}, restore: dbRestore?.view(login) ?? null, tunnel: tunnel?.view(login) ?? null, running: activePrivateCount(fleet.sessions(), login),
+      // The computers the woodshed command line is signed in on as this person (cliSignIn.mjs), never a token.
+      cli: cli ? { tokens: cli.list(login) } : null,
       limit: config.maxPrivatePerPerson, limitDefaults: { idleHours: config.limits.idleMs / 3_600_000, lifetimeHours: config.limits.lifetimeMs / 3_600_000 }, names: namesFor([login]),
       // A console that started with no repo: the setup card sends an admin to add one on Console settings.
       repoNeeded: !hasRepo(config),
@@ -1514,6 +1562,7 @@ export function createHandler({
     if (databases) await databases.remove(login);
     dbRestore?.forget(login);
     tunnel?.revoke(login);
+    cli?.revokeAll(login, 'Remove My Woodshed');
     // Last: each stop above tries to save the home, which the session API refuses for someone with no record now.
     if (homes) {
       await homes.removeSessionsOf(login);
@@ -1543,6 +1592,8 @@ export function createHandler({
           return reply(res, 200, { removed: actionMatch[1] });
         }
         const resuming = fleet.find(actionMatch[1]);
+        // Whose it is before anything of it is read: someone else's private session answers as one that does not exist.
+        if (!resuming || resuming.owner !== login) return reply(res, 409, { error: 'no session you can open with that id' });
         await userSettings?.refresh?.(login, { force: true });
         if (resuming?.options?.agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
         if (!databasesReady(login)) return reply(res, 409, { error: DATABASES_NOT_READY });
@@ -1551,7 +1602,7 @@ export function createHandler({
           console.log('console: session resume refused, project not open to the person', { login, sessionId: resuming.id, project: resuming.project ?? null });
           return reply(res, 403, { error: `you can no longer start sessions on ${resuming.project}: you have no write access to its repo, or it is not one of this console's` });
         }
-        return reply(res, 201, publicSession(await fleet.resumePrivate({ owner: login, id: actionMatch[1], background: true })));
+        return reply(res, 201, publicSession(await fleet.resumePrivate({ owner: login, id: actionMatch[1], background: true, herdrParent: body?.herdrParent === true })));
       }
       if (pathname === '/api/my/home/forget') {
         // A running session saves its home every few minutes, which would bring back what was forgotten.
@@ -1583,6 +1634,7 @@ export function createHandler({
       }
       if (pathname === '/api/my/sessions') {
         const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
+        const herdrParent = body.herdrParent === true;
         await userSettings?.refresh?.(login, { force: true });
         // A Codex session signs in with its own login or the team's OpenAI key: it needs no Claude token.
         if (agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
@@ -1598,7 +1650,7 @@ export function createHandler({
           console.log('console: session start refused, project not open to the person', { login, project: String(body.project ?? '').slice(0, 40) });
           return reply(res, 403, { error: `you cannot start sessions on a project named ${String(body.project ?? '').slice(0, 40)}: it is not one of this console's, or you have no write access to its repo` });
         }
-        return reply(res, 201, publicSession(await fleet.startPrivate({ owner: login, prompt, name, workOn, agent, model, effort, permissionMode, attachmentIds, background: true, project })));
+        return reply(res, 201, publicSession(await fleet.startPrivate({ owner: login, prompt, name, workOn, agent, model, effort, permissionMode, attachmentIds, background: true, project, herdrParent })));
       }
       if (pathname === MY_DEFAULT_PROJECT_PATH) {
         if (!projectAccess || !viewPrefs) return reply(res, 404, { error: 'this console keeps no default project' });
@@ -2074,6 +2126,27 @@ export function createHandler({
     return { available, own, best, choice: userSettings?.reviewAgents(login) ?? null };
   }
 
+  // `woodshed review start`: the console's review of one of the person's own open pull requests, now (fleet.mjs,
+  // reviewOnDemand). The project is one they may start sessions on: GitHub is asked for their write access to an added
+  // project's repo, and the default project's (also the one used when none is named) was proved at sign-in, and is
+  // checked again on each command line call (cliSignIn.mjs authenticate).
+  async function myPullReviewWrite(req, res, number, login) {
+    if (!login) return reply(res, 409, { error: 'a review asked for by hand needs GitHub sign-in, which this console does not have' });
+    if (!fleet.reviewOnDemand) return reply(res, 404, { error: 'this console cannot start a review by hand' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    if (body?.project != null && typeof body.project !== 'string') return reply(res, 400, { error: 'project must be a project\'s name' });
+    const project = projectAccess ? await projectAccess.forStart(login, body?.project) : defaultProject(config);
+    if (!project) return reply(res, 403, { error: `you cannot start sessions on a project named ${String(body?.project ?? '').slice(0, 40)}: it is not one of this console's, or you have no write access to its repo` });
+    const result = await fleet.reviewOnDemand({ project, number, login });
+    if (result.outcome === 'refused') return reply(res, result.status, { error: result.reason });
+    return reply(res, result.outcome === 'started' ? 201 : 200, { outcome: result.outcome, sessionId: result.sessionId, project: project.name, repo: project.repo, number });
+  }
+
   async function myReviewsWrite(req, res, login) {
     if (!login) return reply(res, 409, { error: 'My Woodshed needs GitHub sign-in, which this console does not have' });
     if (!userSettings) return reply(res, 409, { error: 'this console has no secret store, so My settings cannot be saved' });
@@ -2090,6 +2163,25 @@ export function createHandler({
       throw err;
     }
     return reply(res, 200, await myReviewsView(login));
+  }
+
+  /** My settings' Terminal row: what the person's private sessions run claude or codex in (userSettings.setTerminal). */
+  async function myTerminalWrite(req, res, login) {
+    if (!login) return reply(res, 409, { error: 'My Woodshed needs GitHub sign-in, which this console does not have' });
+    if (!userSettings) return reply(res, 409, { error: 'this console has no secret store, so My settings cannot be saved' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    try {
+      userSettings.setTerminal(login, body?.terminal);
+    } catch (err) {
+      if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
+      throw err;
+    }
+    return reply(res, 200, { terminal: userSettings.terminal(login) });
   }
 
   // Kept with the person's pins, so it needs no secret store, and with no sign-in it is the console's one person's.
@@ -2109,7 +2201,16 @@ export function createHandler({
     }
   }
 
-  // The same typed confirm as every other admin change is the page's; the server checks the value's bounds.
+  async function removeRepo(name, by) {
+    // Clear the repo's values first, so a failed delete can be retried. A repo that Remove would refuse keeps them.
+    if (addedProjects.view().some((p) => p.name === name && p.removable && !p.sessions)) await repoSettings?.forget(name);
+    await addedProjects.remove({ name, by });
+    projectColors?.forget({ name });
+    repoTriggers?.forget(name);
+    slack?.setProjectChannel({ project: name, channel: '', by });
+  }
+
+  // The server checks the value's bounds.
   async function consoleSettingsWrite(req, res, pathname, login) {
     if (!consoleSettings) return reply(res, 404, { error: 'this console has no settings page' });
     let body;
@@ -2137,17 +2238,7 @@ export function createHandler({
         if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
         const by = login ?? 'console';
         if (pathname === PROJECTS_PATH) await addedProjects.add({ repo: body.repo, name: body.name, by });
-        else {
-          // Its env values and instructions, the installation's and everyone's own, go first: a repo added again starts
-          // with none, and when a delete fails the repo stays listed, so Remove can be tried again. Only for a repo
-          // Remove would take: one refused (the installation's own, or one with live sessions) keeps its settings.
-          if (addedProjects.view().some((p) => p.name === body.name && p.removable && !p.sessions)) await repoSettings?.forget(body.name);
-          await addedProjects.remove({ name: body.name, by });
-          projectColors?.forget({ name: body.name });
-          repoTriggers?.forget(body.name);
-          // A repo added again later under the same name starts on the console's channel.
-          slack?.setProjectChannel({ project: body.name, channel: '', by });
-        }
+        else await removeRepo(body.name, by);
       } else if (pathname === '/api/console-settings') {
         const by = login ?? 'console';
         const values = body.values ?? {};
@@ -2255,9 +2346,12 @@ export function createHandler({
       return reply(res, 200, shareView());
     }
     if (session.status !== 'running') return reply(res, 409, { error: 'the session is not running: its app can be shared while it is' });
+    const next = body?.path === undefined || body?.path === null ? null : shareNext(body.path);
+    if (next === null && body?.path !== undefined && body?.path !== null) return reply(res, 400, { error: 'path must be a page of the app, starting with /, such as /landing-a' });
     try {
       const link = appShares.createLink({ sessionId: id, hours: body?.hours, by: login });
-      return reply(res, 201, { ...shareView(), url: appUrl(config, id, `${APP_SHARE_PATH}?t=${link.token}`), created: link.id });
+      const landing = next && next !== '/' ? `&next=${encodeURIComponent(next)}` : '';
+      return reply(res, 201, { ...shareView(), url: appUrl(config, id, `${APP_SHARE_PATH}?t=${link.token}${landing}`), created: link.id, path: next });
     } catch (err) {
       if (err.shown) return reply(res, 400, { error: err.message });
       throw err;
@@ -2267,11 +2361,23 @@ export function createHandler({
   async function write(req, res, pathname, login) {
     if (req.headers['x-woodshed'] !== '1') return reply(res, 403, { error: 'missing x-woodshed header' });
     if (!isSameOrigin(req.headers)) return reply(res, 403, { error: 'cross-origin request refused' });
+    return writeRoute(req, res, pathname, login);
+  }
+
+  // A write past its sign-in and the page's own checks: the page's, through write(), and the command line's few
+  // (cliSessions.mjs).
+  async function writeRoute(req, res, pathname, login) {
     if (pathname === '/api/secrets-manager') return managerWrite(req, res, login);
     if (SECRET_RE.test(pathname) || WEBHOOK_RE.test(pathname)) return settingsWrite(req, res, pathname);
     if (SETUP_WRITE_RE.test(pathname)) return githubSetupWrite(req, res, pathname, login);
     if (pathname === `${REVIEWER_SETUP_PATH}/manifest`) return reviewerSetupWrite(req, res);
     if (pathname === '/api/my/uploads') return stageUpload(req, res, login);
+    const cliRevoke = MY_CLI_REVOKE_RE.exec(pathname);
+    if (cliRevoke) {
+      if (!cli) return reply(res, 404, { error: 'this console has no command line sign-in' });
+      if (!cli.revoke(login, cliRevoke[1])) return reply(res, 404, { error: 'no such sign-in' });
+      return reply(res, 200, myView(login));
+    }
     if (pathname === '/api/my/databases/restore') return restoreUpload(req, res, login);
     const repoRoute = repoSettingsApi && repoSettingsRoute(pathname);
     if (repoRoute) return repoSettingsApi(req, res, { route: repoRoute, login });
@@ -2283,6 +2389,9 @@ export function createHandler({
     const slackWrite = SLACK_SETUP_WRITE_RE.exec(pathname);
     if (slackWrite) return slackSetupWrite(req, res, slackWrite[1] ?? null, login);
     if (pathname === '/api/my/reviews') return myReviewsWrite(req, res, login);
+    const pullReview = MY_PULL_REVIEW_RE.exec(pathname);
+    if (pullReview) return myPullReviewWrite(req, res, Number(pullReview[1]), login);
+    if (pathname === '/api/my/terminal') return myTerminalWrite(req, res, login);
     if (pathname === MY_SESSION_VIEW_PATH) return mySessionViewWrite(req, res, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH || pathname === PROJECT_TRIGGERS_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
@@ -2323,9 +2432,15 @@ export function createHandler({
           // Which of several apps, by name; none is the default. A console page from before several apps sends no body.
           const body = await readJson(req).catch(() => null);
           if (!body || (body.app !== undefined && typeof body.app !== 'string')) return reply(res, 400, { error: 'app must be an app\'s name' });
-          return reply(res, 200, publicSession(await fleet.startApp(session, { app: body.app || null })));
+          // `started`: whether the session took it (none while a stop script runs), for the command line.
+          const said = {};
+          const after = await fleet.startApp(session, { app: body.app || null, said });
+          return reply(res, 200, { ...publicSession(after), ...said });
         }
-        return reply(res, 200, publicSession(await fleet.stopApp(session)));
+        // `stopping`: whether a stop ran (none with no stop command, or one already running).
+        const said = {};
+        const after = await fleet.stopApp(session, { said });
+        return reply(res, 200, { ...publicSession(after), ...said });
       } catch (err) {
         if (err.notRunning) return reply(res, 409, { error: 'the session is not running' });
         if (err.refused) return reply(res, 409, { error: err.message });
@@ -2376,6 +2491,22 @@ export function createHandler({
     return reply(res, 404, { error: 'not found' });
   }
 
+  // The command line token's reads and writes, past handleCliCall's checks (cliSessions.mjs). A config write answers
+  // with the config alone (cliConfig.mjs).
+  async function cliRead(req, res, url, login) {
+    const { pathname } = url;
+    if (pathname === REVIEW_READINESS_PATH) return reviewReadinessReply({ req, res, url, login, readiness: reviewReadiness, config, reply });
+    if (pathname === CLI_CONFIG_PATH) return reply(res, 200, await configView({ userSettings, projectsView }, login));
+    if (pathname === '/api/my/pulls') return pullsReply(res, login);
+    const shareRead = APP_SHARE_RE.exec(pathname);
+    if (shareRead && !shareRead[2]) return appShareAction(req, res, shareRead, login);
+    return reply(res, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
+  }
+  function cliWrite(req, res, pathname, login) {
+    if (!isConfigWrite(pathname)) return writeRoute(req, res, pathname, login);
+    return answerWithView(res, (held) => writeRoute(req, held, pathname, login), () => configView({ userSettings, projectsView }, login), reply);
+  }
+
   return async function handle(req, res) {
     // An app port answers its session's app and nothing else: the console's own pages there would share the app's origin.
     if (appPorts?.owns(req.socket?.localPort)) return appPortRequest(req, res, req.socket.localPort);
@@ -2392,6 +2523,21 @@ export function createHandler({
     if (url.pathname === CONNECTION_PATH && req.method === 'GET') {
       return tunnel ? tunnel.connection(req, res) : reply(res, 404, { error: 'this console has no tunnel to your databases' });
     }
+    // The woodshed command line has no cookie either: a device code, then its token, is its sign-in.
+    // The shared gate for session, config and review calls as the token's person.
+    const cliCall = () => handleCliCall({ req, res, url, cli, reply, read: cliRead, write: cliWrite });
+    if (url.pathname.startsWith('/api/cli/')) {
+      if (!cli) return reply(res, 404, { error: 'this console has no command line sign-in' });
+      if (url.pathname === CLI_CONFIG_PATH) return cliCall();
+      if (url.pathname === CLI_REPOS_PATH || url.pathname === `${CLI_REPOS_PATH}/remove`) {
+        return handleCliRepos({ req, res, url, cli, reply, readJson, addedProjects, roleFor: cliRepoRole, projectsView, removeRepo });
+      }
+      if (await handleCliSettings({ req, res, url, cli, claudeSettings, repoSettingsApi, userSettings })) return;
+      return handleCliApi({ req, res, url, cli, publicUrl: config.publicUrl, about: cliAbout, sessionSignIns: sessionSignInsOf(userSettings) });
+    }
+    // `woodshed review <id>`: the review's calls with the token, checked and carried as the page's are (reviewProxy.mjs).
+    if (carriesCliToken(req.headers) && isReviewPath(url.pathname)) return proxyReview.forCli(req, res, url);
+    if (carriesCliToken(req.headers)) return cliCall();
     // Sign-in's cookies belong to one host name, and GitHub sends people back only to publicUrl's. Once sign-in
     // can be used, a page opened on another public name (the bare IP) moves there.
     const stays = url.pathname === '/healthz';
@@ -2416,6 +2562,8 @@ export function createHandler({
       console.log('console: Connect GitHub started', { login: user.login });
       return redirect(res, location, setCookie);
     }
+    // The page a command line's sign-in code is approved on: its form posts without x-woodshed, as a page's form does.
+    if (cli && await handleCliPage({ req, res, url, cli, login: user.login, consoleName, about: cliAbout })) return;
     if (handleTerminalRequest(req, res, { targetFor: terminalTarget(fleet, user.login, access) })) return;
     if (isReviewPath(url.pathname)) return proxyReview(req, res, url, user.login);
     const { pathname } = url;
@@ -2433,6 +2581,7 @@ export function createHandler({
     if (pathname === '/setup/github') return html(res, pageShell({ title: consoleName, script: 'githubSetup.js' }));
     if (pathname === '/setup/github/created') return githubSetupCreated(res, url);
     if (pathname === '/setup/github/reviewer-created') return reviewerSetupCreated(res, url);
+    if (pathname === REVIEW_READINESS_PATH) return reviewReadinessReply({ req, res, url, login: user.login, readiness: reviewReadiness, config, reply });
     if (pathname === REVIEWER_SETUP_PATH) return reviewerApp ? reply(res, 200, await reviewerApp.view()) : reply(res, 404, { error: 'this console cannot make a reviewer App' });
     if (pathname === '/api/setup/github') return githubSetup ? reply(res, 200, await githubSetup.view()) : reply(res, 404, { error: 'this console has no secret store, so it cannot keep a GitHub App' });
     if (pathname === '/api/console-settings') return consoleSettingsReply(res);
@@ -2634,10 +2783,11 @@ function terminalTarget(fleet, login, members) {
  * Every websocket the console takes: a session app's (createAppUpgrade), woodshed-db.mjs's tunnel, and the terminals,
  * which need the console's own origin and whoever is signed in: the session cookie, or a hosting proxy's header.
  * @param {{config: object, fleet: object, auth?: object|null, members?: object|null, appShares?: object|null,
- *          tunnel?: {handleUpgrade: Function}|null, trusted?: ReturnType<typeof createTrustedIdentity>|null}} deps
+ *          tunnel?: {handleUpgrade: Function}|null, trusted?: ReturnType<typeof createTrustedIdentity>|null,
+ *          execPipe?: {handleUpgrade: Function}|null}} deps
  * @returns {(req: import('node:http').IncomingMessage, socket: import('node:net').Socket, head: Buffer) => void}
  */
-export function createConsoleUpgrade({ config, fleet, auth = null, members = null, appShares = null, tunnel = null, trusted = null, appPorts = null }) {
+export function createConsoleUpgrade({ config, fleet, auth = null, members = null, appShares = null, tunnel = null, trusted = null, appPorts = null, execPipe = null }) {
   const hosts = knownHosts(config);
   const appUpgrade = createAppUpgrade({ config, fleet, auth, members, appShares, trusted });
   return function upgrade(req, socket, head) {
@@ -2657,6 +2807,8 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
     if (appId) return appUpgrade(req, socket, head, appId);
     // woodshed-db.mjs is no browser: no Origin, no cookie, and a token that does what the same-origin check does here.
     if (isKnownHost(req.headers.host, hosts) && tunnel?.handleUpgrade(req, socket, head)) return;
+    // `woodshed tunnel`'s pipe into a session (execPipe.mjs): no browser either, and the command line's token.
+    if (isKnownHost(req.headers.host, hosts) && execPipe?.handleUpgrade(req, socket, head)) return;
     // A websocket is not covered by the same-origin policy, and this one types into claude.
     if (!isKnownHost(req.headers.host, hosts) || !isSameOrigin(req.headers)) {
       console.warn('console: terminal websocket refused', { host: String(req.headers.host).slice(0, 100), origin: String(req.headers.origin).slice(0, 100) });
@@ -2690,7 +2842,7 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
  *   `repos` and `projectReadiness` are an embedding program's hooks, passed on to createInstallation (installation.mjs):
  *   only the dev console's stand-in (scripts/devHostConsole.mjs) passes them here
  */
-export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null }) {
+export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null, hostApp = null }) {
   const first = given ?? loadConfig();
   const store = openStore(first.stateDir);
   // An App saved on the setup page is the console's own from the next start.
@@ -2700,7 +2852,7 @@ export async function startConsole({ provider, config: given = null, repos = nul
   const trusted = loaded.trustedIdentitySecret ? createTrustedIdentity({ secret: loaded.trustedIdentitySecret }) : null;
   console.log('console: hosted mode', { githubBroker: Boolean(loaded.githubBroker), trustedIdentity: Boolean(trusted) });
   await checkGh();
-  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness });
+  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness, hostApp });
   const { config, handle } = installation;
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {

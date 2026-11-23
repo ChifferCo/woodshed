@@ -31,7 +31,7 @@ function element(tag) {
     addEventListener(k, fn) { this.listeners[k] = fn; },
     append(c) { this.children.push(c); },
     replaceChildren(...c) { this.children = c; },
-    focus() {},
+    focus() { this.focused = true; },
     scrollIntoView(opts) { this.scrolledTo = opts; },
     get textContent() { return textOf(this); },
     set textContent(v) { this.children = [String(v)]; },
@@ -270,6 +270,7 @@ test('a saved value stays hidden until Show and edit, which reads it from the co
   await settle();
   assert.deepEqual(calls.at(-1), { method: 'GET', path: '/api/console-settings/repos/app/env/api-env' });
   assert.equal(editorOf(app, 'env-api-env').value, `API_TOKEN=${SECRET_MARK}\n`);
+  assert.equal(editorOf(app, 'env-api-env').focused, true, 'Show puts the caret in the editor');
   button(app, 'Hide').listeners.click();
   assert.equal(editorOf(app, 'env-api-env'), undefined);
 });
@@ -339,12 +340,14 @@ test('instructions over 16 KB cannot be saved, and say so before Save', async ()
   assert.equal(instructionsSave(app).disabled, true);
 });
 
-test('saved instructions are read when the page opens', async () => {
+test('saved instructions are read when the page opens, without taking the focus', async () => {
   const { app, calls } = await loadPage({
     before: ({ repoSettings }) => repoSettings.saveInstallation({ project: 'app', text: 'Keep it short.\n', by: 'mia-dev' }),
   });
   assert.deepEqual(calls.map((c) => c.path), ['/api/console-settings/repos/app', '/api/console-settings/repos/app/instructions']);
   assert.equal(editorOf(app, 'instructions-text').value, 'Keep it short.\n');
+  // Focus scrolls its field into view: the page would open at Instructions, past the env files.
+  assert.notEqual(editorOf(app, 'instructions-text').focused, true);
 });
 
 test('a key the project file no longer names is listed, and Delete removes everyone\'s values for it after a typed confirm', async () => {

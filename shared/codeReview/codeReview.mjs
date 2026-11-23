@@ -1,7 +1,6 @@
 // The code review's prompt and verdict, for a review that runs as a Woodshed session (session/review.sh) in place of
 // the Actions workflow. The session writes its verdict, summary, merge risk and the full comment into a directory with
 // this prompt, then the console submits the formal review and the merge-risk check (console/fleet.mjs, reviewFinished).
-// The merge-risk tiers match the Actions review (review.yml), so the tier is the same wherever the review runs.
 //
 //   node codeReview.mjs prompt <dir> --pr <n> --head <sha> --server <url> --repo <owner/name> [--reviewer <login>]
 //       [--agent Codex]
@@ -128,10 +127,28 @@ const TIER_ORDER = { Low: 0, Medium: 1, High: 2 };
 // As many inline comments as the console posts in one review (console/reviewSessions.mjs).
 const MAX_INLINE_COMMENTS = 30;
 
+function hasHighRiskEvidence({ reason, summary }) {
+  return Boolean(reason) && /^- Verify before merging:[ \t]+\S/m.test(summary);
+}
+
+function combinedMergeRisk(reviews) {
+  const rated = reviews.filter(({ verdict }) => verdict.mergeRisk.tier);
+  const highest = rated.reduce((a, b) => (!a || TIER_ORDER[b.verdict.mergeRisk.tier] > TIER_ORDER[a.verdict.mergeRisk.tier] ? b : a), null);
+  if (!highest) return { tier: null, reason: '', summary: '' };
+
+  const tier = highest.verdict.mergeRisk.tier;
+  const highestReports = rated.filter(({ verdict }) => verdict.mergeRisk.tier === tier);
+  const supportedHigh = tier === 'High' && highestReports.find(({ verdict }) => hasHighRiskEvidence(verdict.mergeRisk));
+  const { name, verdict: { mergeRisk } } = supportedHigh || highest;
+  if (rated.length < 2 || highestReports.length === rated.length) return { ...mergeRisk };
+  return { ...mergeRisk, summary: `${mergeRisk.summary}\n\n(The higher of the reviewers' tiers: ${name}'s.)` };
+}
+
 /**
  * One review from two reviewers' verdicts, each `{name, verdict}` with a verdict as verdictIn reads it. The strictest
- * conclusion wins (REQUEST_CHANGES, then COMMENT, then APPROVE) and the higher merge risk, so a pull request is approved
- * only when both approve. The comment and summary keep a section from each, and the inline comments say whose they are.
+ * conclusion wins (REQUEST_CHANGES, then COMMENT, then APPROVE), so a pull request is approved only when both approve.
+ * The highest reported risk tier wins. The comment and summary keep a section from each, and the inline comments
+ * say whose they are.
  * An earlier comment one of them wrote (`authors`) is resolved when that one found it fixed: the other often leaves a
  * finding that is not its own off its list. One with no known writer, or whose writer wrote no verdict, is resolved only
  * when every reviewer with a verdict found it fixed. A reviewer that wrote no verdict is left out, and the comment says
@@ -145,10 +162,7 @@ export function mergeVerdicts(reviews, { authors = new Map() } = {}) {
   if (!done.length) return { ...reviews[0].verdict, conclusion: null };
   const missingNote = missing.length ? `${missing.join(' and ')} wrote no verdict, so this is ${done.map((r) => r.name).join(' and ')}'s alone.` : '';
   const conclusion = done.map((r) => r.verdict.conclusion).reduce((a, b) => (STRICTNESS[b] > STRICTNESS[a] ? b : a));
-  const risky = done.filter((r) => r.verdict.mergeRisk.tier)
-    .reduce((a, b) => (!a || TIER_ORDER[b.verdict.mergeRisk.tier] > TIER_ORDER[a.verdict.mergeRisk.tier] ? b : a), null);
-  const mergeRisk = risky ? { ...risky.verdict.mergeRisk } : { tier: null, reason: '', summary: '' };
-  if (risky && done.length > 1) mergeRisk.summary = `${mergeRisk.summary}\n\n(The higher of the reviewers' tiers: ${risky.name}'s.)`;
+  const mergeRisk = combinedMergeRisk(done);
   const sections = (field) => done.length === 1
     ? [done[0].verdict[field], missingNote].filter(Boolean).join('\n\n')
     : done.filter((r) => r.verdict[field]).map((r) => `### ${r.name}: ${r.verdict.conclusion}\n\n${r.verdict[field]}`).join('\n\n');
@@ -175,18 +189,21 @@ function main([command, dir, other]) {
   if (command === 'verdict' && dir) {
     const verdict = verdictIn(dir);
     if (!verdict.conclusion) process.exit(3);
-    process.stdout.write(`${JSON.stringify(verdict)}\n`);
+    process.stdout.write(`${JSON.stringify({ ...verdict, agents: [other === 'codex' ? 'codex' : 'claude'] })}\n`);
     return;
   }
   if (command === 'merge' && dir && other) {
-    const names = ['Claude Code', 'Codex'];
-    const verdict = mergeVerdicts([{ name: names[0], verdict: verdictIn(dir) }, { name: names[1], verdict: verdictIn(other) }],
-      { authors: commentAuthorsIn(dir, names) });
+    const reviews = [
+      { agent: 'claude', name: 'Claude Code', verdict: verdictIn(dir) },
+      { agent: 'codex', name: 'Codex', verdict: verdictIn(other) },
+    ];
+    const verdict = mergeVerdicts(reviews, { authors: commentAuthorsIn(dir, reviews.map((r) => r.name)) });
     if (!verdict.conclusion) process.exit(3);
-    process.stdout.write(`${JSON.stringify(verdict)}\n`);
+    const agents = reviews.filter((r) => r.verdict.conclusion).map((r) => r.agent);
+    process.stdout.write(`${JSON.stringify({ ...verdict, agents })}\n`);
     return;
   }
-  throw new Error('usage: codeReview.mjs prompt <dir> --pr --head --server --repo [--reviewer] [--agent] | verdict <dir> | merge <dir> <codexDir>');
+  throw new Error('usage: codeReview.mjs prompt <dir> --pr --head --server --repo [--reviewer] [--agent] | verdict <dir> [codex] | merge <dir> <codexDir>');
 }
 
 if (isMain(import.meta.url)) {

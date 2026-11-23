@@ -7,6 +7,7 @@ import { createAddedProjects, createHostProjects } from './addedProjects.mjs';
 import { createConsoleSettings, liveConfig } from './consoleSettings.mjs';
 import { createProjectColors } from './projectColors.mjs';
 import { createTunnel } from './dbTunnel.mjs';
+import { createCliSignIn } from './cliSignIn.mjs';
 import { createHandler } from './server.mjs';
 import { createSlack } from './slack.mjs';
 import { createUserSettings } from './userSettings.mjs';
@@ -496,7 +497,9 @@ test('an admin invites, accepts and removes on the People page, a member who is 
   const github = { canWrite: async (login) => login !== 'outsider' };
   const revoked = [];
   const tunnel = { revoke: (login) => revoked.push(login) };
-  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, github, tunnel });
+  const cliRevoked = [];
+  const cli = { revokeAll: (login) => cliRevoked.push(login), list: () => [] };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, github, tunnel, cli });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
@@ -533,6 +536,7 @@ test('an admin invites, accepts and removes on the People page, a member who is 
   assert.equal((await post(port, '/api/people/remove', { login: 'sam-ops' }, mia)).status, 200);
   assert.equal((await getWith(port, '/api/people', sam)).status, 401, 'removed, they are out at once');
   assert.deepEqual(revoked, ['sam-ops'], 'and their database tunnels with them, the open ones too');
+  assert.deepEqual(cliRevoked, ['sam-ops'], 'and their command line sign-ins');
   assert.equal((await post(port, '/api/access/ask', {}, { ...sam, origin: 'https://evil.example' })).status, 403);
 });
 
@@ -1124,9 +1128,10 @@ test('a tunnel token comes from My settings, signed in; woodshed-db.mjs reads it
     remove: async () => {},
   };
   const tunnel = createTunnel({ store: { state: {}, save() {} }, targets: { pg: '127.0.0.1:1', mongo: '127.0.0.1:2' }, databases });
+  const cli = createCliSignIn({ store: { state: {}, save() {} } });
   const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => (cookie ? { login: /woodshed_session=([\w-]+)/.exec(cookie)[1] } : null) };
   const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
-  const handle = createHandler({ config, fleet, auth, databases, tunnel });
+  const handle = createHandler({ config, fleet, auth, databases, tunnel, cli });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
@@ -1140,8 +1145,14 @@ test('a tunnel token comes from My settings, signed in; woodshed-db.mjs reads it
   assert.match(made.body.tunnelToken, /^wt_[0-9a-f]{64}$/);
   assert.ok(made.body.tunnel.expiresAt);
   assert.equal((await details(made.body.tunnelToken)).status, 200, 'no cookie needed with the token');
+  const { deviceCode, userCode } = cli.start({ name: 'laptop' });
+  cli.decide({ code: userCode, login: 'mia-dev', approve: true });
+  const { token: cliToken } = cli.poll(deviceCode);
+  const cliMe = () => fetch(`http://127.0.0.1:${port}/api/cli/me`, { headers: { host: `localhost:${port}`, authorization: `Bearer ${cliToken}` } });
+  assert.equal((await cliMe()).status, 200);
   assert.equal((await post(port, '/api/my/remove', { confirm: 'mia-dev' }, as)).status, 200);
   assert.equal((await details(made.body.tunnelToken)).status, 401, 'Remove My Woodshed revokes it');
+  assert.equal((await cliMe()).status, 401, 'and the command line\'s sign-ins');
 
   const again = await post(port, '/api/my/tunnel-token', {}, as);
   const revoked = await post(port, '/api/my/tunnel-token/remove', {}, as);
@@ -1822,6 +1833,31 @@ test('My settings\' Reviews card: each person picks who reviews their pull reque
   assert.equal((await post(port, '/api/my/reviews', { choice: 'everyone' }, as)).status, 400);
   assert.equal((await post(port, '/api/my/reviews', { choice: null }, as)).body.choice, null, 'back to the default');
   assert.equal((await post(port, '/api/my/reviews', { choice: 'both' }, { ...as, origin: 'https://evil.example' })).status, 403);
+});
+
+test('My settings\' Agent terminal: each person picks tmux or Herdr for their own private sessions, tmux by default', async (t) => {
+  const { createUserSettings } = await import('./userSettings.mjs');
+  const secrets = { values: new Map(), async read(n) { return this.values.get(n) ?? null; }, async write(n, v) { this.values.set(n, v); }, async remove(n) { this.values.delete(n); }, async list() { return [...this.values.keys()]; } };
+  const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets });
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+
+  assert.equal(userSettings.view('mia-dev').terminal, 'tmux', 'nothing picked: tmux, as every session');
+  const herdr = await post(port, '/api/my/terminal', { terminal: 'herdr', login: 'joel' }, as);
+  assert.deepEqual([herdr.status, herdr.body], [200, { terminal: 'herdr' }]);
+  assert.equal(userSettings.terminal('mia-dev'), 'herdr', 'the body cannot say whose it is');
+  assert.equal(userSettings.terminal('joel'), 'tmux');
+  assert.equal(userSettings.view('mia-dev').terminal, 'herdr', 'My settings shows it');
+  assert.equal((await post(port, '/api/my/terminal', { terminal: 'screen' }, as)).status, 400);
+  assert.equal((await post(port, '/api/my/terminal', {}, as)).status, 400);
+  assert.equal((await post(port, '/api/my/terminal', { terminal: 'tmux' }, { ...as, origin: 'https://evil.example' })).status, 403);
+  assert.equal((await post(port, '/api/my/terminal', { terminal: 'tmux' }, as)).body.terminal, 'tmux', 'back to tmux');
+  assert.equal(userSettings.terminal('mia-dev'), 'tmux');
 });
 
 test('a console that borrows its GitHub access shows no webhook switches, unless its host delivers webhooks', async (t) => {
