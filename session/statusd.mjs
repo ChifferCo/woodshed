@@ -41,6 +41,13 @@
 //                     {unchanged: true} while nothing was written after it
 //   POST /interrupt   Esc typed into the agent's pane (Ctrl+C into Grok Build's, which Esc never stops): every agent
 //                     stops its turn on it
+//   GET  /agents      the agents started beside the session's own (agents.mjs), each with its state: a private coding
+//                     session's on Claude Code or Codex alone, 404 anywhere else
+//   POST /agents      {"agent": "claude"|"codex", "model", "effort", "permissionMode", "prompt"} starts another, in a tmux
+//                     session of its own in the same checkout; 409 once the session is tainted, or with three running
+//   ANY  /agents/<id>/transcript|send|interrupt|prompt|answer|stop   as the routes of the same names, for that agent:
+//                     its own record of its conversation, a message typed into its pane (held while it works, and typed
+//                     once it is back at its prompt), Esc, what it asks and the answer; stop ends it
 //   GET  /prompt      what the agent's pane asks now, read from the screen (panePrompt.mjs): claude's AskUserQuestion
 //                     picker, or an approval (claude's permission dialog, codex's approval), or {prompt: null}
 //   POST /answer      the Chat tab's answer to it, typed as keys only once the pane shows that same prompt, and checked
@@ -74,9 +81,10 @@ import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
 import { TAINTED_CLAUDE_FLAGS, applyTaint, isTaintSetUp, isTainted, markTaintSetUp } from './taint.mjs';
-import { paneState, stateReader } from './agentState.mjs';
+import { lastInterruptAt, openToolCalls, paneState, stateReader } from './agentState.mjs';
+import { AGENT_ID_RE, createAgents, openRollout } from './agents.mjs';
 import { agentPane } from './agentPane.mjs';
-import { Refusal, answerApproval, answerQuestions, composerEmpty, composerText, readPrompt, typeMessage } from './panePrompt.mjs';
+import { Refusal, answerApproval, answerQuestions, composerEmpty, composerText, readPrompt, typeMessage, typingSteps } from './panePrompt.mjs';
 import { createReviewHost } from './reviewShed/host.mjs';
 import { createCodeEditor } from './codeEditor.mjs';
 import { readSessionDiff } from './sessionDiff.mjs';
@@ -179,8 +187,6 @@ const PR_CACHE_MS = 60_000;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_SEND_CHARS = 8000;
 const TRANSCRIPT_TAIL_BYTES = 64 * 1024;
-// What claude writes when Esc ends a turn, mid-turn ("…by user]") or on a dialog ("…by user for tool use]").
-const INTERRUPT_RECORD = '[Request interrupted by user';
 // The container's start too: the entrypoint execs statusd, and the task ends when it does, so it never restarts.
 const STARTED_AT = Date.now();
 const CONSOLE_URL = process.env.WOODSHED_CONSOLE_URL || '';
@@ -204,6 +210,7 @@ const CODEX = AGENT === 'codex';
 // The agents whose input box statusd reads from the screen (panePrompt.mjs, composerText): claude's and codex's. The
 // others' boxes are not read: a message to them is typed only between turns, with no prompt on screen, as for any.
 const READS_BOX = CLAUDE || CODEX;
+const CODEX_HOME = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 const CODEX_AUTH_FILE = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'auth.json');
 // The copy the entrypoint was given, to tell whether this session refreshed the login.
 const CODEX_GIVEN_FILE = path.join(os.homedir(), '.config/woodshed/codex-auth');
@@ -241,7 +248,7 @@ export function isAuthorized(header, token) {
 }
 
 // The readers of the agent's state, and the pane they read: statusd's tests and older callers import them from here.
-export { claudeState, paneState } from './agentState.mjs';
+export { claudeState, lastInterruptAt, openToolCalls, paneState } from './agentState.mjs';
 export { AGENT_PANE_FORMAT } from './agentPane.mjs';
 
 /**
@@ -610,7 +617,72 @@ const OWN_TRANSCRIPTS = { writtenFrom: readHomeRestoredFrom(), resume: process.e
 // The transcript claude writes to now, in this session (ownClaudeTranscript). Its name is claude's own session id,
 // which `claude --resume` takes.
 async function newestTranscript() {
-  return ownClaudeTranscript(transcriptDir(), OWN_TRANSCRIPTS);
+  return ownClaudeTranscript(transcriptDir(), { ...OWN_TRANSCRIPTS, skip: agents?.claimed().claude });
+}
+
+// The agents a person starts beside the session's own (agents.mjs): in a private coding session alone, never a shared
+// one, a question, a QA run or a review, and only beside Claude Code or Codex (shared/agents.cjs, teamCredential): a
+// Grok Build or OpenCode session runs on its owner's own sign-in and nothing else, and has no claude or codex set up to
+// start, nor records of theirs to keep apart from its own (the entrypoint writes neither for it). The entrypoint writes the claude flags they start with, and says when codex is
+// set up (configureCodex). WOODSHED_AGENT_BIN, WOODSHED_AGENT_CLAUDE_FLAGS_FILE, WOODSHED_CODEX_READY_FILE and
+// WOODSHED_AGENT_STATE_DIR move them
+// for the dev console's made-up sessions (console/bin/devChatSession.mjs): the fleet never sets them, so they are in no
+// PER_SESSION_ENV (providers/aws/ecsLauncher.mjs).
+const CODEX_READY_FILE = process.env.WOODSHED_CODEX_READY_FILE || '/tmp/woodshed-codex-ready';
+const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.env.SESSION_MODE !== 'review' && AGENTS.agent(AGENT).teamCredential ? createAgents({
+  run,
+  repoDir: REPO_DIR,
+  bin: process.env.WOODSHED_AGENT_BIN || path.join(import.meta.dirname, 'bin'),
+  claudeDir: transcriptDir(),
+  codexHome: CODEX_HOME,
+  claudeFlagsFile: process.env.WOODSHED_AGENT_CLAUDE_FLAGS_FILE || '/tmp/woodshed-agent-claude-flags',
+  codexReady: async () => existsSync(CODEX_READY_FILE),
+  codexEnv: codexBeside,
+  uploadsDir: process.env.UPLOADS_DIR || '/tmp/uploads',
+  stateDir: process.env.WOODSHED_AGENT_STATE_DIR || '/tmp',
+  tainted: () => tainted(),
+  // Where the session's own agent runs, the agents beside it run too: tmux, or Herdr (agentPane.mjs).
+  terminal: process.env.WOODSHED_TERMINAL === 'herdr' ? 'herdr' : 'tmux',
+  hcBin: process.env.WOODSHED_HC_BIN || 'hc',
+}) : null;
+
+// A Codex agent beside claude: its sign-in, the owner's own from My settings when they saved one, which the console sends
+// with the start (console/server.mjs, agentAction) and nothing here asks for, written into codex's home as configureCodex
+// writes it; with none, the console's proxy and the team key (session/bin/codex). In a Codex session codex has its own.
+// A start that fails after it takes back a sign-in it wrote.
+async function codexBeside(given) {
+  if (CODEX) return { env: {} };
+  const authFile = path.join(CODEX_HOME, 'auth.json');
+  if (existsSync(authFile)) {
+    console.log('statusd: Codex agent beside claude set up', { own: true, already: true });
+    return { env: { WOODSHED_CODEX_AUTH: '' } };
+  }
+  if (!given) {
+    console.log('statusd: Codex agent beside claude set up', { own: false });
+    return { env: { WOODSHED_CODEX_AUTH: 'key' } };
+  }
+  const body = given.startsWith('sk-') ? JSON.stringify({ OPENAI_API_KEY: given.trim() }) : given;
+  await fs.writeFile(authFile, body, { mode: 0o600, flag: 'wx' });
+  // The copy given, for the stop to tell whether this session refreshed it (keepCodexAuth).
+  await fs.mkdir(path.dirname(CODEX_GIVEN_FILE), { recursive: true });
+  await fs.writeFile(CODEX_GIVEN_FILE, given, { mode: 0o600 });
+  console.log('statusd: Codex agent beside claude set up', { own: true });
+  return {
+    env: { WOODSHED_CODEX_AUTH: '' },
+    undo: async () => {
+      await fs.rm(authFile, { force: true });
+      await fs.rm(CODEX_GIVEN_FILE, { force: true });
+      console.log('statusd: Codex sign-in taken back, the agent did not start');
+    },
+  };
+}
+
+// The rollout the session's own codex writes to: the one its process holds open, and with none open (it exited, or has
+// not opened one yet) the newest no agent beside it claimed.
+async function ownRollout() {
+  if (!agents) return undefined;
+  const held = await agentIo().shellPid().then((pid) => openRollout(pid, CODEX_HOME)).catch(() => null);
+  return held ?? undefined;
 }
 
 async function transcriptTail() {
@@ -625,60 +697,6 @@ async function transcriptTail() {
   } finally {
     await handle.close();
   }
-}
-
-/**
- * @param {string} tailText  the tail of a transcript
- * @returns {number|null}  when the last turn was cut short with Esc, mid-turn or on a dialog, in ms
- */
-export function lastInterruptAt(tailText) {
-  const lines = tailText.split('\n');
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (!lines[i].includes(INTERRUPT_RECORD)) continue;
-    let rec;
-    try {
-      rec = JSON.parse(lines[i]);
-    } catch {
-      continue;
-    }
-    const content = rec?.message?.content;
-    const texts = typeof content === 'string' ? [content] : Array.isArray(content) ? content.map((b) => b?.text) : [];
-    const at = Date.parse(rec?.timestamp);
-    if (rec?.type === 'user' && !Number.isNaN(at) && texts.some((t) => typeof t === 'string' && t.startsWith(INTERRUPT_RECORD))) return at;
-  }
-  return null;
-}
-
-/**
- * @param {string} tailText  the tail of a transcript
- * @param {{partial: boolean}} opts  partial: the tail starts mid-file, so a walk that runs off its start has not
- *   seen the whole turn
- * @returns {number|null}  tool calls since the last prompt with no result yet: still running, in parallel with the
- *   last one to finish, or a subagent at work. null when the tail ends before the prompt does: one large tool
- *   result can fill it, and the call it ran beside may be further back
- */
-export function openToolCalls(tailText, { partial }) {
-  const results = new Set();
-  let open = 0;
-  const lines = tailText.split('\n');
-  for (let i = lines.length - 1; i >= 0; i--) {
-    let rec;
-    try {
-      rec = JSON.parse(lines[i]);
-    } catch {
-      continue;
-    }
-    const content = rec?.message?.content;
-    if (rec?.type === 'user') {
-      if (!Array.isArray(content)) return open;
-      const resultIds = content.filter((b) => b?.type === 'tool_result').map((b) => b.tool_use_id);
-      if (!resultIds.length) return open;
-      resultIds.forEach((id) => results.add(id));
-    } else if (rec?.type === 'assistant' && Array.isArray(content)) {
-      open += content.filter((b) => b?.type === 'tool_use' && !results.has(b.id)).length;
-    }
-  }
-  return partial ? null : open;
 }
 
 async function hookState() {
@@ -917,7 +935,9 @@ const readAgent = stateReader({ qa: QA, agent: AGENT, terminal: TERMINAL });
 // ChatGPT's refresh token rotates, so the sign-in saved on My settings stops working once a session used it. The
 // console keeps the copy only for an owner who saved one, and says 409 to anyone else.
 async function keepCodexAuth() {
-  if (!CODEX || !CONSOLE_URL || process.env.SESSION_KIND !== 'private') return;
+  // A Codex agent beside claude in a session that has since seen production data sends nothing back (the console refuses
+  // it too): its sign-in file is the session's to write.
+  if (!(CODEX || (agents?.ranCodex() && !tainted())) || !CONSOLE_URL || process.env.SESSION_KIND !== 'private') return;
   try {
     const [body, given] = await Promise.all([fs.readFile(CODEX_AUTH_FILE, 'utf8'), fs.readFile(CODEX_GIVEN_FILE, 'utf8').catch(() => null)]);
     // Only a login this session refreshed goes back: another session's newer one must not be written over by a stale copy.
@@ -1055,6 +1075,8 @@ async function status() {
     shells: state === 'done' ? hook?.shells ?? 0 : 0,
     lastMessage: tail ? parseTranscriptTail(tail.text, { partial: tail.partial }).message : null,
     claudeSession: !CLAUDE ? null : (await newestTranscript().catch(() => null))?.name.replace(/\.jsonl$/, '') ?? null,
+    // The agents beside the session's own, for the page's switch over Chat and TUI. Left out where none can start.
+    ...(agents ? { agents: await agents.list().catch(() => []) } : {}),
     branch: await git('branch', '--show-current'),
     head: await git('rev-parse', '--short', 'HEAD'),
     prUrl: await prUrl(),
@@ -1199,33 +1221,9 @@ async function answer(body) {
   }
 }
 
-// How a message is typed so the agent shows it in its box as it is, never folded into a `[Pasted …]` placeholder
-// (measured on claude 2.1.328 and codex 0.167): claude folds a fast burst (1200 characters at once, or several lines),
-// and shows the same text typed 50 characters at a time, 20 ms apart, with Ctrl-J for each new line (a newline, not
-// an Enter). codex swallows an Enter landing in a fast run of plain keys, so it gets bracketed pastes, which it folds
-// over about 1000 characters: 400 at a time.
-const CLAUDE_CHUNK = 50;
-const CODEX_PASTE = 400;
-
-/**
- * @returns {({keys: string}|{paste: string}|{key: string}) & {pauseMs: number}}[]
- */
-export function typingSteps(text, agent) {
-  const steps = [];
-  // Every agent but claude gets pastes: codex as measured; Grok Build and OpenCode, whose typing was not measured, as
-  // a bracketed paste is the one way each documents taking text as it is.
-  if (agent !== 'claude') {
-    const chars = [...text];
-    for (let i = 0; i < chars.length; i += CODEX_PASTE) steps.push({ paste: chars.slice(i, i + CODEX_PASTE).join(''), pauseMs: 50 });
-    return steps;
-  }
-  text.split('\n').forEach((line, n) => {
-    if (n > 0) steps.push({ key: 'C-j', pauseMs: 20 });
-    const chars = [...line];
-    for (let i = 0; i < chars.length; i += CLAUDE_CHUNK) steps.push({ keys: chars.slice(i, i + CLAUDE_CHUNK).join(''), pauseMs: 20 });
-  });
-  return steps;
-}
+// How a message is typed (typingSteps) is panePrompt.mjs's, shared with the extra agents (agents.mjs): statusd's tests
+// import it from here.
+export { typingSteps };
 
 /**
  * A failed tmux call that typed a message, said again without the message: execFile's own error quotes the command
@@ -1548,6 +1546,8 @@ async function taint({ proxy = null, ca = null, message = '' }) {
   if (!flags.includes('--strict-mcp-config')) await fs.writeFile(CLAUDE_FLAGS_FILE, `${TAINTED_CLAUDE_FLAGS}${flags.trimEnd()}`);
   await fs.writeFile(TAINT_MESSAGE_FILE, String(message || 'This session has seen production data and is now locked down.'));
   await markTaintSetUp(TAINT_FILES.setUp);
+  // The agents beside the session's own are not reopened on the console's proxy: they stop.
+  await agents?.stopAll('tainted');
   console.log('statusd: tainted', { egress, reopens: CLAUDE });
   if (CLAUDE) tainting ??= reopenClaude().catch((err) => console.warn('statusd: claude not reopened after the taint', { message: err?.message }));
   return { tainted: true, egress };
@@ -1731,7 +1731,8 @@ async function uploadReply(req, res) {
     const saved = await saveUpload(req, { name: url.searchParams.get('name') });
     // Herdr types no text without an Enter, so a file dropped on the agent there is saved and not typed in: the page
     // says where it is. The Terminal tab's shell is tmux's always.
-    const typed = pane === 'terminal' || (pane === 'agent' && agentIo().typesText) ? pane : null;
+    // An agent beside the session's own (agents.mjs) is in tmux always, under its own name.
+    const typed = pane === 'terminal' || (pane === 'agent' && agentIo().typesText) || (agents && TERMINAL === 'tmux' && AGENT_ID_RE.test(pane ?? '')) ? pane : null;
     if (typed) await typePaths(run, [saved.path], typed);
     console.log('statusd: file uploaded', { bytes: saved.bytes, typed });
     return reply(res, 200, saved);
@@ -1896,6 +1897,7 @@ async function handle(req, res) {
     await interrupt();
     return reply(res, 200, { ok: true });
   }
+  if (pathname === '/agents' || pathname.startsWith('/agents/')) return agentsReply(req, res, route, pathname);
   if (route === 'GET /prompt') {
     // A pane that could not be read is not one that asks nothing: said so, for the page to send the person to the TUI tab.
     let pane;
@@ -1946,13 +1948,16 @@ async function handle(req, res) {
     const params = new URL(req.url, 'http://statusd').searchParams;
     const limit = params.get('limit');
     const since = Number(params.get('since'));
+    const claimed = agents?.claimed();
     const read = await readSessionTranscript({
       agent: AGENT,
       home: os.homedir(),
       claudeDir: transcriptDir(),
       ...OWN_TRANSCRIPTS,
       root: REPO_DIR,
-      codexHome: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
+      codexHome: CODEX_HOME,
+      skip: CODEX ? claimed?.codex : CLAUDE ? claimed?.claude : undefined,
+      ...(CODEX ? { file: await ownRollout() } : {}),
       ...(limit ? { limit: Number(limit) } : {}),
       ...(params.get('since') && Number.isFinite(since) ? { since } : {}),
     }).catch((err) => {
@@ -1967,7 +1972,7 @@ async function handle(req, res) {
     try {
       const { steps, pane } = JSON.parse((await readBody(req)) || '{}');
       // The TUI tab is a Herdr client then, which takes the wheel itself: there is no tmux pane of the agent's to scroll.
-      if (TERMINAL === 'herdr' && (pane ?? 'agent') === 'agent') return reply(res, 409, { error: 'the agent runs in Herdr, whose client scrolls it' });
+      if (TERMINAL === 'herdr' && ((pane ?? 'agent') === 'agent' || AGENT_ID_RE.test(pane ?? ''))) return reply(res, 409, { error: 'the agent runs in Herdr, whose client scrolls it' });
       return reply(res, 200, { via: await scrollPane(run, { steps, pane }) });
     } catch (err) {
       if (err.shown || err instanceof SyntaxError) return reply(res, 400, { error: err.message });
@@ -1991,6 +1996,67 @@ async function handle(req, res) {
   }
   if (route === 'POST /app/stop') return reply(res, 200, await stopApp());
   return reply(res, 404, { error: 'not found' });
+}
+
+// The agents beside the session's own (agents.mjs): list and start them, and each one's Chat routes.
+async function agentsReply(req, res, route, pathname) {
+  if (!agents) return reply(res, 404, { error: 'this session runs no other agents: only a private coding session does' });
+  if (route === 'GET /agents') return reply(res, 200, { agents: await agents.list() });
+  try {
+    if (route === 'POST /agents') {
+      let body;
+      try {
+        body = JSON.parse((await readBody(req)) || '{}');
+      } catch {
+        return reply(res, 400, { error: 'body must be JSON' });
+      }
+      return reply(res, 200, { agent: await agents.start(body) });
+    }
+    const [, , id, action] = pathname.split('/');
+    if (!AGENT_ID_RE.test(id ?? '') || pathname.split('/').length !== 4) return reply(res, 404, { error: 'not found' });
+    const op = `${req.method} ${action}`;
+    if (op === 'GET transcript') {
+      const params = new URL(req.url, 'http://statusd').searchParams;
+      const since = Number(params.get('since'));
+      return reply(res, 200, await agents.transcript(id, {
+        limit: Number(params.get('limit')) || undefined,
+        since: params.get('since') && Number.isFinite(since) ? since : undefined,
+      }));
+    }
+    if (op === 'POST send') {
+      let text;
+      let raw;
+      try {
+        raw = await readBody(req);
+        text = parseSendBody(raw);
+      } catch (err) {
+        return reply(res, 400, { error: err.message });
+      }
+      const messageId = JSON.parse(raw)?.id;
+      const done = await agents.send(id, text, typeof messageId === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(messageId) ? messageId : undefined);
+      return done.ok ? reply(res, 200, done) : reply(res, done.status, { error: done.error, ...(done.typed && { typed: true }) });
+    }
+    if (op === 'POST interrupt') {
+      await agents.interrupt(id);
+      return reply(res, 200, { ok: true });
+    }
+    if (op === 'GET prompt') return reply(res, 200, promptReply(await agents.prompt(id)));
+    if (op === 'POST answer') {
+      let body;
+      try {
+        body = parseAnswerBody(await readBody(req));
+      } catch (err) {
+        return reply(res, 400, { error: err.message });
+      }
+      const done = await agents.answer(id, body);
+      return reply(res, done.status, done.body);
+    }
+    if (op === 'POST stop') return reply(res, 200, await agents.stop(id));
+    return reply(res, 404, { error: 'not found' });
+  } catch (err) {
+    if (err.status) return reply(res, err.status, { error: err.message });
+    throw err;
+  }
 }
 
 function main() {

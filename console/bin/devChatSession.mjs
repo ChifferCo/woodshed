@@ -37,6 +37,8 @@ const agents = createRequire(import.meta.url)('../../shared/agents.cjs');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const STATUSD = path.join(HERE, '..', '..', 'session', 'statusd.mjs');
 const AGENT = path.join(HERE, 'devChatAgent.mjs');
+const ATTACH = path.join(HERE, '..', '..', 'session', 'bin', 'woodshed-attach');
+const HERDR_VARIABLES = ['WOODSHED_TERMINAL', 'WOODSHED_HC_BIN', 'HC_TERMINAL_ID', 'HC_TERMINAL_SOCKET', 'HC_SCOPE', 'HC_SESSION'];
 const WOODSHED = path.join(HERE, '..', '..');
 const HOOKS = path.join(WOODSHED, 'session', 'claudeHooks.json');
 const HOOK_STATE = path.join(WOODSHED, 'session', 'hookState.mjs');
@@ -99,7 +101,7 @@ async function trustOnce(tmux) {
 
 /**
  * @param {{id: string, token: string, agent: 'codex'|'claude'|'grok'|'opencode', nextPath: string, real?: boolean, terminalToken?: string}} opts
- *   nextPath: the PATH a `docker` call for any other container goes on with. real: the real agent, with ttyd on
+ *   nextPath: the PATH a `docker` call for any other container goes on with. real: the real agent. Each gets ttyd on
  *   terminalToken
  * @returns {Promise<{port: number, termPort: number|null, ref: string|null, binDir: string|null, close: () => void}|null>}
  */
@@ -185,9 +187,10 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   const restoredFile = path.join(root, 'home-restored-from');
   if (restoredHome && agent === 'claude' && !real) restoreEarlierHome(recordDir, restoredFile);
   // A tmux server of its own (TMUX_TMPDIR), so it never meets the session's own claude.
-  // Its agent is in that tmux, never Herdr: a dev console run in a Woodshed session whose own agent is in Herdr has
-  // WOODSHED_TERMINAL=herdr, and its statusd would read that session's agent instead.
-  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: root, WOODSHED_TERMINAL: 'tmux', HOME: home, WOODSHED_CLAUDE_STATE_FILE: stateFile, WOODSHED_HOME_RESTORED_FILE: restoredFile,
+  // Never the variables that reach a Herdr core (test/isolatedEnv.mjs): a dev console run in a Woodshed session whose
+  // agent runs in Herdr would otherwise read, and its agents type into, that session's own terminals.
+  const ownEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !HERDR_VARIABLES.includes(name)));
+  const tmuxEnv = { ...ownEnv, TMUX: '', TMUX_TMPDIR: root, HOME: home, WOODSHED_CLAUDE_STATE_FILE: stateFile, WOODSHED_HOME_RESTORED_FILE: restoredFile,
     // OpenCode's database is under XDG_DATA_HOME: this machine's own must not be where statusd looks.
     ...(!real && { XDG_DATA_HOME: path.join(home, '.local', 'share') }),
     ...(restoredHome && { DEV_CHAT_AGENT_FRESH: '1' }),
@@ -213,13 +216,36 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   }
   execFileSync('tmux', ['new-session', '-d', '-s', 'claude', '-x', '120', '-y', '30', '-c', repo, paneCommand], { env: tmuxEnv });
   if (real && !realCodex) await trustOnce(tmuxEnv);
+  // The agents started beside a stand-in session's own (session/agents.mjs, statusd's /agents), from New agent on its
+  // pane bar: stand-ins too, a `claude` and a `codex` that run devChatAgent.mjs in their own tmux sessions, writing their
+  // records where the real ones would. The real agents' sessions start none: they would spend this machine's sign-ins.
+  const agentsEnv = {};
+  if (!real) {
+    const agentBin = path.join(root, 'agent-bin');
+    fs.mkdirSync(agentBin);
+    fs.writeFileSync(path.join(agentBin, 'claude'), `#!/bin/sh
+exec '${process.execPath}' '${AGENT}' claude "$HOME/.claude/projects/$(printf %s "$PWD" | tr '/.' '--')" "$PWD" "$@"
+`, { mode: 0o755 });
+    fs.writeFileSync(path.join(agentBin, 'codex'), `#!/bin/sh
+exec '${process.execPath}' '${AGENT}' codex "\${CODEX_HOME:-$HOME/.codex}" "$PWD" "$@"
+`, { mode: 0o755 });
+    fs.writeFileSync(path.join(root, 'agent-claude-flags'), '');
+    fs.writeFileSync(path.join(root, 'codex-ready'), '');
+    Object.assign(agentsEnv, {
+      SESSION_KIND: 'private', WOODSHED_AGENT_BIN: agentBin, UPLOADS_DIR: path.join(root, 'uploads'),
+      WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(root, 'agent-claude-flags'), WOODSHED_CODEX_READY_FILE: path.join(root, 'codex-ready'),
+      WOODSHED_AGENT_STATE_DIR: root,
+    });
+  }
+  // The TUI tab, as a session serves it (startClaude in session/entrypoint.sh): ttyd running woodshed-attach, which
+  // attaches to the session's own agent, or to one beside it that the URL names.
   let ttyd = null;
   let termPort = null;
-  if (real) {
+  if (onPath('ttyd')) {
     termPort = await freePort();
-    ttyd = spawn('ttyd', ['--writable', '--interface', '127.0.0.1', '--port', String(termPort), '--base-path', `/term/${id}`,
+    ttyd = spawn('ttyd', ['--writable', '--url-arg', '--interface', '127.0.0.1', '--port', String(termPort), '--base-path', `/term/${id}`,
       '--credential', `woodshed:${terminalToken}`, '-t', THEME, '-t', 'scrollback=10000', '-t', 'disableLeaveAlert=true',
-      'tmux', 'attach', '-t', 'claude'], { stdio: 'ignore', env: tmuxEnv });
+      ATTACH], { stdio: 'ignore', env: { ...tmuxEnv, WOODSHED_TUI_ATTACH: 'exec tmux attach -t claude' } });
   }
   const port = await freePort();
   const child = spawn(process.execPath, [STATUSD], {
@@ -228,11 +254,12 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
       AGENT: agent === 'claude' ? '' : agent, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '',
       // An ordinary session's, whatever kind of session the dev console itself runs in (a QA one's would never say done).
       SESSION_MODE: '',
+      ...agentsEnv,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   // What it was sent and its state: the rest is warnings of what a made-up session lacks (gh, a branch on GitHub).
-  const relay = (chunk) => { if (/statusd: (text sent|text not sent|message held|held message|agent interrupted|answer typed|answer refused|claude state changed)/.test(String(chunk))) process.stdout.write(`dev chat session ${id}: ${chunk}`); };
+  const relay = (chunk) => { if (/(statusd|agents): (text sent|text not sent|message held|held message|agent interrupted|answer typed|answer refused|claude state changed|agent started|agent stopped|agent state changed)/.test(String(chunk))) process.stdout.write(`dev chat session ${id}: ${chunk}`); };
   child.stdout.on('data', relay);
   child.stderr.on('data', relay);
   let binDir = null;

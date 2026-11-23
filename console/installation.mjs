@@ -460,6 +460,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // What a session has open that its lockdown would not close goes the moment it starts.
   if (egressProxy) fleet.onLocking((id) => egressProxy.cut(id));
   fleet.onLocking((id) => mcpRelay.cut(id));
+  // A Codex agent's calls on the team key, opened before its session's lockdown (session/agents.mjs).
+  fleet.onLocking((id) => openai.cut(id));
   // Sessions of anyone the program's list does not have go back to Unassigned, now for the first read and at each after.
   members?.whenGone?.((login) => fleet.releaseAssignments({ login, by: 'the program' }));
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });

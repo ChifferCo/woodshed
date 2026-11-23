@@ -663,13 +663,20 @@ async function tail(file, size) {
  * starts from its owner's Claude home, which holds their earlier conversations on the repo, one of them maybe another
  * session's that is still running; until claude writes its first line here, none of them is this session's.
  * @param {string} claudeDir  claude's transcript folder for the repo
- * @param {{writtenFrom?: number, resume?: string|null}} [opts]  writtenFrom: when the home was restored, in ms (0: all)
+ * @param {{writtenFrom?: number, resume?: string|null, skip?: Set<string>|null}} [opts]  writtenFrom: when the home was
+ *   restored, in ms (0: all). skip: the names of the session's other claudes' transcripts (agents.mjs), never this one
  * @returns {Promise<{name: string, file: string, stat: import('node:fs').Stats}|null>}
  */
-export async function ownClaudeTranscript(claudeDir, { writtenFrom = 0, resume = null } = {}) {
+export async function ownClaudeTranscript(claudeDir, { writtenFrom = 0, resume = null, skip = null } = {}) {
   const resumed = resume ? `${resume}.jsonl` : null;
-  const found = await newestIn(claudeDir, (name) => name.endsWith('.jsonl'), (name, stat) => name === resumed || stat.mtimeMs >= writtenFrom);
+  const found = await newestIn(claudeDir, (name) => name.endsWith('.jsonl') && !skip?.has(name), (name, stat) => name === resumed || stat.mtimeMs >= writtenFrom);
   return found ? { ...found, name: path.basename(found.file) } : null;
+}
+
+async function fileStat(file) {
+  if (!file) return null;
+  const stat = await fs.stat(file).catch(() => null);
+  return stat?.isFile() ? { file, stat } : null;
 }
 
 async function newestIn(dir, keep, own = () => true) {
@@ -686,14 +693,16 @@ async function newestIn(dir, keep, own = () => true) {
   return stats.filter((s) => s.stat && own(path.basename(s.file), s.stat)).sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs)[0] ?? null;
 }
 
-// Codex files its rollouts by the day they started: the newest is in the last day folder that has one.
-async function newestRollout(codexHome) {
+// Codex files its rollouts by the day they started: the newest is in the last day folder that has one. `skip`: the files
+// of the session's other codexes (agents.mjs).
+async function newestRollout(codexHome, skip = null) {
   const root = path.join(codexHome, 'sessions');
   const desc = async (dir) => (await fs.readdir(dir).catch(() => [])).filter((n) => /^\d+$/.test(n)).sort().reverse();
   for (const year of await desc(root)) {
     for (const month of await desc(path.join(root, year))) {
       for (const day of await desc(path.join(root, year, month))) {
-        const found = await newestIn(path.join(root, year, month, day), (n) => /^rollout-.*\.jsonl(\.zst)?$/.test(n));
+        const dir = path.join(root, year, month, day);
+        const found = await newestIn(dir, (n) => /^rollout-.*\.jsonl(\.zst)?$/.test(n) && !skip?.has(path.join(dir, n)));
         if (found) return found;
       }
     }
@@ -704,16 +713,18 @@ async function newestRollout(codexHome) {
 /**
  * The newest conversation of the session's agent, newest entries last.
  * @param {{agent: string, claudeDir: string, codexHome: string, home?: string, root?: string,
- *          limit?: number, since?: number, writtenFrom?: number, resume?: string|null}} opts
+ *          limit?: number, since?: number, writtenFrom?: number, resume?: string|null, skip?: Set<string>|null,
+ *          file?: string|null}} opts
  *   agent: claude, codex, grok or opencode (shared/agents.cjs). claudeDir: claude's transcript folder for the repo. home:
  *   the home the other agents keep theirs in. root: the repo, which edits' paths are given relative to, and whose conversations are read.
  *   since: the writtenAt of the caller's last answer. writtenFrom, resume: which of claude's are this session's
- *   (ownClaudeTranscript)
+ *   (ownClaudeTranscript). skip: the session's other agents' records (agents.mjs): claude's by name, codex's by path.
+ *   file: the record itself, for an agent that knows its own (agents.mjs); undefined reads the newest, null none yet
  * @returns {Promise<{agent: string, entries: Entry[], partial: boolean, writtenAt: number|null}|{agent: string, unchanged: true, writtenAt: number}>}
  *   partial: older entries were left out, by the read or by the limit. unchanged: the newest record is still the
  *   one written at `since`, so the caller's entries stand
  */
-export async function readSessionTranscript({ agent, claudeDir, codexHome, home = os.homedir(), root, limit = MAX_ENTRIES, since = null, writtenFrom = 0, resume = null }) {
+export async function readSessionTranscript({ agent, claudeDir, codexHome, home = os.homedir(), root, limit = MAX_ENTRIES, since = null, writtenFrom = 0, resume = null, skip = null, file }) {
   const max = Math.max(1, Math.min(MAX_ENTRIES, Math.trunc(Number(limit)) || MAX_ENTRIES));
   if (agent === 'opencode') {
     const read = await readOpenCode({ dbFile: openCodeDb(home), root, since });
@@ -721,9 +732,10 @@ export async function readSessionTranscript({ agent, claudeDir, codexHome, home 
     if (read.unchanged) return { agent, unchanged: true, writtenAt: read.writtenAt };
     return { agent, entries: capDiffs(read.entries.slice(-max)), partial: read.partial || read.entries.length > max, writtenAt: read.writtenAt };
   }
-  const newest = agent === 'codex' ? await newestRollout(codexHome)
-    : agent === 'grok' ? await newestGrokUpdates(home, root)
-      : await ownClaudeTranscript(claudeDir, { writtenFrom, resume });
+  const newest = file !== undefined ? await fileStat(file)
+    : agent === 'codex' ? await newestRollout(codexHome, skip)
+      : agent === 'grok' ? await newestGrokUpdates(home, root)
+        : await ownClaudeTranscript(claudeDir, { writtenFrom, resume, skip });
   if (!newest) return { agent, entries: [], partial: false, writtenAt: null };
   if (since !== null && newest.stat.mtimeMs === since) return { agent, unchanged: true, writtenAt: since };
   let text;

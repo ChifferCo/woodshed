@@ -166,3 +166,60 @@ export function stateReader({ qa = false, agent, codex = false, terminal = 'tmux
   if (terminal !== 'herdr') return own;
   return (input) => withHerdr(herdrState(input), own(input));
 }
+
+// What claude writes when Esc ends a turn, mid-turn ("…by user]") or on a dialog ("…by user for tool use]").
+const INTERRUPT_RECORD = '[Request interrupted by user';
+
+/**
+ * @param {string} tailText  the tail of a transcript
+ * @returns {number|null}  when the last turn was cut short with Esc, mid-turn or on a dialog, in ms
+ */
+export function lastInterruptAt(tailText) {
+  const lines = tailText.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes(INTERRUPT_RECORD)) continue;
+    let rec;
+    try {
+      rec = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    const content = rec?.message?.content;
+    const texts = typeof content === 'string' ? [content] : Array.isArray(content) ? content.map((b) => b?.text) : [];
+    const at = Date.parse(rec?.timestamp);
+    if (rec?.type === 'user' && !Number.isNaN(at) && texts.some((t) => typeof t === 'string' && t.startsWith(INTERRUPT_RECORD))) return at;
+  }
+  return null;
+}
+
+/**
+ * @param {string} tailText  the tail of a transcript
+ * @param {{partial: boolean}} opts  partial: the tail starts mid-file, so a walk that runs off its start has not
+ *   seen the whole turn
+ * @returns {number|null}  tool calls since the last prompt with no result yet: still running, in parallel with the
+ *   last one to finish, or a subagent at work. null when the tail ends before the prompt does: one large tool
+ *   result can fill it, and the call it ran beside may be further back
+ */
+export function openToolCalls(tailText, { partial }) {
+  const results = new Set();
+  let open = 0;
+  const lines = tailText.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let rec;
+    try {
+      rec = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    const content = rec?.message?.content;
+    if (rec?.type === 'user') {
+      if (!Array.isArray(content)) return open;
+      const resultIds = content.filter((b) => b?.type === 'tool_result').map((b) => b.tool_use_id);
+      if (!resultIds.length) return open;
+      resultIds.forEach((id) => results.add(id));
+    } else if (rec?.type === 'assistant' && Array.isArray(content)) {
+      open += content.filter((b) => b?.type === 'tool_use' && !results.has(b.id)).length;
+    }
+  }
+  return partial ? null : open;
+}

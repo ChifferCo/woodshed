@@ -24,10 +24,11 @@ const message = (kind, body) => encodeFrame(OP.binary, Buffer.concat([Buffer.fro
 /**
  * Opens the websocket.
  * @param {{origin: string, token: string, session: string, kind: 'term'|'shell', size: {columns: number, rows: number},
- *          userAgent?: string, answerMs?: number}} args
+ *          userAgent?: string, answerMs?: number, agent?: string|null}} args  agent: `agent-2` and the rest, an agent
+ *   started beside the session's own, on the TUI's terminal
  * @returns {Promise<{socket: import('node:net').Socket, head: Buffer}|{refused: {status: number, message: string}}|{unreachable: string}>}
  */
-export function openTerminal({ origin, token, session, kind, size, userAgent = 'woodshed-cli', answerMs = ANSWER_MS }) {
+export function openTerminal({ origin, token, session, kind, size, userAgent = 'woodshed-cli', answerMs = ANSWER_MS, agent = null }) {
   const url = new URL(`/api/tunnel/${kind}/${session}`, origin);
   const key = newKey();
   return new Promise((resolve) => {
@@ -42,6 +43,7 @@ export function openTerminal({ origin, token, session, kind, size, userAgent = '
       headers: {
         connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-key': key, 'sec-websocket-version': '13',
         'sec-websocket-protocol': 'tty', authorization: `Bearer ${token}`, [SIZE_HEADER]: `${size.columns}x${size.rows}`, 'user-agent': userAgent,
+        ...(agent ? { 'x-woodshed-agent': agent } : {}),
       },
       agent: false,
     });

@@ -583,9 +583,9 @@ export async function main(argv, deps = {}) {
         // A relative config folder is made absolute: hc's core runs the line from a folder of its own.
         // This terminal on the session's, once: closed, detached, refused, unreachable, or cut once it was open.
         tty: Boolean(stdin.isTTY && stdout.isTTY),
-        terminal: deps.terminal ?? (async (session, kind) => {
+        terminal: deps.terminal ?? (async (session, kind, { agent = null } = {}) => {
           const size = { columns: stdout.columns || 80, rows: stdout.rows || 24 };
-          const opened = await openTerminal({ origin, token: signedIn(origin).token, session, kind, size, userAgent: `woodshed-cli/${VERSION}` });
+          const opened = await openTerminal({ origin, token: signedIn(origin).token, session, kind, size, userAgent: `woodshed-cli/${VERSION}`, agent });
           if (opened.refused) return { status: 'refused', http: opened.refused.status, message: opened.refused.message };
           if (opened.unreachable) return { status: 'unreachable', message: opened.unreachable };
           const openedAt = now();

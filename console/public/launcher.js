@@ -39,6 +39,9 @@
   const MODES = [['auto', 'auto', 'Works unattended; refuses what looks risky'], ['acceptEdits', 'acceptEdits', 'Edits freely, asks before commands'],
     ['plan', 'plan', 'Plans only, changes nothing'], ['default', 'default', 'Asks before every tool']];
 
+  // For + Another agent on a session's pane bar (session.js), which offers the same choices.
+  W.agentChoices = { AGENTS, MODELS, EFFORTS, MODES, CODEX_MODES };
+
   function select(id, options) {
     return h('select', { id, class: 'field' }, options.map(([value, label, title]) => h('option', { value, title }, label)));
   }

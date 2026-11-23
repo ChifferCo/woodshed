@@ -267,6 +267,12 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 /* Share, beside the app's button: Shared in the bar's slate, outlined, while others can open the app. Never orange. */
 .pbtn.pshare.is-shared { color: var(--bar-slate); border-color: var(--bar-well-line); }
 .pbtn.pshare.is-shared:hover { color: var(--bar-ink); }
+/* The agent switch beside the tabs, while Chat or TUI shows (session.js agentSwitch): the agent shown, how many the
+   session has, and how many of the others need you, in the bar's needs-you colour as the status word has it. */
+.pbtn.pagent { gap: 6px; color: var(--bar-ink); border-color: var(--bar-well-line); }
+.pbtn.pagent .pagent-count { font-weight: 500; color: var(--bar-sub); }
+.pbtn.pagent .pagent-needs { color: var(--bar-amber); }
+.pbtn.pagent.is-needs { border-color: var(--bar-amber-line); }
 .pphone-meta .ptimer { font-family: var(--mono); color: var(--bar-amber); }
 .pane-bar .btn { min-height: 24px; padding: 0 8px; font-size: 11.5px; font-family: "Red Hat Display", system-ui, sans-serif; }
 .pane-bar .btn-plain { border: 1px solid var(--bar-well-line); background: transparent; color: var(--bar-ink); }
@@ -396,6 +402,10 @@ dialog.confirm dl { margin: 0 0 12px; display: grid; grid-template-columns: auto
 dialog.confirm dt { color: var(--meta); }
 dialog.confirm dd { margin: 0; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
 dialog.confirm .field-label { margin-top: 12px; }
+/* Start another agent (session.js newAgentDialog): New session's four choices, two by two, then the first message. */
+dialog.agent-dialog .agent-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+dialog.agent-dialog textarea { resize: vertical; min-height: 64px; }
+dialog.agent-dialog .sub { margin: 0; }
 .dialog-actions { margin-top: 14px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .nowrap { white-space: nowrap; }
 
@@ -570,6 +580,8 @@ dialog.wizard:focus { outline: none; }
   .pane-bar .psubtab { padding: 5px 0; font-size: 12.5px; }
   .pane-bar > .ptitle, .pane-bar > .status, .pane-bar > .prchip, .pane-bar .pright, .pane-bar .pkeys,
   .pane-bar .pref, .pane-bar .pmark, .pane-bar .pbtn { display: none; }
+  /* The agent switch stays, on a row of its own under the tabs: on a phone it is how Chat and TUI reach another agent. */
+  .pane-bar .pbtn.pagent { display: inline-flex; order: 5; flex: 1 1 100%; justify-content: center; min-height: 30px; font-size: 12.5px; }
 
   /* The message box under claude's terminal (messageBox.js): 📎, the field, and the mic or Send. */
   .msgbox:not([hidden]) { display: flex; flex: none; flex-direction: column; gap: 6px; padding: 7px 8px 8px; background: var(--bar); border-top: 1px solid var(--bar-line); }

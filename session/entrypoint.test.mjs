@@ -908,8 +908,8 @@ test('a Codex session starts codex with the picked flags, and the rules go in co
     encoding: 'utf8', env: { PATH: process.env.PATH, PERMISSION_MODE: 'plan', MODEL: 'gpt-5.5', EFFORT: 'high' },
   });
   assert.equal(flags, ' --sandbox read-only --ask-for-approval on-request --model gpt-5.5 -c model_reasoning_effort=\\"high\\"');
-  assert.ok(ENTRYPOINT.indexOf('  writeRules\n  case "${AGENT:-claude}" in\n    codex) configureCodex ;;') > 0, 'the rules are written before codex is configured');
-  assert.ok(ENTRYPOINT.indexOf('  pullSettings\n') < ENTRYPOINT.indexOf('    codex) configureCodex ;;\n'), 'the owner\'s synced config is there before codex is configured');
+  assert.ok(ENTRYPOINT.indexOf('  writeRules\n  case "${AGENT:-claude}" in\n    codex)\n      configureCodex\n') > 0, 'the rules are written before codex is configured');
+  assert.ok(ENTRYPOINT.indexOf('  pullSettings\n') < ENTRYPOINT.indexOf('    codex)\n      configureCodex\n'), 'the owner\'s synced config is there before codex is configured');
 });
 
 // configureCodex as the entrypoint has it, in a codex home of the test's own, after a pull wrote `pulled` into it.
@@ -1353,7 +1353,7 @@ test('startClaude types the agent at once, or once its parent made its terminal,
 });
 
 test('while the agent\'s terminal is not there yet, the TUI tab says so and attaches once it is', () => {
-  assert.match(fn('startClaude'), /\[ ! -f "\$AGENT_TERMINAL_WAIT" \] \|\| attach=\(bash -c "\$TUI_WAIT_THEN_ATTACH"\)/);
+  assert.match(fn('startClaude'), /\[ ! -f "\$AGENT_TERMINAL_WAIT" \] \|\| attach=\$TUI_WAIT_THEN_ATTACH/);
   const line = /^TUI_WAIT_THEN_ATTACH=(.*)$/m.exec(ENTRYPOINT)[1];
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-tui-wait-'));
   try {
@@ -1536,4 +1536,30 @@ test('the rules and setup files are never read through a link out of the checkou
   fs.symlinkSync(elsewhere, path.join(dir, 'docs'));
   fs.writeFileSync(path.join(elsewhere, 'rules.md'), 'SENTINEL-NOT-A-SECRET');
   assert.equal(cli('rules').failed, true);
+});
+
+// The TUI tab's ttyd runs woodshed-attach with the URL's `arg` (--url-arg): an agent started beside the session's own
+// (agents.mjs) by its tmux session, anything else the session's own, as WOODSHED_TUI_ATTACH says.
+test('the TUI tab attaches to the agent the page names, and to the session\'s own otherwise', () => {
+  assert.match(fn('startClaude'), /WOODSHED_TUI_ATTACH=\$attach ttyd --writable --url-arg .*"\$SESSION_DIR\/bin\/woodshed-attach"/s);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-attach-'));
+  try {
+    // tmux that has only agent-2, and says what it would attach to.
+    fs.writeFileSync(path.join(tmp, 'tmux'), '#!/bin/bash\ncase "$1" in has-session) [ "$3" = =agent-2 ] ;; attach) echo "tmux attach $3" ;; esac\n', { mode: 0o755 });
+    const attach = (...args) => execFileSync(path.join(SESSION_DIR, 'bin', 'woodshed-attach'), args, {
+      encoding: 'utf8', env: { PATH: `${tmp}:/usr/bin:/bin`, WOODSHED_TUI_ATTACH: 'echo own agent' }, timeout: 5000,
+    });
+    assert.equal(attach('agent-2'), 'tmux attach =agent-2\n');
+    assert.equal(attach(), 'own agent\n');
+    for (const bad of ['agent-1', 'claude', 'agent-2; reboot', '../agent-2']) assert.equal(attach(bad), 'own agent\n', bad);
+    // In Herdr, the agent's Herdr terminal of that name.
+    fs.writeFileSync(path.join(tmp, 'hc'), '#!/bin/bash\ncase "$1" in get) [ "$4" = agent-3 ] ;; attach) echo "hc attach $2" ;; esac\n', { mode: 0o755 });
+    const inHerdr = (...args) => execFileSync(path.join(SESSION_DIR, 'bin', 'woodshed-attach'), args, {
+      encoding: 'utf8', env: { PATH: `${tmp}:/usr/bin:/bin`, WOODSHED_TUI_ATTACH: 'echo own agent', WOODSHED_TERMINAL: 'herdr', WOODSHED_HC_BIN: path.join(tmp, 'hc') }, timeout: 5000,
+    });
+    assert.equal(inHerdr('agent-3'), 'hc attach agent-3\n');
+    assert.equal(inHerdr(), 'own agent\n');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });

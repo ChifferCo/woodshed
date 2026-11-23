@@ -557,13 +557,41 @@ function stillDrawing(box, text) {
 
 /**
  * Whether the box holds the text just typed and nothing else, as it shows it (wrapped, so whitespace aside). statusd
- * types so that no agent folds it into a `[Pasted …]` placeholder (statusd.mjs, typingSteps), since a placeholder says
+ * types so that no agent folds it into a `[Pasted …]` placeholder (typingSteps, below), since a placeholder says
  * nothing of whose paste it is: one in the box is never this text, and gets no Enter.
  */
 export function holdsOnly(box, text) {
   if (typeof box !== 'string') return false;
   const bare = (s) => s.replace(/[\s\u00a0]+/g, '');
   return bare(box) === bare(text);
+}
+
+// How a message is typed so the agent shows it in its box as it is, never folded into a `[Pasted …]` placeholder
+// (measured on claude 2.1.328 and codex 0.167): claude folds a fast burst (1200 characters at once, or several lines),
+// and shows the same text typed 50 characters at a time, 20 ms apart, with Ctrl-J for each new line (a newline, not
+// an Enter). codex swallows an Enter landing in a fast run of plain keys, so it gets bracketed pastes, which it folds
+// over about 1000 characters: 400 at a time.
+const CLAUDE_CHUNK = 50;
+const CODEX_PASTE = 400;
+
+/**
+ * @returns {({keys: string}|{paste: string}|{key: string}) & {pauseMs: number}}[]
+ */
+export function typingSteps(text, agent) {
+  const steps = [];
+  // Every agent but claude gets pastes: codex as measured; Grok Build and OpenCode, whose typing was not measured, as
+  // a bracketed paste is the one way each documents taking text as it is.
+  if (agent !== 'claude') {
+    const chars = [...text];
+    for (let i = 0; i < chars.length; i += CODEX_PASTE) steps.push({ paste: chars.slice(i, i + CODEX_PASTE).join(''), pauseMs: 50 });
+    return steps;
+  }
+  text.split('\n').forEach((line, n) => {
+    if (n > 0) steps.push({ key: 'C-j', pauseMs: 20 });
+    const chars = [...line];
+    for (let i = 0; i < chars.length; i += CLAUDE_CHUNK) steps.push({ keys: chars.slice(i, i + CLAUDE_CHUNK).join(''), pauseMs: 20 });
+  });
+  return steps;
 }
 
 export async function typeMessage(io, text) {

@@ -1235,6 +1235,14 @@ test('Resume starts a stopped private session again on its branch, reopening cla
   await fleet.stop(never, 'stopped from the console');
   const fresh = await fleet.resumePrivate({ owner: 'joel', id: never.id });
   assert.equal(fresh.prompt, 'Never got going');
+
+  // The agents its owner started beside its own in the last run, and what they were allowed, are not this run's.
+  await fleet.stop(fresh, 'stopped from the console');
+  fleet.allowAgent(fresh, 'codex');
+  fresh.agents = [{ id: 'agent-2', agent: 'codex' }];
+  await fleet.resumePrivate({ owner: 'joel', id: fresh.id });
+  assert.equal(fresh.extraAgents, null);
+  assert.equal(fresh.agents, null);
   assert.equal(calls.started.at(-1).env.RESUME_SESSION, undefined);
 });
 

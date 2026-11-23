@@ -908,6 +908,25 @@ URL on top of each env file's Repo settings values
   speech recognition, and says why in a toast when the site may not use the
   microphone. A terminal that reconnected by itself logs `terminal:
   reconnecting` in the browser's console.
+- **+ Another agent fails, or the agent switch is missing.** The switch shows only to the owner of a running My
+  Woodshed session on Claude Code or Codex whose statusd reports `agents` (an image from before `session/agents.mjs`
+  reports none; a Grok Build or OpenCode session never does, and the console answers 409 `runs on its owner's own sign-in
+  alone`). From the
+  command line it is `woodshed session agents|agent <id>`, which the console logs as `cliSessions: call` with the path,
+  then the same lines below; `session connect <id> --agent agent-N` refused with 400 is a console from before it. A start
+  logs `console: another agent asked for`, then in the session `agents: agent started` with its id, agent, model and
+  mode, or the dialog says why: 409 `at most 3 agents`, `seen production data`, `started before it could start another
+  claude` (no `/tmp/woodshed-agent-claude-flags`: an image from before) or `codex is not set up` (no
+  `/tmp/woodshed-codex-ready`: configureCodex failed, `WARNING: codex not set up` in the session's log). A Codex agent
+  beside claude logs `statusd: Codex agent beside claude set up` with `own` (the console sent the owner's sign-in with
+  the start: `console: another agent asked for` with `ownCodex`); the console refuses the team key with `openaiProxy:
+  refused, not a Codex session` until the agent started (`fleet: another agent allowed in the session`), and again from
+  the moment the session's lockdown starts (`fleet: other agents' access dropped at the lockdown`). Its state changes log `agents: agent state changed`; in
+  the session, `tmux ls` lists `agent-2` and the rest (`hc ls` where the session runs in Herdr: `agents: agent started`
+  says which `terminal`), `cat /tmp/woodshed-agent-2-state.json` its last hook, and its TUI is `tmux attach -t =agent-2`
+  (`hc attach agent-2`). A Chat that shows another agent's conversation means its record was not told apart:
+  claude's by its `--session-id` or the transcript its hooks name, codex's by the rollout its process holds open
+  (`ls -l /proc/<codex pid>/fd`).
 - **Chat's Send says `Not sent: this session started before Chat could send safely`.** Its statusd predates the
   guarded send (its `/status` has no `safeSend`), and would type blind, Enter and all, into whatever is on screen: the
   console logs `console: message from the page refused, the session cannot send safely`. Type in the TUI tab, or start
@@ -1112,6 +1131,10 @@ Grok Build or OpenCode: it serves a made-up sign-in for the agent, and passes wh
 session's pane with its first message (its provider then refuses the made-up key, which says the key reached it). An
 image with no checkout clones `REPO` (default this repo) at start. In a Woodshed session, whose Docker is the machine's,
 `IN_IMAGE_CONSOLE_HOST` is this container's own address (`hostname -I`), not `host.docker.internal`.
+`providers/aws/bin/agentsInImage.mjs <image>` is the copy for the agents a private session's owner starts beside its own
+(`session/agents.mjs`): it copies the checkout's `session/` and `shared/` over the image's, runs a private claude start,
+then starts a claude and a codex through statusd's `/agents` and opens the TUI tab's ttyd for each, and prints PASSED or
+FAILED. `IN_IMAGE_TERMINAL=herdr` runs it with the owner's Agent terminal set to Herdr.
 `providers/aws/bin/herdrParentInImage.mjs <image> [entrypoint.sh]` is the copy for a private session started with
 `woodshed session new --herdr --parent`: it runs the whole start under ECS's init (`--init`) and waits for the agent's
 terminal, which a terminal in this computer's Herdr makes once the machine is added with `--via 'docker exec -i
@@ -1141,7 +1164,9 @@ whose pane runs a stand-in agent (`devChatAgent.mjs`) writing the agents' real r
 claude started from a Claude home holding an earlier session's conversation, as a private session started while another
 runs is: its Chat stays empty until it is sent a message. `/s/62000c0d` (Grok Build) and `/s/0c0de0c0` (OpenCode) open
 on a Chat tab that works the same way: the real statusd over a stand-in agent (`devChatAgent.mjs`) writing Grok Build's
-`updates.jsonl` and OpenCode's SQLite database. `/s/c1a0dea1` runs the
+`updates.jsonl` and OpenCode's SQLite database. `/s/a6e1a6e1` is @local's own session on the stand-in codex, whose
+agent switch starts stand-in claudes and codexes beside it (`session/agents.mjs`), each with a Chat and a TUI tab that
+work. `/s/c1a0dea1` runs the
 real `claude` instead, in a clone of this checkout with no remote and with its TUI tab live, on this machine's Claude
 credential, with `DEV_CONSOLE_REAL_CLAUDE=1`. It spends that credential's usage, and its session can run commands as
 this machine, so it is never behind Start app's console, which Open app and app shares reach with no sign-in:

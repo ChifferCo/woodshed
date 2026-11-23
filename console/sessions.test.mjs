@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   parseCommand, publicSession, sharedRunningCount, routeQa, routeTrigger, sessionsToStart, statusUpdate, woodshedRunsOn, stopReason, pauseAt, withSessionLimits, canSee, activePrivateCount, parseWorkOn, sessionOptions,
   keptIds, pullNumber, planUsageFrom, sessionLink,
+  agentsFrom, runsCodex,
 } from './sessions.mjs';
 
 const HOUR = 3_600_000;
@@ -462,4 +463,31 @@ test('statusUpdate keeps whether the session\'s statusd sends with the guards', 
   const nowIso = '2026-10-21T12:00:00.000Z';
   assert.equal(statusUpdate(session(), { state: 'done', safeSend: true }, nowIso).safeSend, true);
   assert.equal(statusUpdate(session(), { state: 'done' }, nowIso).safeSend, false, 'an older statusd says nothing of it');
+});
+
+test('the agents beside a session\'s own are read from statusd field by field, and none from a session that starts none', () => {
+  assert.equal(agentsFrom(undefined), null, 'an older image, or a shared session');
+  const read = agentsFrom([
+    { id: 'agent-2', agent: 'codex', model: 'gpt-5.5', effort: 'high', permissionMode: 'plan', startedAt: '2026-11-23T10:00:00.000Z', state: 'working',
+      heldIds: ['msg-00000001', 'x', 42], deliveredIds: [], refusedIds: [], leftInBox: { id: 'msg-00000002' }, extra: 'dropped' },
+    { id: 'agent-3', agent: 'bash', state: 'done' },
+    { id: '../claude', agent: 'claude' },
+    { id: 'agent-4', agent: 'claude', model: '$(id)', state: 'sleeping', leftInBox: { id: '<b>' } },
+  ]);
+  assert.deepEqual(read, [
+    { id: 'agent-2', agent: 'codex', model: 'gpt-5.5', effort: 'high', permissionMode: 'plan', startedAt: '2026-11-23T10:00:00.000Z', state: 'working',
+      heldIds: ['msg-00000001'], deliveredIds: [], refusedIds: [], leftInBox: { id: 'msg-00000002' } },
+    { id: 'agent-4', agent: 'claude', model: null, effort: null, permissionMode: null, startedAt: null, state: null,
+      heldIds: [], deliveredIds: [], refusedIds: [], leftInBox: null },
+  ]);
+  assert.equal(agentsFrom(Array.from({ length: 9 }, (_, i) => ({ id: `agent-${(i % 8) + 2}`, agent: 'claude' }))).length, 3);
+});
+
+test('codex runs in a Codex session, and in a private one whose owner started a Codex agent in it', () => {
+  assert.equal(runsCodex({ options: { agent: 'codex' } }), true);
+  assert.equal(runsCodex({ owner: 'octocat', extraAgents: ['codex'] }), true);
+  assert.equal(runsCodex({ owner: 'octocat', extraAgents: ['claude'] }), false);
+  assert.equal(runsCodex({ owner: null, extraAgents: ['codex'] }), false, 'a shared session starts no other agent');
+  assert.equal(runsCodex({ owner: 'octocat', extraAgents: ['codex'], taintedAt: '2026-11-23T10:00:00Z' }), false, 'nor one that has seen production data');
+  assert.equal(runsCodex({}), false);
 });
