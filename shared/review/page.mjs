@@ -1808,16 +1808,18 @@ ${DARK_PALETTE}
     // (the draft's headSha, read on load, on coming back to the tab and every WATCH_MS while it is shown) and takes the
     // review again itself, as Re-review would: a reader should not have to spot the sentence and press the button.
     // Once per head: a take that did not reach it (GitHub behind the session, a pull refused) is not tried again
-    // until GitHub moves once more, so the page never loops on a paid analysis.
+    // until GitHub moves once more, so the page never loops on a paid analysis. A refused pull is not a reason to stop
+    // following: the next head GitHub has, once the session sorted the branch out, gets its try.
     var WATCH_MS = 60000;
     var watchTimer = null;
     var followedSha = null;
     // The note's Re-review, set each time the note is drawn: takeAgain(auto).
     var reReviewNow = null;
+    // GitHub's comments changed while the reader was busy: drawn at the first tick they are not.
+    var draftUndrawn = false;
 
     function headMovedOnGitHub() {
-      if (!draft.headSha || !state.headSha || draft.headSha === state.headSha) return false;
-      return !(state.pull && state.pull.refused);
+      return !!(draft.headSha && state.headSha && draft.headSha !== state.headSha);
     }
 
     function followPullRequest() {
@@ -1849,15 +1851,20 @@ ${DARK_PALETTE}
         if (headMovedOnGitHub() && followedSha !== draft.headSha) {
           render();
           followPullRequest();
-        } else if (JSON.stringify(draft) !== before && !readerBusy()) {
-          render();
+        } else if (JSON.stringify(draft) !== before || draftUndrawn) {
+          draftUndrawn = readerBusy();
+          if (!draftUndrawn) render();
         }
       }, WATCH_MS);
     }
 
     async function loadDraft() {
-      draft = { prId: null, headSha: null, reviewId: null, description: null, comments: [], threads: [], outdated: 0, said: [], aiReviews: [] };
-      if (!state.session || !state.livePr) return;
+      if (!state.session || !state.livePr) {
+        draft = { prId: null, headSha: null, reviewId: null, description: null, comments: [], threads: [], outdated: 0, said: [], aiReviews: [] };
+        return;
+      }
+      // The draft on screen stays until GitHub's answer replaces it: the minute's check would otherwise leave a redraw
+      // in that second with no comments drawn.
       var got = await api('GET', '/reviews/' + state.session + '/comments');
       draft = {
         prId: got.prId || null,
@@ -4959,6 +4966,12 @@ ${DARK_PALETTE}
       function send(mode, button) {
         var text = area.value.trim();
         if (!text) return close();
+        // The lines are this diff's: on another commit GitHub would put the comment on whatever is there now.
+        if (draft.headSha && state.headSha && draft.headSha !== state.headSha) {
+          problem.textContent = 'The pull request has new commits, and the review is being taken again. '
+            + 'Your comment is kept here: send it once the new diff is on screen.';
+          return;
+        }
         button.disabled = true;
         problem.textContent = '';
         api('POST', '/reviews/' + state.session + '/comments', {
