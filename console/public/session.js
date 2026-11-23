@@ -496,7 +496,14 @@
     idleHours: [0.25, 0.5, 1, 2, 4],
     lifetimeHours: [1, 2, 4, 8, 12, 24],
   };
-  const BUSY = new Set(['working', 'starting']);
+  // How far along a clock is as the console counts it (sessions.mjs pauseAt): from its start, whatever claude is doing,
+  // and nothing while an Extend from this run still holds the session.
+  const clockPast = (x, from) => {
+    if (x.status !== 'running' || !from) return 0;
+    const held = Date.parse(x.extendedAt) >= Date.parse(x.startedAt) ? Date.parse(x.extendedUntil) : NaN;
+    if (Number.isFinite(held) && held > Date.now()) return 0;
+    return (Date.now() - Date.parse(from)) / 3_600_000;
+  };
   const limitText = (n) => (n < 1 ? `${Math.round(n * 60)} min` : `${n} h`);
   const limitWords = (n) => (n < 1 ? `${Math.round(n * 60)} minutes` : W.hoursText(n));
   function limitPicks(s) {
@@ -504,12 +511,12 @@
     let latest = s;
     let pending = false;
     // How far the session already is along each clock: a pick at or under it would pause or stop it within seconds, so
-    // those are not offered (Pause and stop… still can). Claude working holds the idle clock at nothing.
+    // those are not offered (Pause and stop… still can).
     const KINDS = {
       idleHours: {
         label: 'Pauses after', aria: 'Pause it after waiting for input for', cls: 'rename-offer-idle-pick',
         fallback: () => (s.owner && data.myIdleHours) || data.idleHours,
-        past: (x) => (x.status === 'running' && !BUSY.has(x.state) && x.lastActiveAt ? (Date.now() - Date.parse(x.lastActiveAt)) / 3_600_000 : 0),
+        past: (x) => clockPast(x, x.lastActiveAt),
         saved: (n) => `Pauses after ${limitWords(n)} waiting for input`,
         refused: (n) => `it has already waited for input for more than ${limitWords(n)}`,
         title: 'How long it waits for input before it pauses. Resume picks it up where it was.',
@@ -517,7 +524,7 @@
       lifetimeHours: {
         label: 'Stops after', aria: 'Stop it after', cls: 'rename-offer-ttl-pick',
         fallback: () => (s.owner && data.myLifetimeHours) || data.lifetimeHours,
-        past: (x) => (x.status === 'running' && x.startedAt ? (Date.now() - Date.parse(x.startedAt)) / 3_600_000 : 0),
+        past: (x) => clockPast(x, x.startedAt),
         saved: (n) => `Stops after ${limitWords(n)} of running`,
         refused: (n) => `it has already run past ${limitWords(n)}`,
         title: 'How long it runs before it stops by itself. It tries to push its work first, and Resume picks it up.',
