@@ -278,7 +278,7 @@ const PENDING_QUERY = `query($owner:String!,$repo:String!,$pr:Int!){
           }
         }
       }
-      verdicts: reviews(first:30,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]){
+      verdicts: reviews(last:30,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]){
         nodes{ id author{ __typename login } state body url submittedAt isMinimized viewerDidAuthor commit{ oid } }
       }
       comments(first:30){

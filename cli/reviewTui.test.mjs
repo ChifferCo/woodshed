@@ -444,7 +444,7 @@ const AI_REVIEW = {
   parts: [{ agent: 'Claude Code', conclusion: 'APPROVE', body: 'Looks right.' }, { agent: 'Codex', conclusion: 'REQUEST_CHANGES', body: 'The retry never stops.' }],
   findings: [{ id: 'F1', agent: 'Codex', path: 'one.mjs', line: 1, side: 'new', body: 'This loops for ever.', url: null, resolved: false, outdated: false, folded: false, replies: [{ author: 'ana', body: 'Does it?' }] }],
 };
-const OLD_REVIEW = { ...AI_REVIEW, id: 'R0', conclusion: 'COMMENT', agents: ['Claude Code'], heading: 'Claude review', current: false, commit: 'bbbbbbb'.padEnd(40, '0'), parts: [{ agent: 'Claude Code', conclusion: 'COMMENT', body: 'Earlier.' }], findings: [] };
+const OLD_REVIEW = { ...AI_REVIEW, id: 'R0', state: 'dismissed', conclusion: 'COMMENT', agents: ['Claude Code'], heading: 'Claude review', current: false, commit: 'bbbbbbb'.padEnd(40, '0'), parts: [{ agent: 'Claude Code', conclusion: 'COMMENT', body: 'Earlier.' }], findings: [] };
 
 test('6 opens AI reviews: each reviewer\'s verdict and part, the findings on their lines, and older reviews folded', async (t) => {
   const tui = await tuiOver(t, baseRoutes({
@@ -458,7 +458,7 @@ test('6 opens AI reviews: each reviewer\'s verdict and part, the findings on the
   assert.match(text, /Claude Code approves\n {2}Looks right\./);
   assert.match(text, /Codex requests changes\n {2}The retry never stops\./);
   assert.match(text, / {2}• Codex one\.mjs:1\n {4}This loops for ever\.\n {4}↳ ana: Does it\?/);
-  assert.match(text, /▸ Claude Code comments · older commit bbbbbbb · 0 findings/);
+  assert.match(text, /▸ Claude Code comments · dismissed · older commit bbbbbbb · 0 findings/, 'a dismissed review keeps its verdict and says it was dismissed');
   assert.doesNotMatch(text, /Earlier\./, 'an older review is folded');
   // ↓ ↓ goes to the older review (past the finding), and Enter opens it.
   tui.type('\x1b[B');

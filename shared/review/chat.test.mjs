@@ -66,8 +66,9 @@ test('a follow-up on an AI review fences the point, asks for it to be checked, a
   });
   const nonce = /<review-point-([0-9a-f]{12})>/.exec(prompt)?.[1];
   assert.ok(nonce, 'the point is not fenced');
-  assert.match(prompt, new RegExp(`<review-point-${nonce}>\\nThis drops the error\\.\\n</review-point-${nonce}>`));
-  assert.match(prompt, /Claude Code on b\.mjs:9/);
+  // The label is GitHub's text too, so it is inside the block, never in the instructions above it.
+  assert.match(prompt, new RegExp(`<review-point-${nonce}>\\npoint: Claude Code on b\\.mjs:9\\nThis drops the error\\.\\n</review-point-${nonce}>`));
+  assert.equal(prompt.split('Claude Code on b.mjs:9').length, 2, 'the label once, in the block');
   assert.match(prompt, /whether it holds/);
   assert.match(prompt, /reviewer \(following up on the AI review's point: Codex on a\.mjs:3\): is it\?/);
   assert.doesNotMatch(buildChatPrompt({ meta: {}, files: [], history: [], question: 'q' }), /review-point-/);

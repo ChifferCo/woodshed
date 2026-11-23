@@ -51,7 +51,7 @@ import {
   validateExplainRequest, explainArgv, buildExplainPrompt, extractAnswer,
 } from './explain.mjs';
 import { validateChatRequest, buildChatPrompt } from './chat.mjs';
-import { aboutFinding } from './aiReviews.mjs';
+import { aboutFinding, findAiPoint } from './aiReviews.mjs';
 import {
   MAX_DEPTH as QA_MAX_DEPTH, juniorArgv, seniorArgv, buildTopQuestionsPrompt, buildFollowupsPrompt,
   buildAnswersPrompt, extractStructured, topQuestions, followupQuestions, applyAnswers,
@@ -2094,11 +2094,9 @@ async function aiReviewPoint(ctx, session, about) {
   if (!got.ok) return { ok: false, status: got.status, error: got.status === 409 ? 'this review has no pull request with AI reviews on it' : got.error };
   const draft = await fetchReviewState({ pr: got.live.number, slug: got.slug });
   if (!draft.ok) return { ok: false, status: draft.status, error: draft.error };
-  const review = (draft.aiReviews || []).find((r) => r.id === about.review);
-  if (!review) return { ok: false, status: 409, error: 'that AI review is no longer on the pull request' };
-  const finding = about.finding ? review.findings.find((f) => f.id === about.finding) : null;
-  if (about.finding && !finding) return { ok: false, status: 409, error: 'that finding is no longer on the pull request' };
-  return { ok: true, about: aboutFinding(review, finding) };
+  const found = findAiPoint(draft.aiReviews, about, { truncated: draft.truncated });
+  if (!found.ok) return { ok: false, status: 409, error: found.error };
+  return { ok: true, about: aboutFinding(found.review, found.finding) };
 }
 
 async function handleChat(payload, res, ctx, session) {
@@ -2125,6 +2123,9 @@ async function handleChat(payload, res, ctx, session) {
       return json(res, found.status, { ok: false, error: found.error });
     }
     about = found.about;
+    // Again after the read: a turn another client started meanwhile would
+    // otherwise run beside this one, and only one of them is kept in chatJobs.
+    if (chatInFlight(session)) return json(res, 409, { ok: false, error: 'still answering the previous message' });
   }
 
   const prompt = buildChatPrompt({

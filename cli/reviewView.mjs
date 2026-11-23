@@ -746,6 +746,7 @@ export function aiLines(state, columns, nowMs = Date.now()) {
     const [tone, word] = AI_WORD[review.conclusion] ?? AI_WORD.COMMENT;
     const n = review.findings?.length ?? 0;
     const facts = [[tone, ` ${word}`]];
+    if (review.state === 'dismissed') facts.push(['dim', ' · dismissed']);
     if (review.commit) facts.push(['dim', ' · '], [review.current ? 'dim' : 'yellow', review.current ? 'latest commit' : `older commit ${clean(review.commit).slice(0, 7)}`]);
     facts.push(['dim', ` · ${n} finding${n === 1 ? '' : 's'}`]);
     add([]);

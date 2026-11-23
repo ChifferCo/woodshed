@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { aboutFinding, aiReviewsOf, parseAiReviewBody } from './aiReviews.mjs';
+import { aboutFinding, aiReviewsOf, findAiPoint, parseAiReviewBody } from './aiReviews.mjs';
 
 const BOT = { __typename: 'Bot', login: 'woodshed-reviewer' };
 const HEAD = 'a'.repeat(40);
@@ -74,7 +74,27 @@ test('a person\'s review, a hidden one, and a bot\'s that is not a review verdic
   assert.deepEqual(aiReviewsOf({ verdicts, threads: [], headSha: null }).map((r) => [r.id, r.agents.join('+'), r.conclusion]), [
     ['NEW', 'Claude Code', 'APPROVE'], ['OLD', 'Claude Code', 'REQUEST_CHANGES'],
   ]);
-  assert.equal(parseAiReviewBody('## Deploy notes — COMMENT'), null);
+  assert.equal(parseAiReviewBody('## Deploy notes\n\nCOMMENT'), null);
+});
+
+test('a project\'s own heading reads, whatever it is called', () => {
+  const read = parseAiReviewBody('## Verdict — APPROVE\n\nFine.');
+  assert.equal(read.heading, 'Verdict');
+  assert.deepEqual(read.parts, [{ agent: null, conclusion: 'APPROVE', body: 'Fine.' }]);
+});
+
+test('a follow-up\'s ids find a finding only in the review they name, and a point past a partial read says so', () => {
+  const reviews = aiReviewsOf({
+    verdicts: [{ id: 'R1', author: BOT, body: BOTH }, { id: 'R2', author: BOT, body: '## Claude review — COMMENT\n\nHm.' }],
+    threads: [thread({ review: 'R1', body: '**Codex:** Loops.', line: 30 }), thread({ review: 'R2', body: 'Name.', line: 4 })],
+    headSha: null,
+  });
+  const found = findAiPoint(reviews, { review: 'R1', finding: 'c-src/a.mjs-30' });
+  assert.equal(found.ok && found.finding.body, 'Loops.');
+  assert.equal(findAiPoint(reviews, { review: 'R1', finding: null }).finding, null);
+  assert.deepEqual(findAiPoint(reviews, { review: 'R1', finding: 'c-src/a.mjs-4' }), { ok: false, error: 'that finding is no longer on the pull request' }, 'R2\'s finding asked as R1\'s');
+  assert.deepEqual(findAiPoint(reviews, { review: 'R9', finding: null }), { ok: false, error: 'that AI review is no longer on the pull request' });
+  assert.match(findAiPoint(reviews, { review: 'R9' }, { truncated: true }).error, /past the part of this pull request the review reads/);
 });
 
 test('a project\'s own heading still reads, and its sections name the reviewers', () => {

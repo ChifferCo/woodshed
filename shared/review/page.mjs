@@ -601,6 +601,7 @@ ${DARK_PALETTE}
       max-width: var(--prose-measure);
     }
     .saidhead.toggles { cursor: pointer; user-select: none; }
+    .saidhead.toggles:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
     .saidhead .caret { font-size: 9px; width: 0.6rem; color: var(--faint); }
     .saidbox.folded .saidhead { border-bottom: 0; }
 
@@ -619,7 +620,9 @@ ${DARK_PALETTE}
     .aifindings { border-top: 1px solid var(--rule); padding: 0.5rem 0.7rem 0.7rem; }
     .aifindings > h4 { margin: 0.2rem 0 0.5rem; font: 600 12px/1.6 "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--muted); }
     .aifinding { border: 1px solid var(--rule); border-radius: 5px; padding: 0.5rem 0.65rem; margin: 0 0 0.6rem; max-width: var(--prose-measure); }
-    .aifinding.done { opacity: 0.75; }
+    /* Resolved or outdated: a dashed border and the state's own label, never a
+       fade, which would take muted text under 4.5:1 on white. */
+    .aifinding.done { border-style: dashed; }
     .aifinding .aiat { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin-bottom: 0.3rem; font-size: 12px; color: var(--muted); }
     .aifinding .aiat .grow { flex: 1; }
     .aifinding .aiat code { font-size: 12px; }
@@ -3801,7 +3804,7 @@ ${DARK_PALETTE}
     // agent check it against the code. Its answer is drawn under the point, and
     // in the conversation too, where it belongs to the same transcript.
 
-    var aiView = { drafts: {}, error: null };
+    var aiView = { drafts: {}, error: null, chatError: null };
 
     var AI_WORD = {
       APPROVE: { word: 'approves', tone: 'good' },
@@ -3815,11 +3818,21 @@ ${DARK_PALETTE}
         return;
       }
       // The follow-ups are the conversation's turns, so it is read once here.
-      if (!chat.loaded && !chat.loading) {
+      // Once: a read that failed says so here and waits for Try again, rather
+      // than reading again on every render while the endpoint keeps failing.
+      if (!chat.loaded && !chat.loading && !aiView.chatError) {
         chat.loading = true;
         loadChat()
-          .catch(function failed(e) { chat.error = e.message; })
+          .catch(function failed(e) { aiView.chatError = e.message; })
           .then(function done() { chat.loading = false; if (state.tab === 'ai') render(); });
+      }
+      if (aiView.chatError) {
+        var failed = el('p', 'askerr', 'Could not read the follow-ups asked so far: ' + aiView.chatError + '. ');
+        var again = el('button', 'quiet', 'Try again');
+        again.type = 'button';
+        again.addEventListener('click', function onAgain() { aiView.chatError = null; render(); });
+        failed.appendChild(again);
+        content.appendChild(failed);
       }
       var list = draft.aiReviews || [];
       if (!list.length) {
@@ -3837,6 +3850,8 @@ ${DARK_PALETTE}
       var head = el('div', 'saidhead');
       head.appendChild(el('span', 'who', review.agents.length ? review.agents.join(' and ') : review.heading));
       head.appendChild(el('span', 'verdictword ' + verdict.tone, verdict.word));
+      // A maintainer dismissed it on GitHub: what it said stays, and so does that.
+      if (review.state === 'dismissed') head.appendChild(el('span', 'aitag', 'dismissed'));
       if (review.commit) {
         var at = el('span', 'aitag' + (review.current ? '' : ' old'), review.current ? 'latest commit' : 'older commit ' + review.commit.slice(0, 7));
         at.dataset.tip = review.current ? 'Reviewed at the pull request\u2019s head' : 'Reviewed at ' + review.commit.slice(0, 7) + '; the pull request has moved on since';
@@ -3986,13 +4001,29 @@ ${DARK_PALETTE}
 
     // The whole header toggles, except the buttons and links on it, which
     // keep doing their own job.
+    // A disclosure for the keyboard too: it takes the focus, says whether it is
+    // open, and Enter or Space folds it, keeping the focus on it after the render.
     function foldable(head, id, open) {
       head.classList.add('toggles');
       head.insertBefore(el('span', 'caret', open ? '\\u25be' : '\\u25b8'), head.firstChild);
-      head.addEventListener('click', function onFold(ev) {
-        if (ev.target.closest('button, a')) return;
+      head.tabIndex = 0;
+      head.setAttribute('role', 'button');
+      head.setAttribute('aria-expanded', open ? 'true' : 'false');
+      head.dataset.fold = id;
+      function fold() {
         saidOpen[id] = !open;
         render();
+        var again = document.querySelector('[data-fold="' + CSS.escape(id) + '"]');
+        if (again) again.focus({ preventScroll: true });
+      }
+      head.addEventListener('click', function onFold(ev) {
+        if (ev.target.closest('button, a')) return;
+        fold();
+      });
+      head.addEventListener('keydown', function onKey(ev) {
+        if (ev.target !== head || (ev.key !== 'Enter' && ev.key !== ' ')) return;
+        ev.preventDefault();
+        fold();
       });
     }
 

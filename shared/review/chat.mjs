@@ -142,11 +142,12 @@ export function buildChatPrompt({ meta, artifact, files, history, question, diff
   if (about) {
     // An AI review's finding is a claim about the code, and often a wrong one:
     // the follow-up is worth asking because the reviewer wants it checked.
-    lines.push(`The reviewer's latest message follows up on this point from an AI code review of the pull request (${String(about.label).slice(0, 300)}).`);
-    lines.push('Check the point against the code before you answer: say plainly whether it holds, partly holds or does');
-    lines.push('not, and why, citing path:line, then answer what the message asks. The point may be about an older commit');
-    lines.push('than the one checked out: if the code has moved on, say so.');
+    lines.push("The reviewer's latest message follows up on the point from an AI code review of the pull request in the");
+    lines.push('block below, which says whose it is and where first. Check the point against the code before you answer:');
+    lines.push('say plainly whether it holds, partly holds or does not, and why, citing path:line, then answer what the');
+    lines.push('message asks. The point may be about an older commit than the one checked out: if the code has moved on, say so.');
     lines.push(`<${pointTag}>`);
+    lines.push(`point: ${String(about.label).slice(0, 300).replace(/\s+/g, ' ')}`);
     lines.push(String(about.text || '').slice(0, MAX_POINT_CHARS));
     lines.push(`</${pointTag}>`);
     lines.push('');

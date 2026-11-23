@@ -3,7 +3,8 @@
 // can draw: who reviewed (Claude Code, Codex or both), the verdict, each reviewer's part, and each finding on its line.
 //
 // Nothing here is new data. The review's verdict is a GitHub review whose body opens `## <name> review — <CONCLUSION>`
-// (reviewHeading in console/reviewSessions.mjs; a project file may name another heading), written by an App. When both
+// (reviewHeading in console/reviewSessions.mjs; a project file may name another heading, such as `## Verdict`, which
+// reads too: any App's review whose first line is `## <heading> — <CONCLUSION>`), written by an App. When both
 // reviewed, the body has a `### Claude Code: <CONCLUSION>` and a `### Codex: <CONCLUSION>` section, and each inline
 // comment opens `**Claude Code:**` or `**Codex:**` (mergeVerdicts in shared/codeReview/codeReview.mjs). When GitHub
 // refused the inline comments, they are folded into the body under `**Inline comments**`, one `` - `path:line`: body ``
@@ -41,7 +42,7 @@ export function agentsOfHeading(name) {
 export function parseAiReviewBody(raw) {
   const lines = String(raw || '').replace(/\r\n?/g, '\n').split('\n');
   const head = HEADING_RE.exec(lines[0].trim());
-  if (!head || !/review/i.test(head[1])) return null;
+  if (!head) return null;
   const heading = head[1].trim();
   const conclusion = head[2];
   const agents = agentsOfHeading(heading);
@@ -143,6 +144,23 @@ export function aiReviewsOf({ verdicts = [], threads = [], headSha = null }) {
   }
   out.sort((a, b) => (a.at === b.at ? 0 : !a.at ? 1 : !b.at ? -1 : a.at < b.at ? 1 : -1));
   return out;
+}
+
+/**
+ * The point a follow-up names, by its ids, among the AI reviews read from the pull request: a finding only within the
+ * review it names, so an id from another review is refused rather than answered about the wrong one. `truncated`: the
+ * read did not reach every review or thread, so a point not found may only be beyond it, and is said so.
+ *
+ * @returns {{ok: true, review: object, finding: object|null} | {ok: false, error: string}}
+ */
+export function findAiPoint(aiReviews, about, { truncated = false } = {}) {
+  const partial = truncated ? ' (or is past the part of this pull request the review reads: open it on GitHub)' : '';
+  const review = (aiReviews || []).find((r) => r.id === about?.review);
+  if (!review) return { ok: false, error: `that AI review is no longer on the pull request${partial}` };
+  if (!about.finding) return { ok: true, review, finding: null };
+  const finding = review.findings.find((f) => f.id === about.finding);
+  if (!finding) return { ok: false, error: `that finding is no longer on the pull request${partial}` };
+  return { ok: true, review, finding };
 }
 
 /**
