@@ -176,4 +176,6 @@ test('a day past the keep is not kept again from a long session\'s report, and r
   }
   const view = many.summary({ login: 'sam', admin: false, days: 90 });
   assert.equal(view.totals.plan.cost, 240, 'all 60 runs, 1M input each at $4');
+  many.record({ id: 'b2', owner: 'sam' }, report('plan', { '2026-11-01': { 'claude-opus-5-5': t(1e6, 0) } }, { since: '2026-10-01T00:00:00Z' }));
+  assert.equal(many.summary({ login: 'sam', admin: false, days: 90 }).totals.plan.cost, 240, 'a late copy of a run already added up counts nothing');
 });

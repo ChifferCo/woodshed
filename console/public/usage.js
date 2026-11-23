@@ -92,20 +92,24 @@ window.Woodshed.settingsPage('/usage', (app, life) => {
   }
 
   function dayChart() {
-    const top = Math.max(0, ...data.byDay.map((d) => d.plan.cost + d.key.cost));
+    // In dollars; in tokens when nothing in the span has a price, so the days still show.
+    const byCost = data.byDay.some((d) => d.plan.cost + d.key.cost > 0);
+    const size = (part) => (byCost ? part.cost : part.tokens);
+    const top = Math.max(0, ...data.byDay.map((d) => size(d.plan) + size(d.key)));
     if (!top) return null;
     // Newest first, as the other lists; a bar per day against the busiest one, plan then key, each named in words.
+    const said = (part) => (byCost ? money(part.cost) : `${tokens(part.tokens)} tokens`);
     return h('section', { class: 'usage-section', id: 'usage-days' },
-      h('h2', { class: 'set-group-label' }, 'By day, at API prices'),
+      h('h2', { class: 'set-group-label' }, byCost ? 'By day, at API prices' : 'By day, in tokens (no price known)'),
       h('div', { class: 'usage-days' }, [...data.byDay].reverse().map((d) => {
-        const cost = d.plan.cost + d.key.cost;
-        const label = `${d.day}: ${money(d.plan.cost)} on a plan, ${money(d.key.cost)} on an API key`;
+        const total = size(d.plan) + size(d.key);
+        const label = `${d.day}: ${said(d.plan)} on a plan, ${said(d.key)} on an API key`;
         return h('div', { class: 'usage-day', title: label },
           h('span', { class: 'mono meta-cell' }, d.day.slice(5)),
           h('span', { class: 'usage-bar', role: 'img', 'aria-label': label },
-            h('i', { class: 'is-plan', style: `width:${((d.plan.cost / top) * 100).toFixed(2)}%` }),
-            h('i', { class: 'is-key', style: `width:${((d.key.cost / top) * 100).toFixed(2)}%` })),
-          h('span', { class: 'mono usage-day-cost' }, cost ? money(cost) : '—'));
+            h('i', { class: 'is-plan', style: `width:${((size(d.plan) / top) * 100).toFixed(2)}%` }),
+            h('i', { class: 'is-key', style: `width:${((size(d.key) / top) * 100).toFixed(2)}%` })),
+          h('span', { class: 'mono usage-day-cost' }, total ? (byCost ? money(total) : tokens(total)) : '—'));
       })),
       h('p', { class: 'foot usage-legend' }, h('span', null, h('span', { class: 'usage-key is-plan', 'aria-hidden': 'true' }), ' Plan'),
         h('span', null, h('span', { class: 'usage-key is-key', 'aria-hidden': 'true' }), ' API key')));

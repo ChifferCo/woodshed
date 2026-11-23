@@ -115,6 +115,8 @@ export function createUsage(store, { now = Date.now } = {}) {
     // again, though a session running that long reports it on.
     const cutoff = keepFrom();
     for (const usage of usages) {
+      // A run already added into `earlier` is never kept again: a late copy of its report would count it twice.
+      if (entry.foldedThrough && usage.since <= entry.foldedThrough) continue;
       const days = Object.fromEntries(Object.entries(usage.days).filter(([day]) => day >= cutoff));
       if (Object.keys(days).length) entry.runs[`${usage.since} ${usage.agent}`] = { agent: usage.agent, billing: usage.billing, days };
     }
@@ -131,6 +133,7 @@ export function createUsage(store, { now = Date.now } = {}) {
         }
       }
       delete entry.runs[old];
+      entry.foldedThrough = old.split(' ')[0];
     }
     if (JSON.stringify(entry) === before) return false;
     store.save();
@@ -151,12 +154,12 @@ export function createUsage(store, { now = Date.now } = {}) {
     if (now() - prunedAt > 60 * 60 * 1000) prune();
   }
 
-  /** Drops the days past KEEP_DAYS, and a session left with none. */
   /** @returns {string}  the first day kept */
   function keepFrom() {
     return new Date(now() - KEEP_DAYS * DAY_MS).toISOString().slice(0, 10);
   }
 
+  /** Drops the days past KEEP_DAYS, and a session left with none. */
   function prune() {
     prunedAt = now();
     const cutoff = keepFrom();

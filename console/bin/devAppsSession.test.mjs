@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedEnv } from '../../test/isolatedEnv.mjs';
 import { startDevAppsSession } from './devAppsSession.mjs';
 
 test('the two-app session counts none of the usage of whoever runs the dev console, even from a Codex session or a review', async (t) => {
@@ -17,20 +18,10 @@ test('the two-app session counts none of the usage of whoever runs the dev conso
     JSON.stringify({ timestamp: at, type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 99, output_tokens: 99 }, last_token_usage: { input_tokens: 99, output_tokens: 99 } } } }),
     '',
   ].join('\n'));
-  const saved = {};
-  for (const [key, value] of Object.entries({ AGENT: 'codex', CODEX_HOME: path.join(parent, 'codex'), SESSION_MODE: 'review', REVIEW_AGENTS: 'claude codex', REVIEW_CODEX_AUTH: 'key' })) {
-    saved[key] = process.env[key];
-    process.env[key] = value;
-  }
-  t.after(() => {
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-    fs.rmSync(parent, { recursive: true, force: true });
-  });
+  t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const env = { ...isolatedEnv(), AGENT: 'codex', CODEX_HOME: path.join(parent, 'codex'), SESSION_MODE: 'review', REVIEW_AGENTS: 'claude codex', REVIEW_CODEX_AUTH: 'key' };
   t.mock.method(console, 'log', () => {});
-  const session = await startDevAppsSession({ id: 'abbaabba', token: 'tok' });
+  const session = await startDevAppsSession({ id: 'abbaabba', token: 'tok', env });
   t.after(() => session.close());
   const status = await (await fetch(`http://127.0.0.1:${session.port}/status`, { headers: { authorization: 'Bearer tok' } })).json();
   assert.ok(Array.isArray(status.tokenUsage), 'it reports, as any session does');

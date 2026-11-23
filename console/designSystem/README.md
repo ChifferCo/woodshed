@@ -89,15 +89,15 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 - A program embedding the console may add a line under the person's name on the user button, in `meta` (mono, `meta`
   color), and nowhere else on the rail.
-- The user menu, top to bottom (`components/MenuGroups`): the name and @handle; My settings, then the program's pages
-  for the person, and a `line-soft` rule; the program's switcher groups; **Console**; the program's own sections; Sign
-  out. With no program, My settings alone is under the name.
+- The user menu, top to bottom (`components/MenuGroups`): the name and @handle; My settings, Usage, then the program's
+  pages for the person, and a `line-soft` rule; the program's switcher groups; **Console**; the program's own sections; Sign
+  out. With no program, My settings and Usage alone are under the name.
 - A switcher group is a `menu-label`, then a row per item. A choice in use has a `green` ✓ and 600 weight; a note, such
   as the person's role there, is a word in `meta` at the right end.
 - A section is a `menu-label` and its entries; an entry's own pages are under it as Settings' tabs are (below,
   Settings), always in the menu.
-- The settings side list has the same groups, each a `side-group` heading: **You** (My settings, then the program's
-  pages for the person), **Console**, the program's sections, then **This browser**. A program's entry has a `○` in
+- The settings side list has the same groups, each a `side-group` heading: **You** (My settings, Usage, then the
+  program's pages for the person), **Console**, the program's sections, then **This browser**. A program's entry has a `○` in
   the icon column, and its own pages open under it only on those pages. Its page has its own title (the entry's name)
   and, when it has pages of its own, their row under it, as Settings has its tabs.
 - Each one is a plain link: never orange, never a button that looks like an action on the session.
