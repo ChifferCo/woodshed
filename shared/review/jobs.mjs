@@ -39,7 +39,9 @@ import {
 // someone waiting, so it goes in the explain's slot, with its timeout.
 const MAX_ANALYSIS_JOBS = 1;
 const MAX_EXPLAIN_JOBS = 1;
-const BACKGROUND_KINDS = ['analysis', 'qa'];
+// The AI review reads the whole change like the analysis does, for minutes, so it takes the analysis's slot and its
+// time limit: asked for while the analysis runs, it waits for it. A follow-up about it is someone waiting on a sentence.
+const BACKGROUND_KINDS = ['analysis', 'qa', 'findings'];
 
 function slotOf(kind) {
   return BACKGROUND_KINDS.includes(kind) ? 'background' : 'interactive';
@@ -113,7 +115,7 @@ export function availableBytes(readMeminfo) {
 /**
  * Queue or start a review model run.
  *
- * @param {{kind: 'analysis'|'explain'|'chat'|'qa'|'qa-ask', session: string, argv: string[], cwd: string,
+ * @param {{kind: 'analysis'|'explain'|'chat'|'qa'|'qa-ask'|'findings'|'findings-ask', session: string, argv: string[], cwd: string,
  *          log: Function, onLine?: Function, agent?: string, model?: string, effort?: string, files?: object[]}} spec
  * @returns {{ok: true, job: object} | {ok: false, status: number, error: string}}
  */
@@ -314,7 +316,7 @@ function launch(job) {
     agent: job.agent, model: job.model || null,
   });
 
-  const timeoutMs = job.kind === 'analysis' ? ANALYSIS_TIMEOUT_MS : job.kind === 'qa' ? QA_TIMEOUT_MS : EXPLAIN_TIMEOUT_MS;
+  const timeoutMs = job.kind === 'analysis' || job.kind === 'findings' ? ANALYSIS_TIMEOUT_MS : job.kind === 'qa' ? QA_TIMEOUT_MS : EXPLAIN_TIMEOUT_MS;
   job.timer = setTimeout(function onTimeout() {
     job.timedOut = true;
     job.log('review.job_timeout', { jobId: job.jobId, kind: job.kind, session: job.session, ms: timeoutMs });

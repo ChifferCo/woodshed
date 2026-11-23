@@ -211,12 +211,12 @@ export const ANALYSIS_SCHEMA = {
  *                           that overshot (checked between turns). The wall
  *                           clock in jobs.mjs is the real control.
  */
-export function analysisArgv({ prompt }) {
+export function analysisArgv({ prompt, schema = ANALYSIS_SCHEMA }) {
   return [
     '-p', prompt,
     '--output-format', 'stream-json',
     '--verbose',
-    '--json-schema', JSON.stringify(ANALYSIS_SCHEMA),
+    '--json-schema', JSON.stringify(schema),
     '--model', REVIEW_MODEL,
     '--effort', REVIEW_EFFORT,
     '--permission-mode', 'dontAsk',

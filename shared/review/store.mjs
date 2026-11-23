@@ -158,6 +158,8 @@ export function removeArtifact(session) {
     // The Q&A answered questions about the diff being replaced, for the same
     // reason as the artifact: kept, it would answer about code that is gone.
     fs.rmSync(path.join(sessionDirFor(session), 'qa.json'), { force: true });
+    // The AI review's findings are anchored to lines of the diff being replaced, and their conversations with them.
+    fs.rmSync(path.join(sessionDirFor(session), 'findings.json'), { force: true });
     return true;
   } catch (err) {
     if (err.code === 'ENOENT') return true;
@@ -257,7 +259,7 @@ export function answerKey({ session, filePath, line, side, question }) {
 // single job.json meant the explain overwrote the analysis's entry and then
 // deleted it on finishing — leaving a live analysis child with no breadcrumb at
 // all, which is precisely the orphan the breadcrumb exists to reap.
-const JOB_KINDS = ['analysis', 'explain', 'chat', 'qa', 'qa-ask'];
+const JOB_KINDS = ['analysis', 'explain', 'chat', 'qa', 'qa-ask', 'findings', 'findings-ask'];
 
 function breadcrumbName(kind) {
   return `job-${JOB_KINDS.includes(kind) ? kind : 'analysis'}.json`;
@@ -334,6 +336,21 @@ export function readQa(session) {
 
 export function writeQa({ session, qa }) {
   writeJsonAtomic(path.join(ensureSessionDir(session), 'qa.json'), qa);
+}
+
+// --- the AI review -------------------------------------------------------------
+
+// findings.json: one AI review of the diff on disk, its findings and the conversations about them. Written whole by
+// the run that makes it and by each answered follow-up, one at a time (index.mjs's findingsAsks), each re-reading it
+// first and writing nothing when its `runId` is not the one it began on.
+export function readFindings(session) {
+  if (!isSessionName(session)) return null;
+  const got = readJson(path.join(sessionDirFor(session), 'findings.json'));
+  return got && typeof got === 'object' && typeof got.runId === 'string' ? got : null;
+}
+
+export function writeFindings({ session, record }) {
+  writeJsonAtomic(path.join(ensureSessionDir(session), 'findings.json'), record);
 }
 
 // --- migration off the old layout -------------------------------------------

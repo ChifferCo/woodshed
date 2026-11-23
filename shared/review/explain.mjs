@@ -190,7 +190,7 @@ export function buildExplainPrompt({ meta, file, filePath, line, endLine, side, 
  * on purpose: the checkout is there for depth, so this only has to orient the
  * model, not carry the whole change.
  */
-function excerptAround({ file, line, side }) {
+export function excerptAround({ file, line, side }) {
   const hunks = file?.hunks || [];
   if (!hunks.length) return '';
 

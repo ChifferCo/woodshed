@@ -39,7 +39,7 @@ import {
   readDiff, writeDiff, readArtifact, writeArtifact,
   writeSessionReview, readSessionReview, hasSessionReview, listReviewSessions,
   removeReviewState, hasJobBreadcrumb, answerKey, isSessionName, legacyStatePaths,
-  removeArtifact, readChat, appendChat, discardReviewWork, readQa, writeQa,
+  removeArtifact, readChat, appendChat, discardReviewWork, readQa, writeQa, readFindings, writeFindings,
 } from './store.mjs';
 import {
   startJob, findJob, sweepOrphans, cancelJobsForSession, availableBytes, MIN_AVAILABLE_BYTES,
@@ -51,6 +51,9 @@ import {
   validateExplainRequest, explainArgv, buildExplainPrompt, extractAnswer,
 } from './explain.mjs';
 import { validateChatRequest, buildChatPrompt } from './chat.mjs';
+import {
+  FINDINGS_SCHEMA, buildFindingsPrompt, extractFindings, reconcileFindings, validateFindingAsk, buildFindingAskPrompt, threadKey,
+} from './aiReview.mjs';
 import {
   MAX_DEPTH as QA_MAX_DEPTH, juniorArgv, seniorArgv, buildTopQuestionsPrompt, buildFollowupsPrompt,
   buildAnswersPrompt, extractStructured, topQuestions, followupQuestions, applyAnswers,
@@ -171,6 +174,12 @@ let qaGen = 0;
  *  a new question that happens to share its id. Cleared wherever qaRuns is, so an answer still on its way
  *  after a discard or re-review writes nothing. */
 const qaAsks = new Map();
+/** session -> {runId, job} of the AI review being written. Deleted wherever qaRuns is; a run also checks that
+ *  findings.json still carries its runId before it writes, so a Discard or Re-review in between keeps its result out. */
+const findingsRuns = new Map();
+/** session -> {runId, job, finding, question} of the follow-up about the AI review being answered. One at a time, as
+ *  the chat's: each turn replays its thread, and each answer rewrites findings.json whole. */
+const findingsAsks = new Map();
 
 /**
  * session -> the take of its review in progress. One at a time per session,
@@ -799,6 +808,8 @@ async function removeReviewSessionNow({ ctx, sessionName }) {
   progressBySession.delete(sessionName);
   qaRuns.delete(sessionName);
   qaAsks.delete(sessionName);
+  findingsRuns.delete(sessionName);
+  findingsAsks.delete(sessionName);
   // The ref holding the Q&A's tree goes with the review, whoever owns the worktree.
   if (review.kind === 'worktree') {
     const released = await releaseTree({ worktreePath: review.worktree, sessionName });
@@ -1051,6 +1062,22 @@ export async function handleReviewRequest(req, res, ctx) {
     await gated(res, ctx, 'qa', () => handleQaStart(res, ctx, session, url.searchParams.get('forDiff'), url.searchParams.get('first') === '1'));
     return true;
   }
+  // The AI review: what it found, asking for one (again), and a follow-up about it or one of its findings. Matched
+  // with the tail first, as the Q&A's are.
+  if (req.method === 'GET' && section === '/findings' && !tail) {
+    handleFindingsRead(res, ctx, session);
+    return true;
+  }
+  if (req.method === 'POST' && section === '/findings' && tail === 'ask') {
+    const body = await readJsonBody(req, res, ctx);
+    if (!body.ok) return true;
+    await gated(res, ctx, 'findings-ask', () => handleFindingsAsk(body.payload, res, ctx, session));
+    return true;
+  }
+  if (req.method === 'POST' && section === '/findings' && !tail) {
+    await gated(res, ctx, 'findings', () => handleFindingsStart(res, ctx, session, url.searchParams.get('forDiff')));
+    return true;
+  }
   if (req.method === 'GET' && section === '/chat') {
     handleChatRead(res, ctx, session);
     return true;
@@ -1210,6 +1237,8 @@ function handleDiscardReview(res, ctx, session) {
   progressBySession.delete(session);
   qaRuns.delete(session);
   qaAsks.delete(session);
+  findingsRuns.delete(session);
+  findingsAsks.delete(session);
   discardReviewWork(session);
   log('review.discarded', { reqId, session, jobsKilled: killed, kind: review?.kind });
   json(res, 200, { ok: true });
@@ -1490,6 +1519,8 @@ async function takeWorktreeReview(res, ctx, session) {
   progressBySession.delete(session);
   qaRuns.delete(session);
   qaAsks.delete(session);
+  findingsRuns.delete(session);
+  findingsAsks.delete(session);
   beginAnalysis({ ctx, session, review: made.review });
   // The Q&A alongside it, for this diff: what the reader opens the tab to find should be written by then.
   startQaAfterTake({ ctx, session, review: made.review });
@@ -1542,6 +1573,8 @@ async function takeRefreshReview(res, ctx, session) {
   progressBySession.delete(session);
   qaRuns.delete(session);
   qaAsks.delete(session);
+  findingsRuns.delete(session);
+  findingsAsks.delete(session);
   beginAnalysis({ ctx, session, review: done.review });
   startQaAfterTake({ ctx, session, review: done.review });
 
@@ -2153,6 +2186,222 @@ async function handleChat(payload, res, ctx, session) {
       log('review.chat_settle_failed', { session, error: err?.message });
     });
 
+  return json(res, 200, { ok: true, askId: job.jobId, status: 'running' });
+}
+
+// --- the AI review ------------------------------------------------------------------
+//
+// One run of the session's agent over the diff, for what is wrong with it (aiReview.mjs), asked for by the reader
+// rather than started on opening: unlike the analysis it is a judgement, and a person asks for one when they want it.
+// Its record, findings.json, is the diff's like the Q&A's (removeArtifact drops it), and holds the conversations about
+// it, one thread for the review as a whole and one per finding.
+
+const FINDINGS_THREAD_MAX = 100;
+
+function findingsRunIsLive(session, runId) {
+  return findingsRuns.get(session)?.runId === runId && readFindings(session)?.runId === runId;
+}
+
+function findingsAskInFlight(session) {
+  const ask = findingsAsks.get(session);
+  if (!ask || ask.job.cancelled) return null;
+  return ask.job.phase === 'queued' || ask.job.phase === 'running' ? ask : null;
+}
+
+function findingsPayload(session) {
+  let record = readFindings(session);
+  const run = findingsRuns.get(session);
+  // A record left running by a run this process does not have: the shed (or the session's statusd) restarted under it.
+  if (record?.status === 'running' && run?.runId !== record.runId) {
+    record = { ...record, status: 'interrupted', error: 'it was cut off: the review restarted while it ran' };
+  }
+  let progress = null;
+  if (record?.status === 'running' && run?.job) {
+    const job = run.job;
+    progress = {
+      phase: job.phase, toolCalls: job.toolCalls, currentFile: job.currentFile,
+      elapsedMs: job.startedAt ? Date.now() - job.startedAt : 0,
+    };
+  }
+  const ask = findingsAskInFlight(session);
+  const asking = ask && ask.runId === record?.runId ? { askId: ask.job.jobId, finding: ask.finding, question: ask.question } : null;
+  return { ok: true, aiReview: record, progress, asking };
+}
+
+function handleFindingsRead(res, ctx, session) {
+  if (!readSessionReview(session)) return ctx.json(res, 404, { ok: false, error: 'no review for this session' });
+  return ctx.json(res, 200, findingsPayload(session));
+}
+
+function handleFindingsStart(res, ctx, session, forDiff) {
+  const { json, log, reqId } = ctx;
+  const review = readSessionReview(session);
+  if (!review) return json(res, 404, { ok: false, error: 'no review for this session' });
+  const diff = readDiff(session);
+  if (!diff) return json(res, 409, { ok: false, error: 'no diff stored for this session' });
+  const diffAt = diff.createdAt ?? review.createdAt ?? null;
+  // Asked of the diff the reader is looking at, or of none: a review of a diff taken since would anchor findings to
+  // lines that page does not show.
+  if (forDiff && forDiff !== String(diffAt)) {
+    return json(res, 409, { ok: false, error: 'the diff was taken again since this page read it: reload to review the new one' });
+  }
+  const current = readFindings(session);
+  const run = findingsRuns.get(session);
+  if (current?.status === 'running' && run?.runId === current.runId) {
+    return json(res, 200, { ok: true, status: 'running', joined: true });
+  }
+  const runId = randomBytes(6).toString('hex');
+  const record = {
+    runId, forDiff: diffAt, status: 'running', startedAt: new Date().toISOString(), finishedAt: null, error: null,
+    summary: '', findings: [], threads: {}, costUsd: null, agent: ctx.reviewAgent?.agent === 'codex' ? 'codex' : 'claude',
+  };
+  if (!diff.files?.length) {
+    writeFindings({ session, record: { ...record, status: 'ready', finishedAt: record.startedAt, summary: 'There are no changed files to review.' } });
+    return json(res, 200, { ok: true, status: 'ready' });
+  }
+  writeFindings({ session, record });
+  findingsRuns.set(session, { runId, job: null });
+  log('review.findings_started', { reqId, session, runId, replaced: Boolean(current), files: diff.files.length });
+  runFindings({ ctx, session, review, diff, runId }).catch(function unexpected(err) {
+    log('review.findings_crashed', { session, error: err?.message });
+    settleFindings(session, runId, { status: 'failed', error: err?.message || 'the review crashed' });
+  });
+  return json(res, 200, { ok: true, status: 'running' });
+}
+
+/** Write the end of a run onto its record, unless the record is another run's by now. */
+function settleFindings(session, runId, fields) {
+  const record = readFindings(session);
+  if (record?.runId !== runId) return false;
+  writeFindings({ session, record: { ...record, ...fields, finishedAt: new Date().toISOString() } });
+  return true;
+}
+
+async function runFindings({ ctx, session, review, diff, runId }) {
+  const { log } = ctx;
+  const codex = ctx.reviewAgent?.agent === 'codex';
+  let retryReason = null;
+  try {
+    // One retry, as the analysis has, for a run that answered with nothing usable.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (!findingsRunIsLive(session, runId)) {
+        log('review.findings_abandoned', { session, runId, attempt: attempt + 1 });
+        return;
+      }
+      const prompt = buildFindingsPrompt({ meta: review.meta, files: diff.files, retryReason, diffOnly: codex });
+      const started = startReviewJob(ctx, {
+        kind: 'findings', session, files: diff.files,
+        argv: analysisArgv({ prompt, schema: FINDINGS_SCHEMA }), cwd: review.worktree, onLine: onAnalysisLine,
+      });
+      if (!started.ok) {
+        settleFindings(session, runId, { status: 'failed', error: started.error });
+        return;
+      }
+      findingsRuns.set(session, { runId, job: started.job });
+      const job = await started.job.done;
+      if (!findingsRunIsLive(session, runId)) {
+        log('review.findings_abandoned', { session, runId, attempt: attempt + 1, stage: 'post-run' });
+        return;
+      }
+      if (job.phase === 'failed') {
+        settleFindings(session, runId, { status: 'failed', error: job.error });
+        return;
+      }
+      const got = extractFindings(job);
+      const made = got.ok ? reconcileFindings({ value: got.value, files: diff.files }) : null;
+      // Findings, every one of them about a path the diff does not have: as useless as none, and worth the retry.
+      const unplaced = made && !made.findings.length && made.dropped > 0;
+      if (!got.ok || unplaced) {
+        retryReason = got.ok ? 'none of the paths you returned were in the diff' : got.reason;
+        log('review.findings_bad_output', { session, runId, attempt: attempt + 1, reason: retryReason });
+        if (attempt === 1) {
+          settleFindings(session, runId, { status: 'failed', error: retryReason });
+          return;
+        }
+        continue;
+      }
+      settleFindings(session, runId, {
+        status: 'ready', error: null, summary: made.summary, findings: made.findings, costUsd: job.costUsd ?? null,
+      });
+      log('review.findings_done', {
+        session, runId, findings: made.findings.length, dropped: made.dropped,
+        high: made.findings.filter((f) => f.severity === 'high').length,
+        unanchored: made.findings.filter((f) => !f.line).length, toolCalls: job.toolCalls, costUsd: job.costUsd,
+      });
+      return;
+    }
+  } finally {
+    if (findingsRuns.get(session)?.runId === runId) findingsRuns.delete(session);
+  }
+}
+
+async function handleFindingsAsk(payload, res, ctx, session) {
+  const { json, log, reqId } = ctx;
+  const review = readSessionReview(session);
+  if (!review) return json(res, 404, { ok: false, error: 'no review for this session' });
+  const diff = readDiff(session);
+  if (!diff) return json(res, 409, { ok: false, error: 'no diff stored for this session' });
+  const record = readFindings(session);
+  if (!record) return json(res, 409, { ok: false, error: 'there is no AI review to ask about yet' });
+  if (record.status === 'running') return json(res, 409, { ok: false, error: 'the AI review is still being written' });
+  if (record.status !== 'ready') return json(res, 409, { ok: false, error: 'this AI review did not finish: run it again first' });
+  const valid = validateFindingAsk({ payload, record });
+  if (!valid.ok) return json(res, 400, { ok: false, error: valid.error });
+  if (valid.forDiff !== String(record.forDiff ?? '')) {
+    return json(res, 409, { ok: false, error: 'the AI review was run again since this page read it: reload to see the new one' });
+  }
+  if (findingsAskInFlight(session)) return json(res, 409, { ok: false, error: 'still answering the previous question' });
+
+  const finding = valid.finding ? record.findings.find((f) => f.id === valid.finding) : null;
+  const file = finding ? diff.files.find((f) => f.path === finding.path) : null;
+  const key = threadKey(valid.finding);
+  const codex = ctx.reviewAgent?.agent === 'codex';
+  const prompt = buildFindingAskPrompt({
+    meta: review.meta, record, finding, file, history: record.threads?.[key] ?? [], question: valid.question, diffOnly: codex,
+  });
+  const started = startReviewJob(ctx, {
+    kind: 'findings-ask', session,
+    files: codex && file ? [file, ...diff.files.filter((f) => f !== file)] : undefined,
+    argv: explainArgv({ prompt }), cwd: review.worktree,
+  });
+  if (!started.ok) return json(res, started.status, { ok: false, error: started.error });
+  const job = started.job;
+  const runId = record.runId;
+  findingsAsks.set(session, { runId, job, finding: valid.finding, question: valid.question });
+  // Polled through the explain endpoint, as a chat turn is.
+  explainJobs.set(job.jobId, job);
+  log('review.findings_ask', { reqId, session, finding: valid.finding, question: valid.question.slice(0, 80), jobId: job.jobId });
+
+  job.done
+    .then(function settled(done) {
+      const answer = done.phase === 'done' ? extractAnswer(done) : null;
+      const durationMs = (done.endedAt || Date.now()) - (done.startedAt || Date.now());
+      let kept = false;
+      // Only an answered turn is kept, as the chat's; and only on the review it was asked of.
+      if (answer?.ok && findingsAsks.get(session)?.job === job) {
+        const now = readFindings(session);
+        if (now?.runId === runId) {
+          const at = new Date().toISOString();
+          const thread = [...(now.threads?.[key] ?? []),
+            { role: 'user', text: valid.question, at },
+            { role: 'assistant', text: answer.text, at, steps: answer.steps, durationMs, costUsd: answer.costUsd },
+          ].slice(-FINDINGS_THREAD_MAX);
+          writeFindings({ session, record: { ...now, threads: { ...now.threads, [key]: thread } } });
+          kept = true;
+        }
+      }
+      log('review.findings_ask_done', {
+        session, jobId: done.jobId, phase: done.phase, ms: durationMs, kept, costUsd: answer?.costUsd,
+        error: done.error || (answer && !answer.ok ? answer.error : undefined),
+      });
+      setTimeout(function forget() {
+        if (explainJobs.get(job.jobId) === job) explainJobs.delete(job.jobId);
+        if (findingsAsks.get(session)?.job === job) findingsAsks.delete(session);
+      }, EXPLAIN_JOB_TTL_MS).unref();
+    })
+    .catch(function neverHappens(err) {
+      log('review.findings_ask_settle_failed', { session, error: err?.message });
+    });
   return json(res, 200, { ok: true, askId: job.jobId, status: 'running' });
 }
 
