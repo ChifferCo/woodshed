@@ -690,6 +690,23 @@ test('the Usage page is everyone\'s: a member reads their own sessions\' usage, 
   assert.equal(live.totals.key.cost, 4, 'Sonnet 5.5, which the list leaves out, at the built-in one');
   await fetch(`http://127.0.0.1:${pricedPort}/api/usage`, { headers: mia });
   assert.equal(reads.length, 2, 'read again on each ask, never kept');
+  // An admin demoted while the prices are on their way reads only their own.
+  let release;
+  const slow = { read: () => new Promise((resolve) => { release = () => resolve({ table: null, source: 'built-in', asOf: '2026-11-23' }); }) };
+  const slowHandle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, usage, livePrices: slow });
+  const slowServer = http.createServer((req, res) => { slowHandle(req, res); });
+  const slowPort = await listen(slowServer);
+  t.after(() => slowServer.close());
+  const pending = fetch(`http://127.0.0.1:${slowPort}/api/usage?everyone=1`, { headers: mia });
+  while (!release) await new Promise((r) => setTimeout(r, 5));
+  t.after(() => release());
+  members.setAdmin({ login: 'sam-ops', admin: true, by: 'mia-dev' });
+  members.setAdmin({ login: 'mia-dev', admin: false, by: 'sam-ops' });
+  release();
+  const demoted = await (await pending).json();
+  assert.equal(demoted.everyone, false, 'the role is read after the wait');
+  assert.equal(demoted.admin, false);
+  assert.deepEqual(demoted.bySession.map((r) => r.sessionId), ['bbbb2222']);
   const none = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members });
   const bare = http.createServer((req, res) => { none(req, res); });
   const barePort = await listen(bare);

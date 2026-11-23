@@ -2720,9 +2720,11 @@ export function createHandler({
     // The Usage page (usage.mjs): the viewer's own sessions', or with ?everyone=1 an admin's whole console's.
     if (pathname === '/api/usage') {
       if (!usage) return reply(res, 404, { error: 'this console keeps no usage' });
-      const admin = isAdmin(user);
       // Read on each ask, never kept: OpenRouter's list, or the built-in tables when it is not reached (livePrices.mjs).
       const prices = livePrices ? await livePrices.read() : null;
+      // Who may read what is decided after the wait for the prices: an admin demoted, or a person whose Sessions from
+      // GitHub was turned off, meanwhile reads only what they may now.
+      const admin = isAdmin(user);
       const view = usage.summary({ login: user?.login ?? null, admin, everyone: url.searchParams.get('everyone') === '1', days: Number(url.searchParams.get('days')) || 30, seesShared: seesShared(user?.login ?? null) }, prices);
       const listed = new Set(fleet.sessions().map((s) => s.id));
       const bySession = view.bySession.map((row) => (row.hidden ? row : { ...row, listed: listed.has(row.sessionId) }));

@@ -51,3 +51,17 @@ test('a read that takes too long gives up', async (t) => {
   const read = await prices.read();
   assert.equal(read.source, 'built-in');
 });
+
+test('an answer past the size limit is not read to its end', async (t) => {
+  quiet(t);
+  let pulled = 0;
+  let cancelled = false;
+  const body = new ReadableStream({
+    pull(controller) { pulled += 1; controller.enqueue(new Uint8Array(1024)); },
+    cancel() { cancelled = true; },
+  });
+  const prices = createLivePrices({ maxBytes: 4096, fetch: async () => new Response(body, { status: 200 }) });
+  assert.equal((await prices.read()).source, 'built-in');
+  assert.ok(cancelled, 'the rest of the body is cancelled');
+  assert.ok(pulled <= 6, `stopped near the limit, after ${pulled} chunks`);
+});

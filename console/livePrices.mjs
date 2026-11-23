@@ -10,11 +10,30 @@ const TIMEOUT_MS = 5_000;
 // The list is about 1 MB; past this it is not what was asked for.
 const MAX_BYTES = 20 * 1024 * 1024;
 
+// The body as text, or null once it passes `max` bytes: the rest is not read.
+async function bodyUpTo(res, max) {
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 /**
- * @param {{fetch?: typeof globalThis.fetch, url?: string, timeoutMs?: number, now?: () => number}} [opts]
+ * @param {{fetch?: typeof globalThis.fetch, url?: string, timeoutMs?: number, maxBytes?: number, now?: () => number}} [opts]
  * @returns {{read: () => Promise<{table: Record<string, object>|null, source: 'openrouter'|'built-in', asOf: string}>}}
  */
-export function createLivePrices({ fetch = globalThis.fetch, url = OPENROUTER_MODELS_URL, timeoutMs = TIMEOUT_MS, now = Date.now } = {}) {
+export function createLivePrices({ fetch = globalThis.fetch, url = OPENROUTER_MODELS_URL, timeoutMs = TIMEOUT_MS, maxBytes = MAX_BYTES, now = Date.now } = {}) {
   // Each reason a read failed is logged once, until a read works again.
   let lastWhy = null;
   const builtIn = (why) => {
@@ -29,8 +48,8 @@ export function createLivePrices({ fetch = globalThis.fetch, url = OPENROUTER_MO
       try {
         const res = await fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
         if (!res.ok) return builtIn(`status ${res.status}`);
-        const text = await res.text();
-        if (text.length > MAX_BYTES) return builtIn('the answer was too large');
+        const text = await bodyUpTo(res, maxBytes);
+        if (text === null) return builtIn('the answer was too large');
         body = JSON.parse(text);
       } catch (err) {
         return builtIn(err?.name === 'TimeoutError' ? `no answer in ${timeoutMs / 1000} s` : err instanceof SyntaxError ? 'the answer is not JSON' : String(err?.cause?.code ?? err?.message ?? err).split('\n')[0]);
