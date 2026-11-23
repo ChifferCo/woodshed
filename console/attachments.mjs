@@ -86,23 +86,61 @@ export function createAttachments({ dir, now = Date.now }) {
    * @returns {Promise<number>}  how many it has
    */
   async function claim({ login, ids, sessionId }) {
+    return (await move({ login, ids, sessionId })).length;
+  }
+
+  /**
+   * The staged files named, moved under a session after those it has already (a handoff to one of the person's
+   * sessions), numbered on from them.
+   * @returns {Promise<string[]>}  their names in the session's folder, as its uploads folder will have them
+   */
+  async function append({ login, ids, sessionId }) {
+    return move({ login, ids, sessionId, extra: true });
+  }
+
+  // `extra`: the session may have files already, and the cap counts them too.
+  async function move({ login, ids, sessionId, extra = false }) {
     const picked = [...new Set((Array.isArray(ids) ? ids : []).map(String))];
-    if (!picked.length) return 0;
-    if (picked.length > MAX_ATTACHMENTS) throw shown(`at most ${MAX_ATTACHMENTS} attachments`);
+    if (!picked.length) return [];
+    const to = sessionDir(sessionId);
+    const already = extra ? (await fsp.readdir(to).catch(() => [])).length : 0;
+    // A handoff's note is one more than the person's own picks.
+    if (picked.length > MAX_ATTACHMENTS + (extra ? 0 : 1) || (extra && already + picked.length > MAX_ATTACHMENTS * 4)) throw shown(`at most ${MAX_ATTACHMENTS} attachments`);
     if (!picked.every((id) => UPLOAD_ID_RE.test(id))) throw shown('attachments must be upload ids');
     const from = stagedDir(login);
     for (const id of picked) {
       if (!(await fsp.stat(path.join(from, id)).catch(() => null))) throw shown('an attachment is gone: add it again');
     }
-    const to = sessionDir(sessionId);
     await fsp.mkdir(to, { recursive: true });
+    const names = [];
     for (const [i, id] of picked.entries()) {
       const name = await fsp.readFile(path.join(from, `${id}.name`), 'utf8').catch(() => 'file');
-      await fsp.rename(path.join(from, id), path.join(to, attachmentName(name, i)));
+      const named = attachmentName(name, already + i);
+      await fsp.rename(path.join(from, id), path.join(to, named));
       await fsp.rm(path.join(from, `${id}.name`), { force: true });
+      names.push(named);
     }
-    console.log('attachments: claimed', { login, sessionId, count: picked.length });
-    return picked.length;
+    console.log('attachments: claimed', { login, sessionId, count: picked.length, ...(extra ? { after: already } : {}) });
+    return names;
+  }
+
+  /**
+   * Text the console writes itself (a handoff's note), staged as an upload of the person's is.
+   * @returns {Promise<string>}  its upload id
+   */
+  async function stageText({ login, name, text }) {
+    if (!LOGIN_RE.test(String(login ?? ''))) throw shown('My Woodshed needs GitHub sign-in');
+    await fsp.mkdir(stagedDir(login), { recursive: true });
+    const id = randomBytes(8).toString('hex');
+    const file = path.join(stagedDir(login), id);
+    await fsp.writeFile(file, String(text), { flag: 'wx', mode: 0o600 });
+    await fsp.writeFile(`${file}.name`, String(name || 'file').slice(0, 200), { mode: 0o600 });
+    return id;
+  }
+
+  /** @returns {string}  where one of a session's files is kept, for sending it into the running session */
+  function pathOf(sessionId, name) {
+    return path.join(sessionDir(sessionId), path.basename(name));
   }
 
   /** @returns {Promise<boolean>}  whether the session has any, before tarring them */
@@ -152,5 +190,5 @@ export function createAttachments({ dir, now = Date.now }) {
     if (removed) console.log('attachments: old staged files removed', { removed });
   }
 
-  return { stage, claim, has, send, drop, sweep };
+  return { stage, stageText, claim, append, pathOf, has, send, drop, sweep };
 }
