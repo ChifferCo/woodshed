@@ -495,7 +495,8 @@
   const ranHoursOf = (s) => (s.status === 'running' && s.startedAt ? (Date.now() - Date.parse(s.startedAt)) / 3_600_000 : 0);
   function lifetimePick(s) {
     if (s.kind === 'ask' || !data || !W.ownsLimits(s, data)) return null;
-    const fallback = (s.owner && data.myLifetimeHours) || data.lifetimeHours;
+    // The usual stop, read again each time from the latest settings: My settings' or the console's may change meanwhile.
+    const fallbackOf = () => (s.owner && data.myLifetimeHours) || data.lifetimeHours;
     const hoursShort = (n) => `${n} h`;
     const select = h('select', { class: 'field rename-offer-ttl-pick', 'aria-label': 'Stop it after' });
     let latest = s;
@@ -505,6 +506,7 @@
       latest = next;
       const own = next.limits?.lifetimeHours ?? null;
       const ranHours = ranHoursOf(next);
+      const fallback = fallbackOf();
       const picks = [...new Set([...LIFETIME_PICKS, ...(own ? [own] : [])])].sort((a, b) => a - b);
       const option = (value, text, hours) => h('option', { value, disabled: hours <= ranHours && value !== String(own ?? '') }, text);
       select.replaceChildren(
@@ -515,6 +517,7 @@
     draw(s);
     select.addEventListener('change', async () => {
       const lifetimeHours = select.value ? Number(select.value) : null;
+      const fallback = fallbackOf();
       // Checked again now: the offer may have been open long enough for the session to run past the pick.
       if ((lifetimeHours ?? fallback) <= ranHoursOf(latest)) {
         W.shell.toast(`Not saved: it has already run past ${W.hoursText(lifetimeHours ?? fallback)}. Pause and stop… can stop it now.`, { ms: 6000 });
@@ -539,8 +542,13 @@
     });
     const el = h('label', { class: 'rename-offer-ttl', title: 'How long it runs before it stops by itself. It tries to push its work first, and Resume picks it up.' },
       h('span', null, 'Stops after'), select);
-    // Not while a save is on its way, nor while its list may be open.
-    const sync = (next) => { if (!pending && document.activeElement !== select) draw(next); };
+    // The latest copy is kept on every refresh; its options are drawn again only when no save is on its way and its
+    // list cannot be open.
+    const sync = (next) => {
+      if (pending) return;
+      latest = next;
+      if (document.activeElement !== select) draw(next);
+    };
     return { el, sync };
   }
 
