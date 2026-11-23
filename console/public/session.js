@@ -220,11 +220,9 @@
     const shown = shownAgent(s);
     const own = { id: null, agent: W.agentOf(s), model: s.options?.model || null, state: s.state };
     const waiting = [own, ...list].filter((a) => a.state === 'needs-you' && a.id !== (shown?.id ?? null)).length;
-    // It says what it is: the agent shown, and how to add one while it is the only one.
     const label = [
-      h('span', { class: 'pagent-word' }, 'Agent'),
       h('span', null, agentLabel((shown ?? own).agent, (shown ?? own).model)),
-      list.length > 0 ? h('span', { class: 'pagent-count' }, `${list.length + 1} agents`) : h('span', { class: 'pagent-count' }, '+ add'),
+      list.length > 0 && h('span', { class: 'pagent-count' }, `${list.length + 1} agents`),
       waiting > 0 && h('span', { class: 'pagent-needs' }, `${waiting} needs you`),
       ' ▾',
     ];
