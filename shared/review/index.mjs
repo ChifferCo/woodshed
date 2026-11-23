@@ -394,6 +394,13 @@ async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath
   return { ok: true, review };
 }
 
+/** The commit a checkout is on, or null when git cannot say. */
+async function checkoutHead(worktreePath) {
+  const got = await run('git', ['rev-parse', 'HEAD'], { cwd: worktreePath, timeoutMs: 30_000 });
+  const sha = got.status === 0 ? (got.stdout || '').trim() : '';
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+}
+
 /**
  * Review the work sitting in a session's own worktree, against the default branch.
  *
@@ -415,9 +422,14 @@ async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath
  * `pull` is a Re-review's: first fast-forward the checkout to what origin has on its branch (pullWorktreeBranch), so
  * commits pushed from elsewhere are read too. Opening the page never pulls.
  *
- * @returns {Promise<{ok: true, review: object} | {ok: false, status: number, error: string, stderr?: string}>}
+ * `follow` is the page's own Re-review, when it saw the pull request's head move on GitHub: after the pull, a checkout
+ * still at the commit the review read answers `unchanged` and takes nothing, so a GitHub that is behind the session (or
+ * a pull refused) never spends an analysis on the same commit again.
+ *
+ * @returns {Promise<{ok: true, review: object} | {ok: true, unchanged: true, headSha: string}
+ *   | {ok: false, status: number, error: string, stderr?: string}>}
  */
-async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = false }) {
+async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = false, follow = false }) {
   const { log, repoRoot, reqId } = ctx;
   if (DISABLED) return { ok: false, status: 503, error: 'the review feature is disabled in this instance' };
   if (!isSessionName(sessionName)) return { ok: false, status: 400, error: 'not a session name' };
@@ -444,6 +456,10 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
       reqId, session: sessionName, branch: pulled.branch, commits: pulled.pulled,
       from: pulled.from?.slice(0, 8), to: pulled.to?.slice(0, 8), refused: pulled.refused ?? null,
     });
+  }
+  if (follow && existing?.headSha && fs.existsSync(worktreePath)) {
+    const head = await checkoutHead(worktreePath);
+    if (head === existing.headSha) return { ok: true, unchanged: true, headSha: head };
   }
   // Unique per call, not per session. Its callers now take a session's review
   // one at a time (oneTakeAtATime), but this was written when two overlapping
@@ -995,7 +1011,9 @@ export async function handleReviewRequest(req, res, ctx) {
   // it spends money, and the second press means "do it again with what I have
   // now", which is a request to act rather than to set a value.
   if (req.method === 'POST' && !section) {
-    await gated(res, ctx, 'worktree-review', () => handleWorktreeReview(res, ctx, session));
+    // ?follow=1 is the page keeping up with the pull request on its own: take it again only when the commit moved.
+    const follow = url.searchParams.get('follow') === '1';
+    await gated(res, ctx, 'worktree-review', () => handleWorktreeReview(res, ctx, session, { follow }));
     return true;
   }
   // Take this pull request or branch again at whatever origin has now. A
@@ -1506,21 +1524,25 @@ async function handleViewedWrite(payload, res, ctx, session) {
   json(res, 200, { ok: true, path: filePath, viewed: !!payload.viewed });
 }
 
-function handleWorktreeReview(res, ctx, session) {
-  return oneTakeAtATime(session, () => takeWorktreeReview(res, ctx, session));
+function handleWorktreeReview(res, ctx, session, { follow = false } = {}) {
+  return oneTakeAtATime(session, () => takeWorktreeReview(res, ctx, session, { follow }));
 }
 
-async function takeWorktreeReview(res, ctx, session) {
+async function takeWorktreeReview(res, ctx, session, { follow = false } = {}) {
   const { json, log, reqId } = ctx;
   // No existence check here: worktreePathFor only computes a path, and whether
   // anything is at it is worktreeDiff's first question — which answers with a
   // 409 and a sentence rather than a bare 404.
   const worktreePath = ctx.worktreePathFor(session);
 
-  const made = await createWorktreeReview({ ctx, sessionName: session, worktreePath, pull: true });
+  const made = await createWorktreeReview({ ctx, sessionName: session, worktreePath, pull: true, follow });
   if (!made.ok) {
     log('review.worktree_failed', { reqId, session, status: made.status, error: made.error });
     return json(res, made.status, { ok: false, error: made.error, stderr: made.stderr });
+  }
+  if (made.unchanged) {
+    log('review.worktree_unchanged', { reqId, session, headSha: made.headSha.slice(0, 8) });
+    return json(res, 200, { ok: true, unchanged: true, headSha: made.headSha });
   }
 
   // Everything below is the re-review case, and the order is the point.
