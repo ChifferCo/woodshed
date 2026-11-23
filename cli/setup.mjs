@@ -2,6 +2,7 @@
 
 import { execFile } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
+import { setTimeout as delay } from 'node:timers/promises';
 import { CONFIG_KEYS, CONFIG_UNAVAILABLE } from './config.mjs';
 import { ORIGIN_RE } from './credentials.mjs';
 
@@ -13,6 +14,8 @@ export const REVIEW_PRS_DEFAULT = 5;
 export const WAIT_DEFAULT_MINUTES = 15;
 export const WAIT_MAX_MINUTES = 60;
 export const WAIT_POLL_SECONDS = 5;
+// A poll with no more than this left before the deadline is skipped: the wait ends instead.
+const WAIT_MIN_CALL_MS = 1000;
 
 export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--no-browser] [options]
 
@@ -115,9 +118,10 @@ function options(args, fail) {
 }
 
 // Each step runs the installed CLI here, with this process's environment.
-export function runCli({ node, script }, args, env) {
+// `signal` stops the subcommand, for a call that must end by --wait's deadline.
+export function runCli({ node, script }, args, env, { signal } = {}) {
   return new Promise((resolve, reject) => {
-    execFile(node, [script, ...args], { env, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+    execFile(node, [script, ...args], { env, maxBuffer: 4 * 1024 * 1024, signal }, (err, stdout) => {
       if (err && typeof err.code !== 'number') return reject(new Error('Could not run a Woodshed subcommand.'));
       resolve({ code: err?.code ?? 0, stdout });
     });
@@ -163,10 +167,10 @@ export async function setupCommand(args, ctx) {
   const choose = !opts['--yes'] && (ctx.tty ?? process.stdin.isTTY)
     ? (ctx.ask ?? ((question) => askTerminal(question, ctx.stderr)))
     : null;
-  const run = ctx.run ?? ((words) => runCli(ctx.self, words, env));
-  // The clock and the pause of --wait, which the tests replace.
+  const run = ctx.run ?? ((words, options) => runCli(ctx.self, words, env, options));
+  // The clock and the pause of --wait, which the tests replace. `sleep` rejects once its `signal` aborts.
   const now = ctx.now ?? Date.now;
-  const sleep = ctx.sleep ?? ((ms) => new Promise((resolve) => { setTimeout(resolve, ms); }));
+  const sleep = ctx.sleep ?? ((ms, { signal } = {}) => delay(ms, undefined, { signal }));
   function report(step, status, message, fields = {}) {
     if (args.json) emit({ event: 'setup', step, status, message, ...fields });
     else say(`[${status.replace('-', ' ')}] ${message}${fields.url ? ` ${fields.url}` : ''}`);
@@ -177,15 +181,27 @@ export async function setupCommand(args, ctx) {
     return [EXIT.waiting, EXIT.refused].includes(code) ? code : EXIT.failed;
   }
   const globals = ['--console', origin, '--json', ...(!args.browser ? ['--no-browser'] : [])];
-  async function call(step, ...words) {
+  const call = (step, ...words) => callWith({}, step, ...words);
+  async function callWith(options, step, ...words) {
     try {
-      const result = await run([...globals, ...words]);
+      const result = await run([...globals, ...words], options);
       const events = result.stdout.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line));
       if (events.some((event) => !event || typeof event !== 'object' || Array.isArray(event))) throw new Error('not a JSON event');
       return { code: result.code, events, last: events.at(-1), error: events.findLast((event) => event.event === 'error') };
     } catch {
       return { code: EXIT.failed, events: [], error: { error: `Could not read woodshed ${step} output. Run woodshed ${step} directly for details.` } };
     }
+  }
+  // A call given `ms` at most: one that takes longer is stopped, and answers as a failed call when the time is up.
+  async function callWithin(ms, step, ...words) {
+    const stopCall = new AbortController();
+    const stopTimer = new AbortController();
+    const late = { code: EXIT.failed, events: [], error: { error: 'the console did not answer before the wait ran out' } };
+    const timer = sleep(ms, { signal: stopTimer.signal }).then(() => late, () => null);
+    const result = await Promise.race([callWith({ signal: stopCall.signal }, step, ...words), timer]);
+    stopTimer.abort();
+    if (result === late) stopCall.abort();
+    return result;
   }
   function childError(step, result, message, fields) {
     return stop(step, result.code || EXIT.failed, printable(result.error?.error) || message, fields);
@@ -327,9 +343,10 @@ export async function setupCommand(args, ctx) {
       report('agent', 'waiting', message, { ...fields, waitMinutes: wait });
       const deadline = now() + wait * 60_000;
       let unread = false;
-      while (missing.length && now() < deadline) {
-        await sleep(Math.max(0, Math.min(WAIT_POLL_SECONDS * 1000, deadline - now())));
-        const checked = await call('status', 'status');
+      // Each pause and each call is held to the time left, so exit 2 comes by the deadline even from a slow console.
+      while (missing.length && deadline - now() > WAIT_MIN_CALL_MS) {
+        await sleep(Math.min(WAIT_POLL_SECONDS * 1000, deadline - now() - WAIT_MIN_CALL_MS));
+        const checked = await callWithin(deadline - now(), 'status', 'status');
         const seen = checked.code === EXIT.done && checked.last?.signedIn === true ? checked.last.sessionSignIns : null;
         if (!seen || typeof seen !== 'object') {
           // Once: the console may be restarting, and the next call may well answer.
@@ -338,9 +355,12 @@ export async function setupCommand(args, ctx) {
           continue;
         }
         signIns = seen;
-        for (const name of missing.filter((other) => seen[other] === true)) {
-          missing = missing.filter((other) => other !== name);
-          report('agent', 'connected', `${AGENT_NAMES[name]} is connected.`, { agent: name, missing });
+        // From the latest answer each time: a sign-in removed on My settings mid-wait is missing again.
+        const was = missing;
+        missing = wanted.filter((name) => seen[name] !== true);
+        for (const name of wanted) {
+          if (was.includes(name) && !missing.includes(name)) report('agent', 'connected', `${AGENT_NAMES[name]} is connected.`, { agent: name, missing });
+          if (!was.includes(name) && missing.includes(name)) report('agent', 'waiting', `${AGENT_NAMES[name]}'s sign-in is no longer saved on My settings: connect it again.`, { agent: name, missing, steps: { [name]: stepsOf(name) } });
         }
       }
     }

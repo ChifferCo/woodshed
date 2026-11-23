@@ -41,7 +41,13 @@ function fake({
       EXIT, emit: (event) => events.push(event), say: (line) => lines.push(line), fail: (message) => new Error(message),
       stderr: { write: (line) => lines.push(line) },
       cwd, run, open: (url) => opened.push(url), tty, platform,
-      ...(clock ? { now: () => clock.t, sleep: async (ms) => { clock.slept.push(ms); clock.t += ms; } } : {}),
+      // After the calls already answered (setImmediate), as a real timer would be, and not at all once aborted.
+      ...(clock ? { now: () => clock.t, sleep: (ms, { signal } = {}) => new Promise((resolve, reject) => setImmediate(() => {
+        if (signal?.aborted) return reject(new Error('aborted'));
+        clock.slept.push(ms);
+        clock.t += ms;
+        return resolve();
+      })) } : {}),
       ask: async (question) => {
         questions.push(question);
         return input.shift() ?? null;
@@ -626,7 +632,8 @@ test('when --wait runs out, setup exits 2 with the steps and the message it give
   const clock = fakeClock();
   const after = await fake({ clock, answers: missing }).invoke('--yes', '--repo', repo, '--wait=1m');
   assert.equal(after.code, EXIT.waiting);
-  assert.equal(clock.slept.reduce((sum, ms) => sum + ms, 0), 60_000, 'waited the minute, and no longer');
+  const waited = clock.slept.reduce((sum, ms) => sum + ms, 0);
+  assert.ok(waited >= 59_000 && waited <= 60_000, `waited the minute, and no longer (${waited} ms)`);
   assert.equal(after.calls.filter(([word]) => word === 'status').length, 1 + 12, 'asked every 5 seconds');
   const { status, ...last } = after.events.at(-1);
   const { status: was, ...without } = before.events.at(-1);
@@ -665,4 +672,33 @@ test('with --wait and both agents already connected, setup runs as it does witho
   assert.deepEqual(waited.events, plain.events);
   assert.deepEqual(waited.calls, plain.calls);
   assert.deepEqual(clock.slept, []);
+});
+
+test('with --wait, a status call slower than the time left is cut off, and setup exits 2 by the deadline', async () => {
+  const clock = fakeClock();
+  const start = clock.t;
+  let calls = 0;
+  // The first answer says Codex is missing; every later call never answers, as a console that hangs.
+  const { invoke } = fake({ clock, answers: { status: () => (calls++ ? new Promise(() => {}) : signedIn({ claude: true, codex: false })) } });
+  const after = await invoke('--yes', '--repo', repo, '--wait=1m');
+  assert.equal(after.code, EXIT.waiting);
+  assert.ok(clock.t - start <= 60_000, `exit 2 by the deadline (${clock.t - start} ms)`);
+  assert.equal(calls, 2, 'one hung call, cut off when the time ran out, and none after it');
+  assert.deepEqual(after.events.filter((event) => event.step === 'agent').map((event) => event.status), ['waiting', 'waiting', 'needs-you']);
+  assert.match(after.events[3].message, /did not answer before the wait ran out/);
+  assert.deepEqual(after.events.at(-1).missing, ['codex']);
+});
+
+test('with --wait, a sign-in removed mid-wait is reported missing again', async () => {
+  // Claude Code connects while Codex is still missing, then its sign-in is removed.
+  const both = [{ claude: false, codex: false }, { claude: true, codex: false }, { claude: false, codex: false }];
+  const { invoke } = fake({ clock: fakeClock(), answers: { status: () => signedIn(both.length > 1 ? both.shift() : both[0]) } });
+  const after = await invoke('--yes', '--repo', repo, '--wait=1m');
+  assert.equal(after.code, EXIT.waiting);
+  const agent = after.events.filter((event) => event.step === 'agent');
+  assert.deepEqual(agent.map(({ status, agent: name }) => [status, name]), [['waiting', undefined], ['connected', 'claude'], ['waiting', 'claude'], ['needs-you', undefined]]);
+  assert.deepEqual(agent[1].missing, ['codex']);
+  assert.match(agent[2].message, /^Claude Code's sign-in is no longer saved on My settings/);
+  assert.deepEqual(agent[2].missing, ['claude', 'codex']);
+  assert.deepEqual(agent.at(-1).missing, ['claude', 'codex'], 'the timeout names both again');
 });
