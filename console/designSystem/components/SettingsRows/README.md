@@ -37,8 +37,8 @@ two never drift. What is new there:
 
 - A closed row's form is in the page and hidden, so it opens with no round trip; `public/hostRows.js` opens and closes
   rows, opens the one the address names (`#<id>`), copies a value box's value, and says a repo pick's pick.
-- Forms post to the program, which sends the page back where it was: no script of the program's runs in the frame or
-  on a repo's page.
+- Forms post to the program, which sends the page back where it was. In the settings frame the program's scripts run
+  as the frame puts its part in; on a repo's page only the scripts it names with its groups are loaded, once.
 - A checkbox with its words is `check-line`, `slate` as its accent. A step drawn over a page that stands alone (a
   first visit's steps) is `host-dialog`: the console's dialog's look, the page inert behind it, its steps a checklist
   (`components/Checklist`) with no seconds.

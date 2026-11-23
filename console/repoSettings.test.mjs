@@ -490,13 +490,19 @@ test('a program\'s own groups for a repo\'s page come with the admin\'s view, an
   const { call } = await startConsole(t, { repoPage: async (repo) => { asked.push(repo); return answer(repo); } });
   const view = await call('mia-dev', 'GET', '/api/console-settings/repos/tools', undefined, { 'x-org': 'acme' });
   assert.equal(view.status, 200);
-  assert.match(view.body.host, /<div class="set-group"><h2 class="set-group-label">Project file<\/h2>/, 'its markup, as it made it');
+  assert.match(view.body.host.html, /<div class="set-group"><h2 class="set-group-label">Project file<\/h2>/, 'its markup, as it made it');
+  assert.deepEqual(view.body.host.scripts, [], 'no script it did not name');
   assert.equal(asked.at(-1).name, 'tools');
   assert.equal(asked.at(-1).headers['x-org'], 'acme', 'the request\'s headers, so the program knows whose it is');
   assert.ok(asked.at(-1).repo, 'and the repo');
   // A save answers with the view too, so the page keeps the program's groups.
   const saved = await call('mia-dev', 'POST', '/api/console-settings/repos/tools/instructions', { text: 'Be brief.' });
-  assert.match(saved.body.host, /Project file/);
+  assert.match(saved.body.host.html, /Project file/);
+  // With the scripts that make its groups work: paths on the console's address alone.
+  answer = (repo) => ({ markup: group({ label: 'Session data' }, row({ id: 'd', title: repo.name })), scripts: ['/assets/upload.js', 'https://x.test/a.js', '//x.test/b.js', 7] });
+  const withScripts = await call('mia-dev', 'GET', '/api/console-settings/repos/tools');
+  assert.match(withScripts.body.host.html, /Session data/);
+  assert.deepEqual(withScripts.body.host.scripts, ['/assets/upload.js']);
   const quiet = [];
   answer = () => { throw new Error('the database is away'); };
   const original = console.warn;

@@ -647,9 +647,10 @@ async function readBody(req, limit = MAX_BODY_BYTES) {
  *   `POST /api/console-settings/projects/slack-channel`, as the Repos card saved it. `myView` is My settings' view of a
  *   person (userSettings.mjs), which the old own files route answers with. `triggersOf` is the repo's label and its
  *   switches (repoTriggers.mjs), saved through `POST /api/console-settings/projects/triggers`. `hostGroups` is a program's
- *   `repoPage` hook (installation.mjs): its own groups for the admin's page, as markup (settingsMarkup.mjs), which the
- *   view carries as `host` and the page shows after its own groups. A hook that throws, or answers anything but markup
- *   or null, adds none, and the page is shown without them.
+ *   `repoPage` hook (installation.mjs): its own groups for the admin's page, as markup (settingsMarkup.mjs), or
+ *   `{markup, scripts}` with the paths of scripts that make them work; the view carries them as `host: {html, scripts}`
+ *   and the page shows them after its own groups. A hook that throws, or answers anything but markup or null, adds
+ *   none, and the page is shown without them.
  */
 export function createRepoSettingsApi({ repoSettings, config, projectAccess = null, slackOf = null, triggersOf = null, myView = null, hostGroups = null }) {
   async function canWrite(login, name) {
@@ -668,15 +669,19 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
     return { ...view, slack: slackOf?.(project) ?? null, triggers: triggersOf?.(project) ?? null, host };
   }
 
-  // The program's groups for the repo's page: what it said, as text the page puts in after its own, or none.
+  // The program's groups for the repo's page, as the page puts them in: its markup, and the scripts (paths on the
+  // console's address) it loads once to make them work, such as an upload's. None when it gives none or fails.
   async function hostGroupsOf(name, headers) {
     if (!hostGroups) return null;
     try {
       const given = await hostGroups({ name, repo: projectNamed(config, name)?.repo ?? null, headers });
       if (given === null || given === undefined) return null;
-      const text = typeof given === 'string' ? given : given instanceof Markup ? given.text : null;
+      const markup = given instanceof Markup || typeof given === 'string' ? given : given?.markup;
+      const text = typeof markup === 'string' ? markup : markup instanceof Markup ? markup.text : null;
       if (text === null) throw new Error(`answered ${typeof given}, not markup`);
-      return text;
+      const scripts = (Array.isArray(given?.scripts) ? given.scripts : [])
+        .filter((src) => typeof src === 'string' && src.startsWith('/') && !src.startsWith('//')).slice(0, 8);
+      return { html: text, scripts };
     } catch (err) {
       console.warn('repoSettings: the program\'s groups not given', { project: String(name).slice(0, 40), error: err.message });
       return null;

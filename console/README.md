@@ -1970,10 +1970,11 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   like the console's pages and follows the design system as it changes; their rows open in place (`public/hostRows.js`).
 - `repoPage({name, repo, headers})`: groups of the program's own on a repo's settings page (Console settings → Repos →
   Repo settings), after the console's, for what it keeps about the repo: its session image's project file, the data its
-  sessions start from. Async; it answers markup from `settingsMarkup.mjs` (or the string of it), or `null` for none. The
-  admin's view of the repo carries it as `host` (`GET /api/console-settings/repos/<project>`), and the page puts it in as
-  a template's contents, so none of it runs; its forms post to the program, which sends the page back to
-  `/console-settings/repos/<project>#<row>`, opening that row. A hook that throws, or answers anything else, adds none
+  sessions start from. Async; it answers markup from `settingsMarkup.mjs` (or the string of it), `{markup, scripts}`
+  where its groups need scripts to work (an upload's: paths on the console's address, at most eight), or `null` for
+  none. The admin's view of the repo carries it as `host: {html, scripts}` (`GET /api/console-settings/repos/<project>`),
+  and the page puts the markup in as a template's contents, so nothing in it runs, then loads each script once; its forms
+  post to the program, which sends the page back to `/console-settings/repos/<project>#<row>`, opening that row. A hook that throws, or answers anything else, adds none
   and logs `repoSettings: the program's groups not given`; the page is shown without them.
 - `standalonePage({title, body, brand, groups?, current?, login?, signOut?, dialog?, refresh?, styles?, scripts?})`
   from `server.mjs`: a page of the program's that stands outside any console, such as a first visit before there is a

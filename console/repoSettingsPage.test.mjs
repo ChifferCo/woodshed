@@ -665,6 +665,16 @@ test('a program\'s own groups follow the repo\'s, put in as its markup, and stay
   assert.equal(page.wired.length, 1, 'wired once');
 });
 
+test('the scripts a program names for its groups are loaded once, after them', async () => {
+  const page = await loadPage({ hostGroups: async () => ({ markup: '<div class="set-group">Session data</div>', scripts: ['/assets/upload.js'] }) });
+  const host = walk(page.app).find((e) => e.className === 'host-groups');
+  const scripts = walk(host).filter((e) => e.tag === 'script');
+  assert.deepEqual(scripts.map((e) => e.attrs.src), ['/assets/upload.js']);
+  page.context.window.Woodshed.postJson('/api/console-settings/repos/app/instructions', { text: 'Be brief.' });
+  await settle();
+  assert.equal(walk(page.app).filter((e) => e.tag === 'script').length, 1, 'not loaded again by a redraw');
+});
+
 test('with no program\'s groups, or one that fails, the repo\'s page is the console\'s alone', async () => {
   const none = await loadPage({ hostGroups: async () => null });
   assert.equal(walk(none.app).some((e) => e.className === 'host-groups'), false);
