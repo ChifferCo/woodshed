@@ -227,11 +227,13 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - A row of the Repos card is the repo's name, where it was set, its sessions and, with Slack, where its pull requests go
   (`PRs to C…` or `PRs to the console's channel`, a link to the Slack card), then **Settings** and, for an added repo,
   **Remove**. No field: the channel is set on the repo's page.
-- Three cards: **Env files** (a tab per env file, by path), **Instructions** and **Slack**. The first two are a layered file
+- Four groups of rows that open in place (`components/SettingsRows`): **Env files** (a row per env file, by path),
+  **Prompt** (Instructions), **Sessions from GitHub** (its two switches on their rows, then the label's name) and **Slack**
+  (the pull request channel). A closed row says what it holds. An env file and the instructions are a layered file
   (`components/LayeredFile`): the layers in the order a session writes them, the layer's word as a grey tag, and for an
   env file a table of which layer wins each key. Values never appear in the table, a log or a tooltip: only in their
   own layer's field, behind **Show and edit** once saved.
-- With no env files, the Env files card is a short how-to in the same box: numbered steps (`cmd-steps`), the YAML in a
+- With no env files, the Env files group's box holds a short how-to: numbered steps (`cmd-steps`), the YAML in a
   mono `stopped` block, a link to the project file on GitHub (↗), and where the docs are.
 - **Slack** is one box of the same shape: the channel ID field (mono), a `meta` mono line saying where the next pull
   request goes, Save and a quiet Clear (back to the console's channel), then a `sub` line on finding the ID and inviting
