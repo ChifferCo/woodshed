@@ -419,6 +419,7 @@
     if (was === s.namedAt) {
       if (offer) {
         if (!offer.editing) offer.name.textContent = s.title;
+        offer.ttl?.sync(s);
         placeRenameOffer();
       }
       return;
@@ -468,9 +469,10 @@
     const body = h('div', { class: 'rename-offer-body', onclick: (e) => { if (!e.target.closest('form')) edit(); } },
       h('span', { class: 'rename-offer-line' }, 'Named ', name),
       h('button', { type: 'button', class: 'btn btn-plain btn-sm', onclick: edit }, 'Rename'));
+    const ttl = lifetimePick(s);
     const el = h('div', { class: 'rename-offer', role: 'dialog', 'aria-label': 'Rename this session' },
       body,
-      lifetimePick(s),
+      ttl?.el,
       h('button', { type: 'button', class: 'rename-offer-close', 'aria-label': 'Close', title: 'Keep this name', onclick: (e) => { e.stopPropagation(); closeRenameOffer(); } }, '\u00d7'),
       h('span', { class: 'rename-offer-timer', 'aria-hidden': 'true', style: `animation-duration: ${RENAME_OFFER_MS}ms` }));
     el.addEventListener('pointerdown', keep);
@@ -481,47 +483,65 @@
       closeRenameOffer();
     });
     document.body.append(el);
-    offer = { id: s.id, el, name, kept: false, editing: false, timer: setTimeout(closeRenameOffer, RENAME_OFFER_MS) };
+    offer = { id: s.id, el, name, ttl, kept: false, editing: false, timer: setTimeout(closeRenameOffer, RENAME_OFFER_MS) };
     placeRenameOffer();
   }
 
   // The offer's other question, while the session is new: how long it runs before it stops by itself (its own
   // `lifetimeHours`, as Pause and stop… sets it). Offered to whoever may change it (W.ownsLimits); the first option is
-  // what it runs on otherwise, and a pick is saved at once.
+  // what it runs on otherwise, and a pick is saved at once. Each refresh draws its options again from the latest copy of
+  // the session, while the offer stays open: a stop set in Pause and stop… meanwhile shows here.
   const LIFETIME_PICKS = [1, 2, 4, 8, 12, 24];
+  const ranHoursOf = (s) => (s.status === 'running' && s.startedAt ? (Date.now() - Date.parse(s.startedAt)) / 3_600_000 : 0);
   function lifetimePick(s) {
     if (s.kind === 'ask' || !data || !W.ownsLimits(s, data)) return null;
     const fallback = (s.owner && data.myLifetimeHours) || data.lifetimeHours;
-    const own = s.limits?.lifetimeHours ?? null;
     const hoursShort = (n) => `${n} h`;
-    const picks = [...new Set([...LIFETIME_PICKS, ...(own ? [own] : [])])].sort((a, b) => a - b);
+    const select = h('select', { class: 'field rename-offer-ttl-pick', 'aria-label': 'Stop it after' });
+    let latest = s;
+    let pending = false;
     // A stop it has already run past would end it within seconds: those are not offered (Pause and stop… still can).
-    const ranHours = s.status === 'running' && s.startedAt ? (Date.now() - Date.parse(s.startedAt)) / 3_600_000 : 0;
-    const option = (value, text, hours) => h('option', { value, disabled: hours <= ranHours && value !== String(own ?? '') }, text);
-    const select = h('select', { class: 'field rename-offer-ttl-pick', 'aria-label': 'Stop it after' },
-      option('', fallback ? `${hoursShort(fallback)} (usual)` : 'Usual', fallback || Infinity),
-      ...picks.map((n) => option(String(n), hoursShort(n), n)));
-    select.value = own ? String(own) : '';
-    let saved = select.value;
+    const draw = (next) => {
+      latest = next;
+      const own = next.limits?.lifetimeHours ?? null;
+      const ranHours = ranHoursOf(next);
+      const picks = [...new Set([...LIFETIME_PICKS, ...(own ? [own] : [])])].sort((a, b) => a - b);
+      const option = (value, text, hours) => h('option', { value, disabled: hours <= ranHours && value !== String(own ?? '') }, text);
+      select.replaceChildren(
+        option('', fallback ? `${hoursShort(fallback)} (usual)` : 'Usual', fallback || Infinity),
+        ...picks.map((n) => option(String(n), hoursShort(n), n)));
+      select.value = own ? String(own) : '';
+    };
+    draw(s);
     select.addEventListener('change', async () => {
       const lifetimeHours = select.value ? Number(select.value) : null;
+      // Checked again now: the offer may have been open long enough for the session to run past the pick.
+      if ((lifetimeHours ?? fallback) <= ranHoursOf(latest)) {
+        W.shell.toast(`Not saved: it has already run past ${W.hoursText(lifetimeHours ?? fallback)}. Pause and stop… can stop it now.`, { ms: 6000 });
+        draw(latest);
+        return;
+      }
       select.disabled = true;
+      pending = true;
       try {
         // The session's own idle pause stays as it is now (a key left out would go back to the usual): read from the
         // latest copy of this session, never the offer's first, which may hold an idle pause cleared since.
-        const latest = currentSession?.id === s.id ? currentSession : s;
         await W.postJson(`/api/sessions/${s.id}/limits`, { idleHours: latest.limits?.idleHours ?? null, lifetimeHours });
-        saved = select.value;
+        latest = { ...latest, limits: { ...latest.limits, lifetimeHours } };
         W.shell.toast(`Stops after ${W.hoursText(lifetimeHours ?? fallback)} of running`);
         refresh();
       } catch (err) {
-        select.value = saved;
         W.shell.toast(`Not saved: ${err.message}`, { ms: 6000 });
       }
+      pending = false;
       select.disabled = false;
+      draw(latest);
     });
-    return h('label', { class: 'rename-offer-ttl', title: 'How long it runs before it stops by itself. It tries to push its work first, and Resume picks it up.' },
+    const el = h('label', { class: 'rename-offer-ttl', title: 'How long it runs before it stops by itself. It tries to push its work first, and Resume picks it up.' },
       h('span', null, 'Stops after'), select);
+    // Not while a save is on its way, nor while its list may be open.
+    const sync = (next) => { if (!pending && document.activeElement !== select) draw(next); };
+    return { el, sync };
   }
 
   const STAR = 'M5 1.1 L5.99 3.94 L8.99 4 L6.6 5.82 L7.47 8.7 L5 6.98 L2.53 8.7 L3.4 5.82 L1.01 4 L4.01 3.94 Z';
