@@ -102,6 +102,42 @@ test('a message goes in through hc only while the agent says it is idle, and cod
   assert.deepEqual(calls.at(-1), ['hc', 'send', '--json', '--', 'claude', 'go on'], 'no record: codex read at its prompt');
 });
 
+// claude's record after each turn: `done`, kept until its next turn starts (measured, claude 2.1.330 on hc 0.1.21). hc's
+// `send --if` takes only idle or working, and `--if idle` refuses done with status_mismatch ("t3 is done, not idle").
+const CLAUDE_DONE = { ...CLAUDE_RUNNING, status: { app: 'claude-code', state: 'done' } };
+
+test('a message goes in through hc after claude\'s turn ended, which its record says as done, not idle', async () => {
+  // hc as it answers: `--if idle` on a done terminal is refused, and nothing is typed.
+  const hcSend = (args) => (args.includes('--if') ? refused('status_mismatch') : { started: false, status: 'done' });
+  const calls = [];
+  const run = async (cmd, args) => {
+    calls.push([cmd, ...args]);
+    if (args[0] === 'get') return { stdout: JSON.stringify(CLAUDE_DONE) };
+    if (args[0] === 'read') return { stdout: JSON.stringify(read(fixture('pane-done.txt'))) };
+    const out = hcSend(args);
+    if (out instanceof Error) throw out;
+    return { stdout: JSON.stringify(out) };
+  };
+  assert.deepEqual(await hcPane(run).send('the review asked for changes'), { sent: true });
+  assert.deepEqual(calls.at(-1), ['hc', 'send', '--json', '--', 'claude', 'the review asked for changes']);
+});
+
+test('a done record is not enough while the screen shows claude working or asking: nothing goes in', async () => {
+  for (const [name, screen, why] of [['working', fixture('pane-working.txt'), 'not-at-prompt'], ['approval', fixture('pane-permission.txt'), 'prompt-open']]) {
+    const { run, calls } = fakeRun({ 'hc get': CLAUDE_DONE, 'hc read': read(screen) });
+    assert.equal((await hcPane(run).send('hi')).why, why, name);
+    assert.deepEqual(sends(calls), [], name);
+  }
+});
+
+test('while its record says working or blocked, nothing goes in through hc', async () => {
+  for (const [state, why] of [['working', 'status_mismatch'], ['blocked', 'blocked'], ['error', 'status_mismatch']]) {
+    const { run, calls } = fakeRun({ 'hc get': { ...CLAUDE_RUNNING, status: { app: 'claude-code', state } }, 'hc read': read(fixture('pane-done.txt')) });
+    assert.deepEqual(await hcPane(run).send('hi'), { sent: false, why }, state);
+    assert.deepEqual(sends(calls), [], state);
+  }
+});
+
 test('a message that starts with a dash is the message, never one of hc\'s options', async () => {
   const { run, calls } = fakeRun({ 'hc get': CLAUDE_RUNNING, 'hc read': read(fixture('pane-done.txt')) });
   assert.deepEqual(await hcPane(run).send('- first\n- second'), { sent: true });
