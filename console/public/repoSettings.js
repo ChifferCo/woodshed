@@ -481,7 +481,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
   }
 
   // A program's own groups for the repo (its `repoPage` hook, settingsMarkup.mjs), after the console's: its markup, put
-  // in as a template's so nothing in it runs, its rows opened by hostRows.js. The same node until the markup changes, so
+  // in as a template's so no <script> in it runs, its rows opened by hostRows.js. The same node until the markup changes, so
   // a redraw for the console's groups keeps the program's rows as they were opened, and what is typed in its forms. The
   // scripts it names (paths on the console's address) are loaded once, after its groups are first drawn.
   let hostNode = null;
@@ -502,6 +502,8 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
         hostScripts.add(src);
         hostNode.append(h('script', { src }));
       }
+      // A script loaded once listens on the document, or for this: the program's groups were drawn anew.
+      window.dispatchEvent(new CustomEvent('woodshed:host-groups', { detail: { node: hostNode } }));
     }
     return hostNode;
   }

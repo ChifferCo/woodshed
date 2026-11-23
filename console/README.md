@@ -1973,8 +1973,11 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   sessions start from. Async; it answers markup from `settingsMarkup.mjs` (or the string of it), `{markup, scripts}`
   where its groups need scripts to work (an upload's: paths on the console's address, at most eight), or `null` for
   none. The admin's view of the repo carries it as `host: {html, scripts}` (`GET /api/console-settings/repos/<project>`),
-  and the page puts the markup in as a template's contents, so nothing in it runs, then loads each script once; its forms
-  post to the program, which sends the page back to `/console-settings/repos/<project>#<row>`, opening that row. A hook that throws, or answers anything else, adds none
+  and the page puts the markup in as a template's contents, so no `<script>` in it runs, then loads each script once:
+  markup from `settingsMarkup.mjs` alone, which escapes every value, never a string the program built some other way. A
+  script listens on the document, or for `woodshed:host-groups` on `window`, which the page fires each time it draws the
+  groups anew (a save answering with new ones). Its forms post to the program, which sends the page back to
+  `/console-settings/repos/<project>#<row>`, opening that row. A hook that throws, or answers anything else, adds none
   and logs `repoSettings: the program's groups not given`; the page is shown without them.
 - `standalonePage({title, body, brand, groups?, current?, login?, signOut?, dialog?, refresh?, styles?, scripts?})`
   from `server.mjs`: a page of the program's that stands outside any console, such as a first visit before there is a

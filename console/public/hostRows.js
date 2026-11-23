@@ -62,6 +62,7 @@
       const copy = e.target.closest('[data-copy]');
       if (copy && root.contains(copy)) {
         const box = copy.parentElement?.querySelector('.value-box');
+        if (!box) return;
         try {
           await navigator.clipboard.writeText(box?.textContent ?? '');
           copy.textContent = 'Copied';

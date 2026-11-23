@@ -648,7 +648,7 @@ async function readBody(req, limit = MAX_BODY_BYTES) {
  *   person (userSettings.mjs), which the old own files route answers with. `triggersOf` is the repo's label and its
  *   switches (repoTriggers.mjs), saved through `POST /api/console-settings/projects/triggers`. `hostGroups` is a program's
  *   `repoPage` hook (installation.mjs): its own groups for the admin's page, as markup (settingsMarkup.mjs), or
- *   `{markup, scripts}` with the paths of scripts that make them work; the view carries them as `host: {html, scripts}`
+ *   `{markup, scripts}` with the paths of scripts that make them work (markup from settingsMarkup.mjs alone, never a string); the view carries them as `host: {html, scripts}`
  *   and the page shows them after its own groups. A hook that throws, or answers anything but markup or null, adds
  *   none, and the page is shown without them.
  */
@@ -664,6 +664,16 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
     return { projects: main.repo ? [main] : [], defaultProject: main.repo ? main.name : null };
   }
 
+  // A script path on the console's own address: `/\host/x.js` is another site's to a browser, as `//host/x.js` is.
+  function onConsole(src) {
+    if (typeof src !== 'string' || !src.startsWith('/') || src.includes('\\')) return false;
+    try {
+      return new URL(src, 'http://console.invalid').origin === 'http://console.invalid';
+    } catch {
+      return false;
+    }
+  }
+
   async function adminView(project, headers) {
     const [view, host] = await Promise.all([repoSettings.view(project), hostGroupsOf(project, headers)]);
     return { ...view, slack: slackOf?.(project) ?? null, triggers: triggersOf?.(project) ?? null, host };
@@ -676,12 +686,11 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
     try {
       const given = await hostGroups({ name, repo: projectNamed(config, name)?.repo ?? null, headers });
       if (given === null || given === undefined) return null;
-      const markup = given instanceof Markup || typeof given === 'string' ? given : given?.markup;
-      const text = typeof markup === 'string' ? markup : markup instanceof Markup ? markup.text : null;
-      if (text === null) throw new Error(`answered ${typeof given}, not markup`);
-      const scripts = (Array.isArray(given?.scripts) ? given.scripts : [])
-        .filter((src) => typeof src === 'string' && src.startsWith('/') && !src.startsWith('//')).slice(0, 8);
-      return { html: text, scripts };
+      // Markup alone, made with settingsMarkup.mjs, which escaped every value: never a string built some other way.
+      const markup = given instanceof Markup ? given : given?.markup;
+      if (!(markup instanceof Markup)) throw new Error(`answered ${typeof given}, not markup from settingsMarkup.mjs`);
+      const scripts = (Array.isArray(given?.scripts) ? given.scripts : []).filter(onConsole).slice(0, 8);
+      return { html: markup.text, scripts };
     } catch (err) {
       console.warn('repoSettings: the program\'s groups not given', { project: String(name).slice(0, 40), error: err.message });
       return null;

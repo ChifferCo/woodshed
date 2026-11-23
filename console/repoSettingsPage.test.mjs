@@ -8,6 +8,7 @@ import vm from 'node:vm';
 
 import { createRepoSettings, createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { createSlack } from './slack.mjs';
+import { trusted } from './settingsMarkup.mjs';
 import { parseProject } from '../shared/project.mjs';
 
 const rowsSource = fs.readFileSync(new URL('./public/settingsRows.js', import.meta.url), 'utf8');
@@ -172,12 +173,15 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
   // A program's markup is put in through a template, which keeps it as the text it was given here; hostRows.js wires it.
   const wired = [];
   const revealed = [];
+  const events = [];
   const template = () => ({ set innerHTML(text) { this.content = { tag: '#markup', attrs: {}, children: [], markup: text }; } });
   const context = vm.createContext({
     window: {
       Woodshed: W, location, confirm: (text) => { asked.push(text); return confirmAnswer; },
       WoodshedHostRows: { wire: (node, opts) => wired.push({ node, opts }), reveal: (node, id) => revealed.push({ node, id }) },
+      dispatchEvent: (e) => events.push(e),
     }, console, location, history, URL, URLSearchParams, TextEncoder,
+    CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init?.detail; } },
     document: { getElementById: (id) => walk(app).find((e) => e.attrs.id === id) ?? null, activeElement: null, createElement: (tag) => (tag === 'template' ? template() : element(tag)) },
     setTimeout: (fn) => setImmediate(fn), clearTimeout: () => {},
   });
@@ -192,7 +196,7 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
     for (const id of opened) openRow(app, id);
   }
   await settle();
-  return { app, calls, confirms, asked, history, store, secrets, repoSettings, wired, revealed, context };
+  return { app, calls, confirms, asked, history, store, secrets, repoSettings, wired, revealed, events, context };
 }
 
 // A row is a section with its id; its head is the button that opens and closes it.
@@ -646,7 +650,7 @@ test('the label\'s name is a row that opens: a label of the repo\'s own is saved
 
 test('a program\'s own groups follow the repo\'s, put in as its markup, and stay the same node when the page is drawn again', async () => {
   const markup = '<div class="set-group"><h2 class="set-group-label">Project file</h2></div>';
-  const page = await loadPage({ hash: '#project-file', triggers: TRIGGERS, slack: { consoleChannel: '#prs', channels: {} }, hostGroups: async () => markup });
+  const page = await loadPage({ hash: '#project-file', triggers: TRIGGERS, slack: { consoleChannel: '#prs', channels: {} }, hostGroups: async () => trusted(markup) });
   const view = page.app.children[0];
   const host = walk(view).find((e) => e.className === 'host-groups');
   assert.ok(host, 'drawn');
@@ -663,10 +667,11 @@ test('a program\'s own groups follow the repo\'s, put in as its markup, and stay
   await settle();
   assert.ok(walk(page.app).includes(host), 'kept across a redraw');
   assert.equal(page.wired.length, 1, 'wired once');
+  assert.deepEqual(page.events.map((e) => e.type), ['woodshed:host-groups'], 'drawn once, so said once, for a script that wires what it finds');
 });
 
 test('the scripts a program names for its groups are loaded once, after them', async () => {
-  const page = await loadPage({ hostGroups: async () => ({ markup: '<div class="set-group">Session data</div>', scripts: ['/assets/upload.js'] }) });
+  const page = await loadPage({ hostGroups: async () => ({ markup: trusted('<div class="set-group">Session data</div>'), scripts: ['/assets/upload.js'] }) });
   const host = walk(page.app).find((e) => e.className === 'host-groups');
   const scripts = walk(host).filter((e) => e.tag === 'script');
   assert.deepEqual(scripts.map((e) => e.attrs.src), ['/assets/upload.js']);

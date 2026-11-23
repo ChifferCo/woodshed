@@ -499,7 +499,7 @@ test('a program\'s own groups for a repo\'s page come with the admin\'s view, an
   const saved = await call('mia-dev', 'POST', '/api/console-settings/repos/tools/instructions', { text: 'Be brief.' });
   assert.match(saved.body.host.html, /Project file/);
   // With the scripts that make its groups work: paths on the console's address alone.
-  answer = (repo) => ({ markup: group({ label: 'Session data' }, row({ id: 'd', title: repo.name })), scripts: ['/assets/upload.js', 'https://x.test/a.js', '//x.test/b.js', 7] });
+  answer = (repo) => ({ markup: group({ label: 'Session data' }, row({ id: 'd', title: repo.name })), scripts: ['/assets/upload.js', 'https://x.test/a.js', '//x.test/b.js', '/\\x.test/c.js', 7] });
   const withScripts = await call('mia-dev', 'GET', '/api/console-settings/repos/tools');
   assert.match(withScripts.body.host.html, /Session data/);
   assert.deepEqual(withScripts.body.host.scripts, ['/assets/upload.js']);
@@ -513,10 +513,12 @@ test('a program\'s own groups for a repo\'s page come with the admin\'s view, an
     assert.equal(failed.body.host, null);
     answer = () => ({ html: '<script>' });
     assert.equal((await call('mia-dev', 'GET', '/api/console-settings/repos/tools')).body.host, null, 'anything but markup is none');
+    answer = () => '<div class="set-group">tools</div>';
+    assert.equal((await call('mia-dev', 'GET', '/api/console-settings/repos/tools')).body.host, null, 'nor a string, which settingsMarkup.mjs did not escape');
   } finally {
     console.warn = original;
   }
-  assert.deepEqual(quiet.map((a) => a[0]), ['repoSettings: the program\'s groups not given', 'repoSettings: the program\'s groups not given']);
+  assert.deepEqual(quiet.map((a) => a[0]), Array(3).fill('repoSettings: the program\'s groups not given'));
   answer = () => null;
   assert.equal((await call('mia-dev', 'GET', '/api/console-settings/repos/tools')).body.host, null, 'none for this repo');
   assert.equal((await call('sam-ops', 'GET', '/api/console-settings/repos/tools')).status, 403, 'still an admin\'s alone');
