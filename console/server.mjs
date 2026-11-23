@@ -202,6 +202,7 @@
 // A session started from My Woodshed is private: every route that reaches it (its page's data, terminal,
 // Redis, app, review, Stop, the websockets) answers anyone but its owner as it would an id that does not exist.
 
+import { safeHref } from './settingsMarkup.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -617,7 +618,11 @@ export function settingsFrame({ title, body, current, heading = null, tabs = nul
  * @returns {string}
  */
 export function standalonePage({ title, body, brand, groups = [], current = null, login = null, signOut = null, dialog = null, refresh = null, styles = [], scripts = [] }) {
-  const path = (href) => (typeof href === 'string' && href.startsWith('/') && !href.startsWith('//') ? href : null);
+  // A path on this address alone, as settingsMarkup.mjs's links are: `//host` or `/\\host` is another site's to a browser.
+  const path = (href) => {
+    const safe = typeof href === 'string' ? safeHref(href) : null;
+    return safe?.startsWith('/') ? safe : null;
+  };
   const link = (item) => {
     const href = path(item?.href);
     const label = menuText(item?.label);

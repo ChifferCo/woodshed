@@ -90,7 +90,7 @@ test('a page that stands alone: the settings frame drawn by the server, with the
     title: 'Get started', body: pageHead({ title: 'Get started' }).text, brand: { label: 'Woodshed Cloud', href: '/account', icon: '/assets/logo.svg' },
     groups: [{ label: 'You', items: [{ label: 'Your workspaces', href: '/account' }, { label: 'Away', href: 'https://x.test' }, { label: 'Protocol', href: '//x.test' }] }],
     current: '/account', login: 'joel', signOut: '/account/sign-out', dialog: '<div class="host-dialog">step</div>', refresh: 4,
-    styles: ['/assets/own.css', 'https://x.test/a.css'], scripts: ['/assets/own.js'],
+    styles: ['/assets/own.css', 'https://x.test/a.css', '/\\x.test/b.css'], scripts: ['/assets/own.js', '/\\x.test/a.js', '/\t/x.test/c.js'],
   });
   assert.match(page, /<a class="side-back" href="\/account"><img src="\/assets\/logo.svg" width="20" height="20" alt="" class="side-brand-icon"><b>Woodshed Cloud<\/b><\/a>/, 'its mark and name head the side list');
   assert.match(page, /<a class="side-item" href="\/account" aria-current="page">Your workspaces<\/a>/);
