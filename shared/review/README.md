@@ -76,6 +76,12 @@ than a third branch inside `prepareReview`:
   fast-forward: a branch that moved both here and there, or a pull that would
   overwrite an uncommitted file, is left alone and the page says why. Opening the
   page never pulls.
+- **The page re-reviews on its own when the pull request moves.** It reads the pull request's head on GitHub on load,
+  on coming back to the tab and every minute while shown, and when that is not the commit the review read it presses
+  Re-review itself, once per head. A worktree review's is `POST /reviews/<session>?follow=1`: after the pull, a checkout
+  still at the commit the review read answers `unchanged` and takes nothing, so a GitHub behind the session never
+  spends an analysis on the same commit again. A target review's `/refresh` already answers `unchanged` for an unmoved
+  head.
 
 `server.mjs` imports eight things from here: `handleReviewRequest`,
 `reviewStartupSweep`, `parseReviewTarget`, `createReviewSession`,
