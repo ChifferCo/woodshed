@@ -1295,18 +1295,17 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 /* A role picked beside the handle (People behind a hosting proxy): as wide as its words. */
 .invite-row select.field { flex: 0 0 auto; font-family: inherit; }
 
-/* The Slack card (Console settings): a row each for the bot, pull requests and questions, and their Limits folded
-   under them. The Set up Slack dialog and the channel picker are public/slackSetup.js. */
-.slack-rows { display: flex; flex-direction: column; }
-.slack-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; align-items: center; padding: 11px 0; border-top: 1px solid var(--line-soft); }
-.slack-row:first-child { border-top: 0; padding-top: 2px; }
-.slack-row .set-name { margin: 0; }
-.slack-row .sub { grid-column: 1; margin: 0; font-size: 13px; }
-.slack-row .slack-act { grid-column: 2; grid-row: 1 / span 2; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
-.slack-row .slack-more { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; }
-.slack-limits { grid-column: 1 / -1; margin-top: 4px; padding-left: 14px; border-left: 2px solid var(--line-soft); }
+/* Settings · General's rows (consoleSettings.js), over the shared settings rows: Slack's channel picker with its
+   buttons, a Slack row's Limits under its other controls, a repo's colour dot beside its name, and a server's
+   Production tag, which goes under the name on a phone as a pill does. The Set up Slack dialog and the channel picker
+   are public/slackSetup.js. */
+.set-fold-body .slack-more { display: flex; flex-direction: column; gap: 8px; }
+.set-fold-body h4.sub-head { margin-bottom: 0; }
+.slack-limits { padding-left: 14px; border-left: 2px solid var(--line-soft); }
 .slack-limits .set-rows { margin-bottom: 4px; }
-@media (max-width: 560px) { .slack-row { grid-template-columns: minmax(0, 1fr); } .slack-row .slack-act { grid-column: 1; grid-row: auto; justify-content: flex-start; } }
+.proj-dot { display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--project, var(--idle-dot)); vertical-align: 1px; }
+.set-value .proj-colors { margin-top: 0; justify-content: flex-end; }
+@media (max-width: 560px) { .set-fold-head .otag { grid-row: 2; justify-self: start; } .set-value .proj-colors { justify-content: flex-start; } }
 .channel-pick { display: flex; flex-direction: column; gap: 6px; max-width: 560px; }
 .channel-list { display: flex; flex-direction: column; max-height: 240px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
 .channel-option { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 10px; padding: 7px 10px; border: 0; border-top: 1px solid var(--line-soft); background: transparent; color: inherit; font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }

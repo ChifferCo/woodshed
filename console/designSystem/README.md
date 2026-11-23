@@ -105,12 +105,14 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## Woodshed card
 
-- First on Console settings. The state is a sentence: "Up to date with …" in `green`, or "N commits behind …" in
+- First on Console settings, as a settings row (`components/SettingsRows`): closed, it says the running commit, when
+  it was checked and its pill (**Up to date** `is-ok`, **N commits behind** `is-warn`, Updating, Restarting, Failed),
+  and it stays open while an update runs. Opened, the state is a sentence: "Up to date with …" in `green`, or "N commits behind …" in
   `set-name` weight, the running commit as a mono `rref`. The newer commits are a list, newest first: mono `slate` sha,
   the title cut to one line, then the author and age in `meta`; it scrolls past about ten.
 - An update is a checklist (`components/Checklist`) under an Update head with its pill: Updating or Restarting
   (`is-work`), Failed (`is-bad`). Commands and a build's last lines are mono on `stopped`.
-- **Update to latest** is the card's one orange button; **Check now** is quiet.
+- **Update to latest** is the row's one orange button; **Check now** is quiet.
 
 ## Setup card
 
@@ -127,8 +129,8 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   with Add a repo (admin) or a line saying an admin can connect another; a blocked repo stays in the list with
   `— needs setup`, and picking it puts the card in place of the prompt and Start. Nothing on the rail or the New
   session button changes for it.
-- Console settings' Repos card says **Ready** (`pill is-ok`) or **Needs setup** on each row, with the card's reason and
-  fix under a row that needs it.
+- Console settings' Repos group says **Ready** (`pill is-ok`) or **Needs setup** on each repo's row, with the card's
+  reason and fix inside a row that needs it.
 
 ## Checklists
 
@@ -159,9 +161,9 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   under the list names it.
 - Where Slack will not list them (an app without the scopes), the picker is the channel ID field, with a `cap-note`
   that says which scopes to add. It never shows an empty list as if the workspace had no channels.
-- The Slack card is one card in rows (Bot, Pull requests, Questions), each with its sentence and its action on the
-  right; a group's numbers fold under its row behind a quiet **Limits ▾**. Not set up, it is one sentence and the
-  orange **Set up Slack**, its primary action. The dialog's way to connect is a radio card list; an option not yet
+- Slack on Console settings is one group of settings rows (Bot, Pull requests, Questions), each saying what it is
+  now on its closed row; a row's numbers are in it under a **Limits** head, with no fold of their own. Not set up, it
+  is one line with its sentence and the orange **Set up Slack**, its primary action. The dialog's way to connect is a radio card list; an option not yet
   available is disabled, and its own description says why.
 
 ## Naming a session
