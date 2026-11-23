@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { seedEnv, seedEnvFiles } from './dbAdmin.mjs';
 import { loadProject } from '../shared/project.mjs';
 import { fixtureApp, fixtureCheckout, fixtureProject } from '../shared/projectFixture.mjs';
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
 
 const SESSION_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ENTRYPOINT = fs.readFileSync(path.join(SESSION_DIR, 'entrypoint.sh'), 'utf8');
@@ -1367,7 +1368,7 @@ test('while the agent\'s terminal is not there yet, the TUI tab says so and atta
 });
 
 // Grok Build, Antigravity and OpenCode: their flags for each mode, and their own files, from the owner's own sign-in.
-const agentFlags = (name, env) => execFileSync('bash', ['-c', `${fn(name)}\n${name}`], { encoding: 'utf8', env: { PATH: process.env.PATH, ...env } });
+const agentFlags = (name, env) => execFileSync('bash', ['-c', `${fn(name)}\n${name}`], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, ...env }) });
 
 test('each agent gets its own flags for the mode, model and effort New session picked', () => {
   assert.equal(agentFlags('grokFlags', {}), ' --no-alt-screen --no-auto-update --always-approve');
@@ -1379,7 +1380,7 @@ test('each agent gets its own flags for the mode, model and effort New session p
   assert.equal(agentFlags('opencodeFlags', { PERMISSION_MODE: 'plan', MODEL: 'anthropic/claude-sonnet-4-5' }), ' --agent plan --model anthropic/claude-sonnet-4-5');
   assert.equal(agentFlags('opencodeFlags', { PERMISSION_MODE: 'default' }), '');
   const command = (agent) => execFileSync('bash', ['-c', [fn('codexFlags'), fn('grokFlags'), fn('antigravityFlags'), fn('opencodeFlags'), fn('agentCommand'), fn('promptFlag'), 'printf "%s|%s" "$(agentCommand)" "$(promptFlag)"'].join('\n')],
-    { encoding: 'utf8', env: { PATH: process.env.PATH, AGENT: agent, SESSION_DIR: '/opt/woodshed/session' } });
+    { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, AGENT: agent, SESSION_DIR: '/opt/woodshed/session' }) });
   assert.equal(command('grok'), '/opt/woodshed/session/bin/grok --no-alt-screen --no-auto-update --always-approve|');
   assert.equal(command('antigravity'), '/opt/woodshed/session/bin/agy --mode auto --add-dir /tmp/uploads| -i');
   assert.equal(command('opencode'), '/opt/woodshed/session/bin/opencode --auto| --prompt');
@@ -1400,7 +1401,7 @@ function configureAgent(name, auth, env = {}) {
   const read = (file) => (fs.existsSync(path.join(home, file)) ? fs.readFileSync(path.join(home, file), 'utf8') : null);
   const mode = (file) => fs.statSync(path.join(home, file)).mode & 0o777;
   try {
-    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, SESSION_DIR: '/opt/woodshed/session', REPO_DIR: '/work/app', ...env } });
+    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, HOME: home, SESSION_DIR: '/opt/woodshed/session', REPO_DIR: '/work/app', ...env }) });
     return { out, read, mode };
   } catch (err) {
     return { out: String(err.stdout), failed: true, read, mode };
