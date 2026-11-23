@@ -472,16 +472,37 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
       envGroup(),
       promptGroup(),
       githubGroup(),
-      slackGroup()));
+      slackGroup(),
+      hostGroups()));
     for (const key of editors.keys()) updateCounts(key);
     if (focused && focused === document.activeElement) {
       try { if (caret?.[0] !== undefined && caret?.[0] !== null) focused.setSelectionRange(...caret); } catch { /* not a text field */ }
     }
   }
 
+  // A program's own groups for the repo (its `repoPage` hook, settingsMarkup.mjs), after the console's: its markup, put
+  // in as a template's so nothing in it runs, its rows opened by hostRows.js. The same node until the markup changes, so
+  // a redraw for the console's groups keeps the program's rows as they were opened, and what is typed in its forms.
+  let hostNode = null;
+  let hostText = null;
+  function hostGroups() {
+    if (!view.host) return null;
+    if (view.host !== hostText) {
+      const template = document.createElement('template');
+      template.innerHTML = view.host;
+      hostNode = h('div', { class: 'host-groups' });
+      hostNode.append(template.content);
+      hostText = view.host;
+      // A link that names one of its rows opens it: readOpened, once the page is drawn.
+      window.WoodshedHostRows?.wire(hostNode, { hash: false });
+    }
+    return hostNode;
+  }
+
   // The search, or a link followed while the page is shown, opens a row without its head being pressed: the
   // instructions are read then too.
   function readOpened() {
+    if (hostNode) window.WoodshedHostRows?.reveal(hostNode, location.hash.slice(1));
     if (location.hash === GITHUB && view && !open.has(LABEL_ROW)) {
       open.add(LABEL_ROW);
       render();

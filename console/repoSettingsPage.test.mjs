@@ -112,7 +112,7 @@ function channelCall(slack, body) {
  * row's body, or the ids of the rows to open ([] leaves the page as a link to it finds it).
  * @returns the page's root, the calls it made, and the console's state and secrets
  */
-async function loadPage({ project = 'app', search = '', hash = '', file = APP_FILE, admin = true, before = null, confirmAnswer = true, slack: slackSettings = null, channels = CHANNELS, opened = 'all', triggers = null, triggersFail = null } = {}) {
+async function loadPage({ project = 'app', search = '', hash = '', file = APP_FILE, admin = true, before = null, confirmAnswer = true, slack: slackSettings = null, channels = CHANNELS, opened = 'all', triggers = null, triggersFail = null, hostGroups = null } = {}) {
   const store = { state: { sessions: [] }, save() {} };
   const secrets = memorySecrets();
   const config = { projects: PROJECTS, repo: 'acme/app' };
@@ -128,7 +128,7 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
   const slack = slackSettings && createSlack({ store, secrets });
   // The repo's label and switches, changed as the Repos card's API changes them.
   let now = triggers && { ...triggers };
-  const api = createRepoSettingsApi({ repoSettings, config, slackOf: slack ? slackOf(slack) : null, triggersOf: () => now });
+  const api = createRepoSettingsApi({ repoSettings, config, slackOf: slack ? slackOf(slack) : null, triggersOf: () => now, hostGroups });
   const calls = [];
   const consoleCall = (method, path, body) => {
     // The page's objects are of its own realm: copied, so they compare as plain ones.
@@ -169,9 +169,16 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
   };
   const location = { pathname: `/console-settings/repos/${project}`, search, hash, href: `http://console.test/console-settings/repos/${project}${search}${hash}` };
   const history = { urls: [], replaceState(_s, _t, url) { this.urls.push(String(url)); } };
+  // A program's markup is put in through a template, which keeps it as the text it was given here; hostRows.js wires it.
+  const wired = [];
+  const revealed = [];
+  const template = () => ({ set innerHTML(text) { this.content = { tag: '#markup', attrs: {}, children: [], markup: text }; } });
   const context = vm.createContext({
-    window: { Woodshed: W, location, confirm: (text) => { asked.push(text); return confirmAnswer; } }, console, location, history, URL, URLSearchParams, TextEncoder,
-    document: { getElementById: (id) => walk(app).find((e) => e.attrs.id === id) ?? null, activeElement: null },
+    window: {
+      Woodshed: W, location, confirm: (text) => { asked.push(text); return confirmAnswer; },
+      WoodshedHostRows: { wire: (node, opts) => wired.push({ node, opts }), reveal: (node, id) => revealed.push({ node, id }) },
+    }, console, location, history, URL, URLSearchParams, TextEncoder,
+    document: { getElementById: (id) => walk(app).find((e) => e.attrs.id === id) ?? null, activeElement: null, createElement: (tag) => (tag === 'template' ? template() : element(tag)) },
     setTimeout: (fn) => setImmediate(fn), clearTimeout: () => {},
   });
   vm.runInContext(pickerSource, context);
@@ -185,7 +192,7 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
     for (const id of opened) openRow(app, id);
   }
   await settle();
-  return { app, calls, confirms, asked, history, store, secrets, repoSettings };
+  return { app, calls, confirms, asked, history, store, secrets, repoSettings, wired, revealed, context };
 }
 
 // A row is a section with its id; its head is the button that opens and closes it.
@@ -635,4 +642,39 @@ test('the label\'s name is a row that opens: a label of the repo\'s own is saved
   assert.deepEqual(calls.at(-1).body, { name: 'app', label: null });
   assert.match(textOf(row()), /Back to the console's label, woodshed\./);
   assert.deepEqual(headText(app, 'session-label-row').slice(1), ['woodshed, the console\'s', 'Console\'s']);
+});
+
+test('a program\'s own groups follow the repo\'s, put in as its markup, and stay the same node when the page is drawn again', async () => {
+  const markup = '<div class="set-group"><h2 class="set-group-label">Project file</h2></div>';
+  const page = await loadPage({ hash: '#project-file', triggers: TRIGGERS, slack: { consoleChannel: '#prs', channels: {} }, hostGroups: async () => markup });
+  const view = page.app.children[0];
+  const host = walk(view).find((e) => e.className === 'host-groups');
+  assert.ok(host, 'drawn');
+  assert.equal(host.children[0].markup, markup, 'its markup, as the program made it');
+  const groups = walk(view).filter((e) => e.className === 'set-group' || e.className === 'host-groups').map((e) => e.attrs.id ?? e.className);
+  assert.equal(groups.at(-1), 'host-groups', 'after the console\'s own groups');
+  assert.equal(page.wired.length, 1);
+  assert.equal(page.wired[0].node, host);
+  assert.deepEqual({ ...page.wired[0].opts }, { hash: false }, 'the page opens its own rows from the address');
+  await settle();
+  assert.deepEqual(page.revealed.map((r) => r.id), ['project-file'], 'a link to one of its rows opens it');
+  // Saving the instructions draws the page again: the program's part is the same node, its rows as they were.
+  page.context.window.Woodshed.postJson('/api/console-settings/repos/app/instructions', { text: 'Be brief.' });
+  await settle();
+  assert.ok(walk(page.app).includes(host), 'kept across a redraw');
+  assert.equal(page.wired.length, 1, 'wired once');
+});
+
+test('with no program\'s groups, or one that fails, the repo\'s page is the console\'s alone', async () => {
+  const none = await loadPage({ hostGroups: async () => null });
+  assert.equal(walk(none.app).some((e) => e.className === 'host-groups'), false);
+  const original = console.warn;
+  console.warn = () => {};
+  try {
+    const failed = await loadPage({ hostGroups: async () => { throw new Error('away'); } });
+    assert.equal(walk(failed.app).some((e) => e.className === 'host-groups'), false);
+    assert.ok(walk(failed.app).some((e) => e.attrs.id === 'env-files'), 'the console\'s groups still drawn');
+  } finally {
+    console.warn = original;
+  }
 });

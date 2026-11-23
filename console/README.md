@@ -1965,7 +1965,22 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   marks its entry in the side list and menu, and its tab in the row and among the entry's pages. `styles` are its
   stylesheets (paths), loaded after the console's, so its rules use the design system's variables and follow the
   theme; it scopes them to `.host-page`, which holds its part. Its forms and links stay the program's. Someone who is not an admin sees the program's tabs alone, and Settings in the Console group opens the
-  first of them; with no tabs, nothing changes for them.
+  first of them; with no tabs, nothing changes for them. It draws its part with the console's own components, made on
+  its server by `settingsMarkup.mjs` (designSystem/components/SettingsRows, "From a program's server"), so it looks
+  like the console's pages and follows the design system as it changes; their rows open in place (`public/hostRows.js`).
+- `repoPage({name, repo, headers})`: groups of the program's own on a repo's settings page (Console settings → Repos →
+  Repo settings), after the console's, for what it keeps about the repo: its session image's project file, the data its
+  sessions start from. Async; it answers markup from `settingsMarkup.mjs` (or the string of it), or `null` for none. The
+  admin's view of the repo carries it as `host` (`GET /api/console-settings/repos/<project>`), and the page puts it in as
+  a template's contents, so none of it runs; its forms post to the program, which sends the page back to
+  `/console-settings/repos/<project>#<row>`, opening that row. A hook that throws, or answers anything else, adds none
+  and logs `repoSettings: the program's groups not given`; the page is shown without them.
+- `standalonePage({title, body, brand, groups?, current?, login?, signOut?, dialog?, refresh?, styles?, scripts?})`
+  from `server.mjs`: a page of the program's that stands outside any console, such as a first visit before there is a
+  console to be in. It is the settings pages' frame drawn by the server, the program's name heading the side list in
+  place of Back to sessions, its `groups` of links under it and Sign out posting to `signOut`, with the design system's
+  stylesheet and `hostRows.js` and no console script, so it asks no console anything. `dialog` is a step drawn over it
+  (`settingsMarkup.mjs`'s `dialog`), the page inert behind; `refresh` reloads it after that many seconds.
 - `members: {list(), add({login, role, by}), remove({login, by}), setRole({login, role, by})}`, with `trusted` only
   (given without it, `createInstallation` throws): the program's own list of who is in, for the People page (above,
   "Sign-in", behind a hosting proxy). `list()` answers `[{login, role, note?}]`, `role` `owner` or `member` (an

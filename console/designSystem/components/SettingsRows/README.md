@@ -26,3 +26,19 @@ still says its value.
   one part at a time on a segmented control (Instructions, Env files, Your files), with a `•` on a part that holds
   something of theirs.
 - On a phone the pill moves under the row's text, and a row's control under its help.
+
+## From a program's server
+
+A program embedding the console draws the same rows on its server (`console/settingsMarkup.mjs`: `group`, `row`,
+`line`, `howTo`, `pill`, `button`, `steps`, `valueBox`, `table`, `eventLine`, `checklist`, `pageHead`, `dialog`), for
+its pages in the settings frame, its groups on a repo's settings page (the `repoPage` hook) and its pages that stand
+alone (`standalonePage` in `server.mjs`). `settingsMarkup.test.mjs` holds its rows to `public/settingsRows.js`'s, so the
+two never drift. What is new there:
+
+- A closed row's form is in the page and hidden, so it opens with no round trip; `public/hostRows.js` opens and closes
+  rows, opens the one the address names (`#<id>`), copies a value box's value, and says a repo pick's pick.
+- Forms post to the program, which sends the page back where it was: no script of the program's runs in the frame or
+  on a repo's page.
+- A checkbox with its words is `check-line`, `slate` as its accent. A step drawn over a page that stands alone (a
+  first visit's steps) is `host-dialog`: the console's dialog's look, the page inert behind it, its steps a checklist
+  (`components/Checklist`) with no seconds.

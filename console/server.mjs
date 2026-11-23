@@ -254,7 +254,7 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'publ
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
 // The most one message to an agent may be: statusd's own limit (session/statusd.mjs, MAX_SEND_CHARS).
 export const MAX_MESSAGE_CHARS = 8000;
-const SETTINGS_SCRIPTS = ['settingsRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
+const SETTINGS_SCRIPTS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
 const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
@@ -291,6 +291,7 @@ const STATIC_FILES = {
   'launcher.js': 'text/javascript; charset=utf-8',
   'mySettings.js': 'text/javascript; charset=utf-8',
   'settingsRows.js': 'text/javascript; charset=utf-8',
+  'hostRows.js': 'text/javascript; charset=utf-8',
   'dbRestore.js': 'text/javascript; charset=utf-8',
   'dbRestoreStates.js': 'text/javascript; charset=utf-8',
   'consoleSettings.js': 'text/javascript; charset=utf-8',
@@ -597,7 +598,64 @@ export function settingsFrame({ title, body, current, heading = null, tabs = nul
     ...(own ? [`data-heading="${escapeHtml(own)}"`, `data-tabs="${escapeHtml(JSON.stringify(row))}"`] : [])].join(' ');
   const hostPage = `\n<template id="woodshed-host-page" ${attrs}>${html}</template>`;
   const sheets = styles.filter((href) => typeof href === 'string' && href.startsWith('/') && !href.startsWith('//'));
-  return pageShell({ title, script: 'hostSettings.js', login, linkQuery, hostPage, styles: sheets });
+  return pageShell({ title, script: ['hostRows.js', 'hostSettings.js'], login, linkQuery, hostPage, styles: sheets });
+}
+
+/**
+ * A page of a program embedding the console that stands outside any console: one the program shows someone before
+ * they have a console to be in (a first visit, the steps that make one) or between consoles (which to open). It is the
+ * settings pages' frame drawn by the server, with the design system's stylesheet and hostRows.js: the side list holds
+ * the program's own links under its name in place of Back to sessions, and the body is the program's, made with
+ * settingsMarkup.mjs and escaped by it. No console script runs, so nothing on it asks a console anything.
+ * @param {{title: string, body: string, brand: {label: string, href: string}, groups?: {label: string, items: {label: string, href: string}[]}[],
+ *          current?: string|null, login?: string|null, signOut?: string|null, dialog?: string|null, refresh?: number|null,
+ *          styles?: string[], scripts?: string[]}} page
+ *   `groups` are the side list's, each link marked when its `href` is `current`; `signOut` is the path a form posts to
+ *   for Sign out, shown under `login`; `dialog` is a step drawn over the page, which is inert behind it; `refresh` reloads
+ *   the page after that many seconds (a job it waits on); `styles` and `scripts` are the program's own (paths), after the
+ *   console's.
+ * @returns {string}
+ */
+export function standalonePage({ title, body, brand, groups = [], current = null, login = null, signOut = null, dialog = null, refresh = null, styles = [], scripts = [] }) {
+  const path = (href) => (typeof href === 'string' && href.startsWith('/') && !href.startsWith('//') ? href : null);
+  const link = (item) => {
+    const href = path(item?.href);
+    const label = menuText(item?.label);
+    if (!href || !label) return '';
+    return `<a class="side-item" href="${escapeHtml(href)}"${href === current ? ' aria-current="page"' : ''}>${escapeHtml(label)}</a>`;
+  };
+  const side = (Array.isArray(groups) ? groups : []).map((g) => {
+    const items = (Array.isArray(g?.items) ? g.items : []).map(link).filter(Boolean);
+    return items.length ? `<div class="side-group">${escapeHtml(menuText(g?.label))}</div>${items.join('')}` : '';
+  }).join('');
+  const who = /^[A-Za-z0-9-]{1,39}$/.test(String(login ?? '')) ? login : null;
+  const out = who && path(signOut)
+    ? `<div class="side-group">Signed in</div><span class="side-item side-who">@${who}</span><form class="inline-form" method="post" action="${escapeHtml(path(signOut))}"><button type="submit" class="side-item">Sign out</button></form>`
+    : '';
+  const home = path(brand?.href) ?? '/';
+  const seconds = Number.isInteger(refresh) && refresh > 0 ? refresh : null;
+  const own = (list, tag) => (Array.isArray(list) ? list : []).map(path).filter(Boolean).map(tag).join('');
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">${seconds ? `\n<meta http-equiv="refresh" content="${seconds}">` : ''}
+<title>${escapeHtml(title)}</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<script src="${staticUrl('theme.js')}"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Red+Hat+Display:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="${staticUrl('style.css')}">${own(styles, (h) => `\n<link rel="stylesheet" href="${escapeHtml(h)}">`)}
+</head>
+<body>
+<div id="app"><div class="settings-view"><div class="page"${dialog ? ' inert aria-hidden="true"' : ''}>
+<aside class="settings-side" aria-label="${escapeHtml(menuText(brand?.label) || 'Settings')}"><div class="side-head"><a class="side-back" href="${escapeHtml(home)}"><b>${escapeHtml(menuText(brand?.label))}</b></a></div><nav class="side-list">${side}${out}</nav></aside>
+${String(body ?? '')}
+</div>${dialog ? `\n${String(dialog)}` : ''}</div></div>
+<script src="${staticUrl('hostRows.js')}" data-wire="app"></script>${own(scripts, (s) => `\n<script src="${escapeHtml(s)}"></script>`)}
+</body>
+</html>
+`;
 }
 
 /**
@@ -739,13 +797,13 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
   cli = null, reviewReadiness = null,
 }) {
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
   const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
-  const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
+  const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login), hostGroups: repoPage }) : null;
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
   // A config made in a test or by a program embedding the console may not have been through loadConfig.
@@ -2844,7 +2902,7 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
  *   `repos` and `projectReadiness` are an embedding program's hooks, passed on to createInstallation (installation.mjs):
  *   only the dev console's stand-in (scripts/devHostConsole.mjs) passes them here
  */
-export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null, hostApp = null }) {
+export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null, hostApp = null, repoPage = null }) {
   const first = given ?? loadConfig();
   const store = openStore(first.stateDir);
   // An App saved on the setup page is the console's own from the next start.
@@ -2854,7 +2912,7 @@ export async function startConsole({ provider, config: given = null, repos = nul
   const trusted = loaded.trustedIdentitySecret ? createTrustedIdentity({ secret: loaded.trustedIdentitySecret }) : null;
   console.log('console: hosted mode', { githubBroker: Boolean(loaded.githubBroker), trustedIdentity: Boolean(trusted) });
   await checkGh();
-  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness, hostApp });
+  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness, hostApp, repoPage });
   const { config, handle } = installation;
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {

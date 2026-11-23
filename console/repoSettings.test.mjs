@@ -10,6 +10,7 @@ import {
 } from './repoSettings.mjs';
 import { createUserSettings } from './userSettings.mjs';
 import { createHandler } from './server.mjs';
+import { group, pill, row } from './settingsMarkup.mjs';
 import { parseProject } from '../shared/project.mjs';
 
 // Every value a test saves carries one of these: none may ever reach a log line.
@@ -217,7 +218,7 @@ test('forget deletes a removed repo\'s values, the installation\'s and everyone\
 });
 
 // The routes behind the pages, over HTTP, as three people: an admin, a member who writes to tools, one who does not.
-async function startConsole(t, { secrets: initial = memorySecrets(), people = {} } = {}) {
+async function startConsole(t, { secrets: initial = memorySecrets(), people = {}, repoPage = null } = {}) {
   const state = {
     people,
     members: {
@@ -240,7 +241,7 @@ async function startConsole(t, { secrets: initial = memorySecrets(), people = {}
   const githubFor = (project) => ({ canWrite: async (login) => project.name !== 'tools' || login !== 'ana-k' });
   const handle = createHandler({
     config: fullConfig, fleet: { sessions: () => [], find: () => null }, auth, members, repoSettings, userSettings,
-    projectAccess: createProjectAccess({ config: fullConfig, githubFor }),
+    projectAccess: createProjectAccess({ config: fullConfig, githubFor }), repoPage,
   });
   const server = http.createServer((req, res) => { handle(req, res); });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -481,4 +482,36 @@ test('My settings reads and saves own files for a repo the person can write to, 
   assert.deepEqual(results.oldRead.body, { files: { '.mcp.local.json': '{}' } });
   assert.equal(results.tooBig.status, 413, 'past what the store could hold, even escaped');
   assert.deepEqual(lines.filter((l) => l.includes(SECRET_MARK)), []);
+});
+
+test('a program\'s own groups for a repo\'s page come with the admin\'s view, and one that fails adds none', async (t) => {
+  const asked = [];
+  let answer = (repo) => group({ label: 'Project file' }, row({ id: 'project-file', title: `${repo.repo}'s file`, pill: pill('Drafted', 'work') }));
+  const { call } = await startConsole(t, { repoPage: async (repo) => { asked.push(repo); return answer(repo); } });
+  const view = await call('mia-dev', 'GET', '/api/console-settings/repos/tools', undefined, { 'x-org': 'acme' });
+  assert.equal(view.status, 200);
+  assert.match(view.body.host, /<div class="set-group"><h2 class="set-group-label">Project file<\/h2>/, 'its markup, as it made it');
+  assert.equal(asked.at(-1).name, 'tools');
+  assert.equal(asked.at(-1).headers['x-org'], 'acme', 'the request\'s headers, so the program knows whose it is');
+  assert.ok(asked.at(-1).repo, 'and the repo');
+  // A save answers with the view too, so the page keeps the program's groups.
+  const saved = await call('mia-dev', 'POST', '/api/console-settings/repos/tools/instructions', { text: 'Be brief.' });
+  assert.match(saved.body.host, /Project file/);
+  const quiet = [];
+  answer = () => { throw new Error('the database is away'); };
+  const original = console.warn;
+  console.warn = (...args) => quiet.push(args);
+  try {
+    const failed = await call('mia-dev', 'GET', '/api/console-settings/repos/tools');
+    assert.equal(failed.status, 200, 'the page is still shown');
+    assert.equal(failed.body.host, null);
+    answer = () => ({ html: '<script>' });
+    assert.equal((await call('mia-dev', 'GET', '/api/console-settings/repos/tools')).body.host, null, 'anything but markup is none');
+  } finally {
+    console.warn = original;
+  }
+  assert.deepEqual(quiet.map((a) => a[0]), ['repoSettings: the program\'s groups not given', 'repoSettings: the program\'s groups not given']);
+  answer = () => null;
+  assert.equal((await call('mia-dev', 'GET', '/api/console-settings/repos/tools')).body.host, null, 'none for this repo');
+  assert.equal((await call('sam-ops', 'GET', '/api/console-settings/repos/tools')).status, 403, 'still an admin\'s alone');
 });
