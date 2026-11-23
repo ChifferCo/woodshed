@@ -38,10 +38,20 @@ const REVIEWS_DIR =
 // session route in server.mjs pins the same way. Everything here builds a
 // filesystem path out of one, so it is checked before it is joined rather than
 // trusted because the caller "obviously" passed a real one.
-const SESSION_RE = /^claude-[0-9a-f]{8}$/;
+//
+// A Woodshed session has one review of its own working tree, `claude-<8hex>`, and one of each pull request it opened,
+// `claude-<8hex>-pr<n>` (session/reviewShed/host.mjs): a session can open several, and each has its own diff, verdict
+// and merge. The standalone shed's names never carry the suffix.
+const SESSION_RE = /^claude-[0-9a-f]{8}(?:-pr[1-9][0-9]{0,8})?$/;
 
 export function isSessionName(name) {
   return typeof name === 'string' && SESSION_RE.test(name);
+}
+
+/** @returns {number|null}  the pull request a review name is of (`claude-<8hex>-pr<n>`), or null for a session's own */
+export function pullOfReviewName(name) {
+  const match = /^claude-[0-9a-f]{8}-pr([1-9][0-9]{0,8})$/.exec(String(name ?? ''));
+  return match ? Number(match[1]) : null;
 }
 
 function sessionDirFor(session) {

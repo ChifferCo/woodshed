@@ -915,7 +915,7 @@ export async function handleReviewRequest(req, res, ctx) {
 
   // The askId tail is bounded: unbounded, a long segment produced
   // ENAMETOOLONG rather than a miss and echoed an absolute path back in a 500.
-  const match = /^\/reviews\/(claude-[0-9a-f]{8})(\/[a-z]+)?(\/[A-Za-z0-9-]{1,64})?$/.exec(pathname);
+  const match = /^\/reviews\/(claude-[0-9a-f]{8}(?:-pr[1-9][0-9]{0,8})?)(\/[a-z]+)?(\/[A-Za-z0-9-]{1,64})?$/.exec(pathname);
   if (!match) {
     json(res, 404, { ok: false, error: 'not found' });
     return true;

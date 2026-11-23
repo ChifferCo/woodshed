@@ -5819,7 +5819,7 @@ ${DARK_PALETTE}
     state.tab = tabFromUrl(initialUrl.searchParams.get('tab')) || state.tab;
 
     var initialSession = initialUrl.searchParams.get('session');
-    if (initialSession && /^claude-[0-9a-f]{8}$/.test(initialSession)) openSession(initialSession);
+    if (initialSession && /^claude-[0-9a-f]{8}(-pr[1-9][0-9]{0,8})?$/.test(initialSession)) openSession(initialSession);
     else renderEmptyState();
   </script>
 </body>
