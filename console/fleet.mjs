@@ -2247,8 +2247,8 @@ export function createFleet({
 
   /**
    * A pull request whose review runs in a session (pullRequests.review.runner: woodshed): when its head commit carries
-   * the review's rerun tag and no session has reviewed that commit, a review session starts, as the pull request's
-   * author. Once for each commit. Cheap to call on any pull request change: it returns early unless the runner is
+   * the review's rerun tag, or was pushed over the review's approval and dismissed it (approvalDismissed), and no
+   * session has reviewed that commit, a review session starts, as the pull request's author. Once for each commit. Cheap to call on any pull request change: it returns early unless the runner is
    * `woodshed`.
    * @param {{number: number, project?: string|null}} args
    */
@@ -2263,10 +2263,26 @@ export function createFleet({
     if (state.sessions.some((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.sha === pull.head.sha)) return { unrecorded: true };
     if (review.rerun) {
       const message = await safely('review head commit', () => gh.commitMessage(pull.head.sha));
-      if (!message || !message.includes(review.rerun)) return { unrecorded: true };
+      const tagged = Boolean(message?.includes(review.rerun));
+      if (!tagged && !(await approvalDismissed(project, gh, number, pull.head.sha))) return { unrecorded: true };
     }
     const owner = pullOwner(project, pull, number);
     return startReview({ project, gates, number, login: owner.login, owner, pull });
+  }
+
+  /**
+   * Whether the review's own last verdict on this pull request was an approval of an older commit, which GitHub now
+   * shows dismissed: a push to a repo that dismisses stale approvals took it away. Such a push is reviewed tag or not,
+   * since nothing else gives the approval back and git's own merge message carries no tag (#333, #334). A fix after
+   * changes were asked for, or a push to a repo that keeps stale approvals, still waits for the tag.
+   */
+  async function approvalDismissed(project, gh, number, head) {
+    const last = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.conclusion && s.review.posted).at(-1);
+    if (last?.review.conclusion !== 'APPROVE' || last.review.sha === head) return false;
+    const reviews = await safely('reviews of the pull request', () => gh.reviews(number));
+    const dismissed = Boolean(reviews?.some((r) => r.commit_id === last.review.sha && r.state === 'DISMISSED'));
+    if (dismissed) console.log('fleet: the review\'s approval was dismissed by a push, reviewing it again', { number, approved: last.review.sha, head, ...projectField(project) });
+    return dismissed;
   }
 
   /**

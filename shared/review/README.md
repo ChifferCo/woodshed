@@ -90,6 +90,15 @@ review needs nothing new from it: `POST /reviews/<session>` arrives through
 worktree through `ctx.worktreePathFor`, which server.mjs now supplies so the
 `<repo>/.claude/worktrees/bridge-<id>` layout rule stays stated in one place.
 
+### A Woodshed session's other pull requests
+
+A session that opens more than one pull request has a review of each (`session/reviewShed/host.mjs`): its checkout's,
+`claude-<8hex>`, the worktree kind, and one per other pull request, `claude-<8hex>-pr<n>`, which `isSessionName` takes
+too. `ensurePullRequestReview` makes that one a pull request review in a worktree of its own, **detached**
+(`createReviewSession`'s `detach`): no branch is made, taken or moved, because the pull request's branch may be checked
+out in the session or held there with commits of its own. A host's `ctx.worktreeBaseRef` names the base for the
+worktree kind, the base of the checkout's open pull request, so one stacked on another branch is diffed against it.
+
 ## Re-reviewing a target
 
 A pull request review used to be final: the head was fetched at launch and a

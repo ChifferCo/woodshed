@@ -20,6 +20,7 @@ import logins from './public/logins.cjs';
 import { projectFor, projectNamed, defaultProject } from './projects.mjs';
 import { isAsk, isQa } from './sessions.mjs';
 import { checkFile } from './userSettings.mjs';
+import { Markup } from './settingsMarkup.mjs';
 import { envKeyTable, envKeys, instructionsProblem, sessionWiring } from '../shared/repoSettings.mjs';
 import { DEFAULT_MAX_VALUE_BYTES, MAX_OWN_FILES, ownFilePath, ownFilePathProblem, ownFilesBodyLimit } from '../shared/ownFiles.mjs';
 const { loginKey } = logins;
@@ -645,9 +646,13 @@ async function readBody(req, limit = MAX_BODY_BYTES) {
  *   `slackOf` is the repo's own Slack channel and the console's, for the admin's page; it is saved through
  *   `POST /api/console-settings/projects/slack-channel`, as the Repos card saved it. `myView` is My settings' view of a
  *   person (userSettings.mjs), which the old own files route answers with. `triggersOf` is the repo's label and its
- *   switches (repoTriggers.mjs), saved through `POST /api/console-settings/projects/triggers`
+ *   switches (repoTriggers.mjs), saved through `POST /api/console-settings/projects/triggers`. `hostGroups` is a program's
+ *   `repoPage` hook (installation.mjs): its own groups for the admin's page, as markup (settingsMarkup.mjs), or
+ *   `{markup, scripts}` with the paths of scripts that make them work (markup from settingsMarkup.mjs alone, never a string); the view carries them as `host: {html, scripts}`
+ *   and the page shows them after its own groups. A hook that throws, or answers anything but markup or null, adds
+ *   none, and the page is shown without them.
  */
-export function createRepoSettingsApi({ repoSettings, config, projectAccess = null, slackOf = null, triggersOf = null, myView = null }) {
+export function createRepoSettingsApi({ repoSettings, config, projectAccess = null, slackOf = null, triggersOf = null, myView = null, hostGroups = null }) {
   async function canWrite(login, name) {
     if (projectAccess) return Boolean(await projectAccess.forStart(login, name));
     return projectNamed(config, name)?.default === true;
@@ -659,16 +664,45 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
     return { projects: main.repo ? [main] : [], defaultProject: main.repo ? main.name : null };
   }
 
-  async function adminView(project) {
-    return { ...(await repoSettings.view(project)), slack: slackOf?.(project) ?? null, triggers: triggersOf?.(project) ?? null };
+  // A script path on the console's own address: `/\host/x.js` is another site's to a browser, as `//host/x.js` is.
+  function onConsole(src) {
+    if (typeof src !== 'string' || !src.startsWith('/') || src.includes('\\')) return false;
+    try {
+      return new URL(src, 'http://console.invalid').origin === 'http://console.invalid';
+    } catch {
+      return false;
+    }
+  }
+
+  async function adminView(project, headers) {
+    const [view, host] = await Promise.all([repoSettings.view(project), hostGroupsOf(project, headers)]);
+    return { ...view, slack: slackOf?.(project) ?? null, triggers: triggersOf?.(project) ?? null, host };
+  }
+
+  // The program's groups for the repo's page, as the page puts them in: its markup, and the scripts (paths on the
+  // console's address) it loads once to make them work, such as an upload's. None when it gives none or fails.
+  async function hostGroupsOf(name, headers) {
+    if (!hostGroups) return null;
+    try {
+      const given = await hostGroups({ name, repo: projectNamed(config, name)?.repo ?? null, headers });
+      if (given === null || given === undefined) return null;
+      // Markup alone, made with settingsMarkup.mjs, which escaped every value: never a string built some other way.
+      const markup = given instanceof Markup ? given : given?.markup;
+      if (!(markup instanceof Markup)) throw new Error(`answered ${typeof given}, not markup from settingsMarkup.mjs`);
+      const scripts = (Array.isArray(given?.scripts) ? given.scripts : []).filter(onConsole).slice(0, 8);
+      return { html: markup.text, scripts };
+    } catch (err) {
+      console.warn('repoSettings: the program\'s groups not given', { project: String(name).slice(0, 40), error: err.message });
+      return null;
+    }
   }
 
   async function admin(req, res, { project, key, remove, instructions }, by) {
-    if (req.method === 'GET' && !key && !instructions) return reply(res, 200, await adminView(project));
+    if (req.method === 'GET' && !key && !instructions) return reply(res, 200, await adminView(project, req.headers));
     if (req.method === 'GET') return reply(res, 200, { text: (await repoSettings.installationText({ project, key, by })) ?? '' });
     if (remove) await repoSettings.removeUnnamed({ project, key, by });
     else await repoSettings.saveInstallation({ project, key, text: await readText(req), by });
-    return reply(res, 200, await adminView(project));
+    return reply(res, 200, await adminView(project, req.headers));
   }
 
   async function mine(req, res, { project: named, key, instructions, files, oldFiles }, login) {

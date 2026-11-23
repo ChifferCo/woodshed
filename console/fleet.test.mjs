@@ -3048,6 +3048,41 @@ test('a head without the review tag starts nothing', async () => {
   assert.equal(fleet.sessions().length, 0);
 });
 
+// #333 and #334: the review approved the head, then the session merged main in with git's own message, which carries
+// no tag, and the repo dismissed the stale approval. The pull request sat with no approval and no review coming.
+test('a push that dismissed the review\'s approval is reviewed again, tag or not', async () => {
+  const approved = 'a'.repeat(40);
+  const merged = 'b'.repeat(40);
+  const untagged = (state) => {
+    const t = reviewSetup();
+    let head = approved;
+    t.github.pull = async () => ({ ...REVIEW_PULL, head: { ...REVIEW_PULL.head, sha: head } });
+    t.github.reviews = async () => [{ id: 1, user: { login: 'woodshed-reviewer[bot]' }, state, commit_id: approved, body: '## Woodshed review — APPROVE' }];
+    return { ...t, push: (message) => { head = merged; t.github.commitMessage = async () => message; } };
+  };
+
+  const dismissed = untagged('DISMISSED');
+  await dismissed.fleet.reviewOnTag({ number: 7 });
+  await dismissed.fleet.reviewFinished(dismissed.fleet.sessions()[0], REVIEW_RESULT);
+  dismissed.push("Merge remote-tracking branch 'origin/main' into woodshed/joel-1234abcd");
+  const again = await dismissed.fleet.reviewOnTag({ number: 7 });
+  assert.equal(again.outcome, 'started', JSON.stringify(again));
+  assert.equal(dismissed.fleet.sessions()[1].review.sha, merged);
+  assert.deepEqual(await dismissed.fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'once for the commit');
+
+  const kept = untagged('APPROVED');
+  await kept.fleet.reviewOnTag({ number: 7 });
+  await kept.fleet.reviewFinished(kept.fleet.sessions()[0], REVIEW_RESULT);
+  kept.push("Merge branch 'main' into joel/gtm");
+  assert.deepEqual(await kept.fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'a repo that keeps stale approvals still has one');
+
+  const changes = untagged('DISMISSED');
+  await changes.fleet.reviewOnTag({ number: 7 });
+  await changes.fleet.reviewFinished(changes.fleet.sessions()[0], { ...REVIEW_RESULT, conclusion: 'REQUEST_CHANGES' });
+  changes.push('fix: half of it');
+  assert.deepEqual(await changes.fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'a fix after changes were asked for waits for the tag, as before');
+});
+
 test('reviewFinished submits the formal review and the Merge risk check as the console App, then stops', async () => {
   const { fleet, calls } = reviewSetup();
   await fleet.reviewOnTag({ number: 7 });

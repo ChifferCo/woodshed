@@ -93,10 +93,19 @@ const CODEX_AT_PROMPT = ['╭─────────────────
 const read = (text) => ({ text, complete: true, how: 'screen' });
 const sends = (calls) => calls.filter((c) => c[1] === 'send' || c[1] === 'keys');
 
-test('a message goes in through hc only while the agent says it is idle, and codex, which says nothing, by its screen', async () => {
+test('a message goes in through hc only while claude says it is idle or done, and codex, which says nothing, by its screen', async () => {
   let { run, calls } = fakeRun({ 'hc get': CLAUDE_RUNNING, 'hc read': read(fixture('pane-done.txt')) });
   assert.deepEqual(await hcPane(run).send('fix it\nplease'), { sent: true });
   assert.deepEqual(calls.at(-1), ['hc', 'send', '--if', 'idle', '--json', '--', 'claude', 'fix it\nplease']);
+  // After a finished turn claude says `done`, which hc's `--if idle` refuses (`t1 is done, not idle`): sent with no --if.
+  ({ run, calls } = fakeRun({ 'hc get': { ...CLAUDE_RUNNING, status: { app: 'claude-code', state: 'done' } }, 'hc read': read(fixture('pane-done.txt')) }));
+  assert.deepEqual(await hcPane(run).send('how can i test it'), { sent: true });
+  assert.deepEqual(calls.at(-1), ['hc', 'send', '--json', '--', 'claude', 'how can i test it']);
+  for (const state of ['working', 'blocked', 'error']) {
+    ({ run, calls } = fakeRun({ 'hc get': { ...CLAUDE_RUNNING, status: { app: 'claude-code', state } }, 'hc read': read(fixture('pane-done.txt')) }));
+    assert.deepEqual(await hcPane(run).send('hi'), { sent: false, why: 'status_mismatch' }, state);
+    assert.deepEqual(sends(calls), [], state);
+  }
   ({ run, calls } = fakeRun({ 'hc get': CODEX, 'hc read': read(CODEX_AT_PROMPT) }));
   assert.deepEqual(await hcPane(run).send('go on'), { sent: true });
   assert.deepEqual(calls.at(-1), ['hc', 'send', '--json', '--', 'claude', 'go on'], 'no record: codex read at its prompt');

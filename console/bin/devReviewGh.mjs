@@ -27,13 +27,27 @@ const rollup = () => s.checks.map((c) => ({ status: 'COMPLETED', conclusion: c }
 const people = () => s.verdicts.filter((v) => !v.bot);
 const decision = () => (people().some((v) => v.state === 'CHANGES_REQUESTED') ? 'CHANGES_REQUESTED' : people().some((v) => v.state === 'APPROVED') ? 'APPROVED' : 'REVIEW_REQUIRED');
 const url = 'https://github.com/' + s.slug + '/pull/' + s.number;
+// The session's earlier pull requests, on branches of their own: no comments or verdicts, only what a review reads.
+const other = (n) => (s.others || []).find((o) => String(o.number) === String(n)) || null;
+const urlOf = (o) => 'https://github.com/' + s.slug + '/pull/' + o.number;
+// Whose draft and threads a call is about: an earlier pull request's own, else the checkout's (s).
+const byPrId = (prId) => (s.others || []).find((o) => 'PR_dev' + o.number === prId) || s;
+const byReviewId = (rid) => [s, ...(s.others || [])].find((h) => h.pending && h.pending.id === rid) || s;
+const byCommentId = (cid) => [s, ...(s.others || [])].find((h) => h.pending && h.pending.comments.some((c) => c.id === cid)) || s;
+const otherView = (o) => ({ id: 'PR_dev' + o.number, number: o.number, title: o.title, body: o.body, author: { login: s.login },
+  headRefName: o.branch, headRefOid: o.sha, baseRefName: s.base, isCrossRepository: false, state: 'OPEN', url: urlOf(o), isDraft: false,
+  additions: o.additions, deletions: o.deletions, changedFiles: o.changedFiles, files: [], reviewDecision: 'REVIEW_REQUIRED',
+  mergeStateStatus: 'CLEAN', statusCheckRollup: rollup() });
 
 if (args[0] === 'api' && args[1] === 'user') out(s.login);
 if (args[0] === 'pr' && args[1] === 'list') {
   const branch = args[args.indexOf('--head') + 1];
+  const o = (s.others || []).find((x) => x.branch === branch);
+  if (o) out([{ number: o.number, title: o.title, headRefName: o.branch, state: 'OPEN', isDraft: false, reviewDecision: 'REVIEW_REQUIRED', url: urlOf(o), statusCheckRollup: rollup() }]);
   if (branch !== s.branch) out([]);
   out([{ number: s.number, title: s.title, headRefName: s.branch, state: s.state, isDraft: false, reviewDecision: decision(), url, statusCheckRollup: rollup() }]);
 }
+if (args[0] === 'pr' && args[1] === 'view' && other(args[2])) out(otherView(other(args[2])));
 if (args[0] === 'pr' && args[1] === 'view') {
   out({ id: 'PR_dev', number: s.number, title: s.title, state: s.state, isDraft: false, reviewDecision: decision(), headRefOid: head(),
     baseRefName: s.base, mergeStateStatus: 'CLEAN', statusCheckRollup: rollup() });
@@ -42,7 +56,9 @@ if (args[0] === 'pr' && args[1] === 'review') {
   const state = args.includes('--approve') ? 'APPROVED' : args.includes('--request-changes') ? 'CHANGES_REQUESTED' : 'COMMENTED';
   const bodyFile = args[args.indexOf('--body-file') + 1];
   const body = args.includes('--body-file') ? fs.readFileSync(bodyFile, 'utf8') : '';
-  s.verdicts.push({ id: id('PRR'), author: s.login, state, body, at: at() });
+  // Kept on the pull request it names: an earlier one's verdict never lands on the checkout's.
+  const o = other(args[2]);
+  (o ? (o.verdicts ||= []) : s.verdicts).push({ id: id('PRR'), author: s.login, state, body, at: at() });
   save();
   out('');
 }
@@ -52,7 +68,8 @@ if (args[0] === 'api' && args[1] === '-X' && args[2] === 'PATCH') {
   out(s.title);
 }
 if (args[0] === 'api' && args[1] === '-X' && args[2] === 'POST' && /\/comments$/.test(args[3])) {
-  s.threads.push({ id: id('PRRT'), path: fields.path, line: Number(fields.line), side: fields.side, comments: [{ id: id('PRRC'), author: s.login, body: fields.body, pending: false, at: at() }] });
+  const h = other((/\/pulls\/(\d+)\//.exec(args[3]) || [])[1]) || s;
+  (h.threads ||= []).push({ id: id('PRRT'), path: fields.path, line: Number(fields.line), side: fields.side, comments: [{ id: id('PRRC'), author: s.login, body: fields.body, pending: false, at: at() }] });
   save();
   out({ id: 1, node_id: 'x', html_url: url + '#discussion' });
 }
@@ -67,36 +84,56 @@ if (args[0] === 'api' && args[1] === 'graphql') {
   const q = fields.query || '';
   if (q.includes('isMergeQueueEnabled')) out({ isMergeQueueEnabled: false, isInMergeQueue: false });
   if (q.includes('addPullRequestReview(')) {
-    s.pending = { id: id('PRR'), comments: [] };
+    const h = byPrId(fields.id);
+    h.pending = { id: id('PRR'), comments: [] };
     save();
-    out({ data: { addPullRequestReview: { pullRequestReview: { id: s.pending.id } } } });
+    out({ data: { addPullRequestReview: { pullRequestReview: { id: h.pending.id } } } });
   }
   if (q.includes('addPullRequestReviewThread')) {
-    if (!s.pending || s.pending.id !== fields.r) fail('no such pending review');
+    const h = byReviewId(fields.r);
+    if (!h.pending || h.pending.id !== fields.r) fail('no such pending review');
     const c = { id: id('PRRC'), path: fields.p, line: Number(fields.l), side: fields.s, body: fields.b };
-    s.pending.comments.push(c);
+    h.pending.comments.push(c);
     save();
     out({ data: { addPullRequestReviewThread: { thread: { diffSide: c.side, startLine: null, comments: { nodes: [{ id: c.id, path: c.path, line: c.line, originalLine: c.line, body: c.body }] } } } } });
   }
   if (q.includes('submitPullRequestReview')) {
-    if (!s.pending || s.pending.id !== fields.id) fail('no such pending review');
+    const h = byReviewId(fields.id);
+    if (!h.pending || h.pending.id !== fields.id) fail('no such pending review');
     const state = { APPROVE: 'APPROVED', REQUEST_CHANGES: 'CHANGES_REQUESTED', COMMENT: 'COMMENTED' }[fields.e];
-    for (const c of s.pending.comments) s.threads.push({ id: id('PRRT'), path: c.path, line: c.line, side: c.side, comments: [{ id: c.id, author: s.login, body: c.body, pending: false, at: at() }] });
-    s.verdicts.push({ id: s.pending.id, author: s.login, state, body: fields.b || '', at: at() });
-    s.pending = null;
+    for (const c of h.pending.comments) (h.threads ||= []).push({ id: id('PRRT'), path: c.path, line: c.line, side: c.side, comments: [{ id: c.id, author: s.login, body: c.body, pending: false, at: at() }] });
+    (h.verdicts ||= []).push({ id: h.pending.id, author: s.login, state, body: fields.b || '', at: at() });
+    h.pending = null;
     save();
     out({ data: { submitPullRequestReview: { pullRequestReview: { state } } } });
   }
   if (q.includes('deletePullRequestReview(')) {
-    s.pending = null;
+    byReviewId(fields.id).pending = null;
     save();
     out({ data: {} });
   }
   if (q.includes('deletePullRequestReviewComment')) {
-    if (s.pending) s.pending.comments = s.pending.comments.filter((c) => c.id !== fields.id);
-    if (s.pending && !s.pending.comments.length) s.pending = null;
+    const h = byCommentId(fields.id);
+    if (h.pending) h.pending.comments = h.pending.comments.filter((c) => c.id !== fields.id);
+    if (h.pending && !h.pending.comments.length) h.pending = null;
     save();
     out({ data: {} });
+  }
+  if (q.includes('reviewThreads') && other(fields.pr)) {
+    const o = other(fields.pr);
+    const pending = o.pending ? o.pending.comments : [];
+    const thread = (t, c, state) => ({ id: t, path: c.path, diffSide: c.side, line: c.line, startLine: null, isResolved: false, isOutdated: false,
+      comments: { pageInfo: { hasNextPage: false }, nodes: [{ id: c.id, fullDatabaseId: null, author: { login: c.author || s.login }, body: c.body, state, url: state === 'PENDING' ? null : urlOf(o), createdAt: c.at || at(), viewerCanDelete: true, viewerDidAuthor: true }] } });
+    out({ data: { repository: { pullRequest: {
+      id: 'PR_dev' + o.number, headRefOid: o.sha, body: o.body, bodyHTML: '', author: { login: s.login }, createdAt: s.createdAt, url: urlOf(o),
+      reviews: { nodes: o.pending ? [{ id: o.pending.id, comments: { nodes: pending.map((c) => ({ id: c.id, path: c.path, line: c.line, originalLine: c.line, body: c.body })) } }] : [] },
+      comments: { nodes: [] },
+      reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [
+        ...(o.threads || []).map((t) => thread(t.id, { ...t.comments[0], path: t.path, line: t.line, side: t.side }, 'SUBMITTED')),
+        ...pending.map((c) => thread('T' + c.id, c, 'PENDING')),
+      ] },
+      verdicts: { nodes: (o.verdicts || []).map((v) => ({ id: v.id, author: { login: v.author }, state: v.state, body: v.body, url: urlOf(o), submittedAt: v.at, isMinimized: false, viewerDidAuthor: v.author === s.login })) },
+    } } } });
   }
   if (q.includes('reviewThreads')) {
     const pendingThreads = (s.pending ? s.pending.comments : []).map((c) => ({ id: 'T' + c.id, path: c.path, diffSide: c.side, line: c.line, startLine: null, isResolved: false, isOutdated: false,
@@ -117,15 +154,17 @@ fail('not a call the dev review gh answers: ' + args.slice(0, 4).join(' '));
 
 /**
  * @param {string} dir  where to write `gh` and its state; put it first on the review host's PATH
- * @param {{repo: string, branch: string, base: string, slug: string, number: number, title: string, login: string}} pr
+ * @param {{repo: string, branch: string, base: string, slug: string, number: number, title: string, login: string,
+ *          others?: {number: number, branch: string, sha: string, title: string, body: string, additions: number, deletions: number, changedFiles: number}[]}} pr
+ *   `others`: the session's earlier pull requests, each on its own branch
  * @returns {{dir: string, state: string}}
  */
-export function writeDevReviewGh(dir, { repo, branch, base, slug, number, title, login }) {
+export function writeDevReviewGh(dir, { repo, branch, base, slug, number, title, login, others = [] }) {
   fs.mkdirSync(dir, { recursive: true });
   const state = path.join(dir, 'state.json');
   const now = new Date().toISOString();
   fs.writeFileSync(state, JSON.stringify({
-    repo, branch, base, slug, number, title, login, state: 'OPEN', createdAt: now,
+    repo, branch, base, slug, number, title, login, others, state: 'OPEN', createdAt: now,
     body: 'Subscribers that answer 5xx or 429 used to miss the event. This retries them with backoff.\n\n- `retry.mjs` holds the policy\n- `deliver.mjs` loops on it',
     checks: ['SUCCESS', 'SUCCESS', 'SUCCESS'],
     // As the reviewer App posts a review by both (console/fleet.mjs submitReview, codeReview.mjs mergeVerdicts).

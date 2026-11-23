@@ -19,9 +19,21 @@ woodshed setup --yes --json --repo acme/app --reviews default
 ```
 
 Pass the person's console with `--console <url>` when they use their own. Repeat `--repo` for multiple repos. Each
-checklist entry has a `step`, `status`, and `message`. On exit 2, show them the message and any `url` or `userCode` and
-stop. Run setup again after they complete that step. They approve the CLI sign-in and install any GitHub Apps in their
-browser.
+checklist entry has a `step`, `status`, and `message`. Setup has 7 steps: sign in, repos, Claude Code and Codex, review
+on their repos, reviews of their open pull requests, then the optional agent terminal and first coding session. Always
+tell the person which step it is on, what is left, and whether it is finished: the entry that stops a run carries
+`finished: false`, `stepNumber`, `stepTotal` and `left` (the steps after it), and a run that ends with 0 ends with
+`step: "finished"`, `finished: true`: only then say setup is finished. On exit 2, show them the message and any `url`
+or `userCode`, say it is step N of 7 and what is left, and stop. Run setup again after they complete that step. They
+approve the CLI sign-in and install any GitHub Apps in their browser.
+
+- **Sign in (`step: login`).** A new sign-in exits 2 with `userCode` and `url`. Show them both, then run the same
+  command with `--wait` added, as for the agents below: it waits for their approval (`status: "waiting"`, until the
+  code expires after 10 minutes) and goes on in the same run. A person running `woodshed setup` on their own terminal
+  needs none of this: it waits there by itself.
+- **Repos (`step: repos`).** With no `--repo`, it exits 2 with `repos`, each with `added`. Repos added already need no
+  adding: when they say to use those, pass each with `--repo`. A repo not added yet is added when chosen. On their
+  own terminal, Enter at the question takes the ones added already.
 
 - **Agents (`step: agent`).** Setup asks for both Claude Code and Codex: with both connected, their pull requests get
   reviews from both. While one is missing it exits 2 with My settings' link, and the message says what they run for it
@@ -39,8 +51,8 @@ browser.
   (Claude Code's background Bash), run it that way; otherwise run it in the foreground with a timeout longer than
   the wait (over 15 minutes for a bare `--wait`; use `--wait=<N>m` when your tool's timeout is shorter). Run it once,
   not in a loop: when it exits 2 at `step: agent` (the time ran out), show them the steps again and stop until they
-  say. Every other exit 2 (the CLI sign-in, a GitHub App or the reviewer App) is as above: show it and stop.
-- **Review on the repo (`repo-review`, `review-choice`).** Every repo is reviewed by default, with no checkout, project
+  say. Every other exit 2 (a GitHub App or the reviewer App, or a sign-in code that expired) is as above: show it and stop.
+- **Review on their repos (`repo-review`, `review-choice`).** Every repo is reviewed by default, with no checkout, project
   file or pull request. Setup checks it per repo, exits 2 with the link when the console's reviewer App still has to be
   made or installed (an admin's step), and otherwise says the tag (`tag` in `--json`, `[woodshed-review]` unless the
   repo's project file names another): tell the person that putting it in a commit's message on a pull request gets it
