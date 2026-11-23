@@ -474,7 +474,7 @@ test('with sign-in always required, no route but sign-in\'s own answers a signed
       assert.equal((await getWith(port, open, { host: 'console.example' })).status, 200, open);
     }
     const me = await (await fetch(`http://127.0.0.1:${port}/api/me`, { headers: { host: 'console.example' } })).json();
-    assert.deepEqual(me, { supported: true, signIn: true, available: Boolean(secret), login: null, visitor: null, asked: null, admin: false, asking: 0, names: {}, repo: null, workflows: [] });
+    assert.deepEqual(me, { supported: true, signIn: true, available: Boolean(secret), login: null, visitor: null, asked: null, admin: false, asking: 0, people: false, names: {}, repo: null, workflows: [] });
   }
   assert.deepEqual(reached.filter((r) => r !== 'find ffffffff'), [], 'nothing reached a session, a secret or GitHub');
 });
@@ -574,7 +574,7 @@ test('on a console with no list of people, everyone signed in reaches the Secret
   for (const [path, body] of writes) assert.ok([200, 201].includes((await post(port, path, body, as)).status), `POST ${path}`);
   assert.ok(reached.includes('events') && reached.includes('startManual'));
   const me = await (await fetch(`http://127.0.0.1:${port}/api/me`, { headers: as })).json();
-  assert.deepEqual(me, { supported: true, signIn: true, available: true, login: 'mia-dev', visitor: null, asked: null, admin: true, asking: 0, names: {}, repo: 'o/r', workflows: [] });
+  assert.deepEqual(me, { supported: true, signIn: true, available: true, login: 'mia-dev', visitor: null, asked: null, admin: true, asking: 0, people: false, names: {}, repo: 'o/r', workflows: [] });
 });
 
 test('a member who is not an admin loads the console\'s own pages, and every call behind them answers 403', async (t) => {

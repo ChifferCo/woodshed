@@ -1705,7 +1705,7 @@ first to sign in is the first member and an admin, as on any new console. Once a
 what is asked again, at the next hourly check.
 
 Write access alone is not enough: a person must also be on the console's list,
-on the **People** page (`console/members.mjs`, `members` and `memberRequests`
+on the **People** tab of Settings (`console/members.mjs`, `members` and `memberRequests`
 in `state.json`). An admin can invite a handle (it must have write
 access), accept or decline someone asking to join, and remove another member;
 nobody can remove themselves. A writer who is not on the list signs in only as
@@ -1762,7 +1762,7 @@ off, Private only. The switches:
   switch starts off, and sessions already assigned keep their assignee.
 
 **Behind a hosting proxy** there is no People list of the console's own, and no People page, unless the program
-embedding the console hands over its list (`members`, "Embedding the console"). With it, People is a tab of Settings,
+embedding the console hands over its list (`members`, "Embedding the console"). With it, People is a tab of Settings, as on any console,
 after General and Secrets & webhooks, for owners (the admins there). Who is in and each person's role (Owner or
 Member) are the program's: **Add someone** takes a GitHub handle and a People role, Remove and the Role column change
 them there (Owner is the program's owner role, every other People role its member role), and core keeps no copy of the list (`console/hostedMembers.mjs`). Nobody asks to join, so there is no Asking to
