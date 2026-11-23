@@ -1162,6 +1162,8 @@ review's comment, verdict, rename and merge, and a made-up review by Claude Code
 `DEV_CONSOLE_WEBHOOKS=1` names a webhook receiver (which never listens, since polling is off), so the Console
 settings page shows its GitHub webhooks switch (Slack's needs a console that answers Slack questions), and the
 Webhook events page lists made-up deliveries: acted on, ignored, skipped and failed.
+`DEV_CONSOLE_PEOPLE=1` gives the People page four made-up members, with their switches every way, and two people asking
+to join.
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
 7690 with `DEV_CONSOLE_SESSION_APP=1` so it also answers under the session's app name, behind **Open app**.
 

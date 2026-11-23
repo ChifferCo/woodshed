@@ -1727,7 +1727,12 @@ until the first is switched on. The first person to sign in to a console with
 an empty list is its first admin. Locked out with no admin left: stop the console, set `"admin": true` on your entry under `members`
 in `/var/lib/<prefix>/console/state.json`, and start it again.
 
-**What each member can do.** People is a table, one row per member and one
+**The page** reads as the other settings pages do (`public/settingsRows.js`): **Asking to join** is a group of plain
+rows, one per person, with Accept and Decline on the row, and is left out while nobody asks; **Members** is a group
+whose box holds the table below, which scrolls sideways inside the box on a phone; and **Invite someone** (Add someone
+behind a hosting proxy) is that box's last row, which opens in place on its form (`/people#invite-card` opens it).
+
+**What each member can do.** Members is a table, one row per member and one
 column per switch, each off for a new member and set by an admin:
 - *Admin*, above.
 - *Sessions from GitHub* (`githubSessions`): the `woodshed` label and

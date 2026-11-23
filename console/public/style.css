@@ -1264,17 +1264,14 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 :root[data-theme="dark"] .prchip.is-queued { border-color: var(--wait); background: color-mix(in srgb, var(--wait) 12%, transparent); color: var(--wait); }
 
 /* ---- the People page ---- */
-.people-card { border: 1px solid var(--line); border-radius: 8px; }
-.people-card.is-asking { border-color: var(--amber); background: var(--amber-tint); }
-.people-card > .set-head { padding: 12px 16px; border-bottom: 1px solid var(--line-soft); }
-.people-card.is-asking > .set-head { border-bottom-color: transparent; }
-.person-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 16px; border-top: 1px solid var(--line-soft); }
-.person-row:first-of-type { border-top: 0; }
-.person-row .who { flex: 1 1 260px; min-width: 0; }
-.person-row .who .meta { margin-top: 2px; }
-.person-row .who .who { flex: none; }
-/* The members table: who, one column per switch, Slack, Remove. Scrolls sideways on a phone. */
+/* Asking to join: a plain row each (settingsRows.js), its Accept and Decline where a row's pill goes. */
+.person-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+/* The table needs the page's width, and the requests above it line up with it. */
+#requests, #members { max-width: none; }
+/* The members table: who, one column per switch, Slack, Remove. It sits in its group's box, above the row that
+   invites someone, and scrolls sideways inside the box on a phone. */
 .table-scroll { overflow-x: auto; }
+.set-rows-box > .table-scroll { border-radius: 7px 7px 0 0; }
 .people-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 13px; }
 .people-table th { text-align: left; padding: 8px 14px; background: var(--stopped); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label); vertical-align: bottom; }
 .people-table td { padding: 10px 14px; border-top: 1px solid var(--line-soft); vertical-align: middle; }
