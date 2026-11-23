@@ -229,7 +229,9 @@ URL on top of each env file's Repo settings values
 - **`woodshed review enable` says something is missing, or will not write the project file.** Exit 2 lists the
   console's steps, from `GET /api/review-readiness` (console/README.md, "The reviewer App"): `reviewer-app` is no
   reviewer App made (`/setup/github`), `reviewer-installed` one not installed on the repo, `reviewer-installed-unknown`
-  its installation not read (`reviewerApp: key not read, installation not known`), `runs-on` a default branch whose
+  its installation not read (`reviewerApp: key not read, installation not known` for the console's own reviewer App;
+  `reviewReadiness: reviewer App installation not read` when GitHub failed; nothing logged when a host's reviewer App
+  has no `installedOn`, console/README.md, "Embedding the console"), `runs-on` a default branch whose
   `runsOn` names another console, and `repo` a repo the console does not have, or the person cannot start sessions on
   or no longer writes to (`reviewReadiness: refused, no write access to the repo`). `Console: not asked` says why it was not: no sign-in, an origin
   not on GitHub, or a console from before the route. Exit 1 with `does not read as a project file` or `project check

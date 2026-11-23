@@ -2026,7 +2026,10 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   cannot ask GitHub about itself. `login()` answers its `<slug>[bot]` (or null while unknown), asked each time, so the
   console trusts its comments, the QA label it adds (`qa.autoLabel`) and a review session's PR comment as that App's.
   `reviewer` is the program's reviewer App: `{login(), configured(), submitReview({repo, number, event, body, sha,
-  comments})}`, as `reviewerApp.mjs`'s, through which review sessions' verdicts are submitted and trusted. Without it
+  comments})}`, as `reviewerApp.mjs`'s, through which review sessions' verdicts are submitted and trusted. Give it
+  `installedOn(repo)` (true or false, throwing when GitHub fails) and `view()` (`{installUrl}`) too: without them
+  `woodshed setup` and `woodshed review status` say of every repo that the console cannot tell whether it is
+  installed (`reviewer-installed-unknown`), with no install link and nothing logged. Without it
   no verdict counts (above, "The reviewer App"), and the console offers no reviewer App setup of its own. Logged as
   `console: GitHub App from the host`.
 - `mcpServers: {list(), save({server, by}), remove({name, by})}`: where the program keeps the MCP servers sessions get
