@@ -1439,7 +1439,25 @@ test('Antigravity: a Gemini key with its provider, the checkout trusted, its sta
   // Its first-start questions are skipped as agy itself records them answered, with no consent given.
   assert.deepEqual(JSON.parse(a.read('.gemini/antigravity-cli/cache/onboarding.json')), { consumerOnboardingComplete: true, enterpriseOnboardingComplete: false, onboardingComplete: true });
   assert.equal(a.read('.gemini/antigravity-cli/settings.json').includes('AIza'), false, 'the key stays out of its settings');
-  assert.equal(configureAgent('configureAntigravity', '{"x":1}').failed, true, 'a login file is not a key');
+  assert.equal(a.read('.gemini/antigravity-cli/antigravity-oauth-token'), null);
+  assert.match(a.out, /own Gemini API key/);
+  assert.equal(configureAgent('configureAntigravity', '{"x":1}').failed, true, 'a file that is not agy\'s Google sign-in');
+});
+
+test('Antigravity: a Google sign-in as agy\'s own token file, with no Gemini provider, and none of it left on a key', () => {
+  const login = '{"token":{"access_token":"ya29.x","token_type":"Bearer","refresh_token":"1//r","expiry":"2026-12-01T00:00:00Z"},"auth_method":"consumer"}';
+  const g = configureAgent('configureAntigravity', login);
+  assert.equal(g.read('.gemini/antigravity-cli/antigravity-oauth-token'), login);
+  assert.equal(g.mode('.gemini/antigravity-cli/antigravity-oauth-token'), 0o600);
+  assert.deepEqual(JSON.parse(g.read('.gemini/antigravity-cli/settings.json')), {
+    trustedWorkspaces: ['/work/app'], statusLine: { type: 'command', command: 'node /opt/woodshed/session/agentStatusLine.mjs' },
+  }, 'agy signs in with Google unless told to use a key');
+  assert.match(g.out, /own Google sign-in/);
+  // A key saved since the last start: the old sign-in file is gone, so the key is the only way in.
+  const script = fn('configureAntigravity');
+  assert.match(script, /if ownAgentAuthIsKey; then\n    rm -f "\$login"/);
+  assert.match(script, /\[ ! -L "\$ANTIGRAVITY_DIR\/\$file" \]/);
+  assert.match(script, /antigravity-cli\/antigravity-oauth-token AGENTS\.md/, 'the token file is never a symlink');
 });
 
 test('OpenCode: its auth.json, its config with the effort as each agent\'s variant, and the rules', () => {

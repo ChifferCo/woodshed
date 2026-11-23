@@ -1142,21 +1142,32 @@ grokFlags() {
   [ -z "${EFFORT:-}" ] || printf ' --effort %s' "$EFFORT"
 }
 
-# Antigravity: the owner's own Gemini API key, which session/bin/agy hands it in GEMINI_API_KEY, with `modelProvider`
-# gemini, without which agy ignores the key (antigravity.google/docs/install). Its Google sign-in keeps its login in the
-# machine's keyring, which a session cannot carry, so a key is all it takes here. The checkout is a trusted workspace,
-# its status line is agentStatusLine.mjs (statusd's word on what it does), and the rules go in ~/.gemini/AGENTS.md, which
-# it reads with the repo's own.
+# Antigravity: the owner's own sign-in, one of two kinds (shared/agents.cjs). A Google sign-in is agy's own file,
+# ~/.gemini/antigravity-cli/antigravity-oauth-token, which agy reads and writes in place of the keyring when it finds no
+# D-Bus session bus or sees a container, as in a session (its log: `Using file-based token storage because no D-Bus
+# session bus detected`; measured with 1.5.14). It renews the access token in that file, and the refresh token stays as it
+# is, so nothing is sent back at stop. A Gemini API key goes to agy in GEMINI_API_KEY from session/bin/agy, with
+# `modelProvider` gemini, without which agy ignores the key (antigravity.google/docs/install); a sign-in file left from
+# before is removed, so the key is the only way in. The checkout is a trusted workspace, its status line is
+# agentStatusLine.mjs (statusd's word on what it does), and the rules go in ~/.gemini/AGENTS.md, which it reads with the
+# repo's own.
 configureAntigravity() {
   agentDir "$ANTIGRAVITY_DIR" agy
   agentDir "$ANTIGRAVITY_DIR/antigravity-cli" agy
-  local file
-  for file in antigravity-cli/settings.json AGENTS.md; do
+  local file login=$ANTIGRAVITY_DIR/antigravity-cli/antigravity-oauth-token
+  for file in antigravity-cli/settings.json antigravity-cli/antigravity-oauth-token AGENTS.md; do
     [ ! -L "$ANTIGRAVITY_DIR/$file" ] || die "agy's $file is a symlink"
   done
-  ownAgentAuthIsKey || die "Antigravity takes a Gemini API key, and the console sent something else"
-  jq -n --arg repo "$REPO_DIR" --arg line "node $SESSION_DIR/agentStatusLine.mjs" \
-    '{modelProvider: "gemini", trustedWorkspaces: [$repo], statusLine: {type: "command", command: $line}}' \
+  local settings='{trustedWorkspaces: [$repo], statusLine: {type: "command", command: $line}}'
+  if ownAgentAuthIsKey; then
+    rm -f "$login"
+    settings="{modelProvider: \"gemini\"} + $settings"
+  else
+    jq -e '.token.refresh_token and .auth_method' "$OWN_AGENT_AUTH_FILE" >/dev/null 2>&1 \
+      || die "the console sent an Antigravity sign-in that is neither a Gemini API key nor agy's Google sign-in"
+    (umask 077 && cp "$OWN_AGENT_AUTH_FILE" "$login")
+  fi
+  jq -n --arg repo "$REPO_DIR" --arg line "node $SESSION_DIR/agentStatusLine.mjs" "$settings" \
     > "$ANTIGRAVITY_DIR/antigravity-cli/settings.json"
   cp /tmp/woodshed-rules.md "$ANTIGRAVITY_DIR/AGENTS.md"
   # Its first start asks for a colour scheme, then whether Google may collect the person's interactions (ticked
@@ -1166,7 +1177,11 @@ configureAntigravity() {
   [ ! -L "$ANTIGRAVITY_DIR/antigravity-cli/cache/onboarding.json" ] || die "agy's onboarding.json is a symlink"
   jq -n '{consumerOnboardingComplete: true, enterpriseOnboardingComplete: false, onboardingComplete: true}' \
     > "$ANTIGRAVITY_DIR/antigravity-cli/cache/onboarding.json"
-  log "agy runs on the owner's own Gemini API key, directly"
+  if ownAgentAuthIsKey; then
+    log "agy runs on the owner's own Gemini API key, directly"
+  else
+    log "agy runs on the owner's own Google sign-in, directly"
+  fi
 }
 
 # Antigravity's flags: auto, accept-edits and plan are its own modes (`--mode`), default leaves its own policy.

@@ -19,7 +19,7 @@
   const A = window.WoodshedAgents;
   const AGENT_WORDS = {
     claude: 'Claude Code, on your Claude plan', codex: 'OpenAI Codex, on your Codex sign-in or the team key',
-    grok: 'Grok Build, on your own xAI sign-in', antigravity: 'Antigravity CLI, on your own Gemini API key', opencode: 'OpenCode, on the providers you signed in to',
+    grok: 'Grok Build, on your own xAI sign-in', antigravity: 'Antigravity CLI, on your own Google sign-in or Gemini API key', opencode: 'OpenCode, on the providers you signed in to',
   };
   const AGENTS = A.AGENT_IDS.map((id) => [id, A.agent(id).name, AGENT_WORDS[id] ?? A.agent(id).product]);
   // What each permission mode does, in an agent that is not Claude Code or Codex (the entrypoint's mapping onto its flags).

@@ -12,7 +12,10 @@
 // `entrypoint.sh` is copied over the image's, to try a start change before the image is built. Needs Docker and
 // `gh auth token`, whose token the session's git fetches with: the container is removed with a kill, so statusd's stop
 // never pushes. REPO names the repo (owner/name), which an image with no checkout clones at start; IN_IMAGE_CONSOLE_HOST
-// the address the container reaches this computer at (default host.docker.internal).
+// the address the container reaches this computer at (default host.docker.internal). ANTIGRAVITY_SIGN_IN=google gives
+// Antigravity a made-up Google sign-in in place of a key: agy loads it from its own file and opens signed in, and
+// Google refuses every call with a 401 before it takes the first message. That passes on agy's own log, printed after
+// the pane: the sign-in loaded from its file and Google's refusal of it.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -40,7 +43,9 @@ const PROMPT = 'Say hello from agentInImage, then stop.';
 // Made up, in the shape each agent's own sign-in check takes (shared/agents.cjs, checkSignIn): none reaches a provider.
 const SIGN_INS = {
   grok: 'xai-agentInImage-not-a-real-key-0123456789',
-  antigravity: 'AIzaSyAgentInImageNotARealKey0123456789',
+  antigravity: process.env.ANTIGRAVITY_SIGN_IN === 'google'
+    ? JSON.stringify({ token: { access_token: 'ya29.agentInImage-not-a-real-token', token_type: 'Bearer', refresh_token: '1//agentInImage-not-a-real-token', expiry: '2099-01-01T00:00:00Z' }, auth_method: 'consumer' })
+    : 'AIzaSyAgentInImageNotARealKey0123456789',
   opencode: JSON.stringify({ anthropic: { type: 'api', key: 'sk-ant-agentInImage-not-a-real-key' } }),
 };
 const REPO = envValue(process.env, 'REPO') || 'ChifferCo/woodshed';
@@ -130,8 +135,21 @@ try {
   const command = docker('exec', '-u', 'node', CONTAINER, 'tmux', 'display', '-p', '-t', 'claude', '#{pane_current_command}').trim();
   const pane = docker('exec', '-u', 'node', CONTAINER, 'tmux', 'capture-pane', '-p', '-J', '-S', '-200', '-t', 'claude');
   console.log(`--- the agent's pane (its command: ${command})\n${pane.replace(/\n{3,}/g, '\n\n')}`);
-  const ok = /Claude started/.test(log) && agents.agent(AGENT).processNames.includes(command) && pane.includes(PROMPT);
-  console.log(ok ? `--- PASSED: ${agents.agent(AGENT).product} runs in the session's pane with its first message`
+  let ok = /Claude started/.test(log) && agents.agent(AGENT).processNames.includes(command);
+  const googleSignIn = AGENT === 'antigravity' && process.env.ANTIGRAVITY_SIGN_IN === 'google';
+  if (!googleSignIn) ok &&= pane.includes(PROMPT);
+  if (AGENT === 'antigravity') {
+    // How agy signed in, from its own log: where it keeps the sign-in and what Google said of it. These lines hold no
+    // token.
+    const agyLog = docker('exec', '-u', 'node', CONTAINER, 'bash', '-c', 'cat ~/.gemini/antigravity-cli/log/*.log 2>/dev/null || true');
+    const said = agyLog.split('\n').filter((line) => /token storage|keyringAuth|token refresh|ChainedAuth|Gemini API key|modelProvider|auth mode/i.test(line));
+    console.log(`--- agy's log on its sign-in\n${said.slice(0, 20).join('\n') || '(nothing)'}`);
+    if (googleSignIn) {
+      ok &&= said.some((line) => /keyringAuth: loaded token/.test(line)) && /UNAUTHENTICATED \(code 401\)|invalid_grant/.test(agyLog);
+      if (ok) console.log('--- PASSED: agy runs in the session\'s pane on the Google sign-in from its file, which Google refused (it is made up)');
+    }
+  }
+  if (!googleSignIn || !ok) console.log(ok ? `--- PASSED: ${agents.agent(AGENT).product} runs in the session's pane with its first message`
     : '--- FAILED: no agent in the pane with the first message (the log and pane above say why)');
   process.exitCode = ok ? 0 : 1;
   console.log(`docker rm -f ${CONTAINER} when done`);

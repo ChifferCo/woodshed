@@ -51,6 +51,8 @@ test('Antigravity\'s quota: the most used 5-hour and weekly buckets, as the plan
     fiveHour: { usedPercent: 75, resetsAt: '2026-11-23T11:00:00.000Z' },
     sevenDay: { usedPercent: 10, resetsAt: '2026-11-28T10:00:00.000Z' },
   });
+  // agy leaves a zero fraction out: a used-up bucket is all used.
+  assert.deepEqual(antigravityPlanUsageFrom({ quota: { argon: { reset_in_seconds: 1800 } }, at }).fiveHour, { usedPercent: 100, resetsAt: '2026-11-23T10:30:00.000Z' });
   // A key has no quota.
   assert.equal(antigravityPlanUsageFrom({ agent_state: 'idle', at }), null);
   assert.equal(antigravityPlanUsageFrom(null), null);

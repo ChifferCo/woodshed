@@ -29,8 +29,8 @@ browser.
   paste it on My settings themselves: never ask for, read, or pass a token. If they say they use only one, rerun with
   `--agent claude` or `--agent codex`, and setup does not ask for the other.
   Grok Build, Antigravity and OpenCode are not part of setup: a session runs them only on the person's own sign-in,
-  pasted on My settings (`grok login` then `~/.grok/auth.json` or an xAI key; a Gemini API key; `opencode auth login`
-  then `~/.local/share/opencode/auth.json`), and `woodshed status --json` lists each in `sessionSignIns`.
+  pasted on My settings (`grok login` then `~/.grok/auth.json` or an xAI key; agy's Google sign-in from a session's
+  Terminal tab, or a Gemini API key; `opencode auth login` then `~/.local/share/opencode/auth.json`), and `woodshed status --json` lists each in `sessionSignIns`.
   After showing them the steps from that exit 2, don't wait for them to say they are done: run the same setup
   command again with `--wait` added (check `woodshed setup --help` lists it; on older builds, rerun when they say).
   It prints the steps again (`status: "waiting"`), asks the console every 5 seconds, reports each agent as it

@@ -694,6 +694,10 @@ test('a private Grok Build, Antigravity or OpenCode session runs on its owner\'s
   const older = JSON.stringify({ openai: { type: 'oauth', refresh: 'r0', access: 'a0', expires: 1_000 } });
   assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer oc-token', body: older, headers: given(own.opencode) })).status, 409, 'an older login never replaces a newer one');
   assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer agy-token', body: 'AIza-x' })).status, 404, 'a key does not rotate');
+  // Nor does agy's Google sign-in: Google keeps its refresh token as it is, so the saved one stays good.
+  own.antigravity = JSON.stringify({ token: { access_token: 'at', token_type: 'Bearer', refresh_token: 'rt', expiry: '2026-12-01T00:00:00Z' }, auth_method: 'consumer' });
+  assert.equal((await request(port, { path: '/settings', authorization: 'Bearer agy-token' })).body.agentAuth, own.antigravity);
+  assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer agy-token', body: own.antigravity, headers: given(own.antigravity) })).status, 404, 'a Google sign-in is not sent back');
   assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer none-token', body: older })).status, 409, 'no sign-in saved, nothing to replace');
   assert.equal((await request(port, { path: '/agent-auth', authorization: 'Bearer grok-token', body: 'x'.repeat(20_001) })).status, 413);
   assert.equal(saved.length, 1, 'only the refresh of the sign-in it was given');

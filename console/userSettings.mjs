@@ -7,9 +7,10 @@
 //   users/<login>/codex-auth     the person's own Codex sign-in: an OpenAI API key, or the ~/.codex/auth.json of `codex login`.
 //                                Handed to their private Codex sessions, which write a refreshed login back (sessionApi.mjs)
 //   users/<login>/grok-auth, antigravity-auth, opencode-auth   the person's own sign-in for Grok Build (an xAI key or
-//                                ~/.grok/auth.json), Antigravity (a Gemini API key) and OpenCode (its auth.json): those
-//                                agents run on nothing else (shared/agents.cjs). Handed to their private sessions of that
-//                                agent alone; Grok's and OpenCode's logins rotate, so a session writes the refreshed one back
+//                                ~/.grok/auth.json), Antigravity (a Gemini API key or agy's Google sign-in) and OpenCode
+//                                (its auth.json): those agents run on nothing else (shared/agents.cjs). Handed to their
+//                                private sessions of that agent alone; Grok's and OpenCode's logins rotate, so a session
+//                                writes the refreshed one back
 //   users/<login>/tmux-conf      ~/.tmux.conf, which their sessions write after the console's shared file, so a change to
 //                                that still reaches them. Readable by them, since their sessions hold the same text anyway
 //   users/<login>/gitconfig, inputrc, bash-aliases   their own lines for those files, the same way: only what

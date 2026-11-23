@@ -210,7 +210,8 @@ const CODEX_AUTH_FILE = path.join(process.env.CODEX_HOME || path.join(os.homedir
 // The copy the entrypoint was given, to tell whether this session refreshed the login.
 const CODEX_GIVEN_FILE = path.join(os.homedir(), '.config/woodshed/codex-auth');
 // The own sign-in of Grok Build or OpenCode, which refresh a login whose refresh token works once: where the agent keeps
-// it, and the copy the entrypoint was given (configureGrok, configureOpencode). An API key never changes.
+// it, and the copy the entrypoint was given (configureGrok, configureOpencode). An API key never changes, and nor does
+// the refresh token of Antigravity's Google sign-in: agy renews only the access token in its file, so none goes back.
 const OWN_AUTH_FILES = {
   grok: path.join(process.env.GROK_HOME || path.join(os.homedir(), '.grok'), 'auth.json'),
   opencode: path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'opencode', 'auth.json'),

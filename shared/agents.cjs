@@ -67,11 +67,14 @@
       id: 'antigravity', name: 'Antigravity', product: 'Antigravity CLI', command: 'agy', processNames: ['agy', 'antigravity'], quit: '/exit',
       teamCredential: false,
       signIn: {
-        secret: 'antigravity-auth', label: 'Antigravity', placeholder: 'AIza… (a Gemini API key)', maxChars: 200, rotates: false,
-        kinds: 'a Gemini API key',
+        secret: 'antigravity-auth', label: 'Antigravity', placeholder: 'AIza… or the contents of ~/.gemini/antigravity-cli/antigravity-oauth-token', maxChars: 20_000,
+        // Google keeps a refresh token as it is when it refreshes the access token, so every session can hold the same one.
+        rotates: false,
+        kinds: 'your Google sign-in (AI Pro or Ultra), or a Gemini API key',
         steps: [
-          { text: 'Make a Gemini API key in Google AI Studio (aistudio.google.com/apikey), then paste it here.' },
-          { text: 'Antigravity’s Google sign-in keeps its login in the machine’s keyring, which a session cannot carry: sessions run on a key.' },
+          { text: 'agy keeps a Google sign-in in a file only where the machine has no keyring, as in a session. In the Terminal tab of one of your own My Woodshed sessions, sign in with your Google account: open the link it prints, sign in, and paste the code back within the minute agy waits.', command: 'agy -p "say ok"' },
+          { text: 'Print the sign-in it saved, then delete it from that session:', command: 'jq . ~/.gemini/antigravity-cli/antigravity-oauth-token && rm ~/.gemini/antigravity-cli/antigravity-oauth-token' },
+          { text: 'Or paste a Gemini API key (AIza…) from Google AI Studio (aistudio.google.com/apikey).' },
         ],
       },
       permissionModes: ['auto', 'acceptEdits', 'plan', 'default'],
@@ -141,17 +144,26 @@
     const text = value.trim();
     if (!text) throw fail(`paste your ${a.product} sign-in first`);
     if (text.length > a.signIn.maxChars) throw fail(`that is too long for a ${a.product} sign-in`);
-    if (id === 'antigravity') {
-      if (/^AIza[0-9A-Za-z_-]{20,80}$/.test(text)) return text;
-      throw fail('paste a Gemini API key (AIza…) from Google AI Studio');
-    }
+    if (id === 'antigravity' && /^AIza[0-9A-Za-z_-]{20,80}$/.test(text)) return text;
     if (id === 'grok' && /^xai-[0-9A-Za-z_-]{10,200}$/.test(text)) return text;
     let json;
     try {
       // zsh ends output with no final newline in a `%`, which a copy of `cat …auth.json` takes along.
       json = JSON.parse(text.replace(/\}\s*%$/, '}'));
     } catch {
-      throw fail(id === 'grok' ? 'paste an xAI API key (xai-…) or the contents of ~/.grok/auth.json' : 'paste the contents of ~/.local/share/opencode/auth.json');
+      throw fail({
+        grok: 'paste an xAI API key (xai-…) or the contents of ~/.grok/auth.json',
+        antigravity: 'paste a Gemini API key (AIza…) or the contents of ~/.gemini/antigravity-cli/antigravity-oauth-token',
+      }[id] ?? 'paste the contents of ~/.local/share/opencode/auth.json');
+    }
+    if (id === 'antigravity') {
+      // agy's own file for a Google sign-in, as 1.5.14 reads it: the OAuth token (with the refresh token it renews the
+      // access token from) and the sign-in's kind, `consumer` for a Google account.
+      const token = json?.token;
+      if (!token || typeof token !== 'object' || typeof token.refresh_token !== 'string' || !token.refresh_token || typeof json.auth_method !== 'string' || !json.auth_method) {
+        throw fail('that is not agy’s Google sign-in: paste the whole of ~/.gemini/antigravity-cli/antigravity-oauth-token');
+      }
+      return JSON.stringify(json);
     }
     if (typeof json !== 'object' || json === null || Array.isArray(json) || !Object.keys(json).length) throw fail(`that holds no ${a.product} sign-in: paste the whole auth.json`);
     const entries = Object.values(json);

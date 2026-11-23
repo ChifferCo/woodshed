@@ -143,7 +143,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   // registry's words. Their boxes and notes are made once and kept across draws, as Codex's are.
   const A = window.WoodshedAgents;
   const agentInputs = Object.fromEntries(A.OWN_SIGN_IN_AGENTS.map((id) => [id, h('textarea', {
-    id: `${id}-auth`, class: 'field mono', rows: id === 'antigravity' ? '1' : '3', autocomplete: 'off', spellcheck: 'false', placeholder: A.agent(id).signIn.placeholder,
+    id: `${id}-auth`, class: 'field mono', rows: '3', autocomplete: 'off', spellcheck: 'false', placeholder: A.agent(id).signIn.placeholder,
   })]));
   const agentStatus = Object.fromEntries(A.OWN_SIGN_IN_AGENTS.map((id) => [id, h('p', { class: 'form-note', role: 'status' })]));
 

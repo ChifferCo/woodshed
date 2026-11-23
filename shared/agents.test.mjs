@@ -49,7 +49,14 @@ test('own sign-ins: a key or a login file each agent writes, checked before it i
   assert.throws(() => agents.checkSignIn('grok', 'sk-nope'), /xAI API key/);
 
   assert.equal(agents.checkSignIn('antigravity', 'AIzaSyA1234567890abcdefghijklmnop'), 'AIzaSyA1234567890abcdefghijklmnop');
-  assert.throws(() => agents.checkSignIn('antigravity', '{"token": "x"}'), /Gemini API key/);
+  // agy's own file for a Google sign-in (~/.gemini/antigravity-cli/antigravity-oauth-token), as 1.5.14 writes it.
+  const agyLogin = { token: { access_token: 'ya29.x', token_type: 'Bearer', refresh_token: '1//r', expiry: '2026-12-01T00:00:00Z' }, auth_method: 'consumer' };
+  assert.equal(agents.checkSignIn('antigravity', `${JSON.stringify(agyLogin, null, 2)}\n`), JSON.stringify(agyLogin));
+  assert.throws(() => agents.checkSignIn('antigravity', '{"token": "x"}'), /not agy’s Google sign-in/);
+  assert.throws(() => agents.checkSignIn('antigravity', JSON.stringify({ token: agyLogin.token })), /not agy’s Google sign-in/, 'it says which sign-in it is');
+  assert.throws(() => agents.checkSignIn('antigravity', JSON.stringify({ ...agyLogin, token: { access_token: 'a' } })), /not agy’s Google sign-in/, 'with nothing to renew it from');
+  assert.throws(() => agents.checkSignIn('antigravity', 'sk-nope'), /Gemini API key \(AIza…\) or the contents of/);
+  assert.equal(agents.agent('antigravity').signIn.rotates, false, 'Google keeps its refresh token as it is');
 
   const oc = { anthropic: { type: 'api', key: 'sk-ant-x' }, openai: { type: 'oauth', refresh: 'r', access: 'a', expires: 1 } };
   assert.equal(agents.checkSignIn('opencode', JSON.stringify(oc)), JSON.stringify(oc));

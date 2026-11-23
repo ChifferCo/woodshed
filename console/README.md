@@ -760,14 +760,17 @@ answering, the menus are your last list read, or else codex's built-in list (`BU
 **Grok Build**, **Antigravity** and **OpenCode** are on the Agent menu too (`shared/agents.cjs`), each only for someone
 whose own sign-in for it is saved on My settings: they run on nothing else, since the console holds no team key or proxy
 for them. The sign-in is `users/<login>/grok-auth` (an xAI key, `xai-…`, or `~/.grok/auth.json` from `grok login`),
-`antigravity-auth` (a Gemini API key, `AIza…`: Antigravity's Google sign-in keeps its login in the machine's keyring,
-which a session cannot carry) or `opencode-auth` (`~/.local/share/opencode/auth.json` from `opencode auth login`), saved
+`antigravity-auth` (agy's Google sign-in, for a Google AI Pro or Ultra plan, or a Gemini API key, `AIza…`) or `opencode-auth` (`~/.local/share/opencode/auth.json` from `opencode auth login`), saved
 with `POST /api/my/agent-auth/<agent>` and removed with `…/remove`. It is handed to that person's private sessions of
 that agent alone (`/settings`'s `agentAuth`), never to a shared session, a question, QA or a review: so they review
 nothing, and a resume needs it saved as a start does. Grok's and OpenCode's logins rotate their refresh token at each
 use, so a session sends the refreshed one back at stop (`POST /agent-auth`, with the digest of the sign-in it was
 given), kept only while the saved one is still that sign-in (not a key or login saved since, nor another session's
-refresh) and does not run out before it. Their **Model** is a name their own `--model` takes, blank for the agent's default (OpenCode's is
+refresh) and does not run out before it. Antigravity's Google sign-in is its file
+`~/.gemini/antigravity-cli/antigravity-oauth-token`, which agy writes in place of the keyring where the machine has none,
+as in a session: My settings has the person sign in from the Terminal tab of one of their own sessions (`agy -p`, which
+prints a link and takes the code back) and paste the file. Google keeps its refresh token as it is, so nothing goes back
+at stop. Their **Model** is a name their own `--model` takes, blank for the agent's default (OpenCode's is
 `provider/model`); **Effort** and **Permissions** offer what each one's command line has (`efforts` and
 `permissionModes` in the registry). None of them gets the console's MCP servers yet.
 

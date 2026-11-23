@@ -1,7 +1,8 @@
 #!/bin/bash
-# agy (Antigravity), on its owner's own Gemini API key (configureAntigravity in entrypoint.sh), handed to agy alone in
-# GEMINI_API_KEY from the 0600 file the entrypoint kept: never exported to the session's shell, nor to the Terminal tab.
-# What agy runs inherits it, as for grok's key: it is the owner's own key, in their own private session.
+# agy (Antigravity), on its owner's own sign-in (configureAntigravity in entrypoint.sh). A Gemini API key is handed to
+# agy alone in GEMINI_API_KEY from the 0600 file the entrypoint kept: never exported to the session's shell, nor to the
+# Terminal tab. What agy runs inherits it, as for grok's key: it is the owner's own key, in their own private session. A
+# Google sign-in is agy's own file, which agy reads by itself.
 set -euo pipefail
 
 real=${WOODSHED_REAL_AGY:-/usr/local/bin/agy}
@@ -10,6 +11,9 @@ if [ -s "$auth" ] && [[ "$(head -c 4 "$auth")" == AIza ]]; then
   GEMINI_API_KEY=$(cat "$auth")
   export GEMINI_API_KEY
 fi
+# agy keeps a Google sign-in in its file, not the keyring, when it finds no D-Bus session bus or sees a container (its
+# log says which, measured with 1.5.14): a session has no bus, and this keeps it so whatever the environment says.
+unset DBUS_SESSION_BUS_ADDRESS
 # Never updating itself in a session: a new version comes in by the image's pins.
 export AGY_CLI_DISABLE_AUTO_UPDATE=true
 exec "$real" "$@"
