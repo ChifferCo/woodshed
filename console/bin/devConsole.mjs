@@ -267,6 +267,7 @@ const sessions = [
     ...(reviewPr ? { kind: 'task', trigger: 'my-woodshed', owner: 'local', assignee: null, prUrl: `https://github.com/${reviewPr.slug}/pull/${reviewPr.number}` } : {}),
   }),
   // Running on a project that declares two apps, with the real statusd behind it: Start app ▾ lists them.
+  // Its checkout's three branches have a pull request each, which that statusd reports: three chips on its card.
   session(APPS_ID, 26702, 'A project with two apps', {
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', hasShell: true,
     ref: twoApps.ref, endpoint: { host: '127.0.0.1', statusPort: twoApps.port, termPort: twoApps.port },

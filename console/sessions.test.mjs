@@ -241,6 +241,22 @@ test('statusUpdate keeps every pull request the session reported, oldest first, 
   assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: url(10) }), { state: 'done', prUrl: 'https://github.com/evil/r/pull/1' }, 'now').prUrls, [url(10)]);
 });
 
+test('statusUpdate takes the pull requests of the session\'s other branches, in number order', () => {
+  const url = (n) => `https://github.com/o/r/pull/${n}`;
+  const first = statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrl: url(12), prUrls: [url(11), url(12), url(14)] }, 'now');
+  assert.deepEqual(first.prUrls, [url(11), url(12), url(14)]);
+  assert.equal(first.prUrl, url(12), 'prUrl stays the checked-out branch\'s');
+  const later = statusUpdate(session({ repo: 'o/r', prUrl: url(12), prUrls: [url(12)] }), { state: 'done', prUrl: url(12), prUrls: [url(11)] }, 'now');
+  assert.deepEqual(later.prUrls, [url(11), url(12)], 'an older one found later goes before');
+  const gone = statusUpdate(session({ repo: 'o/r', prUrl: url(12), prUrls: first.prUrls }), { state: 'done', prUrl: null, prUrls: [] }, 'now');
+  assert.deepEqual(gone.prUrls, first.prUrls, 'a branch deleted since keeps its pull request');
+  const odd = statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrls: ['https://github.com/evil/r/pull/1', 7, `${url(5)}/files`, url(6)] }, 'now');
+  assert.deepEqual(odd.prUrls, [url(6)]);
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrls: 'no' }, 'now').prUrls, []);
+  const many = Array.from({ length: 30 }, (_, i) => url(i + 1));
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrls: many }, 'now').prUrls, many.slice(-20), 'the 20 newest');
+});
+
 test('publicSession drops the token and the endpoint', () => {
   const view = publicSession(session({ token: 'secret', terminalToken: 'term', endpoint: { host: 'h' }, pendingMessages: ['a', 'b'] }));
   assert.equal(view.token, undefined);

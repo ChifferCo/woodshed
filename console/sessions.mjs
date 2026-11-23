@@ -446,9 +446,13 @@ export function prUrlsOf(session) {
   return session?.prUrl ? [session.prUrl] : [];
 }
 
-function withPrUrl(session, prUrl) {
-  const known = prUrlsOf(session);
-  return prUrl && !known.includes(prUrl) ? [...known, prUrl].slice(-MAX_PR_URLS) : known;
+/**
+ * The session's list with what its statusd reports now: the pull request of the branch checked out, and those of its
+ * other branches (`prUrls`, from a statusd that reads them). Oldest first, which is the lowest number first.
+ */
+function withPrUrls(session, reported) {
+  const all = [...new Set([...prUrlsOf(session), ...reported.filter(Boolean)])];
+  return all.sort((a, b) => pullNumber(a) - pullNumber(b)).slice(-MAX_PR_URLS);
 }
 
 /**
@@ -469,6 +473,9 @@ export function statusUpdate(session, status, nowIso) {
   const prUrl = typeof status.prUrl === 'string' && status.prUrl.startsWith(`https://github.com/${session.repo}/pull/`)
     ? status.prUrl
     : null;
+  // The pull requests of its other branches, a worktree's included. `prUrl` stays the checked-out branch's alone.
+  const otherPrUrls = (Array.isArray(status.prUrls) ? status.prUrls.slice(-MAX_PR_URLS) : [])
+    .filter((url) => typeof url === 'string' && url.startsWith(`https://github.com/${session.repo}/pull/`) && pullNumber(url));
   const update = {
     state: status.state,
     shells: Number.isInteger(status.shells) && status.shells > 0 ? Math.min(status.shells, 99) : 0,
@@ -484,8 +491,9 @@ export function statusUpdate(session, status, nowIso) {
     // Whether its statusd types only into a running agent when asked (`agentOnly`): an older image's would type into
     // the shell an exited agent leaves, so its private session's pull request is not watched.
     agentOnlySend: status.agentOnlySend === true,
-    // Every pull request the session has reported, oldest first: a session can open another after one merged.
-    prUrls: withPrUrl(session, prUrl),
+    // Every pull request the session has reported, oldest first: a session can open another after one merged, or
+    // several from branches of their own.
+    prUrls: withPrUrls(session, [...otherPrUrls, prUrl]),
     app: APP_STATES.has(status.app) ? status.app : null,
     // Claude's own id for the conversation, which Resume hands back to `claude --resume`.
     claudeSession: CLAUDE_SESSION_RE.test(status.claudeSession ?? '') ? status.claudeSession : session.claudeSession ?? null,
