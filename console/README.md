@@ -1745,7 +1745,7 @@ log), and the role shown is read back from the switches, so a list from before r
 | Private only | off | off | off |
 
 An admin kept from before roles with a switch off shows as Owner, with what they lack in words; picking Owner again
-turns both on. Invite someone takes a role too; without one (an older page or a script), someone new has every switch
+turns both on. Invite someone takes a role too, picked from a table of the roles with what each can do; without one (an older page or a script), someone new has every switch
 off, Private only. The switches:
 - *Admin*, above.
 - *Sessions from GitHub* (`githubSessions`): the `woodshed` label and

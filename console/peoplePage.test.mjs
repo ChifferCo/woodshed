@@ -48,7 +48,7 @@ async function loadPage({ members, addReply, hosted = true, requests = [] }) {
   };
   // As /api/people answers: each member's role from their switches, and the roles with what each gives.
   const withRoles = (reply) => (reply && Array.isArray(reply.members)
-    ? { ...reply, roles: ROLES.map(({ id, label, explain }) => ({ id, label, explain })), members: reply.members.map((m) => ({ ...m, access: roleOf(m), accessDiffers: roleDiffers(m) })) }
+    ? { ...reply, roles: ROLES.map(({ id, label, explain, privateSessions, admin, githubSessions, assignable }) => ({ id, label, explain, privateSessions, admin, githubSessions, assignable })), members: reply.members.map((m) => ({ ...m, access: roleOf(m), accessDiffers: roleDiffers(m) })) }
     : reply);
   const list = withRoles({ members, requests, hosted, names: {}, slack: null });
   const posted = [];
@@ -77,8 +77,7 @@ async function loadPage({ members, addReply, hosted = true, requests = [] }) {
   return { app, add, hint, rowOf, posted, find, heard };
 }
 
-const CONTRIBUTOR = 'Contributor: Starts sessions from GitHub and sees Everyone, but is never assigned a shared session. ';
-const CORE_HINT = `${CONTRIBUTOR}They can sign in straight away. Nothing is sent to them: tell them the link.`;
+const CORE_HINT = 'They can sign in straight away. Nothing is sent to them: tell them the link.';
 
 test('a note from the program is shown under the person, muted, as text', async () => {
   const { rowOf } = await loadPage({
@@ -101,7 +100,7 @@ test('after an add, what the program says it did stands in for core\'s hint; wit
   assert.equal(hint(), CORE_HINT, 'before any add');
   await add('lee-dev');
   assert.deepEqual([posted[0][0], posted[0][1].login], ['/api/people/add', 'lee-dev']);
-  assert.equal(hint(), `${CONTRIBUTOR}They can sign in straight away. We emailed them a link.`);
+  assert.equal(hint(), 'They can sign in straight away. We emailed them a link.');
   told = '<script>alert(1)</script>';
   await add('bo-dev');
   assert.match(hint(), /<script>alert\(1\)<\/script>$/, 'as text, since h makes a text node of it');
@@ -174,8 +173,26 @@ test('each member has a Role select and what that role can do; picking one posts
   assert.equal(JSON.stringify(posted.at(-1)), JSON.stringify(['/api/people/access', { login: 'lee-dev', access: 'member' }]));
   assert.equal(picked('lee-dev'), 'Member', 'drawn from the answer');
 
-  assert.match(hint(), /^Contributor: /, 'someone new behind a proxy starts as a Contributor, as before roles');
-  find((e) => e.attrs.id === 'add-role').value = 'member';
+  hint();
+  const picker = find((e) => e.attrs.id === 'add-role');
+  const pickRows = () => walk(find((e) => e.attrs.id === 'add-role')).filter((e) => e.tag === 'tr');
+  assert.deepEqual(pickRows().map((tr) => tr.children.slice(0, 5).map(textOf)), [
+    ['Role', 'Private sessions', 'Settings pages', 'Sessions from GitHub', 'Can be assigned'],
+    [' Owner', 'Yes', 'Yes', 'Yes', 'Yes'], [' Member', 'Yes', 'No', 'Yes', 'Yes'], [' Contributor', 'Yes', 'No', 'Yes', 'No'], [' Private only', 'Yes', 'No', 'No', 'No'],
+  ], 'the roles as a table, each power a word');
+  assert.match(textOf(pickRows()[3]), /never assigned a shared session$/, 'and what the role can do, in words');
+  assert.ok(picker);
+  const pickedRow = () => pickRows().findIndex((tr) => tr.className === 'is-picked');
+  assert.equal(pickedRow(), 3, 'someone new behind a proxy starts as a Contributor, as before roles');
+  pickRows()[2].listeners.click();
+  assert.equal(pickedRow(), 2, 'a click on a row picks it');
   await add('cy-dev');
   assert.equal(JSON.stringify(posted.at(-1)), JSON.stringify(['/api/people/add', { login: 'cy-dev', access: 'member' }]));
+});
+
+test('on a console of its own, someone invited starts as Private only unless another role is picked', async () => {
+  const members = [{ login: 'ana-owner', admin: true, addedBy: null, addedAt: '2026-11-01T00:00:00.000Z', how: 'first to sign in' }];
+  const { add, posted } = await loadPage({ members, hosted: false, addReply: () => ({ members, requests: [], hosted: false, names: {}, slack: null }) });
+  await add('lee-dev');
+  assert.equal(JSON.stringify(posted.at(-1)), JSON.stringify(['/api/people/invite', { login: 'lee-dev', access: 'private' }]));
 });

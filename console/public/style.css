@@ -1289,8 +1289,18 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 .slack-matches .foot { margin: 0; padding: 8px 12px; }
 .invite-row { display: flex; flex-wrap: wrap; gap: 8px; max-width: 560px; }
 .invite-row .field { flex: 1 1 220px; font-family: var(--mono); }
-/* A role picked beside the handle (People behind a hosting proxy): as wide as its words. */
-.invite-row select.field { flex: 0 0 auto; font-family: inherit; }
+/* Invite someone's roles: a table with what each can do, a row picked as the role. */
+.invite-send { margin-top: 12px; }
+.role-pick { margin: 12px 0 0; padding: 0; border: 0; min-width: 0; }
+.role-pick legend { padding: 0; margin-bottom: 6px; }
+.role-pick table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 13px; border: 1px solid var(--line); border-radius: 8px; }
+.role-pick th { text-align: left; padding: 6px 12px; background: var(--stopped); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label); }
+.role-pick td { padding: 8px 12px; border-top: 1px solid var(--line-soft); vertical-align: middle; cursor: pointer; }
+.role-pick td.foot { margin: 0; line-height: 1.45; }
+.role-pick td:first-child { white-space: nowrap; }
+.role-pick td.is-no { color: var(--meta); }
+.role-pick tr.is-picked td { background: var(--stopped); }
+.role-pick input[type="radio"] { margin: 0 4px 0 0; accent-color: var(--slate); vertical-align: -2px; }
 
 /* Settings · General's rows (consoleSettings.js), over the shared settings rows: Slack's channel picker with its
    buttons, a Slack row's Limits under its other controls, a repo's colour dot beside its name, and a server's

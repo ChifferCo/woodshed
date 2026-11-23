@@ -25,10 +25,11 @@ window.Woodshed.settingsPage('/people', (app, life) => {
   let told = null;
   const invite = h('input', { id: 'invite', class: 'field', placeholder: '@handle', autocomplete: 'off', spellcheck: 'false' });
   const inviteError = h('p', { class: 'form-error', role: 'alert', hidden: true });
-  // Someone new starts as they did before roles: behind a proxy with Sessions from GitHub on and nothing else, on a
-  // console of its own with every switch off. The select is filled once the roles are known.
-  const addRole = h('select', { id: 'add-role', class: 'field', 'aria-label': 'Role', onchange: () => render() });
-  let addRoleFilled = false;
+  // The role someone new is given, picked from a table of the roles and what each can do. Until one is picked it is
+  // what someone new was before roles: behind a proxy Sessions from GitHub on and nothing else, on a console of its own
+  // every switch off.
+  let addAccess = null;
+  const defaultAccess = () => (hosted ? 'contributor' : 'private');
 
   const { row, group, draw, follow } = window.WoodshedSettingsRows.create({ render });
 
@@ -94,9 +95,7 @@ window.Woodshed.settingsPage('/people', (app, life) => {
   function inviteRow() {
     const action = hosted ? 'add' : 'invite';
     const button = h('button', { type: 'submit', class: 'btn btn-stop' }, hosted ? 'Add someone' : 'Invite');
-    const picked = roleNamed(addRole.value);
     const hint = h('p', { class: 'foot', id: 'add-hint' },
-      picked ? `${picked.label}: ${picked.explain}. ` : '',
       `They can sign in straight away. ${told || 'Nothing is sent to them: tell them the link.'}`);
     return row({
       id: 'invite-card', title: hosted ? 'Add someone' : 'Invite someone',
@@ -109,13 +108,43 @@ window.Woodshed.settingsPage('/people', (app, life) => {
           inviteError.hidden = true;
           const login = invite.value.trim().replace(/^@/, '');
           if (!login) return invite.focus();
-          if (await act(action, login, button, { access: addRole.value })) invite.value = '';
+          if (await act(action, login, button, { access: addAccess ?? defaultAccess() })) invite.value = '';
         },
       },
         h('label', { class: 'field-label', for: 'invite' }, hosted ? 'Add someone by GitHub handle' : 'Invite by GitHub handle'),
-        h('div', { class: 'invite-row' }, invite, addRole, button),
+        h('div', { class: 'invite-row' }, invite),
+        rolePicker(),
+        h('div', { class: 'invite-send' }, button),
         inviteError,
         hint));
+  }
+
+  // The roles as a table, one row each with what it can do: picking a row is picking the role.
+  function rolePicker() {
+    const roles = data?.roles ?? [];
+    if (!roles.length) return null;
+    const current = addAccess ?? defaultAccess();
+    const word = (on) => (on ? 'Yes' : 'No');
+    const pick = (id) => { addAccess = id; render(); };
+    return h('fieldset', { class: 'role-pick', id: 'add-role' },
+      h('legend', { class: 'field-label' }, 'Role'),
+      h('div', { class: 'table-scroll' }, h('table', null,
+        h('thead', null, h('tr', null,
+          h('th', { scope: 'col' }, 'Role'),
+          h('th', { scope: 'col' }, 'Private sessions'),
+          h('th', { scope: 'col' }, 'Settings pages'),
+          h('th', { scope: 'col' }, 'Sessions from GitHub'),
+          h('th', { scope: 'col' }, 'Can be assigned'),
+          h('th', { scope: 'col' }, 'What they can do'))),
+        h('tbody', null, roles.map((r) => h('tr', { class: r.id === current ? 'is-picked' : null, onclick: () => pick(r.id) },
+          h('td', null, h('label', null,
+            h('input', { type: 'radio', name: 'add-role', value: r.id, checked: r.id === current, onchange: () => pick(r.id) }),
+            ' ', h('b', null, r.label))),
+          h('td', { class: r.privateSessions ? 'is-yes' : 'is-no' }, word(r.privateSessions)),
+          h('td', { class: r.admin ? 'is-yes' : 'is-no' }, word(r.admin)),
+          h('td', { class: r.githubSessions ? 'is-yes' : 'is-no' }, word(r.githubSessions)),
+          h('td', { class: r.assignable ? 'is-yes' : 'is-no' }, word(r.assignable)),
+          h('td', { class: 'foot' }, r.explain)))))));
   }
 
   function addedLine(m) {
@@ -277,18 +306,13 @@ window.Woodshed.settingsPage('/people', (app, life) => {
       const [people, meReply] = await Promise.all([W.getJson('/api/people'), me ? null : W.getJson('/api/me')]);
       data = people;
       hosted = Boolean(people.hosted);
-      if (!addRoleFilled && people.roles?.length) {
-        addRole.replaceChildren(...people.roles.map((r) => h('option', { value: r.id, selected: r.id === (hosted ? 'contributor' : 'private') }, r.label)));
-        addRole.value = hosted ? 'contributor' : 'private';
-        addRoleFilled = true;
-      }
       if (meReply) me = meReply.login;
       loadError = null;
     } catch (err) {
       loadError = err.message;
     }
     // A refresh leaves the page alone while the invite field has the focus, or a Slack link is being typed, so typing is never interrupted.
-    if (document.activeElement !== invite && document.activeElement !== addRole && !editing) render();
+    if (document.activeElement !== invite && document.activeElement?.name !== 'add-role' && !editing) render();
   }
 
   render();
