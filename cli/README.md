@@ -54,13 +54,20 @@ woodshed setup --yes --repo acme/app --reviews default
 ```
 
 Use `--console <url>` for your own console and `--no-browser` to print links without opening them. When setup exits 2,
-follow the link or supply the choice it asks for, then run it again with the same options. A new CLI sign-in starts
-in your browser and setup collects the approval the next time you run it.
+follow the link or supply the choice it asks for, then run it again with the same options.
 
-It goes in this order:
+It has seven steps and says which one it is on: `Setup has 7 steps: …` first, then `Step 2 of 7: Repos` as it comes to
+each, and `[done] Setup is finished.` at the end. A run that stops (exit 2, 3 or 1) ends with `Setup is not finished: it
+stopped at step N of 7, <step>. Still to do after it: …`; running it again checks the steps done already and goes on.
+On a terminal each question says what Enter takes.
 
-1. **Sign in**, then **repos**: repeat `--repo` to choose several; the first is for a session.
-2. **Claude Code and Codex.** Setup asks for both: with both connected, your pull requests get reviews from both. On a
+1. **Sign in.** A new CLI sign-in opens the console's page in your browser. On a terminal, or with `--wait`, setup
+   shows the code, waits while you approve it (asking the console every 5 seconds, until the code expires after 10
+   minutes or `--wait`'s time runs out) and goes on in the same run; a sign-in denied there stops it (exit 3).
+   Otherwise it exits 2 with the code and link, and collects the approval the next time you run it.
+2. **Repos**: repeat `--repo` to choose several; the first is for a session. On a terminal setup lists the console's
+   repos, marking those added already, and Enter takes those: type others to add them.
+3. **Claude Code and Codex.** Setup asks for both: with both connected, your pull requests get reviews from both. On a
    console with no team keys (a new org on console.woodshed.run), reviews run on the pull request author's own saved
    Claude token and Codex sign-in, each used for reviews from the moment it is saved (console/reviewAgents.mjs). While
    one is missing, setup lists the steps for each, numbered: what to run in another terminal (`claude setup-token`,
@@ -77,12 +84,12 @@ It goes in this order:
    never runs those commands or handles a token itself, so none passes through it or a coding agent running it. Use
    only one? Pass `--agent claude` or `--agent codex`, or answer so on a terminal, and setup does not ask for the
    other.
-3. **Review on the repo.** Every repo is reviewed by default, on a commit whose message has `[woodshed-review]`
+4. **Review on your repos.** Every repo is reviewed by default, on a commit whose message has `[woodshed-review]`
    (sessions add it for you), with no checkout, project file or pull request: for each repo setup runs `woodshed review
    status --repo <repo>`, stops with the link when the console's reviewer App still has to be made or installed, and
    otherwise tells you the tag. `--reviews` sets your own reviewer choice (`default` is the most the console can run:
    both, once both are connected).
-4. **Reviews of your open pull requests**, the step setup is for: it lists your open pull requests on each repo
+5. **Reviews of your open pull requests**, the step setup is for: it lists your open pull requests on each repo
    (`woodshed review pulls`) and starts the console's review on them now (`woodshed review start`), then gives each
    review's link. On a terminal it asks which, Enter for all (closing the input, Ctrl-D, starts none). `--review-prs
    all`, `none` or numbers (`12,15`) say which: with several repos, each names its repo, as `owner/name#12` (a bare number
@@ -93,26 +100,28 @@ It goes in this order:
    ends with the review's tag (`[woodshed-review]` by default; a session adds it, on your own computer you add it).
    Every repo is reviewed by default; only one whose project file runs its review elsewhere (GitHub Actions, or
    another console by `runsOn`) gets none, and setup says why. With `--reviews none` it starts none.
-5. **Optional: the agent terminal**, Herdr or tmux, for new private sessions. On a terminal Enter keeps the saved
+6. **Optional: the agent terminal**, Herdr or tmux, for new private sessions. On a terminal Enter keeps the saved
    choice; `--terminal herdr` or `--terminal tmux` sets it. With Herdr and a compatible `hc` here, setup then starts
    `session watch --herdr --add` in Herdr (step `herdr-watch`), so each of your private sessions shows in Herdr's
    sidebar as it starts or resumes, wherever it was started: the console's page, Slack, or an agent in another session.
    It says so, and how to stop it (`hc kill woodshed-watch`); `--no-herdr-add` starts the watch without `--add`. One
    already running is kept as it was started. Inside a Woodshed session setup starts no watch and adds nothing to
    Herdr, and says to run the watch on your computer.
-6. **Optional: a first coding session**, only with `--prompt`, or a prompt typed in when asked. Without one, setup
+7. **Optional: a first coding session**, only with `--prompt`, or a prompt typed in when asked. Without one, setup
    finishes and says how to start one. When the terminal choice is Herdr and setup finds a compatible `hc` on macOS or
    Linux, it uses `session new --herdr` to show the agent in a space on the session's machine. On Windows it starts a
    regular session and prints the link. If a private session already exists for the first repo, setup gives you its
    link. Setup then ends with the reviews' links again.
 
-Use `--prompt=--help` for a prompt that looks like an option. `--skip-reviews` skips steps 3 and 4, and `--no-session`
-step 6.
+Use `--prompt=--help` for a prompt that looks like an option. `--skip-reviews` skips steps 4 and 5, and `--no-session`
+step 7.
 
 `--yes`, `--wait` at its step, and runs without a terminal never prompt. `--json` prints one checklist entry per line with
 `event: "setup"`, `step` (`login`, `repos`, `agent`, `repo-review`, `review-choice`, `pr-reviews`, `terminal`,
-`herdr-watch`, `session`, `reviews`), `status`, `message`, and a `url` when relevant; `pr-reviews` and `reviews` carry `reviews`, each
-with its `number`, `url` and `pullUrl`. When this CLI lacks a repo, review, or config command, setup skips that step and
+`herdr-watch`, `session`, `reviews`, `finished`), `status`, `message`, and a `url` when relevant; `pr-reviews` and `reviews` carry `reviews`, each
+with its `number`, `url` and `pullUrl`. `login` is `waiting` with `userCode` and `url` while setup waits for the
+approval. The entry that stops setup carries `finished: false`, `stepNumber`, `stepTotal` and `left` (the keys of the
+steps after it); a run that ends with 0 ends with `step: "finished"` and `finished: true`. When this CLI lacks a repo, review, or config command, setup skips that step and
 says where to do it.
 
 ### Command organization

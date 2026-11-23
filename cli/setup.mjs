@@ -35,10 +35,15 @@ export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--
   --no-herdr-add         with herdr: start that watch without --add, so sessions are added only by session herdr
   --prompt <text>        optional: start a first coding session on this
   --no-session           finish without starting a session
-  --wait[=<N>m]          when Claude Code or Codex is not connected yet, print the steps and wait until it is,
-                         checking every ${WAIT_POLL_SECONDS} s, then go on: ${WAIT_DEFAULT_MINUTES} minutes, or N from 1 to ${WAIT_MAX_MINUTES}. It never asks for Enter
+  --wait[=<N>m]          wait for the CLI sign-in's approval in the browser, and when Claude Code or Codex is not
+                         connected yet, print the steps and wait until it is, checking every ${WAIT_POLL_SECONDS} s, then go on:
+                         ${WAIT_DEFAULT_MINUTES} minutes, or N from 1 to ${WAIT_MAX_MINUTES}. It never asks for Enter
 
-When you need to do something, setup prints what is needed and exits 2. Run it again with the same options after that.`;
+Setup has 7 steps: sign in, repos, Claude Code and Codex, review on your repos, reviews of your open pull requests,
+then optionally the agent terminal and a first coding session. It names each step as it comes to it and ends with
+"Setup is finished." On a terminal it waits for the sign-in's approval and asks each choice, Enter taking what is in
+brackets or named first (the repos added already, the saved choice). When you need to do something it cannot wait for,
+it prints what is needed, says it is not finished and what is left, and exits 2: run it again after that.`;
 
 const REPO = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\/(?!\.{1,2}$)[\w.-]+$/i;
 const REVIEW_CHOICES = ['none', 'claude', 'codex', 'both', 'default'];
@@ -64,6 +69,18 @@ export function agentSteps(name, url, platform) {
     `On My settings (${url}), paste it in the Codex row's box and press Save. An OpenAI API key (sk-…) works there too.`,
   ];
 }
+// Setup's steps, in order, as a person sees them: each entry's `step` (and the keys that report under it) belongs to one.
+// The last two are optional. Setup says which one it is on, what is left, and at its end whether it finished.
+export const SETUP_STEPS = [
+  { key: 'login', title: 'Sign in' },
+  { key: 'repos', title: 'Repos' },
+  { key: 'agent', title: 'Claude Code and Codex' },
+  { key: 'repo-review', title: 'Review on your repos', also: ['review-choice', 'reviews'] },
+  { key: 'pr-reviews', title: 'Reviews of your open pull requests' },
+  { key: 'terminal', title: 'Agent terminal (optional)', also: ['herdr-watch'] },
+  { key: 'session', title: 'A first coding session (optional)', also: ['herdr'] },
+];
+const stepIndex = (step) => SETUP_STEPS.findIndex(({ key, also = [] }) => key === step || also.includes(step));
 const numbered = (steps) => steps.map((step, i) => `  ${i + 1}. ${step}`).join('\n');
 // A pull request in --review-prs or the terminal's answer: 12, #12, or owner/name#12 for one repo of several.
 const PICK = '(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?/[\\w.-]+)?#?[1-9][0-9]{0,8}';
@@ -175,13 +192,33 @@ export async function setupCommand(args, ctx) {
   // The clock and the pause of --wait, which the tests replace. `sleep` rejects once its `signal` aborts.
   const now = ctx.now ?? Date.now;
   const sleep = ctx.sleep ?? ((ms, { signal } = {}) => delay(ms, undefined, { signal }));
+  // What a person reads between the entries: with --json, on stderr and only on a terminal, never among the entries.
+  const tell = (line) => {
+    if (!args.json) say(line);
+    else if (choose) ctx.stderr.write(`${line}\n`);
+  };
+  // The step setup is on, by its place in SETUP_STEPS: each is named once, as setup comes to it.
+  let current = -1;
+  function begin(step) {
+    const at = stepIndex(step);
+    if (at <= current) return;
+    current = at;
+    tell(`\nStep ${at + 1} of ${SETUP_STEPS.length}: ${SETUP_STEPS[at].title}`);
+  }
+  const after = (at) => SETUP_STEPS.slice(at + 1).map(({ title }, i) => `${at + i + 2}. ${title}`);
   function report(step, status, message, fields = {}) {
+    begin(step);
     if (args.json) emit({ event: 'setup', step, status, message, ...fields });
     else say(`[${status.replace('-', ' ')}] ${message}${fields.url ? ` ${fields.url}` : ''}`);
   }
+  // Every stop says setup is not finished, where it stopped and what is left, so a person never takes it for the end.
   function stop(step, code, message, fields) {
     const status = code === EXIT.waiting ? 'needs-you' : code === EXIT.refused ? 'refused' : 'failed';
-    report(step, status, message, fields);
+    begin(step);
+    const at = current;
+    const left = after(at);
+    report(step, status, message, { ...fields, finished: false, stepNumber: at + 1, stepTotal: SETUP_STEPS.length, left: SETUP_STEPS.slice(at + 1).map(({ key }) => key) });
+    tell(`\nSetup is not finished: it stopped at step ${at + 1} of ${SETUP_STEPS.length}, ${SETUP_STEPS[at].title}.${left.length ? ` Still to do after it: ${left.join(', ')}.` : ''} Run woodshed setup again to go on from here: it checks the steps done already and does not do them again.`);
     return [EXIT.waiting, EXIT.refused].includes(code) ? code : EXIT.failed;
   }
   const globals = ['--console', origin, '--json', ...(!args.browser ? ['--no-browser'] : [])];
@@ -214,13 +251,45 @@ export async function setupCommand(args, ctx) {
   const consoleArg = ORIGIN_RE.test(origin) ? `"${origin}"` : '"YOUR_CONSOLE_URL"';
   const command = (...words) => `woodshed ${words.join(' ')} --console ${consoleArg}`;
 
+  tell(`Setup has ${SETUP_STEPS.length} steps: ${after(-1).join(', ')}.`);
+  begin('login');
   const status = await call('status', 'status');
   if (status.code === EXIT.waiting && status.last?.signedIn === false) {
-    const login = await call('login', 'login', '--no-wait');
-    const code = login.events.find((event) => event.event === 'code');
-    const url = linkTo(code?.verificationUrlComplete, origin);
-    if (login.code === EXIT.waiting && url && /^[A-Z]{4}-[A-Z]{4}$/.test(code.userCode)) {
-      return stop('login', EXIT.waiting, `Match the code ${code.userCode} in your browser and approve the CLI sign-in, then run setup again.`, { url, userCode: code.userCode });
+    let login = await call('login', 'login', '--no-wait');
+    const codeOf = (result) => {
+      const code = result.events.find((event) => event.event === 'code');
+      const url = linkTo(code?.verificationUrlComplete, origin);
+      return result.code === EXIT.waiting && url && /^[A-Z]{4}-[A-Z]{4}$/.test(code.userCode) ? { url, userCode: code.userCode, expiresAt: Date.parse(code.expiresAt) } : null;
+    };
+    const code = codeOf(login);
+    // On a terminal, or with --wait, setup waits for the approval and goes on in the same run; else it hands it off.
+    if (code && !(choose || opts['--wait'])) {
+      return stop('login', EXIT.waiting, `Match the code ${code.userCode} in your browser and approve the CLI sign-in, then run setup again.`, { url: code.url, userCode: code.userCode });
+    }
+    if (code) {
+      const { userCode, url } = code;
+      // Until the code expires (10 minutes), and no later than --wait's own time: a poll after it would start a new code.
+      const lasts = Number.isFinite(code.expiresAt) ? code.expiresAt : now() + 10 * 60_000;
+      const deadline = Math.min(lasts, opts['--wait'] && !choose ? now() + opts['--wait'] * 60_000 : Infinity);
+      report('login', 'waiting', `Your code is ${userCode}. On the sign-in page${args.browser ? ' (open in your browser)' : ''}, check it shows the same code, then press Sign in the CLI. Setup waits here and goes on once you have${choose ? ' (Ctrl-C stops it)' : ''}.`, { url, userCode });
+      let unread = false;
+      for (;;) {
+        if (deadline - now() <= WAIT_MIN_CALL_MS) return stop('login', EXIT.waiting, `The code ${userCode} was not approved in time. Run setup again for a new one.`, { url, userCode });
+        await sleep(Math.min(WAIT_POLL_SECONDS * 1000, deadline - now() - WAIT_MIN_CALL_MS));
+        if (deadline - now() <= WAIT_MIN_CALL_MS) continue;
+        const polled = await callWithin(deadline - now(), 'login', 'login', '--no-wait');
+        if (polled.code === EXIT.waiting && codeOf(polled)?.userCode === userCode) continue;
+        // A poll that failed (the console restarting, Wi-Fi dropping) is said once, and the next one may well answer.
+        if (polled.code === EXIT.failed) {
+          if (!unread) report('login', 'waiting', `Could not ask the console whether it is approved${printable(polled.error?.error) ? ` (${printable(polled.error.error)})` : ''}. Still asking.`);
+          unread = true;
+          continue;
+        }
+        // Another code means this one expired at the console: approving the old page no longer works.
+        if (polled.code === EXIT.waiting) return stop('login', EXIT.waiting, `The code ${userCode} expired before it was approved. Run setup again for a new one.`, { url, userCode });
+        login = polled;
+        break;
+      }
     }
     if (login.code !== EXIT.done) return childError('login', login, 'Sign in with woodshed login, then run setup again.');
   } else if (status.code !== EXIT.done || status.last?.signedIn !== true) {
@@ -240,6 +309,7 @@ export async function setupCommand(args, ctx) {
     const flags = [...selected.map((name) => `--repo ${name}`), ...more].join(' ');
     return flags ? `rerun setup with ${flags}` : 'run setup again';
   };
+  begin('repos');
   if (!has('repo')) {
     report('repos', 'skipped', 'This CLI has no repo command yet. Choose repos in the console or use a CLI with repo list and repo add.', { url: `${origin}/console-settings` });
   } else {
@@ -252,14 +322,22 @@ export async function setupCommand(args, ctx) {
     const added = new Set(connected.map(({ repo }) => key(repo)));
     const named = [...connected, ...(available ?? []).filter(valid)].map(({ repo }) => ({ repo, added: added.has(key(repo)) }));
     const show = named.map((entry) => `${entry.repo}${entry.added === true ? ' (added)' : ''}`).join(', ') || 'none listed';
+    // The repos added to the console already: Enter at the question takes them, so a person who added them is not asked
+    // to type them again.
+    const already = connected.map(({ repo }) => repo);
     // In agent mode the list accompanies the instruction when a choice has yet to be made.
-    if (choose && !selected.length) {
-      if (args.json) ctx.stderr.write(`Repos on ${origin}: ${show}.\n`);
-      else say(`Repos on ${origin}: ${show}.`);
+    if (choose && !selected.length) tell(`Repos on ${origin}: ${show}.`);
+    if (!selected.length && choose) {
+      const question = already.length
+        ? `Which repos should Woodshed use? Press Enter for ${already.length === 1 ? 'the one' : `the ${already.length}`} added already (${already.join(', ')}), or enter owner/name, separated by commas. `
+        : 'Which repos should Woodshed use? Enter owner/name, separated by commas. ';
+      const answer = await choose(question);
+      selected = answer === '' ? already : (answer ?? '').split(/[\s,]+/).filter(Boolean);
     }
-    if (!selected.length && choose) selected = (await choose('Which repos should Woodshed use? Enter owner/name, separated by commas. ') ?? '').split(/[\s,]+/).filter(Boolean);
     if (!selected.length || selected.some((repo) => !REPO.test(repo))) {
-      return stop('repos', EXIT.waiting, `Choose a repo with --repo owner/name. Repos: ${show}.`, { repos: named.map(({ repo, added }) => ({ repo, added: added === true })) });
+      const notAdded = named.filter(({ added }) => !added).map(({ repo }) => repo);
+      const lists = [already.length ? `Added already: ${already.join(', ')}.` : 'None added yet.', notAdded.length ? `Not added yet, and added when you choose it: ${notAdded.join(', ')}.` : ''].filter(Boolean).join(' ');
+      return stop('repos', EXIT.waiting, `Choose the repos setup uses with --repo owner/name, once for each. ${lists}`, { repos: named.map(({ repo, added }) => ({ repo, added: added === true })) });
     }
     selected = [...new Map(selected.map((repo) => [key(repo), repo])).values()];
     for (const repo of selected) {
@@ -274,12 +352,14 @@ export async function setupCommand(args, ctx) {
         return childError('repos', addedRepo, `Could not add ${repo}.`, { repo });
       }
     }
-    report('repos', 'done', `Selected ${selected.join(', ')}. Repos: ${show}.`, { selected });
+    const addedNow = selected.filter((repo) => !added.has(key(repo)));
+    report('repos', 'done', `Woodshed uses ${selected.join(', ')}.${addedNow.length ? ` Added just now: ${addedNow.join(', ')}.` : ''}`, { selected });
   }
 
   // Reviews from Claude Code and Codex are what setup gives first: on a console with no team keys they run on the pull
   // request's author's own Claude token and Codex sign-in (console/reviewAgents.mjs), so setup asks for both, unless the
   // person says they use only one.
+  begin('agent');
   let signIns = me.sessionSignIns;
   let wanted = opts['--agent'] ? [opts['--agent']] : ['claude', 'codex'];
   if (!signIns) {
@@ -291,8 +371,7 @@ export async function setupCommand(args, ctx) {
     if (missing.length && !opts['--agent'] && choose && !wait) {
       const have = wanted.filter((name) => signIns[name] === true).map((name) => AGENT_NAMES[name]);
       const intro = `Connect Claude Code and Codex: with both connected, your pull requests get reviews from both.${have.length ? ` ${have[0]} is connected.` : ''}`;
-      if (args.json) ctx.stderr.write(`${intro}\n`);
-      else say(intro);
+      tell(intro);
       const answer = (await choose('Use both? Press Enter for both, or type claude or codex if you use only one. ') ?? '').toLowerCase();
       if (answer === 'claude' || answer === 'codex') wanted = [answer];
       else if (answer && answer !== 'both') return stop('agent', EXIT.waiting, 'Answer both, claude or codex, or rerun setup with --agent claude or --agent codex.');
@@ -302,7 +381,6 @@ export async function setupCommand(args, ctx) {
     const rowUrl = (name) => `${origin}/settings#${name}`;
     const stepsOf = (name) => agentSteps(name, rowUrl(name), ctx.platform);
     // On a terminal, setup walks through each one and waits while the person does it, then checks with the console.
-    const tell = (line) => (args.json ? ctx.stderr.write(`${line}\n`) : say(line));
     let walked = false;
     if (missing.length && choose && !wait) {
       walked = true;
@@ -383,6 +461,7 @@ export async function setupCommand(args, ctx) {
 
   // The reviewer choice saved by the step below, when it ran: `none` means no review of their pull requests starts.
   let reviewChoice = null;
+  begin('repo-review');
   if (opts['--skip-reviews']) {
     report('reviews', 'skipped', 'You chose to skip review setup.');
   } else {
@@ -448,6 +527,7 @@ export async function setupCommand(args, ctx) {
   // The console's review of the person's open pull requests on each repo, now: what setup is for. The terminal and a
   // first coding session after it are optional.
   const reviewLinks = [];
+  begin('pr-reviews');
   if (opts['--skip-reviews'] || opts['--review-prs']?.trim().toLowerCase() === 'none') {
     report('pr-reviews', 'skipped', opts['--skip-reviews'] ? 'You chose to skip reviews.' : 'You chose to review none of your pull requests now.');
   } else if (reviewChoice === 'none') {
@@ -489,8 +569,7 @@ export async function setupCommand(args, ctx) {
       let why = '';
       if (!which && choose) {
         const lines = [`Your open pull requests on ${repo}:`, ...pulls.map((p) => `  #${p.number}${p.draft ? ' (draft: reviewed once it is ready)' : ''}  ${printable(p.title)}`)];
-        if (args.json) ctx.stderr.write(`${lines.join('\n')}\n`);
-        else lines.forEach((line) => say(line));
+        lines.forEach((line) => tell(line));
         const answer = await choose('Review which now? Press Enter for all of them, or give numbers separated by commas, or none. ');
         // Closing the input (Ctrl-D) starts nothing: reviews spend the person's plan and post on GitHub.
         if (answer === null) {
@@ -533,6 +612,7 @@ export async function setupCommand(args, ctx) {
 
   // Inside a Woodshed session hc is that session's own Herdr, which the person's computer never shows: nothing is added
   // to it from here (sessions.mjs says the same to session herdr and --herdr).
+  begin('terminal');
   const insideSession = sessionHere(env ?? {});
   const canAttach = me.hc?.ok === true && ctx.platform !== 'win32' && !insideSession;
   let terminal = opts['--terminal'];
@@ -557,6 +637,8 @@ export async function setupCommand(args, ctx) {
       if (set.code !== EXIT.done) return childError('terminal', set, 'Could not save your agent terminal preference.');
     }
     report('terminal', 'done', `New private sessions will run their agents in ${terminal === 'herdr' ? 'Herdr' : 'tmux'}.`, { terminal });
+  } else {
+    report('terminal', 'skipped', 'Optional: your agent terminal is left as it is. Choose Herdr or tmux for new private sessions with --terminal, or on My settings.', { url: `${origin}/settings` });
   }
 
   // With Herdr, each of the person's sessions shows in Herdr's sidebar by default: a watch in Herdr adds each as it starts
@@ -581,14 +663,18 @@ export async function setupCommand(args, ctx) {
   }
 
   const code = await firstSession();
+  if (code !== EXIT.done) return code;
   // Setup ends with the reviews it started, the main thing it set up, when a session's lines came after them.
-  if (code === EXIT.done && reviewLinks.length) {
+  if (reviewLinks.length) {
     report('reviews', 'done', `Your reviews: ${reviewLinks.map((link) => `${link.repo}#${link.number} ${link.url ?? link.pullUrl}`).join(', ')}.`, { reviews: reviewLinks });
   }
+  tell('');
+  report('finished', 'done', 'Setup is finished. Run woodshed setup again any time to change a choice.', { finished: true });
   return code;
 
   // Optional: a first coding session, only when asked for (--prompt, or a prompt typed in).
   async function firstSession() {
+    begin('session');
     if (opts['--no-session']) {
       report('session', 'skipped', 'You chose to finish without starting a session.');
       return EXIT.done;
