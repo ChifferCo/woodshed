@@ -188,6 +188,11 @@ test('a pull request checked out after the checkout\'s review was taken on anoth
   const status = await (await call('GET', '/shed-review/reviews/claude-0a1b2c3d-pr7', null, { 'x-woodshed-pulls': '7,8' })).json();
   assert.equal(status.ok, true);
   assert.equal(status.status, 'ready', 'not sent to the checkout\'s review');
+  assert.deepEqual(status.reviews, [
+    { review: 'claude-0a1b2c3d', number: null, checkout: true },
+    { review: 'claude-0a1b2c3d-pr8', number: 8, checkout: false },
+    { review: 'claude-0a1b2c3d-pr7', number: 7, checkout: false },
+  ], 'the checkout\'s review is not named after #7, which keeps a link of its own');
   assert.deepEqual(shed.calls[0], { ensured: 'claude-0a1b2c3d-pr7', pr: 7, worktree: '/tmp/rv-pulls-test/claude-0a1b2c3d-pr7' });
 
   // Taken on the branch checked out now: sent there.

@@ -189,7 +189,16 @@ export function createReviewHost({
     const isStatus = req.method === 'GET' && pathname.startsWith('/reviews/') && !sectionOf(pathname);
     // The status call names the session's reviews, for the switch between them.
     let reviews = null;
-    if (isStatus) reviews = reviewsOf({ sessionName, pulls, checkoutPull: (await checkoutPullNow())?.number ?? null });
+    // The checkout's review is of the branch it was taken on. Named after the pull request checked out now only while
+    // that is the same branch (or it is not taken yet): after a checkout of another branch, that pull request keeps a
+    // link to a review of its own, and the checkout's says no number until a Re-review takes the new branch.
+    let checkoutNumber = null;
+    if (isStatus) {
+      const current = (await checkoutPullNow())?.number ?? null;
+      const taken = current === null ? null : shed.worktreeReviewBranch?.({ sessionName }) ?? { exists: false };
+      if (taken && (!taken.exists || (taken.branch && taken.branch === checkout.branch))) checkoutNumber = current;
+      reviews = reviewsOf({ sessionName, pulls, checkoutPull: checkoutNumber });
+    }
     const withReviews = (body) => (reviews && body && typeof body === 'object' && body.ok !== false ? { ...body, reviews } : body);
     const ctx = {
       reqId, repoRoot: repoDir,
@@ -208,9 +217,7 @@ export function createReviewHost({
     // split its comments and verdict across two pages. Nothing is made; the caller opens that one instead. Only while
     // that review is of this branch, or not taken yet: one taken on a branch checked out before would post to that
     // branch's pull request, so the pull request asked for gets a review of its own instead.
-    const checkoutNumber = reviews?.[0]?.number ?? null;
-    const taken = isStatus && pr !== null && pr === checkoutNumber ? shed.worktreeReviewBranch?.({ sessionName }) ?? { exists: false } : null;
-    if (taken && (!taken.exists || (taken.branch && taken.branch === checkout.branch))) {
+    if (isStatus && pr !== null && pr === checkoutNumber) {
       json(res, 200, { ok: false, status: 'checkout', review: sessionName, error: `#${pr} is the branch checked out: its review is the checkout's`, reviews });
       return true;
     }

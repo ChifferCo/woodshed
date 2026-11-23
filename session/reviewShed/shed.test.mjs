@@ -7,6 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
+import { isolatedEnv } from '../../test/isolatedEnv.mjs';
+
 // The host over the shed's real review code and a real git checkout. No claude and no gh on the path: nothing here
 // may need either to open the page, which is the property this pins. The Codex case stubs its CLI on PATH.
 process.env.WOODSHED_REVIEWS = fs.mkdtempSync(path.join(os.tmpdir(), 'rv-state-'));
@@ -14,6 +16,9 @@ process.env.PATH = '/usr/bin:/bin';
 // A Woodshed session exports these; the fixtures' repos are on master.
 delete process.env.DEFAULT_BRANCH;
 delete process.env.REVIEW_ONLY;
+// What the host starts (git, gh, the review's jobs) inherits this process's environment: put it on isolatedEnv's
+// scratch core first, before the host loads, so nothing here reaches a Herdr core or the runner's own state.
+Object.assign(process.env, isolatedEnv());
 const { createReviewHost } = await import('./host.mjs');
 
 function checkout(t, { dirty }) {
@@ -182,11 +187,12 @@ console.log(JSON.stringify({ type: 'turn.completed' }));
 function twoPullRequests(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rv-pulls-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const git = (cwd, ...a) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-C', cwd, ...a], { stdio: 'pipe' }).toString().trim();
+  const env = isolatedEnv();
+  const git = (cwd, ...a) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', '-C', cwd, ...a], { stdio: 'pipe', env }).toString().trim();
   const remote = path.join(dir, 'remote.git');
   const repo = path.join(dir, 'repo');
-  execFileSync('git', ['init', '-q', '--bare', '-b', 'master', remote]);
-  execFileSync('git', ['init', '-q', '-b', 'master', repo]);
+  execFileSync('git', ['init', '-q', '--bare', '-b', 'master', remote], { env });
+  execFileSync('git', ['init', '-q', '-b', 'master', repo], { env });
   fs.writeFileSync(path.join(repo, 'a.mjs'), 'export const a = 1;\n');
   git(repo, 'add', '.');
   git(repo, 'commit', '-q', '-m', 'start');
@@ -209,7 +215,7 @@ function twoPullRequests(t) {
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh
 if [ "$3" = remote ] && [ "$4" = get-url ]; then echo https://github.com/acme/app.git; exit 0; fi
-exec ${execFileSync('sh', ['-c', 'command -v git']).toString().trim()} "$@"
+exec ${execFileSync('sh', ['-c', 'command -v git'], { env }).toString().trim()} "$@"
 `, { mode: 0o755 });
   const pr7 = {
     number: 7, title: 'First', body: '', author: { login: 'mia' }, headRefName: 'first', headRefOid: firstSha, baseRefName: 'master',
@@ -230,6 +236,21 @@ process.exit(1);
   process.env.PATH = `${bin}:${oldPath}`;
   t.after(() => { process.env.PATH = oldPath; });
   return { repo, git, firstSha, worktrees: path.join(dir, 'worktrees') };
+}
+
+// Opening a review starts its analysis and Q&A in the background, which copy and read its worktree: wait for them to
+// end before the fixture's folders go, so none is cut off mid-copy.
+async function settle(get, names) {
+  const pulls = { headers: { 'x-woodshed-pulls': '7,8' } };
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const busy = await Promise.all(names.map(async (name) => {
+      const status = await get(`/reviews/${name}/qa`, pulls).catch(() => null);
+      return status?.qa?.status === 'running';
+    }));
+    if (!busy.some(Boolean)) return;
+    await delay(50);
+  }
+  assert.fail('the reviews\' background runs did not end');
 }
 
 test('a session with two pull requests has a review of each, and the checkout\'s is against its pull request\'s base', { timeout: 20_000 }, async (t) => {
@@ -273,6 +294,7 @@ test('a session with two pull requests has a review of each, and the checkout\'s
   const nine = await get('/reviews/claude-fffffff6-pr9', pulls);
   assert.match(nine.error, /#9 is not one of this session's pull requests/);
   assert.match((await get('/reviews/claude-fffffff6-pr7', {})).error, /#7 is not one of this session's pull requests/, 'nor with no list from the console');
+  await settle(get, ['claude-fffffff6', 'claude-fffffff6-pr7']);
 });
 
 test('a pull request checked out after the checkout\'s review was taken is not sent to that review', { timeout: 20_000 }, async (t) => {
@@ -288,4 +310,5 @@ test('a pull request checked out after the checkout\'s review was taken is not s
   assert.equal(seven.pr, 7);
   assert.equal(seven.headSha, firstSha);
   assert.equal(git(repo, 'branch', '--show-current'), 'first', 'the checkout is left on its branch');
+  await settle(get, ['claude-fffffff7', 'claude-fffffff7-pr7']);
 });

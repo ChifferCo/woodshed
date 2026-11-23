@@ -23,6 +23,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { parseUnifiedDiff } from './diff.mjs';
+import { run } from './exec.mjs';
 import {
   originSlug, fetchPrMeta, submitPrReview, fetchViewedFiles, setFileViewed, ghAccount,
   setPrTitle, fetchReviewState, addPendingComment, deletePendingComment, discardPendingReview,
@@ -570,7 +571,7 @@ export async function ensureWorktreeReview({ ctx, sessionName }) {
  * The base a host names for a worktree review (`ctx.worktreeBaseRef`), when it is a branch name a refspec can carry.
  * @returns {Promise<string|null>}
  */
-async function worktreeBaseRef(ctx) {
+export async function worktreeBaseRef(ctx) {
   if (typeof ctx.worktreeBaseRef !== 'function') return null;
   let base = null;
   try {
@@ -579,10 +580,11 @@ async function worktreeBaseRef(ctx) {
     ctx.log?.('review.base_not_read', { reqId: ctx.reqId, error: err?.message });
     return null;
   }
-  // A branch name, checked as one: a base named `123` is a branch, not a pull request number.
-  const ok = typeof base === 'string' && base.length <= 200 && /^[A-Za-z0-9._/-]+$/.test(base)
-    && !base.startsWith('-') && !base.startsWith('/') && !base.endsWith('/') && !base.endsWith('.lock') && !base.includes('..') && !base.includes('//');
-  return ok ? base : null;
+  // A branch name, as git checks one (`check-ref-format --branch`): a base named `123`, or `équipe/x`, is a branch.
+  // It becomes a refspec, so never one that starts with `-`, `@` or names a ref by `@{…}`.
+  if (typeof base !== 'string' || !base || base.length > 255 || /^[-@]|@\{|[\u0000-\u001f\u007f]/.test(base)) return null;
+  const checked = await run('git', ['check-ref-format', '--branch', base], { timeoutMs: 10_000 });
+  return checked.status === 0 && (checked.stdout || '').trim() === base ? base : null;
 }
 
 /**
