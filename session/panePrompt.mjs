@@ -453,7 +453,12 @@ function menuOn(pane, text) {
     && lines.slice(i + 1, i + 10).some((l) => MENU_HINT.test(l)));
 }
 
-function asking(pane, text) {
+/**
+ * What the pane asks of a person now, if anything: a known prompt's kind (`question`, `approval`), or `menu` for any
+ * highlighted numbered menu. Nothing is typed while it asks.
+ * @returns {string|null}
+ */
+export function asking(pane, text) {
   const known = readPrompt(pane);
   if (known) return known.kind;
   return menuOn(pane, text) ? 'menu' : null;

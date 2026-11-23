@@ -265,7 +265,7 @@ export function describedAs(meta) {
   };
 }
 
-export function buildAnalysisPrompt({ meta, files, retryReason }) {
+export function buildAnalysisPrompt({ meta, files, retryReason, diffOnly = false }) {
   const lines = [];
   // Both fences carry a per-prompt nonce, so neither can be forged by content
   // inside them. A PR author controls the description outright and can control
@@ -278,9 +278,13 @@ export function buildAnalysisPrompt({ meta, files, retryReason }) {
   const filesTag = `changed-files-${nonce}`;
 
   lines.push(
-    'You are preparing a pull request for a human to read. The pull request head is checked out',
-    'at your current working directory, so you can read any file in the repository as it exists',
-    'on this branch — not just the changed ones.',
+    ...(diffOnly ? [
+      'You are preparing a pull request for a human to read. Base the analysis on the supplied review material.',
+    ] : [
+      'You are preparing a pull request for a human to read. The pull request head is checked out',
+      'at your current working directory, so you can read any file in the repository as it exists',
+      'on this branch — not just the changed ones.',
+    ]),
     '',
     'Your job has four parts:',
     '',
@@ -320,7 +324,8 @@ export function buildAnalysisPrompt({ meta, files, retryReason }) {
     '   the core decision or the new abstraction, not the alphabetically-first file. Put tests,',
     '   config, generated files and docs last unless they are genuinely the point of the change.',
     '2. WRITE a preamble for each file: what this file does in this change, and why it is here.',
-    '   Read the actual file to do this. Say what a reviewer would otherwise have to work out —',
+    diffOnly ? '   Use the supplied changes to describe each file.' : '   Read the actual file to do this.',
+    '   Say what a reviewer would otherwise have to work out —',
     '   what the code is for, what it interacts with, what decision it encodes. Do not restate',
     '   the diff ("adds a function called x"); a reader can see that. Two or three sentences,',
     '   and under 1000 characters — anything much longer is truncated when displayed.',

@@ -13,7 +13,8 @@ import fs from 'node:fs';
 import { isMain } from '../shared/isMain.mjs';
 
 // Add a plugin here to give it to every private session. The marketplace must be one claude knows without a
-// `plugin marketplace add`: anthropic-plugin-directory and claude-plugins-official are.
+// `plugin marketplace add`: one of these. A fresh home's claude knows no other, claude-plugins-official included.
+export const BUILT_IN_MARKETPLACES = ['anthropic-plugin-directory'];
 export const DEFAULT_PLUGINS = ['slack@anthropic-plugin-directory'];
 
 /**

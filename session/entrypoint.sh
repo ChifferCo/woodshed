@@ -509,8 +509,14 @@ writeRules() {
   rules=${rules//"{{DEFAULT_BRANCH}}"/"$DEFAULT_BRANCH"}
   rules=${rules//"{{STARTED_BY}}"/"${STARTED_BY:-someone}"}
   rules=${rules//"{{VIA}}"/"${SESSION_URL:+[}Woodshed${SESSION_URL:+]($SESSION_URL)}"}
-  # The tag that asks for the project's code review (pullRequests.review.rerun). A project with none loses the line.
-  tag=$(project get pullRequests.review.rerun 2>/dev/null) || tag=
+  # The tag that asks for the project's code review (pullRequests.review.rerun; none when it reviews every commit), or the
+  # console's for a checkout whose file names no review at all (WOODSHED_REVIEW_TAG, console/defaultReview.mjs). A
+  # project with neither loses the line.
+  if [ -n "$(project get pullRequests.review 2>/dev/null)" ]; then
+    tag=$(project get pullRequests.review.rerun 2>/dev/null) || tag=
+  else
+    tag=${WOODSHED_REVIEW_TAG:-}
+  fi
   if [ -n "$tag" ]; then
     rules=${rules//"{{REVIEW_TAG}}"/"$tag"}
   else
@@ -703,6 +709,7 @@ fetchOwnerSettings() {
   [ "$code" = 200 ] || die "could not get the owner's settings from the console (status $code): $(jq -r '.error // empty' <<< "$answer" 2>/dev/null)"
   own=$(jq -r '.files["tmux-conf"] // empty' <<< "$answer")
   if [ -n "$own" ]; then printf '\n# Your own lines, from My settings\n%s\n' "$own" >> "$HOME/.tmux.conf"; owned=tmux-conf; fi
+  writeOwnDotfiles "$answer"
   # null where the console makes no databases (the docker launcher): the environment's stay.
   if jq -e '.database' <<< "$answer" >/dev/null; then useDatabaseFrom "$answer"; fi
   # For claude alone (session/bin/claude), outside ~/.claude, which is saved to the console. A console from before
@@ -725,7 +732,35 @@ fetchOwnerSettings() {
   fi
   OWNER_GIT_NAME=$(jq -r '.git.name // empty' <<< "$answer")
   OWNER_GIT_EMAIL=$(jq -r '.git.email // empty' <<< "$answer")
-  log "Owner's settings fetched" "(started_by: ${STARTED_BY:-unknown}, database: ${WOODSHED_DB_NAME:-none}, own lines in: ${owned:-none}, commits as owner: $([ -n "$OWNER_GIT_EMAIL" ] && echo yes || echo no))"
+  # What the owner picked on My settings for the agent's terminal (agentTerminal); a console from before it sends none.
+  OWNER_TERMINAL=$(jq -r '.terminal // empty' <<< "$answer")
+  log "Owner's settings fetched" "(started_by: ${STARTED_BY:-unknown}, database: ${WOODSHED_DB_NAME:-none}, own lines in: ${owned:-none}, commits as owner: $([ -n "$OWNER_GIT_EMAIL" ] && echo yes || echo no), terminal: ${OWNER_TERMINAL:-tmux})"
+}
+
+# The owner's own lines for a few dotfiles from My settings (shared/dotfiles.mjs, which the console checks them with):
+# git's aliases and behaviour, never an identity, a credential helper or a path, so what the start sets stays; readline's
+# after the system's own; and alias lines alone, which the image's ~/.bashrc reads from ~/.bash_aliases. Appended to
+# `owned` for the start's log line.
+writeOwnDotfiles() {
+  local own
+  own=$(jq -r '.files.gitconfig // empty' <<< "$1")
+  if [ -n "$own" ]; then
+    printf '\n# Your own lines, from My settings\n%s\n' "$own" >> "$HOME/.gitconfig"
+    owned="${owned:+$owned, }gitconfig"
+  fi
+  own=$(jq -r '.files.inputrc // empty' <<< "$1")
+  if [ -n "$own" ]; then
+    # readline reads no /etc/inputrc once ~/.inputrc exists, unless it is included: once, theirs or this.
+    [ -f "$HOME/.inputrc" ] || grep -q '^[[:space:]]*\$include[[:space:]]*/etc/inputrc' <<< "$own" || printf '$include /etc/inputrc\n' > "$HOME/.inputrc"
+    printf '\n# Your own lines, from My settings\n%s\n' "$own" >> "$HOME/.inputrc"
+    owned="${owned:+$owned, }inputrc"
+  fi
+  own=$(jq -r '.files["bash-aliases"] // empty' <<< "$1")
+  if [ -n "$own" ]; then
+    printf '# Your own aliases, from My settings\n%s\n' "$own" >> "$HOME/.bash_aliases"
+    grep -qs bash_aliases "$HOME/.bashrc" || printf '\n[ -f ~/.bash_aliases ] && . ~/.bash_aliases\n' >> "$HOME/.bashrc"
+    owned="${owned:+$owned, }bash-aliases"
+  fi
 }
 
 # The console's repo settings for the session's own project (POST /repo-settings, console/repoSettings.mjs): the
@@ -923,12 +958,52 @@ installDefaultPlugins() {
   log "Default plugins installed" "(installed: $installed, failed: $failed)"
 }
 
+# The plugins the owner installed for their whole home on their computer or in another session, which this home lacks:
+# the shared settings name each with its marketplace (settingsSync.mjs's plugin items, syncedPlugins.mjs), and each is
+# installed from there, adding the marketplace first when claude does not know it. Offered once, in the default plugins'
+# list, so one its owner uninstalled or turned off stays that way. Private and untainted only, as the default plugins
+# are: a shared session syncs nothing, and a tainted one reaches no marketplace. Best effort, like restorePlugins.
+installSyncedPlugins() {
+  [ "${SESSION_KIND:-}" = private ] && ! tainted || return 0
+  local wanted kind plugin market err installed=0 failed=0 skipped=0 offered="$HOME/.claude/woodshed-default-plugins.json"
+  if ! wanted=$(node "$SESSION_DIR/syncedPlugins.mjs" "$HOME" "$offered"); then
+    log "WARNING: the plugins from your other sessions could not be read, none installed"
+    return 0
+  fi
+  [ -n "$wanted" ] || return 0
+  while read -r kind plugin market; do
+    if [ "$kind" = skip ]; then
+      skipped=$((skipped + 1))
+      log "WARNING: a plugin from your other sessions was not installed" "(plugin: $plugin, why: its marketplace is a folder, a pinned ref or a URL a session does not add)"
+      continue
+    fi
+    if [ "$market" != - ] && ! err=$(cd "$REPO_DIR" && timeout 60 "$SESSION_DIR/bin/claude" plugin marketplace add "$market" 2>&1 >/dev/null </dev/null); then
+      failed=$((failed + 1))
+      log "WARNING: a plugin's marketplace could not be added" "(plugin: $plugin, error: ${err%%$'\n'*})"
+      continue
+    fi
+    if err=$(cd "$REPO_DIR" && timeout 60 "$SESSION_DIR/bin/claude" plugin install --scope user "$plugin" 2>&1 >/dev/null </dev/null); then
+      installed=$((installed + 1))
+      node "$SESSION_DIR/defaultPlugins.mjs" --offered "$offered" "$plugin" || log "WARNING: a plugin was not recorded as offered" "(plugin: $plugin)"
+    else
+      failed=$((failed + 1))
+      log "WARNING: a plugin from your other sessions could not be installed" "(plugin: $plugin, error: ${err%%$'\n'*})"
+    fi
+  done <<< "$wanted"
+  log "Plugins from your other sessions installed" "(installed: $installed, failed: $failed, skipped: $skipped)"
+}
+
 # How codex reaches OpenAI. The owner's own sign-in goes into codex's home as auth.json: an API key as the key file codex
 # reads, a ChatGPT login as it was saved. With none, session/bin/codex uses the console's proxy and the team key. The
-# rules go in codex's own AGENTS.md, which it reads at every start, so the terminal shows only the request.
+# rules go in codex's own AGENTS.override.md, which it reads at every start, so the terminal shows only the request.
 configureCodex() {
+  [ ! -L "$CODEX_HOME_DIR" ] || die "codex's home is a symlink"
   mkdir -p "$CODEX_HOME_DIR"
   chmod 700 "$CODEX_HOME_DIR"
+  local file
+  for file in auth.json config.toml AGENTS.override.md; do
+    [ ! -L "$CODEX_HOME_DIR/$file" ] || die "codex's $file is a symlink"
+  done
   if [ "${SESSION_KIND:-}" = private ] && [ -s "$OWN_CODEX_AUTH_FILE" ]; then
     if [[ "$(head -c 3 "$OWN_CODEX_AUTH_FILE")" == sk- ]]; then
       (umask 077 && jq -n --rawfile key "$OWN_CODEX_AUTH_FILE" '{OPENAI_API_KEY: $key}' > "$CODEX_HOME_DIR/auth.json")
@@ -940,22 +1015,142 @@ configureCodex() {
     export WOODSHED_CODEX_AUTH=key
     log "codex runs on the team key, through the console"
   fi
-  # The checkout is trusted so codex loads the repo's .codex/config.toml and AGENTS.md without asking.
-  printf '[projects."%s"]\ntrust_level = "trusted"\n' "$REPO_DIR" > "$CODEX_HOME_DIR/config.toml"
-  cp /tmp/woodshed-rules.md "$CODEX_HOME_DIR/AGENTS.md"
+  # The checkout is trusted so codex loads the repo's .codex/config.toml and AGENTS.md without asking. The rest of
+  # config.toml is a private session's owner's own, which pullSettings wrote and statusd keeps in step
+  # (settingsSync.mjs): each side keeps its own trusted folders, so this one stays this session's.
+  node "$SHARED_DIR/codexConfig.mjs" trust "$CODEX_HOME_DIR/config.toml" "$REPO_DIR" || die "codex's config.toml could not be written"
+  # The rules win. codex reads AGENTS.override.md in place of AGENTS.md: it holds the rules, then the owner's own
+  # AGENTS.md, which stays theirs as it is synced.
+  {
+    cat /tmp/woodshed-rules.md
+    if [ -f "$CODEX_HOME_DIR/AGENTS.md" ] && [ ! -L "$CODEX_HOME_DIR/AGENTS.md" ] && [ -s "$CODEX_HOME_DIR/AGENTS.md" ]; then
+      printf '\n\n# Your own instructions, from ~/.codex/AGENTS.md\n\n'
+      cat "$CODEX_HOME_DIR/AGENTS.md"
+    fi
+  } > "$CODEX_HOME_DIR/AGENTS.override.md"
 }
 
 # codex's flags for what New session picked: the container is the sandbox, so auto lets the model decide when to ask
 # with no inner sandbox, plan is read-only, and default leaves codex's own policy.
 codexFlags() {
   local mode=${PERMISSION_MODE:-auto}
-  printf ' --add-dir %s' "${UPLOADS_DIR:-/tmp/uploads}"
+  # Codex rejects additional writable roots when its sandbox is read-only.
+  [ "$mode" = plan ] || printf ' --add-dir %s' "${UPLOADS_DIR:-/tmp/uploads}"
   case "$mode" in
     auto) printf ' --sandbox danger-full-access --ask-for-approval on-request' ;;
     plan) printf ' --sandbox read-only --ask-for-approval on-request' ;;
   esac
   [ -z "${MODEL:-}" ] || printf ' --model %s' "$MODEL"
   [ -z "${EFFORT:-}" ] || printf ' -c model_reasoning_effort=\\"%s\\"' "$EFFORT"
+}
+
+# What the agent runs in (session/agentPane.mjs): Herdr only in a private coding session whose owner picked it on My
+# settings (fetchOwnerSettings), or whose owner's Herdr makes its terminal (WOODSHED_HERDR_PARENT, below), and tmux
+# everywhere else: a shared session, a question, a review and a QA run.
+agentTerminal() {
+  case "${SESSION_MODE:-}" in ask | qa | review) echo tmux; return ;; esac
+  if [ "${SESSION_KIND:-}" = private ] && { [ "${OWNER_TERMINAL:-}" = herdr ] || [ "${WOODSHED_HERDR_PARENT:-}" = 1 ]; }; then
+    echo herdr
+  else
+    echo tmux
+  fi
+}
+
+# Where the session says it waits for its agent's terminal from its owner's Herdr (cli/hc.mjs, AGENT_WAIT_FILE), and for
+# how long before it makes the terminal itself, with no parent. A constant: nothing per session sets it, so the ECS
+# launcher's allowlist (PER_SESSION_ENV) has nothing to carry.
+AGENT_TERMINAL_WAIT=/tmp/woodshed-agent-terminal.json
+HERDR_PARENT_WAIT_SECONDS=300
+# The TUI tab's command while the agent's terminal is not there yet (startClaude).
+TUI_WAIT_THEN_ATTACH='hc get --json claude > /dev/null 2>&1 || printf "Waiting for your Herdr to make the agent'"'"'s terminal (woodshed session new --herdr --parent)...\r\n"; until hc get --json claude > /dev/null 2>&1; do sleep 1; done; exec hc attach claude'
+
+# Herdr's core (herdr-core, `hc`) for this session, with a terminal named claude in the checkout for the agent: a
+# shell, kept (a lost one is replaced in place), as tmux's pane is. Its programs get the environment it starts with, as
+# tmux's do. The shell is bash as a login shell, as tmux starts it: with no SHELL set (Docker sets none) hc's own pick is
+# sh. notes off: hc types nothing on its own into the agent.
+# With WOODSHED_HERDR_PARENT (`woodshed session new --herdr --parent`) the terminal is left to the owner's Herdr, which
+# makes the same one with `hc run --on` from a terminal of theirs, its parent: hc gives a terminal its parent only as it
+# starts, and only from the caller's side. The session says so in AGENT_TERMINAL_WAIT, with the folder to make it in.
+startHerdr() {
+  command -v hc > /dev/null || { log "WARNING: no hc in this image, the agent runs in tmux"; return 1; }
+  mkdir -p "$HOME/.config/herdr-core"
+  printf 'notes = false\nshell = ["/bin/bash", "-l"]\n' > "$HOME/.config/herdr-core/config.toml"
+  if ! hc server start > /tmp/woodshed-herdr.log 2>&1; then
+    log "WARNING: Herdr did not start, the agent runs in tmux" "($(tail -n 1 /tmp/woodshed-herdr.log))"
+    return 1
+  fi
+  if [ "${WOODSHED_HERDR_PARENT:-}" = 1 ]; then
+    jq -n --arg terminal claude --arg cwd "$REPO_DIR" --argjson waitSeconds "$HERDR_PARENT_WAIT_SECONDS" \
+      '{terminal: $terminal, cwd: $cwd, waitSeconds: $waitSeconds}' > "$AGENT_TERMINAL_WAIT"
+    log "Herdr started" "(version: $(hc --version | awk '{print $2}'), terminal: claude, made by: its parent, waits up to: ${HERDR_PARENT_WAIT_SECONDS}s)"
+    return 0
+  fi
+  if ! hc run --bg --no-parent --keep --name claude --cwd "$REPO_DIR" >> /tmp/woodshed-herdr.log 2>&1; then
+    log "WARNING: Herdr did not start, the agent runs in tmux" "($(tail -n 1 /tmp/woodshed-herdr.log))"
+    return 1
+  fi
+  log "Herdr started" "(version: $(hc --version | awk '{print $2}'), terminal: claude)"
+}
+
+# Until the owner's Herdr made the agent's terminal (startHerdr), for up to HERDR_PARENT_WAIT_SECONDS; then the session
+# makes it itself, as startHerdr does with no parent, so the agent starts all the same. Either way the wait file goes,
+# so a late `woodshed session herdr --parent` finds no wait and says so.
+awaitAgentTerminal() {
+  local waited=0
+  until hc get --json claude > /dev/null 2>&1; do
+    if [ "$waited" -ge "$HERDR_PARENT_WAIT_SECONDS" ]; then
+      rm -f "$AGENT_TERMINAL_WAIT"
+      if hc run --bg --no-parent --keep --name claude --cwd "$REPO_DIR" >> /tmp/woodshed-herdr.log 2>&1; then
+        log "WARNING: no parent made the agent's terminal" "(waited: ${waited}s, started: with no parent)"
+        return 0
+      fi
+      # Made from the owner's side while this one was on its way: theirs is the agent's.
+      hc get --json claude > /dev/null 2>&1 && break
+      log "ERROR: the agent's terminal could not be started" "($(tail -n 1 /tmp/woodshed-herdr.log))"
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  rm -f "$AGENT_TERMINAL_WAIT"
+  log "Agent's terminal made by its parent" "(parent: $(hc get --json claude | jq -r '.parent // "none"'), outlives it: $(hc get --json claude | jq -r 'if .die_with_parent then "no" else "yes" end'), waited: ${waited}s)"
+}
+
+# A command typed at the agent's terminal's prompt, with its Enter: tmux's pane, or Herdr's terminal, where text goes in
+# only as a paste with its Enter.
+agentRun() {
+  if [ "$WOODSHED_TERMINAL" = herdr ]; then
+    hc send claude "$1" > /dev/null
+  else
+    tmux send-keys -t claude "$1" Enter
+  fi
+}
+
+# The agent, typed into its terminal (agentRun) with the flags woodshed-login and move reuse: the QA run, the review, or
+# claude or codex on the prompt, the conversation it resumes, or nothing for a review-only session.
+startAgent() {
+  if [ "${SESSION_MODE:-}" = qa ]; then
+    # After statusd's port is open: the run asks it for the app's port and to start the app. Working from the start.
+    touch /tmp/qa-running
+    agentRun "until curl -s -o /dev/null http://127.0.0.1:\${STATUSD_PORT:-7682}/; do sleep 1; done; SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/qa.sh"
+  elif [ "${SESSION_MODE:-}" = review ]; then
+    # The review reads the diff and sends its verdict to the console; no app, so it does not wait on statusd.
+    touch /tmp/review-running
+    agentRun "SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/review.sh"
+  elif [ "${AGENT:-claude}" = codex ]; then
+    # A Codex conversation is not kept between runs, so a resume starts the prompt again.
+    if [ "${REVIEW_ONLY:-}" = 1 ]; then
+      agentRun "$SESSION_DIR/bin/codex$(codexFlags)"
+    else
+      agentRun "$SESSION_DIR/bin/codex$(codexFlags) \"\$(cat /tmp/woodshed-prompt.md)\""
+    fi
+  elif resumable; then
+    agentRun "$SESSION_DIR/bin/claude$(claudeFlags) --resume $RESUME_SESSION"
+  elif [ "${REVIEW_ONLY:-}" = 1 ]; then
+    agentRun "$SESSION_DIR/bin/claude$(claudeFlags)"
+  else
+    agentRun "$SESSION_DIR/bin/claude$(claudeFlags) \"\$(cat /tmp/woodshed-prompt.md)\""
+  fi
 }
 
 startClaude() {
@@ -966,31 +1161,24 @@ startClaude() {
     startDbViewers
     startDockerPorts
   fi
-  tmux new-session -d -s claude -x 200 -y 50 -c "$REPO_DIR"
-  tmux set-option -t claude remain-on-exit on
-  # woodshed-login reopens claude with the same flags once it signed in.
-  [ "${AGENT:-claude}" = codex ] || claudeFlags > /tmp/woodshed-claude-flags
-  if [ "${SESSION_MODE:-}" = qa ]; then
-    # After statusd's port is open: the run asks it for the app's port and to start the app. Working from the start.
-    touch /tmp/qa-running
-    tmux send-keys -t claude "until curl -s -o /dev/null http://127.0.0.1:\${STATUSD_PORT:-7682}/; do sleep 1; done; SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/qa.sh" Enter
-  elif [ "${SESSION_MODE:-}" = review ]; then
-    # The review reads the diff and sends its verdict to the console; no app, so it does not wait on statusd.
-    touch /tmp/review-running
-    tmux send-keys -t claude "SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/review.sh" Enter
-  elif [ "${AGENT:-claude}" = codex ]; then
-    # A Codex conversation is not kept between runs, so a resume starts the prompt again.
-    if [ "${REVIEW_ONLY:-}" = 1 ]; then
-      tmux send-keys -t claude "$SESSION_DIR/bin/codex$(codexFlags)" Enter
-    else
-      tmux send-keys -t claude "$SESSION_DIR/bin/codex$(codexFlags) \"\$(cat /tmp/woodshed-prompt.md)\"" Enter
-    fi
-  elif resumable; then
-    tmux send-keys -t claude "$SESSION_DIR/bin/claude$(claudeFlags) --resume $RESUME_SESSION" Enter
-  elif [ "${REVIEW_ONLY:-}" = 1 ]; then
-    tmux send-keys -t claude "$SESSION_DIR/bin/claude$(claudeFlags)" Enter
+  # Exported before either starts, so statusd, claude and what claude runs (woodshed-login) all know where it is.
+  WOODSHED_TERMINAL=$(agentTerminal)
+  export WOODSHED_TERMINAL
+  if [ "$WOODSHED_TERMINAL" = herdr ] && ! startHerdr; then WOODSHED_TERMINAL=tmux; fi
+  if [ "$WOODSHED_TERMINAL" = tmux ]; then
+    tmux new-session -d -s claude -x 200 -y 50 -c "$REPO_DIR"
+    tmux set-option -t claude remain-on-exit on
+  fi
+  # woodshed-login reopens claude with the same flags once it signed in, and `woodshed move --from herdr` opens a conversation moved
+  # from a laptop with the agent's own (cli/move.mjs).
+  if [ "${AGENT:-claude}" = codex ]; then codexFlags > /tmp/woodshed-codex-flags; else claudeFlags > /tmp/woodshed-claude-flags; fi
+  # A terminal its owner's Herdr makes comes once the session runs, after statusd opened the tunnel it comes through:
+  # the agent is typed into it then, in the background, as into the session's own. Handed to the init like progress's
+  # reports: this shell becomes statusd, which would never reap it, and it would stay a zombie once done.
+  if [ -f "$AGENT_TERMINAL_WAIT" ]; then
+    ( { awaitAgentTerminal && startAgent; } & )
   else
-    tmux send-keys -t claude "$SESSION_DIR/bin/claude$(claudeFlags) \"\$(cat /tmp/woodshed-prompt.md)\"" Enter
+    startAgent
   fi
   # The shed's terminal theme: a terminal paints its own background, and ttyd's default is a lighter grey than the
   # pane around it. The pane's ground, the accent for the cursor, and the app's selection wash. No leave alert, as in the
@@ -999,13 +1187,19 @@ startClaude() {
   # The browser scrolls back through its own copy of what tmux scrolled off (tmux.conf): 10000 lines rather than
   # xterm.js's 1000, and no more, since each line costs the page its width in cells. tmux keeps 50000.
   local scrollback=scrollback=10000
+  # The TUI tab: the agent's terminal, tmux's pane or Herdr's terminal, which a person's own Herdr can attach to too.
+  local attach=(tmux attach -t claude)
+  [ "$WOODSHED_TERMINAL" = tmux ] || attach=(hc attach claude)
+  # While the owner's Herdr has not made the agent's terminal yet, the tab says so and attaches once it is there, rather
+  # than an attach that finds nothing and closes. ttyd runs it for each browser that connects.
+  [ ! -f "$AGENT_TERMINAL_WAIT" ] || attach=(bash -c "$TUI_WAIT_THEN_ATTACH")
   ttyd --writable --port 7681 --base-path "/term/$SESSION_ID" --credential "woodshed:${TERMINAL_TOKEN:-$SESSION_TOKEN}" \
-    -t "$theme" -t "$scrollback" -t disableLeaveAlert=true tmux attach -t claude >/tmp/ttyd.log 2>&1 &
+    -t "$theme" -t "$scrollback" -t disableLeaveAlert=true "${attach[@]}" >/tmp/ttyd.log 2>&1 &
   # The Terminal tab: a shell beside claude in the repo, with the same environment. Its own tmux session, so a
   # reload or a second browser finds it as it was; -A makes a new one after someone types exit.
   ttyd --writable --port 7684 --base-path "/shell/$SESSION_ID" --credential "woodshed:${TERMINAL_TOKEN:-$SESSION_TOKEN}" \
     -t "$theme" -t "$scrollback" -t disableLeaveAlert=true tmux new-session -A -s shell -c "$REPO_DIR" >/tmp/ttyd-shell.log 2>&1 &
-  log "Claude started" "(session: $SESSION_ID, branch: $BRANCH, started_by: ${STARTED_BY:-unknown})"
+  log "Claude started" "(session: $SESSION_ID, branch: $BRANCH, started_by: ${STARTED_BY:-unknown}, terminal: $WOODSHED_TERMINAL)"
 }
 
 # The rules as the system prompt, written at every start as writeRules does, and the question as the first message.
@@ -1129,8 +1323,9 @@ runSession() {
   else
     restorePlugins
     installDefaultPlugins
+    installSyncedPlugins
   fi
-  # Both have read it: the env files are written, and the instructions are in the rules (and codex's AGENTS.md).
+  # Both have read it: the env files are written, and the instructions are in the rules (and codex's AGENTS.override.md).
   rm -f "$REPO_SETTINGS_JSON"
   progress env
   startClaude

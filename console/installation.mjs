@@ -22,6 +22,8 @@ import { createDbRestore } from './dbRestore.mjs';
 import { createSlack } from './slack.mjs';
 import { checkSlackInstall, createSlackSetup } from './slackSetup.mjs';
 import { createTunnel, tunnelTargetsFor } from './dbTunnel.mjs';
+import { createCliSignIn, sessionSignInsOf } from './cliSignIn.mjs';
+import { createExecPipe } from './execPipe.mjs';
 import { createFleet } from './fleet.mjs';
 import { createGitHub } from './github.mjs';
 import { createAppApi } from './githubApp.mjs';
@@ -67,8 +69,10 @@ import { createAddedProjects, createHostProjects, ghRepoLister, repoChecker, rep
 import { createProjectColors } from './projectColors.mjs';
 import { createAppPorts } from './appPorts.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
+import { createReviewReadiness } from './reviewReadiness.mjs';
 import { createReviewerApp } from './reviewerApp.mjs';
 import { withAppLogins } from './reviewLogins.mjs';
+import { withDefaultReview } from './defaultReview.mjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 
 // A caller that delivers GitHub's webhooks itself (dispatchWebhook) tells the fleet they arrive this often, as the local
@@ -290,10 +294,13 @@ function mcpAccess({ loaded: given, secrets, launcher }) {
  *   `slackEventsUrl` is the Slack events Request URL the Set up Slack dialog and its manifest show, over the
  *   provider's; `slackInstall` is the program's own way to put a Slack app in a workspace, offered beside "Use your
  *   own Slack app" (slackSetup.mjs, README.md "Embedding the console").
+ *   `cliDevices` (cliSignIn.mjs, createCliDevices) is the command line's waiting room for sign-ins, for a program that
+ *   gives several installations behind one address the same one: the token is made by the installation it is approved
+ *   on, and `cli.owns(headers)` says whose a request's token is (README.md "Embedding the console").
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null, mcpServers: mcpServersHook = null }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null, mcpServers: mcpServersHook = null, cliDevices = undefined }) {
   checkMembersHook(memberList, trusted);
   if (mcpServersHook && ['list', 'save', 'remove'].some((f) => typeof mcpServersHook[f] !== 'function')) throw new Error('mcpServers needs list, save and remove');
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
@@ -414,10 +421,18 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const ownReviewer = hostApp ? null : createReviewerApp({ store, secrets, config });
   const reviewerApp = hostApp ? hostApp.reviewer ?? null : ownReviewer;
   if (hostApp) console.log('console: GitHub App from the host', { login: hostApp.login() ?? null, reviewer: Boolean(hostApp.reviewer) });
+  const logins = async () => ({ reviewerLogin: reviewerApp?.login() ?? null, ownLogin: await appIdentity.login() });
+  // A project's pull request gates from its project file, with the Apps' logins the file leaves out (reviewLogins.mjs).
+  const fileGatesOf = async (name) => withAppLogins(await readerOf(name).pullRequests(), await logins());
+  // A pull request's gates (the Slack post, QA's wait) are the file's alone, as before: the default review only starts a
+  // review on the tag and gives sessions the tag (defaultReview.mjs), since it may have no reviewer App to approve with.
+  const gatesOf = fileGatesOf;
+  // What starts a review, by the tag or on demand, and the tag sessions are told: the file's, with every repo's default.
+  const reviewGatesOf = async (name) => withAppLogins(withDefaultReview(await readerOf(name).pullRequests()), await logins());
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, qaRecordings, pullWebhooksFlowing: pullWebhooks.flowing,
-    pullRequests: async (name) => withAppLogins(await readerOf(name).pullRequests(), { reviewerLogin: reviewerApp?.login() ?? null, ownLogin: await appIdentity.login() }),
+    pullRequests: gatesOf, reviewGates: reviewGatesOf,
     projectBlocker: databaseGate.blocker, githubFor,
     consoleLinks: (name) => readerOf(name).consoleLinks(), ...(newId ? { newId } : {}),
     // The App that posts a QA session's check, so the brief trusts it.
@@ -487,6 +502,16 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const tunnel = createTunnel({ store, targets: databaseTargets, databases, allowed: (login) => members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login) });
   // Behind a hosting proxy, whoever leaves the program's list loses their token and open tunnels at once, as People's Remove does.
   members?.whenLeft?.((login) => tunnel.revoke(login), { also: () => Object.keys(store.state.tunnelTokens ?? {}) });
+  // The woodshed command line's sign-ins, one per computer (cliSignIn.mjs): asked who may use them as the tunnel is, and
+  // whether their person keeps write access on GitHub as a browser's sign-in is, only where GitHub sign-in is on: with
+  // none, or behind a hosting proxy, nobody's access is asked there either.
+  // `cliDevices` is a waiting room a program running several consoles gives them all (console/README.md, "Embedding the console").
+  const cli = createCliSignIn({
+    store, devices: cliDevices, trustedProxies: config.trustedProxies,
+    allowed: (login) => members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login),
+    canWrite: auth?.canWrite ? (login) => (auth.enabled() ? auth.canWrite(login) : true) : null,
+  });
+  members?.whenLeft?.((login) => cli.revokeAll(login, 'the program\'s list'), { also: () => cli.logins().filter(Boolean) });
   const dbRestore = createDbRestore({
     store, dir: path.join(loaded.stateDir, 'restores'), databases, targets: databaseTargets,
     defaultBranchMigrations: tokens ? () => projectReader.migrationFiles('postgres') : null,
@@ -532,8 +557,23 @@ export async function createInstallation({ config: loaded, store, provider, trus
     githubConnectAutomatic: Boolean(hostConnect && githubConnect.automatic),
     woodshedUpdate,
     slackSetup,
+    cli,
+    // Whether a repo's review can run in a session, for `woodshed review`: none with no GitHub App to run it.
+    reviewReadiness: config.githubApp || hostApp ? createReviewReadiness({
+      publicUrl: config.publicUrl, reviewer: reviewerApp, ownReviewer: !hostApp, appLogin: () => appIdentity.login(),
+      pullRequestsOf: fileGatesOf,
+      runsOnName: config.runsOnName ?? null,
+      // A token's person must still write to the repo, as sign-in asks of a browser's (auth.mjs). With no sign-in, or
+      // behind a hosting proxy, nobody's access is asked there either.
+      canWrite: auth && !trusted ? async (login, project) => {
+        const gh = auth.enabled() && login ? githubFor(project) : null;
+        return gh ? gh.canWrite(login) : true;
+      } : null,
+    }) : null,
   });
-  const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts });
+  // `woodshed tunnel <id> -- <line>`: a pipe into a running session of the token's person, through its statusd.
+  const execPipe = createExecPipe({ fleet, cli });
+  const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts, execPipe });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
@@ -600,6 +640,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     config,
     fleet,
     tunnel,
+    cli,
     tokens,
     handle,
     upgrade,
@@ -610,6 +651,12 @@ export async function createInstallation({ config: loaded, store, provider, trus
     start,
     /** Stops the loops; requests already in flight finish. */
     stop: () => { members?.stop?.(); loops.stop(); },
+    /**
+     * `GET /api/cli/me`'s `sessionSignIns`, for a program that answers that route itself (a host serving several
+     * installations passes it to handleCliApi): without it, `woodshed setup` cannot tell whether Claude Code and Codex
+     * are connected.
+     */
+    sessionSignIns: sessionSignInsOf(userSettings),
     /** @returns {boolean}  whether an active session of this installation holds `token` (the session API's bearer) */
     ownsSessionToken: (token) => Boolean(sessionForToken(token, fleet.sessions())),
     /** One GitHub or Slack message, as the provider's webhook source hands it (webhookDispatch.mjs). */

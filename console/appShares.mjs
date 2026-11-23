@@ -11,14 +11,33 @@
 // keeps only a hash of each token. Shares end with the session's run: `sweep` drops those of a session no longer
 // active, so a resumed session starts with its app private again.
 //
+// A link may name a page of the app to land on (`&next=/landing-a`): a path on the app's own name, never another
+// site's, and never the console's own `/__woodshed/` paths. It is read once the token is traded, so it lands there.
+//
 // Neither audience is read-only: the app runs as the session's dev user, and so does whoever opens it.
 
 import crypto from 'node:crypto';
-import { parseCookies } from './auth.mjs';
+import { parseCookies, safeNext } from './auth.mjs';
 
 export const SHARE_COOKIE = 'woodshed_view';
 const MAX_HOURS = 7 * 24;
 const MAX_LINKS = 10;
+
+const MAX_NEXT = 500;
+
+/**
+ * @param {unknown} value  a path asked for, from the owner's request or the link's `next`
+ * @returns {string|null}  the same-origin path a link lands on, or null for none or one that is not a plain path on the app
+ */
+export function shareNext(value) {
+  if (typeof value !== 'string' || !value || value.length > MAX_NEXT || !value.startsWith('/') || /^\/[/\\]/.test(value)) return null;
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(value)) return null;
+  const path = safeNext(value);
+  // Measured again once encoded: a short path of other scripts grows, and the claim reads the encoded one.
+  if ((path === '/' && value !== '/') || path.length > MAX_NEXT) return null;
+  return path.startsWith('/__woodshed/') || path === '/__woodshed' ? null : path;
+}
 
 function hash(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -56,11 +75,11 @@ export function createAppShares({ store, secure = true, now = Date.now }) {
     return Boolean(forSession(sessionId)?.members);
   }
 
-  /** @returns {{members: boolean, links: {id: string, createdAt: number, expiresAt: number}[]}} */
+  /** @returns {{members: boolean, links: {id: string, createdAt: number, expiresAt: number, by: string|null}[]}}  never a token */
   function view(sessionId) {
     return {
       members: membersOpen(sessionId),
-      links: live(sessionId).map(([id, l]) => ({ id, createdAt: l.createdAt, expiresAt: l.expiresAt })).sort((a, b) => b.createdAt - a.createdAt),
+      links: live(sessionId).map(([id, l]) => ({ id, createdAt: l.createdAt, expiresAt: l.expiresAt, by: l.by ?? null })).sort((a, b) => b.createdAt - a.createdAt),
     };
   }
 

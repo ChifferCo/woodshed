@@ -10,7 +10,8 @@
 //   POST /settings       Authorization: Bearer <SESSION_TOKEN>  ->  {"files": {"tmux-conf": "..."|null},
 //                        "ownFiles": {"<path>": "<text>"} (the owner's whole files for the session's repo, written
 //                        where git ignores them),
-//                        "database": {"user", "password", "name"}|null, "claudeToken"}   database null only where the
+//                        "database": {"user", "password", "name"}|null, "claudeToken", "terminal": "tmux"|"herdr"}
+//                        terminal: what the owner picked on My settings for their agent; database null only where the
 //                        console makes no databases; claudeToken is the owner's own, for claude in their session;
 //                        a shared session gets {"database"}, its own, and 503 while they are still being copied, with
 //                        {"plan"} too when it runs on the Claude plan of whoever started it
@@ -379,11 +380,14 @@ async function settingsReply(res, session, userSettings, databases, repoSettings
   const ownFiles = await repoSettings?.filesForSession?.(session) ?? {};
   console.log('sessionApi: settings handed out', {
     sessionId: session.id, owner: session.owner, ownFiles: Object.keys(files).filter((k) => files[k] !== null), wholeFiles: Object.keys(ownFiles), database: database?.name ?? null,
+    terminal: userSettings.terminal?.(session.owner) ?? 'tmux',
   });
   // A Codex session runs on its owner's own sign-in when they saved one, and otherwise on the team's key through /openai.
   const codexAuth = codex ? await userSettings.codexAuth(session.owner) : null;
   if (codex) console.log('sessionApi: Codex sign-in decided', { sessionId: session.id, owner: session.owner, own: Boolean(codexAuth) });
-  return reply(res, 200, { files, ownFiles, git: userSettings.gitIdentity(session.owner), database, claudeToken, ...(codex ? { codexAuth } : {}) });
+  // What the owner picked on My settings for their agent's terminal (session/agentPane.mjs): a private session's alone.
+  const terminal = userSettings.terminal?.(session.owner) ?? 'tmux';
+  return reply(res, 200, { files, ownFiles, git: userSettings.gitIdentity(session.owner), database, claudeToken, terminal, ...(codex ? { codexAuth } : {}) });
 }
 
 // Whether the login a session sends back was refreshed before the saved one: a refresh token rotates, so the older is dead.
@@ -615,7 +619,7 @@ async function claudeSettingsReply(req, res, session, { claudeSettings, userSett
   } catch (err) {
     if (!err.shown) throw err;
     console.warn('sessionApi: shared Claude settings refused', { sessionId: session.id, owner: session.owner, message: err.message });
-    return reply(res, 413, { error: err.message });
+    return reply(res, err.status ?? 413, { error: err.message });
   }
 }
 
@@ -661,6 +665,6 @@ async function homeReply(req, res, session, { homes, userSettings, restore, peri
   } catch (err) {
     if (!err.shown) throw err;
     req.resume();
-    return reply(res, 413, { error: err.message });
+    return reply(res, err.status ?? 413, { error: err.message });
   }
 }

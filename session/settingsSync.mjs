@@ -12,19 +12,36 @@
 // statusd runs syncSettings every SYNC_EVERY_MS after that.
 
 import fs from 'node:fs/promises';
+import { lstatSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { isMain } from '../shared/isMain.mjs';
+import { CODEX_CONFIG, readToml, sharedConfigView, sharedPart, withEntries, withOwnEntries } from '../shared/codexConfig.mjs';
+import { carriedSource } from '../shared/pluginSource.mjs';
+import { secretContent } from '../shared/secretLike.mjs';
+import { PLUGIN_ID_RE } from './missingPlugins.mjs';
 
-export const SYNCED_FILES = ['.claude/settings.json', '.claude/CLAUDE.md', '.claude/keybindings.json'];
-export const SYNCED_DIRS = ['.claude/agents', '.claude/commands', '.claude/skills'];
+// codex's settings beside claude's. Never ~/.codex/auth.json: a Codex sign-in is My settings' (userSettings.mjs).
+export const SYNCED_FILES = ['.claude/settings.json', '.claude/CLAUDE.md', '.claude/keybindings.json', CODEX_CONFIG, '.codex/AGENTS.md'];
+export const SYNCED_DIRS = ['.claude/agents', '.claude/commands', '.claude/skills', '.codex/prompts', '.codex/skills'];
+// codex writes its own skills here at every start, for the version it is: each side has its own.
+const NOT_SYNCED = ['.codex/skills/.system'];
+// The homes' folders an item may be in.
+const ROOTS = ['.claude', '.codex'];
 // `live: false`: claude reads ~/.claude.json's servers only as it starts, and rewrites that file all the time, so a
 // write into it under a running claude would only be lost. A new server reaches a session as it starts.
 export const SYNCED_ENTRIES = [
   { file: '.claude/.credentials.json', key: 'mcpOAuth', live: true },
   { file: '.claude.json', key: 'mcpServers', live: false },
 ];
+// The plugins installed for the whole home (user scope), one item each, as the marketplace each comes from: claude's
+// own records name paths in this home and the plugin's version, so a session installs each from its marketplace as it
+// starts instead (syncedPlugins.mjs), and its files are never carried. Its being on or off is settings.json's
+// enabledPlugins, which syncs with the rest of that file.
+export const PLUGINS_FILE = '.claude/plugins/installed_plugins.json';
+export const MARKETPLACES_FILE = '.claude/plugins/known_marketplaces.json';
+const PLUGIN_PREFIX = `${PLUGINS_FILE}#plugins/`;
 export const SYNC_EVERY_MS = 20_000;
 // A settings file is a few KB; this keeps a stray log or binary dropped in skills/ out.
 export const MAX_ITEM_BYTES = 1024 * 1024;
@@ -34,9 +51,9 @@ export const MAX_ITEM_BYTES = 1024 * 1024;
 // a path in that session's image. Carried between sessions, a newer image's path would reach a session still on an
 // older one, which may not have it, and stop its status line. So a session keeps its own on apply, and sends the
 // shared copy's back unchanged.
-const SETTINGS = '.claude/settings.json';
+export const SETTINGS = '.claude/settings.json';
 // A settings.json with no status line, for what a session sends when no shared copy has one to keep.
-const NO_STATUS_LINE = Buffer.from('{}').toString('base64');
+export const NO_STATUS_LINE = Buffer.from('{}').toString('base64');
 
 function settingsJson(b64) {
   try {
@@ -54,7 +71,7 @@ function canonical(value) {
 }
 
 /** Whether two settings.json contents say the same, whatever their formatting. */
-function sameSettings(a, b) {
+export function sameSettings(a, b) {
   const x = settingsJson(a);
   const y = settingsJson(b);
   return x && y ? canonical(x) === canonical(y) : a === b;
@@ -80,6 +97,15 @@ function entryId(file, key, name) {
   return `${file}#${key}/${name}`;
 }
 
+/** @returns {string|null}  the `name@marketplace` a plugin's item is for, null for any other item */
+export function parsePluginId(id) {
+  if (typeof id !== 'string' || !id.startsWith(PLUGIN_PREFIX)) return null;
+  const name = id.slice(PLUGIN_PREFIX.length);
+  return PLUGIN_ID_RE.test(name) ? name : null;
+}
+
+export const pluginId = (name) => `${PLUGIN_PREFIX}${name}`;
+
 /** @returns {{file: string, key: string, name: string, live: boolean}|null}  what an entry id names, null for a file */
 export function parseEntryId(id) {
   for (const e of SYNCED_ENTRIES) {
@@ -93,21 +119,46 @@ export function parseEntryId(id) {
 // synced ones, such as `.claude/skills/../../.bashrc`.
 export function isSyncedFile(id) {
   if (typeof id !== 'string' || /[\\\0]/.test(id) || path.posix.normalize(id) !== id || id.split('/').includes('..')) return false;
+  if (NOT_SYNCED.some((d) => id === d || id.startsWith(`${d}/`))) return false;
   return SYNCED_FILES.includes(id) || SYNCED_DIRS.some((d) => id.startsWith(`${d}/`));
 }
 
 function inside(home, id) {
-  const rel = path.relative(path.join(home, '.claude'), path.resolve(home, id));
+  const root = id.split('/')[0];
+  if (!ROOTS.includes(root)) return false;
+  const rel = path.relative(path.join(home, root), path.resolve(home, id));
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
-async function filesUnder(home, dir) {
+/** The first symlink on a settings path under the home, relative to the home. */
+export function linkOnPath(home, file) {
+  let at = home;
+  for (const part of file.split('/')) {
+    at = path.join(at, part);
+    try {
+      const stat = lstatSync(at, { throwIfNoEntry: false });
+      if (!stat) return null;
+      if (stat.isSymbolicLink()) return path.relative(home, at);
+    } catch (err) {
+      if (err.code === 'ENOTDIR') return null;
+      throw err;
+    }
+  }
+  return null;
+}
+
+const pathGuard = (home, skipPath) => skipPath ?? ((file) => Boolean(linkOnPath(home, file)));
+
+async function filesUnder(home, dir, skipPath) {
   const found = [];
+  if (skipPath(dir, true)) return found;
   const entries = await fs.readdir(path.join(home, dir), { withFileTypes: true }).catch(() => []);
   for (const e of entries) {
     const rel = `${dir}/${e.name}`;
-    if (e.isDirectory()) found.push(...await filesUnder(home, rel));
+    if (NOT_SYNCED.includes(rel)) continue;
+    if (e.isDirectory()) found.push(...await filesUnder(home, rel, skipPath));
     else if (e.isFile()) found.push(rel);
+    else if (e.isSymbolicLink()) skipPath(rel);
   }
   return found;
 }
@@ -124,24 +175,61 @@ async function readJson(file) {
 }
 
 /**
- * @param {string} home
- * @returns {Promise<{items: Record<string, string>, unreadable: string[], oversized: string[]}>}  each item's content: a
- *   file's as base64, an entry's as JSON. `unreadable` names the JSON files left out this round, whose entries must not
- *   read as removed; `oversized` the files over MAX_ITEM_BYTES, which are neither removed nor overwritten
+ * The plugins installed for the whole home, each as `{"marketplace": <its source, carriedSource>|null}`. None
+ * while claude is writing the list: they are never taken as removed, so a round without them loses nothing.
+ * @returns {Promise<Record<string, string>>}
  */
-export async function readSnapshot(home) {
+export async function pluginItems(home, skipPath = pathGuard(home)) {
+  if (skipPath(PLUGINS_FILE)) return {};
+  const installed = await readJson(path.join(home, PLUGINS_FILE)).catch(() => null);
+  const known = skipPath(MARKETPLACES_FILE) ? null : await readJson(path.join(home, MARKETPLACES_FILE)).catch(() => null);
+  const items = {};
+  const plugins = installed?.plugins;
+  if (!plugins || typeof plugins !== 'object') return items;
+  for (const [name, installs] of Object.entries(plugins)) {
+    // A name with a key's shape in it is no plugin's: it stays here, never in the shared copy.
+    if (!PLUGIN_ID_RE.test(name) || secretContent(name) || !Array.isArray(installs) || !installs.some((i) => i?.scope === 'user')) continue;
+    // Only what a session can add again: a folder's path or a URL with a sign-in never leaves this home.
+    items[pluginId(name)] = JSON.stringify({ marketplace: carriedSource(known?.[name.split('@')[1]]?.source) });
+  }
+  return items;
+}
+
+/**
+ * @param {string} home
+ * @param {{skipPath?: (path: string, directory?: boolean) => boolean}} [opts]  which local paths to leave alone
+ * @returns {Promise<{items: Record<string, string>, unreadable: string[], oversized: string[], unparsed: string[], codexConfig?: string}>}
+ *   `items` holds files as base64 and entries as JSON. `unreadable`, `oversized` and `unparsed` name files held this round.
+ *   `codexConfig` is the original file as base64, for the CLI's plan and for detecting shared entries it shadows.
+ */
+export async function readSnapshot(home, { skipPath } = {}) {
   const items = {};
   const oversized = [];
+  const unparsed = [];
+  let codexConfig;
+  const blocked = pathGuard(home, skipPath);
   const files = [...SYNCED_FILES];
-  for (const dir of SYNCED_DIRS) files.push(...await filesUnder(home, dir));
+  for (const dir of SYNCED_DIRS) files.push(...await filesUnder(home, dir, blocked));
   for (const rel of files) {
+    if (blocked(rel)) continue;
     const content = await fs.readFile(path.join(home, rel)).catch((err) => (err.code === 'ENOENT' || err.code === 'EISDIR' ? null : Promise.reject(err)));
     if (!content) continue;
     if (content.length > MAX_ITEM_BYTES) oversized.push(rel);
-    else items[rel] = content.toString('base64');
+    else if (rel === CODEX_CONFIG) {
+      codexConfig = content.toString('base64');
+      const text = content.toString('utf8');
+      if (!readToml(text)) {
+        unparsed.push(rel);
+        continue;
+      }
+      const shared = sharedPart(text);
+      if (shared) items[rel] = Buffer.from(shared).toString('base64');
+    } else items[rel] = content.toString('base64');
   }
+  Object.assign(items, await pluginItems(home, blocked));
   const unreadable = [];
   for (const { file, key } of SYNCED_ENTRIES) {
+    if (blocked(file)) continue;
     const json = await readJson(path.join(home, file));
     if (json === null) {
       unreadable.push(file);
@@ -151,7 +239,7 @@ export async function readSnapshot(home) {
     if (!map || typeof map !== 'object') continue;
     for (const [name, value] of Object.entries(map)) items[entryId(file, key, name)] = JSON.stringify(value);
   }
-  return { items, unreadable, oversized };
+  return { items, unreadable, oversized, unparsed, codexConfig };
 }
 
 /**
@@ -173,37 +261,51 @@ export function localChanges(synced, local, oversized = []) {
  * files the shared copy no longer has.
  * @param {string} home
  * @param {Record<string, string>} items
- * @param {{live?: boolean, before?: Record<string, string>}} [opts]  live: claude is running, so entries it reads only at
+ * @param {{live?: boolean, before?: Record<string, string>, skipPath?: (path: string, directory?: boolean) => boolean}} [opts]
+ *   live: claude is running, so entries it reads only at
  *   start are left alone. before: the snapshot the round sent; an item changed on disk since is someone's edit made
- *   while the request was out, so it is left for the next round to send rather than overwritten or deleted
- * @returns {Promise<{written: number, deleted: number, skipped: string[]}>}  skipped: the entries left alone for `live`
+ *   while the request was out, so it is left for the next round to send rather than overwritten or deleted.
+ *   skipPath: paths to leave alone both when reading and when applying the shared copy.
+ * @returns {Promise<{written: number, deleted: number, skipped: string[]}>}  skipped: items held back from this write
  */
-export async function applyItems(home, items, { live = false, before = null } = {}) {
+export async function applyItems(home, items, { live = false, before = null, skipPath } = {}) {
   let written = 0;
   let deleted = 0;
   const skipped = [];
-  const { items: local, oversized } = await readSnapshot(home);
-  const untouched = (id) => !before || before[id] === local[id];
+  const { items: local, oversized: tooBig, unparsed, codexConfig } = await readSnapshot(home, { skipPath });
+  const oversized = [...tooBig, ...unparsed];
+  const blocked = pathGuard(home, skipPath);
+  const untouched = (id) => !before || before[id] === (id === CODEX_CONFIG && skipPath ? codexConfig : local[id]);
   for (const [id, shared] of Object.entries(items)) {
     // This session's own status line stays (see SETTINGS).
     const value = id === SETTINGS && local[id] ? withStatusLineOf(shared, local[id]) : shared;
     const same = local[id] === value || (id === SETTINGS && local[id] && sameSettings(local[id], value));
-    if (!isSyncedFile(id) || !inside(home, id) || same || oversized.includes(id) || !untouched(id)) continue;
+    if (!isSyncedFile(id) || !inside(home, id) || same) continue;
+    if (blocked(id)) {
+      skipped.push(id);
+      continue;
+    }
+    if (oversized.includes(id) || !untouched(id)) {
+      if (skipPath) skipped.push(id);
+      continue;
+    }
     const target = path.join(home, id);
     await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.writeFile(target, Buffer.from(value, 'base64'));
+    await fs.writeFile(target, id === CODEX_CONFIG ? await withOwnEntriesOf(target, Buffer.from(value, 'base64').toString('utf8')) : Buffer.from(value, 'base64'));
     written += 1;
   }
   for (const id of Object.keys(local)) {
-    if (!isSyncedFile(id) || !inside(home, id) || id in items || !untouched(id)) continue;
-    await fs.rm(path.join(home, id), { force: true });
+    if (!isSyncedFile(id) || !inside(home, id) || id in items || !untouched(id) || blocked(id)) continue;
+    // config.toml gone from the shared copy leaves this side's own entries.
+    if (id === CODEX_CONFIG) await fs.writeFile(path.join(home, id), await withOwnEntriesOf(path.join(home, id), ''));
+    else await fs.rm(path.join(home, id), { force: true });
     deleted += 1;
   }
   for (const { file, key, live: readLive } of SYNCED_ENTRIES) {
     const wanted = Object.entries(items).filter(([id]) => parseEntryId(id)?.file === file && parseEntryId(id)?.key === key);
     if (!wanted.length) continue;
     const target = path.join(home, file);
-    const json = live && !readLive ? null : await readJson(target);
+    const json = (live && !readLive) || blocked(file) ? null : await readJson(target);
     if (json === null) {
       skipped.push(...wanted.map(([id]) => id));
       continue;
@@ -212,7 +314,11 @@ export async function applyItems(home, items, { live = false, before = null } = 
     let changed = false;
     for (const [id, value] of wanted) {
       const { name } = parseEntryId(id);
-      if (JSON.stringify(map[name]) === value || !untouched(id)) continue;
+      if (JSON.stringify(map[name]) === value) continue;
+      if (!untouched(id)) {
+        if (skipPath) skipped.push(id);
+        continue;
+      }
       map[name] = JSON.parse(value);
       changed = true;
       written += 1;
@@ -233,6 +339,12 @@ export async function applyItems(home, items, { live = false, before = null } = 
     }
   }
   return { written, deleted, skipped };
+}
+
+// The shared config.toml's text with this side's own entries (codexConfig.mjs) kept from the file there now.
+async function withOwnEntriesOf(target, shared) {
+  const local = await fs.readFile(target, 'utf8').catch((err) => (err.code === 'ENOENT' ? null : Promise.reject(err)));
+  return withOwnEntries(shared, local);
 }
 
 /** The applied state, for statusd to carry on from what the entrypoint pulled. */
@@ -310,9 +422,23 @@ export async function withRetries(call, { tries = START_TRIES, delayMs = START_R
  *   the console keeps no settings
  */
 export async function syncOnce({ home, state, live, send }) {
-  const { items: local, unreadable, oversized } = await readSnapshot(home);
+  const { items: local, unreadable, oversized: tooBig, unparsed, codexConfig } = await readSnapshot(home);
+  const oversized = [...tooBig, ...unparsed];
   const known = state.version !== null;
   let { changed, removed } = known ? localChanges(state.synced, local, oversized) : { changed: {}, removed: [] };
+  // An item behind a link is held locally. It has not been deleted from the shared copy.
+  removed = removed.filter((id) => !linkOnPath(home, id));
+  if ((CODEX_CONFIG in changed || removed.includes(CODEX_CONFIG)) && codexConfig !== undefined && state.synced[CODEX_CONFIG]) {
+    const text = (value) => Buffer.from(value, 'base64').toString('utf8');
+    const { visible, hidden } = sharedConfigView(text(state.synced[CODEX_CONFIG]), text(codexConfig));
+    if (hidden.length) {
+      // Private entries can hide shared ones. Compare only what this home can see and leave the hidden copy intact.
+      const here = text(local[CODEX_CONFIG] ?? '');
+      removed = removed.filter((id) => id !== CODEX_CONFIG);
+      if (here === visible) delete changed[CODEX_CONFIG];
+      else changed[CODEX_CONFIG] = Buffer.from(withEntries(here, hidden)).toString('base64');
+    }
+  }
   // A JSON file read mid-write is left out of this round entirely: its entries are neither sent nor counted as gone.
   for (const file of unreadable) for (const id of Object.keys(changed)) if (parseEntryId(id)?.file === file) delete changed[id];
   // The shared copy's status line goes back as it was, and a difference in it alone is no change. With no shared copy
@@ -354,6 +480,7 @@ async function pullAtStart() {
   if (!consoleUrl || !token) return;
   const home = os.homedir();
   for (const { file } of SYNCED_ENTRIES) {
+    if (linkOnPath(home, file)) continue;
     const dir = path.dirname(path.join(home, file));
     const prefix = `${path.basename(file)}${TEMP_SUFFIX}`;
     for (const name of await fs.readdir(dir).catch(() => [])) if (name.startsWith(prefix)) await fs.rm(path.join(dir, name), { force: true });

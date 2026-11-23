@@ -1,5 +1,5 @@
-<!-- @dsCard group="Pages" height=620 subtitle="The desktop app's sign-in: the browser's question and hand-off, the app's waiting card and an error" -->
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Red+Hat+Display:wght@400;600&display=swap">
+<!-- @dsCard group="Pages" height=860 subtitle="The desktop app's sign-in: the browser's question and hand-off, the app's waiting card and an error; the command line's code and question" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Red+Hat+Display:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
  body{margin:0;padding:20px;background:var(--stopped);color:var(--ink);font:15px/1.5 "Red Hat Display",system-ui,sans-serif;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
  .card{background:var(--ground);border:1px solid var(--line);border-radius:12px;padding:24px;max-width:440px;box-sizing:border-box}
@@ -11,6 +11,10 @@
  .quiet{color:var(--sub);margin-left:10px;font-size:13.5px}
  .bad{color:var(--bad);margin:0 0 14px;font-size:13.5px}
  .icon{width:44px;height:44px;border-radius:10px;background:#1b2232;margin-bottom:12px;display:grid;place-items:center;color:#E87D09;font-weight:700}
+ .code{display:block;font:600 22px/1.2 "JetBrains Mono",ui-monospace,monospace;letter-spacing:.08em;margin:0 0 14px}
+ .meta{font:12px/1.5 "JetBrains Mono",ui-monospace,monospace;color:var(--sub);margin:-8px 0 14px}
+ .field{display:block;width:100%;box-sizing:border-box;margin:0 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font:600 18px "JetBrains Mono",ui-monospace,monospace;letter-spacing:.08em;color:var(--meta)}
+ .quiet.u{text-decoration:underline}
  .cap{grid-column:1/-1;margin:4px 0 -8px;font:600 11px "Red Hat Display",system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--label)}
 </style>
 <p class="cap">In the browser</p>
@@ -19,3 +23,6 @@
 <p class="cap">In the app</p>
 <div class="card"><div class="icon">⌒</div><h1>Finish signing in in your browser</h1><p>Your browser opened the console's sign-in. When it asks whether to open Woodshed, say yes.</p><span class="btn wide">Open the browser again</span><span class="btn wide outline">Sign in in this window instead</span></div>
 <div class="card"><div class="icon">⌒</div><h1>Signing in did not finish</h1><p>Try again in your browser, or sign in in this window.</p><p class="bad">That sign-in has expired or was already used. Sign in again from the app.</p><span class="btn wide">Open the browser again</span><span class="btn wide outline">Sign in in this window instead</span></div>
+<p class="cap">The command line, in the browser</p>
+<div class="card"><h1>Sign in the woodshed command line?</h1><p>The woodshed command line on <strong>mia-laptop</strong> asks to sign in to Woodshed as <strong>@octocat</strong>. Sign in only if you just ran <code>woodshed login</code> and your terminal shows this code:</p><span class="code">MWNZ-RMWZ</span><p class="meta">Asked 2026-11-20 10:00 UTC</p><span class="btn">Sign in the CLI</span><span class="quiet u">Deny</span></div>
+<div class="card"><h1>Sign in the woodshed command line</h1><p>Type the code <code>woodshed login</code> shows in your terminal.</p><span class="field">ABCD-EFGH</span><p class="bad">No sign-in is waiting with that code. It lasts 10 minutes: run woodshed login again for a new one.</p><span class="btn">Next</span><span class="quiet">Cancel</span></div>

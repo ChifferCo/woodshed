@@ -21,8 +21,16 @@ const MAX_HISTORY_CHARS = 12_000;
 const MAX_FILES_LISTED = 200;
 const MAX_NOTE_CHARS = 4_000;
 
+const MAX_ABOUT_ID = 200;
+const MAX_POINT_CHARS = 6_000;
+
 /**
- * @returns {{ok: true, question: string} | {ok: false, error: string}}
+ * A message, and what it follows up on when it is about an AI review: `about`
+ * names the review (`review`, GitHub's id) and, for one of its findings,
+ * `finding` (the finding's id; none for the review as a whole). Only the ids
+ * come from the page: the shed reads what they say from GitHub itself.
+ *
+ * @returns {{ok: true, question: string, about: {review: string, finding: string|null}|null} | {ok: false, error: string}}
  */
 export function validateChatRequest({ payload }) {
   const question = String(payload?.question ?? '').trim();
@@ -30,7 +38,13 @@ export function validateChatRequest({ payload }) {
   if (question.length > MAX_MESSAGE_CHARS) {
     return { ok: false, error: `message too long (max ${MAX_MESSAGE_CHARS} characters)` };
   }
-  return { ok: true, question };
+  const raw = payload?.about;
+  if (raw === undefined || raw === null) return { ok: true, question, about: null };
+  const isId = (v) => typeof v === 'string' && v.length > 0 && v.length <= MAX_ABOUT_ID;
+  if (typeof raw !== 'object' || !isId(raw.review) || !(raw.finding === undefined || raw.finding === null || isId(raw.finding))) {
+    return { ok: false, error: 'the follow-up does not say which AI review it is about' };
+  }
+  return { ok: true, question, about: { review: raw.review, finding: raw.finding ?? null } };
 }
 
 /**
@@ -53,7 +67,7 @@ export function trimHistory(messages) {
   return kept.reverse();
 }
 
-export function buildChatPrompt({ meta, artifact, files, history, question }) {
+export function buildChatPrompt({ meta, artifact, files, history, question, diffOnly = false, about = null }) {
   const lines = [];
   // Same reasoning as the other two prompts: a fixed delimiter is guessable,
   // and everything fenced below — the description, file names, the
@@ -62,11 +76,16 @@ export function buildChatPrompt({ meta, artifact, files, history, question }) {
   const prTag = `pull-request-${nonce}`;
   const chatTag = `conversation-${nonce}`;
   const messageTag = `message-${nonce}`;
+  const pointTag = `review-point-${nonce}`;
 
   lines.push(
-    'You are talking with a reviewer about a pull request. The pull request head is checked out',
-    'at your current working directory: read whatever you need — the changed files, their callers,',
-    'related code — and answer from the code rather than from the description.',
+    ...(diffOnly ? [
+      'You are talking with a reviewer about a pull request. Answer from the supplied review material.',
+    ] : [
+      'You are talking with a reviewer about a pull request. The pull request head is checked out',
+      'at your current working directory: read whatever you need — the changed files, their callers,',
+      'related code — and answer from the code rather than from the description.',
+    ]),
     '',
     "Answer the reviewer's latest message. Keep it short: a few sentences, or a short bullet list",
     'when you are listing things. Markdown is welcome — backticks around identifiers and paths,',
@@ -113,9 +132,24 @@ export function buildChatPrompt({ meta, artifact, files, history, question }) {
     lines.push('The conversation so far, oldest first:');
     lines.push(`<${chatTag}>`);
     for (const turn of turns) {
-      lines.push(`${turn.role === 'assistant' ? 'you' : 'reviewer'}: ${turn.text}`);
+      const on = turn.role !== 'assistant' && turn.about?.label ? ` (following up on the AI review's point: ${String(turn.about.label).slice(0, 300)})` : '';
+      lines.push(`${turn.role === 'assistant' ? 'you' : 'reviewer'}${on}: ${turn.text}`);
     }
     lines.push(`</${chatTag}>`);
+    lines.push('');
+  }
+
+  if (about) {
+    // An AI review's finding is a claim about the code, and often a wrong one:
+    // the follow-up is worth asking because the reviewer wants it checked.
+    lines.push("The reviewer's latest message follows up on the point from an AI code review of the pull request in the");
+    lines.push('block below, which says whose it is and where first. Check the point against the code before you answer:');
+    lines.push('say plainly whether it holds, partly holds or does not, and why, citing path:line, then answer what the');
+    lines.push('message asks. The point may be about an older commit than the one checked out: if the code has moved on, say so.');
+    lines.push(`<${pointTag}>`);
+    lines.push(`point: ${String(about.label).slice(0, 300).replace(/\s+/g, ' ')}`);
+    lines.push(String(about.text || '').slice(0, MAX_POINT_CHARS));
+    lines.push(`</${pointTag}>`);
     lines.push('');
   }
 

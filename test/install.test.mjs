@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isolatedEnv } from './isolatedEnv.mjs';
 import { ENGINE_NAMES } from '../shared/databases/index.mjs';
 import { loadConfig, requireRepo } from '../console/config.mjs';
 import { defaultProject } from '../console/projects.mjs';
@@ -109,7 +110,7 @@ test('projectSettings reads the seed secrets and the engines from the repository
 
   // A shallow clone with no project file, as fetchRepo makes for a repository that has none.
   const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-origin-'));
-  const git = (args, cwd) => execFileSync('git', args, { cwd, stdio: 'ignore', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
+  const git = (args, cwd) => execFileSync('git', args, { cwd, stdio: 'ignore', env: { ...isolatedEnv(), GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } });
   git(['init', '-q', '-b', 'main'], origin);
   fs.writeFileSync(path.join(origin, 'a.txt'), 'a');
   git(['add', '.'], origin);

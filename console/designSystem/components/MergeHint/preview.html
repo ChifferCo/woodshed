@@ -1,0 +1,25 @@
+<!-- @dsCard group="Review" height=230 subtitle="Why an approved pull request cannot be merged yet: an icon with a tip, the sentence itself on a phone" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600&family=JetBrains+Mono:wght@600&display=swap">
+<style>
+ body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
+ .bar{display:flex;align-items:flex-end;gap:18px;border-bottom:1px solid var(--line);max-width:620px;margin-top:44px}
+ .tab{padding:8px 2px 10px;font-weight:600;font-size:13.5px;color:var(--meta);white-space:nowrap;border-bottom:2px solid transparent;margin-bottom:-1px}
+ .tab.on{color:var(--ink);border-bottom-color:var(--action)}
+ .n{font:600 11px/1.5 "JetBrains Mono",ui-monospace,monospace;color:var(--meta);border:1px solid var(--line);border-radius:999px;padding:0 6px;margin-left:5px}
+ .right{margin-left:auto;display:flex;align-items:center;gap:11px;padding-bottom:7px}
+ .submit{padding:6px 14px;font-size:13px;font-weight:600;border-radius:5px;background:var(--action);color:#fff;white-space:nowrap}
+ .hint{position:relative;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:999px;color:var(--ink);background:var(--line-soft)}
+ .hint svg,.phone svg{width:15px;height:15px;fill:currentColor;flex:none}
+ .tip{position:absolute;bottom:calc(100% + 6px);right:0;width:max-content;max-width:240px;font-size:12px;line-height:1.35;color:#fff;background:#1b2232;padding:6px 9px;border-radius:4px}
+ .phone{display:flex;align-items:center;gap:11px;max-width:340px;margin-top:22px;font-size:12px;line-height:1.4;color:var(--meta)}
+ .phone .submit{color:#fff}
+ .phone span.why{display:inline-flex;align-items:center;gap:6px}
+ .cap{font-size:11px;color:var(--label);margin-top:6px}
+</style>
+<div class="bar">
+ <span class="tab on">Overview</span><span class="tab">Q&amp;A<span class="n">5</span></span><span class="tab">Files changed<span class="n">17</span></span>
+ <span class="right"><span class="submit">Submit review</span><span class="hint"><svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg><span class="tip">New commits since this review. Re-review to merge.</span></span></span>
+</div>
+<div class="cap">Hovered or focused: the tip says why.</div>
+<div class="phone"><span class="submit">Submit review</span><span class="why"><svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"/></svg>New commits since this review. Re-review to merge.</span></div>
+<div class="cap">On a phone, where tips are off: the sentence beside the icon.</div>

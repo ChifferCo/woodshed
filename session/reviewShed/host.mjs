@@ -19,22 +19,24 @@ const SESSION_ID_RE = /^[0-9a-f]{8}$/;
 async function loadShed(repoDir) {
   // The shed reads this when its store module loads.
   process.env.WOODSHED_REVIEWS ??= REVIEWS_DIR;
-  const [{ handleReviewRequest, ensureWorktreeReview, startReviewAnalysisIfNone, warmLivePr }, { ghAccount }, { configurePrStatus }] = await Promise.all([
+  const [{ handleReviewRequest, ensureWorktreeReview, startReviewAnalysisIfNone, startReviewQaIfNone, warmLivePr }, { ghAccount }, { configurePrStatus }] = await Promise.all([
     import('../../shared/review/index.mjs'),
     import('../../shared/review/github.mjs'),
     import('../../shared/prStatus.mjs'),
   ]);
   // Without the checkout, the shed cannot name the repo, so its pull request lookup finds nothing and the page gets no PR.
   configurePrStatus({ repoRoot: repoDir, log: (event, fields) => console.log(`review: ${event}`, fields) });
-  return { handleReviewRequest, ensureWorktreeReview, startReviewAnalysisIfNone, warmLivePr, ghAccount };
+  return { handleReviewRequest, ensureWorktreeReview, startReviewAnalysisIfNone, startReviewQaIfNone, warmLivePr, ghAccount };
 }
 
 /**
- * @param {{repoDir: string, sessionId: string, sessionKind?: string, load?: typeof loadShed, now?: () => number}} opts
+ * @param {{repoDir: string, sessionId: string, sessionKind?: string, agent?: string, model?: string, effort?: string, load?: typeof loadShed, now?: () => number}} opts
  * @returns {{handle: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => Promise<boolean>}}
  */
 export function createReviewHost({
-  repoDir, sessionId, sessionKind = process.env.SESSION_KIND, load = loadShed, now = Date.now,
+  repoDir, sessionId, sessionKind = process.env.SESSION_KIND,
+  agent, model, effort,
+  load = loadShed, now = Date.now,
 }) {
   const sessionName = `claude-${sessionId}`;
   let shed = null;
@@ -82,6 +84,7 @@ export function createReviewHost({
     }
     const ctx = {
       reqId, repoRoot: repoDir,
+      reviewAgent: { agent, model, effort },
       json: (r, status, body) => json(r, status, writable === false ? withoutPullRequest(body) : body),
       log: (event, fields) => console.log(`review: ${event}`, fields),
       worktreePathFor: () => repoDir,
@@ -96,11 +99,21 @@ export function createReviewHost({
         return true;
       }
       // Once per container, and only when the review has no analysis: a reload, a second viewer, a finished or failed
-      // run, or a Discard pressed since, must not pay for another.
+      // run, or a Discard pressed since, must not pay for another. The Q&A the same way, so it is written while the
+      // reader is on the analysis rather than only once they open its tab: whichever page or terminal opened the review.
       if (!analysisOffered) {
         analysisOffered = true;
-        const started = shed.startReviewAnalysisIfNone({ ctx, sessionName });
-        console.log('review: analysis on opening', { reqId, started });
+        // Neither may fail the read that opens the page: a start that throws (qa.json unreadable, say) is logged and
+        // left for the page's own button.
+        const offer = (what, start) => {
+          try { return start(); } catch (err) {
+            console.warn(`review: ${what} not started on opening`, { reqId, error: err?.message });
+            return false;
+          }
+        };
+        const started = offer('analysis', () => shed.startReviewAnalysisIfNone({ ctx, sessionName }));
+        const qaStarted = offer('Q&A', () => shed.startReviewQaIfNone?.({ ctx, sessionName }) ?? false);
+        console.log('review: analysis on opening', { reqId, started, qaStarted });
       }
       // The first read would otherwise answer before the shed has asked GitHub for the branch's pull request.
       await shed.warmLivePr?.({ sessionName });

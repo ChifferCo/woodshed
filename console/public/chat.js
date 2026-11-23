@@ -586,7 +586,7 @@
         const since = T.turnStart(record?.entries ?? []) ?? pendingOf(session.id)[0]?.sentAt ?? null;
         status.className = 'chat-status is-working';
         status.replaceChildren(h('span', { class: 'spin', 'aria-hidden': 'true' }),
-          h('b', null, 'Working'), since ? h('span', { class: 'chat-clock' }, T.elapsed(since)) : null);
+          h('b', null, 'Working'), ...(since ? [h('span', { class: 'chat-clock' }, T.elapsed(since))] : []));
         return;
       }
       if (state !== 'done' && state !== 'starting' && state) {
