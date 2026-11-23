@@ -1422,12 +1422,21 @@ test('POST /send with agentOnly types into a running agent and never into a shel
   assert.equal(await got(), 'The review asks for changes\nFix PR 9\n', 'only the one on its pull request, once');
   await taken();
 
+  // A hand-off's checkpoint whose push fails (this checkout has nowhere to push to) leaves the session running: its
+  // sends go on, and the console does not stop it.
+  const handoff = await call('POST', '/checkpoint', undefined, JSON.stringify({ keepRunningOnFailure: true }));
+  assert.equal(handoff.status, 500);
+  assert.match(handoff.body.error, / push -u origin HEAD/);
+  assert.equal((await send(forNine)).status, 200, 'it sends again');
+  for (let i = 0; i < 50 && !(await got()).includes('Fix PR 9\nFix PR 9'); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  await taken();
+
   // Once the stop's checkpoint has started, nothing guarded is typed.
   await call('POST', '/checkpoint');
   const stopping = await send(forNine);
   assert.deepEqual([stopping.status, stopping.body.error], [409, 'the session is stopping']);
   await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.equal(await got(), 'The review asks for changes\nFix PR 9\n');
+  assert.equal(await got(), 'The review asks for changes\nFix PR 9\nFix PR 9\n');
 });
 test('a branch pointed at another pull request\'s ref, which @{u} cannot name, is another lookup key', async (t) => {
   // A real repository, configured as gh pr checkout leaves a pull request's branch.

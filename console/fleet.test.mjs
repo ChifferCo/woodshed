@@ -4190,3 +4190,112 @@ test('Hand off without the conversation reads none and attaches nothing; a taint
   assert.match(next.prompt, /was not handed over/);
   assert.equal(next.options.agent, 'claude');
 });
+
+test('a hand-off whose push is refused leaves the session running with its checkout, and starts nothing', async () => {
+  const attachments = fakeAttachments();
+  const { fleet, calls, statuses, answers, alive, store } = setup({ attachments });
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });
+  statuses[first.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+  answers['/transcript'] = { entries: [{ role: 'user', text: 'Fix it', at: null }] };
+  const refused = Object.assign(new Error('statusd /checkpoint answered 500'), { status: 500, body: { error: 'Command failed: git push -u origin HEAD\n! [rejected] HEAD -> joel/fix (fetch first)' } });
+  answers['/checkpoint'] = Promise.reject(refused);
+  answers['/checkpoint'].catch(() => {});
+  const before = store.state.sessions.length;
+  await assert.rejects(fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'codex' }), {
+    shown: true, message: /its work could not be pushed \(Command failed: git push -u origin HEAD\): it keeps running/,
+  });
+  assert.equal(first.status, 'running');
+  assert.equal(first.stopReason, null);
+  assert.ok(alive.has(`c-${first.id}`), 'its container, and the checkout in it, stay');
+  assert.ok(!calls.stopped.includes(`c-${first.id}`));
+  assert.deepEqual(calls.statusd.find((c) => c.path === '/checkpoint').body, { keepRunningOnFailure: true }, 'statusd lets it run on');
+  assert.equal(store.state.sessions.length, before, 'no new session');
+  assert.deepEqual(attachments.written, {});
+});
+
+test('a hand-off and a lockdown never overlap: a lockdown under way refuses the hand-off, and a hand-off refuses a lockdown', async () => {
+  const attachments = fakeAttachments();
+  const { fleet, statuses, answers, launcher, store } = setup({ attachments });
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });
+  statuses[first.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+  first.mayUseProduction = true;
+  let unlock;
+  launcher.lockDown = () => new Promise((resolve) => { unlock = resolve; });
+  const lockdown = fleet.taint(first, { why: 'test' });
+  await assert.rejects(fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'codex' }), /seen production data/);
+  unlock(null);
+  await lockdown;
+  assert.ok(first.taintedAt);
+
+  const second = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/two' });
+  statuses[second.id] = { state: 'done', branch: 'joel/two' };
+  await fleet.tick();
+  second.mayUseProduction = true;
+  let release;
+  answers['/transcript'] = new Promise((resolve) => { release = resolve; });
+  const before = store.state.sessions.length;
+  const handing = fleet.handOffPrivate({ owner: 'joel', id: second.id, agent: 'codex' });
+  await new Promise((resolve) => setImmediate(resolve));
+  await assert.rejects(fleet.taint(second, { why: 'test' }), /being handed off/, 'the first production call is refused');
+  assert.equal(second.taintedAt, undefined);
+  // Had a lockdown won anyway, what was read goes nowhere.
+  second.taintedAt = '2026-10-21T10:00:00.000Z';
+  release({ entries: [{ role: 'assistant', text: 'order 42: paid', at: null }] });
+  await assert.rejects(handing, /seen production data/);
+  assert.equal(second.status, 'running');
+  assert.equal(store.state.sessions.length, before, 'no replacement');
+  assert.deepEqual(attachments.written, {}, 'no attachment');
+});
+
+test('a hand-off checks the branch before it stops anything, and carries the permission mode the new agent runs', async () => {
+  const { fleet, statuses, answers, github } = setup({ attachments: fakeAttachments() });
+  github.defaultBranch = async () => 'main';
+  answers['/transcript'] = { entries: [] };
+  const onMain = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix', permissionMode: 'plan' });
+  statuses[onMain.id] = { state: 'done', branch: 'main' };
+  await fleet.tick();
+  assert.equal(onMain.branch, 'main', 'the agent checked out the default branch');
+  await assert.rejects(fleet.handOffPrivate({ owner: 'joel', id: onMain.id, agent: 'codex' }), /main is not a branch name a session can work on/);
+  assert.equal(onMain.status, 'running');
+
+  statuses[onMain.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+  const toCodex = await fleet.handOffPrivate({ owner: 'joel', id: onMain.id, agent: 'codex' });
+  assert.equal(toCodex.options.permissionMode, 'plan', 'plan is a Codex mode too');
+  const edits = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/edits', permissionMode: 'acceptEdits' });
+  statuses[edits.id] = { state: 'done', branch: 'joel/edits' };
+  await fleet.tick();
+  const fromEdits = await fleet.handOffPrivate({ owner: 'joel', id: edits.id, agent: 'codex' });
+  assert.equal(fromEdits.options.permissionMode, 'auto', 'Codex has no acceptEdits: its default');
+});
+
+test('the hand-off file is written by the real attachments store and goes out in the new session\'s tar', async (t) => {
+  const { createAttachments } = await import('./attachments.mjs');
+  const { execFileSync } = await import('node:child_process');
+  const fsp = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { PassThrough } = await import('node:stream');
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'woodshed-handoff-'));
+  t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+  const attachments = createAttachments({ dir });
+  const { fleet, statuses, answers, calls } = setup({ attachments });
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });
+  statuses[first.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+  answers['/transcript'] = { entries: [{ role: 'assistant', text: 'MARKER-7f3: the token check was inverted', at: null }] };
+  const next = await fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'codex' });
+  assert.equal(calls.started.filter((c) => c.id === next.id).at(-1).env.ATTACHMENTS, '1', 'the container is told to fetch one');
+  const out = new PassThrough();
+  const chunks = [];
+  out.on('data', (c) => chunks.push(c));
+  out.writeHead = () => {};
+  await attachments.send(next.id, out);
+  const tarFile = path.join(dir, 'got.tar');
+  await fsp.writeFile(tarFile, Buffer.concat(chunks));
+  assert.deepEqual(execFileSync('tar', ['tf', tarFile], { encoding: 'utf8' }).trim().split('\n'), ['1-handoff.md']);
+  assert.match(execFileSync('tar', ['xOf', tarFile, '1-handoff.md'], { encoding: 'utf8' }), /MARKER-7f3: the token check was inverted/);
+  assert.equal(await attachments.has(first.id), false, 'nothing under the old session');
+});

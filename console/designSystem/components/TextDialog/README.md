@@ -18,3 +18,12 @@ session, and the payload URL on Secrets & webhooks.
 saying it is for this session alone and what an empty field falls back to (with the hours), then each `mono` number
 field under its label with the hours it falls back to as its placeholder and the range on the input. Cancel, then
 **Save**. The server's refusal shows in the dialog (`form-error`), which stays open; a save closes it with a toast. While a save is on its way, Cancel and Save are disabled and Escape does not close it. A lifetime shorter than the session has already run, entered or the one an empty field falls back to, is said first, in the same `form-error` line (when, if an Extend holds the stop back, it says so), and a second Save goes ahead.
+
+**Hand off…** on a running My Woodshed session's ⋯ (`handOff` in `public/session.js`, console/handoff.mjs) is the same
+dialog: a sentence first saying the agent stops here with its work pushed to its branch (the branch in `code`), then
+**Hand off to** and **Model** as `field` selects (it opens on the other agent), the **Hand over the conversation**
+switch as a `toggle-row` (on by default, its `sub` line saying what goes or that the new agent starts clean, `is-off`
+when off), and **Note to the new agent**, an optional `field` textarea. Cancel quiet, then **Hand off**, the dialog's one
+orange action (`btn-primary`; `Handing off…` while the console stops the session and starts the next, Cancel and
+Escape disabled meanwhile). A refusal is a `form-error` in the dialog, which stays open; a hand-off opens the new
+session's Chat.

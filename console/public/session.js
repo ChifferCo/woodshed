@@ -362,7 +362,7 @@
     const note = h('textarea', { id: 'handoff-note', class: 'field', rows: '4', maxlength: '4000', placeholder: 'What is left to do, or what to try differently. Optional.' });
     const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
     const cancel = h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel');
-    const go = h('button', { type: 'submit', class: 'btn btn-open' }, 'Hand off');
+    const go = h('button', { type: 'submit', class: 'btn btn-primary' }, 'Hand off');
     const form = h('form', { method: 'dialog' },
       h('p', null, `${W.agentTitle(s)} stops here, its work committed and pushed to `, h('code', null, s.branch), '. A new session of yours carries on from that branch with the agent you pick. Resume still reopens this one.'),
       h('label', { class: 'field-label' }, h('span', null, 'Hand off to'), agent),

@@ -1313,10 +1313,26 @@ async function lastSettingsRound() {
   }
 }
 
-async function checkpoint() {
+// keepRunningOnFailure: a hand-off's checkpoint (console/handoff.mjs), which the console stops the session after only
+// when the push went through. When it fails the session runs on as before: its sends and home saves start again, and
+// its work stays in the checkout, committed.
+async function checkpoint({ keepRunningOnFailure = false } = {}) {
   homeSavesOver = true;
   // The session is stopping: a guarded send still checking GitHub types nothing now.
   stopping = true;
+  try {
+    return await checkpointNow();
+  } catch (err) {
+    if (keepRunningOnFailure) {
+      homeSavesOver = false;
+      stopping = false;
+      console.warn('statusd: checkpoint failed, the session runs on', { message: String(err?.message ?? err).split('\n')[0] });
+    }
+    throw err;
+  }
+}
+
+async function checkpointNow() {
   await keepCodexAuth();
   await lastSettingsRound();
   // Before the push, which can fail: the home is worth keeping either way.
@@ -1745,7 +1761,15 @@ async function handle(req, res) {
     }
     return reply(res, 200, await taint(body));
   }
-  if (route === 'POST /checkpoint') return reply(res, 200, await checkpoint());
+  if (route === 'POST /checkpoint') {
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req)) || '{}') ?? {};
+    } catch {
+      return reply(res, 400, { error: 'the body is not JSON' });
+    }
+    return reply(res, 200, await checkpoint({ keepRunningOnFailure: body.keepRunningOnFailure === true }));
+  }
   if (route === 'POST /upload') return uploadReply(req, res);
   if (route === 'GET /applog') return reply(res, 200, await appLogs());
   if (route === 'GET /diff') {
