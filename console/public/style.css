@@ -348,22 +348,30 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 
 /* ---- webhook events ---- */
 .table-box { border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; }
+/* The events page draws lines now; these stay for a table other pages draw in a .table-box with this class. */
 table.events { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 13px; }
 .events th { text-align: left; padding: 8px 14px; background: var(--stopped); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label); }
 .events td { padding: 9px 14px; border-top: 1px solid var(--line-soft); vertical-align: top; }
 .events .meta-cell { color: var(--meta); white-space: nowrap; }
 .events .detail { margin-left: 8px; color: var(--sub); }
+.set-fold.is-plain.event-line > .set-fold-head { grid-template-columns: 150px minmax(0, 1fr) auto; align-items: start; }
+.event-when { padding-top: 2px; color: var(--meta); white-space: nowrap; }
+.event-line .event-meta { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 3px; }
+.event-meta .event-id { color: var(--meta); }
+.event-line .pill { margin-top: 1px; }
+#event-list { max-width: none; }
+@media (max-width: 560px) {
+  .set-fold.is-plain.event-line > .set-fold-head { grid-template-columns: minmax(0, 1fr); }
+  .event-line .set-fold-head .pill { grid-row: auto; }
+}
 
 /* ---- secrets and the webhook card ---- */
 .settings-card, .secret-list { border: 1px solid var(--line); border-radius: 8px; }
 .settings-card { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .settings-card h2, .secret-group h2 { margin: 0; }
-.secret-group { display: flex; flex-direction: column; gap: 8px; }
-.secret-row { padding: 14px 16px; }
-.secret-row + .secret-row { border-top: 1px solid var(--line-soft); }
-.secret-row.is-open { box-shadow: inset 3px 0 0 var(--amber); }
-.secret-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 16px; }
-.secret-main { flex: 999 1 380px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+/* A secret is a row of its group (SettingsRows): its value and its form are in the open row. */
+.set-fold-body .value-row, .set-fold-body > .secret-form, .set-fold-body > .advanced-body, .set-fold-body > .actions, .set-fold-body > .form-ok, .set-fold-body > .form-error { margin-top: 0; }
+.secret-form-title { margin: 4px 0 -4px; font-size: 13px; font-weight: 600; }
 .secret-name { font-family: var(--mono); font-size: 13.5px; font-weight: 600; }
 .msg-plain { font-size: 13px; color: var(--sub); }
 .field-block { display: flex; flex-direction: column; gap: 4px; }
@@ -389,7 +397,6 @@ dialog.confirm dt { color: var(--meta); }
 dialog.confirm dd { margin: 0; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
 dialog.confirm .field-label { margin-top: 12px; }
 .dialog-actions { margin-top: 14px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-.events td.result { min-width: 260px; }
 .nowrap { white-space: nowrap; }
 
 /* ---- the webhook card's checks and its setup modal ---- */
@@ -930,6 +937,10 @@ dialog.confirm .confirm-rows .now { font-weight: 600; color: var(--amber-ink); }
    order a session writes them, each with its word as a grey tag; then which layer wins each key. */
 .crumb { margin: 0 0 4px; font-size: 13px; }
 .crumb a { text-decoration: none; font-weight: 600; }
+/* On the repo's page a row of the Env files group is one env file: its status word, then Delete for a key no file names. */
+.repo-row-ctl { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 10px; }
+.set-fold-body > .layer-meta { overflow-wrap: anywhere; }
+@media (max-width: 560px) { .repo-row-ctl { justify-content: flex-start; } }
 .layered { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 7px; }
 .layered-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 10px 12px; border-bottom: 1px solid var(--line-soft); }
 .layered-head h3 { margin: 0; font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
@@ -1253,25 +1264,19 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 :root[data-theme="dark"] .prchip.is-queued { border-color: var(--wait); background: color-mix(in srgb, var(--wait) 12%, transparent); color: var(--wait); }
 
 /* ---- the People page ---- */
-.people-card { border: 1px solid var(--line); border-radius: 8px; }
-.people-card.is-asking { border-color: var(--amber); background: var(--amber-tint); }
-.people-card > .set-head { padding: 12px 16px; border-bottom: 1px solid var(--line-soft); }
-.people-card.is-asking > .set-head { border-bottom-color: transparent; }
-.person-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 16px; border-top: 1px solid var(--line-soft); }
-.person-row:first-of-type { border-top: 0; }
-.person-row .who { flex: 1 1 260px; min-width: 0; }
-.person-row .who .meta { margin-top: 2px; }
-.person-row .who .who { flex: none; }
-/* The members table: who, one column per switch, Slack, Remove. Scrolls sideways on a phone. */
+/* Asking to join: a plain row each (settingsRows.js), its Accept and Decline where a row's pill goes. */
+.person-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+/* The table needs the page's width, and the requests above it line up with it. */
+#requests, #members { max-width: none; }
+/* The members table: who, one column per switch, Slack, Remove. It sits in its group's box, above the row that
+   invites someone, and scrolls sideways inside the box on a phone. */
 .table-scroll { overflow-x: auto; }
+.set-rows-box > .table-scroll { border-radius: 7px 7px 0 0; }
 .people-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 13px; }
 .people-table th { text-align: left; padding: 8px 14px; background: var(--stopped); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label); vertical-align: bottom; }
 .people-table td { padding: 10px 14px; border-top: 1px solid var(--line-soft); vertical-align: middle; }
 .people-table .switch-cell { text-align: center; width: 1%; white-space: nowrap; }
-.people-table .is-split { border-left: 1px solid var(--line); }
-.people-table .th-note { margin-top: 2px; font-family: var(--mono); font-size: 10px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--meta); }
-.people-table input[type="checkbox"] { width: 18px; height: 18px; margin: 0; accent-color: var(--slate); cursor: pointer; }
-.people-table input[type="checkbox"]:disabled { cursor: not-allowed; opacity: 0.45; }
+.people-table .role-can { min-width: 260px; line-height: 1.45; }
 .people-table .end-cell { text-align: right; white-space: nowrap; }
 .people-table .edit-row td { border-top: 0; padding-top: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -1284,21 +1289,30 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 .slack-matches .foot { margin: 0; padding: 8px 12px; }
 .invite-row { display: flex; flex-wrap: wrap; gap: 8px; max-width: 560px; }
 .invite-row .field { flex: 1 1 220px; font-family: var(--mono); }
-/* A role picked beside the handle (People behind a hosting proxy): as wide as its words. */
-.invite-row select.field { flex: 0 0 auto; font-family: inherit; }
+/* Invite someone's roles: a table with what each can do, a row picked as the role. */
+.invite-send { margin-top: 12px; }
+.role-pick { margin: 12px 0 0; padding: 0; border: 0; min-width: 0; }
+.role-pick legend { padding: 0; margin-bottom: 6px; }
+.role-pick table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 13px; border: 1px solid var(--line); border-radius: 8px; }
+.role-pick th { text-align: left; padding: 6px 12px; background: var(--stopped); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label); }
+.role-pick td { padding: 8px 12px; border-top: 1px solid var(--line-soft); vertical-align: middle; cursor: pointer; }
+.role-pick td.foot { margin: 0; line-height: 1.45; }
+.role-pick td:first-child { white-space: nowrap; }
+.role-pick td.is-no { color: var(--meta); }
+.role-pick tr.is-picked td { background: var(--stopped); }
+.role-pick input[type="radio"] { margin: 0 4px 0 0; accent-color: var(--slate); vertical-align: -2px; }
 
-/* The Slack card (Console settings): a row each for the bot, pull requests and questions, and their Limits folded
-   under them. The Set up Slack dialog and the channel picker are public/slackSetup.js. */
-.slack-rows { display: flex; flex-direction: column; }
-.slack-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; align-items: center; padding: 11px 0; border-top: 1px solid var(--line-soft); }
-.slack-row:first-child { border-top: 0; padding-top: 2px; }
-.slack-row .set-name { margin: 0; }
-.slack-row .sub { grid-column: 1; margin: 0; font-size: 13px; }
-.slack-row .slack-act { grid-column: 2; grid-row: 1 / span 2; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
-.slack-row .slack-more { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; }
-.slack-limits { grid-column: 1 / -1; margin-top: 4px; padding-left: 14px; border-left: 2px solid var(--line-soft); }
+/* Settings · General's rows (consoleSettings.js), over the shared settings rows: Slack's channel picker with its
+   buttons, a Slack row's Limits under its other controls, a repo's colour dot beside its name, and a server's
+   Production tag, which goes under the name on a phone as a pill does. The Set up Slack dialog and the channel picker
+   are public/slackSetup.js. */
+.set-fold-body .slack-more { display: flex; flex-direction: column; gap: 8px; }
+.set-fold-body h4.sub-head { margin-bottom: 0; }
+.slack-limits { padding-left: 14px; border-left: 2px solid var(--line-soft); }
 .slack-limits .set-rows { margin-bottom: 4px; }
-@media (max-width: 560px) { .slack-row { grid-template-columns: minmax(0, 1fr); } .slack-row .slack-act { grid-column: 1; grid-row: auto; justify-content: flex-start; } }
+.proj-dot { display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--project, var(--idle-dot)); vertical-align: 1px; }
+.set-value .proj-colors { margin-top: 0; justify-content: flex-end; }
+@media (max-width: 560px) { .set-fold-head .otag { grid-row: 2; justify-self: start; } .set-value .proj-colors { justify-content: flex-start; } }
 .channel-pick { display: flex; flex-direction: column; gap: 6px; max-width: 560px; }
 .channel-list { display: flex; flex-direction: column; max-height: 240px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
 .channel-option { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 10px; padding: 7px 10px; border: 0; border-top: 1px solid var(--line-soft); background: transparent; color: inherit; font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }

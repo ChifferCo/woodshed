@@ -1,5 +1,5 @@
-Settings rows are how My settings shows what is yours: groups of rows, each row one setting with its name, what it is
-now and its status word, opening in place on its form (`public/mySettings.js`, `row`, `line` and `group`; `.set-group`,
+Settings rows are how a settings page shows what it holds, My settings first: groups of rows, each row one setting with its name, what it is
+now and its status word, opening in place on its form (`public/settingsRows.js`, `row`, `line` and `group`, which each settings page makes with its own render; `.set-group`,
 `.set-fold` and `.set-line` in `public/style.css`). The page reads in one screen, and nothing is hidden: a closed row
 still says its value.
 
@@ -11,6 +11,11 @@ still says its value.
 - Several rows may be open at once. Opening one never closes another, and a row a link or the search names opens by
   itself. A job the person waits on (their databases being copied, a restore) keeps its row open.
 - A setting with nothing to change is a plain row: its sentence and pill, no ▸ and no button.
+- A list people add to (Settings' repos, its MCP servers) is a row per thing, then **Add a …** as the group's last
+  row. A thing's row opens on its own form, with Remove outlined in `bad` beside its Save: there is no Edit button,
+  and closing the row is its Cancel. With nothing yet, a plain row says so above the Add row.
+- A row of numbers says **Defaults** or **Changed** (`is-ok`) on its pill, and **Not saved** (`is-warn`) while a typed
+  number waits for its Save. Numbers that are saved together are one row; ones that are not are two.
 - A setting that is one pick (the theme, the default project) has its control on the row and no form to open: a
   segmented control or a select, saved as it is picked.
 - A row that removes things has its name in `bad`; its button is inside, outlined in `bad`. Never a red border on the

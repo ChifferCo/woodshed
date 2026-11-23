@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  parseCommand, publicSession, sharedRunningCount, routeQa, routeTrigger, sessionsToStart, statusUpdate, stopReason, pauseAt, withSessionLimits, canSee, activePrivateCount, parseWorkOn, sessionOptions,
+  parseCommand, publicSession, sharedRunningCount, routeQa, routeTrigger, sessionsToStart, statusUpdate, woodshedRunsOn, stopReason, pauseAt, withSessionLimits, canSee, activePrivateCount, parseWorkOn, sessionOptions,
   keptIds, pullNumber, planUsageFrom, sessionLink,
 } from './sessions.mjs';
 
@@ -239,6 +239,41 @@ test('statusUpdate keeps every pull request the session reported, oldest first, 
   const again = statusUpdate(session({ repo: 'o/r', prUrl: url(11), prUrls: second.prUrls }), { state: 'done', prUrl: url(10) }, 'now');
   assert.deepEqual(again.prUrls, [url(10), url(11)], 'one reported again keeps its place');
   assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: url(10) }), { state: 'done', prUrl: 'https://github.com/evil/r/pull/1' }, 'now').prUrls, [url(10)]);
+});
+
+test('statusUpdate takes the pull requests of the session\'s other branches, in number order', () => {
+  const url = (n) => `https://github.com/o/r/pull/${n}`;
+  const first = statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrl: url(12), prUrls: [url(11), url(12), url(14)] }, 'now');
+  assert.deepEqual(first.prUrls, [url(11), url(12), url(14)]);
+  assert.equal(first.prUrl, url(12), 'prUrl stays the checked-out branch\'s');
+  const later = statusUpdate(session({ repo: 'o/r', prUrl: url(12), prUrls: [url(12)] }), { state: 'done', prUrl: url(12), prUrls: [url(11)] }, 'now');
+  assert.deepEqual(later.prUrls, [url(11), url(12)], 'an older one found later goes before');
+  const gone = statusUpdate(session({ repo: 'o/r', prUrl: url(12), prUrls: first.prUrls }), { state: 'done', prUrl: null, prUrls: [] }, 'now');
+  assert.deepEqual(gone.prUrls, first.prUrls, 'a branch deleted since keeps its pull request');
+  const odd = statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrls: ['https://github.com/evil/r/pull/1', 7, `${url(5)}/files`, url(6)] }, 'now');
+  assert.deepEqual(odd.prUrls, [url(6)]);
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrls: 'no' }, 'now').prUrls, []);
+  const many = Array.from({ length: 30 }, (_, i) => url(i + 1));
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrls: many }, 'now').prUrls, many.slice(-20), 'the 20 newest');
+});
+
+test('a pull request says which of Woodshed\'s review and QA are at work on it', () => {
+  const url = (n) => `https://github.com/o/r/pull/${n}`;
+  const run = (number, extra) => session({ repo: 'o/r', kind: 'pr', number, status: 'running', ...extra });
+  const runsOn = woodshedRunsOn([
+    run(7, { review: { sha: 'a' } }), run(7, { qa: { sha: 'a' }, status: 'queued' }),
+    run(8, { qa: { sha: 'b' } }),
+    run(9, { review: { sha: 'c', conclusion: 'APPROVE' }, status: 'stopped' }),
+    run(10, {}),
+    session({ repo: 'o/other', kind: 'pr', number: 11, status: 'running', review: {} }),
+  ]);
+  assert.deepEqual(runsOn(url(7)), ['review', 'qa'], 'one waiting in line counts');
+  assert.deepEqual(runsOn(url(8)), ['qa']);
+  assert.deepEqual(runsOn(url(9)), [], 'a finished review is in the checks');
+  assert.deepEqual(runsOn(url(10)), [], 'a session working on the pull request is no reviewer');
+  assert.deepEqual(runsOn(url(11)), [], 'another repo\'s pull request of that number');
+  assert.deepEqual(runsOn('https://github.com/O/R/pull/8'), ['qa']);
+  assert.deepEqual(runsOn(null), []);
 });
 
 test('publicSession drops the token and the endpoint', () => {

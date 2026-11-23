@@ -223,9 +223,9 @@ export function resumeComment({ session, publicUrl, linkQuery = null, consoleNam
 export function refusalComment({ login, label, unlabeled, member, publicUrl, consoleName = DEFAULT_CONSOLE_NAME }) {
   let ask;
   if (member) {
-    ask = `An admin can turn on "Sessions from GitHub" for you on the console's People page${publicUrl ? `: ${publicUrl}/people` : '.'}`;
+    ask = `An admin can make you a Contributor, Member or Owner on the console's People page${publicUrl ? `: ${publicUrl}/people` : '.'}`;
   } else {
-    ask = `Ask an admin to add you to the console${publicUrl ? ` (${publicUrl})` : ''} and turn on "Sessions from GitHub" for you.`;
+    ask = `Ask an admin to add you to the console${publicUrl ? ` (${publicUrl})` : ''} as a Contributor, Member or Owner.`;
   }
   return [
     `@${login} can't start ${consoleName} sessions from GitHub yet, so nothing started${unlabeled ? ` and the \`${label}\` label was taken off` : ''}.`,

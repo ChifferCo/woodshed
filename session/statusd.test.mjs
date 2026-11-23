@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { isolatedEnv } from '../test/isolatedEnv.mjs';
-import { AGENT_PANE_FORMAT, sendNotAfter, sendWithinMs, stillThePull, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps, typeableText } from './statusd.mjs';
+import { AGENT_PANE_FORMAT, sendNotAfter, sendWithinMs, stillThePull, appState, branchPullsQuery, createBranchPulls, createPrLookup, githubRepoOf, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps, typeableText } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -1208,6 +1208,82 @@ test('the pull request lookup is kept for the branch, its upstream and its remot
   assert.equal(new Set([first, repointed, retracked]).size, 3, 'each change is another key');
   Object.assign(repo, { upstream: null, url: null });
   assert.equal((await prLookupKey(gitRun)).trim(), 'woodshed/joel-1', 'no upstream or remote: the branch alone');
+});
+
+test('the pull requests of every local branch are read, not only the one checked out', async () => {
+  const url = (n) => `https://github.com/o/r/pull/${n}`;
+  let clock = 0;
+  let reads = 0;
+  let local = [{ name: 'feature/docs', sha: 'c3' }, { name: 'feature/api', sha: 'b2' }, { name: 'woodshed/joel-1', sha: 'a1' }];
+  const asked = [];
+  const branchPulls = createBranchPulls({
+    branches: async () => local,
+    pullsOf: async (names) => {
+      reads += 1;
+      asked.push(names);
+      return [
+        { branch: 'feature/docs', url: url(14), headSha: 'c3', fork: false },
+        { branch: 'woodshed/joel-1', url: url(9), headSha: 'a1', fork: false },
+        { branch: 'feature/api', url: url(12), headSha: 'b2', fork: false },
+        // An older pull request that used the name, whose commits the branch does not have, and a fork's of that name.
+        { branch: 'feature/api', url: url(3), headSha: 'old', fork: false },
+        { branch: 'feature/api', url: url(13), headSha: 'b2', fork: true },
+      ];
+    },
+    isAncestor: async (sha, branch) => local.some((b) => b.name === branch && b.sha === sha),
+    now: () => clock,
+    cacheMs: 60_000,
+  });
+  assert.deepEqual(await branchPulls(), [url(9), url(12), url(14)], 'the lowest number first');
+  assert.deepEqual(asked[0], ['feature/docs', 'feature/api', 'woodshed/joel-1']);
+  await branchPulls();
+  assert.equal(reads, 1, 'kept while the branches are as they were');
+  local = [{ name: 'feature/more', sha: 'd4' }, ...local];
+  await branchPulls();
+  assert.equal(reads, 2, 'a new branch is read at once');
+  clock = 61_000;
+  await branchPulls();
+  assert.equal(reads, 3, 'and again after a minute');
+});
+
+test('a failed read of the branches\' pull requests is kept a minute, with the last good list', async () => {
+  let fail = true;
+  let reads = 0;
+  let clock = 0;
+  let local = [{ name: 'a', sha: '1' }];
+  const failing = createBranchPulls({
+    branches: async () => local,
+    pullsOf: async () => { reads += 1; if (fail) throw new Error('gh: HTTP 502'); return [{ branch: 'a', url: 'https://github.com/o/r/pull/2', headSha: local[0].sha, fork: false }]; },
+    isAncestor: async () => true,
+    now: () => clock,
+    cacheMs: 60_000,
+  });
+  assert.deepEqual(await failing(), []);
+  fail = false;
+  assert.deepEqual(await failing(), [], 'not asked again at the next status read');
+  assert.equal(reads, 1);
+  clock = 61_000;
+  assert.deepEqual(await failing(), ['https://github.com/o/r/pull/2'], 'asked again after its minute');
+  fail = true;
+  local = [{ name: 'a', sha: '2' }];
+  assert.deepEqual(await failing(), ['https://github.com/o/r/pull/2'], 'a later failure keeps the last good list');
+  assert.equal(reads, 3, 'a new commit asks at once');
+  await failing();
+  assert.equal(reads, 3);
+  const none = createBranchPulls({ branches: async () => [], pullsOf: async () => { reads += 1; return []; }, isAncestor: async () => true, now: () => 0 });
+  assert.deepEqual(await none(), []);
+  assert.equal(reads, 3, 'no branch asks nothing');
+});
+
+test('the branches\' pull requests are asked for in one query, of the repo the remote names', () => {
+  assert.deepEqual(githubRepoOf('https://github.com/o/r.git\n'), { owner: 'o', name: 'r' });
+  assert.deepEqual(githubRepoOf('git@github.com:o/r.name'), { owner: 'o', name: 'r.name' });
+  assert.equal(githubRepoOf('/srv/git/r.git'), null);
+  const { query, variables } = branchPullsQuery(['woodshed/joel-1', 'x"y']);
+  assert.deepEqual(variables, { b0: 'woodshed/joel-1', b1: 'x"y' }, 'names go as variables, never into the query');
+  assert.match(query, /^query\(\$owner: String!, \$name: String!, \$b0: String!, \$b1: String!\)/);
+  assert.match(query, /b1: pullRequests\(first: 5, [^)]*headRefName: \$b1\)/);
+  assert.ok(!query.includes('x"y'));
 });
 
 test('a send marked agentOnly types only while claude or codex runs in the pane', () => {

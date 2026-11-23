@@ -14,6 +14,8 @@ window.Woodshed.settingsPage('/events', (app, life) => {
 
   let data = null;
   let loadError = null;
+  // The list is one box of plain rows (settingsRows.js): a delivery has nothing to open.
+  const { group } = window.WoodshedSettingsRows.create({ render });
 
   function filter() {
     return new URLSearchParams(window.location.search).get('show') || 'all';
@@ -30,32 +32,42 @@ window.Woodshed.settingsPage('/events', (app, life) => {
     return true;
   }
 
+  const firstUp = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+
+  // What the console did, as the line's name. The pill beside it says which of the four it was, so the name does not.
   function result(e) {
     const session = e.sessionId && h('a', { href: `/s/${e.sessionId}` }, e.sessionId);
     if (e.outcome === 'started') return ['Started session ', session];
     if (e.outcome === 'sent') return ['Sent to session ', session];
     if (e.outcome === 'resumed') return ['Resumed session ', session];
     if (e.outcome === 'refreshed') return `Read again: ${e.reason || 'the pull request'}`;
-    if (e.outcome === 'duplicate') return `Skipped: ${e.reason || 'already handled'}`;
-    if (e.outcome === 'failed') return `Failed: ${e.reason || 'no reason recorded'}`;
-    return `Ignored: ${e.reason || 'nothing to do'}`;
+    if (e.outcome === 'duplicate') return firstUp(e.reason || 'already handled');
+    if (e.outcome === 'failed') return firstUp(e.reason || 'no reason recorded');
+    return firstUp(e.reason || 'nothing to do');
   }
 
-  function tone(e) {
-    if (ACTED.has(e.outcome)) return 'is-done';
-    if (e.outcome === 'failed') return 'is-failed';
-    return 'is-idle';
+  // A status is always a word (designSystem/README.md): the pill's colour only repeats it.
+  function pill(e) {
+    if (ACTED.has(e.outcome)) return h('span', { class: 'pill is-ok' }, 'Acted on');
+    if (e.outcome === 'failed') return h('span', { class: 'pill is-bad' }, 'Failed');
+    return h('span', { class: 'pill' }, e.outcome === 'duplicate' ? 'Skipped' : 'Ignored');
   }
 
+  // One delivery is one line of the box (designSystem/components/SettingsRows, a plain row): when it came, what the
+  // console did with it over the event, what it was on, who sent it and the delivery's id, then the status word.
   function row(e) {
-    const target = e.number ? h('a', { class: 'nowrap', href: W.issueUrl(data.repo, e), target: '_blank', rel: 'noopener' }, W.ref(e)) : '';
-    return h('tr', null,
-      h('td', { class: 'mono meta-cell' }, W.when(e.receivedAt || e.handledAt)),
-      h('td', { class: 'mono' }, e.type || 'unknown'),
-      h('td', null, target, e.detail ? h('span', { class: 'detail' }, e.detail) : null),
-      h('td', null, e.login ? W.person(e.login) : ''),
-      h('td', { class: 'result' }, h('span', { class: `status ${tone(e)}` }, h('span', { class: 'dot', 'aria-hidden': 'true' })), ' ', result(e)),
-      h('td', { class: 'mono meta-cell', title: e.deliveryId || '' }, (e.deliveryId || '').slice(0, 8)));
+    const target = e.number ? h('a', { class: 'nowrap', href: W.issueUrl(data.repo, e), target: '_blank', rel: 'noopener' }, W.ref(e)) : null;
+    const at = e.receivedAt || e.handledAt;
+    return h('section', { class: 'set-fold is-plain event-line' }, h('div', { class: 'set-fold-head' },
+      h('time', { class: 'mono event-when', datetime: at || '' }, W.when(at)),
+      h('span', { class: 'set-fold-text' },
+        h('span', { class: 'set-name' }, result(e)),
+        h('span', { class: 'set-help mono event-meta' },
+          h('span', null, e.type || 'unknown'),
+          (target || e.detail) && h('span', null, target, target && e.detail ? ' ' : null, e.detail || null),
+          e.login && h('span', null, W.person(e.login)),
+          e.deliveryId && h('span', { class: 'event-id', title: `Delivery ${e.deliveryId}` }, e.deliveryId.slice(0, 8)))),
+      pill(e)));
   }
 
   // A source switched off in Settings (webhookSwitch.mjs): said here, since its deliveries stop showing.
@@ -80,10 +92,8 @@ window.Woodshed.settingsPage('/events', (app, life) => {
     }
     const show = filter();
     const visible = data.events.filter((e) => matches(e, show));
-    const table = visible.length
-      ? h('div', { class: 'table-box' }, h('table', { class: 'events' },
-        h('thead', null, h('tr', null, ['Received', 'Event', 'On', 'From', 'Result', 'Delivery'].map((c) => h('th', { scope: 'col' }, c)))),
-        h('tbody', null, visible.map(row))))
+    const list = visible.length
+      ? group({ id: 'event-list' }, visible.map(row))
       : h('p', { class: 'empty' }, data.events.length ? 'No events match this filter.' : 'No webhook events yet.');
     app.replaceChildren(h('div', { class: 'page' },
       life.nav('/events'),
@@ -93,7 +103,7 @@ window.Woodshed.settingsPage('/events', (app, life) => {
         h('p', { class: 'foot' }, data.queue ? 'Newest first. The last 7 days are kept.' : 'No webhooks reach this console, so it only polls GitHub.'),
         h('div', { class: 'seg', role: 'group', 'aria-label': 'Show' }, FILTERS.map((f) =>
           h('button', { type: 'button', 'aria-pressed': String(f.id === show), onclick: () => setFilter(f.id) }, f.label)))),
-      table,
+      list,
       h('p', { class: 'foot' }, `A delivery with a bad signature is turned away by ${W.providerWords.webhookReceiver ?? 'the webhook receiver'} and never reaches this list. `,
         'The GitHub App’s Recent Deliveries page shows those as 401.')));
   }

@@ -95,6 +95,23 @@ test('past the cap, the older pull requests fold into one +N chip, the newest sh
   assert.deepEqual([...W2.prChips({ prs: prs.slice(0, 2) }, { max: 2 }).map((c) => c.text)], ['PR #1', 'PR #2'], 'at the cap, nothing folds');
 });
 
+test('a pull request Woodshed is reviewing or testing says so on its chip, never a tick', () => {
+  const W2 = loadCommonWithElements();
+  const green = { title: 'Fix', state: 'open', review: null, checks: { pass: 4, fail: 0, pending: 0, total: 4 } };
+  const chip = (pr, runs) => W2.prChip({ prUrl: 'https://github.com/o/r/pull/9', pr, runs });
+  assert.equal(chip(green, []).text, 'PR #9✓');
+  const reviewing = chip(green, ['review']);
+  assert.equal(reviewing.text, 'PR #9review', 'the ring has no glyph');
+  assert.match(reviewing.attrs.title, /all 4 checks passing · Woodshed review running/);
+  assert.match(chip(green, ['review', 'qa']).attrs.title, /Woodshed review and QA running/);
+  assert.equal(chip(green, ['review', 'qa']).text, 'PR #9review, QA');
+  assert.equal(chip({ ...green, checks: { pass: 3, fail: 1, pending: 0, total: 4 } }, ['qa']).text, 'PR #9QA✗', 'a failing check keeps its mark');
+  const unread = chip(null, ['qa']);
+  assert.equal(unread.text, 'PR #9QA');
+  assert.equal(unread.attrs.title, 'Woodshed QA running');
+  assert.equal(chip(null, undefined).text, 'PR #9', 'a console from before runs');
+});
+
 test('Start app offers a pick only with more than one app, and each line says what picking it does', () => {
   const apps = [{ name: 'web', label: 'Web' }, { name: 'admin', label: 'Admin' }];
   assert.equal(W.appChoices({ apps: null }), null, 'a session from an image before several apps');

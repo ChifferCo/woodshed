@@ -149,6 +149,15 @@ const sessions = [
     prUrl: 'https://github.com/example-org/example-repo/pull/26333',
     prUrls: [26331, 26332, 26333].map((n) => `https://github.com/example-org/example-repo/pull/${n}`),
   }),
+  // Woodshed's own review and QA at work on two of those pull requests: each chip says so, with the ring, where its
+  // checks alone would show a tick.
+  session('7d7d7d7d', 26332, 'Review: Split the billing page into steps', {
+    trigger: 'review', prUrl: null, status: 'running', state: 'working', stoppedAt: null, stopReason: null, assignee: null,
+    review: { base: 'main', sha: 'f00d332', heading: null, author: null, check: null, commentId: null },
+  }),
+  session('9c9c9c9c', 26333, 'QA: Split the billing page into steps', {
+    trigger: 'qa', prUrl: null, status: 'running', state: 'working', stoppedAt: null, stopReason: null, assignee: null, head: 'f00d333', qa: {},
+  }),
   session('cccc3333', 26327, 'A failed start', { status: 'failed', error: 'The container did not start.' }),
   // Running, for the top bar's buttons. With no container behind it the app's links and the terminal go nowhere.
   session('dddd4444', 26328, 'Keep background shell alive for cap', { status: 'running', stoppedAt: null, stopReason: null, app: 'stopped', appServers: { frontend: false, backend: false, frontendPort: 5173, backendPort: 8080 }, hasShell: true, editor: true,
@@ -267,6 +276,7 @@ const sessions = [
     ...(reviewPr ? { kind: 'task', trigger: 'my-woodshed', owner: 'local', assignee: null, prUrl: `https://github.com/${reviewPr.slug}/pull/${reviewPr.number}` } : {}),
   }),
   // Running on a project that declares two apps, with the real statusd behind it: Start app ▾ lists them.
+  // Its checkout's three branches have a pull request each, which that statusd reports: three chips on its card.
   session(APPS_ID, 26702, 'A project with two apps', {
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', hasShell: true,
     ref: twoApps.ref, endpoint: { host: '127.0.0.1', statusPort: twoApps.port, termPort: twoApps.port },
@@ -330,6 +340,17 @@ const mcpServers = [
   { name: 'docs', url: 'https://docs.example.com/mcp', production: false, shared: true, people: '*', repos: '*', auth: 'oidc', audience: 'docs', header: null, headerSavedAt: null, updatedBy: 'local', updatedAt: '2026-11-19T09:00:00.000Z' },
   { name: 'tracker', url: 'https://tracker.example.com/mcp', production: false, shared: false, people: ['local'], repos: '*', auth: 'header', audience: null, header: 'x-api-key', headerSavedAt: null, updatedBy: 'local', updatedAt: '2026-11-19T09:00:00.000Z' },
 ];
+// DEV_CONSOLE_PEOPLE=1 gives the People page a list to show: made-up members with their switches every way, and two
+// people asking to join. Without it the console starts its list from the sessions' owners, with nobody asking.
+const people = process.env.DEV_CONSOLE_PEOPLE === '1' ? {
+  members: {
+    local: { addedBy: null, addedAt: '2026-10-01T09:00:00.000Z', how: 'first to sign in', admin: true, adminBy: 'local', adminAt: '2026-10-01T09:00:00.000Z', githubSessions: true, githubSessionsBy: 'local', githubSessionsAt: '2026-10-01T09:00:00.000Z', assignable: true, assignableBy: 'local', assignableAt: '2026-10-01T09:00:00.000Z' },
+    octocat: { addedBy: null, addedAt: '2026-10-01T09:00:00.000Z', how: 'already using the console', githubSessions: true, githubSessionsBy: 'local', githubSessionsAt: '2026-10-02T09:00:00.000Z', assignable: true, assignableBy: 'local', assignableAt: '2026-10-02T09:00:00.000Z' },
+    'mia-dev': { addedBy: 'local', addedAt: '2026-11-03T09:00:00.000Z', how: 'invited', githubSessions: true, githubSessionsBy: 'local', githubSessionsAt: '2026-11-03T09:00:00.000Z' },
+    'sam-ops': { addedBy: 'local', addedAt: '2026-11-12T09:00:00.000Z', how: 'accepted' },
+  },
+  memberRequests: { 'lee-new': { askedAt: '2026-11-20T08:00:00.000Z' }, 'kim-design': { askedAt: '2026-11-18T15:30:00.000Z' } },
+} : {};
 // DEV_CONSOLE_EXEC_PORT=<port> adds a running My Woodshed session of @local's, 55aa55aa, for `woodshed tunnel`
 // (console/execPipe.mjs): its statusd is a session container you started yourself, with its 7682 published on that
 // port of loopback and its SESSION_TOKEN in the file DEV_CONSOLE_EXEC_TOKEN_FILE (cli/README.md, "Trying the tunnel").
@@ -366,7 +387,7 @@ function devTokenUsage() {
       { [`${day(6)}T09:00:00.000Z`]: { agent: 'codex', billing: 'key', days: { [day(6)]: { 'gpt-6.2-astra': o(2), 'gpt-next-preview': o(1) } } } }),
   };
 }
-fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null, mcpServers, tokenUsage: devTokenUsage() }));
+fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null, mcpServers, tokenUsage: devTokenUsage(), ...people }));
 
 // The shell's own console settings, under either name (shared/envNames.mjs: a GitHub App, required sign-in, the ECS
 // launcher), would turn this back into the real console, so none of them are passed on, but hosted mode's
@@ -512,6 +533,23 @@ function devRepoSettings(dir) {
 // GH_TOKEN stands in for `gh auth token`, and polling is off, so nothing here calls GitHub: the open pull requests come
 // from devGh.mjs's gh.
 const webhookPort = process.env.DEV_CONSOLE_WEBHOOKS === '1' ? await freePort() : null;
+// Made-up deliveries for the Webhook events page (console/webhookEvents.mjs), oldest first as the log is written: one
+// of each thing the console does with a message. Nothing sent them.
+if (webhookPort) {
+  const at = (minutesAgo) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
+  const delivery = (n) => `${String(n).repeat(8)}-0000-4000-8000-${String(n).repeat(12)}`;
+  const event = (minutesAgo, n, fields) => ({ receivedAt: at(minutesAgo), handledAt: at(minutesAgo), deliveryId: delivery(n), type: null, number: null, kind: null, login: null, detail: '', sessionId: null, reason: null, ...fields });
+  const made = [
+    event(190, 1, { type: 'label', number: 41, kind: 'issue', login: 'mia-dev', detail: 'woodshed', outcome: 'started', sessionId: 'aaaa1111' }),
+    event(150, 2, { type: 'comment', number: 41, kind: 'issue', login: 'mia-dev', detail: '/woodshed also cover the empty state', outcome: 'sent', sessionId: 'aaaa1111' }),
+    event(95, 3, { type: 'label', number: 41, kind: 'issue', login: 'mia-dev', detail: 'woodshed', outcome: 'duplicate', reason: 'the poll already started this one' }),
+    event(60, 4, { type: 'pr', number: 57, kind: 'pr', login: 'sam-ops', detail: 'review submitted', outcome: 'refreshed', reason: 'the chip and the Slack post' }),
+    event(32, 5, { type: 'comment', number: 63, kind: 'pr', login: 'drive-by', detail: '/woodshed fix the flaky test', outcome: 'ignored', reason: 'drive-by has no write access to the repo' }),
+    event(14, 6, { type: 'mention', login: 'slack:U0MADEUP01', detail: 'how do sessions get their databases?', outcome: 'ignored', reason: 'Slack questions are switched off on Console settings' }),
+    event(3, 7, { type: 'comment', number: 41, kind: 'issue', login: 'mia-dev', detail: '/woodshed pick this up again', outcome: 'failed', reason: 'the session could not be resumed: its Claude home was not saved' }),
+  ];
+  fs.writeFileSync(path.join(stateDir, 'webhookEvents.jsonl'), made.map((e) => `${JSON.stringify(e)}\n`).join(''), { mode: 0o600 });
+}
 let child = null;
 function startConsole() {
   child = spawn(process.execPath, [server], {

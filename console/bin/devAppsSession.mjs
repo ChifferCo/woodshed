@@ -2,6 +2,8 @@
 // (session/statusd.mjs) over a small checkout made here. Start app's menu, the switch from one app to the other and Open
 // app (`http://<id>.apps.localhost:<port>/`) all work as in a session: each app is a page that names itself, on its own
 // frontend port beside one backend they share. No container, tmux or claude: the TUI and Terminal tabs go nowhere.
+// Its checkout has three branches with a pull request each, one of them in a git worktree, behind a stand-in `gh`: its
+// card shows a chip for each (branchesWithPulls).
 // The console reads a session's status only while its launcher says the container runs, so `binDir` holds a `docker`
 // that says so for this session's container alone, and hands every other call to the real one, if there is one.
 
@@ -51,6 +53,44 @@ function project({ webPort, adminPort, apiPort }) {
   return JSON.stringify({ version: 1, apps: [app('web', 'Web', webPort), app('admin', 'Admin', adminPort)] });
 }
 
+const REPO = 'example-org/example-repo';
+export const DEV_APPS_PULLS = { checkedOut: 26351, pushed: 26352, worktree: 26353 };
+
+/**
+ * Three branches with a pull request each, as a session that opened three has them: the one checked out, one pushed
+ * and left, and one in a git worktree. The `gh` it writes answers `gh pr view` for the branch checked out and
+ * statusd's read of every branch's pull requests (session/statusd.mjs, branchPullsQuery); each head is the branch's
+ * own commit. The card then shows a chip for each.
+ * @returns {string}  the folder of that `gh`, for statusd's PATH
+ */
+function branchesWithPulls({ root, repo, id, git }) {
+  const read = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+  git('remote', 'add', 'origin', `https://github.com/${REPO}.git`);
+  git('branch', `woodshed/${id}-api`);
+  git('worktree', 'add', '-q', '-b', `woodshed/${id}-docs`, path.join(root, 'docs-worktree'));
+  const sha = read('rev-parse', 'HEAD');
+  const url = (number) => `https://github.com/${REPO}/pull/${number}`;
+  const pulls = { [`woodshed/${id}`]: DEV_APPS_PULLS.checkedOut, [`woodshed/${id}-api`]: DEV_APPS_PULLS.pushed, [`woodshed/${id}-docs`]: DEV_APPS_PULLS.worktree };
+  const dir = path.join(root, 'gh-bin');
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'gh.mjs'), `const args = process.argv.slice(2);
+const pulls = ${JSON.stringify(pulls)};
+if (args[0] === 'pr' && args[1] === 'view') {
+  console.log(${JSON.stringify(url(DEV_APPS_PULLS.checkedOut))});
+} else if (args[0] === 'api' && args[1] === 'graphql') {
+  const asked = args.filter((a) => /^b\\d+=/.test(a)).map((a) => [a.slice(0, a.indexOf('=')), a.slice(a.indexOf('=') + 1)]);
+  const repository = Object.fromEntries(asked.map(([alias, branch]) => [alias, { nodes: pulls[branch]
+    ? [{ url: 'https://github.com/${REPO}/pull/' + pulls[branch], headRefName: branch, headRefOid: '${sha}', isCrossRepository: false }] : [] }]));
+  console.log(JSON.stringify({ data: { repository } }));
+} else {
+  console.error('gh: not answered by the dev console');
+  process.exit(1);
+}
+`);
+  fs.writeFileSync(path.join(dir, 'gh'), `#!/bin/sh\nexec '${process.execPath}' '${path.join(dir, 'gh.mjs')}' "$@"\n`, { mode: 0o755 });
+  return dir;
+}
+
 /** @param {{id: string, token: string, env?: NodeJS.ProcessEnv}} opts  `env` the environment its statusd starts from, this process's by default (a test's isolatedEnv) */
 export async function startDevAppsSession({ id, token, env = process.env }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-apps-'));
@@ -65,6 +105,7 @@ export async function startDevAppsSession({ id, token, env = process.env }) {
   git('init', '-q', '-b', `woodshed/${id}`);
   git('add', '-A');
   git('commit', '-q', '-m', 'two apps');
+  const ghDir = branchesWithPulls({ root, repo, id, git });
   const port = await freePort();
   // A home of its own, and an ordinary claude session's agent and mode whatever the dev console runs in: its token count
   // (session/tokenUsage.mjs) follows HOME, CODEX_HOME, AGENT and a review's REVIEW_* to the agent's records, and with
@@ -72,11 +113,12 @@ export async function startDevAppsSession({ id, token, env = process.env }) {
   const home = path.join(root, 'home');
   fs.mkdirSync(home);
   const child = spawn(process.execPath, [STATUSD], {
-    env: { ...env, HOME: home, SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '',
+    env: { ...env, PATH: [ghDir, env.PATH].join(path.delimiter), HOME: home, SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '',
+      // A QA run or a question starts the dev console with its own mode, in which statusd reports no pull request.
       WOODSHED_CLAUDE_AUTH: '', AGENT: '', SESSION_MODE: '', CODEX_HOME: path.join(home, '.codex'), REVIEW_AGENTS: '', REVIEW_CODEX_AUTH: '', REVIEW_CODEX_HOME: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  // Its app decisions only: tmux and gh are not here, which it warns of on every status read.
+  // Its app decisions only: tmux is not here, which it warns of on every status read.
   const relay = (chunk) => { if (/statusd: app/.test(String(chunk))) process.stdout.write(`dev apps session: ${chunk}`); };
   child.stdout.on('data', relay);
   child.stderr.on('data', relay);

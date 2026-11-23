@@ -395,7 +395,7 @@ test('Webhook events is under Settings, not an entry of its own, and Keyboard sh
   const menu = t.side().querySelector('div.user-menu');
   assert.ok(!menu.querySelectorAll('a.menu-item').some((a) => a.getAttribute('href') === '/events'), 'nor in the avatar menu');
   assert.ok(!menu.querySelectorAll('a.menu-item').some((a) => /Webhook events/.test(a.textContent)));
-  assert.deepEqual([...t.W.consoleLinks().map((l) => l.label)], ['Settings', 'People']);
+  assert.deepEqual([...t.W.consoleLinks().map((l) => l.label)], ['Settings'], 'People is a tab of Settings, not an entry');
   assert.equal(t.settingsEntry().getAttribute('aria-current'), 'true', 'Settings is the set the page is in');
   assert.deepEqual(t.subs('side-sub').map(([, href, mark]) => [href, mark]), [
     ['/console-settings', null], ['/secrets', null], ['/orgs/acme/members', null], ['/orgs/acme/credits', null],
@@ -509,7 +509,7 @@ test('the side list: You with the program\'s pages, Console, then the program\'s
   assert.deepEqual(account.current(), ['/account'], 'the You entry marked');
 });
 
-test('behind a hosting proxy with the program\'s list, People is Settings\' tab after Secrets & webhooks, before the program\'s', async () => {
+test('People is Settings\' tab after Secrets & webhooks, before the program\'s, behind a hosting proxy and on a console of its own', async () => {
   const people = (W) => [['/people', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/people'), W.h('h1', null, 'Settings'), W.settingsTabs('/people')))]];
   const t = load('/people', people, { me: { login: 'sam', admin: true, hosted: true, people: true, settingsTabs: HOST_TABS } });
   await answered();
@@ -529,10 +529,12 @@ test('behind a hosting proxy with the program\'s list, People is Settings\' tab 
   assert.deepEqual(without.subs('menu-sub').map(([label]) => label), ['General', 'Secrets & webhooks'], 'without the list, no People');
   assert.deepEqual([...without.W.consoleLinks().map((l) => l.href)], ['/console-settings']);
 
-  const own = load('/settings', mine, { me: { login: 'sam', admin: true, people: true } });
+  const own = load('/settings', mine, { me: { login: 'sam', admin: true, people: true, asking: 2 } });
   await answered();
-  assert.deepEqual(own.subs('menu-sub').map(([label]) => label), ['General', 'Secrets & webhooks'], 'on a console of its own People stays an entry');
-  assert.deepEqual([...own.W.consoleLinks().map((l) => l.href)], ['/console-settings', '/people']);
+  assert.deepEqual(own.subs('menu-sub').map(([label]) => label), ['General', 'Secrets & webhooks', 'People2'], 'on a console of its own People is the same tab, with how many ask to join');
+  assert.deepEqual([...own.W.consoleLinks().map((l) => l.href)], ['/console-settings'], 'and no entry of its own');
+  const count = own.side().querySelectorAll('a.side-item').find((a) => a.getAttribute('href') === '/console-settings' && !a.matches('a.side-sub')).querySelector('span.menu-count');
+  assert.deepEqual([count.textContent, count.getAttribute('title')], ['2', '2 asking to join'], 'Settings counts those asking, since People is under it');
 });
 
 test('someone who is not an owner behind a hosting proxy gets no People tab', async () => {

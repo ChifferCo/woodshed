@@ -822,8 +822,8 @@
       v.last && h('p', { class: `peek-last${v.last.error ? ' is-error' : ''}` }, v.last.who && h('span', { class: 'peek-who' }, `${v.last.who}: `), v.last.text),
       v.prs.length > 0 && h('div', { class: 'peek-prs' }, v.prs.map((p) => h('div', { class: 'peek-pr' },
         h('div', { class: 'peek-pr-head' }, h('span', { class: 'peek-num' }, p.number), p.title && h('span', { class: 'peek-pr-title' }, p.title)),
-        (p.state || p.checks || p.review) && h('div', { class: 'peek-pr-sub' },
-          [p.state, p.checks && h('span', { class: `peek-checks is-${p.level}` }, p.checks), p.review]
+        (p.state || p.checks || p.review || p.running) && h('div', { class: 'peek-pr-sub' },
+          [p.state, p.checks && h('span', { class: `peek-checks is-${p.level}` }, p.checks), p.review, p.running && h('span', { class: 'peek-checks is-pending' }, p.running)]
             .filter(Boolean).flatMap((part, i) => (i ? [' · ', part] : [part])))))),
       v.rows.length > 0 && h('dl', { class: 'peek-rows' }, v.rows.flatMap(([term, value]) => [h('dt', null, term), h('dd', { class: term === 'Branch' ? 'is-mono' : null }, value)])),
     ].filter(Boolean);
@@ -891,6 +891,12 @@
     const control = card && e.target.closest('a:not(.rname), button, .prchip');
     if (card && !control) peekSoon(card.dataset.session, 'pointer');
     else if (peek.id) hidePeek();
+  });
+  // A pointer that leaves a card straight into the terminal, the review or another iframe sends this page no further
+  // move, so leaving the card is what hides it there.
+  document.addEventListener('mouseout', (e) => {
+    if (peek.by !== 'pointer' || !e.target.closest?.('.rail .rcard')) return;
+    if (!e.relatedTarget?.closest?.('.rail .rcard')) hidePeek();
   });
   document.addEventListener('focusin', (e) => {
     const name = peekable() && e.target.closest?.('.rail .rcard .rname');

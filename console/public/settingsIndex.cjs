@@ -74,6 +74,8 @@
       words: 'slack set up setup connect bot token signing secret manifest app install channel post notify announce pr pull request review qa brief channel id questions ask mention answer thread follow-up running at once limits disconnect' },
     { page: '/console-settings', id: 'card-webhooks', title: 'Webhooks', note: 'Turn GitHub\'s webhooks off, so the console polls instead.',
       words: 'webhook github events off on switch poll polling deliveries' },
+    { page: '/console-settings', id: 'mcp-servers', title: 'MCP servers', note: 'The tools claude gets in sessions, each reached through the console.',
+      words: 'mcp server tool relay header token oidc production ordinary add test remove' },
     { page: '/console-settings', id: 'card-data', title: 'Sessions holding data', note: 'Databases and Claude homes kept by stopped sessions.',
       words: 'stalled drop delete cleanup storage homes databases kept' },
 

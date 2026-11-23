@@ -676,6 +676,18 @@ export async function createInstallation({ config: loaded, store, provider, trus
     },
     /** Disconnect, for the host when the person leaves: the stored token goes and GitHub ends it. */
     disconnectGitHub: async (login) => { if (githubUser) await githubUser.disconnect(login); },
+    /**
+     * The Slack match core's own sign-in makes (slackPeople.mjs, matchOnSignIn), for a host that signs people in
+     * itself: `emails()` answers the verified emails on their GitHub account, and is only called when a look is due
+     * (at most once a day, never over a link set by hand). As at sign-in, only a member is matched, so someone the
+     * host's list does not have leaves nothing behind. Never throws.
+     * @param {{login: string, emails: () => Promise<string[]>}} args
+     * @returns {Promise<'linked'|'unmatched'|'manual'|'skipped'>}
+     */
+    matchSlack: async ({ login, emails }) => {
+      if (members && !members.isMember(login)) return 'skipped';
+      return slackPeople.matchOnSignIn({ login, emails });
+    },
     summary: () => ({
       repo: defaultProject(config).repo, projects: config.projects?.map((p) => p.name), label: config.label,
       launcher: config.launcher.kind, maxRunning: config.maxRunning, pollGitHub: config.pollGitHub,
