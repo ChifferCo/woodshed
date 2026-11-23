@@ -1150,7 +1150,7 @@ GitHub on People (on for everyone on a hosted console) for a review to use their
 gives the repo a project file that names no review, for the console's default review.
 `DEV_CONSOLE_REVIEW_PR=1` makes `/s/beadfeed` @local's own My Woodshed session whose branch has a made-up open pull
 request, #26701, answered by a stand-in `gh` (`console/bin/devReviewGh.mjs`), for `woodshed review beadfeed` and the
-review's comment, verdict, rename and merge (cli/README.md, "Reviewing a session on this terminal").
+review's comment, verdict, rename and merge, and a made-up review by Claude Code and Codex for the AI reviews tab (cli/README.md, "Reviewing a session on this terminal").
 `DEV_CONSOLE_WEBHOOKS=1` names a webhook receiver (which never listens, since polling is off), so the Console
 settings page shows its GitHub webhooks switch (Slack's needs a console that answers Slack questions).
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on

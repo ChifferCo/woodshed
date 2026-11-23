@@ -1120,6 +1120,71 @@
       pr && ` · ${PR_STATE_WORD[pr.state]}${pr.title ? ` · ${pr.title}` : ''}`]);
   }
 
+  /**
+   * What the rail's hover card says about a session (session.js railPeek), as words for the page to draw: the status
+   * word with what comes next on its own (when it pauses or stops, or since when it is stopped), the agent's last line,
+   * then a row each for its pull requests and their checks, branch, agent, last activity and who has it. Nothing here
+   * is new: it is what the card, its chips' tooltips and Details already say, in one place the pointer reaches.
+   * @param {object} s  the session, as /api/sessions gives it
+   * @param {object} data  the page's data: the console's idle numbers and the viewer's login
+   * @param {{project?: string|null, nowMs?: number}} [opts]  the project's name when the rail shows more than one
+   * @returns {{title: string, key: string, word: string, next: string|null, last: {who: string|null, text: string, error: boolean}|null,
+   *   prs: {number: string, title: string|null, state: string|null, checks: string|null, level: string|null, review: string|null}[],
+   *   rows: [string, string][]}}
+   */
+  function peekView(s, data, { project = null, nowMs = Date.now() } = {}) {
+    const st = displayStatus(s);
+    const live = isLive(s);
+    const at = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    let next = null;
+    if (s.status === 'running') {
+      const end = pauseLeft(s, data);
+      if (end) next = end.left > 0 ? `${end.why === 'lifetime' ? 'stops' : 'pauses'} at ${at(nowMs + end.left)}, in ${span(end.left)}` : `${end.why === 'lifetime' ? 'stops' : 'pauses'} any moment`;
+      else if (BUSY_STATES.has(s.state) && s.kind !== 'ask') next = 'never pauses while it works';
+    } else if (s.status === 'starting' && s.startedAt) {
+      next = startProgress(s).current?.short ?? null;
+    } else if (isResumable(s)) {
+      next = [keptLine(s), st.key !== 'merged' && deletedIn(s)].filter(Boolean).join(' · ');
+    } else if (isPrivate(s) && !live) {
+      next = privateStopLine(s, data.login) || null;
+    } else if (!live && s.stoppedAt) {
+      next = ago(s.stoppedAt);
+    }
+    const line = lastLine(s);
+    const MAX = 280;
+    const last = line && {
+      who: line.who === 'assistant' ? agentTitle(s) : line.who === 'user' ? 'Asked' : null,
+      text: line.text.length > MAX ? `${line.text.slice(0, MAX - 1).trimEnd()}…` : line.text,
+      error: Boolean(line.error),
+    };
+    // Every pull request it opened, a merged or closed one the chips no longer show too, as Details lists them.
+    const allPrs = s.prs?.length ? s.prs : s.prUrl ? [{ url: s.prUrl, pr: s.pr ?? null }] : [];
+    const prs = allPrs.map(({ url, pr }) => ({
+      number: prNumber(url), title: pr?.title ?? null,
+      state: pr ? (pr.state === 'queued' && pr.queuePosition ? `${PR_STATE_WORD.queued}, position ${pr.queuePosition}` : PR_STATE_WORD[pr.state]) : null,
+      checks: pr ? checksWord(pr.checks) : null,
+      level: pr?.checks ? (pr.checks.fail ? 'fail' : pr.checks.pending ? 'pending' : 'pass') : null,
+      review: pr ? REVIEW_WORD[pr.review] ?? null : null,
+    }));
+    const model = [s.options?.model, s.options?.effort && `${s.options.effort} effort`].filter(Boolean).join(', ');
+    const activity = !live ? null
+      : s.status === 'running' && s.state === 'working' ? 'Working now'
+        : s.lastActiveAt ? ago(s.lastActiveAt) : null;
+    const startedBy = isPrivate(s) || s.kind === 'ask' ? null : personText(s.startedBy);
+    const rows = [
+      ['Project', project],
+      // A session started on an issue, or on a pull request it did not open, says which.
+      ['Works on', s.number && !(s.kind === 'pr' && prs.some((p) => p.number === `#${s.number}`)) ? ref(s) : null],
+      ['Branch', s.branch],
+      ['Agent', `${agentTitle(s)}${model ? ` · ${model}` : ''}`],
+      ['Last activity', activity],
+      ['Started', s.startedAt ? [startedBy, ago(s.startedAt)].filter(Boolean).join(', ') : null],
+      ['Assigned to', !isPrivate(s) && s.kind !== 'ask' && !['review', 'qa'].includes(s.trigger) ? (s.assignee ? personText(s.assignee) : 'Nobody') : null],
+      ['Production data', s.taintedAt ? `Since ${ago(s.taintedAt)}` : null],
+    ].filter(([, value]) => value);
+    return { title: s.title, key: st.key, word: capitalised(st.word), next, last, prs, rows };
+  }
+
   // What the container uses, against what it may: amber past 70% of its memory or 150% CPU, red past 90% or 190%.
   function fmtBytes(bytes) {
     if (bytes < 1024 ** 2) return `${Math.round(bytes / 1024)} KB`;
@@ -1892,6 +1957,6 @@
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
+    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, peekView, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
 })();
