@@ -1716,6 +1716,19 @@ export function createFleet({
   }
 
   /**
+   * Another agent started in a private session beside its own (session/agents.mjs), recorded before the session is asked
+   * to start it: a Codex one may then use its owner's Codex sign-in (sessionApi.mjs GET /codex-auth) or the team's key
+   * (openaiProxy.mjs), as a Codex session does.
+   * @param {object} session
+   * @param {'claude'|'codex'} agent
+   */
+  function allowAgent(session, agent) {
+    if ((session.extraAgents ?? []).includes(agent)) return;
+    console.log('fleet: another agent allowed in the session', { id: session.id, agent });
+    update(session, { extraAgents: [...(session.extraAgents ?? []), agent] });
+  }
+
+  /**
    * New session on My Woodshed: a session private to `owner`, on their own Claude token. The console posts no comment
    * or reaction; the session itself still pushes its branch and opens a PR, as any session does.
    * @param {{owner: string, prompt: string, name?: string, workOn?: string, model?: string, effort?: string,
@@ -2899,7 +2912,7 @@ export function createFleet({
   }
 
   return {
-    createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

@@ -125,6 +125,21 @@ several options, and anything else the agent asks only in its terminal stay **An
 the **TUI** tab (`?tab=tui`; `?tab=agent`, its old name, still opens it): hooks, Remote Control and Resume work as before. A session that is not running has
 no Chat tab and shows its start or its end there.
 
+**More than one agent in a session.** The owner of a running My Woodshed session can start another agent in it, beside
+its own: the agent switch on the pane bar, after the tabs while Chat or TUI shows (`components/AgentSwitch`), has
+**+ Another agent**, a dialog with New session's Agent, Model, Effort and Permissions and an optional first message
+(`POST /api/sessions/<id>/agents`, checked as New session checks its form; the console logs `console: another agent
+asked for`, and `fleet: another agent allowed in the session` the first time a session runs that agent). Up to three
+run beside the session's own, each in the same checkout in a tmux session of its own (`session/agents.mjs`). The
+switch lists them all with their state words and says how many others need you; picking one points Chat at its own
+conversation (`/api/sessions/<id>/agents/<agent-N>/transcript`, `send`, `interrupt`, `prompt`, `answer`) and the TUI
+tab at its terminal (`/term/<id>/?arg=agent-N`, ttyd's URL argument). The pick is kept per session in the browser tab.
+**Stop** in the switch's menu ends one. A Codex agent beside claude runs on its owner's Codex sign-in, which the
+session asks for only as it starts (`POST /codex-sign-in` on the session API), or on the team's OpenAI key through the
+console's proxy, as a Codex session does. A shared session, a question, a review and a QA run have none, nor a session
+that has seen production data: its lockdown stops them. They last while the session runs: a Resume starts its own
+agent alone.
+
 Under claude's terminal on the TUI tab, a phone has a message box
 (`public/messageBox.js`): the phone's own keyboard, so autocorrect, dictation
 and paste work, **📎** for photos and files, and **🎤** for the browser's speech

@@ -2652,3 +2652,61 @@ test('the console\'s limit on one message is statusd\'s own, so nothing it accep
   const statusdSource = await (await import('node:fs/promises')).readFile(new URL('../session/statusd.mjs', import.meta.url), 'utf8');
   assert.match(statusdSource, new RegExp(`const MAX_SEND_CHARS = ${MAX_MESSAGE_CHARS};`));
 });
+
+test('another agent in a private session: its owner\'s alone, checked as New session checks it, and each one\'s Chat routes go to statusd', async (t) => {
+  const asked = [];
+  const statusd = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      asked.push({ method: req.method, url: req.url, body });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+  });
+  const statusPort = await listen(statusd);
+  t.after(() => statusd.close());
+  const mine = { id: '0a1b2c3d', status: 'running', title: 't', token: 'tok', owner: 'local', endpoint: { host: '127.0.0.1', termPort: 1, statusPort } };
+  const theirs = { ...mine, id: '1b2c3d4e', owner: 'octocat' };
+  const tainted = { ...mine, id: '2c3d4e5f', taintedAt: '2026-11-23T10:00:00Z' };
+  const all = [mine, theirs, tainted];
+  const allowed = [];
+  const fleet = {
+    sessions: () => all, find: (id) => all.find((s) => s.id === id) ?? null, isLocked: () => false,
+    allowAgent: (s, agent) => allowed.push([s.id, agent]),
+  };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, launcher: { kind: 'docker' }, localLogin: 'local',
+  };
+  const server = http.createServer(createHandler({ config, fleet }));
+  const port = await listen(server);
+  t.after(() => server.close());
+  const call = (path, body, method = 'POST') => fetch(`http://127.0.0.1:${port}${path}`, {
+    method, headers: { 'content-type': 'application/json', 'x-woodshed': '1' }, ...(body !== undefined && { body: JSON.stringify(body) }),
+  });
+
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'claude', model: 'opus', prompt: 'look' })).status, 200);
+  assert.deepEqual(allowed, [['0a1b2c3d', 'claude']]);
+  assert.deepEqual(JSON.parse(asked[0].body), { agent: 'claude', model: 'opus', effort: '', permissionMode: 'auto', prompt: 'look' });
+  assert.equal(asked[0].url, '/agents');
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'claude', model: 'opus; rm -rf /' })).status, 400, 'a model New session does not offer');
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'bash' })).status, 400);
+  assert.equal((await call('/api/sessions/1b2c3d4e/agents', { agent: 'claude' })).status, 404, 'someone else\'s session');
+  assert.equal((await call('/api/sessions/2c3d4e5f/agents', { agent: 'claude' })).status, 409, 'a tainted session starts none');
+  assert.equal(asked.length, 1, 'nothing refused reached the session');
+
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents', undefined, 'GET')).status, 200);
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/transcript?limit=50&since=x', undefined, 'GET')).status, 200);
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/send', { text: 'hi', id: 'msg-00000001', extra: 1 })).status, 200);
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/interrupt', { keys: 'rm -rf /' })).status, 200);
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/stop', {})).status, 200);
+  assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-1/stop', {})).status, 404, 'not an agent beside the session\'s own');
+  assert.deepEqual(asked.slice(1).map((a) => [a.method, a.url, a.body]), [
+    ['GET', '/agents', ''],
+    ['GET', '/agents/agent-2/transcript?limit=50', ''],
+    ['POST', '/agents/agent-2/send', '{"text":"hi","id":"msg-00000001"}'],
+    ['POST', '/agents/agent-2/interrupt', '{}'],
+    ['POST', '/agents/agent-2/stop', '{}'],
+  ]);
+});

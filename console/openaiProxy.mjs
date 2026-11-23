@@ -22,7 +22,7 @@
 
 import http from 'node:http';
 import https from 'node:https';
-import { isReview } from './sessions.mjs';
+import { isReview, runsCodex } from './sessions.mjs';
 import { credentialOf } from './codexModels.mjs';
 
 const PREFIX = '/openai';
@@ -165,7 +165,8 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, userSettings
       console.warn('openaiProxy: refused, no active session has that token', { from: req.socket.remoteAddress });
       return refuse(res, 401, 'not an active Woodshed session');
     }
-    if (session.options?.agent !== 'codex' && !(isReview(session) && session.review.agents?.includes('codex'))) {
+    // A private session whose owner started a Codex agent beside its claude (session/agents.mjs) runs codex too.
+    if (!runsCodex(session) && !(isReview(session) && session.review.agents?.includes('codex'))) {
       req.resume();
       console.warn('openaiProxy: refused, not a Codex session', { sessionId: session.id });
       return refuse(res, 403, 'only a Codex session may use the team\'s OpenAI key');

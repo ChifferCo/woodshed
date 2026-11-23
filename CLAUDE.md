@@ -907,6 +907,19 @@ URL on top of each env file's Repo settings values
   speech recognition, and says why in a toast when the site may not use the
   microphone. A terminal that reconnected by itself logs `terminal:
   reconnecting` in the browser's console.
+- **+ Another agent fails, or the agent switch is missing.** The switch shows only to the owner of a running My
+  Woodshed session whose statusd reports `agents` (an image from before `session/agents.mjs` reports none). A start
+  logs `console: another agent asked for`, then in the session `agents: agent started` with its id, agent, model and
+  mode, or the dialog says why: 409 `at most 3 agents`, `seen production data`, `started before it could start another
+  claude` (no `/tmp/woodshed-agent-claude-flags`: an image from before) or `codex is not set up` (no
+  `/tmp/woodshed-codex-ready`: configureCodex failed, `WARNING: codex not set up` in the session's log). A Codex agent
+  beside claude logs `statusd: Codex sign-in asked for an agent` with the status and `own`; the console logs
+  `sessionApi: Codex sign-in decided` with `beside: true`, and refuses the team key with `openaiProxy: refused, not a
+  Codex session` until the session has `extraAgents` with codex. Its state changes log `agents: agent state changed`; in
+  the session, `tmux ls` lists `agent-2` and the rest, `cat /tmp/woodshed-agent-2-state.json` its last hook, and its TUI
+  is `tmux attach -t =agent-2`. A Chat that shows another agent's conversation means its record was not told apart:
+  claude's by its `--session-id` or the transcript its hooks name, codex's by the rollout its process holds open
+  (`ls -l /proc/<codex pid>/fd`).
 - **Chat's Send says `Not sent: this session started before Chat could send safely`.** Its statusd predates the
   guarded send (its `/status` has no `safeSend`), and would type blind, Enter and all, into whatever is on screen: the
   console logs `console: message from the page refused, the session cannot send safely`. Type in the TUI tab, or start
@@ -1122,7 +1135,9 @@ worktree) behind a stand-in `gh`: its card shows a chip for each (`devAppsSessio
 `/s/c0de5e55` (codex) and `/s/c1a0de00` (claude) open on a Chat tab that works: the real statusd over a private tmux,
 whose pane runs a stand-in agent (`devChatAgent.mjs`) writing the agents' real record formats. `/s/c1a0de02` is that
 claude started from a Claude home holding an earlier session's conversation, as a private session started while another
-runs is: its Chat stays empty until it is sent a message. `/s/c1a0dea1` runs the
+runs is: its Chat stays empty until it is sent a message. `/s/a6e1a6e1` is @local's own session on that stand-in codex, whose
+agent switch starts stand-in claudes and codexes beside it (`session/agents.mjs`), each with a Chat and a TUI tab that
+work. `/s/c1a0dea1` runs the
 real `claude` instead, in a clone of this checkout with no remote and with its TUI tab live, on this machine's Claude
 credential, with `DEV_CONSOLE_REAL_CLAUDE=1`. It spends that credential's usage, and its session can run commands as
 this machine, so it is never behind Start app's console, which Open app and app shares reach with no sign-in:

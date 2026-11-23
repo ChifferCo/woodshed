@@ -396,6 +396,42 @@ const MAX_APP_LABEL = 60;
  * @returns {{name: string, label: string}[]|null}  the apps Start app can pick, as statusd listed them; null from a
  *   statusd from before several apps, which runs its one app
  */
+/** Whether the session runs codex: a Codex session, or a private one whose owner started a Codex agent in it
+ * (fleet.allowAgent): its owner's Codex sign-in and the team's OpenAI key are for it as for a Codex session. */
+export function runsCodex(session) {
+  return session.options?.agent === 'codex' || (Boolean(session.owner) && (session.extraAgents ?? []).includes('codex'));
+}
+
+const AGENT_STATES = new Set(['starting', 'working', 'needs-you', 'done', 'not-running']);
+const MESSAGE_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
+const AGENT_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+
+/**
+ * The agents statusd says run beside the session's own (session/agents.mjs), as the page reads them: each one's id,
+ * agent, model, effort, permission mode, state, and the page's ids of the messages it holds or typed in. Null from a
+ * session that cannot start any (an older image, a shared session), which the page then offers none to.
+ * @param {unknown} agents  statusd's `agents`
+ * @returns {object[]|null}
+ */
+export function agentsFrom(agents) {
+  if (!Array.isArray(agents)) return null;
+  const ids = (list) => (Array.isArray(list) ? list.filter((id) => typeof id === 'string' && MESSAGE_ID_RE.test(id)).slice(-20) : []);
+  const name = (value) => (typeof value === 'string' && AGENT_NAME_RE.test(value) ? value : null);
+  return agents.filter((a) => /^agent-[2-9]$/.test(a?.id ?? '') && AGENTS.includes(a.agent)).slice(0, 3).map((a) => ({
+    id: a.id,
+    agent: a.agent,
+    model: name(a.model),
+    effort: name(a.effort),
+    permissionMode: name(a.permissionMode),
+    startedAt: typeof a.startedAt === 'string' && !Number.isNaN(Date.parse(a.startedAt)) ? a.startedAt : null,
+    state: AGENT_STATES.has(a.state) ? a.state : null,
+    heldIds: ids(a.heldIds),
+    deliveredIds: ids(a.deliveredIds),
+    refusedIds: ids(a.refusedIds),
+    leftInBox: typeof a.leftInBox?.id === 'string' && MESSAGE_ID_RE.test(a.leftInBox.id) ? { id: a.leftInBox.id } : null,
+  }));
+}
+
 export function appsFrom(apps) {
   if (!Array.isArray(apps)) return null;
   const valid = apps.slice(0, MAX_APPS).filter((a) => APP_NAME_RE.test(a?.name ?? ''));
@@ -515,6 +551,8 @@ export function statusUpdate(session, status, nowIso) {
     // several from branches of their own.
     prUrls: withPrUrls(session, [...otherPrUrls, prUrl]),
     app: APP_STATES.has(status.app) ? status.app : null,
+    // The agents a person started beside its own, for the page's switch over Chat and TUI.
+    agents: agentsFrom(status.agents),
     // Claude's own id for the conversation, which Resume hands back to `claude --resume`.
     claudeSession: CLAUDE_SESSION_RE.test(status.claudeSession ?? '') ? status.claudeSession : session.claudeSession ?? null,
     appServers: appServersFrom(status.appServers),

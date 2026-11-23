@@ -88,6 +88,12 @@
 //   POST /api/sessions/<id>/answer  the Chat tab's answer to it, which the session types only once its pane shows that
 //        same prompt: {"kind": "question", "questions": [{question, options, pick}]} or {"kind": "approval",
 //        "decision": "approve"|"deny", "key": <GET /prompt's key, the hash of exactly what it asks>} (session/panePrompt.mjs)
+//   GET  /api/sessions/<id>/agents  the agents started beside a private session's own, each with its state (statusd's
+//                                   /agents): its owner's alone
+//   POST /api/sessions/<id>/agents  {"agent", "model", "effort", "permissionMode", "prompt"} starts another in it, its
+//                                   model and effort checked as New session checks them
+//   ANY  /api/sessions/<id>/agents/<agent-N>/transcript|send|interrupt|prompt|answer|stop   that agent's Chat routes, as
+//                                   the session's own below, and its stop
 //   GET  /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>  the conversation so far (what was asked, said and
 //        run), for the Chat tab; `since` answers {unchanged: true} while the agent wrote nothing newer
 //        (session/sessionTranscript.mjs)
@@ -234,7 +240,7 @@ import { checkGh } from './github.mjs';
 import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
 import { applyStored, createGitHubAppSetup, supervisorOf } from './githubAppSetup.mjs';
 import { createInstallation } from './installation.mjs';
-import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf, publicSession, sharedRunningCount, woodshedRunsOn } from './sessions.mjs';
+import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf, publicSession, sessionOptions, sharedRunningCount, woodshedRunsOn } from './sessions.mjs';
 import { WEBHOOK_SECRET } from './settings.mjs';
 import { openStore } from './store.mjs';
 import { parseHandle } from './members.mjs';
@@ -350,6 +356,8 @@ const SHARED_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(resume|delete|remove
 const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename)$/;
 const LIMIT_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(extend|limits)$/;
 const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|interrupt|answer|prompt|applog|diff|transcript)$/;
+// The agents started beside a private session's own (session/agents.mjs): the list, a start, and each one's Chat routes.
+const AGENTS_RE = /^\/api\/sessions\/([0-9a-f]{8})\/agents(?:\/(agent-[2-9])\/(transcript|send|interrupt|answer|prompt|stop))?$/;
 // The skills in the repo change with a merge; an hour is soon enough for a / list.
 const SKILLS_FRESH_MS = 60 * 60_000;
 // A project's open pull requests, for New session's Work on list: every launcher that opens asks.
@@ -1887,6 +1895,80 @@ export function createHandler({
     return session?.status === 'running' && session.endpoint ? session : null;
   }
 
+  /**
+   * The agents beside a private session's own (session/agents.mjs), its owner's to start, switch to and stop: the
+   * console checks what a start asks for as New session's form, notes that the session may run that agent
+   * (fleet.allowAgent, for a Codex one's sign-in), and passes the rest to statusd's /agents.
+   */
+  async function agentAction(req, res, [, id, agentId, action], login) {
+    const found = findFor(id, login);
+    const session = runningFor(id, login);
+    if (!found || found.owner !== login) {
+      req.resume();
+      return reply(res, 404, { error: 'no such session of yours' });
+    }
+    if (!session) {
+      req.resume();
+      return reply(res, 409, { error: 'the session is not running' });
+    }
+    const url = new URL(req.url, 'http://console.invalid');
+    if (!agentId) {
+      if (req.method === 'GET') return toStatusd(req, res, session, { method: 'GET', path: '/agents' });
+      if (req.method !== 'POST') return reply(res, 405, { error: 'GET or POST' });
+      let body;
+      try {
+        body = await readJson(req);
+      } catch (err) {
+        return reply(res, 400, { error: err.message });
+      }
+      if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
+      let picked;
+      try {
+        picked = sessionOptions({ agent: body?.agent, model: body?.model ?? '', effort: body?.effort ?? '', permissionMode: body?.permissionMode || 'auto' });
+      } catch (err) {
+        return reply(res, 400, { error: err.message });
+      }
+      const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
+      if (prompt.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in the first message` });
+      fleet.allowAgent(session, picked.agent);
+      console.log('console: another agent asked for', { id: session.id, agent: picked.agent, model: picked.model || null, effort: picked.effort || null, permissionMode: picked.permissionMode, prompt: Boolean(prompt.trim()) });
+      return toStatusd(req, res, session, { method: 'POST', path: '/agents', body: { ...picked, prompt } });
+    }
+    const base = `/agents/${agentId}`;
+    if (req.method === 'GET' && (action === 'transcript' || action === 'prompt')) {
+      const limit = action === 'transcript' ? url.searchParams.get('limit') : null;
+      const since = action === 'transcript' ? url.searchParams.get('since') : null;
+      const params = new URLSearchParams({
+        ...(limit && /^\d{1,4}$/.test(limit) && { limit }),
+        ...(since && /^\d{1,16}(\.\d{1,6})?$/.test(since) && { since }),
+      });
+      return toStatusd(req, res, session, { method: 'GET', path: `${base}/${action}${params.size ? `?${params}` : ''}` });
+    }
+    if (req.method !== 'POST' || action === 'transcript' || action === 'prompt') return reply(res, 405, { error: 'not that method' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    if (action === 'stop' || action === 'interrupt') {
+      console.log(`console: agent ${action === 'stop' ? 'stopped' : 'interrupted'} from the page`, { id: session.id, agent: agentId });
+      return toStatusd(req, res, session, { method: 'POST', path: `${base}/${action}`, body: {} });
+    }
+    if (action === 'answer') {
+      const sent = answerBody(body);
+      if (!sent) return reply(res, 400, { error: 'not an answer: a question\'s picks, or approve or deny' });
+      console.log('console: answer typed in from the page', { id: session.id, agent: agentId, kind: sent.kind });
+      return toStatusd(req, res, session, { method: 'POST', path: `${base}/answer`, body: sent });
+    }
+    // send: statusd holds it while that agent works, and types it once it is back at its prompt (agents.mjs).
+    if (typeof body?.text !== 'string' || !body.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f\s]/g, '')) return reply(res, 400, { error: 'nothing to send' });
+    if (body.text.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in one message` });
+    const messageId = typeof body.id === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(body.id) ? body.id : randomUUID();
+    console.log('console: message typed in from the page', { id: session.id, agent: agentId, chars: body.text.length });
+    return toStatusd(req, res, session, { method: 'POST', path: `${base}/send`, body: { text: body.text, id: messageId } });
+  }
+
   async function terminalAction(req, res, [, id, action], login) {
     const session = runningFor(id, login);
     if (!session) {
@@ -1897,7 +1979,7 @@ export function createHandler({
     if (action === 'upload') {
       // `none` saves the file and types nothing: the phone's message box adds its path to the message itself.
       const asked = url.searchParams.get('pane');
-      const pane = asked === 'none' ? null : asked === 'terminal' ? 'terminal' : 'agent';
+      const pane = asked === 'none' ? null : asked === 'terminal' ? 'terminal' : /^agent-[2-9]$/.test(asked ?? '') ? asked : 'agent';
       const query = new URLSearchParams({ name: url.searchParams.get('name') || 'file', ...(pane && { pane }) });
       return toStatusd(req, res, session, { method: 'POST', path: `/upload?${query}`, maxBytes: MAX_ATTACHMENT_BYTES });
     }
@@ -2440,6 +2522,8 @@ export function createHandler({
     if (repoRoute) return repoSettingsApi(req, res, { route: repoRoute, login });
     const terminalWrite = TERMINAL_RE.exec(pathname);
     if (terminalWrite && ['upload', 'scroll', 'send', 'interrupt', 'answer'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
+    const agentWrite = AGENTS_RE.exec(pathname);
+    if (agentWrite) return agentAction(req, res, agentWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings/webhooks') return webhookSwitchWrite(req, res, login);
     if (MCP_SERVERS_WRITES.has(pathname)) return mcpServersWrite(req, res, pathname, login);
@@ -2693,6 +2777,8 @@ export function createHandler({
     }
     const shareRead = APP_SHARE_RE.exec(pathname);
     if (shareRead && !shareRead[2]) return appShareAction(req, res, shareRead, user.login);
+    const agentRead = AGENTS_RE.exec(pathname);
+    if (agentRead) return agentAction(req, res, agentRead, user.login);
     const imageMatch = TERMINAL_RE.exec(pathname);
     if (imageMatch?.[2] === 'applog' || imageMatch?.[2] === 'diff' || imageMatch?.[2] === 'transcript' || imageMatch?.[2] === 'prompt') {
       const session = runningFor(imageMatch[1], user.login);
