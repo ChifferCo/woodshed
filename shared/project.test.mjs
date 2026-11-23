@@ -7,7 +7,6 @@ import path from 'node:path';
 
 import { appNamed, checkoutDir, EMPTY_PROJECT, envFileKey, envFileKeys, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, secretEnvName, unsetPlaceholders, usesOldOverridesName, usesVariable, writeEnvFiles } from './project.mjs';
 import { fixtureApp, fixtureCheckout, fixtureProject, fixtureProjectFiles } from './projectFixture.mjs';
-import { isolatedEnv } from '../test/isolatedEnv.mjs';
 
 const SCRIPT = path.join(import.meta.dirname, 'project.mjs');
 
@@ -636,43 +635,4 @@ test('project.mjs never statically imports databases/index.mjs, which imports it
   const databases = path.join(import.meta.dirname, 'databases', 'index.mjs');
   assert.ok(staticallyReaches(databases, SCRIPT), 'the walk reads databases/index.mjs\'s import of project.mjs');
   assert.equal(staticallyReaches(SCRIPT, databases), false, 'project.mjs reaches databases/index.mjs through its static imports');
-});
-
-test('the rules and setup files are never read through a link out of the checkout, which could name a sign-in', (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'project-rules-link-'));
-  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'project-rules-elsewhere-'));
-  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(elsewhere, { recursive: true, force: true }); });
-  // An inert sentinel where a sign-in would be.
-  const sentinel = path.join(elsewhere, 'agent-auth');
-  fs.writeFileSync(sentinel, 'SENTINEL-NOT-A-SECRET');
-  fs.mkdirSync(path.join(dir, '.woodshed'));
-  fs.mkdirSync(path.join(dir, 'docs'));
-  fs.writeFileSync(path.join(dir, '.woodshed/project.yaml'), fixtureProject({ rules: 'docs/rules.md', setup: 'docs/setup.md' }));
-  const cli = (field) => {
-    try {
-      return { out: execFileSync('node', [SCRIPT, 'file', field], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: isolatedEnv({ PATH: process.env.PATH, REPO_DIR: dir }) }) };
-    } catch (err) {
-      return { out: err.stdout, err: err.stderr, failed: true };
-    }
-  };
-
-  // A link inside the checkout is the repo's own choice.
-  fs.writeFileSync(path.join(dir, 'RULES.md'), 'Our rules\n');
-  fs.symlinkSync('../RULES.md', path.join(dir, 'docs/rules.md'));
-  fs.writeFileSync(path.join(dir, 'docs/setup.md'), 'Our setup\n');
-  assert.deepEqual([cli('rules').out, cli('setup').out], ['Our rules\n', 'Our setup\n']);
-
-  for (const field of ['rules', 'setup']) {
-    fs.rmSync(path.join(dir, `docs/${field}.md`));
-    fs.symlinkSync(sentinel, path.join(dir, `docs/${field}.md`));
-    const read = cli(field);
-    assert.equal(read.failed, true, field);
-    assert.match(read.err, new RegExp(`docs/${field}\\.md is a link to a file outside the checkout, which is never read`));
-    assert.doesNotMatch(`${read.out}${read.err}`, /SENTINEL/, `${field}: the sentinel is never printed`);
-  }
-  // A folder on the path that links out is the same.
-  fs.rmSync(path.join(dir, 'docs'), { recursive: true });
-  fs.symlinkSync(elsewhere, path.join(dir, 'docs'));
-  fs.writeFileSync(path.join(elsewhere, 'rules.md'), 'SENTINEL-NOT-A-SECRET');
-  assert.equal(cli('rules').failed, true);
 });

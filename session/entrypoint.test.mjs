@@ -1498,3 +1498,42 @@ test('an own-sign-in agent\'s start stops without its sign-in, and keeps the cop
   assert.match(settings, /\(umask 077 && printf '%s' "\$token" > "\$OWN_AGENT_AUTH_FILE"\)/);
   assert.match(fn('configureMcp'), /\[ "\$\{AGENT:-claude\}" = claude \]/, 'MCP servers only for claude');
 });
+
+test('the rules and setup files are never read through a link out of the checkout, which could name a sign-in', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'project-rules-link-'));
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'project-rules-elsewhere-'));
+  t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(elsewhere, { recursive: true, force: true }); });
+  // An inert sentinel where a sign-in would be.
+  const sentinel = path.join(elsewhere, 'agent-auth');
+  fs.writeFileSync(sentinel, 'SENTINEL-NOT-A-SECRET');
+  fs.mkdirSync(path.join(dir, '.woodshed'));
+  fs.mkdirSync(path.join(dir, 'docs'));
+  fs.writeFileSync(path.join(dir, '.woodshed/project.yaml'), fixtureProject({ rules: 'docs/rules.md', setup: 'docs/setup.md' }));
+  const cli = (field) => {
+    try {
+      return { out: execFileSync('node', [path.join(SHARED_DIR, 'project.mjs'), 'file', field], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: isolatedEnv({ PATH: process.env.PATH, REPO_DIR: dir }) }) };
+    } catch (err) {
+      return { out: err.stdout, err: err.stderr, failed: true };
+    }
+  };
+
+  // A link inside the checkout is the repo's own choice.
+  fs.writeFileSync(path.join(dir, 'RULES.md'), 'Our rules\n');
+  fs.symlinkSync('../RULES.md', path.join(dir, 'docs/rules.md'));
+  fs.writeFileSync(path.join(dir, 'docs/setup.md'), 'Our setup\n');
+  assert.deepEqual([cli('rules').out, cli('setup').out], ['Our rules\n', 'Our setup\n']);
+
+  for (const field of ['rules', 'setup']) {
+    fs.rmSync(path.join(dir, `docs/${field}.md`));
+    fs.symlinkSync(sentinel, path.join(dir, `docs/${field}.md`));
+    const read = cli(field);
+    assert.equal(read.failed, true, field);
+    assert.match(read.err, new RegExp(`docs/${field}\\.md is a link to a file outside the checkout, which is never read`));
+    assert.doesNotMatch(`${read.out}${read.err}`, /SENTINEL/, `${field}: the sentinel is never printed`);
+  }
+  // A folder on the path that links out is the same.
+  fs.rmSync(path.join(dir, 'docs'), { recursive: true });
+  fs.symlinkSync(elsewhere, path.join(dir, 'docs'));
+  fs.writeFileSync(path.join(elsewhere, 'rules.md'), 'SENTINEL-NOT-A-SECRET');
+  assert.equal(cli('rules').failed, true);
+});
