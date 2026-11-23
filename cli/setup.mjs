@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { CONFIG_KEYS, CONFIG_UNAVAILABLE } from './config.mjs';
 import { ORIGIN_RE } from './credentials.mjs';
+import { sessionHere } from './hc.mjs';
 
 // With --yes, setup reviews this many of the person's open pull requests, the ones updated last: enough to see reviews
 // work on their own code, without spending their plan on a long tail of old branches.
@@ -28,7 +29,10 @@ export const SETUP_USAGE = `Usage: woodshed setup [--console <url>] [--json] [--
                          (with several repos, each as owner/name#12)
                          (with --yes and no --review-prs: the ${REVIEW_PRS_DEFAULT} updated last)
   --skip-reviews         skip the review check, your reviewer choice and reviews of your pull requests
-  --terminal <name>      optional: agent terminal for new private sessions, herdr or tmux
+  --terminal <name>      optional: agent terminal for new private sessions, herdr or tmux. With herdr, setup also
+                         starts woodshed session watch --herdr --add in Herdr, which adds each of your sessions to
+                         Herdr's sidebar as it starts or resumes, wherever it was started
+  --no-herdr-add         with herdr: start that watch without --add, so sessions are added only by session herdr
   --prompt <text>        optional: start a first coding session on this
   --no-session           finish without starting a session
   --wait[=<N>m]          when Claude Code or Codex is not connected yet, print the steps and wait until it is,
@@ -88,7 +92,7 @@ function options(args, fail) {
   const out = { repos: [] };
   for (let i = 0; i < args.length; i++) {
     const [name, inline] = args[i].split(/=(.*)/s);
-    if (['--yes', '--skip-reviews', '--no-session'].includes(name) && inline === undefined) {
+    if (['--yes', '--skip-reviews', '--no-session', '--no-herdr-add'].includes(name) && inline === undefined) {
       out[name] = true;
       continue;
     }
@@ -527,7 +531,10 @@ export async function setupCommand(args, ctx) {
     }
   }
 
-  const canAttach = me.hc?.ok === true && ctx.platform !== 'win32';
+  // Inside a Woodshed session hc is that session's own Herdr, which the person's computer never shows: nothing is added
+  // to it from here (sessions.mjs says the same to session herdr and --herdr).
+  const insideSession = sessionHere(env ?? {});
+  const canAttach = me.hc?.ok === true && ctx.platform !== 'win32' && !insideSession;
   let terminal = opts['--terminal'];
   const checkTerminal = canConfig && (choose || terminal || (canAttach && !opts['--no-session']));
   const currentTerminal = checkTerminal ? await call('config get terminal', 'config', 'get', 'terminal') : null;
@@ -550,6 +557,27 @@ export async function setupCommand(args, ctx) {
       if (set.code !== EXIT.done) return childError('terminal', set, 'Could not save your agent terminal preference.');
     }
     report('terminal', 'done', `New private sessions will run their agents in ${terminal === 'herdr' ? 'Herdr' : 'tmux'}.`, { terminal });
+  }
+
+  // With Herdr, each of the person's sessions shows in Herdr's sidebar by default: a watch in Herdr adds each as it starts
+  // or resumes, wherever it was started (the console's page, Slack, an agent in another session).
+  if (terminal === 'herdr') {
+    const add = !opts['--no-herdr-add'];
+    const watchWords = ['session', 'watch', '--herdr', ...(add ? ['--add'] : [])];
+    if (insideSession) {
+      report('herdr-watch', 'skipped', `This runs inside Woodshed session ${insideSession}, whose Herdr your computer never shows. On your computer, run ${command(...watchWords)} to have your sessions added to Herdr there.`);
+    } else if (!canAttach) {
+      report('herdr-watch', 'skipped', `Herdr's hc ${me.hc?.minimum ?? ''} or newer is not here, so your sessions are not added to Herdr. Once it is, run ${command(...watchWords)}.`.replace('hc  or', 'hc or'));
+    } else {
+      const watch = await call('session watch', ...watchWords);
+      if (watch.code !== EXIT.done) return childError('herdr-watch', watch, `Could not start the watch in Herdr. Run ${command(...watchWords)}.`);
+      const kept = watch.last?.action === 'kept';
+      const what = add ? 'Each of your private sessions is added to Herdr\'s sidebar as it starts or resumes, wherever it was started' : 'Herdr tells you as your sessions start, need you or stop; add one to its sidebar with woodshed session herdr <id>';
+      const message = kept
+        ? `Herdr already runs hc terminal woodshed-watch, as it was started.${add ? ' If it was started without --add, run hc kill woodshed-watch, then setup again, to have it add your sessions.' : ''}`
+        : `${what}: hc terminal woodshed-watch runs ${command(...watchWords)}. Stop it with hc kill woodshed-watch${add ? ', or rerun setup with --no-herdr-add' : ''}.`;
+      report('herdr-watch', 'done', message, { add, action: watch.last?.action ?? null });
+    }
   }
 
   const code = await firstSession();
