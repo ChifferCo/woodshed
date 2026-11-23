@@ -404,6 +404,8 @@
     const title = slots.head.querySelector('.ptitle');
     const anchor = title?.getClientRects().length ? title : slots.head;
     const r = anchor.getBoundingClientRect();
+    // Measured from the left edge, where nothing squeezes it, then placed under the title.
+    offer.el.style.left = '8px';
     const width = offer.el.offsetWidth;
     offer.el.style.top = `${Math.round(r.bottom + 6)}px`;
     offer.el.style.left = `${Math.round(Math.max(8, Math.min(r.left, window.innerWidth - width - 8)))}px`;
@@ -441,6 +443,8 @@
       keep();
       if (offer.editing) return;
       offer.editing = true;
+      // The name's field needs the row: the pickers go under it, at any width.
+      el.classList.add('is-editing');
       const input = h('input', { class: 'field', value: currentSession?.title ?? s.title, maxlength: '120', 'aria-label': 'Session name', autocomplete: 'off' });
       const save = h('button', { type: 'submit', class: 'btn btn-plain btn-sm' }, 'Save');
       const form = h('form', { class: 'rename-offer-form' }, input, save,
