@@ -1179,15 +1179,6 @@
   }
 
   /**
-   * The rail's groups (session.js): a session started as a piece of another's work (`startedFrom`, not `startedApart`)
-   * nests under it while that one is live and on the same list, the same person's. Once it stops, they are each on their
-   * own again, so a live session never hides in a folded Stopped zone.
-   * @param {object[]} listed  the sessions the rail shows
-   * @returns {{top: object[], kids: Map<string, object[]>, parentOf: Map<string, object>}}  `top` the sessions in no
-   *   group, `kids` each group's sessions by its session's id (those asking their person first, asksPerson, then the
-   *   live, then the newest), `parentOf` the group each nested one is in
-   */
-  /**
    * Whether a session in a group asks its person for something: a question or an approval on its screen, or paused
    * waiting for Resume. Narrower than needsYou, which counts a live session that is done (waiting for the next message)
    * too: a finished piece of a group's work is not a call for the person.
@@ -1197,6 +1188,15 @@
     return isLive(s) ? displayStatus(s).key === 'needs-you' : needsYou(s);
   }
 
+  /**
+   * The rail's groups (session.js): a session started as a piece of another's work (`startedFrom`, not `startedApart`)
+   * nests under it while that one is live and on the same list, the same person's. Once it stops, they are each on their
+   * own again, so a live session never hides in a folded Stopped zone.
+   * @param {object[]} listed  the sessions the rail shows
+   * @returns {{top: object[], kids: Map<string, object[]>, parentOf: Map<string, object>}}  `top` the sessions in no
+   *   group, `kids` each group's sessions by its session's id (those asking their person first, asksPerson, then the
+   *   live, then the newest), `parentOf` the group each nested one is in
+   */
   function railGroups(listed) {
     const byId = new Map(listed.map((s) => [s.id, s]));
     const parentOf = new Map();

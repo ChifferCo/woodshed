@@ -991,9 +991,11 @@
     if (!cardMenu.el.hidden && (e.target === document || slots.rail?.contains(e.target))) closeCardMenu();
   }, true);
 
-  function menuButton(s) {
+  // `key`: the menu's own, the session's id, or another for a second card of it (the Needs you copy), so each menu stays
+  // on the card it opened from.
+  function menuButton(s, key = s.id) {
     return h('button', {
-      type: 'button', class: 'rmenu', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === s.id), 'data-session': s.id, 'data-menu-for': s.id,
+      type: 'button', class: 'rmenu', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === key), 'data-session': s.id, 'data-menu-for': key,
       'aria-label': `Actions for ${s.title}`, title: 'Actions',
       onclick: (e) => { e.preventDefault(); e.stopPropagation(); openCardMenu(e.currentTarget, s); },
     }, '⋯');
@@ -1105,7 +1107,7 @@
         h('a', { class: 'rname', href, title: peekable() ? null : project ? `${s.title} · project ${project.name}` : s.title, 'aria-label': project ? `${s.title}, project ${project.name}` : null }, s.title),
         // The word Assigned on Mine means yours; a session you started that someone else has names them, as on Everyone.
         showOwnerTag(s) && W.ownerTag(s, { named: !railMine() || !W.sameLogin(s.assignee, data.login) }),
-        h('span', { class: 'rmarks' }, starButton(s), menuButton(s))),
+        h('span', { class: 'rmarks' }, starButton(s), menuButton(s, inGroup ? `${s.id}:copy` : s.id))),
       h('div', { class: 'rsub' },
         h('span', { class: 'rsub-text' }, sub),
         W.hasPrs(s) ? W.prChips(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
