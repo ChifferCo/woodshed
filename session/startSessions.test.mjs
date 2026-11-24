@@ -136,3 +136,8 @@ test('rename names this session, or another when given its id', async () => {
   assert.deepEqual(out.calls.map((c) => [c.url.replace('http://10.8.0.1:7691', ''), c.body.name]), [['/rename', 'Billing page'], ['/sessions/c0c0c0c0/rename', 'Totals in cents']]);
   assert.match(out.stdout, /^Renamed aaaa0001: Billing page\nRenamed c0c0c0c0: Totals in cents\n$/);
 });
+
+test('a session that has seen production data is said to be so, with no last line', () => {
+  const lines = describe({ id: 'c0c0c0c0', status: 'running', state: 'done', title: 'Prod check', url: 'https://console.example/s/c0c0c0c0', lastMessage: null, tainted: true });
+  assert.deepEqual(lines.slice(2), ['  has seen production data: what it says stays on the console']);
+});

@@ -88,11 +88,17 @@ export function isStartsPath(pathname) {
 
 const text = (value, max) => (typeof value === 'string' && value ? value.slice(0, max) : null);
 
-/** What the starting session sees of one it started: enough to tell how it is doing and where to open it. */
+/**
+ * What another session sees of one: enough to tell how it is doing and where to open it. Of a session that has seen
+ * production data, nothing its agent wrote: its last message could carry that data to a session with no lockdown, as its
+ * conversation could (the transcript route refuses it). `error` and `stopReason` are the console's own words.
+ */
 export function startedSummary(s, { publicUrl, linkQuery = null }) {
+  const tainted = Boolean(s.taintedAt);
   return {
     id: s.id, title: text(s.title, 200), status: s.status, state: s.state ?? null, project: s.project ?? null, branch: s.branch ?? null,
-    agent: s.options?.agent === 'codex' ? 'codex' : 'claude', prUrl: s.prUrl ?? null, lastMessage: text(s.lastMessage?.text, 500),
+    agent: s.options?.agent === 'codex' ? 'codex' : 'claude', prUrl: s.prUrl ?? null, lastMessage: tainted ? null : text(s.lastMessage?.text, 500),
+    ...(tainted ? { tainted: true } : {}),
     createdAt: s.createdAt ?? null, startedAt: s.startedAt ?? null, stoppedAt: s.stoppedAt ?? null, stopReason: text(s.stopReason, 200),
     error: text(s.error, 300), url: sessionLink(publicUrl, s.id, linkQuery),
   };
@@ -134,7 +140,7 @@ export function createSessionStarts({
   const summary = (s) => startedSummary(s, { publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
 
   function startedBy(session) {
-    return fleet.sessions().filter((s) => s.startedFrom === session.id).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    return fleet.sessions().filter((s) => s.startedFrom === session.id && s.owner === session.owner).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
   async function handle(req, res) {

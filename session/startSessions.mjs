@@ -87,6 +87,7 @@ export function describe(s) {
   if (facts.length) lines.push(`  ${facts.join(', ')}`);
   if (s.error || s.stopReason) lines.push(`  ${s.error ? 'failed' : 'stopped'}: ${s.error ?? s.stopReason}`);
   if (s.lastMessage) lines.push(`  last: ${s.lastMessage.split('\n')[0].slice(0, 200)}`);
+  if (s.tainted) lines.push('  has seen production data: what it says stays on the console');
   return lines;
 }
 

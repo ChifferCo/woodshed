@@ -305,3 +305,19 @@ test('a session renames itself, and another of its person\'s, as the page does',
   assert.equal((await api.call('POST', '/rename', { token, body: { name: '  ' } })).status, 400);
   assert.equal((await api.call('POST', `/sessions/${strangers.id}/rename`, { token, body: { name: 'x' } })).status, 404);
 });
+
+test('of a session that has seen production data, no route hands over what its agent wrote', async (t) => {
+  const { token, child, sibling, sessions } = family();
+  for (const s of [child, sibling]) Object.assign(s, { taintedAt: new Date(NOW).toISOString(), state: 'done', lastMessage: { role: 'assistant', text: 'Customer 4411 owes 1,204.50.', at: new Date(NOW).toISOString() } });
+  const api = await serve({ sessions });
+  t.after(api.close);
+  const answers = [
+    (await api.call('GET', `/sessions/${sibling.id}`, { token })).body.session,
+    ...(await api.call('GET', '/sessions?all=1', { token })).body.sessions,
+    ...(await api.call('GET', '/sessions', { token })).body.sessions,
+    (await api.call('GET', `/sessions/${sibling.id}/wait`, { token })).body.session,
+  ];
+  assert.equal(answers.length, 5);
+  for (const one of answers) assert.deepEqual([one.lastMessage, one.tainted], [null, true], one.id);
+  assert.doesNotMatch(JSON.stringify(answers), /4411/);
+});

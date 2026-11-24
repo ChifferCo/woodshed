@@ -894,7 +894,8 @@ one session's machine to another's. `list --all` lists them; `list` alone the on
   what was sent, or says nothing took it up (never seen working, with nothing held, for 90 s). The console answers each
   wait within 4 minutes and the command asks again.
 - `read <id>` is what it was asked and said, from its statusd's `/transcript`, tools left out. A session that has seen
-  production data is never read by another (403).
+  production data is never read by another (403), and what any route says of it (`get`, `list`, `wait`) carries
+  nothing its agent wrote: no last message, and `tainted: true`.
 - `stop <id>` and `resume <id>` are the page's Stop and Resume, with Resume's checks (`resumeMine` in `server.mjs`).
 - `rename "<name>"` renames the session itself, `rename <id> "<name>"` another of the person's, as the page's rename.
 
