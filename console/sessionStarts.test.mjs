@@ -346,3 +346,20 @@ test('of a session that has seen production data, no route hands over what its a
   for (const one of answers) assert.deepEqual([one.lastMessage, one.tainted], [null, true], one.id);
   assert.doesNotMatch(JSON.stringify(answers), /4411/);
 });
+
+test('a separate start is its own work: marked so, and out of the starting session\'s list', async (t) => {
+  const { token, session } = holder();
+  const sessions = [session];
+  const api = await serve({ sessions });
+  t.after(api.close);
+  const part = await api.call('POST', '/sessions', { token, body: { prompt: 'A piece of this work' } });
+  const apart = await api.call('POST', '/sessions', { token, body: { prompt: 'Something else', separate: true } });
+  assert.equal(api.asked[0].body.startedApart, undefined);
+  assert.equal(api.asked[1].body.startedApart, true);
+  sessions.find((s) => s.id === apart.body.session.id).startedApart = true;
+  assert.equal(part.body.session.separate, undefined);
+  const list = await api.call('GET', '/sessions', { token });
+  assert.deepEqual(list.body.sessions.map((s) => s.id), [part.body.session.id], 'list follows the pieces of its own work');
+  const all = await api.call('GET', '/sessions?all=1', { token });
+  assert.deepEqual(all.body.sessions.find((s) => s.id === apart.body.session.id).separate, true);
+});

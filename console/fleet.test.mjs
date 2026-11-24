@@ -1239,6 +1239,11 @@ test('each run of a person\'s own session gets a start token, kept only as its h
 
   const child = await fleet.startPrivate({ owner: 'joel', prompt: 'Add CSV export', startedFrom: mine.id });
   assert.equal(child.startedFrom, mine.id);
+  assert.equal(child.startedApart, undefined, 'a piece of the starting session\'s work');
+  const apart = await fleet.startPrivate({ owner: 'joel', prompt: 'Audit refunds', startedFrom: mine.id, startedApart: true });
+  assert.deepEqual([apart.startedFrom, apart.startedApart], [mine.id, true], 'work of its own, still saying where it came from');
+  const ofTeam = await fleet.createSession({ kind: 'task', number: null, title: 't', startedBy: 'joel', trigger: 'label', startedFrom: mine.id, startedApart: true });
+  assert.deepEqual([ofTeam.startedFrom, ofTeam.startedApart], [undefined, undefined], 'only a person\'s own session says where it came from');
 
   statuses[mine.id] = { state: 'working' };
   await fleet.tick();
