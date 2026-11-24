@@ -1,4 +1,4 @@
-// The rail head's bell, in the desktop app only: the notifications the app showed, newest first, each opening its
+// The bell in the rail's foot, in the desktop app only: the notifications the app showed, newest first, each opening its
 // session (desktop/notificationLog.mjs keeps them, desktop/preload.cjs hands them over as window.woodshedNotifications).
 // A browser has no such bridge, and no bell. designSystem/components/NotificationBell.
 (function () {
