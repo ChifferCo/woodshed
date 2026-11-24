@@ -148,6 +148,10 @@ test('with no choice saved, a review runs every reviewer that can, Grok Build an
   assert.equal((await agents.options('gil')).best, 'claude+codex+grok+opencode');
   const picked = setup({ agentOwn: { grok: ['gil'], opencode: ['gil'] }, choices: { gil: 'both' } });
   assert.deepEqual((await picked.forReview({ login: 'gil' })).agents, ['claude', 'codex'], 'a saved choice still leaves them out');
+  const dead = setup({ team: { claude: true, codex: false }, agentOwn: { grok: ['gil'] }, choices: { gil: 'codex' } });
+  const fell = await dead.forReview({ login: 'gil' });
+  assert.deepEqual(fell.agents, ['claude', 'grok'], 'none of the saved choice can run: the default runs, and Grok Build is in it');
+  assert.match(fell.why, /the author chose codex, which this console cannot run now/);
   const grokOnly = setup({ team: { claude: false, codex: false }, agentOwn: { grok: ['gil'] } });
   assert.deepEqual([(await grokOnly.forReview({ login: 'gil' })).agents, (await grokOnly.options('gil')).best], [['grok'], 'grok']);
 });

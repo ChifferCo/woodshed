@@ -152,8 +152,9 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   }
 
   // Whether reviews of your pull requests may run this agent on your sign-in. On once a sign-in is saved, unless turned
-  // off; the default then includes it (console/reviewAgents.mjs). A saved choice that leaves it out does not. The
-  // console adds the sign-in to the agent's calls (console/reviewAgentProxy.mjs), never into the review session.
+  // off; the default then includes it (console/reviewAgents.mjs). A saved choice that leaves it out does not, unless
+  // none of that choice can run, in which case the default runs. The console adds the sign-in to the agent's calls
+  // (console/reviewAgentProxy.mjs), never into the review session.
   function agentReviewsSwitch(id) {
     const a = A.agent(id);
     if (!a.reviews) return null;
@@ -163,11 +164,11 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     return h('div', { class: `toggle-row${on ? '' : ' is-off'}` },
       h('button', {
         type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-labelledby': `${id}-reviews-label`, disabled: !saved || !me.available || busy.has(id),
-        onclick: () => agentChange(id, `/api/my/agent-auth/${id}/reviews`, { on: !on }, on ? `Off: ${a.name} does not review your pull requests.` : `On: ${a.name} reviews your pull requests, unless your own reviewer choice leaves it out.`),
+        onclick: () => agentChange(id, `/api/my/agent-auth/${id}/reviews`, { on: !on }, on ? `Off: ${a.name} does not review your pull requests.` : `On: ${a.name} reviews your pull requests, unless your own reviewer choice leaves it out. If none of that choice can run, the default includes it.`),
       }),
       h('span', { class: 'toggle-label', id: `${id}-reviews-label` }, 'Also use it for reviews of my pull requests'),
       h('p', { class: 'sub' }, on
-        ? `On: ${a.name} reviews the pull requests you open on ${what}, with the other reviewers that can, unless your own choice under Reviews of my pull requests leaves it out. The console adds it to ${a.name}\u2019s calls; it never goes into the review session.${a.signIn.rotates && id === 'grok' ? ' A login that has expired is not used: a Grok session of yours refreshes it.' : ''}`
+        ? `On: ${a.name} reviews the pull requests you open on ${what}, with the other reviewers that can, unless your own choice under Reviews of my pull requests leaves it out. If none of that choice can run, the default runs, and ${a.name} is included. The console adds it to ${a.name}\u2019s calls; it never goes into the review session.${a.signIn.rotates && id === 'grok' ? ' A login that has expired is not used: a Grok session of yours refreshes it.' : ''}`
         : `Off: ${a.name} never reviews your pull requests. There is no team key for it.`),
       !saved && h('p', { class: 'why-off' }, 'Save a sign-in above to turn this on.'));
   }
@@ -800,7 +801,10 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       disabled: busy.has('reviews') || (value && !available[agent]), 'aria-label': `${label} ${value ? 'on' : 'off'}`,
       onchange: () => pick(agent, value),
     });
-    const cantRun = choice && (A.reviewersOf(choice) ?? []).some((a) => !available[a]);
+    const chosen = A.reviewersOf(choice) ?? [];
+    // A saved choice that cannot run at all falls back to the default, which can include an agent the choice left out.
+    const noneLeft = Boolean(choice) && chosen.length > 0 && chosen.every((id) => !available[id]);
+    const cantRun = Boolean(choice) && chosen.some((id) => !available[id]);
     const names = A.REVIEW_AGENT_IDS.filter((id) => on.has(id)).map((id) => A.agent(id).product);
     const listed = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
     const who = !names.length ? 'No code review of' : names.length === 2 ? `${listed} both review` : names.length > 2 ? `${listed} all review` : `${listed} reviews`;
@@ -813,7 +817,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
           h('td', null, radio(agent, label, false)),
           h('td', null, radio(agent, label, true)))))),
       h('p', { class: 'form-note' }, choice
-        ? (cantRun ? 'What you chose cannot all run now, so your reviews get what of it can.' : 'Your own choice. ')
+        ? (noneLeft ? 'None of what you chose can run now, so your reviews get the default: every reviewer that can.'
+          : cantRun ? 'What you chose cannot all run now, so your reviews get what of it can.' : 'Your own choice. ')
         : 'Default: every reviewer that can run, from your sign-ins and the team\u2019s keys. Grok Build and OpenCode are included when their sign-in is on for reviews. ',
       choice && h('button', { type: 'button', class: 'btn-link', disabled: busy.has('reviews'), onclick: () => saveReviews(null, 'Back to the default.') }, 'Back to the default')),
       reviewStatus);

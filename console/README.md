@@ -1244,8 +1244,9 @@ reviewers' ids joined with `+` in the registry's order (`claude+grok`; shared/ag
 - Grok Build: their own Grok sign-in (an xAI key, or a `grok login` that has not expired) while they use it for reviews;
 - OpenCode: an Anthropic or OpenAI API key among their own OpenCode sign-ins, while they use them for reviews.
 
-There is no team key for Grok Build or OpenCode: with the author's own sign-in off, missing or expired, that reviewer is
-left out, and `fleet: review runs other than the author chose` says why (`Grok Build left out: …`). With no choice saved,
+There is no team key for Grok Build or OpenCode. With the author's own sign-in off, missing or expired, that reviewer is
+not in the default. `fleet: review runs other than the author chose` says why only when a saved choice named it
+(`Grok Build left out: …`). With no choice saved,
 a review runs every reviewer that can: Claude Code and Codex from the team keys or the author's own sign-ins, and Grok
 Build and OpenCode when the author's own sign-in is on for reviews. A saved choice that can no longer run keeps what of
 it can, else falls back the same way, and the console says why. A pull request is the
@@ -1319,7 +1320,7 @@ Grok Build and OpenCode review the same way, on the author's own sign-in alone, 
 - **The switch.** On My settings' Grok Build and OpenCode cards, **Also use it for reviews of my pull requests** is on
   once a sign-in is saved, unless the person turns it off (`POST /api/my/agent-auth/<agent>/reviews`, `woodshed config
   set grok-reviews|opencode-reviews`). It needs the same checks as Codex's (`teamKeyReason`; never a bot). With no
-  reviewer choice saved, the default includes it; a saved choice that leaves it out does not. The review keeps `review.ownSignIns`: whose sign-in and how
+  reviewer choice saved, the default includes it; a saved choice that leaves it out does not, unless none of that choice can run, in which case the default runs. The review keeps `review.ownSignIns`: whose sign-in and how
   (`{grok: {login, via: 'key'|'login'}, opencode: {login, provider}}`), never the sign-in itself.
 - **Grok Build** runs with `XAI_API_KEY` set to the session's token and `GROK_MODELS_BASE_URL` at the console's
   `/grok/v1`, which takes all its model traffic: `GET /v1/models`, `POST /v1/responses` (its session title) and `POST
