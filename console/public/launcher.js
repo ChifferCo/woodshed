@@ -512,7 +512,7 @@
     const agent = select('l-agent', AGENTS);
     const model = select('l-model', MODELS);
     // An agent other than Claude Code or Codex takes any model name its own --model does (the registry's modelRe): typed.
-    const modelText = h('input', { id: 'l-model-text', class: 'field mono', autocomplete: 'off', spellcheck: 'false', hidden: true });
+    const modelText = h('input', { id: 'l-model-text', 'aria-label': 'Model', class: 'field mono', autocomplete: 'off', spellcheck: 'false', hidden: true });
     const ownAgent = () => !['claude', 'codex'].includes(agent.value);
     const modelValue = () => (ownAgent() ? modelText.value.trim() : model.value);
     const effort = select('l-effort', EFFORTS);

@@ -396,8 +396,32 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     return agents.agent(id);
   }
 
+  // One change at a time to each person's sign-in for each agent: My settings' save or remove, and a session's write-back
+  // of a refreshed login, which reads the saved one, compares, and writes (sessionApi.mjs, agentAuthReply). Without it a
+  // save landing between that read and that write would be written over.
+  const agentAuthTurns = new Map();
+  /**
+   * Runs `fn` with that sign-in to itself: no save or remove of it, nor another turn, runs until it is done.
+   * @param {string} login @param {string} id
+   * @param {(ops: {read: () => Promise<string|null>, save: (value: string) => Promise<void>}) => Promise<T>} fn
+   * @returns {Promise<T>}
+   * @template T
+   */
+  function agentAuthTurn(login, id, fn) {
+    const key = `${loginKey(login)}/${id}`;
+    const run = (agentAuthTurns.get(key) ?? Promise.resolve()).then(() => fn({ read: () => agentAuth(login, id), save: (value) => saveAgentAuth(login, id, value) }));
+    const settled = run.catch(() => {});
+    agentAuthTurns.set(key, settled);
+    settled.then(() => { if (agentAuthTurns.get(key) === settled) agentAuthTurns.delete(key); });
+    return run;
+  }
+
   /** Saves the person's own sign-in for Grok Build or OpenCode (shared/agents.cjs, checkSignIn). */
-  async function setAgentAuth(login, id, value) {
+  function setAgentAuth(login, id, value) {
+    return agentAuthTurn(login, id, ({ save }) => save(value));
+  }
+
+  async function saveAgentAuth(login, id, value) {
     requireSecrets();
     const agent = ownSignInAgent(id);
     const auth = agents.checkSignIn(id, value);
@@ -406,7 +430,11 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     console.log(`userSettings: ${agent.product} sign-in saved`, { login, agent: id, apiKey: !auth.startsWith('{') });
   }
 
-  async function removeAgentAuth(login, id) {
+  function removeAgentAuth(login, id) {
+    return agentAuthTurn(login, id, () => deleteAgentAuth(login, id));
+  }
+
+  async function deleteAgentAuth(login, id) {
     requireSecrets();
     const agent = ownSignInAgent(id);
     await secrets.remove(userSecretName(login, agent.signIn.secret));
@@ -531,7 +559,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   return {
-    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setAgentAuth, removeAgentAuth, agentAuth, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setReviewAgents, reviewAgents, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
+    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setAgentAuth, removeAgentAuth, agentAuth, agentAuthTurn, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setReviewAgents, reviewAgents, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }

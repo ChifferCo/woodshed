@@ -1733,7 +1733,9 @@ export function createHandler({
     let body;
     const fileMatch = MY_FILE_RE.exec(pathname);
     try {
-      body = await readJson(req, fileMatch ? MAX_FILE_BODY_BYTES : undefined);
+      // A sign-in file is held to its agent's own limit once decoded (shared/agents.cjs, checkSignIn); escaped in JSON it
+      // takes more than the usual body, so its request gets the secrets' bound.
+      body = await readJson(req, fileMatch ? MAX_FILE_BODY_BYTES : MY_AGENT_AUTH_RE.test(pathname) ? MAX_SECRET_BODY_BYTES : undefined);
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }

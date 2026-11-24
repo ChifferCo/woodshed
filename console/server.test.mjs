@@ -1058,6 +1058,14 @@ test('Grok Build and OpenCode are offered and start only on their owner\'s own s
   for (const id of ['codex', 'claude', 'nope']) assert.equal((await post(port, `/api/my/agent-auth/${id}`, { value: 'x' }, as)).status, 404, id);
   assert.equal((await post(port, '/api/my/agent-auth/grok/remove', {}, as)).body.agents.grok, false);
   assert.equal((await post(port, '/api/my/agent-auth/grok', { value: 'x' }, { ...as, origin: 'https://evil.example' })).status, 403);
+  // A multi-provider auth.json past the usual 16 KiB body, within the registry's limit: held to that limit, not the body's.
+  const big = JSON.stringify(Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`provider${i}`, { type: 'api', key: `"k${i}"-${'x'.repeat(400)}` }])));
+  assert.ok(big.length > 16 * 1024 && big.length < agentsRegistry.agent('opencode').signIn.maxChars, String(big.length));
+  const bigSaved = await post(port, '/api/my/agent-auth/opencode', { value: big }, as);
+  assert.equal(bigSaved.status, 200, JSON.stringify(bigSaved.body));
+  assert.equal(bigSaved.body.agents.opencode, true);
+  // The request itself stays bounded (the registry's limit on the decoded value is checkSignIn's, in shared/agents.test.mjs).
+  assert.deepEqual(await post(port, '/api/my/agent-auth/opencode', { value: 'x'.repeat(170 * 1024) }, as), { status: 400, body: { error: 'body too large' } });
 });
 
 test('the first Claude token starts your own databases, and New session waits for them', async (t) => {

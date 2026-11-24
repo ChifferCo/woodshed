@@ -1036,3 +1036,44 @@ test('a review whose Codex runs on its author\'s sign-in is never handed that si
   assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer review-own', body: '{"tokens":{"refresh_token":"x"}}' })).status, 404);
   assert.deepEqual(saved, []);
 });
+
+test('a save on My settings that lands while a session\'s refresh is being written back is never written over', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  // The real settings, on a store that holds back the write-back's save until the test lets it go: the save on My
+  // settings comes after the write-back read and compared, and before it wrote.
+  const values = new Map();
+  let held = null;
+  let wroteBack = () => {};
+  const reachedSave = new Promise((resolve) => { wroteBack = resolve; });
+  const secrets = {
+    read: async (name) => values.get(name) ?? null,
+    save: async (name, value) => {
+      if (value.includes('rt2')) { wroteBack(); await held; }
+      values.set(name, value);
+    },
+    remove: async (name) => { values.delete(name); },
+  };
+  const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets });
+  const login = JSON.stringify({ scope: { key: 'at', refresh_token: 'rt', expires_at: '2026-12-01T00:00:00Z' } });
+  await userSettings.setAgentAuth('joel', 'grok', login);
+  const sessions = [{ id: 'aaaaaaaa', status: 'running', token: 'grok-token', owner: 'joel', options: { agent: 'grok' } }];
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  let release;
+  held = new Promise((resolve) => { release = resolve; });
+  const refreshed = JSON.stringify({ scope: { key: 'at2', refresh_token: 'rt2', expires_at: '2026-12-02T00:00:00Z' } });
+  const back = request(port, { path: '/agent-auth', authorization: 'Bearer grok-token', body: refreshed, headers: { 'x-woodshed-given-sign-in': agents.signInDigest(login) } });
+  await reachedSave;
+  // Read and compared, not yet written: a key saved on My settings now.
+  const saved = userSettings.setAgentAuth('joel', 'grok', 'xai-replacement-key-0123456789');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  release();
+  await saved;
+  assert.equal((await back).status, 200);
+  // The save waited for the write-back's turn and went after it: the key is what is kept, not the refresh.
+  assert.equal(await userSettings.agentAuth('joel', 'grok'), 'xai-replacement-key-0123456789');
+});

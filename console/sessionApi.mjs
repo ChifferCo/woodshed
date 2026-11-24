@@ -487,30 +487,39 @@ async function agentAuthReply(req, res, session, userSettings) {
     text += chunk;
     if (text.length > agent.signIn.maxChars) return reply(res, 413, { error: 'too large' });
   }
-  const current = await userSettings.agentAuth(session.owner, agent.id);
-  if (!current) {
-    console.log(`sessionApi: ${agent.product} sign-in not kept, the owner has none saved`, { sessionId: session.id, owner: session.owner });
-    return reply(res, 409, { error: `the owner saved no ${agent.product} sign-in` });
-  }
-  // Only over the sign-in this session was given: one saved on My settings since (a key has no expiry to compare), or
-  // another session's refresh, stays. A session that does not say which it was given keeps nothing.
-  const given = String(req.headers[GIVEN_SIGN_IN_HEADER] ?? '');
-  if (given !== agents.signInDigest(current)) {
-    console.log(`sessionApi: ${agent.product} sign-in not kept, the saved one is not the one the session was given`, { sessionId: session.id, owner: session.owner, said: Boolean(given) });
-    return reply(res, 409, { error: `the saved ${agent.product} sign-in changed since this session started` });
-  }
-  const [incoming, saved] = [loginExpiry(text), loginExpiry(current)];
-  if (incoming !== null && saved !== null && incoming < saved) {
-    console.log(`sessionApi: ${agent.product} sign-in not kept, the saved one is newer`, { sessionId: session.id, owner: session.owner });
-    return reply(res, 409, { error: `the saved ${agent.product} sign-in is newer` });
-  }
-  try {
-    await userSettings.setAgentAuth(session.owner, agent.id, text);
-  } catch (err) {
-    if (!err.shown) throw err;
-    console.warn(`sessionApi: ${agent.product} sign-in refused`, { sessionId: session.id, owner: session.owner, message: err.message });
-    return reply(res, 400, { error: err.message });
-  }
+  // Read, compared and written in one turn of this sign-in's (userSettings.agentAuthTurn): a save on My settings waits
+  // for it, or it for the save, so neither lands between the other's read and write.
+  const turn = userSettings.agentAuthTurn ?? ((login, id, fn) => fn({ read: () => userSettings.agentAuth(login, id), save: (value) => userSettings.setAgentAuth(login, id, value) }));
+  // A refusal answers at once, and says so.
+  const refuse = (code, body) => { reply(res, code, body); return true; };
+  const answered = await turn(session.owner, agent.id, async ({ read, save }) => {
+    const current = await read();
+    if (!current) {
+      console.log(`sessionApi: ${agent.product} sign-in not kept, the owner has none saved`, { sessionId: session.id, owner: session.owner });
+      return refuse(409, { error: `the owner saved no ${agent.product} sign-in` });
+    }
+    // Only over the sign-in this session was given: one saved on My settings since (a key has no expiry to compare), or
+    // another session's refresh, stays. A session that does not say which it was given keeps nothing.
+    const given = String(req.headers[GIVEN_SIGN_IN_HEADER] ?? '');
+    if (given !== agents.signInDigest(current)) {
+      console.log(`sessionApi: ${agent.product} sign-in not kept, the saved one is not the one the session was given`, { sessionId: session.id, owner: session.owner, said: Boolean(given) });
+      return refuse(409, { error: `the saved ${agent.product} sign-in changed since this session started` });
+    }
+    const [incoming, saved] = [loginExpiry(text), loginExpiry(current)];
+    if (incoming !== null && saved !== null && incoming < saved) {
+      console.log(`sessionApi: ${agent.product} sign-in not kept, the saved one is newer`, { sessionId: session.id, owner: session.owner });
+      return refuse(409, { error: `the saved ${agent.product} sign-in is newer` });
+    }
+    try {
+      await save(text);
+    } catch (err) {
+      if (!err.shown) throw err;
+      console.warn(`sessionApi: ${agent.product} sign-in refused`, { sessionId: session.id, owner: session.owner, message: err.message });
+      return refuse(400, { error: err.message });
+    }
+    return null;
+  });
+  if (answered) return;
   console.log(`sessionApi: ${agent.product} sign-in kept`, { sessionId: session.id, owner: session.owner });
   return reply(res, 200, { ok: true });
 }

@@ -84,7 +84,7 @@ import { TAINTED_CLAUDE_FLAGS, applyTaint, isTaintSetUp, isTainted, markTaintSet
 import { lastInterruptAt, openToolCalls, paneState, stateReader } from './agentState.mjs';
 import { AGENT_ID_RE, createAgents, openRollout } from './agents.mjs';
 import { agentPane } from './agentPane.mjs';
-import { Refusal, answerApproval, answerQuestions, composerEmpty, composerText, readPrompt, typeMessage, typingSteps } from './panePrompt.mjs';
+import { Refusal, answerApproval, answerQuestions, composerEmpty, composerText, draftInBox, readPrompt, typeMessage, typingSteps } from './panePrompt.mjs';
 import { createReviewHost } from './reviewShed/host.mjs';
 import { createCodeEditor } from './codeEditor.mjs';
 import { readSessionDiff } from './sessionDiff.mjs';
@@ -1200,6 +1200,8 @@ async function answer(body) {
     capture: capturePane,
     keys: async (...keys) => { await agentIo().keys(...keys); },
     agent: AGENT,
+    // OpenCode's pick shows only as a colour (panePrompt.mjs, opencodeHighlight): a read with them, where the pane has them.
+    ...(agentIo().colours ? { colored: () => agentIo().capture({ ansi: true }) } : {}),
     // Grok Build's rows are picked by their number, typed as text: only where the terminal types text (tmux).
     ...(agentIo().typesText ? { literal: async (text) => { await agentIo().literal(text); } } : {}),
   };
@@ -1314,6 +1316,9 @@ async function boxEmpty() {
   const colored = await captureBox();
   // A prompt on screen is typeMessage's to refuse, as the prompt it is. No box found at all is no place to type.
   if (readPrompt(colored.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, ''))) return true;
+  // Grok Build's and OpenCode's: a draft seen there holds the message back; a box this cannot read is taken as empty, as
+  // it was before it was read (draftInBox).
+  if (AGENT === 'grok' || AGENT === 'opencode') return draftInBox(colored, AGENT) !== true;
   // A box statusd does not read is taken as empty: the agent is at its prompt between turns, with no prompt on screen.
   if (!READS_BOX) return true;
   return composerEmpty(colored, AGENT) === true;
