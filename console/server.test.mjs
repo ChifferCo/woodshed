@@ -896,7 +896,9 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
     // Whose page it is, so the rail draws from what it kept only for the same person.
     assert.match(await getBody(port, page, as('octocat')), /<meta name="woodshed-login" content="octocat">/, `${page} names who it is for`);
     // The same scripts on each, since session.js moves between them in place.
-    assert.deepEqual(scripts.slice(-9), ['dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'notificationBell.js', 'session.js'], `${page} is the shell`);
+    assert.deepEqual(scripts.slice(-8), ['dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'], `${page} is the shell`);
+    // The desktop app's notifications on every page, after the shell that opens them on ⌘J.
+    assert.deepEqual(scripts.slice(scripts.indexOf('shell.js'), scripts.indexOf('shell.js') + 2), ['shell.js', 'notificationBell.js'], `${page} has the notifications`);
   }
   assert.match(await getBody(port, '/static/sharedHome.js', as('octocat')), /createSharedHome/);
   assert.match(await getBody(port, '/static/messageBox.js', as('octocat')), /createMessageBox/);

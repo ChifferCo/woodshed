@@ -115,8 +115,8 @@ notification is a change between two reads, in the console's words, and clicking
 
 **Where it shows.** With the app's window in front, a notification is not the OS's: the console's page shows it as a
 card at the window's bottom right, beside the bell (below), which opens its session and goes after 10 seconds (held
-while the pointer is on it). Behind other windows, minimised or closed, it is the OS's. A page with no bell (a settings
-page, a console from before it) gets the OS's in front too.
+while the pointer is on it). Behind other windows, minimised or closed, it is the OS's. Every page of the console shows
+the cards (the bell is the rail's, ⌘J's dialog any page's); a console from before them gets the OS's in front too.
 
 **Opening a session clears its notifications**: under the bell, the OS's (taken back from its notification centre),
 and its cards, however it was opened (the rail, a link, a notification), and on coming back to the window while it
@@ -128,7 +128,10 @@ whatever session it showed.
 
 **The bell.** In the app the console's rail has a bell in its foot, beside the user menu (`console/public/notificationBell.js`), listing the
 notifications the app showed, newest first: the session's name, what it said and when, each opening its session. Its
-count is the ones not seen yet; opening the list sees them all, and so does opening their session. A notification about the session you are looking at is
+count is the ones not read yet: a notification is read once its session is opened (from the list, a card, the OS's,
+the rail or a link), or with the list's Mark all read. Opening the list marks nothing. **⌘J** (Ctrl+J off a Mac) opens
+the same list in the middle of the screen, on any page of the console: ↑↓ pick one, ⏎ opens its session, esc closes it;
+the command palette lists it as Notifications. A browser keeps ⌘J for itself. A notification about the session you are looking at is
 listed as seen and not shown. The list is kept by the main process (`notificationLog.mjs`), in memory, for this console
 and this sign-in: Change console…, signing in and signing out empty it, and so does quitting the app. The page reads it
 through the preload's `window.woodshedNotifications` (below), which a browser does not have, so the console in a
