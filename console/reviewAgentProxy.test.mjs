@@ -44,7 +44,7 @@ async function setup(t, { on = { grok: ['gil', 'lou', 'old'], opencode: ['oto', 
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
-      seen.push({ url: req.url, headers: req.headers, body });
+      seen.push({ method: req.method, url: req.url, headers: req.headers, body });
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       res.end('data: {}\n\n');
     });
@@ -157,8 +157,60 @@ test('only the calls a review\'s agent makes pass, in their plain form', async (
   }
   for (const path of ['/opencode/anthropic/v1/files', '/opencode/anthropic/v1/messages/../../v1/files']) assert.equal((await call('review-oto', path, { header: 'x-api-key' })).status, 404, path);
   assert.equal(seen.length, 0);
-  assert.deepEqual(reviewAgentRoute('/grok/v1/models?x=1'), { agent: 'grok', provider: null, path: '/v1/models?x=1' });
+  assert.deepEqual(reviewAgentRoute('/grok/v1/models', 'GET'), { agent: 'grok', provider: null, path: '/v1/models' });
+  assert.match(reviewAgentRoute('/grok/v1/models?x=1', 'GET').refused, /no query string/);
   assert.equal(reviewAgentRoute('/elsewhere'), null);
+});
+
+// Every path any of them allows, and a few each refuses, with every method: a recording upstream counts what reached it.
+const PATHS = ['/v1/models', '/v1/responses', '/v1/chat/completions', '/v1/messages', '/v1/messages/count_tokens',
+  '/v1/responses/resp_made-up', '/v1/chat/completions/chatcmpl-made-up', '/v1/files', '/v1/batches'];
+const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
+const ALLOWED = {
+  grok: { token: 'review-gil', prefix: '/grok', upstream: '/xai', calls: { 'GET /v1/models': 1, 'POST /v1/responses': 1, 'POST /v1/chat/completions': 1 } },
+  anthropic: { token: 'review-oto', header: 'x-api-key', prefix: '/opencode/anthropic', upstream: '/anthropic',
+    calls: { 'POST /v1/messages': 1, 'POST /v1/messages/count_tokens': 1, 'GET /v1/models': 1 } },
+  openai: { token: 'review-ovi', prefix: '/opencode/openai', upstream: '/openai', calls: { 'POST /v1/responses': 1, 'GET /v1/models': 1 } },
+};
+
+for (const [name, { token, header = 'authorization', prefix, upstream, calls }] of Object.entries(ALLOWED)) {
+  test(`${name}: each path passes only with the method it needs, and nothing else reaches the upstream`, async (t) => {
+    const lines = logged(t);
+    const { seen, call } = await setup(t);
+    for (const path of PATHS) {
+      for (const method of METHODS) {
+        const before = seen.length;
+        const res = await call(token, `${prefix}${path}`, { method, header });
+        const key = `${method} ${path}`;
+        if (calls[key]) {
+          assert.equal(res.status, 200, key);
+          assert.equal(seen.length, before + 1, `${key} reached the upstream`);
+          assert.deepEqual([seen.at(-1).method, seen.at(-1).url], [method, `${upstream}${path}`]);
+        } else {
+          assert.equal(res.status, Object.keys(calls).some((c) => c.endsWith(` ${path}`)) ? 405 : 404, key);
+          assert.equal(seen.length, before, `${key} never reached the upstream`);
+        }
+      }
+    }
+    assert.equal(seen.length, Object.keys(calls).length);
+    assert.ok(lines.some((l) => l.includes('reviewAgentProxy: refused a call a review\'s agent does not need')));
+  });
+}
+
+test('OpenAI\'s stored completions and responses are never read through a review\'s OpenCode, nor any query string passed', async (t) => {
+  const lines = logged(t);
+  const { seen, call } = await setup(t);
+  const list = await call('review-ovi', '/opencode/openai/v1/chat/completions', { method: 'GET' });
+  assert.equal(list.status, 404, 'chat completions are not OpenCode\'s on OpenAI at all');
+  assert.equal((await call('review-ovi', '/opencode/openai/v1/responses', { method: 'GET' })).status, 405);
+  for (const path of ['/opencode/openai/v1/models?limit=100&after=secret-made-up', '/opencode/openai/v1/responses?include=all',
+    '/grok/v1/models?metadata=made-up']) {
+    const res = await call(path.startsWith('/grok') ? 'review-gil' : 'review-ovi', path, { method: path.includes('responses') ? 'POST' : 'GET' });
+    assert.equal(res.status, 404, path);
+    assert.match(JSON.parse(res.body).error.message, /no query string/);
+  }
+  assert.equal(seen.length, 0, 'the upstream got none of them');
+  assert.ok(!lines.join('\n').includes('secret-made-up'), 'a refused query is not logged');
 });
 
 test('a review\'s OpenCode reaches Anthropic on its author\'s API key, from opencode\'s own x-api-key', async (t) => {

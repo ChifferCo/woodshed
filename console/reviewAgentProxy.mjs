@@ -11,8 +11,8 @@
 //   /opencode/openai/v1/<path>      Authorization: Bearer <SESSION_TOKEN>  ->  api.openai.com/v1/<path>, on the author's key
 //
 // The session's grok reaches here by GROK_MODELS_BASE_URL, and its opencode by a provider's `baseURL` in its own config
-// (session/review.sh). Only what a review's model calls need passes: its turns and the model list, never a key's files,
-// batches or anything else. The sign-in is read at each call, so one turned off, removed or expired since the review
+// (session/review.sh). Only what a review's model calls need passes, each path with the one method it needs: its turns
+// and the model list, never a key's files, batches, stored completions or anything else. The sign-in is read at each call, so one turned off, removed or expired since the review
 // started stops being used at once. The console never refreshes a Grok login (grokModels.mjs says why): one whose
 // `expires_at` has passed is refused, and the review's grok says so. OpenCode runs only on an API key here, never a login
 // (OPENCODE_REVIEW_PROVIDERS says why). Nothing of a sign-in is logged: the login, the agent, how, and a status.
@@ -26,13 +26,22 @@ import { ownReviewCredential } from './reviewAgents.mjs';
 const GROK_PREFIX = '/grok';
 const OPENCODE_PREFIX = '/opencode';
 
-// What of each API a review's agent may reach, under its /v1. Measured with grok 1.0.92 on a key: GET /v1/models, POST
-// /v1/responses (its session title) and POST /v1/chat/completions (its turns); with opencode 1.19.6, POST /v1/messages
-// for Anthropic and POST /v1/responses for OpenAI.
-const GROK_PATH_RE = /^\/v1\/(?:models|chat\/completions|responses)$/;
+// What of each API a review's agent may reach, under its /v1, each path with the one method it needs. Measured with grok
+// 1.0.92 on a key: GET /v1/models, POST /v1/responses (its session title) and POST /v1/chat/completions (its turns); with
+// opencode 1.19.6, POST /v1/messages for Anthropic and POST /v1/responses for OpenAI. The method is part of the rule, not
+// a detail: the same path read with another method is another API (OpenAI's GET /v1/chat/completions lists every stored
+// completion in the key's project, and GET /v1/responses/<id> reads one back), which a prompt in the diff could ask for.
+// No query string passes either: no call measured sends one, and one could turn a path into a listing.
+const GROK_CALLS = { '/v1/models': 'GET', '/v1/responses': 'POST', '/v1/chat/completions': 'POST' };
 const OPENCODE_PROVIDERS = {
-  anthropic: { upstream: 'https://api.anthropic.com', paths: /^\/v1\/(?:messages(?:\/count_tokens)?|models)$/, header: (key) => ({ 'x-api-key': key }) },
-  openai: { upstream: 'https://api.openai.com', paths: /^\/v1\/(?:responses|chat\/completions|models)$/, header: (key) => ({ authorization: `Bearer ${key}` }) },
+  anthropic: {
+    upstream: 'https://api.anthropic.com', header: (key) => ({ 'x-api-key': key }),
+    calls: { '/v1/messages': 'POST', '/v1/messages/count_tokens': 'POST', '/v1/models': 'GET' },
+  },
+  openai: {
+    upstream: 'https://api.openai.com', header: (key) => ({ authorization: `Bearer ${key}` }),
+    calls: { '/v1/responses': 'POST', '/v1/models': 'GET' },
+  },
 };
 
 // A path already in its plain form: no `.` or `..` segment, no empty one, no `%` escape and no backslash.
@@ -62,12 +71,12 @@ export function reviewAgentTokenOf(headers) {
 /**
  * Which agent a call is for, and what of its API it asks: null for anything a review's agent has no business with.
  * @param {string} url  the request's path and query
- * @returns {{agent: 'grok'|'opencode', provider: string|null, path: string}|{agent: string, refused: string}|null}
+ * @param {string} [method]  the request's method: a path passes only with the one its rule names
+ * @returns {{agent: 'grok'|'opencode', provider: string|null, path: string}|{agent: string, refused: string, status?: number}|null}
  */
-export function reviewAgentRoute(url) {
+export function reviewAgentRoute(url, method = 'GET') {
   const q = url.indexOf('?');
   const pathname = q === -1 ? url : url.slice(0, q);
-  const search = q === -1 ? '' : url.slice(q);
   let agent;
   let provider = null;
   let rest;
@@ -81,9 +90,13 @@ export function reviewAgentRoute(url) {
     provider = m[1];
     rest = m[2] ?? '';
   } else return null;
-  const allowed = agent === 'grok' ? GROK_PATH_RE : OPENCODE_PROVIDERS[provider].paths;
-  if (UNPLAIN_PATH_RE.test(rest) || !allowed.test(rest) || search.includes('#')) return { agent, refused: `not something a review's ${agents.agent(agent).product} needs` };
-  return { agent, provider, path: rest + search };
+  const calls = agent === 'grok' ? GROK_CALLS : OPENCODE_PROVIDERS[provider].calls;
+  const needs = !UNPLAIN_PATH_RE.test(rest) && Object.hasOwn(calls, rest) ? calls[rest] : null;
+  const product = agents.agent(agent).product;
+  if (!needs || url.includes('#')) return { agent, refused: `not something a review's ${product} needs` };
+  if (method !== needs) return { agent, refused: `a review's ${product} only sends ${needs} to ${rest}`, status: 405 };
+  if (q !== -1) return { agent, refused: `a review's ${product} sends no query string` };
+  return { agent, provider, path: rest };
 }
 
 function refuse(res, code, message) {
@@ -144,7 +157,7 @@ export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}
   }
 
   async function handle(req, res, session) {
-    const route = reviewAgentRoute(req.url);
+    const route = reviewAgentRoute(req.url, req.method);
     const product = agents.agent(route?.agent).product;
     if (!session) {
       req.resume();
@@ -164,8 +177,9 @@ export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}
     }
     if (!route || route.refused) {
       req.resume();
-      console.warn('reviewAgentProxy: refused a path a review\'s agent does not need', { sessionId: session.id, agent: route?.agent ?? null, path: req.url.slice(0, 120) });
-      return refuse(res, 404, route?.refused ?? 'not something a review needs');
+      // The path only, never its query: a query is refused, and what it held is not logged.
+      console.warn('reviewAgentProxy: refused a call a review\'s agent does not need', { sessionId: session.id, agent: route?.agent ?? null, method: String(req.method).slice(0, 16), path: req.url.split('?')[0].slice(0, 120) });
+      return refuse(res, route?.status ?? 404, route?.refused ?? 'not something a review needs');
     }
     const own = session.review.agents?.includes(route.agent) ? session.review.ownSignIns?.[route.agent] ?? null : null;
     if (!own?.login) {

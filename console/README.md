@@ -1311,16 +1311,19 @@ Grok Build and OpenCode review the same way, on the author's own sign-in alone, 
   `auth.json` has (`OPENCODE_REVIEW_PROVIDERS` in shared/agents.cjs), and the session gets `REVIEW_OPENCODE_PROVIDER`.
   Its own config points that provider alone at the console's `/opencode/<provider>/v1` (its `baseURL`), with the
   session's token as the key: `x-api-key` for Anthropic, a bearer for OpenAI. The proxy swaps it for the author's key,
-  to `api.anthropic.com` (`/v1/messages`, `/v1/messages/count_tokens`, `/v1/models`) or `api.openai.com`
-  (`/v1/responses`, `/v1/chat/completions`, `/v1/models`). A login (`oauth`: Claude Pro or Max through OpenCode, ChatGPT,
+  to `api.anthropic.com` (`POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/models`) or `api.openai.com`
+  (`POST /v1/responses`, `GET /v1/models`). A login (`oauth`: Claude Pro or Max through OpenCode, ChatGPT,
   Copilot) is never used: those rotate, and OpenCode's plugins reshape their calls in ways a proxy should not copy.
   Other key providers (OpenRouter, Google and the rest) are left out until each has its upstream, header and paths
   here. OpenCode picks its model itself, its default for that provider.
 
 Each call is checked as Codex's are: only a review session running that agent with an author's sign-in recorded, the
 switch and the sign-in read again at each call (one turned off, removed, expired, or an OpenCode key gone from
-`auth.json`, stops at once), the provider the review started on, and only those paths, in plain form: the rest get a
-404 (`reviewAgentProxy: refused a path a review's agent does not need`). A private Grok or OpenCode session never comes
+`auth.json`, stops at once), the provider the review started on, and only those paths, in plain form, each with the
+one method it names and no query string. The rest get a 404, or a 405 for a known path asked with another method
+(`reviewAgentProxy: refused a call a review's agent does not need`, with the method and the path but never a query):
+the same path read with another method is another API, such as OpenAI's `GET /v1/chat/completions`, which lists every
+stored completion in the key's project. A private Grok or OpenCode session never comes
 here: it runs on its owner's own sign-in, directly.
 
 
