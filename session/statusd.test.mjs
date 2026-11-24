@@ -313,6 +313,9 @@ test('statusd stops the app with the token only, a start still waiting on its he
   }
   assert.equal(after, 'stopped', 'the interrupted start does not read as failed');
   assert.deepEqual(await calls(), ['start', 'stop']);
+  // One app too: a line names each start, which readyGate counts as a try, since Stop app writes to the same log.
+  const startLog = (await call('GET', '/applog')).body.logs.find((l) => l.name === 'start');
+  assert.match(startLog.text, /# Woodshed: starting app\n/);
   assert.equal((await call('POST', '/app/start')).body.started, true, 'a new start is allowed once the stop is done');
 });
 
