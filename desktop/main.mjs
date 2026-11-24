@@ -607,7 +607,8 @@ ipcMain.handle('notifications:read', (event, key) => {
   if (log.markRead(typeof key === 'string' ? key : null)) logChanged();
 });
 
-// Each notification shown, with its session, until it is clicked, its session opened, or 50 newer ones were: one
+// Each notification shown, with its session, until it is clicked, its session opened, or 50 newer ones were (it is then
+// closed): one
 // nothing refers to is garbage collected, and its click then fires nothing, so the OS only brings the app forward on
 // whatever session it showed. Not dropped at its `close`, which some systems send when the banner goes into their
 // notification centre, where it can still be clicked.
@@ -745,7 +746,12 @@ async function poll() {
     if (!Notification.isSupported()) continue;
     const shown = new Notification({ title: n.title, body: n.body, icon, silent: false });
     shownNotifications.set(shown, n.id);
-    if (shownNotifications.size > KEEP_SHOWN) shownNotifications.delete(shownNotifications.keys().next().value);
+    // The oldest let go is taken back from the OS's list too: left there, its click would do nothing.
+    if (shownNotifications.size > KEEP_SHOWN) {
+      const oldest = shownNotifications.keys().next().value;
+      shownNotifications.delete(oldest);
+      oldest.close();
+    }
     const done = () => shownNotifications.delete(shown);
     shown.on('click', () => {
       done();

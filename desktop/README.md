@@ -122,7 +122,7 @@ page, a console from before it) gets the OS's in front too.
 and its cards, however it was opened (the rail, a link, a notification), and on coming back to the window while it
 shows that session.
 
-Clicking a notification opens its session. The app holds each one it showed (the 50 latest) until it is clicked: one
+Clicking a notification opens its session. The app holds each one it showed (the 50 latest, closing an older one) until it is clicked: one
 nothing refers to is garbage collected, and its click then fires nothing, so the OS only brings the window forward on
 whatever session it showed.
 
