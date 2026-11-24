@@ -91,7 +91,8 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 ## Menu groups
 
 - A program embedding the console may add a line under the person's name on the user button, in `meta` (mono, `meta`
-  color), and nowhere else on the rail.
+  color), and nowhere else on the rail. The settings pages' side head shows the avatar alone, neither the name nor that
+  line, so **‹ Back to sessions** is never cut.
 - The user menu, top to bottom (`components/MenuGroups`): the name and @handle; My settings, then the program's pages
   for the person, and a `line-soft` rule; the program's switcher groups; **Console**; the program's own sections; Sign
   out. With no program, My settings alone is under the name.
