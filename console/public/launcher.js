@@ -670,6 +670,9 @@
     let agentPicked = false;
     agent.addEventListener('change', () => {
       agentPicked = true;
+      // A model name is one agent's own (OpenCode's `provider/model`, Grok's `grok-…`): another agent starts from its default.
+      modelText.value = '';
+      grokTyped = false;
       showAgent();
       if (me) update(me);
     });
