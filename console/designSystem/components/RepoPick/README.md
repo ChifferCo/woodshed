@@ -10,3 +10,6 @@ MCP servers card, **Repos** (`mcpRepos` in `public/consoleSettings.js`, `.repo-p
 - A saved repo the console no longer lists stays, ticked, with a `meta` note `not a repo of this console`: a save never
   drops what was saved unseen.
 - No repo ticked says so in words under it.
+- A long list (a program's pick of many repositories) may start with a filter (`.repo-pick-filter`): a `field` across
+  the list, `type="search"`, its placeholder saying how many it filters (`Filter 24 repositories`), hiding the rows
+  that do not match as it is typed.

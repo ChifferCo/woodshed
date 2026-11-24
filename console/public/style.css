@@ -921,6 +921,9 @@ button.set-fold-head:hover { background: var(--slate-tint); }
 .repo-pick[open] > summary::after { content: "▴"; }
 .repo-pick-text { flex: 1 1 0; width: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .repo-pick-list { display: flex; flex-direction: column; margin-top: 4px; padding: 4px 0; border: 1px solid var(--line); border-radius: 6px; background: var(--ground); max-height: 260px; overflow-y: auto; }
+/* A long list's filter, first in it: a text field across the list, with the list's own padding at its sides. As specific
+   as `.set-value .field.is-text`, and after it, so a row's field width does not shrink it. */
+.repo-pick-list > .field.repo-pick-filter { flex: none; width: calc(100% - 16px); box-sizing: border-box; margin: 2px 8px 4px; font-size: 13px; font-family: inherit; text-align: left; }
 .repo-check { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
 .repo-check:hover { background: var(--slate-tint); }
 .repo-check:first-child { border-bottom: 1px solid var(--line-soft); font-weight: 600; }
