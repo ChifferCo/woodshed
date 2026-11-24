@@ -222,6 +222,43 @@ test('through the proxy, ttyd gets the console\'s first message and then the bro
   assert.equal(received[2], '0q');
 });
 
+test('a terminal websocket goes on only to ttyd\'s own /ws, and ends when ttyd closes before its answer', async (t) => {
+  const asked = [];
+  const ttyd = net.createServer((conn) => {
+    conn.once('data', (d) => {
+      asked.push(d.toString().split('\r\n')[0]);
+      // Half an answer, then gone: a ttyd stopping as the browser connects.
+      conn.end('HTTP/1.1 101 Switching');
+    });
+  });
+  const ttydPort = await listen(ttyd);
+  const sessions = { '0a1b2c3d': { host: '127.0.0.1', termPort: ttydPort, shellPort: ttydPort, statusPort: 1, terminalToken: 'secret', sessionToken: 'other' } };
+  const proxy = http.createServer();
+  proxy.on('upgrade', (req, socket, head) => handleTerminalUpgrade(req, socket, head, { targetFor: (id) => sessions[id] ?? null }));
+  const proxyPort = await listen(proxy);
+  t.after(() => { ttyd.close(); proxy.close(); });
+
+  const open = (path) => new Promise((resolve) => {
+    const client = net.connect(proxyPort, '127.0.0.1', () => {
+      client.write([`GET ${path} HTTP/1.1`, 'Host: console.example', 'Upgrade: websocket', 'Connection: Upgrade',
+        'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==', 'Sec-WebSocket-Protocol: tty', '', ''].join('\r\n'));
+    });
+    let got = '';
+    client.on('data', (d) => { got += d; });
+    client.on('error', () => {});
+    client.on('close', () => resolve(got));
+    setTimeout(() => { client.destroy(); resolve('still open after 3 s'); }, 3000);
+  });
+
+  for (const path of ['/term/0a1b2c3d/token', '/term/0a1b2c3d//ws', '/term/0a1b2c3d/%77s', '/term/0a1b2c3d/ws;x', '/shell/0a1b2c3d/']) {
+    assert.equal(await open(path), 'HTTP/1.1 404 Not Found\r\n\r\n', path);
+  }
+  assert.deepEqual(asked, [], 'ttyd was never asked');
+
+  assert.equal(await open('/shell/0a1b2c3d/ws?arg=x'), '', 'closed, so the page opens a new one, with nothing of ttyd\'s half answer');
+  assert.deepEqual(asked, ['GET /shell/0a1b2c3d/ws?arg=x HTTP/1.1']);
+});
+
 test('a Redis viewer request goes to statusd with the session token, and another site is refused', async (t) => {
   let seen;
   const statusd = http.createServer((req, res) => {

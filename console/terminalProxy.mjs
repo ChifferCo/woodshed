@@ -195,11 +195,14 @@ export function handleTerminalUpgrade(req, socket, head, ctx) {
   if (!route) return false;
   const { app, id } = route;
   const session = ctx.targetFor(id);
-  if (!session || (app === 'shell' && !session.shellPort)) {
+  // ttyd's websocket alone, by its own address as written, as only its page goes on (isTerminalPage).
+  if (!session || (app === 'shell' && !session.shellPort) || String(req.url || '').split('?')[0] !== `/${app}/${id}/ws`) {
     socket.end('HTTP/1.1 404 Not Found\r\n\r\n');
     return true;
   }
   const target = { host: session.host, ...UPSTREAM[app](session) };
+  // Until ttyd's answer is passed on, nothing pipes ttyd's side to the browser's: ttyd closing first must end it here.
+  let answered = false;
 
   const credential = Buffer.from(`woodshed:${session.terminalToken}`).toString('base64');
   const upstream = net.connect(target.port, target.host, () => {
@@ -221,6 +224,7 @@ export function handleTerminalUpgrade(req, socket, head, ctx) {
         return;
       }
       upstream.off('data', readAnswer);
+      answered = true;
       socket.write(answerWithoutClientContext(answer.subarray(0, end + 4)));
       if (answer.length > end + 4) socket.write(answer.subarray(end + 4));
       upstream.pipe(socket);
@@ -254,6 +258,11 @@ export function handleTerminalUpgrade(req, socket, head, ctx) {
     upstream.destroy();
   }
   upstream.on('error', drop);
+  // After its answer, pipe() ends the browser's side once what ttyd sent is written; before it, the browser would wait
+  // on a socket nothing writes to again, rather than see it close and open a new one.
+  upstream.on('close', () => {
+    if (!answered) drop(new Error('ttyd closed before its answer'));
+  });
   // Without these a tab closed mid-stream leaks the pair, or becomes an uncaught exception.
   socket.on('close', () => upstream.destroy());
   socket.on('error', drop);
