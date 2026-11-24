@@ -686,7 +686,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     const extra = picked.filter((r) => !known.some((k) => lower(k) === lower(r)));
     const has = (r) => picked.some((x) => lower(x) === lower(r));
     const set = (repos) => { f.repos = repos; render(); };
-    const box = (id, text, checked, onchange, { disabled = false, note = null } = {}) => h('label', { class: 'repo-check', for: id },
+    const box = (id, text, checked, onchange, { disabled = false, note = null, every = false } = {}) => h('label', { class: every ? 'repo-check is-all' : 'repo-check', for: id },
       h('input', { id, type: 'checkbox', checked, disabled, onchange: (e) => onchange(e.target.checked) }),
       h('span', { class: 'repo-check-name' }, text), note && h('span', { class: 'repo-check-note' }, note));
     const summary = all ? 'All repos' : picked.length ? picked.join(', ') : 'No repo';
@@ -698,7 +698,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         h('details', { class: 'repo-pick', open: f.reposOpen, ontoggle: (e) => { f.reposOpen = e.target.open; } },
           h('summary', { id: fid(f, 'repos'), class: 'field', 'aria-labelledby': `${label} ${fid(f, 'repos')}` }, h('span', { class: 'repo-pick-text' }, summary)),
           h('div', { class: 'repo-pick-list', role: 'group', 'aria-labelledby': label },
-            box(fid(f, 'repo-all'), 'All repos', all, (on) => set(on ? '*' : [...known])),
+            box(fid(f, 'repo-all'), 'All repos', all, (on) => set(on ? '*' : [...known]), { every: true }),
             known.map((r, i) => box(fid(f, `repo-${i}`), r, all || has(r), (on) => set(on ? [...picked, r] : picked.filter((x) => lower(x) !== lower(r))), { disabled: all })),
             extra.map((r, i) => box(fid(f, `repo-x${i}`), r, true, (on) => set(on ? [...picked, r] : picked.filter((x) => x !== r)), { note: 'not a repo of this console' }))))),
       !all && !picked.length && h('p', { class: 'form-error', role: 'status' }, 'No repo picked: no session gets it.'));

@@ -1,4 +1,4 @@
-<!-- @dsCard group="Settings" height=240 subtitle="Some of the console's repos or all, as checkboxes under a fold" -->
+<!-- @dsCard group="Settings" height=420 subtitle="Some of the console's repos or all, as checkboxes under a fold; a long list starts with a filter" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600&family=JetBrains+Mono:wght@400&display=swap">
 <style>
  body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
@@ -11,6 +11,8 @@
  label{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:center;padding:6px 10px;font:12.5px "JetBrains Mono",monospace}
  label:first-child{border-bottom:1px solid var(--line-soft);font:600 13px "Red Hat Display",sans-serif}
  input{margin:0;accent-color:var(--slate)}
+ .filter{width:calc(100% - 16px);box-sizing:border-box;margin:2px 8px 4px;padding:7px 10px;font:13px "Red Hat Display",sans-serif;border:1px solid #b9b9b9;border-radius:4px}
+ .filtered label:first-of-type{border-bottom:0;font:12.5px "JetBrains Mono",monospace}
  small{flex-basis:100%;padding-left:21px;font:11.5px "Red Hat Display",sans-serif;color:var(--meta)}
 </style>
 <details open>
@@ -20,5 +22,13 @@
   <label><input type="checkbox">example-org/web</label>
   <label><input type="checkbox" checked>example-org/api</label>
   <label><input type="checkbox" checked>example-org/gone<small>not a repo of this console</small></label>
+ </div>
+</details>
+<details open style="margin-top:16px">
+ <summary><span>example-org/api</span></summary>
+ <div class="list filtered">
+  <input class="filter" type="search" placeholder="Filter 24 repositories" value="api">
+  <label><input type="checkbox" checked>example-org/api</label>
+  <label><input type="checkbox">example-org/api-docs</label>
  </div>
 </details>
