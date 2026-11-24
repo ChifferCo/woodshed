@@ -47,7 +47,10 @@ const onPath = (bin) => {
   }
 };
 
-/** @returns {Promise<{port: number, close: () => void}|null>}  null where ttyd or tmux is missing */
+/**
+ * @returns {Promise<{port: number, shellPort: number, close: () => void}|null>}  null where ttyd or tmux is missing;
+ *   `port` is the TUI tab's ttyd, `shellPort` the Terminal tab's, on a plain shell in a tmux session of its own
+ */
 export async function startDevTerminal({ id, terminalToken }) {
   if (!onPath('ttyd') || !onPath('tmux')) return null;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-terminal-'));
@@ -60,10 +63,17 @@ export async function startDevTerminal({ id, terminalToken }) {
   const ttyd = spawn('ttyd', ['--writable', '--interface', '127.0.0.1', '--port', String(port), '--base-path', `/term/${id}`,
     '--credential', `woodshed:${terminalToken}`, '-t', THEME, '-t', 'scrollback=10000', '-t', 'disableLeaveAlert=true',
     'tmux', '-S', socket, 'attach', '-t', 'claude'], { stdio: 'ignore' });
+  // The Terminal tab, as a session's second ttyd: a shell in its own tmux session, made again after an `exit` (-A).
+  const shellPort = await freePort();
+  const shell = spawn('ttyd', ['--writable', '--interface', '127.0.0.1', '--port', String(shellPort), '--base-path', `/shell/${id}`,
+    '--credential', `woodshed:${terminalToken}`, '-t', THEME, '-t', 'scrollback=10000', '-t', 'disableLeaveAlert=true',
+    'tmux', '-S', socket, 'new-session', '-A', '-s', 'shell', '-c', root], { stdio: 'ignore' });
   return {
     port,
+    shellPort,
     close() {
       ttyd.kill();
+      shell.kill();
       try {
         execFileSync('tmux', ['-S', socket, 'kill-server'], { stdio: 'ignore' });
       } catch {

@@ -87,23 +87,22 @@ image without the second ttyd has Terminal greyed out.
 **The terminal page.** Both tabs frame the console's own page, `/static/term.html#term/<id>` (or `#shell/<id>`):
 xterm.js, copied into `public/vendor/xterm/` at the versions ttyd 1.7.7 bundles, and `public/terminalPage.js`, which
 speaks ttyd's protocol on `/<kind>/<id>/ws`. The page names its files by hash, as every page does, so the browser keeps
-it and opening a terminal loads only its websocket; ttyd's own page (190 KB gzipped, sent with no cache headers) came
-from the session through the console on every open. The session's ttyd is the connection alone. Its first message is
-the console's (`terminalProxy.mjs`): ttyd's credential with the size the page asked for, so the page never holds the
-credential, and every other ttyd path, `/<kind>/<id>/token` among them, answers 404. A browser's compression offer goes to ttyd with
-`client_no_context_takeover` added, and ttyd's answer comes back with it too should ttyd leave it out, so the browser
-compresses each message on its own: the console can read that first message compressed and send its own uncompressed,
-and nothing after it refers back to bytes ttyd never saw. ttyd's output stays compressed. The session's `-t` flags (theme, scrollback) reach the page as ttyd's
-preferences, as they did ttyd's page. tmux sizes the agent's window by the client used last, and only input counts, so after a phone opened a session a
-desktop that only scrolls or comes back to the front would stay at the phone's width: the page sends tmux a focus-in
-on a wheel, a click or tap, or its window coming to the front (at most every 2 s, and only while tmux asked for focus
+it and opening a terminal loads only its websocket. The session's ttyd is the connection alone: no HTTP request reaches
+it, so neither its own page nor its `/token` (`/<kind>/<id>/…` answers 404). The websocket's first message is the
+console's (`terminalProxy.mjs`): ttyd's credential with the size the page asked for, so the page never holds the
+credential. A browser's compression offer goes to ttyd with `client_no_context_takeover` added, and ttyd's answer comes
+back with it too should ttyd leave it out, so the browser compresses each message on its own: the console can read that
+first message compressed and send its own uncompressed, and nothing after it refers back to bytes ttyd never saw. ttyd's
+output stays compressed. The session's `-t` flags (theme, scrollback) reach the page as ttyd's preferences.
+
+tmux sizes the agent's window by the client used last, and only input counts, so after a phone opened a session a
+desktop that only scrolls or comes back to the front would stay at the phone's width: the page sends tmux a focus-in on
+a wheel, a click or tap, or its window coming to the front (at most every 2 s, and only while tmux asked for focus
 events, `focus-events on` in `session/tmux.conf`), which gives tmux that device's size again, and only from a terminal on
 screen: one not displayed (a phone on its list, another tab) never takes the window. Nor is a terminal ever fitted below
 20 columns or 5 rows: a frame squeezed to nothing for a moment as the page changes would make xterm's fit its 2x1
-minimum, tmux would draw every device's screen at 2 columns, and claude's lines would stay that narrow in their
-history. The last size stays until the next resize. In one browser,
-`localStorage['woodshed-terminal-page'] = 'ttyd'` goes back to
-ttyd's page (`session.js`, `terminalSrc`), which works as before without `/token`.
+minimum, tmux would draw every device's screen at 2 columns, and claude's lines would stay that narrow in their history.
+The last size stays until the next resize.
 
 On a phone (720px wide or less) it works as the shed does there: the sessions
 page is the rail, and a session's page is its pane alone, with **‹** back to the
@@ -119,7 +118,9 @@ The size and the key bar's choice are remembered in the browser.
 A running session opens on its **Chat** tab unless its person picked TUI as their default view (`public/chat.js`): the conversation as a chat instead of the agent's
 terminal. The thread is read from the agent's own record of it, claude's transcript or codex's rollout, through
 statusd's `GET /transcript` (session/README.md), every 1.5 s while the agent works or a message waits to show and every
-5 s otherwise, with `since` so a record that did not move costs the session a stat. The person's messages are on the
+5 s otherwise, with `since` so a record that did not move costs the session a stat. The page keeps the last 8
+conversations shown as it read them (`keptRecords` in `public/chatThread.cjs`), by session and start: coming back to one
+draws it at once, and its first read only asks whether it moved since. The person's messages are on the
 right; the agent's replies are Markdown, read into a tree and built as DOM nodes, never as HTML, with only http(s)
 and mailto links (`public/chatThread.cjs`); each run of tool calls between them is one work log, summed up in a line
 (`Ran 3 commands, edited 2 files`, `1 failed`) that folds open to the calls, open while it is the turn still running.
@@ -156,7 +157,7 @@ session, or a Herdr terminal when the owner's Agent terminal is Herdr, which the
 switch lists them all with their state words and says how many others need you; picking one points Chat at its own
 conversation (`/api/sessions/<id>/agents/<agent-N>/transcript`, `send`, `interrupt`, `prompt`, `answer`) and the TUI
 tab at its terminal (`#term/<id>?arg=agent-N` on the terminal page, which puts `arg` on its websocket for ttyd's URL
-argument; `/term/<id>/?arg=agent-N` on ttyd's own page). The pick is kept per session in the browser tab.
+argument). The pick is kept per session in the browser tab.
 **Stop** in the switch's menu ends one. A Codex agent beside claude runs on its owner's Codex sign-in, which the
 console sends with that start alone, or on the team's OpenAI key through the console's proxy, which the session may use
 only once the agent started (`fleet.allowAgent`), as a Codex session does. A session's lockdown drops that at once and cuts
@@ -176,7 +177,7 @@ claude as one message, through statusd's `POST /send`. Return is a new line. An
 unsent draft stays with its session in this tab. A terminal whose connection
 dropped (a phone in the background closes it) reconnects by itself once the page
 is in front, at most three times a minute; past that it says "Press ⏎ to
-reconnect" (`terminalPage.js`; on ttyd's own page, `terminal.js` presses it).
+reconnect" (`terminalPage.js`).
 
 Review, while the session runs, is the shed's own page and server, run inside
 the session: statusd hands `/shed-review/*` to `session/reviewShed/`, which
@@ -1994,9 +1995,9 @@ redirect.
   (Woodshed's `sameOrigin.mjs`), and writes also need the `x-woodshed: 1`
   header, which a cross-site form cannot send.
 - The proxy adds each session's ttyd credentials, in the terminal's first
-  websocket message too, and passes on only ttyd's page itself (`/<kind>/<id>/`,
-  as written: ttyd reads `%74oken`, `//token` and `token;x` as its `/token`),
-  so the browser never holds the terminal credential. It is a separate token from the one
+  websocket message too, and passes on nothing of a ttyd but its websocket at
+  `/<kind>/<id>/ws` as written (ttyd reads `%74oken`, `//token` and `token;x` as
+  its `/token`), so the browser never holds the terminal credential. It is a separate token from the one
   statusd checks all the same, and only the console can reach statusd.
 - The database viewers and the Redis viewer have no login of their own, so a
   page on another site must not reach them through a signed-in browser.

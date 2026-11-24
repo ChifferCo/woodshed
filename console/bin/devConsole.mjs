@@ -320,11 +320,11 @@ const sessions = [
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', hasShell: true,
     ref: twoApps.ref, endpoint: { host: '127.0.0.1', statusPort: twoApps.port, termPort: twoApps.port },
   }),
-  // Running, with a live TUI (devTerminalSession.mjs), where ttyd and tmux are on the PATH: for find, copy,
-  // links and scrolling back on a real xterm. Its Terminal tab, Diff and app go nowhere.
+  // Running, with a live TUI and Terminal tab (devTerminalSession.mjs), where ttyd and tmux are on the PATH: for find,
+  // copy, links and scrolling back on a real xterm, and the shell's websocket. Its Diff and app go nowhere.
   ...(liveTerminal ? [session(TERMINAL_ID, 26703, 'A session with a live terminal', {
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
-    endpoint: { host: '127.0.0.1', statusPort: liveTerminal.port, termPort: liveTerminal.port },
+    endpoint: { host: '127.0.0.1', statusPort: liveTerminal.port, termPort: liveTerminal.port, shellPort: liveTerminal.shellPort },
   })] : []),
   // Running on a stand-in codex and claude (devChatSession.mjs), for the Chat tab. The codex one's state is read from
   // its pane; the claude one keeps this one. Their TUI tab has no ttyd, and their Terminal, Diff and app go nowhere.

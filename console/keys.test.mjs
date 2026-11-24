@@ -41,14 +41,14 @@ test('a key alone works only while nothing takes typing, and never in a terminal
   assert.equal(match({ key: 'x', code: 'KeyX' }), null);
 });
 
-test('⌘J or Ctrl+J is the desktop app\'s notifications, and Ctrl+J in a terminal is the terminal\'s', () => {
+test('⌘J or Ctrl+J is the notifications, and Ctrl+J in a terminal is the terminal\'s', () => {
   assert.equal(match({ key: 'j', code: 'KeyJ', metaKey: true }), 'notifications');
   assert.equal(match({ key: 'j', code: 'KeyJ', ctrlKey: true }), 'notifications');
   assert.equal(match({ key: 'j', code: 'KeyJ', metaKey: true }, { inFrame: true }), 'notifications');
   assert.equal(match({ key: 'j', code: 'KeyJ', ctrlKey: true }, { inFrame: true }), null);
   assert.equal(match({ key: 'J', code: 'KeyJ', metaKey: true, shiftKey: true }), null);
   assert.equal(match({ key: 'j', code: 'KeyJ' }), null, 'J alone is nothing');
-  assert.equal(byId.notifications.desktop, true, 'left off the sheet in a browser');
+  assert.equal(byId.notifications.bell, true, 'left off the sheet where there is no list');
   assert.deepEqual(caps(byId.notifications.mod, false), ['Ctrl', 'J']);
 });
 

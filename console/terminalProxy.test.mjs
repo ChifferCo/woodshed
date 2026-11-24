@@ -6,8 +6,7 @@ import zlib from 'node:zlib';
 
 import { OP, acceptFor, createFrameReader, encodeFrame } from '../shared/wsFrames.mjs';
 import {
-  answerWithoutClientContext, basicAuth, handleTerminalRequest, handleTerminalUpgrade, isTerminalPage, offerWithoutClientContext, parseTerminalPath,
-  takeFirstMessage,
+  answerWithoutClientContext, basicAuth, handleTerminalRequest, handleTerminalUpgrade, offerWithoutClientContext, parseTerminalPath, takeFirstMessage,
 } from './terminalProxy.mjs';
 
 test('parseTerminalPath accepts only an 8-hex session id, on either terminal', () => {
@@ -29,30 +28,7 @@ function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 }
 
-test('the proxy adds the session credentials and drops the browser cookie', async (t) => {
-  let seen;
-  const ttyd = http.createServer((req, res) => {
-    seen = { url: req.url, authorization: req.headers.authorization, cookie: req.headers.cookie };
-    res.end('ok');
-  });
-  const ttydPort = await listen(ttyd);
-  const sessions = { '0a1b2c3d': { host: '127.0.0.1', termPort: ttydPort, statusPort: 1, terminalToken: 'secret', sessionToken: 'other' } };
-  const proxy = http.createServer((req, res) => {
-    if (!handleTerminalRequest(req, res, { targetFor: (id) => sessions[id] ?? null })) res.end('not ours');
-  });
-  const proxyPort = await listen(proxy);
-  t.after(() => { ttyd.close(); proxy.close(); });
-
-  const res = await fetch(`http://127.0.0.1:${proxyPort}/term/0a1b2c3d/`, { headers: { cookie: 'a=b' } });
-  assert.equal(await res.text(), 'ok');
-  assert.equal(res.headers.get('content-security-policy'), "frame-ancestors 'self'");
-  assert.deepEqual(seen, { url: '/term/0a1b2c3d/', authorization: basicAuth('secret'), cookie: undefined });
-
-  const missing = await fetch(`http://127.0.0.1:${proxyPort}/term/ffffffff/`);
-  assert.equal(missing.status, 404);
-});
-
-test("ttyd's /token never reaches the browser: the console gives the terminal its credential itself", async (t) => {
+test('no request reaches a ttyd but its websocket: the page is the console\'s, and /token is never asked for', async (t) => {
   const asked = [];
   const ttyd = http.createServer((req, res) => {
     asked.push(req.url);
@@ -60,18 +36,21 @@ test("ttyd's /token never reaches the browser: the console gives the terminal it
   });
   const ttydPort = await listen(ttyd);
   const sessions = { '0a1b2c3d': { host: '127.0.0.1', termPort: ttydPort, statusPort: 1, shellPort: ttydPort, terminalToken: 'secret', sessionToken: 'other' } };
-  const proxy = http.createServer((req, res) => { handleTerminalRequest(req, res, { targetFor: (id) => sessions[id] ?? null }); });
+  const proxy = http.createServer((req, res) => {
+    if (!handleTerminalRequest(req, res, { targetFor: (id) => sessions[id] ?? null })) res.end('not ours');
+  });
   const proxyPort = await listen(proxy);
   t.after(() => { ttyd.close(); proxy.close(); });
 
-  // What ttyd reads as its /token too (each was seen to hand out the credential from ttyd 1.7.7), and any other path.
-  const variants = ['/term/0a1b2c3d/token', '/shell/0a1b2c3d/token', '/term/0a1b2c3d/token?x=1', '/term/0a1b2c3d/%74oken',
-    '/term/0a1b2c3d//token', '/term/0a1b2c3d/token;x', '/term/0a1b2c3d/./token', '/term/0a1b2c3d/x/../token', '/term/0a1b2c3d/TOKEN',
-    '/term/0a1b2c3d/token/', '/term/0a1b2c3d/%2e/token', '/term/0a1b2c3d//', '/shell/0a1b2c3d/%74oken'];
-  for (const path of variants) {
+  // ttyd's own page (what the TUI tab framed before the console served one), its /token under every spelling ttyd 1.7.7
+  // was seen to read as one, and a session the console does not know.
+  const paths = ['/term/0a1b2c3d/', '/term/0a1b2c3d', '/term/0a1b2c3d/?arg=agent-2', '/shell/0a1b2c3d/', '/term/0a1b2c3d/token',
+    '/shell/0a1b2c3d/token', '/term/0a1b2c3d/token?x=1', '/term/0a1b2c3d/%74oken', '/term/0a1b2c3d//token', '/term/0a1b2c3d/token;x',
+    '/term/0a1b2c3d/./token', '/term/0a1b2c3d/x/../token', '/shell/0a1b2c3d/%74oken', '/term/ffffffff/'];
+  for (const path of paths) {
     const res = await new Promise((resolve, reject) => {
       // node's fetch would tidy the path; ttyd reads it as the browser sent it.
-      http.get({ host: '127.0.0.1', port: proxyPort, path }, (r) => {
+      http.get({ host: '127.0.0.1', port: proxyPort, path, headers: { cookie: 'a=b' } }, (r) => {
         let body = '';
         r.on('data', (d) => { body += d; });
         r.on('end', () => resolve({ status: r.statusCode, body }));
@@ -81,19 +60,6 @@ test("ttyd's /token never reaches the browser: the console gives the terminal it
     assert.doesNotMatch(res.body, /secret|d29vZHNoZWQ6c2VjcmV0/, path);
   }
   assert.deepEqual(asked, [], 'ttyd was never asked');
-
-  const page = await fetch(`http://127.0.0.1:${proxyPort}/term/0a1b2c3d/?arg=agent-2`);
-  assert.equal(page.status, 200, 'ttyd\'s own page still goes on, its query with it');
-  assert.deepEqual(asked, ['/term/0a1b2c3d/?arg=agent-2']);
-});
-
-test('only ttyd\'s page, written plainly, is a terminal page', () => {
-  assert.equal(isTerminalPage('/term/0a1b2c3d/', 'term', '0a1b2c3d'), true);
-  assert.equal(isTerminalPage('/term/0a1b2c3d', 'term', '0a1b2c3d'), true);
-  assert.equal(isTerminalPage('/shell/0a1b2c3d/?arg=agent-3', 'shell', '0a1b2c3d'), true);
-  for (const url of ['/term/0a1b2c3d/token', '/term/0a1b2c3d//', '/term/0a1b2c3d/%2F', '/term/0a1b2c3d/;x', '/term/0a1b2c3d/index.html', '/term/0a1b2c3d/ws']) {
-    assert.equal(isTerminalPage(url, 'term', '0a1b2c3d'), false, url);
-  }
 });
 
 const CREDENTIAL = Buffer.from('woodshed:secret').toString('base64');
@@ -336,27 +302,36 @@ test('a Redis viewer request goes to statusd with the session token, and another
   assert.deepEqual([gone.status, await gone.text()], [404, 'no Postgres viewer for that session\n']);
 });
 
-test('the Terminal tab reaches the shell ttyd with the terminal credential, and an older session has none', async (t) => {
+test('the Terminal tab\'s websocket reaches the shell ttyd with the terminal credential, and an older session has none', async (t) => {
   const seen = [];
-  const upstream = http.createServer((req, res) => {
-    seen.push({ path: req.url, authorization: req.headers.authorization });
-    res.end('shell');
+  const shell = net.createServer((conn) => {
+    conn.once('data', (d) => {
+      const request = d.toString();
+      seen.push({ line: request.split('\r\n')[0], authorization: /authorization: (.+)/i.exec(request)?.[1] });
+      conn.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+    });
   });
-  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
-  t.after(() => upstream.close());
-  const port = upstream.address().port;
+  const port = await listen(shell);
   const sessions = {
     '0a1b2c3d': { host: '127.0.0.1', termPort: 1, statusPort: 2, shellPort: port, terminalToken: 'tt', sessionToken: 'st' },
     '11111111': { host: '127.0.0.1', termPort: 1, statusPort: 2, terminalToken: 'tt', sessionToken: 'st' },
   };
-  const proxy = http.createServer((req, res) => { handleTerminalRequest(req, res, { targetFor: (id) => sessions[id] ?? null }); });
-  await new Promise((resolve) => proxy.listen(0, '127.0.0.1', resolve));
-  t.after(() => proxy.close());
-  const base = `http://127.0.0.1:${proxy.address().port}`;
+  const proxy = http.createServer();
+  proxy.on('upgrade', (req, socket, head) => handleTerminalUpgrade(req, socket, head, { targetFor: (id) => sessions[id] ?? null }));
+  const proxyPort = await listen(proxy);
+  t.after(() => { shell.close(); proxy.close(); });
 
-  const res = await fetch(`${base}/shell/0a1b2c3d/`);
-  assert.equal(await res.text(), 'shell');
-  assert.deepEqual(seen, [{ path: '/shell/0a1b2c3d/', authorization: basicAuth('tt') }]);
-  const old = await fetch(`${base}/shell/11111111/`);
-  assert.equal(old.status, 404, 'a session from an image before the Terminal tab');
+  const open = (path) => new Promise((resolve) => {
+    const client = net.connect(proxyPort, '127.0.0.1', () => {
+      client.write([`GET ${path} HTTP/1.1`, 'Host: console.example', 'Upgrade: websocket', 'Connection: Upgrade',
+        'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==', 'Sec-WebSocket-Protocol: tty', '', ''].join('\r\n'));
+    });
+    let got = '';
+    client.on('data', (d) => { got += d; });
+    client.on('error', () => {});
+    client.on('close', () => resolve(got.split('\r\n')[0]));
+  });
+  assert.equal(await open('/shell/0a1b2c3d/ws'), 'HTTP/1.1 403 Forbidden', 'ttyd\'s answer comes back as it is');
+  assert.deepEqual(seen, [{ line: 'GET /shell/0a1b2c3d/ws HTTP/1.1', authorization: basicAuth('tt') }]);
+  assert.equal(await open('/shell/11111111/ws'), 'HTTP/1.1 404 Not Found', 'a session from an image before the Terminal tab');
 });

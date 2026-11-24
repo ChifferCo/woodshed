@@ -1,9 +1,8 @@
 // Same-origin terminals and Redis viewers, after Woodshed's terminalProxy.mjs:
 //
-//   GET      /term/<id>/*    ->  <session host>:<ttyd port>/term/<id>/*         the TUI tab: claude's tmux
-//   UPGRADE  /term/<id>/ws   ->  the same, as a raw socket pipe
-//   GET      /shell/<id>/*   ->  <session host>:<shell ttyd port>/shell/<id>/*  the Terminal tab: a plain shell
-//   UPGRADE  /shell/<id>/ws  ->  the same
+//   UPGRADE  /term/<id>/ws   ->  <session host>:<ttyd port>/term/<id>/ws         the TUI tab: claude's tmux
+//   UPGRADE  /shell/<id>/ws  ->  <session host>:<shell ttyd port>/shell/<id>/ws  the Terminal tab: a plain shell
+//   GET      /term/<id>/*, /shell/<id>/*  ->  404: the page is the console's own (/static/term.html, terminalPage.js)
 //   ANY      /redis/<id>/*   ->  <session host>:<statusd port>/redis/<id>/*
 //   ANY      /pg/<id>/*, /mongo/<id>/*  ->  the same: a private session's own pgweb and mongo-express
 //
@@ -13,8 +12,8 @@
 // credentials (ttyd's basic auth, statusd's bearer token), so neither token
 // reaches the browser, and only sessions the console knows as running resolve
 // to an endpoint. ttyd's own credential too: the terminal's first websocket message is
-// the console's, with the size the browser asked for, and ttyd's /token, which would
-// hand the credential to the page, answers 404.
+// the console's, with the size the browser asked for, and no request reaches ttyd's
+// page or its /token, which would hand the credential to the browser.
 
 import http from 'node:http';
 import net from 'node:net';
@@ -45,7 +44,6 @@ const MAX_BEFORE_FIRST = 16 * 1024;
 const TERMINALS = new Set(['term', 'shell']);
 // ttyd's answer to the upgrade is a status line and a few headers.
 const MAX_ANSWER_HEAD = 16 * 1024;
-const TOKEN_RE = /^\/(?:term|shell)\/[0-9a-f]{8}\/token$/;
 
 /**
  * @param {string} pathname
@@ -111,17 +109,6 @@ export function offerWithoutClientContext(value) {
 }
 
 /**
- * Whether a request is for ttyd's own page, `/<app>/<id>/`, written plainly: no encoding, doubled slash or parameter
- * that ttyd would read as another of its paths. A query passes (`?arg=agent-2`).
- * @param {string|undefined} url  the request's target as the browser sent it
- * @returns {boolean}
- */
-export function isTerminalPage(url, app, id) {
-  const raw = String(url || '').split('?')[0];
-  return raw === `/${app}/${id}/` || raw === `/${app}/${id}`;
-}
-
-/**
  * @typedef {{host: string, termPort: number, statusPort: number, shellPort?: number, terminalToken: string, sessionToken: string}} SessionTarget
  *   `shellPort` is missing for a session started before its image had the Terminal tab
  */
@@ -140,20 +127,17 @@ export function handleTerminalRequest(req, res, ctx) {
     res.end('refused: open this from the console\n');
     return true;
   }
-  const session = ctx.targetFor(id);
-  if (!session || (app === 'shell' && !session.shellPort)) {
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-    res.end(VIEWER_NAMES[app] ? `no ${VIEWER_NAMES[app]} viewer for that session\n` : 'no terminal for that session\n');
+  // Of a ttyd, nothing but its websocket (handleTerminalUpgrade): the terminal's page is the console's own, and ttyd's
+  // /token, under any spelling it reads as one (`%74oken`, `//token`, `token;x`), would hand out its credential.
+  if (TERMINALS.has(app)) {
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+    res.end('not found: a terminal\'s page is the console\'s own, and only its websocket reaches the session\n');
     return true;
   }
-  // Of a ttyd, only its page goes on, by its own address as the browser sent it: ttyd reads `%74oken`, `//token` and
-  // `token;x` as its /token, which hands out its credential. That page asks for /token, then sends what it got as its
-  // first message: the console sends that message itself (handleTerminalUpgrade), so the page goes on without one.
-  if (TERMINALS.has(app) && !isTerminalPage(req.url, app, id)) {
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
-    res.end(TOKEN_RE.test(new URL(req.url || '/', 'http://console.invalid').pathname)
-      ? 'no token here: the console gives the terminal its credential itself\n'
-      : 'not found: the console passes on only the terminal\'s page\n');
+  const session = ctx.targetFor(id);
+  if (!session) {
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end(`no ${VIEWER_NAMES[app]} viewer for that session\n`);
     return true;
   }
   const target = { host: session.host, ...UPSTREAM[app](session) };
@@ -195,7 +179,7 @@ export function handleTerminalUpgrade(req, socket, head, ctx) {
   if (!route) return false;
   const { app, id } = route;
   const session = ctx.targetFor(id);
-  // ttyd's websocket alone, by its own address as written, as only its page goes on (isTerminalPage).
+  // ttyd's websocket alone, by its own address as written: ttyd reads other spellings as its other paths.
   if (!session || (app === 'shell' && !session.shellPort) || String(req.url || '').split('?')[0] !== `/${app}/${id}/ws`) {
     socket.end('HTTP/1.1 404 Not Found\r\n\r\n');
     return true;

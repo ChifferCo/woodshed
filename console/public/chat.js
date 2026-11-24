@@ -24,6 +24,9 @@
   const FAST_MS = 1500;
   const SLOW_MS = 5000;
   const LIMIT = 300;
+  // The conversations last shown, kept in the page as read, so coming back to one draws it at once and its next read
+  // asks only whether it changed since (as many as the terminals kept loaded, session.js's MAX_TERMINALS).
+  const KEPT = 8;
   const MAX_FILES = 8;
   const MAX_FILE_MB = 25;
   const SEND_TIMEOUT_MS = 20_000;
@@ -104,6 +107,10 @@
     let session = null;
     // The last answer for the shown session: { id, agent, entries, partial, writtenAt }.
     let record = null;
+    // Each conversation's last answer, by keyOf.
+    const kept = T.keptRecords(KEPT);
+    // A session's own conversation by its id and start: a Resume's is another, and an agent's id already holds its start.
+    const keyOf = (s) => `${s.id}~${s.startedAt ?? ''}`;
     let readError = null;
     let timer = null;
     let ticker = null;
@@ -665,6 +672,7 @@
         readError = null;
         if (answer.unchanged && record?.id === id) return;
         record = { id, ...answer };
+        kept.keep(keyOf(session), record);
         drawThread(false);
         // The record can end the turn (an interrupt) before the console's state says so: Stop goes with it.
         drawComposer();
@@ -734,7 +742,9 @@
       if (moved) {
         if (recognition) recognition.abort();
         recognition = null;
-        record = null;
+        // The conversation as it was last read, drawn now: the read below only asks whether it changed since.
+        record = kept.get(keyOf(s)) ?? null;
+        if (record) kept.keep(keyOf(s), record);
         readError = null;
         const label = `Message ${agent()}`;
         field.placeholder = label;

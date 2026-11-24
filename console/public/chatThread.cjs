@@ -434,6 +434,26 @@
   }
 
   /**
+   * The conversations a Chat tab keeps as last read, so coming back to one draws it at once: at most `max`, and the one
+   * shown longest ago goes first.
+   * @param {number} max
+   * @returns {{get: (key: string) => object|undefined, keep: (key: string, record: object) => void, keys: () => string[]}}
+   *   `keep` also makes it the one shown last
+   */
+  function keptRecords(max) {
+    const kept = new Map();
+    return {
+      get: (key) => kept.get(key),
+      keep(key, record) {
+        kept.delete(key);
+        kept.set(key, record);
+        while (kept.size > max) kept.delete(kept.keys().next().value);
+      },
+      keys: () => [...kept.keys()],
+    };
+  }
+
+  /**
    * One run at a time: a call while one runs is kept, and run once that one ends, whatever it was about. The Chat tab's
    * reads go through it: a read asked for session B while A's is on its way runs when A's ends, rather than being
    * dropped with A's answer, which left B on "Reading the conversation…".
@@ -606,5 +626,5 @@
     return { clear: true, toast: 'Sent' };
   }
 
-  return { boxSendOutcome, consoleRefused, reconcile, typeable, lastUserAt, sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
+  return { boxSendOutcome, consoleRefused, reconcile, typeable, lastUserAt, sendTimeoutMs, pendingLabel, notReady, keptRecords, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
 });
