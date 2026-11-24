@@ -882,6 +882,24 @@ refused` with `why` (`no prompt`, `same branch`, `not a member`, `write access g
 New session's `status`), `refused, no running session has that start token` and `refused, a browser's call`. The
 session's log says `Session starts on` when it got a token.
 
+**Messages between them.** A session reaches the sessions it started and the one that started it, the same person's,
+and no other, on the same token and the same session API: nothing goes from one session's machine to another's.
+
+- `woodshed-session send <id> "<message>"` (`reply "<message>"` for the session's starter) types it in at the other's
+  prompt as the Chat tab's message is (`fleet.send`), headed `[Message from session <id> "<title>", …]` with how to
+  answer, so the agent and its person tell it from what the person typed. It is held while that session works, waits
+  in line or is paused, and typed once it is at its prompt again, as a held Chat message is.
+- `wait <id>` answers once it is done, needs its person, or stopped; `--reply` (and `send --wait`) once it has worked on
+  what was sent, or says nothing took it up (never seen working, with nothing held, for 90 s). The console answers each
+  wait within 4 minutes and the command asks again.
+- `read <id>` is what it was asked and said, from its statusd's `/transcript`, tools left out. A session that has seen
+  production data is never read by another (403).
+- `stop <id>` and `resume <id>` are the page's Stop and Resume, with Resume's checks (`resumeMine` in `server.mjs`).
+
+The console logs `sessionStarts: message` with `from`, `to`, the `chars` and `outcome` (`sent`, `queued`, `in-box`,
+`unknown`), `sessionStarts: session stopped`, `sessionStarts: resume` with the `status`, and `sessionStarts: transcript
+not read` when the other's statusd did not answer.
+
 ### MCP servers
 
 Admins give sessions' claude MCP servers on Console settings' **MCP servers** card, or through its API
