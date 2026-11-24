@@ -95,11 +95,14 @@ export function credentialOf(saved, now = Date.now(), { loginUpstream = LOGIN_UP
   const [, entry] = entries.find(([scope]) => scope.startsWith('https://auth.x.ai::')) ?? entries[0] ?? [];
   if (!entry) return null;
   if (entry.key.startsWith('xai-') && !entry.refresh_token) return key(entry.key);
+  let expiresAt = null;
   if (typeof entry.expires_at === 'string') {
     const at = Date.parse(entry.expires_at);
     if (!Number.isFinite(at) || at <= now) return { expired: true };
+    expiresAt = at;
   }
-  return { url: `${loginUpstream}/models`, base: loginUpstream, authorization: `Bearer ${entry.key}`, source: 'login' };
+  // `expiresAt` null: the login says nothing of when it ends, which the catalog tries anyway, and a review never does.
+  return { url: `${loginUpstream}/models`, base: loginUpstream, authorization: `Bearer ${entry.key}`, source: 'login', expiresAt };
 }
 
 /**

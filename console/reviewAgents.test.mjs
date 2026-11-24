@@ -174,6 +174,17 @@ test('OpenCode reviews only on an API key of a provider the proxy forwards, neve
   assert.match(ownReviewCredential('grok', null).why, /no Grok Build sign-in saved/);
 });
 
+test('a review never runs on a Grok login that does not say when it expires, though a key needs no expiry', () => {
+  const now = Date.parse('2026-11-18T10:00:00Z');
+  const entry = (extra) => JSON.stringify({ 'https://auth.x.ai::made-up': { key: 'made-up-access', refresh_token: 'made-up-refresh', ...extra } });
+  for (const extra of [{}, { expires_at: 1800000000 }, { expires_at: null }]) {
+    assert.match(ownReviewCredential('grok', entry(extra), now).why, /does not say when it expires/, JSON.stringify(extra));
+  }
+  assert.match(ownReviewCredential('grok', entry({ expires_at: 'soon' }), now).why, /has expired/);
+  assert.equal(ownReviewCredential('grok', entry({ expires_at: '2026-11-18T12:00:00Z' }), now).via, 'login');
+  assert.equal(ownReviewCredential('grok', 'xai-made-up-key-0123456789', now).via, 'key');
+});
+
 test('an author\'s Grok Build or OpenCode sign-in that could not be read is said so, and is not taken for none', async () => {
   const agents = setup({ team: { claude: false, codex: false }, agentOwn: { grok: ['gil'] }, choices: { gil: 'grok' }, agentAuthFails: true });
   const r = await agents.forReview({ login: 'gil' });

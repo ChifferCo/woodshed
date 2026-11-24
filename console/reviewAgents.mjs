@@ -58,6 +58,9 @@ export function ownReviewCredential(id, saved, now = Date.now()) {
     const cred = grokCredentialOf(saved, now);
     if (!cred) return { why: 'the author\'s saved Grok Build sign-in has no token' };
     if (cred.expired) return { why: 'the author\'s saved Grok Build login has expired' };
+    // A login whose end is not known is not offered: the console never refreshes one, so a review could start on a login
+    // that has already ended and spend its run on refusals.
+    if (cred.source === 'login' && cred.expiresAt === null) return { why: 'the author\'s saved Grok Build login does not say when it expires' };
     if (!/^[\x21-\x7e]+ [\x21-\x7e]+$/.test(cred.authorization)) return { why: 'the author\'s saved Grok Build sign-in has a token that cannot be sent' };
     return { via: cred.source, base: cred.base, authorization: cred.authorization };
   }

@@ -54,7 +54,8 @@ test('a key\'s catalog leaves out image and video models and odd ids, and falls 
 test('a saved sign-in reaches the right catalog, and an expired login is never sent', () => {
   assert.deepEqual(credentialOf('xai-abc', 0, { keyUpstream: 'https://k.test/v1' }), { url: 'https://k.test/v1/models', base: 'https://k.test/v1', authorization: 'Bearer xai-abc', source: 'key' });
   assert.deepEqual(credentialOf(login(), Date.parse('2029-01-01'), { loginUpstream: 'https://l.test/v1' }),
-    { url: 'https://l.test/v1/models', base: 'https://l.test/v1', authorization: 'Bearer access-token-secret', source: 'login' });
+    { url: 'https://l.test/v1/models', base: 'https://l.test/v1', authorization: 'Bearer access-token-secret', source: 'login', expiresAt: Date.parse('2030-01-01T00:00:00Z') });
+  assert.equal(credentialOf(JSON.stringify({ 'https://auth.x.ai::c': { key: 'access-token-secret', refresh_token: 'r' } })).expiresAt, null, 'a login that says no end is still tried for the catalog');
   assert.deepEqual(credentialOf(login({ expires: '2020-01-01T00:00:00Z' }), Date.parse('2026-01-01')), { expired: true });
   assert.deepEqual(credentialOf(login({ expires: 'soon' })), { expired: true }, 'an expiry it cannot read is taken as passed');
   assert.equal(credentialOf(JSON.stringify({ x: { refresh_token: 'r' } })), null);
