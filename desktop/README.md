@@ -4,7 +4,7 @@ Woodshed's console in a window of its own, for macOS, Windows and Linux, built o
 a browser shows it, with three things a browser tab does not give:
 
 - **A notification when one of your sessions needs you**, or finished its turn. Clicking it opens that session, and
-  the bell at the end of the rail's head lists the latest ones.
+  the bell in the rail's foot, beside your avatar, lists the latest ones.
 - **A badge** counting your sessions that are asking for you: the Dock's (macOS) or the launcher's (Linux) own count, and
   on Windows, which has none, the count drawn over the taskbar button (`overlay.mjs`, from the images in `badges/`,
   which `renderBadges.mjs` draws in the design system's `wait` yellow), with the same in words for screen readers.
@@ -126,7 +126,7 @@ Clicking a notification opens its session. The app holds each one it showed (the
 nothing refers to is garbage collected, and its click then fires nothing, so the OS only brings the window forward on
 whatever session it showed.
 
-**The bell.** In the app the console's rail head ends with a bell (`console/public/notificationBell.js`), listing the
+**The bell.** In the app the console's rail has a bell in its foot, beside the user menu (`console/public/notificationBell.js`), listing the
 notifications the app showed, newest first: the session's name, what it said and when, each opening its session. Its
 count is the ones not seen yet; opening the list sees them all, and so does opening their session. A notification about the session you are looking at is
 listed as seen and not shown. The list is kept by the main process (`notificationLog.mjs`), in memory, for this console

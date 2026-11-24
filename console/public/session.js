@@ -1335,9 +1335,7 @@
       railFrame.add = h('a', { class: 'rail-new', href: '/?new=1', 'data-keys': 'new' }, '+ New session', railFrame.slots);
       railFrame.seg = h('div', { class: 'rail-seg', role: 'group', 'aria-label': 'Whose sessions' }, railFrame.mine, railFrame.everyone);
       railFrame.only = h('b', { class: 'rail-only' }, 'My sessions');
-      // In the desktop app, its notifications under a bell at the row's end (notificationBell.js); nothing in a browser.
-      railFrame.bell = W.notificationBell?.({ navigate }) ?? null;
-      railFrame.el = h('div', { class: `rail-head${railFrame.bell ? ' has-bell' : ''}` }, railFrame.seg, railFrame.only, picker.el, railFrame.add, railFrame.bell);
+      railFrame.el = h('div', { class: 'rail-head' }, railFrame.seg, railFrame.only, picker.el, railFrame.add);
     }
     railFrame.seg.hidden = oneList();
     railFrame.only.hidden = !oneList();
@@ -1371,7 +1369,8 @@
   // each refresh replaces, so the menu keeps its focus through a refresh.
   let railUser = null;
   function railUserFoot() {
-    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot(), railToggle('rail-hide', 'Hide the rail'));
+    // In the desktop app, its notifications under a bell beside the menu (notificationBell.js); nothing in a browser.
+    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot(), W.notificationBell?.({ navigate }) ?? null, railToggle('rail-hide', 'Hide the rail'));
     return railUser;
   }
 
