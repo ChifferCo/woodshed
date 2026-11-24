@@ -1,7 +1,7 @@
-// The desktop app's notifications in the console's page: the bell in the rail's foot, the same list in the middle of
-// the screen on ⌘J (Ctrl+J), and a card at the bottom right for each that arrives with the app in front. The app keeps
-// them (desktop/notificationLog.mjs) and desktop/preload.cjs hands them over as window.woodshedNotifications; a browser
-// has no such bridge, and none of this. designSystem/components/NotificationBell.
+// The notifications in the console's page: the bell in the rail's foot, the same list in the middle of the screen on ⌘J
+// (Ctrl+J), and a card at the bottom right for each that arrives while the page is in front. In the desktop app, the app
+// keeps them (desktop/notificationLog.mjs) and desktop/preload.cjs hands them over as window.woodshedNotifications; in a
+// browser, browserNotifications.js keeps them, with the same calls. designSystem/components/NotificationBell.
 //
 // A notification is new until its session is opened (from here, a card, the OS's, the rail or a link: the app marks
 // it), or Mark all read. Looking at the list marks nothing: what it lists is still to be done.
@@ -9,7 +9,7 @@
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
-  const bridge = window.woodshedNotifications;
+  const bridge = window.woodshedNotifications ?? W.browserNotifications;
   const available = Boolean(bridge && typeof bridge.list === 'function');
   const BELL_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>';
   // Each kind's dot, in the rail's colours: yellow only for what needs the person, as on a card.
@@ -67,6 +67,19 @@
       h('span', { class: 'menu-label' }, 'Notifications'),
       list.unread ? h('button', { type: 'button', class: 'bell-mark', onclick: (e) => { e.stopPropagation(); onMark?.(); markAllRead(); } }, 'Mark all read') : null);
   }
+  // In a browser, its own notifications for when no tab of the console is in front: asked for once, from a click. The
+  // desktop app's are the OS's already.
+  function ask(redraw) {
+    if (!bridge.canAsk?.()) return null;
+    return h('button', {
+      type: 'button', class: 'bell-ask',
+      onclick: async (e) => {
+        e.stopPropagation();
+        await bridge.askPermission().catch(() => {});
+        redraw();
+      },
+    }, 'Notify me outside this tab');
+  }
 
   // ---- the bell ----
   /**
@@ -92,7 +105,7 @@
       const hadFocus = panel.contains(document.activeElement);
       panel.replaceChildren(head(), h('div', { class: 'bell-rows' }, list.items.length
         ? list.items.map((n) => row(n, { beforeOpen: () => setOpen(false) }))
-        : empty()));
+        : empty()), ask(drawPanel) ?? '');
       // Mark all read goes with what it marked: focus goes back to the bell, where Escape still closes the list.
       if (hadFocus && !panel.contains(document.activeElement)) button.focus();
     }
@@ -137,7 +150,7 @@
       onmousemove: () => { if (cursor !== i) { cursor = i; cursorKey = n.key; drawDialog(); } },
     }));
     const hint = (label, key) => h('span', null, h('kbd', null, key), label);
-    dialog.replaceChildren(head(), h('div', { class: 'plist bell-rows' }, rows.length ? rows : empty()),
+    dialog.replaceChildren(head(), h('div', { class: 'plist bell-rows' }, rows.length ? rows : empty()), ask(drawDialog) ?? '',
       h('div', { class: 'pfoot' }, list.items.length ? [hint('Select', '↑↓'), hint('Open', '⏎')] : null, hint('Close', 'esc')));
     dialog.querySelector('[data-cursor="true"]')?.scrollIntoView({ block: 'nearest' });
     if (hadFocus && !dialog.contains(document.activeElement)) dialog.focus();
@@ -221,7 +234,7 @@
   }
 
   W.notificationBell = create;
-  // For the shell's ⌘J and its palette (shell.js): nothing in a browser.
+  // For the shell's ⌘J and its palette (shell.js): nothing on a page with no list (signed out).
   W.notifications = available
     ? { available: true, open: openDialog, close: closeDialog, toggle: () => (overlay.hidden ? openDialog() : closeDialog()), isOpen: () => !overlay.hidden }
     : { available: false, open() {}, close() {}, toggle() {}, isOpen: () => false };

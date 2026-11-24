@@ -131,11 +131,19 @@ notifications the app showed, newest first: the session's name, what it said and
 count is the ones not read yet: a notification is read once its session is opened (from the list, a card, the OS's,
 the rail or a link), or with the list's Mark all read. Opening the list marks nothing. **⌘J** (Ctrl+J off a Mac) opens
 the same list in the middle of the screen, on any page of the console: ↑↓ pick one, ⏎ opens its session, esc closes it;
-the command palette lists it as Notifications. A browser keeps ⌘J for itself. A notification about the session you are looking at is
+the command palette lists it as Notifications. A notification about the session you are looking at is
 listed as seen and not shown. The list is kept by the main process (`notificationLog.mjs`), in memory, for this console
 and this sign-in: Change console…, signing in and signing out empty it, and so does quitting the app. The page reads it
-through the preload's `window.woodshedNotifications` (below), which a browser does not have, so the console in a
-browser has no bell.
+through the preload's `window.woodshedNotifications` (below).
+
+**In a browser** the console has the same bell, ⌘J and cards, with no app (`console/public/browserNotifications.js`):
+the page runs this folder's `attention.mjs`, which the console serves as `/static/attention.mjs` (its image copies the
+file), on the same `/api/sessions` every 20 s, with the default kinds (File → Notifications is the app's). One tab of
+the browser reads, holding a Web Lock until it closes, and every tab shares the list in `localStorage`, for that person.
+A notification shows as a card in the tab that has the focus, and nowhere else; with no tab in front, as the browser's
+own notification once the person allowed them with the list's **Notify me outside this tab**. Opening a session in any
+tab marks its notifications read and closes the browser's. Unlike the app, nothing reads once every tab is closed. The
+app's page has its own list, and the browser's stays off there.
 
 **File → Notifications** switches each kind on or off, kept in the app's `settings.json` under `notifications`; the
 badge counts whatever they say. A switched-off kind is still followed, so switching it on replays nothing. A session

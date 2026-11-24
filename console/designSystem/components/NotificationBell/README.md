@@ -1,5 +1,7 @@
-The desktop app's notifications, under a bell in the rail's foot, between the user menu and the hide button (`console/public/notificationBell.js`). The rail keeps its width. Only in
-the app, which hands the page its list (desktop/README.md, "Notifications and the badge"); a browser has no bell.
+Notifications, under a bell in the rail's foot, between the user menu and the hide button (`console/public/notificationBell.js`). The rail keeps its width. In the desktop app,
+which hands the page its list, and in a browser, which keeps its own (desktop/README.md, "Notifications and the badge").
+In a browser the list ends, until the person answers, with a quiet `sub` line over a `line-soft` rule, **Notify me
+outside this tab**, which asks for the browser's own notifications (`ink` on `stopped` when hovered).
 
 - The bell is a square quiet button, 34px, `line` border, `radius-md`, a `sub` stroke icon that turns `ink` on
   `chip-count` when hovered or open, as the rail foot's hide button. Never orange: it is not the view's primary action.
