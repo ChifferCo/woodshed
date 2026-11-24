@@ -1,7 +1,7 @@
 // statusd: the only port the console talks to inside a session task.
 //
 //   GET  /status      what claude is doing, its last message, the branch, its head and its PR, and what the
-//                     container uses (usage.mjs), and how much of the owner's Claude plan is used (planUsage.mjs)
+//                     container uses (usage.mjs), and how much of the owner's plan is used (planUsage.mjs, codexPlanUsage.mjs, grokPlanUsage.mjs)
 //   GET  /applog      the end of the app's logs: its start, the backend's and the frontend's
 //   GET  /diff        the checkout against its merge base with the default branch, uncommitted work included, as one
 //                     plain unified diff (sessionDiff.mjs)
@@ -81,6 +81,7 @@ import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs
 import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
+import { readGrokPlanUsage } from './grokPlanUsage.mjs';
 import { TAINTED_CLAUDE_FLAGS, applyTaint, isTaintSetUp, isTainted, markTaintSetUp } from './taint.mjs';
 import { lastInterruptAt, openToolCalls, paneState, stateReader } from './agentState.mjs';
 import { AGENT_ID_RE, createAgents, openRollout } from './agents.mjs';
@@ -208,6 +209,7 @@ const AGENTS = createRequire(import.meta.url)('../shared/agents.cjs');
 const AGENT = AGENTS.isAgent(process.env.AGENT) ? process.env.AGENT : 'claude';
 const CLAUDE = AGENT === 'claude';
 const CODEX = AGENT === 'codex';
+const GROK = AGENT === 'grok';
 // The agents whose input box statusd reads from the screen (panePrompt.mjs, composerText): claude's and codex's. The
 // others' boxes are not read: a message to them is typed only between turns, with no prompt on screen, as for any.
 const READS_BOX = CLAUDE || CODEX;
@@ -1040,12 +1042,12 @@ async function agentState({ strict = false } = {}) {
   return { state, source, pane: paneText, tail, hook };
 }
 
-// The plan meter's reading for the session's agent: Claude Code's status line, Codex's rollouts. Grok Build and OpenCode
-// report no plan's limits anywhere a session can read (Grok's /usage is a screen of its own, OpenCode keeps only costs),
-// so they have none.
+// The plan meter's reading for the session's agent: Claude Code's status line, Codex's rollouts, Grok Build's billing
+// line in ~/.grok/logs/unified.jsonl. OpenCode keeps only costs, so it has none.
 async function readAgentPlanUsage() {
   if (CLAUDE) return readPlanUsage();
   if (CODEX) return readCodexPlanUsage();
+  if (GROK) return readGrokPlanUsage();
   return null;
 }
 

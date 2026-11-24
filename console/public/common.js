@@ -1441,13 +1441,24 @@
       .sort((a, b) => (b.asOf ?? '').localeCompare(a.asOf ?? ''))[0];
     if (!newest) return null;
     const now = Date.now();
-    const windows = PLAN_WINDOWS.map(({ key, short, label, ms }) => {
+    const windows = PLAN_WINDOWS.flatMap(({ key, short, label, ms }) => {
       const w = newest[key];
       const reset = w?.resetsAt ? Date.parse(w.resetsAt) : null;
       const rolled = reset !== null && reset <= now;
       const usedPercent = !w ? null : rolled ? 0 : w.usedPercent;
-      const pace = reset !== null && !rolled ? Math.min(1, Math.max(0, 1 - (reset - now) / ms)) : null;
-      return { key, short, label: agent !== 'claude' && key === 'sevenDay' ? 'Week' : label, usedPercent, resetsAt: rolled ? null : w?.resetsAt ?? null, pace, level: planLevel(usedPercent) };
+      // Grok Build reports one allowance. A window it did not report is not a limit it has.
+      if (agent === 'grok' && usedPercent === null) return [];
+      const span = typeof w?.spanMs === 'number' && Number.isFinite(w.spanMs) && w.spanMs > 0 ? w.spanMs : ms;
+      const pace = reset !== null && !rolled ? Math.min(1, Math.max(0, 1 - (reset - now) / span)) : null;
+      return [{
+        key,
+        short: w?.short || short,
+        label: w?.label || (agent !== 'claude' && key === 'sevenDay' ? 'Week' : label),
+        usedPercent,
+        resetsAt: rolled ? null : w?.resetsAt ?? null,
+        pace,
+        level: planLevel(usedPercent),
+      }];
     });
     return {
       agent,

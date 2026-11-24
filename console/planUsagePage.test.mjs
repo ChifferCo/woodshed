@@ -41,3 +41,33 @@ test('Codex shows only tagged Codex readings and counts only Codex sessions', ()
   assert.equal(usage.running, 1);
   assert.equal(planUsageOf(claude, [codex, oldCodex]), null);
 });
+
+test('Grok Build shows its one allowance and counts only its own sessions', () => {
+  const spanMs = 30 * 86400_000;
+  const resetsAt = new Date(Date.now() + spanMs / 2).toISOString();
+  const grok = {
+    owner: 'octocat', status: 'running', options: { agent: 'grok' },
+    planUsage: { agent: 'grok', asOf: new Date().toISOString(), fiveHour: null, sevenDay: { usedPercent: 40, resetsAt, label: 'Month', short: 'mo', spanMs } },
+  };
+  const another = { owner: 'octocat', status: 'running', options: { agent: 'grok' } };
+  const stopped = { ...another, status: 'stopped' };
+  const claude = { owner: 'octocat', status: 'running', planUsage: reading(99, '2026-11-12T12:00:00Z') };
+  const codex = { owner: 'octocat', status: 'running', options: { agent: 'codex' }, planUsage: { ...reading(11, '2026-11-12T12:00:00Z'), agent: 'codex' } };
+  const usage = planUsageOf(grok, [grok, another, stopped, claude, codex]);
+  assert.equal(usage.agent, 'grok');
+  assert.equal(usage.running, 2);
+  assert.equal(usage.windows.length, 1);
+  assert.equal(usage.windows[0].key, 'sevenDay');
+  assert.equal(usage.windows[0].label, 'Month');
+  assert.equal(usage.windows[0].short, 'mo');
+  assert.equal(usage.windows[0].usedPercent, 40);
+  assert.ok(Math.abs(usage.windows[0].pace - 0.5) < 0.05);
+  const weekSession = { ...grok, planUsage: { agent: 'grok', asOf: new Date().toISOString(), fiveHour: null, sevenDay: { usedPercent: 70, resetsAt: null } } };
+  const week = planUsageOf(weekSession, [weekSession]);
+  assert.equal(week.windows.length, 1);
+  assert.equal(week.windows[0].key, 'sevenDay');
+  assert.equal(week.windows[0].label, 'Week');
+  assert.equal(week.windows[0].short, 'wk');
+  assert.equal(planUsageOf(claude, [grok, claude]).windows[0].usedPercent, 99);
+  assert.equal(planUsageOf({ owner: 'octocat', status: 'running', options: { agent: 'opencode' } }, [grok]), null);
+});
