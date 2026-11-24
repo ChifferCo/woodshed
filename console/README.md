@@ -1349,6 +1349,10 @@ refused. A tool's schema and a tool call's arguments are the agent's own and not
 When an agent's update changes what it sends, its reviews fail on that 403: run `reviewInImage.mjs` on the new image
 (with `IN_IMAGE_OPENCODE_PROVIDER=openai` for OpenCode on OpenAI), read the fields it prints, and list the new ones
 that name nothing.
+Grok's conversation and session ids (`x-grok-conv-id`, `x-grok-session-id`, `x-grok-conv-group-id`, any
+`x-grok-…-id`), which xAI may keep state by, reach xAI as ids of the review's own (`scopedId`): a UUID made from the
+review session, the header and the id sent, with a key the console makes at start. The same id stays the same within a
+review, so its turns stay one conversation, and no id a session sends ever names a conversation outside it.
 
 
 The console logs:

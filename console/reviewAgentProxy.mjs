@@ -22,6 +22,7 @@
 // file, vector store, container or anything else the author's account already holds and have the provider read it for
 // a prompt planted in the pull request. A GET passes with no body.
 
+import crypto from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
 import agents from '../shared/agents.cjs';
@@ -73,6 +74,19 @@ export function isReviewAgentPath(pathname) {
  * The session token a call carries: a bearer, or Anthropic's x-api-key, which opencode's Anthropic provider sends its key in.
  * @returns {string|null}
  */
+// Grok's conversation and session ids (`x-grok-conv-id`, `x-grok-session-id`, `x-grok-conv-group-id`, measured with
+// 1.0.92), which xAI may keep state by: whatever the session sends, the upstream gets an id of this review's own, the same
+// for the same id within the review, and never one naming a conversation outside it. Keyed by a secret of this console's
+// alone, made at start.
+const GROK_ID_HEADER = /^x-grok-[a-z-]*id$/;
+const ID_KEY = crypto.randomBytes(32);
+
+/** @returns {string}  a UUID-shaped id, from the review session, the header and the id the session sent */
+export function scopedId(sessionId, name, value, key = ID_KEY) {
+  const hex = crypto.createHmac('sha256', key).update(`${sessionId}\0${name}\0${Array.isArray(value) ? value.join(',') : String(value)}`).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${'89ab'[parseInt(hex[16], 16) % 4]}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 export function reviewAgentTokenOf(headers) {
   const bearer = /^Bearer (\S+)$/.exec(String(headers.authorization ?? ''))?.[1];
   if (bearer) return bearer;
@@ -164,10 +178,13 @@ export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}
     return { target: new URL(opencodeUpstreams[provider] ?? OPENCODE_PROVIDERS[provider].upstream), headers: OPENCODE_PROVIDERS[provider].header(cred.key), via: provider };
   }
 
-  function forward(req, res, { target, path, headers: added, product, body }) {
+  function forward(req, res, { target, path, headers: added, product, body, sessionId }) {
     const transport = target.protocol === 'http:' ? http : https;
     const headers = {};
-    for (const [name, value] of Object.entries(req.headers)) if (!DROPPED_HEADERS.has(name)) headers[name] = value;
+    for (const [name, value] of Object.entries(req.headers)) {
+      if (DROPPED_HEADERS.has(name)) continue;
+      headers[name] = GROK_ID_HEADER.test(name) ? scopedId(sessionId, name, value) : value;
+    }
     Object.assign(headers, added, { host: target.host });
     if (body) headers['content-length'] = String(body.length);
     const base = target.pathname.replace(/\/+$/, '');
@@ -284,7 +301,7 @@ export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}
       routed.add(`${session.id}/${route.agent}`);
       console.log(`reviewAgentProxy: first call on the author's ${product} sign-in`, { sessionId: session.id, agent: route.agent, author: own.login, via: cred.via });
     }
-    return forward(req, res, { target: cred.target, path: route.path, headers: cred.headers, product, body });
+    return forward(req, res, { target: cred.target, path: route.path, headers: cred.headers, product, body, sessionId: session.id });
   }
 
   return { isProxyPath: isReviewAgentPath, handle };

@@ -391,3 +391,22 @@ test('a body over the cap is refused with 413, and the call is answered', async 
   assert.deepEqual(reads, []);
   assert.ok(lines.some((l) => l.includes('"why":"too large"')));
 });
+
+test('grok\'s conversation ids reach xAI as ids of the review\'s own, never as sent', async (t) => {
+  logged(t);
+  const { seen, call } = await setup(t);
+  const ids = { 'x-grok-conv-id': 'someone-elses-conversation', 'x-grok-session-id': 'sess-1', 'x-grok-conv-group-id': 'group-1' };
+  assert.equal((await call('review-gil', '/grok/v1/chat/completions', { extra: ids })).status, 200);
+  assert.equal((await call('review-gil', '/grok/v1/chat/completions', { extra: ids })).status, 200);
+  assert.equal((await call('review-lou', '/grok/v1/chat/completions', { extra: ids })).status, 200);
+  const [first, again, other] = seen.map((s) => s.headers);
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  for (const [name, sent] of Object.entries(ids)) {
+    assert.match(first[name], uuid, name);
+    assert.notEqual(first[name], sent, `${name}: never as the session sent it`);
+    assert.equal(again[name], first[name], `${name}: the same within the review, so its turns stay one conversation`);
+    assert.notEqual(other[name], first[name], `${name}: another review's same id is another conversation`);
+  }
+  assert.notEqual(first['x-grok-conv-id'], first['x-grok-session-id'], 'each header its own');
+  assert.equal(first['x-grok-client-mode'], 'headless', 'grok\'s other headers go along as they are');
+});
