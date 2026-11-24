@@ -125,13 +125,13 @@ export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, i
         console.log('asks: follow-up for a stopping session', { id: session.id });
         return { outcome: 'ignored', reason: 'its session is stopping' };
       }
-      session.slack.lastUser = user;
+      update(session, { slack: { ...session.slack, lastUser: user } });
       const sent = await fleet.send(session, followUp());
       console.log('asks: follow-up typed in', { id: session.id, outcome: sent });
       return { outcome: 'sent', sessionId: session.id };
     }
     if (session?.kept) {
-      session.slack.lastUser = user;
+      update(session, { slack: { ...session.slack, lastUser: user } });
       await fleet.resumeShared(session, { text: followUp(), by: `slack:${user}`, why: 'slack' });
       update(session, { noticedAt: null });
       return { outcome: 'resumed', sessionId: session.id };
