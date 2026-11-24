@@ -7,6 +7,8 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
+// First: it takes the Herdr variables out of this process (test/isolatedEnv.mjs).
+import { isolatedEnv } from '../test/isolatedEnv.mjs';
 import { MAX_OPENED, pullsOpened, readOpened, recordOpened } from './openedPulls.mjs';
 
 const run = promisify(execFile);
@@ -44,7 +46,7 @@ test('claude\'s PostToolUse hook records the pull request and still writes the s
   const file = tmpFile();
   const state = path.join(path.dirname(file), 'state.json');
   const url = 'https://github.com/o/cloud/pull/151';
-  const child = run('node', [HOOK], { env: { ...process.env, WOODSHED_OPENED_PULLS_FILE: file, WOODSHED_CLAUDE_STATE_FILE: state } });
+  const child = run('node', [HOOK], { env: { ...isolatedEnv(), WOODSHED_OPENED_PULLS_FILE: file, WOODSHED_CLAUDE_STATE_FILE: state } });
   child.child.stdin.end(JSON.stringify(bash(`${CREATE} --fill`, `${url}\n`)));
   const { stdout } = await child;
   assert.equal(stdout, '', 'a hook prints nothing');
