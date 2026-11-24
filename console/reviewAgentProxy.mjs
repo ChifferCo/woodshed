@@ -70,10 +70,6 @@ export function isReviewAgentPath(pathname) {
   return under(pathname, GROK_PREFIX) || under(pathname, OPENCODE_PREFIX);
 }
 
-/**
- * The session token a call carries: a bearer, or Anthropic's x-api-key, which opencode's Anthropic provider sends its key in.
- * @returns {string|null}
- */
 // Grok's conversation and session ids (`x-grok-conv-id`, `x-grok-session-id`, `x-grok-conv-group-id`, measured with
 // 1.0.92), which xAI may keep state by: whatever the session sends, the upstream gets an id of this review's own, the same
 // for the same id within the review, and never one naming a conversation outside it. Keyed by a secret of this console's
@@ -87,6 +83,10 @@ export function scopedId(sessionId, name, value, key = ID_KEY) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${'89ab'[parseInt(hex[16], 16) % 4]}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
+/**
+ * The session token a call carries: a bearer, or Anthropic's x-api-key, which opencode's Anthropic provider sends its key in.
+ * @returns {string|null}
+ */
 export function reviewAgentTokenOf(headers) {
   const bearer = /^Bearer (\S+)$/.exec(String(headers.authorization ?? ''))?.[1];
   if (bearer) return bearer;
