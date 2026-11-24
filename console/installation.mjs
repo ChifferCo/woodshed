@@ -585,7 +585,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // A session starting sessions of its person's (sessionStarts.mjs), with New session's own checks, and the command
   // line's for whether the person may still use the console and still writes to its repo: the same check, cached an
   // hour per person (createWriteAccess). It ends no sign-in of theirs: the command line's own check does that.
-  const startsWriteAccess = createWriteAccess({ canWrite: auth?.canWrite ? (login) => (auth.enabled() ? auth.canWrite(login) : true) : null, revokeAll: () => {} });
+  const startsWriteAccess = createWriteAccess({ canWrite: auth?.canWrite ? (login) => (auth.enabled() ? auth.canWrite(login) : true) : null, revokeAll: () => {}, logAs: 'sessionStarts' });
   const sessionStarts = createSessionStarts({
     fleet, config, startMine: (login, body) => handle.startMine(login, body, { startedFrom: body.startedFrom }),
     allowed: (login) => (members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login)),
