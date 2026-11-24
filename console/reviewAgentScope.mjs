@@ -26,7 +26,8 @@ const B = 'boolean';
 const FALSE = { literal: false };
 const DATA_URL = { dataUrl: true };
 const FREE = { free: true };
-const obj = (fields) => ({ fields });
+// `required`: fields a body must carry, refused by name when left out.
+const obj = (fields, required = []) => ({ fields, required });
 const arr = (items) => ({ items });
 const either = (...options) => ({ either: options });
 // An object picked by its `type`: `untyped` is the spec for one with no `type` at all, when the API takes that.
@@ -77,13 +78,15 @@ const R_ITEM = typed({
 }, R_MESSAGE);
 const RESPONSES = obj({
   model: S, input: either(S, arr(R_ITEM)), instructions: S, max_output_tokens: N, temperature: N,
-  // Stored, a response could be read back or chained to: every call measured sends false.
+  // Stored, a response could be read back or chained to: every call measured sends false, and it must be sent.
   store: FALSE, stream: B,
   reasoning: obj({ effort: S, summary: S, mode: S }), text: obj({ verbosity: S }),
   tool_choice: either(S, typed({ function: obj({ type: S, name: S }) })),
   tools: arr(typed({ function: obj({ type: S, name: S, description: S, parameters: FREE, strict: B }) })),
   prompt_cache_key: S, include: arr({ oneOf: ['reasoning.encrypted_content'] }),
-});
+// Left out, OpenAI and xAI store the response in the author's API project, where its members, who may not see the private
+// repo, could read it: so it must be there, and false.
+}, ['store']);
 
 // xAI's chat completions, as grok calls them for its turns.
 const C_CONTENT = either(S, NULL, arr(typed({
@@ -142,6 +145,7 @@ function firstRefused(value, spec, at, depth = 0) {
     const refused = firstRefused(item, spec.fields[key], `${at}.${key}`, depth + 1);
     if (refused !== null) return refused;
   }
+  for (const key of spec.required ?? []) if (!Object.hasOwn(value, key)) return `${at}.${key}`;
   return null;
 }
 

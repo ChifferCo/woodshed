@@ -1340,7 +1340,9 @@ sends its whole conversation to `/v1/chat/completions` each turn and calls `/v1/
 `store: false`; OpenCode 1.19.6 on OpenAI sends `store: false` and its reasoning items back by `encrypted_content`, with
 no `id`; on Anthropic, text, thinking, tool use and tool result blocks. None sends `previous_response_id` or any other ID
 of a stored object, so none passes, not even one the provider gave the same review: the only IDs that pass are the
-conversation's own tool call IDs, matched within the same body. Beyond what was measured, only what names nothing
+conversation's own tool call IDs, matched within the same body. A Responses body must carry `store: false`: left out,
+OpenAI and xAI store the response in the author's API project, where its members could read a private pull request's
+content, so it is refused (`field: 'store'`). Beyond what was measured, only what names nothing
 passes: an image given inline (base64, or a `data:` URL, never a URL or a file), a tool result's `is_error`,
 Anthropic's `redacted_thinking`. Tools are functions alone; a provider's own tools have a `type` of their own and are
 refused. A tool's schema and a tool call's arguments are the agent's own and not walked. A body that is not JSON gets a

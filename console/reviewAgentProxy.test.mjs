@@ -64,7 +64,8 @@ async function setup(t, { on = { grok: ['gil', 'lou', 'old'], opencode: ['oto', 
   const port = await listen(server);
   t.after(() => { server.close(); upstream.close(); });
   // As sent, with no tidying of `..` (fetch would resolve it before sending).
-  const call = (token, path = '/grok/v1/chat/completions', { method = 'POST', header = 'authorization', extra = {}, body = '{"model":"grok-build"}' } = {}) => new Promise((resolve, reject) => {
+  // A Responses body carries store: false, as every agent was measured to send it, and as the proxy requires.
+  const call = (token, path = '/grok/v1/chat/completions', { method = 'POST', header = 'authorization', extra = {}, body = path.split('?')[0].endsWith('/responses') ? '{"model":"grok-build","store":false}' : '{"model":"grok-build"}' } = {}) => new Promise((resolve, reject) => {
     const auth = token ? { [header]: header === 'authorization' ? `Bearer ${token}` : token } : {};
     const r = http.request({ host: '127.0.0.1', port, method, path, headers: { 'content-type': 'application/json', 'x-grok-client-mode': 'headless', ...extra, ...auth } }, (res) => {
       let body = '';
@@ -409,4 +410,22 @@ test('grok\'s conversation ids reach xAI as ids of the review\'s own, never as s
   }
   assert.notEqual(first['x-grok-conv-id'], first['x-grok-session-id'], 'each header its own');
   assert.equal(first['x-grok-client-mode'], 'headless', 'grok\'s other headers go along as they are');
+});
+
+test('a Responses body that leaves store out is refused, since left out it is stored by default', async (t) => {
+  const lines = logged(t);
+  const { seen, call, reads } = await setup(t);
+  for (const which of ['openaiTurn', 'grokTitle']) {
+    const [token, path, body] = edit(which, (b) => { delete b.store; });
+    const res = await call(token, path, { body });
+    assert.equal(res.status, 403, which);
+    assert.match(res.body, /store/, `${which}: the field is named`);
+  }
+  assert.equal(seen.length, 0, 'nothing reaches OpenAI or xAI');
+  assert.equal(reads.length, 0, 'no sign-in is read');
+  assert.ok(lines.some((l) => l.includes('refused, a body a review\'s agent does not send') && l.includes('store')));
+  // Grok's chat completions, which store nothing, take none.
+  const [token, path, body] = MEASURED.grokTurn;
+  assert.equal('store' in body, false);
+  assert.equal((await call(token, path, { body })).status, 200);
 });
