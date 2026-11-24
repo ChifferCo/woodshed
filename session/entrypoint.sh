@@ -536,11 +536,14 @@ writeRules() {
   else
     rules=$(grep -vF '{{REVIEW_TAG}}' <<< "$rules" || true)
   fi
-  # The QA label, which a session adds to the pull request it opens; none where the console adds it itself
-  # (pullRequests.qa.autoLabel) or the project has no QA. A label is GitHub's to name, so plain substitution again.
-  qaLabel=$(project get pullRequests.qa.label 2>/dev/null) || qaLabel=
-  [ "$(project get pullRequests.qa.autoLabel 2>/dev/null)" != true ] || qaLabel=
+  # The QA label, which a session adds to its pull request once ready, for QA the repo's CI runs (pullRequests.qa.runner:
+  # actions). Not for QA run here: the console adds it itself with qa.autoLabel, and without it starts QA only for a
+  # person's label, never the App's that a shared session's gh acts as (fleet.mjs, startQa). A label is GitHub's to
+  # name, so plain substitution again, and shell-quoted for the command.
+  qaLabel=
+  [ "$(project get pullRequests.qa.runner 2>/dev/null)" != actions ] || qaLabel=$(project get pullRequests.qa.label 2>/dev/null) || qaLabel=
   if [ -n "$qaLabel" ]; then
+    rules=${rules//"{{QA_LABEL_ARG}}"/"$(printf '%q' "$qaLabel")"}
     rules=${rules//"{{QA_LABEL}}"/"$qaLabel"}
   else
     rules=$(grep -vF '{{QA_LABEL}}' <<< "$rules" || true)

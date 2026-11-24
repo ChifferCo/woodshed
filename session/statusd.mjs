@@ -836,8 +836,9 @@ async function startApp(name) {
 }
 
 function runStart(app) {
-  // One log for every start: with several apps, a line says which one each start is.
-  if (PROJECT_APPS.length > 1) appendFileSync(APP_LOG, `\n# Woodshed: starting ${app.name}\n`);
+  // One log for every start, and a line says which app each start is: readyGate reads it as a try at that app, since a
+  // Stop app's output lands in the same file.
+  appendFileSync(APP_LOG, `\n# Woodshed: starting ${app.name}\n`);
   const child = runAppCommand(app.start);
   const start = { exitCode: null, startedAt: Date.now(), pid: child.pid, stopped: false };
   appStart = start;

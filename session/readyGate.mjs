@@ -86,21 +86,20 @@ function checkoutOf(cwd) {
   }
 }
 
-// Where Start app (statusd) writes the project's app.start output, the first thing written when a start fails before
-// its servers log anything.
-const START_LOG = process.env.WOODSHED_APP_START_LOG || '/tmp/woodshed-app.log';
+// Where Start app (statusd) writes the project's app.start output, after a `# Woodshed: starting <name>` line for each
+// start: the first thing written when a start fails before its servers log anything.
+const START_LOG = '/tmp/woodshed-app.log';
 
 // An app was started when one of its logs has something in it. They are outside the Claude home a session keeps (the
 // project file's app.logs, such as ~/.cache/<app>/<checkout>/), so a log there was written in this container. Each of
-// several apps counts by its own logs alone. Start app's own log counts too, since a start that failed there is a try:
-// for one of several apps, only once it says that app was started (statusd's `# Woodshed: starting <name>` line).
-export function appStartedIn({ repoDir, app, home = os.homedir(), startLog = START_LOG, several = false }) {
-  if (app && startLog && startedInLog(startLog, several ? app.name : null)) return true;
+// several apps counts by its own logs alone. Start app's own log counts too, since a start that failed there is a try,
+// once it says that app was started (statusd's `# Woodshed: starting <name>` line): Stop app writes there as well.
+export function appStartedIn({ repoDir, app, home = os.homedir(), startLog = START_LOG }) {
+  if (app && startLog && startedInLog(startLog, app.name)) return true;
   return Object.values(app?.logs ?? {}).some((log) => sizeOf(expandPath(log, { repoDir, home })) > 0);
 }
 
 function startedInLog(file, name) {
-  if (!name) return sizeOf(file) > 0;
   try {
     return fs.readFileSync(file, 'utf8').includes(`# Woodshed: starting ${name}\n`);
   } catch {
@@ -134,7 +133,7 @@ export function brokenFileRefusal({ project, changedFiles }) {
   return projectRefusal({ message: project.repoFileError });
 }
 
-function main() {
+export function main({ startLog = START_LOG } = {}) {
   let payload;
   try {
     payload = JSON.parse(fs.readFileSync(0, 'utf8'));
@@ -153,7 +152,7 @@ function main() {
     process.exit(2);
   }
   const changedFiles = changedFilesIn(cwd);
-  const apps = project.apps.map((app) => ({ ...app, started: appStartedIn({ repoDir, app, several: project.apps.length > 1 }) }));
+  const apps = project.apps.map((app) => ({ ...app, started: appStartedIn({ repoDir, app, startLog }) }));
   const reason = brokenFileRefusal({ project, changedFiles }) ?? refusal({ payload, changedFiles, apps });
   if (!reason) return;
   process.stderr.write(`${reason}\n`);
