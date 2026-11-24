@@ -438,3 +438,25 @@ test('a reply to a wait whose command went is typed in, not lost', async (t) => 
   assert.equal(api.fleet.sent.length, 1, 'typed in at the session\'s prompt as any message');
   assert.equal(api.starts.openWaits(), 0);
 });
+
+test('a reply taken by a wait whose command goes in the same moment is typed in, not dropped', async (t) => {
+  const { token, session, child, sessions } = family();
+  const childToken = newStartToken();
+  child.startTokenHash = startTokenHash(childToken);
+  Object.assign(child, { state: 'working', pendingMessages: [] });
+  const api = await serve({ sessions, waitMs: 60_000 });
+  t.after(api.close);
+  const gone = new AbortController();
+  const waiting = fetch(`${api.base}/sessions/${child.id}/wait?for=reply`, { headers: { authorization: `Bearer ${token}` }, signal: gone.signal }).catch(() => null);
+  await new Promise((r) => setTimeout(r, 50));
+  // The reply is taken, and the command goes before the wait wakes to hand it over.
+  const sending = api.call('POST', `/sessions/${session.id}/messages`, { token: childToken, body: { text: 'Done: totals in cents.' } });
+  gone.abort();
+  const sent = await sending;
+  await waiting;
+  await new Promise((r) => setTimeout(r, 100));
+  // Whichever won the race, the reply reached the session once: typed in, since nobody is left to print it.
+  assert.equal(sent.status, 200);
+  assert.equal(api.fleet.sent.length, 1, `typed in once (${sent.body.answeredWait ? 'taken by the wait, then typed in' : 'typed in at once'})`);
+  assert.equal(api.starts.openWaits(), 0);
+});

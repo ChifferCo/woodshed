@@ -326,7 +326,7 @@ export function createSessionStarts({
     // Typed in, it would be held until that wait's turn ends, and that wait would never end.
     const waiting = waits.get(to.id);
     const at = new Date(now()).toISOString();
-    if (waiting && waiting.target === from.id && waiting.answer({ text: said, at })) {
+    if (waiting && waiting.target === from.id && waiting.answer({ text: said, at, typed: `${head}\n\n${said}` })) {
       console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome: 'answered a wait' });
       return reply(res, 200, { sentAt: at, sent: true, answeredWait: true, session: summary(to) });
     }
@@ -368,14 +368,20 @@ export function createSessionStarts({
       closed = true;
       wake?.();
     });
+    let handed = false;
     try {
-      return await waitLoop(res, session, mode, () => replied, () => closed, (resolve) => { wake = resolve; });
+      return await waitLoop(res, session, mode, () => replied, () => closed, (resolve) => { wake = resolve; }, () => { handed = true; });
     } finally {
       if (waits.get(waiter.id) === entry) waits.delete(waiter.id);
+      // Taken in the same tick its command went: typed in at the session's prompt, as any message, not dropped.
+      if (replied && !handed) {
+        const outcome = await fleet.send(waiter, replied.typed);
+        console.log('sessionStarts: message', { from: id, to: waiter.id, chars: replied.text.length, outcome, why: 'its wait went' });
+      }
     }
   }
 
-  async function waitLoop(res, session, mode, repliedOf, closedOf, onWake) {
+  async function waitLoop(res, session, mode, repliedOf, closedOf, onWake, onHanded) {
     const id = session.id;
     const started = now();
     const lastAt = (s) => (s.lastMessage?.role === 'assistant' && s.lastMessage.at ? Date.parse(s.lastMessage.at) : 0);
@@ -386,7 +392,11 @@ export function createSessionStarts({
       if (!s) return reply(res, 404, { error: `no session ${id}` });
       // The waiting command went (Ctrl-C, its timeout): nothing to answer.
       if (closedOf()) return res.end();
-      if (repliedOf()) return reply(res, 200, { session: summary(s), reply: repliedOf() });
+      if (repliedOf()) {
+        onHanded();
+        const { text: said, at } = repliedOf();
+        return reply(res, 200, { session: summary(s), reply: { text: said, at } });
+      }
       const at = deliveredAt === null ? null : new Date(deliveredAt).toISOString();
       if (!ACTIVE_STATUSES.has(s.status)) return reply(res, 200, { session: summary(s), deliveredAt: at });
       if (s.pendingMessages?.length) {
