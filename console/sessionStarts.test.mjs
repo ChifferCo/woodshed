@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 
 import { createSessionStarts, newStartToken, startTokenHash } from './sessionStarts.mjs';
+import agents from '../shared/agents.cjs';
 
 const NOW = Date.parse('2026-11-23T12:00:00.000Z');
 
@@ -78,7 +79,7 @@ test('a session starts a session of its person\'s, as New session does, with sta
   assert.equal(out.body.session.branch, 'joel/csv');
 
   await api.call('POST', '/sessions', { token, body: { prompt: 'Try it in codex', agent: 'codex', project: 'api' } });
-  assert.equal(api.asked[1].body.permissionMode, 'default', 'codex has no acceptEdits: it gets the stricter mode');
+  assert.equal(api.asked[1].body.permissionMode, 'plan', 'codex has no acceptEdits, and its own policy runs commands unasked: it gets its read-only mode');
   assert.equal(api.asked[1].body.project, 'api', 'another of the console\'s repos, which New session\'s own check decides');
 });
 
@@ -93,7 +94,7 @@ test('a session starts Grok Build and OpenCode sessions as New session does, and
     'Grok Build has acceptEdits; its sign-in is startMine\'s check, as New session\'s');
   const opencode = await api.call('POST', '/sessions', { token, body: { prompt: 'Try it in opencode', agent: 'opencode' } });
   assert.equal(opencode.body.session.agent, 'opencode');
-  assert.equal(api.asked[1].body.permissionMode, 'default', 'OpenCode has no acceptEdits: it gets the stricter mode');
+  assert.equal(api.asked[1].body.permissionMode, 'acceptEdits', 'OpenCode\'s acceptEdits asks before commands, as Claude Code\'s does');
   for (const agent of ['gemini', 'constructor', 7]) {
     const refused = await api.call('POST', '/sessions', { token, body: { prompt: 'go', agent } });
     assert.equal(refused.status, 400, String(agent));
@@ -105,6 +106,49 @@ test('a session starts Grok Build and OpenCode sessions as New session does, and
   const unsaved = await serve({ sessions: [session], startMine: async () => ({ status: 409, body: { error: 'save your OpenCode sign-in on My settings first' } }) });
   t.after(unsaved.close);
   assert.deepEqual(await unsaved.call('POST', '/sessions', { token, body: { prompt: 'go', agent: 'opencode' } }), { status: 409, body: { error: 'save your OpenCode sign-in on My settings first' } });
+});
+
+test('a started session\'s mode is never looser than its starter\'s, for every pair of agents and every mode', async (t) => {
+  // What each mode lets an agent do unasked (shared/agents.cjs, RANKS), written out here rather than read from the
+  // registry, so a change to a rank there has to change this too.
+  const unasked = {
+    claude: { plan: 0, default: 1, acceptEdits: 2, auto: 4 },
+    codex: { plan: 0, default: 3, auto: 4 },
+    grok: { plan: 0, default: 1, acceptEdits: 2, auto: 4 },
+    opencode: { plan: 0, default: 1, acceptEdits: 2, auto: 4 },
+  };
+  const want = {
+    claude: { auto: ['auto', 'auto', 'auto', 'auto'], acceptEdits: ['acceptEdits', 'plan', 'acceptEdits', 'acceptEdits'], default: ['default', 'plan', 'default', 'default'], plan: ['plan', 'plan', 'plan', 'plan'] },
+    codex: { auto: ['auto', 'auto', 'auto', 'auto'], default: ['acceptEdits', 'default', 'acceptEdits', 'acceptEdits'], plan: ['plan', 'plan', 'plan', 'plan'] },
+    grok: { auto: ['auto', 'auto', 'auto', 'auto'], acceptEdits: ['acceptEdits', 'plan', 'acceptEdits', 'acceptEdits'], default: ['default', 'plan', 'default', 'default'], plan: ['plan', 'plan', 'plan', 'plan'] },
+    opencode: { auto: ['auto', 'auto', 'auto', 'auto'], acceptEdits: ['acceptEdits', 'plan', 'acceptEdits', 'acceptEdits'], default: ['default', 'plan', 'default', 'default'], plan: ['plan', 'plan', 'plan', 'plan'] },
+  };
+  const ids = ['claude', 'codex', 'grok', 'opencode'];
+  for (const fromAgent of ids) {
+    assert.deepEqual(Object.keys(want[fromAgent]).sort(), [...agents.agent(fromAgent).permissionModes].sort(), `${fromAgent}: every mode it offers`);
+    for (const fromMode of Object.keys(want[fromAgent])) {
+      const { token, session } = holder({ options: { agent: fromAgent, permissionMode: fromMode } });
+      const api = await serve({ sessions: [session] });
+      t.after(api.close);
+      for (const [i, agent] of ids.entries()) {
+        const out = await api.call('POST', '/sessions', { token, body: { prompt: 'go', agent } });
+        assert.equal(out.status, 201);
+        const got = api.asked.at(-1).body.permissionMode;
+        assert.equal(got, want[fromAgent][fromMode][i], `${fromAgent} ${fromMode} starting ${agent}`);
+        assert.ok(agents.agent(agent).permissionModes.includes(got), `${agent} offers ${got}`);
+        assert.ok(unasked[agent][got] <= unasked[fromAgent][fromMode], `${fromAgent} ${fromMode} -> ${agent} ${got} is no looser`);
+        assert.equal(agents.agent(agent).modeRanks[got], unasked[agent][got], `${agent} ${got}: the registry's rank`);
+      }
+    }
+  }
+  // A starter with no mode recorded ran in auto; one with a mode its agent does not have counts as read-only.
+  for (const [options, mode] of [[{ agent: 'claude' }, 'auto'], [{ agent: 'codex', permissionMode: 'acceptEdits' }, 'plan'], [{ agent: 'opencode', permissionMode: 'bypassPermissions' }, 'plan']]) {
+    const { token, session } = holder({ options });
+    const api = await serve({ sessions: [session] });
+    t.after(api.close);
+    await api.call('POST', '/sessions', { token, body: { prompt: 'go', agent: 'claude' } });
+    assert.equal(api.asked[0].body.permissionMode, mode, JSON.stringify(options));
+  }
 });
 
 test('it lists the sessions it started, and reads another of its person\'s too', async (t) => {
@@ -345,4 +389,21 @@ test('of a session that has seen production data, no route hands over what its a
   assert.equal(answers.length, 5);
   for (const one of answers) assert.deepEqual([one.lastMessage, one.tainted], [null, true], one.id);
   assert.doesNotMatch(JSON.stringify(answers), /4411/);
+});
+
+test('a separate start is its own work: marked so, and out of the starting session\'s list', async (t) => {
+  const { token, session } = holder();
+  const sessions = [session];
+  const api = await serve({ sessions });
+  t.after(api.close);
+  const part = await api.call('POST', '/sessions', { token, body: { prompt: 'A piece of this work' } });
+  const apart = await api.call('POST', '/sessions', { token, body: { prompt: 'Something else', separate: true } });
+  assert.equal(api.asked[0].body.startedApart, undefined);
+  assert.equal(api.asked[1].body.startedApart, true);
+  sessions.find((s) => s.id === apart.body.session.id).startedApart = true;
+  assert.equal(part.body.session.separate, undefined);
+  const list = await api.call('GET', '/sessions', { token });
+  assert.deepEqual(list.body.sessions.map((s) => s.id), [part.body.session.id], 'list follows the pieces of its own work');
+  const all = await api.call('GET', '/sessions?all=1', { token });
+  assert.deepEqual(all.body.sessions.find((s) => s.id === apart.body.session.id).separate, true);
 });

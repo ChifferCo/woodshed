@@ -3,7 +3,7 @@
 // (console/sessionStarts.mjs). It reads the session's start token from the file the entrypoint wrote (keepStartToken),
 // which nothing's environment holds.
 //
-//   woodshed-session new [--branch B] [--repo R] [--name N] [--agent claude|codex|grok|opencode] [--model M] [--effort E]
+//   woodshed-session new [--separate] [--branch B] [--repo R] [--name N] [--agent claude|codex|grok|opencode] [--model M] [--effort E]
 //                        (--prompt-file F | "prompt" | - for stdin)
 //   woodshed-session list [--all] [--json]
 //   woodshed-session get <id> [--json]
@@ -38,6 +38,7 @@ Commands:
       --branch <branch>  work on this branch, or a pull request or issue: 123, pr 123 (default: a new branch)
       --repo <project>   another of the console's repos, by its project name (default: this session's)
       --name <name>      its name on the console (default: named from the prompt)
+      --separate         work of its own, not a piece of this session's: at the top of the rail, and not in list
       --agent claude|codex|grok|opencode, --model <model>, --effort <effort>
                          (Grok Build and OpenCode only once your person saved their sign-in for it on My settings)
   list                   the sessions this session started, with their state, branch, pull request and link
@@ -74,6 +75,7 @@ export function parseArgs(argv) {
     else if (word === '--wait') flags.wait = true;
     else if (word === '--reply') flags.reply = true;
     else if (word === '--all') flags.all = true;
+    else if (word === '--separate') flags.separate = true;
     else if (takes.has(word)) {
       if (i + 1 >= words.length) throw new Refused(`${word} needs a value`);
       flags[word.slice(2).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = words[++i];
@@ -275,9 +277,10 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
     const { session } = await call('POST', '/sessions', {
       prompt, ...(flags.branch ? { branch: flags.branch } : {}), ...(flags.repo ? { project: flags.repo } : {}), ...(flags.name ? { name: flags.name } : {}),
       ...(flags.agent ? { agent: flags.agent } : {}), ...(flags.model ? { model: flags.model } : {}), ...(flags.effort ? { effort: flags.effort } : {}),
+      ...(flags.separate ? { separate: true } : {}),
     });
     if (flags.json) return say(JSON.stringify({ session })), 0;
-    say(`Started session ${session.id}${session.title ? `: ${session.title}` : ''}`);
+    say(`Started session ${session.id}${session.title ? `: ${session.title}` : ''}, ${session.separate ? 'on its own' : 'as part of this session\'s work'}`);
     say(`  ${session.url}`);
     say(`  branch ${session.branch ?? 'not named yet'}, ${session.status === 'queued' ? 'waiting in line (the person has as many running as the console allows)' : session.status}`);
     say(`Follow it with: woodshed-session get ${session.id}`);

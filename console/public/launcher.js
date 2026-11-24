@@ -27,7 +27,7 @@
     auto: 'Works unattended, without asking', acceptEdits: 'Edits freely, asks before commands', plan: 'Plans only, changes nothing',
     default: 'The agent\u2019s own approval rules',
   };
-  const ownModes = (id) => A.agent(id).permissionModes.map((m) => [m, m, OWN_MODE_WORDS[m]]);
+  const ownModes = (id) => A.agent(id).permissionModes.map((m) => [m, m, A.agent(id).modeWords?.[m] ?? OWN_MODE_WORDS[m]]);
   const ownEfforts = (id) => (A.agent(id).efforts ?? ['']).map((e) => [e, e || 'default']);
   // What a session of that agent runs on, for the line under Start.
   const RUNS_ON = { claude: 'Claude plan', codex: 'Codex sign-in or the team key' };

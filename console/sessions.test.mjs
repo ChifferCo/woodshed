@@ -378,7 +378,7 @@ test('the New session form\'s Work on names an issue or PR by number, or a branc
   assert.deepEqual(sessionOptions({ agent: 'opencode', model: 'anthropic/claude-sonnet-4-5', permissionMode: 'plan' }).model, 'anthropic/claude-sonnet-4-5');
   assert.throws(() => sessionOptions({ agent: 'opencode', model: 'claude-sonnet' }), /not a name OpenCode takes/, 'OpenCode names its provider');
   for (const bad of ['grok build', 'x"y', '-x', 'a;rm']) assert.throws(() => sessionOptions({ agent: 'grok', model: bad }), /not a name Grok Build takes/, bad);
-  assert.throws(() => sessionOptions({ agent: 'opencode', permissionMode: 'acceptEdits' }), /permission mode/);
+  assert.equal(sessionOptions({ agent: 'opencode', permissionMode: 'acceptEdits' }).permissionMode, 'acceptEdits', 'held by configureOpencode\'s rules');
   assert.throws(() => sessionOptions({ agent: 'grok', effort: 'minimal' }), /the effort must be one of/, 'Grok Build takes low to max');
 });
 
