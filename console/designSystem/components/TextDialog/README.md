@@ -18,3 +18,7 @@ session, and the payload URL on Secrets & webhooks.
 saying it is for this session alone and what an empty field falls back to (with the hours), then each `mono` number
 field under its label with the hours it falls back to as its placeholder and the range on the input. Cancel, then
 **Save**. The server's refusal shows in the dialog (`form-error`), which stays open; a save closes it with a toast. While a save is on its way, Cancel and Save are disabled and Escape does not close it. A lifetime shorter than the session has already run, entered or the one an empty field falls back to, is said first, in the same `form-error` line (when, if an Extend holds the stop back, it says so), and a second Save goes ahead.
+
+**Hand over…** on a shared session's ⋯ (`W.askChoice`) is the same dialog with a dropdown in place of the field: one
+row in the menu however many people can be assigned, never a row each. Heading **Hand over this session**, the label
+**To**, each person by name with the handle after it, sorted, the first picked. Cancel, then **Hand over**.

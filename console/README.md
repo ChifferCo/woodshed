@@ -21,7 +21,7 @@ every session, with no switch, and its head reads **My sessions** (`/all` opens 
 loopback alone), one whose People list has a single member, or one whose `WOODSHED_ONE_PERSON` is `1`. The setting
 decides when set, `0` keeping the two views (the dev console sets it, `DEV_CONSOLE_ONE_PERSON=1` for the one list);
 `/api/sessions` says which in `onePerson`. **Take it** on
-an unassigned card, or **Assign to me**, **Hand over to** and **Unassign** in the card's ⋯ menu, change
+an unassigned card, or **Assign to me**, **Hand over…** (a dropdown of who can be assigned) and **Unassign** in the card's ⋯ menu, change
 who has it; only someone who can be assigned can (`POST /api/sessions/<id>/assign`). A later comment from someone else does not move it, but
 someone who can be assigned commenting on an unassigned session takes it. Assignment is a label, not a permission: a shared session stays visible
 to everyone with Sessions from GitHub, and a private one cannot be assigned. On an issue's session the GitHub issue follows: the assignee is put on
@@ -84,6 +84,26 @@ whose it is: **My repo settings** and **My session timeouts** are yours; Setting
 Both terminals stay connected while another tab shows. A session started from an
 image without the second ttyd has Terminal greyed out.
 
+**The terminal page.** Both tabs frame the console's own page, `/static/term.html#term/<id>` (or `#shell/<id>`):
+xterm.js, copied into `public/vendor/xterm/` at the versions ttyd 1.7.7 bundles, and `public/terminalPage.js`, which
+speaks ttyd's protocol on `/<kind>/<id>/ws`. The page names its files by hash, as every page does, so the browser keeps
+it and opening a terminal loads only its websocket. The session's ttyd is the connection alone: no HTTP request reaches
+it, so neither its own page nor its `/token` (`/<kind>/<id>/…` answers 404). The websocket's first message is the
+console's (`terminalProxy.mjs`): ttyd's credential with the size the page asked for, so the page never holds the
+credential. A browser's compression offer goes to ttyd with `client_no_context_takeover` added, and ttyd's answer comes
+back with it too should ttyd leave it out, so the browser compresses each message on its own: the console can read that
+first message compressed and send its own uncompressed, and nothing after it refers back to bytes ttyd never saw. ttyd's
+output stays compressed. The session's `-t` flags (theme, scrollback) reach the page as ttyd's preferences.
+
+tmux sizes the agent's window by the client used last, and only input counts, so after a phone opened a session a
+desktop that only scrolls or comes back to the front would stay at the phone's width: the page sends tmux a focus-in on
+a wheel, a click or tap, or its window coming to the front (at most every 2 s, and only while tmux asked for focus
+events, `focus-events on` in `session/tmux.conf`), which gives tmux that device's size again, and only from a terminal on
+screen: one not displayed (a phone on its list, another tab) never takes the window. Nor is a terminal ever fitted below
+20 columns or 5 rows: a frame squeezed to nothing for a moment as the page changes would make xterm's fit its 2x1
+minimum, tmux would draw every device's screen at 2 columns, and claude's lines would stay that narrow in their history.
+The last size stays until the next resize.
+
 On a phone (720px wide or less) it works as the shed does there: the sessions
 page is the rail, and a session's page is its pane alone, with **‹** back to the
 list. The terminal is drawn at 0.7 of its size so about 70 columns fit, and a
@@ -98,7 +118,9 @@ The size and the key bar's choice are remembered in the browser.
 A running session opens on its **Chat** tab unless its person picked TUI as their default view (`public/chat.js`): the conversation as a chat instead of the agent's
 terminal. The thread is read from the agent's own record of it, claude's transcript or codex's rollout, through
 statusd's `GET /transcript` (session/README.md), every 1.5 s while the agent works or a message waits to show and every
-5 s otherwise, with `since` so a record that did not move costs the session a stat. The person's messages are on the
+5 s otherwise, with `since` so a record that did not move costs the session a stat. The page keeps the last 8
+conversations shown as it read them (`keptRecords` in `public/chatThread.cjs`), by session and start: coming back to one
+draws it at once, and its first read only asks whether it moved since. The person's messages are on the
 right; the agent's replies are Markdown, read into a tree and built as DOM nodes, never as HTML, with only http(s)
 and mailto links (`public/chatThread.cjs`); each run of tool calls between them is one work log, summed up in a line
 (`Ran 3 commands, edited 2 files`, `1 failed`) that folds open to the calls, open while it is the turn still running.
@@ -134,7 +156,8 @@ run beside the session's own, each in the same checkout in a terminal of its own
 session, or a Herdr terminal when the owner's Agent terminal is Herdr, which their own Herdr then shows beside `claude`. The
 switch lists them all with their state words and says how many others need you; picking one points Chat at its own
 conversation (`/api/sessions/<id>/agents/<agent-N>/transcript`, `send`, `interrupt`, `prompt`, `answer`) and the TUI
-tab at its terminal (`/term/<id>/?arg=agent-N`, ttyd's URL argument). The pick is kept per session in the browser tab.
+tab at its terminal (`#term/<id>?arg=agent-N` on the terminal page, which puts `arg` on its websocket for ttyd's URL
+argument). The pick is kept per session in the browser tab.
 **Stop** in the switch's menu ends one. A Codex agent beside claude runs on its owner's Codex sign-in, which the
 console sends with that start alone, or on the team's OpenAI key through the console's proxy, which the session may use
 only once the agent started (`fleet.allowAgent`), as a Codex session does. A session's lockdown drops that at once and cuts
@@ -152,8 +175,9 @@ recognition (hidden where the browser has none). Files go to `/tmp/uploads` with
 nothing typed (`upload?pane=none`); **Send** puts the text and their paths into
 claude as one message, through statusd's `POST /send`. Return is a new line. An
 unsent draft stays with its session in this tab. A terminal whose connection
-dropped while the phone was in the background (ttyd's "Press ⏎ to Reconnect")
-reconnects by itself once the page is in front, at most three times a minute.
+dropped (a phone in the background closes it) reconnects by itself once the page
+is in front, at most three times a minute; past that it says "Press ⏎ to
+reconnect" (`terminalPage.js`).
 
 Review, while the session runs, is the shed's own page and server, run inside
 the session: statusd hands `/shed-review/*` to `session/reviewShed/`, which
@@ -498,7 +522,8 @@ TUI and Terminal tabs):
   canvas, so the browser's own find sees nothing there: the bar reads xterm's buffer (`public/terminalFind.cjs`), which
   is the screen and the browser's scrollback, case ignored and a wrapped line read as one. Every match is marked, the
   one shown in bright amber and scrolled to; Enter goes to an older one, Shift+Enter a newer one, Esc closes it. The
-  marks are xterm decorations, not its selection, since ttyd copies every selection to the clipboard. What scrolled
+  marks are xterm decorations, not its selection, since the terminal page copies every selection to the clipboard, as
+  ttyd's did. What scrolled
   off before this browser attached is in tmux's history alone: scroll past the top into copy mode, then `?` searches it.
 - **The conversation so far**, the Chat tab's thread, for an app to show and scroll by itself, apart from the terminal:
   `GET /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>` answers what was asked, what the agent said, and a
@@ -517,8 +542,12 @@ And what the shed shows about each session:
   nothing of them until they report; a failing check keeps its ✗ beside the word. The hover
   card and the chip's tooltip say `Woodshed review running`. A session that opens another pull request keeps each one
   it reported (`prUrls`, oldest first, by number): the one of the branch checked out and
-  those of its checkout's other branches, a git worktree's included (statusd's `prUrls`,
-  session/README.md). It shows a chip for each, but a merged
+  those of its checkout's other branches, a git worktree's included, and those claude opened with `gh pr create` from
+  another clone (statusd's `prUrls`, session/README.md). One on another repo is kept only for a private session, and only
+  on a project its owner may start sessions on (`projectAccess`, as New session offers them), since the console reads
+  it with that project's token (`reportableRepos` in `console/fleet.mjs`): a shared session, review, QA run or question
+  keeps its own repo's alone; its chip names its repo (`woodshed-cloud #151`), and it goes where it was
+  first seen, since two repos' numbers say nothing of which came first. It shows a chip for each, but a merged
   or closed one only while no newer one came after it, so the newest always
   stays. The card and pane bar show the newest two of those, a phone's bar
   the newest one, and the older fold into a `+N` chip that names each on hover;
@@ -849,6 +878,68 @@ session is active. claude keeps its plan behaviour behind the proxy, except
 that it fetches no managed settings or organization policy with a custom base
 URL (`/status` says so). The docker launcher's sessions, which get the team key
 in their env file, use it directly.
+
+### Sessions that start sessions
+
+Claude in a My Woodshed session can hand a piece of work to a new session of the same person's: asked to "open a
+session for X", it writes the new session's first prompt as a full brief and runs `woodshed-session new --prompt-file
+<file>` (`session/startSessions.mjs`; the session's rules say how, `session/prompt.md`). The new session is an ordinary
+private session of that person's, with a branch of its own, and `woodshed-session list` and `get <id>` say how each it
+started is doing: its state, branch, pull request, last line and link. The two are not tied together otherwise:
+stopping one does nothing to the other.
+
+- **The credential is its own** (`console/sessionStarts.mjs`). At each launch of a private session the console makes a
+  start token, `wst_` and 64 hex, keeps only its sha256 on the session (`startTokenHash`, which `publicSession` never
+  sends to a page) and hands the token in `WOODSHED_START_TOKEN`. The entrypoint writes it to
+  `/tmp/woodshed-start-token` (mode 0600) and unsets it before anything starts (`keepStartToken`), so neither statusd nor
+  the app it starts has it in their environment; `woodshed-session` reads the file. It works only on the session API's
+  `/sessions` routes, never on `/api/cli` or a page, which no browser reaches, and refuses any call with an Origin. It
+  does nothing once the session stops (the hash goes with its run), and a resume makes another. A session's app, which
+  runs as the same user in the same container, can read the file if it goes looking: what the token can do is bounded
+  instead, below. `ownsSessionToken` knows it too, so a host routes the call to its installation as it does the session
+  token's.
+- **Who gets one**: a running private session, never a shared one, a question from Slack, a review or QA run, or a
+  session that has seen production data (its prompt could carry that data to an untainted session; a taint after the
+  launch makes the token do nothing).
+- **The start** is New session's own (`startMine` in `server.mjs`), as the session's owner: their Claude token (or Codex
+  sign-in, or for `--agent grok` or `opencode` their own Grok Build or OpenCode sign-in saved on My settings, the same
+  `signInRefusal`; Resume asks it the same way), their databases, write access to the project's repo (the session's own unless `--repo` names another
+  project), and the project's readiness; the owner must still be on the console and still have write access to its repo on GitHub, checked as for a command
+  line token (once an hour per person, `createWriteAccess`): New session's project check asks nothing of the default
+  project, whose writers the page's sign-in rechecks. It counts
+  in their My Woodshed sessions and waits in line past the limit, and a hosted console bills it as any session. Its
+  permission mode is the starting session's (`acceptEdits` becomes `default` for Codex and OpenCode, which have none; an agent other than those `shared/agents.cjs` lists is refused with 400), never one it picks. A branch
+  that is the starting session's own is refused. It gets nothing of the starting session's but `startedFrom`, its id.
+- **Limits**: none of its own. The person's **My Woodshed sessions per person** applies as it does to New session: past
+  it, a started session waits in line.
+- **How it shows**: the started session's hover card and Details say **Started from** with the other's name (a link in
+  Details), and the other's say **Started here** with each it started.
+
+The console logs `sessionStarts: session started` with `from`, the new `id` and its `status` (`queued` when it waits in line), `sessionStarts: start
+refused` with `why` (`no prompt`, `same branch`, `not a member`, `write access gone`, or `start checks` with
+New session's `status`), `refused, no running session has that start token` and `refused, a browser's call`. The
+session's log says `Session starts on` when it got a token.
+
+**Messages between them.** A session reaches every other private session of the same person's (never anyone else's, a
+shared one, a question from Slack, a review or a QA run), on the same token and the same session API: nothing goes from
+one session's machine to another's. `list --all` lists them; `list` alone the ones this session started.
+
+- `woodshed-session send <id> "<message>"` (`reply "<message>"` for the session's starter) types it in at the other's
+  prompt as the Chat tab's message is (`fleet.send`), headed `[Message from session <id> "<title>", …]` with how to
+  answer, so the agent and its person tell it from what the person typed. It is held while that session works, waits
+  in line or is paused, and typed once it is at its prompt again, as a held Chat message is.
+- `wait <id>` answers once it is done, needs its person, or stopped; `--reply` (and `send --wait`) once it has worked on
+  what was sent, or says nothing took it up (never seen working, with nothing held, for 90 s). The console answers each
+  wait within 4 minutes and the command asks again.
+- `read <id>` is what it was asked and said, from its statusd's `/transcript`, tools left out. A session that has seen
+  production data is never read by another (403), and what any route says of it (`get`, `list`, `wait`) carries
+  nothing its agent wrote: no last message, and `tainted: true`.
+- `stop <id>` and `resume <id>` are the page's Stop and Resume, with Resume's checks (`resumeMine` in `server.mjs`).
+- `rename "<name>"` renames the session itself, `rename <id> "<name>"` another of the person's, as the page's rename.
+
+The console logs `sessionStarts: message` with `from`, `to`, the `chars` and `outcome` (`sent`, `queued`, `in-box`,
+`unknown`), `sessionStarts: session stopped`, `sessionStarts: resume` with the `status`, `sessionStarts: session renamed`, and `sessionStarts: transcript
+not read` when the other's statusd did not answer.
 
 ### MCP servers
 
@@ -1792,9 +1883,9 @@ exit code.
 with the same token and the size it opens at in `x-woodshed-terminal-size` (`<columns>x<rows>`). The console checks it
 as it does a pipe, as it opens and every 15 seconds after, and closes it on the same revokes and lockdown. It sends it
 on to the session's ttyd for that tab with ttyd's credential in place of the person's token, as `terminalProxy.mjs`
-does the page's. ttyd 1.7.7 also wants its credential in the terminal's first message, which a page reads from ttyd's
-`/token`: the console sends that message itself, with the size asked for, so `TERMINAL_TOKEN` never leaves it. No
-compression is asked for. Then it copies bytes both ways. The log lines are the pipe's, with `kind` (`term` or
+does the page's. ttyd 1.7.7 also wants its credential in the terminal's first message: the console sends that message
+itself, with the size asked for, as it does the page's, so `TERMINAL_TOKEN` never leaves it. No compression is asked
+for. Then it copies bytes both ways. The log lines are the pipe's, with `kind` (`term` or
 `shell`; `exec` for a pipe). It is the same terminal as the tab's: the agent's tmux or Herdr terminal, or the shell's
 tmux, so what is typed in one shows in the other.
 
@@ -1969,9 +2060,11 @@ redirect.
 - Writes and terminal websockets must come from the console's own origin
   (Woodshed's `sameOrigin.mjs`), and writes also need the `x-woodshed: 1`
   header, which a cross-site form cannot send.
-- The proxy adds each session's ttyd credentials. ttyd still gives that
-  terminal credential to the browser, so it is a separate token from the one
-  statusd checks, and only the console can reach statusd.
+- The proxy adds each session's ttyd credentials, in the terminal's first
+  websocket message too, and passes on nothing of a ttyd but its websocket at
+  `/<kind>/<id>/ws` as written (ttyd reads `%74oken`, `//token` and `token;x` as
+  its `/token`), so the browser never holds the terminal credential. It is a separate token from the one
+  statusd checks all the same, and only the console can reach statusd.
 - The database viewers and the Redis viewer have no login of their own, so a
   page on another site must not reach them through a signed-in browser.
   The console refuses any request to `/term/`, `/redis/`, `/pg/` or `/mongo/`
@@ -2332,8 +2425,10 @@ Console settings has one **Slack** group for all of it, a row each for the bot, 
 "Embedding the console"), the dialog first asks which way to connect; otherwise it opens on the own app's steps:
 
 1. **Create the app from this manifest**: the console makes a Slack app manifest (`slackManifest`) with the bot's
-   scopes (`app_mentions:read`, `channels:read`, `chat:write`, `groups:read`, `reactions:write`, `users:read`,
-   `users:read.email`), the Messages tab the assignee's direct messages need, and this console's events Request URL
+   scopes (`app_mentions:read`, `channels:history`, `channels:read`, `chat:write`, `groups:read`,
+   `reactions:write`, `users:read`, `users:read.email`; the `channels:history` scope lets a question read the thread it was
+   asked in, and an app made before it is reinstalled with it: until then the console logs `slack: call refused`
+   with `missing_scope` and `asks: thread not read`, and answers from the mention alone), the Messages tab the assignee's direct messages need, and this console's events Request URL
    with the `app_mention` bot event. The URL is the embedding program's (`slackEventsUrl`), else the provider's: the
    webhooks Lambda's function URL at `/slack` on AWS, the local receiver's `WOODSHED_LOCAL_WEBHOOK_URL` at `/slack`.
    With neither the manifest has no events, and the dialog says where the address comes from. Paste it at
@@ -2600,7 +2695,10 @@ anyone Slack will not say anything about.
    it gets no repo settings, and the install secrets are unset before claude starts.
    `session/ask.md` tells claude to read the code, link each claim to it at the
    commit it read, and post the answer with `session/answer.sh`, which goes
-   through the session API's `POST /answer` to the thread.
+   through the session API's `POST /answer` to the thread. When the person who mentioned it asked for an issue in that
+   message, it searches for an open one first, then runs `session/issue.sh`, which goes through `POST /issues`: the
+   console opens the issue with its App (the session's token never writes). Only for someone linked on People whose GitHub login writes to that repo, only on the console's own repos,
+   labels the repo already has. The console posts the issue's link in the thread; a refusal's reason is told to the session.
 4. Another mention in the same thread is typed into that session, or resumes it
    with its conversation once it has stopped. A mention in a new thread is a new
    question.
@@ -2614,7 +2712,7 @@ A follow-up has to mention the bot too: the app reads mentions only
 (`app_mention`), not every message in a channel.
 
 To turn it on, on the same Slack app as the pull request posts: Set up Slack on the Slack card (above, "Setting it up:
-the Slack card"). An app made from its manifest already has the scopes (`app_mentions:read`, `chat:write`,
+the Slack card"). An app made from its manifest already has the scopes (`app_mentions:read`, `channels:history`, `chat:write`,
 `reactions:write`, `users:read` and `users:read.email` for questions) and Event Subscriptions with this console's
 Request URL (on AWS, the `slack_events_url` Terraform output; Slack checks it at once) and the bot event
 `app_mention`; paste its **Signing Secret** in the dialog's third step. An app made by hand needs the same, then

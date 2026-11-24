@@ -154,6 +154,20 @@ requireEnv() {
   done
 }
 
+# A private session's token for starting sessions of its person's (console/sessionStarts.mjs), which
+# session/bin/woodshed-session reads. Out of the environment before anything starts, so neither statusd nor the app it
+# starts holds it: only a program that reads this file has it. Each run has its own; none leaves the file gone.
+START_TOKEN_FILE=/tmp/woodshed-start-token
+keepStartToken() {
+  if [ -n "${WOODSHED_START_TOKEN:-}" ]; then
+    (umask 077 && printf '%s' "$WOODSHED_START_TOKEN" > "$START_TOKEN_FILE")
+    log "Session starts on" "(woodshed-session)"
+  else
+    rm -f "$START_TOKEN_FILE"
+  fi
+  unset WOODSHED_START_TOKEN
+}
+
 # The credential helper alone, so the branch can be fetched before the owner's settings say who commits. A private
 # session whose owner connected GitHub pushes with their token (sessionApi.mjs).
 configureGitCredentials() {
@@ -1415,6 +1429,8 @@ writeAskPrompt() {
   local rules
   rules=$(cat "$SESSION_DIR/ask.md")
   rules=${rules//"{{ANSWER}}"/"$SESSION_DIR/answer.sh"}
+  rules=${rules//"{{ISSUE}}"/"$SESSION_DIR/issue.sh"}
+  rules=${rules//"{{REPO}}"/"$(git -C "$REPO_DIR" remote get-url origin | sed -E 's#\.git$##; s#^.*github\.com[:/]##')"}
   rules=${rules//"{{DEFAULT_BRANCH}}"/"$DEFAULT_BRANCH"}
   rules=${rules//"{{REPO_URL}}"/"$(git -C "$REPO_DIR" remote get-url origin | sed 's/\.git$//')"}
   printf '%s\n' "$rules" > /tmp/woodshed-rules.md
@@ -1429,6 +1445,7 @@ writeAskPrompt() {
 # reads only (sessionApi.mjs). The start steps are all reported, so the page's checklist reads as for any session.
 runAsk() {
   requireEnv SESSION_ID SESSION_TOKEN WOODSHED_CONSOLE_URL PROMPT
+  keepStartToken
   # On an image with no checkout, the question's repo is cloned first, as for any session.
   useProjectRepo
   log "Container started" "(session: $SESSION_ID, mode: ask)"
@@ -1474,6 +1491,7 @@ runAsk() {
 runSession() {
   [ "${SESSION_MODE:-}" != ask ] || runAsk
   requireEnv SESSION_ID SESSION_TOKEN
+  keepStartToken
   [ -n "${ANTHROPIC_API_KEY:-}${WOODSHED_CONSOLE_URL:-}" ] || die "set ANTHROPIC_API_KEY, or WOODSHED_CONSOLE_URL for the console's Anthropic proxy"
   [ -n "${GH_TOKEN:-}${WOODSHED_CONSOLE_URL:-}" ] || die "set WOODSHED_CONSOLE_URL (GitHub App) or GH_TOKEN"
   # Before anything reaches GitHub, the repo's clone included.

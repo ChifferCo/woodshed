@@ -59,6 +59,13 @@ const server = path.join(woodshed, ...(process.env.DEV_CONSOLE_HOST_REPOS === '1
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-console-'));
 
 const now = new Date().toISOString();
+// /s/5747ed01's start token (console/sessionStarts.mjs), for session/bin/woodshed-session from this machine: with
+// DEV_CONSOLE_SESSION_API_PORT, `WOODSHED_CONSOLE_URL=http://127.0.0.1:<port> node session/startSessions.mjs` with this
+// file as its token file (WOODSHED_START_TOKEN_FILE). Only its hash is in the made-up state, as the console keeps it.
+const devStartToken = `wst_${crypto.randomBytes(32).toString('hex')}`;
+const devStartTokenFile = path.join(stateDir, 'start-token');
+fs.writeFileSync(devStartTokenFile, devStartToken, { mode: 0o600 });
+console.log('dev console: /s/5747ed01\'s start token for woodshed-session', { file: devStartTokenFile });
 const REVIEW_ID = 'beadfeed';
 // DEV_CONSOLE_REVIEW_PR=1 makes /s/beadfeed @local's own My Woodshed session, whose branch has a made-up open pull
 // request, #26701, answered by a stand-in gh (devReviewGh.mjs): for `woodshed review beadfeed`, which opens your own
@@ -94,6 +101,7 @@ const grokChat = await startDevChatSession({ id: GROK_CHAT_ID, ...tokensOf(GROK_
 const openCodeChat = await startDevChatSession({ id: OPENCODE_CHAT_ID, ...tokensOf(OPENCODE_CHAT_ID), agent: 'opencode', nextPath: [grokChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
 // A private session just started while another runs: its Claude home, restored from its owner's, holds an earlier
 // session's conversation, and its own claude has written nothing yet. Its Chat is empty until it is sent a message.
+// /s/5747ed01 started it, so `woodshed-session send|wait|read` from there reach its stand-in claude (sessionStarts.mjs).
 const NEW_CHAT_ID = 'c1a0de02';
 const newChat = await startDevChatSession({ id: NEW_CHAT_ID, ...tokensOf(NEW_CHAT_ID), agent: 'claude', restoredHome: true, nextPath: [openCodeChat?.binDir, grokChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
 // A private session of the dev login's on a stand-in codex, whose pane bar offers + Another agent (session/agents.mjs):
@@ -260,6 +268,16 @@ const sessions = [
   }),
   // A private session that has seen production data (console/mcpRelay.mjs), owned by `local`: its card says Production in
   // place of Private, its pane bar Production data, and its pane offers no Share the app, Editor or Remote Control.
+  // A private session that handed a piece of work to a new session of local's (console/sessionStarts.mjs): the new one's
+  // hover card and Details say Started from, this one's Started here. It holds the start token above.
+  session('5747ed01', null, 'Plan the billing page', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true,
+    branch: 'woodshed/local-5747ed01', startTokenHash: crypto.createHash('sha256').update(devStartToken).digest('hex'),
+  }),
+  session('5747ed02', null, 'Move invoice totals to the server', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true,
+    branch: 'woodshed/local-5747ed02', startedFrom: '5747ed01', lastMessage: { role: 'assistant', text: 'Moved the totals into InvoiceService and opened a draft PR.' },
+  }),
   session('7a1e7ed1', null, 'Why order 42 shows as unpaid', {
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true, editor: true,
     taintedAt: new Date(Date.now() - 12 * 60_000).toISOString(), taintNoticedAt: new Date(Date.now() - 12 * 60_000).toISOString(),
@@ -298,11 +316,11 @@ const sessions = [
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', hasShell: true,
     ref: twoApps.ref, endpoint: { host: '127.0.0.1', statusPort: twoApps.port, termPort: twoApps.port },
   }),
-  // Running, with a live TUI (devTerminalSession.mjs), where ttyd and tmux are on the PATH: for find, copy,
-  // links and scrolling back on a real xterm. Its Terminal tab, Diff and app go nowhere.
+  // Running, with a live TUI and Terminal tab (devTerminalSession.mjs), where ttyd and tmux are on the PATH: for find,
+  // copy, links and scrolling back on a real xterm, and the shell's websocket. Its Diff and app go nowhere.
   ...(liveTerminal ? [session(TERMINAL_ID, 26703, 'A session with a live terminal', {
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
-    endpoint: { host: '127.0.0.1', statusPort: liveTerminal.port, termPort: liveTerminal.port },
+    endpoint: { host: '127.0.0.1', statusPort: liveTerminal.port, termPort: liveTerminal.port, shellPort: liveTerminal.shellPort },
   })] : []),
   // Running on a stand-in codex and claude (devChatSession.mjs), for the Chat tab. The codex one's state is read from
   // its pane; the claude one keeps this one. Their TUI tab has no ttyd, and their Terminal, Diff and app go nowhere.
@@ -329,7 +347,7 @@ const sessions = [
     ref: openCodeChat.ref, endpoint: { host: '127.0.0.1', statusPort: openCodeChat.port, termPort: openCodeChat.termPort ?? openCodeChat.port },
   })] : []),
   ...(newChat ? [session(NEW_CHAT_ID, null, 'A new session beside a running one', {
-    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null,
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, startedFrom: '5747ed01',
     ref: newChat.ref, endpoint: { host: '127.0.0.1', statusPort: newChat.port, termPort: newChat.termPort ?? newChat.port },
   })] : []),
   ...(realClaude ? [session(REAL_ID, null, 'Real claude on a clone of this checkout', {

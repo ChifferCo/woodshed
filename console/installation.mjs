@@ -22,9 +22,9 @@ import { createDbRestore } from './dbRestore.mjs';
 import { createSlack } from './slack.mjs';
 import { checkSlackInstall, createSlackSetup } from './slackSetup.mjs';
 import { createTunnel, tunnelTargetsFor } from './dbTunnel.mjs';
-import { createCliSignIn, sessionSignInsOf } from './cliSignIn.mjs';
+import { createCliSignIn, createWriteAccess, sessionSignInsOf } from './cliSignIn.mjs';
 import { createExecPipe } from './execPipe.mjs';
-import { createFleet } from './fleet.mjs';
+import { callStatusd, createFleet } from './fleet.mjs';
 import { createGitHub } from './github.mjs';
 import { createAppApi } from './githubApp.mjs';
 import { appOwnerCheck } from './appOwner.mjs';
@@ -41,12 +41,13 @@ import { createReviewAgentProxy } from './reviewAgentProxy.mjs';
 import { createCodexModels } from './codexModels.mjs';
 import { createGrokModels } from './grokModels.mjs';
 import { createSessionApi, sessionForToken } from './sessionApi.mjs';
+import { createSessionStarts, sessionForStartToken } from './sessionStarts.mjs';
 import { createReviewSource } from './review.mjs';
 import { createConsoleSettings, liveConfig } from './consoleSettings.mjs';
 import { CHECK_EVERY_MS, createWoodshedUpdate } from './woodshedUpdate.mjs';
 import { supervisorOf } from './githubAppSetup.mjs';
 import { createHeldData } from './heldData.mjs';
-import { ACTIVE_STATUSES } from './sessions.mjs';
+import { ACTIVE_STATUSES, prUrlsOf } from './sessions.mjs';
 import { APP_KEY_SECRET, createSettings } from './settings.mjs';
 import { createGitHubUser } from './githubUser.mjs';
 import { createClaudeSettings } from './claudeSettings.mjs';
@@ -75,7 +76,7 @@ import { createReviewReadiness } from './reviewReadiness.mjs';
 import { createReviewerApp } from './reviewerApp.mjs';
 import { withAppLogins } from './reviewLogins.mjs';
 import { withDefaultReview } from './defaultReview.mjs';
-import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
+import { allProjects, defaultProject, hasRepo, projectFor, projectForRepo, projectNamed } from './projects.mjs';
 
 // A caller that delivers GitHub's webhooks itself (dispatchWebhook) tells the fleet they arrive this often, as the local
 // provider's receiver does, so the GitHub poll slows to its fallback.
@@ -420,7 +421,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   });
   const qaRecordings = provider.recordings ? createQaRecordings({ store: provider.recordings }) : null;
   const pullWebhooks = createPullWebhooks();
-  const prChips = createProjectPrChips({ projects: () => allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs });
+  const prChips = createProjectPrChips({ projects: () => allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs, polled: Boolean(tokens) });
   const pings = createAssigneePings({ slack, slackPeople, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
   const appApi = appKey ? createAppApi({ appId: config.githubApp.appId, privateKey: () => appKey.current() }) : null;
   // A host that lends its GitHub access (hosted.mjs) also says who its App is, and lends its reviewer App: the
@@ -437,7 +438,11 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const gatesOf = fileGatesOf;
   // What starts a review, by the tag or on demand, and the tag sessions are told: the file's, with every repo's default.
   const reviewGatesOf = async (name) => withAppLogins(withDefaultReview(await readerOf(name).pullRequests()), await logins());
+  // Made below, once sign-in and the view prefs are; the fleet asks it only on status reads, after the start.
+  let projectAccess = null;
   const fleet = createFleet({
+    // The repos a session's owner may start on, where it may report a pull request opened from another clone.
+    startableRepos: async (login) => (projectAccess ? (await projectAccess.startable(login)).map((p) => p.repo) : []),
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, qaRecordings, pullWebhooksFlowing: pullWebhooks.flowing,
     pullRequests: gatesOf, reviewGates: reviewGatesOf,
@@ -472,7 +477,10 @@ export async function createInstallation({ config: loaded, store, provider, trus
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
   // Questions need the bot token to answer, and the session API to hear the answer.
-  const asks = slack.canReply && config.sessionApi.host ? createAsks({ store, fleet, slack, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null }) : null;
+  const asks = slack.canReply && config.sessionApi.host ? createAsks({
+    store, fleet, slack, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null,
+    issues: { projectForRepo: (repo) => projectForRepo(config, repo), githubOf: githubFor, loginFor: (id) => slackPeople.loginFor(id) },
+  }) : null;
   console.log('console: Slack questions', { available: Boolean(asks) });
   const events = createWebhookEvents({ file: path.join(loaded.stateDir, 'webhookEvents.jsonl'), store });
   const webhookSwitch = createWebhookSwitch({ store, onOff: (source) => { if (source === 'github') pullWebhooks.forget(); } });
@@ -549,14 +557,15 @@ export async function createInstallation({ config: loaded, store, provider, trus
     config, store, supervisor: supervisorOf(process.env), repo: () => defaultProject(loaded).repo || null,
     token: tokens ? async () => (await tokens.console.token()).token : null,
   }) : null;
+  // Behind a hosting proxy nobody's write access is asked: the host says who is in.
+  projectAccess = createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) });
   const handle = createHandler({
     config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
     prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, grokModels, openaiTeamKey: openai.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,
     workflowLinks: () => projectReader.workflowLinks(),
-    // Behind a hosting proxy nobody's write access is asked: the host says who is in.
-    projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) }),
+    projectAccess,
     githubFor,
     trusted,
     userMenu,
@@ -586,10 +595,20 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const execPipe = createExecPipe({ fleet, cli });
   const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts, execPipe });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
+  // A session starting sessions of its person's (sessionStarts.mjs), with New session's own checks, and the command
+  // line's for whether the person may still use the console and still writes to its repo: the same check, cached an
+  // hour per person (createWriteAccess). It ends no sign-in of theirs: the command line's own check does that.
+  const startsWriteAccess = createWriteAccess({ canWrite: auth?.canWrite ? (login) => (auth.enabled() ? auth.canWrite(login) : true) : null, revokeAll: () => {}, logAs: 'sessionStarts' });
+  const sessionStarts = createSessionStarts({
+    fleet, config, startMine: (login, body) => handle.startMine(login, body, { startedFrom: body.startedFrom }),
+    resumeMine: (login, id) => handle.resumeMine(login, id), statusd: callStatusd,
+    allowed: (login) => (members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login)),
+    canWrite: (login) => startsWriteAccess.allowed(login),
+  });
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, reviewAgentProxy, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
-    mcpRelay, egress: access.egress,
+    mcpRelay, egress: access.egress, sessionStarts,
     ownerTokenRepos: hostConnect ? () => allProjects(config).map((p) => p.repo).filter(Boolean) : null,
   }) : null;
   const webhookDispatch = createWebhookDispatch({ label: config.label, labelOf: (name) => repoTriggers.of(name ?? defaultProject(config).name).label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity, webhookSwitch });
@@ -634,7 +653,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     loops.every(EVENTS_SWEEP_MS, 'webhook events sweep', () => events.sweep());
     // Every session someone can still open: a stopped one's pull request still merges or closes.
     // Every 10 seconds, so a chip a webhook marked due changes soon; only due pull requests are asked for.
-    if (tokens) loops.every(10_000, 'pull request chips', () => prChips.refresh(fleet.sessions().filter((s) => s.prUrl && !s.cleanedAt)));
+    if (tokens) loops.every(10_000, 'pull request chips', () => prChips.refresh(fleet.sessions().filter((s) => prUrlsOf(s).length && !s.cleanedAt)));
     loops.every(config.tickMs, 'tick', () => fleet.tick());
     loops.every(config.tickMs, 'app shares sweep', () => appShares.sweep(fleet.sessions().filter((s) => ACTIVE_STATUSES.has(s.status)).map((s) => s.id)));
     if (asks) loops.every(config.tickMs, 'asks', () => asks.tick());
@@ -669,7 +688,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
      */
     sessionSignIns: sessionSignInsOf(userSettings),
     /** @returns {boolean}  whether an active session of this installation holds `token` (the session API's bearer) */
-    ownsSessionToken: (token) => Boolean(sessionForToken(token, fleet.sessions())),
+    ownsSessionToken: (token) => Boolean(sessionForToken(token, fleet.sessions()) || sessionForStartToken(token, fleet.sessions())),
     /** One GitHub or Slack message, as the provider's webhook source hands it (webhookDispatch.mjs). */
     dispatchWebhook: (message) => webhookDispatch.dispatch(message),
     /**

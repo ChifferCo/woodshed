@@ -293,7 +293,7 @@ test('every file outside the repo that Woodshed points claude at is one claude r
   ].join('\n');
   const paths = [...new Set([...told.matchAll(/\/tmp\/[\w.\-/]+/g)].map((m) => m[0]))];
   paths.push(ENTRYPOINT.match(/^DEPS_STATUS=(\S+)$/m)[1]);
-  assert.deepEqual(paths.sort(), ['/tmp/answer.md', '/tmp/woodshed-deps', '/tmp/woodshed-docker-ports.log', '/tmp/woodshed-dockerd.log', '/tmp/woodshed-setup.md']);
+  assert.deepEqual(paths.sort(), ['/tmp/answer.md', '/tmp/issue.json', '/tmp/woodshed-deps', '/tmp/woodshed-docker-ports.log', '/tmp/woodshed-dockerd.log', '/tmp/woodshed-setup.md']);
   for (const p of paths) {
     const allowed = hooks.permissions.allow.includes(`Read(/${p})`) || addDirs.some((dir) => p.startsWith(`${dir}/`));
     assert.ok(allowed, `${p} has a Read rule in claudeHooks.json (an absolute path is written //${p.slice(1)})`);
@@ -1566,6 +1566,26 @@ test('the rules and setup files are never read through a link out of the checkou
   fs.symlinkSync(elsewhere, path.join(dir, 'docs'));
   fs.writeFileSync(path.join(elsewhere, 'rules.md'), 'SENTINEL-NOT-A-SECRET');
   assert.equal(cli('rules').failed, true);
+});
+
+test('the start token leaves the environment for a file only its user reads, before anything starts', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'start-token-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const file = path.join(tmp, 'woodshed-start-token');
+  const script = (token) => [
+    'set -euo pipefail', 'log() { :; }',
+    `START_TOKEN_FILE=${file}`, fn('keepStartToken').replace(/^START_TOKEN_FILE=.*$/m, ''),
+    'keepStartToken', 'env | grep -c "^WOODSHED_START_TOKEN=" || true', 'bash -c \'echo "child: ${WOODSHED_START_TOKEN:-none}"\'',
+  ].join('\n');
+  const run = (token) => spawnSync('bash', ['-c', script(token)], { encoding: 'utf8', env: { PATH: process.env.PATH, ...(token ? { WOODSHED_START_TOKEN: token } : {}) } });
+  const given = run('wst_abc');
+  assert.equal(given.status, 0, given.stderr);
+  assert.equal(given.stdout, '0\nchild: none\n', 'nothing started after it inherits the token, statusd and the app included');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'wst_abc');
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  const none = run(null);
+  assert.equal(none.status, 0, none.stderr);
+  assert.equal(fs.existsSync(file), false, 'a run with no token leaves none from an earlier one');
 });
 
 // The TUI tab's ttyd runs woodshed-attach with the URL's `arg` (--url-arg): an agent started beside the session's own

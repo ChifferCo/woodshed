@@ -20,10 +20,11 @@ import { blockerText } from './databaseGate.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 import { TAINT_MESSAGE } from './taint.mjs';
+import { mayStartSessions, newStartToken, startTokenHash } from './sessionStarts.mjs';
 import { checkLimits } from './userSettings.mjs';
 import {
   ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, isQa, isReview, keptIds, newSessionId, newSessionToken, sessionLink,
-  parseWorkOn, pullNumber, QA_ALREADY_RUNNING, routeQa, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitProgressFrom, waitsForRetry,
+  parseWorkOn, pullNumber, pullRepo, QA_ALREADY_RUNNING, routeQa, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitProgressFrom, waitsForRetry,
   EXTEND_MS, EXTEND_WINDOW_MS, pauseAt, withSessionLimits,
 } from './sessions.mjs';
 import logins from './public/logins.cjs';
@@ -31,6 +32,8 @@ import agents from '../shared/agents.cjs';
 const { findLogin, sameLogin } = logins;
 
 const CHECKPOINT_TIMEOUT_MS = 90_000;
+// How long the repos a session's owner may start on are kept, for the pull requests it reports (reportableRepos).
+const STARTABLE_KEEP_MS = 60_000;
 const STATUS_TIMEOUT_MS = 5_000;
 // How long statusd may take to type a private session's review feedback after getting it (it reads GitHub first).
 const GUARDED_SEND_WITHIN_MS = 20_000;
@@ -271,7 +274,7 @@ export function failedComment({ session, publicUrl, linkQuery = null, consoleNam
  *   it, every repo has the console's label and both on
  */
 export function createFleet({
-  config, store, launcher, github, statusd = callStatusd, now = Date.now, databases = null, slack = null, homes = null,
+  config, store, launcher, github, statusd = callStatusd, startableRepos = null, now = Date.now, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, qaRecordings = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, reviewGates = async (name) => withDefaultReview(await pullRequests(name)), projectBlocker = async () => null, githubFor = null,
   consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null, repoTriggers = null, reviewAgents = null,
@@ -324,6 +327,8 @@ export function createFleet({
 
   function update(session, fields) {
     Object.assign(session, fields);
+    // A session that stops can start nothing more: its start token goes with its run (sessionStarts.mjs).
+    if (session.startTokenHash && !ACTIVE_STATUSES.has(session.status)) session.startTokenHash = null;
     store.save();
   }
 
@@ -602,7 +607,7 @@ export function createFleet({
     try {
       // Copied while the container starts: the session waits for them at the session API before it writes its env.
       if (((!session.owner && !isAsk(session) && !isReview(session)) || session.ownDatabases) && databases?.available) await databases.createForSession(session.id);
-      started = await launcher.start(session.id, sessionEnv(session));
+      started = await launcher.start(session.id, { ...sessionEnv(session), ...startTokenFor(session) });
     } catch (err) {
       const error = startError(err);
       // No room is AWS being full for now, not the session failing: it waits in the queue until a task stops.
@@ -628,6 +633,19 @@ export function createFleet({
     update(session, { ref, endpoint, startSteps: { machine: nowIso(), ...session.startSteps } });
     console.log('fleet: machine ready', { id: session.id, seconds: secondsSince(session.startedAt) });
   }
+
+  // Each run of a person's own session gets a token to start sessions of theirs with (sessionStarts.mjs), made here so the
+  // console only ever keeps its hash: the session holds the token, the record its hash, and a resume makes another.
+  function startTokenFor(session) {
+    if (!mayStartSessions(session)) {
+      if (session.startTokenHash) update(session, { startTokenHash: null });
+      return {};
+    }
+    const token = newStartToken();
+    update(session, { startTokenHash: startTokenHash(token) });
+    return { WOODSHED_START_TOKEN: token };
+  }
+
 
   async function startQueued() {
     const limits = { maxRunning: config.maxRunning, maxPrivate: config.maxPrivatePerPerson, maxAsks: config.maxAsks };
@@ -663,7 +681,7 @@ export function createFleet({
   async function createSession({
     kind, number, title, startedBy, trigger, prompt = '', branch = null, owner = null, options = null, resumeClaude = null, attach = null,
     background = false, reviewOnly = false, slack: thread = null, assignTo = null, project = defaultProject(config), qa = null, review = null,
-    herdrParent = false,
+    herdrParent = false, startedFrom = null,
   }) {
     refuseWithoutRepo(project, { kind, trigger });
     // An agent that runs on its owner's own sign-in alone runs only in that owner's private session: a shared session,
@@ -696,6 +714,8 @@ export function createFleet({
       ...(attached ? { attachments: attached } : {}),
       ...(reviewOnly ? { reviewOnly: true } : {}),
       ...(owner && herdrParent ? { herdrParent: true } : {}),
+      // The session of the same person's that started this one (sessionStarts.mjs), for the pages to link both ways.
+      ...(owner && startedFrom ? { startedFrom } : {}),
       ...(qa ? { qa } : {}),
       ...(review ? { review } : {}),
       ...(assignTo ? { assignee: assignTo.login, assignedBy: assignTo.login, assignedHow: assignTo.how, assignedAt: nowIso() } : {}),
@@ -706,6 +726,7 @@ export function createFleet({
       id, kind, number, trigger, startedBy, private: Boolean(owner), resumed: Boolean(branch), background, assignee: session.assignee ?? null, qa: Boolean(qa),
       ...(project.default ? {} : { project: project.name, repo: project.repo }),
       ...(session.herdrParent ? { herdrParent: true } : {}),
+      ...(session.startedFrom ? { startedFrom: session.startedFrom } : {}),
     });
     await runStartQueued({ background });
     return session;
@@ -998,6 +1019,31 @@ export function createFleet({
     await readStatus(session);
   }
 
+  /**
+   * The repos besides its own a session may report a pull request on (claude's, opened from another clone:
+   * session/openedPulls.mjs). The console reads each with that project's token and shows its title and state, so only a
+   * private session's, on the repos its owner may start on, as New session and /api/pulls allow; a shared session,
+   * review, QA run or question has none. Asked only when the status names another repo's.
+   * @returns {Promise<string[]>}
+   */
+  const startableKept = new Map();
+  async function reportableRepos(session, status) {
+    if (!session.owner || !startableRepos || !Array.isArray(status.prUrls)) return [];
+    const own = String(session.repo ?? '').toLowerCase();
+    if (!status.prUrls.some((url) => { const repo = pullRepo(url); return repo && repo.toLowerCase() !== own; })) return [];
+    // Kept a minute per owner: projectAccess keeps no failed write check, which would be asked again on every read.
+    const kept = startableKept.get(session.owner);
+    if (kept && now() - kept.at < STARTABLE_KEEP_MS) return kept.repos;
+    try {
+      const repos = (await startableRepos(session.owner)).filter((repo) => allProjects(config).some((p) => p.repo === repo));
+      startableKept.set(session.owner, { at: now(), repos });
+      return repos;
+    } catch (err) {
+      console.warn('fleet: the owner\'s projects not read, other repos\' pull requests left out', { id: session.id, message: firstLine(err) });
+      return [];
+    }
+  }
+
   async function readStatus(session, timeoutMs = STATUS_TIMEOUT_MS) {
     if (readingStatus.has(session.id)) return;
     readingStatus.add(session.id);
@@ -1013,7 +1059,7 @@ export function createFleet({
       }
       const wasStarting = session.status === 'starting';
       const wasAsking = session.state === 'needs-you';
-      update(session, statusUpdate(session, status, nowIso()));
+      update(session, statusUpdate(session, status, nowIso(), { repos: await reportableRepos(session, status) }));
       // A message left in the box: sent or cleared in the TUI tab once the box is empty again.
       if (session.leftInBox && status.boxText === false) {
         update(session, { leftInBox: null });
@@ -1754,7 +1800,7 @@ export function createFleet({
    * @param {{owner: string, prompt: string, name?: string, workOn?: string, model?: string, effort?: string,
    *          permissionMode?: string, background?: boolean}} args  `workOn` is the form's optional issue, pull request or branch
    */
-  async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], background = false, project = defaultProject(config), herdrParent = false, ...picked }) {
+  async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], background = false, project = defaultProject(config), herdrParent = false, startedFrom = null, ...picked }) {
     refuseWithoutRepo(project, { kind: 'task', trigger: 'my-woodshed' });
     const on = parseWorkOn(workOn, { defaultBranch: await githubOf(project).defaultBranch?.() ?? null });
     const reviewOnly = !String(prompt ?? '').trim() && on.kind !== 'task';
@@ -1773,7 +1819,7 @@ export function createFleet({
     const attach = attachments && attachmentIds?.length ? (sessionId) => attachments.claim({ login: owner, ids: attachmentIds, sessionId }) : null;
     const session = await createSession({
       ...target, title: given || titleFrom(text), startedBy: owner, owner, trigger: 'my-woodshed', prompt: text, options, attach, background, reviewOnly, project,
-      herdrParent,
+      herdrParent, startedFrom,
     });
     if (naming) renameWhenNamed(session, naming);
     return session;

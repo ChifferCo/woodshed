@@ -66,7 +66,7 @@ test('the manifest asks for every scope the console uses, the two channel scopes
   const yaml = slackManifest({ name: 'Team Shed', eventsUrl: 'https://hooks.example/slack' });
   assert.match(yaml, /^display_information:\n {2}name: "Team Shed"\n/);
   assert.match(yaml, / {4}display_name: "team-shed"\n/);
-  for (const scope of ['app_mentions:read', 'channels:read', 'chat:write', 'groups:read', 'reactions:write', 'users:read', 'users:read.email']) {
+  for (const scope of ['app_mentions:read', 'channels:history', 'channels:read', 'chat:write', 'groups:read', 'reactions:write', 'users:read', 'users:read.email']) {
     assert.match(yaml, new RegExp(`\\n {6}- ${scope.replace('.', '\\.')}\\n`), scope);
   }
   assert.match(yaml, /event_subscriptions:\n {4}request_url: "https:\/\/hooks\.example\/slack"\n {4}bot_events:\n {6}- app_mention\n/);
@@ -173,7 +173,7 @@ test('check says who a pasted token is, and what scopes its app lacks, keeping n
   const { slackSetup, secrets } = setup({ scopes: ['chat:write', 'app_mentions:read'] });
   const who = await slackSetup.check(TOKEN);
   assert.equal(who.team, 'Acme');
-  assert.deepEqual(who.missingScopes, ['channels:read', 'groups:read', 'reactions:write', 'users:read', 'users:read.email']);
+  assert.deepEqual(who.missingScopes, ['channels:history', 'channels:read', 'groups:read', 'reactions:write', 'users:read', 'users:read.email']);
   assert.equal(secrets.values.size, 0);
 });
 
