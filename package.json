@@ -12,6 +12,7 @@
     "node": ">=22"
   },
   "files": [
+    "cli/agentSignIns.mjs",
     "cli/browser.mjs",
     "cli/config.mjs",
     "cli/credentials.mjs",
