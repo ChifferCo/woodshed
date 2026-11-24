@@ -1233,6 +1233,8 @@ writeAskPrompt() {
   local rules
   rules=$(cat "$SESSION_DIR/ask.md")
   rules=${rules//"{{ANSWER}}"/"$SESSION_DIR/answer.sh"}
+  rules=${rules//"{{ISSUE}}"/"$SESSION_DIR/issue.sh"}
+  rules=${rules//"{{REPO}}"/"$(git -C "$REPO_DIR" remote get-url origin | sed -E 's#\.git$##; s#^.*github\.com[:/]##')"}
   rules=${rules//"{{DEFAULT_BRANCH}}"/"$DEFAULT_BRANCH"}
   rules=${rules//"{{REPO_URL}}"/"$(git -C "$REPO_DIR" remote get-url origin | sed 's/\.git$//')"}
   printf '%s\n' "$rules" > /tmp/woodshed-rules.md

@@ -1,0 +1,31 @@
+<!-- @dsCard group="Cards" height=300 subtitle="The desktop app's bell: count, and its list open" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;600;700&display=swap">
+<style>
+ body{margin:0;padding:20px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
+ .row{display:flex;align-items:flex-start;gap:24px}
+ .bell{position:relative;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid var(--line);border-radius:var(--radius-md);background:var(--ground);color:var(--sub)}
+ .bell.open{background:var(--chip-count);color:var(--ink)}
+ .bell svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linejoin:round;stroke-linecap:round}
+ .count{position:absolute;top:-6px;right:-7px;min-width:16px;padding:0 4px;box-sizing:border-box;border-radius:999px;background:var(--amber-tint);color:var(--amber-ink);box-shadow:0 0 0 2px var(--ground);font:500 10px/16px "JetBrains Mono",ui-monospace,monospace;text-align:center}
+ .list{width:300px;padding:6px;background:var(--ground);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(27,34,50,.14)}
+ .label{padding:8px 10px 4px;font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--label)}
+ .item{display:flex;gap:9px;padding:8px 10px;border-radius:5px}
+ .dot{flex:none;width:7px;height:7px;margin-top:5px;border-radius:50%;background:var(--slate)}
+ .needs{background:var(--wait)}.failed{background:var(--bad)}.done{background:var(--green)}
+ .text{display:flex;flex-direction:column;gap:2px}
+ .text b{font-size:13px;font-weight:600}.seen b{font-weight:500;color:var(--sub)}
+ .text span{font-size:12.5px;color:var(--sub)}
+ .text i{font:normal 11px "JetBrains Mono",ui-monospace,monospace;color:var(--meta)}
+</style>
+<div class="row">
+ <span class="bell"><svg viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg><span class="count">2</span></span>
+ <div>
+  <span class="bell open"><svg viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg></span>
+  <div class="list">
+   <div class="label">Notifications</div>
+   <div class="item"><span class="dot needs"></span><span class="text"><b>Fix the login redirect</b><span>Needs you: claude is asking a question.</span><i>just now</i></span></div>
+   <div class="item"><span class="dot failed"></span><span class="text"><b>Upgrade the queue client</b><span>Failed: it did not start in time.</span><i>8 min ago</i></span></div>
+   <div class="item seen"><span class="dot done"></span><span class="text"><b>Add CSV export</b><span>Done: claude finished its turn.</span><i>50 min ago</i></span></div>
+  </div>
+ </div>
+</div>

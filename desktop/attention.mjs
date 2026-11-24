@@ -35,11 +35,13 @@ export function waitsFor(session) {
  * says otherwise. `key` is what settings.json keeps.
  *
  * On by default, the moments a person acts on: claude asks (needs-you) or finished its turn (done); a session failed,
- * which nothing else will tell them; a shared session someone else handed them; a pull request opened, merged or
- * closed; and the verdict of a review or QA run on their pull request, which runs by itself and is otherwise heard of
- * only on GitHub.
+ * which nothing else will tell them; a shared session someone else handed them; and a pull request opened, merged or
+ * closed.
  *
  * Off by default:
+ * - review, qa: every pull request gets a review and often a QA run, each rerun on a push, so they rang far more than
+ *   anything a person acts on; their verdict reaches the session that opened the pull request, whose next needs-you
+ *   or done rings. Switched on, only their verdict rings: a review or QA session is never notified of otherwise.
  * - checks: every push runs the checks again, and claude in the session usually watches them itself (the rail's
  *   "waiting on a job"), so a busy pull request would ring on each commit.
  * - paused: the idle pause follows a needs-you or done the person already heard about, and the session waits on the
@@ -59,8 +61,8 @@ export const NOTIFICATION_KINDS = [
   { key: 'assigned', label: 'A session is assigned to you', on: true },
   { key: 'pr-opened', label: 'A pull request is opened', on: true },
   { key: 'merged', label: 'A pull request is merged or closed', on: true },
-  { key: 'review', label: 'A review of your pull request finished', on: true },
-  { key: 'qa', label: 'A QA run on your pull request finished', on: true },
+  { key: 'review', label: 'A review of your pull request finished', on: false },
+  { key: 'qa', label: 'A QA run on your pull request finished', on: false },
   { key: 'checks', label: 'A pull request\'s checks fail or pass', on: false },
   { key: 'paused', label: 'A session is paused at its idle or lifetime limit', on: false },
 ];
@@ -188,13 +190,14 @@ export function attention(body, before, { first = false, enabled = enabledKinds(
     if (waiting && was?.waiting !== waiting) {
       add(s, waiting, waiting === 'needs-you' ? 'Needs you: claude is asking a question.' : 'Done: claude finished its turn.');
     }
-    if (mark.failed && !was?.failed) {
+    // A review or QA run rings only for its verdict (below): its failing, pausing or assignee is nobody's news.
+    if (mark.failed && !was?.failed && !pullCheck) {
       const why = (s.error ? firstLine(s.error) : s.stopReason === START_TIMEOUT_REASON ? 'it did not start in time' : '').replace(/\.$/, '');
       add(s, 'failed', why ? `Failed: ${why}.` : 'Failed.');
     }
-    if (mark.paused && !was?.paused) add(s, 'paused', `Paused: ${mark.paused}. Resume it from the console.`);
+    if (mark.paused && !was?.paused && !pullCheck) add(s, 'paused', `Paused: ${mark.paused}. Resume it from the console.`);
     // Handed over by someone else; taking it yourself, or starting it, is no news.
-    if (!s.owner && login && sameLogin(s.assignee, login) && !sameLogin(was?.assignee, login) && s.assignedBy && !sameLogin(s.assignedBy, login)) {
+    if (!pullCheck && !s.owner && login && sameLogin(s.assignee, login) && !sameLogin(was?.assignee, login) && s.assignedBy && !sameLogin(s.assignedBy, login)) {
       add(s, 'assigned', `Assigned to you by ${nameOf(s.assignedBy)}.`);
     }
     // A run that started and finished between two reads (the computer asleep, the console unreachable) rings too, as a

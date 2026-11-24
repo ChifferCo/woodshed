@@ -34,6 +34,12 @@ export function createSlackPeople({ store, slack, now = Date.now }) {
     return (login && accounts()[keyOf(login)]?.slackId) || null;
   }
 
+  /** @returns {string|null}  the GitHub handle (lowercase) linked to this Slack user, or null for none */
+  function loginFor(slackId) {
+    if (!slackId) return null;
+    return Object.entries(accounts()).find(([, a]) => a?.slackId === slackId)?.[0] ?? null;
+  }
+
   /** @returns {Record<string, {slackId: string, name: string|null, how: string}>}  the links of these handles */
   function links(logins) {
     const out = {};
@@ -130,5 +136,5 @@ export function createSlackPeople({ store, slack, now = Date.now }) {
     return result;
   }
 
-  return { slackUserFor, links, matchOnSignIn, setManual, search };
+  return { slackUserFor, loginFor, links, matchOnSignIn, setManual, search };
 }
