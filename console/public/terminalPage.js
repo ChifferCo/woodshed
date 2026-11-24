@@ -37,6 +37,9 @@
   const RETRIES_PER_MINUTE = 3;
   const RETRY_MS = [500, 2000, 5000];
   const CLAIM_MS = 2000;
+  // The least a terminal is fitted to: a phone's narrowest pane holds about 40 columns at its smallest type.
+  const MIN_COLS = 20;
+  const MIN_ROWS = 5;
 
   const route = ROUTE_RE.exec(window.location.hash);
   const container = document.getElementById('terminal-container');
@@ -69,7 +72,7 @@
   term.loadAddon(fit);
   term.loadAddon(new window.WebLinksAddon.WebLinksAddon());
   term.open(container);
-  fit.fit();
+  fitShown();
   // ttyd's defaults, before its preferences say otherwise: WebGL, falling back to canvas, and Unicode 11's widths.
   useWebgl();
   useUnicode11();
@@ -89,7 +92,7 @@
       // The browser would not: the selection stays for the copy key.
     }
   });
-  window.addEventListener('resize', () => fit.fit());
+  window.addEventListener('resize', fitShown);
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && !isOpen() && !retryTimer) retry();
     if (!document.hidden) claim();
@@ -173,9 +176,21 @@
     if (pending > FLOW.high) send('2');
   }
 
+  // A frame with no box to measure (not displayed, or squeezed to nothing for a moment as the page around it changes)
+  // makes xterm's fit its 2x1 minimum, and tmux sizes the window by its client used last: every device's screen would
+  // be drawn 2 columns wide, and claude's lines kept so in their history. Below a size anyone reads, the last one stays
+  // until the next resize.
+  function fitShown() {
+    const dims = fit.proposeDimensions();
+    if (!dims || !(dims.cols >= MIN_COLS) || !(dims.rows >= MIN_ROWS)) return;
+    fit.fit();
+  }
+
+  // Only a terminal on screen: one not displayed (the phone's list, another tab) is no device in use.
   // At most every CLAIM_MS: one says it, and a scroll is many events.
   function claim() {
     if (!term.modes.sendFocusMode || socket?.readyState !== WebSocket.OPEN) return;
+    if (!container.clientWidth || !container.clientHeight) return;
     const now = Date.now();
     if (now - claimedAt < CLAIM_MS) return;
     claimedAt = now;
@@ -209,7 +224,7 @@
         default: {
           const current = term.options[key];
           term.options[key] = current && typeof current === 'object' && value && typeof value === 'object' ? { ...current, ...value } : value;
-          if (key.startsWith('font')) fit.fit();
+          if (key.startsWith('font')) fitShown();
         }
       }
     }
