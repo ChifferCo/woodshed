@@ -16,7 +16,10 @@
 //   POST /sessions/<id>/messages   {"text"}  ->  {"sent": true} or {"held": true}: typed in at its prompt as the Chat
 //                         tab's message is (fleet.send), headed with who sent it; held while it works, waits in line or
 //                         is paused, and typed once it is at its prompt again
-//   GET  /sessions/<id>/wait?for=reply|settled  ->  {"session", "deliveredAt", "waiting"?, "noReply"?}: answers once it
+//   GET  /sessions/<id>/wait?for=reply|settled  ->  {"session", "deliveredAt", "waiting"?, "noReply"?, "reply"?,
+//                         "waitingOnYou"?}: a message the other sends this one while it waits answers it (`reply`:
+//                         {text, at}), and is not typed in; a wait on a session that waits on this one answers at once
+//                         (`waitingOnYou`). Otherwise it answers once it
 //                         is done or needs the person (for=reply: once it worked after what was sent went in, a held
 //                         message counting from when it was typed), or stopped; {"waiting": true} after WAIT_MS, to ask
 //                         again
@@ -26,6 +29,16 @@
 //   POST /sessions/<id>/stop        stop it, as Stop on the page does
 //   POST /sessions/<id>/resume      Resume, with the page's checks (server.mjs's resumeMine)
 //   POST /sessions/<id>/rename      {"name"}  as the page's rename; POST /rename names the calling session itself
+//
+// And the agents beside the calling session's own, in its own container (session/agents.mjs), through the page's own
+// route for + Another agent (server.mjs agentAction), with its checks: a helper on the same work, in the same checkout.
+//
+//   GET  /agents                    ->  {"agents": [...]}: statusd's, each with its id (agent-2 ...) and state
+//   POST /agents                    {"prompt", "agent"?, "model"?, "effort"?}  starts one, in the calling session's own
+//                                   permission mode (never looser), as + Another agent does
+//   POST /agents/<agent-N>/send     {"text"}  typed in at its prompt, held while it works
+//   GET  /agents/<agent-N>/transcript?limit=<n>   its conversation, as statusd reads it
+//   POST /agents/<agent-N>/stop
 //
 // The token is its own, not SESSION_TOKEN, which the app's environment holds (statusd starts the app): it is made
 // for each run of a private session at its launch (fleet.mjs), kept here only as its hash, and does nothing once the
@@ -49,6 +62,7 @@ const MAX_BODY_BYTES = 64 * 1024;
 // A first prompt is the whole brief for a session that knows nothing else: room for a long one, not for a dump.
 export const MAX_PROMPT_CHARS = 20_000;
 const SESSION_PATH_RE = /^\/sessions\/([0-9a-f]{8})(?:\/(messages|wait|transcript|stop|resume|rename))?$/;
+const AGENTS_PATH_RE = /^\/agents(?:\/(agent-[2-9])\/(transcript|send|stop))?$/;
 // statusd types no more in one go (session/statusd.mjs, MAX_SEND_CHARS), less the line that says who sent it.
 export const MAX_MESSAGE_CHARS = 7500;
 // A wait is answered at least this often, so no proxy in between drops it; the command asks again.
@@ -86,7 +100,7 @@ export function sessionForStartToken(given, sessions) {
 
 /** @returns {boolean}  whether the path is one of these routes */
 export function isStartsPath(pathname) {
-  return pathname === '/sessions' || pathname === '/rename' || SESSION_PATH_RE.test(pathname);
+  return pathname === '/sessions' || pathname === '/rename' || SESSION_PATH_RE.test(pathname) || AGENTS_PATH_RE.test(pathname);
 }
 
 const text = (value, max) => (typeof value === 'string' && value ? value.slice(0, max) : null);
@@ -138,10 +152,15 @@ async function readJson(req) {
  *   whose writers the page's sign-in rechecks every hour: a session's start must ask it here.
  */
 export function createSessionStarts({
-  fleet, config, startMine, resumeMine = null, statusd = null, allowed = () => true, canWrite = () => true,
+  fleet, config, startMine, resumeMine = null, statusd = null, agentAction = null, allowed = () => true, canWrite = () => true,
   waitMs = WAIT_MS, pollMs = WAIT_POLL_MS, noReplyMs = NO_REPLY_MS, now = Date.now,
 }) {
   const summary = (s) => startedSummary(s, { publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
+
+  // The waits open now, one for each session waiting and the session it waits on (waitKey): a session may wait on two
+  // at once (two send --wait in the background), and a reply from either answers its own.
+  const waits = new Map();
+  const waitKey = (waiter, target) => `${waiter}>${target}`;
 
   function startedBy(session) {
     return fleet.sessions().filter((s) => s.startedFrom === session.id && s.owner === session.owner && !s.startedApart).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -162,6 +181,8 @@ export function createSessionStarts({
       console.warn('sessionStarts: refused, no running session has that start token', { pathname });
       return reply(res, 401, { error: 'this session cannot start sessions: its start token is not one the console knows, or the session stopped' });
     }
+    const agentPath = AGENTS_PATH_RE.exec(pathname);
+    if (agentPath) return ownAgents(req, res, session, agentPath);
     if (pathname === '/rename') {
       if (req.method !== 'POST') return notFound(req, res);
       const read = await readJson(req);
@@ -192,7 +213,7 @@ export function createSessionStarts({
     if (wants === 'GET') req.resume();
     const query = new URL(req.url, 'http://console').searchParams;
     if (action === null) return reply(res, 200, { session: summary(other) });
-    if (action === 'wait') return wait(res, other, query.get('for') === 'reply' ? 'reply' : 'settled');
+    if (action === 'wait') return wait(res, session, other, query.get('for') === 'reply' ? 'reply' : 'settled');
     if (action === 'transcript') return transcript(res, session, other, query);
     if (!(await allowed(session.owner)) || !(await canWrite(session.owner))) {
       req.resume();
@@ -219,6 +240,48 @@ export function createSessionStarts({
     if (read.bad) return reply(res, 400, { error: 'the body must be a JSON object' });
     if (action === 'rename') return rename(res, session, other, read.body);
     return message(res, session, other, read.body);
+  }
+
+  // The calling session's own agents, through the page's route (agentAction), which answers with statusd's reply.
+  async function ownAgents(req, res, session, [, agentId = null, action = null]) {
+    if (!agentAction) {
+      req.resume();
+      return reply(res, 404, { error: 'this console cannot start agents from a session' });
+    }
+    const route = [undefined, session.id, agentId ?? undefined, action ?? undefined];
+    const login = session.owner;
+    if (req.method === 'GET' && (!agentId || action === 'transcript')) {
+      req.resume();
+      return agentAction(req, res, route, login);
+    }
+    if (req.method !== 'POST' || action === 'transcript') return notFound(req, res);
+    if (!(await allowed(login)) || !(await canWrite(login))) {
+      req.resume();
+      console.log('sessionStarts: refused', { from: session.id, action: `agents ${action ?? 'start'}`, why: 'no longer allowed' });
+      return reply(res, 403, { error: `@${login} can no longer use this console, or no longer writes to its repo` });
+    }
+    const read = await readJson(req);
+    if (read.tooLarge) return reply(res, 413, { error: 'too large' });
+    if (read.bad) return reply(res, 400, { error: 'the body must be a JSON object' });
+    const body = read.body;
+    if (!agentId) {
+      const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+      if (!prompt) return reply(res, 400, { error: 'give the agent its first prompt: what to do, and what to answer with' });
+      // A helper is claude or codex, as + Another agent offers. As loose as the calling session, never looser, by the
+      // rule a session it starts gets (shared/agents.cjs, modeForStartedSession).
+      const agent = body.agent === 'codex' ? 'codex' : 'claude';
+      const permissionMode = agents.modeForStartedSession(agents.agentOfSession(session), session.options?.permissionMode || 'auto', agent);
+      console.log('sessionStarts: agent asked for', { from: session.id, agent, permissionMode });
+      return agentAction(req, res, route, login, { body: {
+        agent, model: typeof body.model === 'string' ? body.model : '', effort: typeof body.effort === 'string' ? body.effort : '',
+        permissionMode, prompt: `[From this session's own agent]\n\n${prompt}`,
+      } });
+    }
+    if (action === 'stop') return agentAction(req, res, route, login, { body: {} });
+    const said = typeof body.text === 'string' ? body.text.trim() : '';
+    if (!said) return reply(res, 400, { error: 'nothing to send' });
+    if (said.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in one message` });
+    return agentAction(req, res, route, login, { body: { text: `[Message from this session's own agent]\n\n${said}` } });
   }
 
   function rename(res, from, session, body) {
@@ -263,6 +326,14 @@ export function createSessionStarts({
     const head = to.startedFrom === from.id
       ? `[Message from ${named}, which started this session. Answer it with: woodshed-session reply "<answer>"]`
       : `[Message from ${named}, ${from.startedFrom === to.id ? 'which this session started' : 'another session of your person\'s'}. Answer it with: woodshed-session send ${from.id} "<answer>"]`;
+    // `to` is waiting on `from` (send --wait, wait): this is its answer, handed to that wait, not typed in behind it.
+    // Typed in, it would be held until that wait's turn ends, and that wait would never end.
+    const waiting = waits.get(waitKey(to.id, from.id));
+    const at = new Date(now()).toISOString();
+    if (waiting && waiting.answer({ text: said, at, typed: `${head}\n\n${said}` })) {
+      console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome: 'answered a wait' });
+      return reply(res, 200, { sentAt: at, sent: true, answeredWait: true, session: summary(to) });
+    }
     const outcome = await fleet.send(to, `${head}\n\n${said}`);
     console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome });
     if (outcome === 'in-box') return reply(res, 409, { error: 'it went into the session\'s box but was not sent: a prompt came up as it was typed, which the person answers in its TUI tab' });
@@ -272,7 +343,50 @@ export function createSessionStarts({
   // The console's own reads of its statusd (fleet.readStatus, every few seconds) keep `state`: this watches it. For a
   // reply, only work after what was sent went in counts: a message held while the session worked goes in once that turn
   // is over, and the turn it was held behind is not its answer. `deliveredAt` says from when, for the caller's read.
-  async function wait(res, session, mode) {
+  async function wait(res, waiter, session, mode) {
+    const id = session.id;
+    // Each the other's: answered now, or both would wait for a reply neither can give.
+    if (waits.has(waitKey(id, waiter.id))) {
+      console.log('sessionStarts: wait answered at once, the other session waits on this one', { from: waiter.id, id });
+      return reply(res, 200, { session: summary(session), waitingOnYou: true });
+    }
+    // One open wait for each pair: a reply from the session it waits on answers it (message, above). A second wait of the
+    // same session on the same one takes its place.
+    let replied = null;
+    let wake = null;
+    let closed = false;
+    // A reply is taken only while the waiting command is still there to print it: once it went, the message is typed in
+    // as any other (message, above), not lost to a wait nobody reads.
+    const entry = {
+      target: id,
+      answer: (r) => {
+        if (closed || res.destroyed || res.writableEnded) return false;
+        replied = r;
+        wake?.();
+        return true;
+      },
+    };
+    waits.set(waitKey(waiter.id, id), entry);
+    // The request's own 'close' comes once its body is read; the response's, before it is sent, means the caller went.
+    res.on('close', () => {
+      if (res.writableFinished) return;
+      closed = true;
+      wake?.();
+    });
+    let handed = false;
+    try {
+      return await waitLoop(res, session, mode, () => replied, () => closed, (resolve) => { wake = resolve; }, () => { handed = true; });
+    } finally {
+      if (waits.get(waitKey(waiter.id, id)) === entry) waits.delete(waitKey(waiter.id, id));
+      // Taken in the same tick its command went: typed in at the session's prompt, as any message, not dropped.
+      if (replied && !handed) {
+        const outcome = await fleet.send(waiter, replied.typed);
+        console.log('sessionStarts: message', { from: id, to: waiter.id, chars: replied.text.length, outcome, why: 'its wait went' });
+      }
+    }
+  }
+
+  async function waitLoop(res, session, mode, repliedOf, closedOf, onWake, onHanded) {
     const id = session.id;
     const started = now();
     const lastAt = (s) => (s.lastMessage?.role === 'assistant' && s.lastMessage.at ? Date.parse(s.lastMessage.at) : 0);
@@ -281,6 +395,13 @@ export function createSessionStarts({
     for (;;) {
       const s = fleet.find(id);
       if (!s) return reply(res, 404, { error: `no session ${id}` });
+      // The waiting command went (Ctrl-C, its timeout): nothing to answer.
+      if (closedOf()) return res.end();
+      if (repliedOf()) {
+        onHanded();
+        const { text: said, at } = repliedOf();
+        return reply(res, 200, { session: summary(s), reply: { text: said, at } });
+      }
       const at = deliveredAt === null ? null : new Date(deliveredAt).toISOString();
       if (!ACTIVE_STATUSES.has(s.status)) return reply(res, 200, { session: summary(s), deliveredAt: at });
       if (s.pendingMessages?.length) {
@@ -294,7 +415,10 @@ export function createSessionStarts({
       // Sent and gone in, but never seen at work since: it is not coming.
       if (settled && now() - deliveredAt >= noReplyMs) return reply(res, 200, { session: summary(s), deliveredAt: since, noReply: true });
       if (now() - started >= waitMs) return reply(res, 200, { session: summary(s), deliveredAt: since, waiting: true });
-      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, pollMs);
+        onWake(() => { clearTimeout(timer); resolve(); });
+      });
     }
   }
 
@@ -363,5 +487,7 @@ export function createSessionStarts({
     handle,
     /** @returns {boolean}  whether the token is the start token of one of this console's running sessions */
     owns: (token) => Boolean(sessionForStartToken(token, fleet.sessions())),
+    /** @returns {number}  how many waits are open, for the tests */
+    openWaits: () => waits.size,
   };
 }

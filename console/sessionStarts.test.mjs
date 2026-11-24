@@ -9,7 +9,7 @@ const NOW = Date.parse('2026-11-23T12:00:00.000Z');
 
 // A console's session API with only these routes: a made-up fleet, and New session's start as a stand-in that records
 // what it was asked and answers as server.mjs's startMine does.
-async function serve({ sessions, startMine = null, allowed = () => true, canWrite = () => true, send = null, statusd = null, resumeMine = null, waitMs = 60_000, noReplyMs = 60_000 } = {}) {
+async function serve({ sessions, startMine = null, allowed = () => true, canWrite = () => true, send = null, statusd = null, resumeMine = null, agentAction = null, waitMs = 60_000, noReplyMs = 60_000 } = {}) {
   const asked = [];
   const fleet = {
     sessions: () => sessions,
@@ -32,7 +32,7 @@ async function serve({ sessions, startMine = null, allowed = () => true, canWrit
   };
   let next = 0;
   const starts = createSessionStarts({
-    fleet, config: { publicUrl: 'https://console.example' }, allowed, canWrite, statusd, resumeMine, waitMs, noReplyMs, pollMs: 10,
+    fleet, config: { publicUrl: 'https://console.example' }, allowed, canWrite, statusd, resumeMine, agentAction, waitMs, noReplyMs, pollMs: 10,
     startMine: startMine ?? (async (login, body) => {
       asked.push({ login, body });
       const made = { id: `5e55${String(next++).padStart(4, '0')}`, owner: login, title: body.name || 'Named from the prompt', status: 'queued', branch: body.workOn || `woodshed/${login}-x`,
@@ -50,7 +50,7 @@ async function serve({ sessions, startMine = null, allowed = () => true, canWrit
     });
     return { status: res.status, body: await res.json() };
   };
-  return { call, asked, starts, fleet, close: () => server.close() };
+  return { call, asked, starts, fleet, base: `http://127.0.0.1:${server.address().port}`, close: () => server.close() };
 }
 
 function holder(extra = {}) {
@@ -406,4 +406,149 @@ test('a separate start is its own work: marked so, and out of the starting sessi
   assert.deepEqual(list.body.sessions.map((s) => s.id), [part.body.session.id], 'list follows the pieces of its own work');
   const all = await api.call('GET', '/sessions?all=1', { token });
   assert.deepEqual(all.body.sessions.find((s) => s.id === apart.body.session.id).separate, true);
+});
+
+test('a session starts, messages, reads and stops the agents beside its own, through the page\'s route', async (t) => {
+  const { token, session } = holder();
+  const asked = [];
+  // The page's + Another agent route (server.mjs agentAction): what it was given, and statusd's kind of answer.
+  const agentAction = async (req, res, route, login, { body } = {}) => {
+    asked.push({ method: req.method, url: req.url, route: route.slice(1), login, body });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(route[2] ? { ok: true } : { agents: [], agent: { id: 'agent-2', agent: body?.agent ?? null } }));
+  };
+  const api = await serve({ sessions: [session], agentAction });
+  t.after(api.close);
+  assert.equal((await api.call('POST', '/agents', { token, body: { prompt: 'Write the tests for totals.ts', agent: 'codex', model: 'gpt-5' } })).status, 200);
+  await api.call('POST', '/agents/agent-2/send', { token, body: { text: 'Also the rounding case.' } });
+  await api.call('GET', '/agents/agent-2/transcript?limit=20', { token });
+  await api.call('GET', '/agents', { token });
+  await api.call('POST', '/agents/agent-2/stop', { token, body: {} });
+  assert.deepEqual(asked.map((a) => [a.method, a.url, a.route.join(','), a.login]), [
+    ['POST', '/agents', `${session.id},,`, 'joel'],
+    ['POST', '/agents/agent-2/send', `${session.id},agent-2,send`, 'joel'],
+    ['GET', '/agents/agent-2/transcript?limit=20', `${session.id},agent-2,transcript`, 'joel'],
+    ['GET', '/agents', `${session.id},,`, 'joel'],
+    ['POST', '/agents/agent-2/stop', `${session.id},agent-2,stop`, 'joel'],
+  ]);
+  assert.deepEqual(asked[0].body, { agent: 'codex', model: 'gpt-5', effort: '', permissionMode: agents.modeForStartedSession('claude', 'acceptEdits', 'codex'), prompt: '[From this session\'s own agent]\n\nWrite the tests for totals.ts' },
+    'never looser than the calling session, by the rule a session it starts gets (shared/agents.cjs)');
+  assert.deepEqual(asked[1].body, { text: '[Message from this session\'s own agent]\n\nAlso the rounding case.' }, 'headed, so the agent and its Chat tell it from the person');
+  assert.equal((await api.call('POST', '/agents', { token, body: { prompt: '  ' } })).status, 400);
+
+  const gone = await serve({ sessions: [session], agentAction, canWrite: () => false });
+  t.after(gone.close);
+  const before = asked.length;
+  assert.equal((await gone.call('POST', '/agents', { token, body: { prompt: 'x' } })).status, 403);
+  assert.equal(asked.length, before, 'refused before the page\'s route');
+  assert.equal((await api.call('GET', '/agents', { token: 'wst_nope' })).status, 401);
+});
+
+test('a message from the session waited on answers the wait, and is not typed in behind it', async (t) => {
+  const { token, session, child, sessions } = family();
+  const childToken = newStartToken();
+  child.startTokenHash = startTokenHash(childToken);
+  Object.assign(child, { state: 'working' });
+  const api = await serve({ sessions, noReplyMs: 60_000 });
+  t.after(api.close);
+  // The main session waits on the child (send --wait), and the child answers with woodshed-session reply.
+  const waiting = api.call('GET', `/sessions/${child.id}/wait?for=reply`, { token });
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(api.starts.openWaits(), 1);
+  const replied = await api.call('POST', `/sessions/${session.id}/messages`, { token: childToken, body: { text: 'For customers, I think.' } });
+  assert.deepEqual([replied.status, replied.body.sent, replied.body.answeredWait], [200, true, true]);
+  const answer = await waiting;
+  assert.equal(answer.body.reply.text, 'For customers, I think.');
+  assert.equal(answer.body.session.id, child.id);
+  assert.deepEqual(api.fleet.sent, [], 'handed to the wait, never typed in behind it');
+  assert.equal(api.starts.openWaits(), 0, 'the wait is gone once answered');
+
+  // With nobody waiting, a message is typed in as before.
+  await api.call('POST', `/sessions/${session.id}/messages`, { token: childToken, body: { text: 'One more thing.' } });
+  assert.equal(api.fleet.sent.length, 1);
+});
+
+test('a wait on a session that waits on this one answers at once, and a wait whose caller went is cleared', async (t) => {
+  const { token, session, child, sessions } = family();
+  const childToken = newStartToken();
+  child.startTokenHash = startTokenHash(childToken);
+  child.state = 'working';
+  const api = await serve({ sessions, waitMs: 60_000 });
+  t.after(api.close);
+  const ac = new AbortController();
+  const first = fetch(`${api.base}/sessions/${child.id}/wait?for=reply`, { headers: { authorization: `Bearer ${token}` }, signal: ac.signal }).catch(() => null);
+  await new Promise((r) => setTimeout(r, 40));
+  const back = await api.call('GET', `/sessions/${session.id}/wait?for=reply`, { token: childToken });
+  assert.deepEqual([back.status, back.body.waitingOnYou, back.body.session.id], [200, true, session.id]);
+  assert.equal(api.starts.openWaits(), 1, 'the answered-at-once wait never opened');
+  ac.abort();
+  await first;
+  for (let i = 0; i < 50 && api.starts.openWaits(); i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(api.starts.openWaits(), 0, 'gone once its caller went');
+});
+
+test('a reply to a wait whose command went is typed in, not lost', async (t) => {
+  const { token, session, child, sessions } = family();
+  const childToken = newStartToken();
+  child.startTokenHash = startTokenHash(childToken);
+  Object.assign(child, { state: 'working', pendingMessages: [] });
+  const api = await serve({ sessions });
+  t.after(api.close);
+  // The waiting command goes (Ctrl-C, its own timeout) before any reply.
+  const gone = new AbortController();
+  const waiting = fetch(`${api.base}/sessions/${child.id}/wait?for=reply`, { headers: { authorization: `Bearer ${token}` }, signal: gone.signal }).catch(() => null);
+  await new Promise((r) => setTimeout(r, 50));
+  gone.abort();
+  await waiting;
+  await new Promise((r) => setTimeout(r, 50));
+  const sent = await api.call('POST', `/sessions/${session.id}/messages`, { token: childToken, body: { text: 'Done: totals in cents.' } });
+  assert.equal(sent.body.answeredWait, undefined);
+  assert.equal(sent.body.sent, true);
+  assert.equal(api.fleet.sent.length, 1, 'typed in at the session\'s prompt as any message');
+  assert.equal(api.starts.openWaits(), 0);
+});
+
+test('a reply taken by a wait whose command goes in the same moment is typed in, not dropped', async (t) => {
+  const { token, session, child, sessions } = family();
+  const childToken = newStartToken();
+  child.startTokenHash = startTokenHash(childToken);
+  Object.assign(child, { state: 'working', pendingMessages: [] });
+  const api = await serve({ sessions, waitMs: 60_000 });
+  t.after(api.close);
+  const gone = new AbortController();
+  const waiting = fetch(`${api.base}/sessions/${child.id}/wait?for=reply`, { headers: { authorization: `Bearer ${token}` }, signal: gone.signal }).catch(() => null);
+  await new Promise((r) => setTimeout(r, 50));
+  // The reply is taken, and the command goes before the wait wakes to hand it over.
+  const sending = api.call('POST', `/sessions/${session.id}/messages`, { token: childToken, body: { text: 'Done: totals in cents.' } });
+  gone.abort();
+  const sent = await sending;
+  await waiting;
+  await new Promise((r) => setTimeout(r, 100));
+  // Whichever won the race, the reply reached the session once: typed in, since nobody is left to print it.
+  assert.equal(sent.status, 200);
+  assert.equal(api.fleet.sent.length, 1, `typed in once (${sent.body.answeredWait ? 'taken by the wait, then typed in' : 'typed in at once'})`);
+  assert.equal(api.starts.openWaits(), 0);
+});
+
+test('a session waiting on two at once gets each one\'s reply in its own wait', async (t) => {
+  const { token, session, child, sibling, sessions } = family();
+  const tokens = {};
+  for (const s of [child, sibling]) {
+    tokens[s.id] = newStartToken();
+    s.startTokenHash = startTokenHash(tokens[s.id]);
+    Object.assign(s, { state: 'working', pendingMessages: [] });
+  }
+  const api = await serve({ sessions });
+  t.after(api.close);
+  const waitOn = (s) => fetch(`${api.base}/sessions/${s.id}/wait?for=reply`, { headers: { authorization: `Bearer ${token}` } }).then((r) => r.json());
+  const onChild = waitOn(child);
+  const onSibling = waitOn(sibling);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(api.starts.openWaits(), 2);
+  await api.call('POST', `/sessions/${session.id}/messages`, { token: tokens[sibling.id], body: { text: 'From the sibling.' } });
+  await api.call('POST', `/sessions/${session.id}/messages`, { token: tokens[child.id], body: { text: 'From the child.' } });
+  assert.equal((await onChild).reply.text, 'From the child.');
+  assert.equal((await onSibling).reply.text, 'From the sibling.');
+  assert.equal(api.fleet.sent.length, 0, 'neither held to be typed in');
+  assert.equal(api.starts.openWaits(), 0);
 });

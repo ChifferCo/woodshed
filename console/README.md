@@ -936,6 +936,10 @@ one session's machine to another's. `list --all` lists them; `list` alone the on
   prompt as the Chat tab's message is (`fleet.send`), headed `[Message from session <id> "<title>", …]` with how to
   answer, so the agent and its person tell it from what the person typed. It is held while that session works, waits
   in line or is paused, and typed once it is at its prompt again, as a held Chat message is.
+- A message from the session a wait is on answers that wait: `send … --wait` and `wait` print it (`[replied HH:MM] …`),
+  and it is not typed in behind the wait, where it would be held until the waiting turn ended, which it never would. A
+  wait on a session that is itself waiting on this one answers at once (`waitingOnYou`), so two sessions never wait on
+  each other: a session answering a message replies and ends its turn, and `reply` never waits.
 - `wait <id>` answers once it is done, needs its person, or stopped; `--reply` (and `send --wait`) once it has worked on
   what was sent, or says nothing took it up (never seen working, with nothing held, for 90 s). The console answers each
   wait within 4 minutes and the command asks again.
@@ -945,8 +949,20 @@ one session's machine to another's. `list --all` lists them; `list` alone the on
 - `stop <id>` and `resume <id>` are the page's Stop and Resume, with Resume's checks (`resumeMine` in `server.mjs`).
 - `rename "<name>"` renames the session itself, `rename <id> "<name>"` another of the person's, as the page's rename.
 
+**Helpers beside a session's own agent.** For a side task of the same work, in the same checkout and branch, a session
+starts an agent beside its own, as **+ Another agent** does, instead of a session: `woodshed-session agent new
+"<prompt>" [--agent claude|codex] [--wait]`, then `agent list`, `agent send <agent-N> "<message>" [--wait]`, `agent read
+<agent-N>` and `agent stop <agent-N>`. These are the session API's `/agents` routes, which reach only the calling
+session's own agents and go through the page's own route (`agentAction` in `server.mjs`, `handle.agentAction`), with its
+checks: a private session, never a tainted one, three at most, an agent the console allows (a Codex one's sign-in). The
+agent runs in the calling session's permission mode, never a looser one, and what it is sent is headed `[From this
+session's own agent]` or `[Message from this session's own agent]`, as its Chat tab shows. `--wait` reads the agents'
+state every 3 s until it worked and is back at its prompt (`it did not take it up` after 90 s with nothing held for it).
+The console logs `sessionStarts: agent asked for` with `from` and `agent`, then the page's `console: another agent asked
+for`.
+
 The console logs `sessionStarts: message` with `from`, `to`, the `chars` and `outcome` (`sent`, `queued`, `in-box`,
-`unknown`), `sessionStarts: session stopped`, `sessionStarts: resume` with the `status`, `sessionStarts: session renamed`, and `sessionStarts: transcript
+`unknown`, `answered a wait`), `sessionStarts: wait answered at once, the other session waits on this one`, `sessionStarts: session stopped`, `sessionStarts: resume` with the `status`, `sessionStarts: session renamed`, and `sessionStarts: transcript
 not read` when the other's statusd did not answer.
 
 ### MCP servers

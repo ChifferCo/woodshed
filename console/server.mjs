@@ -2120,7 +2120,9 @@ export function createHandler({
    * console checks what a start asks for as New session's form, notes that the session may run that agent
    * (fleet.allowAgent, for a Codex one's sign-in), and passes the rest to statusd's /agents.
    */
-  async function agentAction(req, res, [, id, agentId, action], login) {
+  // `preset`: a body already read, for a session asking for its own agents through the session API (sessionStarts.mjs),
+  // which reads and shapes it first.
+  async function agentAction(req, res, [, id, agentId, action], login, { body: preset } = {}) {
     const found = findFor(id, login);
     const session = runningFor(id, login);
     if (!found || found.owner !== login) {
@@ -2143,7 +2145,7 @@ export function createHandler({
       if (req.method !== 'POST') return reply(res, 405, { error: 'GET or POST' });
       let body;
       try {
-        body = await readJson(req);
+        body = preset !== undefined ? preset : await readJson(req);
       } catch (err) {
         return reply(res, 400, { error: err.message });
       }
@@ -2195,7 +2197,7 @@ export function createHandler({
     if (req.method !== 'POST' || action === 'transcript' || action === 'prompt') return reply(res, 405, { error: 'not that method' });
     let body;
     try {
-      body = await readJson(req);
+      body = preset !== undefined ? preset : await readJson(req);
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }
@@ -3087,6 +3089,7 @@ export function createHandler({
   // New session's start, for a session starting one of its person's through the session API (sessionStarts.mjs).
   handle.startMine = startMine;
   handle.resumeMine = resumeMine;
+  handle.agentAction = agentAction;
   return handle;
 }
 
