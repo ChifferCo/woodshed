@@ -4277,4 +4277,9 @@ test('a session that asked a question waits for its answer until it is sent a me
   await fleet.tick();
   await fleet.send(child, 'Customers.');
   assert.equal(child.askedAt, null, 'a message typed into it answers it');
+
+  // Stopped with a question open: its Resume starts with none.
+  fleet.noteQuestion(child, { to: 'aaaa0001' });
+  await fleet.stop(child, 'stopped from the console', { by: 'joel' });
+  assert.deepEqual([child.status, child.askedAt], ['stopped', null]);
 });

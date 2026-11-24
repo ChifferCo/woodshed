@@ -329,6 +329,11 @@ export function createFleet({
     Object.assign(session, fields);
     // A session that stops can start nothing more: its start token goes with its run (sessionStarts.mjs).
     if (session.startTokenHash && !ACTIVE_STATUSES.has(session.status)) session.startTokenHash = null;
+    // Nor does it wait on a question it asked (noteQuestion): a Resume starts it with none open.
+    if (session.askedAt && !ACTIVE_STATUSES.has(session.status)) {
+      Object.assign(session, { askedAt: null, askedOf: null, askedSettled: null });
+      console.log('fleet: question answered', { id: session.id, why: 'stopped' });
+    }
     store.save();
   }
 
@@ -745,7 +750,6 @@ export function createFleet({
   }
   function settleQuestion(session) {
     if (!session.askedAt) return;
-    if (session.status !== 'running') return answered(session, 'stopped');
     if (session.state === 'working') {
       if (session.askedSettled) answered(session, 'working again');
     } else if (['done', 'needs-you', 'idle'].includes(session.state) && !session.askedSettled) update(session, { askedSettled: true });
