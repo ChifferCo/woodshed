@@ -143,7 +143,8 @@ file), on the same `/api/sessions` every 20 s, with the default kinds (File → 
 the browser reads, holding a Web Lock until it closes, and every tab shares the list in `localStorage`, for that person.
 A notification shows as a card in the tab that has the focus, and nowhere else; with no tab in front, as the browser's
 own notification once the person allowed them with the list's **Notify me outside this tab**. Opening a session in any
-tab marks its notifications read and closes the browser's. Unlike the app, nothing reads once every tab is closed. The
+tab marks its notifications read and closes the browser's; Sign out takes the list. Unlike the app, nothing reads
+once every tab is closed. The
 app's page has its own list, and the browser's stays off there.
 
 **File → Notifications** switches each kind on or off, kept in the app's `settings.json` under `notifications`; the

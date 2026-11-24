@@ -2004,6 +2004,13 @@
     } catch {
       // Nothing kept.
     }
+    // The browser's notifications (browserNotifications.js), kept for every tab of this browser: the session names in
+    // them are the person's, so a Sign out takes them too.
+    try {
+      for (const key of Object.keys(window.localStorage)) if (key.startsWith('woodshed-notifications:')) window.localStorage.removeItem(key);
+    } catch {
+      // Nothing kept.
+    }
   }
   // What another login kept in this browser tab goes, unread: a sign-in lost to another browser tab's Sign out and
   // replaced by someone else's runs no Sign out here. Every page that knows who is signed in (its woodshed-login meta)
