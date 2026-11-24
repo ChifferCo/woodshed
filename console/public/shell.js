@@ -44,6 +44,9 @@
     closePalette();
     closeSheet(keys);
   }
+  // The desktop app's notifications, on ⌘J (notificationBell.js, loaded after this): a browser has none.
+  const inApp = typeof window.woodshedNotifications?.list === 'function';
+  const notifications = () => W.notifications ?? { available: false, isOpen: () => false, close() {} };
 
   // ---- toast ----
   let toastEl = null;
@@ -80,6 +83,7 @@
       ...(W.isAdmin?.() ? W.consoleLinks().map((link) => ({ group: 'Go to', label: link.label, run: go(link.href) })) : []),
       // A log, not a menu entry (common.js, CONSOLE_LINKS), so named here to stay a place to go.
       W.isAdmin?.() && { group: 'Go to', label: 'Webhook events', run: go('/events') },
+      notifications().available && { group: 'Commands', label: 'Notifications', meta: keyText('notifications'), run: () => notifications().open() },
       { group: 'Commands', label: 'Keyboard shortcuts', meta: '?', run: () => openSheet(keys) },
       { group: 'Go to', label: 'Display: theme, review files, Chat or TUI', meta: keyText('settings'), run: go(DISPLAY_HREF) },
       page.toggleRail && { group: 'Commands', label: page.railShown() ? 'Hide the rail' : 'Show the rail', meta: keyText('rail'), run: page.toggleRail },
@@ -147,6 +151,7 @@
 
   function openPalette() {
     closeSheet(keys);
+    notifications().close();
     setLevel(null);
     palette.hidden = false;
     takeFocus(input);
@@ -192,6 +197,7 @@
 
   function openSheet(s) {
     closePalette();
+    notifications().close();
     s.onOpen?.();
     s.el.hidden = false;
     takeFocus(s.dialog);
@@ -216,7 +222,7 @@
     return [combo, combo && bare && h('span', { class: 'kor' }, 'or'), bare].filter(Boolean);
   }
   const keys = sheet('Keyboard shortcuts', [
-    K.SHORTCUTS.map((s) => h('div', { class: 'krow' }, h('div', { class: 'kkeys' }, keyCaps(s)), h('div', null, s.id === 'keys' ? 'This list' : s.what, s.where && h('span', { class: 'kwhere' }, ` on ${s.where}`)))),
+    K.SHORTCUTS.filter((s) => !s.desktop || inApp).map((s) => h('div', { class: 'krow' }, h('div', { class: 'kkeys' }, keyCaps(s)), h('div', null, s.id === 'keys' ? 'This list' : s.what, s.where && h('span', { class: 'kwhere' }, ` on ${s.where}`)))),
     h('p', { class: 'sheet-note' }, MAC
       ? 'Ctrl works for ⌘ too, except inside a terminal, where Ctrl is the terminal\'s. A key alone works while you are not typing. Sessions have no key of their own: ⌘K, then type a name.'
       : 'A key alone works while you are not typing. Inside a terminal, Ctrl is the terminal\'s: click outside it first. Sessions have no key of their own: Ctrl+K, then type a name.'),
@@ -230,6 +236,7 @@
   const ACTS = {
     keys: () => toggleSheet(keys),
     palette: () => (palette.hidden ? openPalette() : closePalette()),
+    notifications: () => notifications().toggle(),
     settings: go(DISPLAY_HREF),
     rail: () => page.toggleRail?.(),
     new: go('/?new=1'),
@@ -248,10 +255,10 @@
     const afterG = Date.now() - gAt < SEQUENCE_MS;
     gAt = 0;
     // A key alone is for the page, never for an open palette or sheet, whose own keys come first.
-    const overlayOpen = !palette.hidden || !keys.el.hidden;
+    const overlayOpen = !palette.hidden || !keys.el.hidden || notifications().isOpen();
     const id = K.match(e, { inFrame, afterG, typing: overlayOpen || K.takesTyping(e.composedPath?.()[0] ?? e.target) });
     // A form's own key (⌘↵ on New session) is left to the form, which reads it from its fields.
-    if (!id || K.byId[id]?.where || (id === 'rail' && !page.toggleRail)) return;
+    if (!id || K.byId[id]?.where || (id === 'rail' && !page.toggleRail) || (id === 'notifications' && !notifications().available)) return;
     e.preventDefault();
     e.stopPropagation();
     if (id === 'g') {
@@ -329,7 +336,7 @@
   }
 
   W.shell = {
-    register, toast, bindFrame, openPalette, openKeys: () => openSheet(keys),
+    register, toast, bindFrame, openPalette, openKeys: () => openSheet(keys), closeAll,
     keyText,
   };
 })();

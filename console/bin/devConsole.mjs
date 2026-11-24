@@ -94,6 +94,7 @@ const codexChat = await startDevChatSession({ id: CODEX_CHAT_ID, ...tokensOf(COD
 const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, ...tokensOf(CLAUDE_CHAT_ID), agent: 'claude', nextPath: [codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
 // A private session just started while another runs: its Claude home, restored from its owner's, holds an earlier
 // session's conversation, and its own claude has written nothing yet. Its Chat is empty until it is sent a message.
+// /s/5747ed01 started it, so `woodshed-session send|wait|read` from there reach its stand-in claude (sessionStarts.mjs).
 const NEW_CHAT_ID = 'c1a0de02';
 const newChat = await startDevChatSession({ id: NEW_CHAT_ID, ...tokensOf(NEW_CHAT_ID), agent: 'claude', restoredHome: true, nextPath: [claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
 // A private session of the dev login's on a stand-in codex, whose pane bar offers + Another agent (session/agents.mjs):
@@ -330,7 +331,7 @@ const sessions = [
     ref: agentsChat.ref, endpoint: { host: '127.0.0.1', statusPort: agentsChat.port, termPort: agentsChat.termPort ?? agentsChat.port },
   })] : []),
   ...(newChat ? [session(NEW_CHAT_ID, null, 'A new session beside a running one', {
-    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null,
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, startedFrom: '5747ed01',
     ref: newChat.ref, endpoint: { host: '127.0.0.1', statusPort: newChat.port, termPort: newChat.termPort ?? newChat.port },
   })] : []),
   ...(realClaude ? [session(REAL_ID, null, 'Real claude on a clone of this checkout', {

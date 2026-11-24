@@ -268,7 +268,7 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'publ
 // The most one message to an agent may be: statusd's own limit (session/statusd.mjs, MAX_SEND_CHARS).
 export const MAX_MESSAGE_CHARS = 8000;
 const SETTINGS_SCRIPTS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
-const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'notificationBell.js', 'session.js'];
+const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
   'logins.cjs': 'text/javascript; charset=utf-8',
@@ -634,6 +634,7 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <script src="${staticUrl('settingsSearch.js')}"></script>
 <script src="${staticUrl('keys.cjs')}"></script>
 <script src="${staticUrl('shell.js')}"></script>
+<script src="${staticUrl('notificationBell.js')}"></script>
 ${[script].flat().map((s) => `<script src="${staticUrl(s)}"></script>`).join('\n')}
 </body>
 </html>
@@ -1735,6 +1736,30 @@ export function createHandler({
    * their sessions (sessionStarts.mjs, which gives `startedFrom` and its own permission mode).
    * @returns {Promise<{status: number, body: object}>}  201 and the session, or the refusal the caller answers with
    */
+  /**
+   * My Woodshed's Resume, with its checks, for the page and for a session resuming one it started (sessionStarts.mjs).
+   * @returns {Promise<{status: number, body: object}>}
+   */
+  async function resumeMine(login, id, { herdrParent = false } = {}) {
+    const resuming = fleet.find(id);
+    // Whose it is before anything of it is read: someone else's private session answers as one that does not exist.
+    if (!resuming || resuming.owner !== login) return { status: 409, body: { error: 'no session you can open with that id' } };
+    await userSettings?.refresh?.(login, { force: true });
+    if (resuming.options?.agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return { status: 409, body: { error: 'save your Claude token on My settings first' } };
+    if (!databasesReady(login)) return { status: 409, body: { error: DATABASES_NOT_READY } };
+    // Write access to a project's repo can be taken away after a session started on it: Resume asks again, as a start does.
+    if (projectAccess && (await projectAccess.forStart(login, resuming.project)) === null) {
+      console.log('console: session resume refused, project not open to the person', { login, sessionId: resuming.id, project: resuming.project ?? null });
+      return { status: 403, body: { error: `you can no longer start sessions on ${resuming.project}: you have no write access to its repo, or it is not one of this console's` } };
+    }
+    try {
+      return { status: 201, body: publicSession(await fleet.resumePrivate({ owner: login, id, background: true, herdrParent })) };
+    } catch (err) {
+      if (!err?.shown) throw err;
+      return { status: err.status ?? 409, body: { error: err.message } };
+    }
+  }
+
   async function startMine(login, body, { startedFrom = null } = {}) {
     const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
     const herdrParent = body.herdrParent === true;
@@ -1821,18 +1846,8 @@ export function createHandler({
           await fleet.removePrivateSession({ owner: login, id: actionMatch[1] });
           return reply(res, 200, { removed: actionMatch[1] });
         }
-        const resuming = fleet.find(actionMatch[1]);
-        // Whose it is before anything of it is read: someone else's private session answers as one that does not exist.
-        if (!resuming || resuming.owner !== login) return reply(res, 409, { error: 'no session you can open with that id' });
-        await userSettings?.refresh?.(login, { force: true });
-        if (resuming?.options?.agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
-        if (!databasesReady(login)) return reply(res, 409, { error: DATABASES_NOT_READY });
-        // Write access to a project's repo can be taken away after a session started on it: Resume asks again, as a start does.
-        if (resuming?.owner === login && projectAccess && (await projectAccess.forStart(login, resuming.project)) === null) {
-          console.log('console: session resume refused, project not open to the person', { login, sessionId: resuming.id, project: resuming.project ?? null });
-          return reply(res, 403, { error: `you can no longer start sessions on ${resuming.project}: you have no write access to its repo, or it is not one of this console's` });
-        }
-        return reply(res, 201, publicSession(await fleet.resumePrivate({ owner: login, id: actionMatch[1], background: true, herdrParent: body?.herdrParent === true })));
+        const answer = await resumeMine(login, actionMatch[1], { herdrParent: body?.herdrParent === true });
+        return reply(res, answer.status, answer.body);
       }
       if (pathname === '/api/my/home/forget') {
         // A running session saves its home every few minutes, which would bring back what was forgotten.
@@ -3001,6 +3016,7 @@ export function createHandler({
   };
   // New session's start, for a session starting one of its person's through the session API (sessionStarts.mjs).
   handle.startMine = startMine;
+  handle.resumeMine = resumeMine;
   return handle;
 }
 

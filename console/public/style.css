@@ -182,6 +182,18 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 .bell-toast-close { flex: none; width: 30px; height: 30px; margin: 4px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--meta); font-size: 17px; cursor: pointer; }
 .bell-toast-close:hover { color: var(--ink); background: var(--chip-count); }
 .bell-empty { margin: 0; padding: 6px 10px 10px; font-size: 12.5px; color: var(--sub); }
+/* The list's head: its name, and Mark all read while something is new (opening the list marks nothing). */
+.bell-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.bell-mark { flex: none; margin: 4px 6px 0 0; padding: 3px 6px; border: 0; border-radius: 5px; background: none; color: var(--sub); font: inherit; font-size: 12px; cursor: pointer; }
+.bell-mark:hover, .bell-mark:focus-visible { color: var(--ink); background: var(--chip-count); }
+/* ⌘J: the same list in the middle of the screen, in the palette's frame; the row the keys are on as the palette's. */
+.overlay:has(.bell-dialog) { align-items: center; }
+.bell-dialog:focus { outline: none; }
+.bell-dialog .bell-head { padding: 6px 8px 2px; border-bottom: 1px solid var(--line); }
+.bell-dialog .bell-head .menu-label { padding-bottom: 8px; }
+.bell-dialog .bell-head .bell-mark { margin: 0 0 4px; }
+.bell-dialog .bell-item { border: 1px solid transparent; }
+.bell-dialog .bell-item[data-cursor="true"] { background: var(--amber-tint); border-color: var(--amber); }
 /* The user menu, at the foot of the rail, opening upward. */
 .rail-user { flex: none; display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--line-soft); padding: 8px 10px; }
 .rail-user .nav-user { flex: 1 1 auto; min-width: 0; width: 100%; }
