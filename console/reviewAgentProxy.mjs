@@ -46,9 +46,10 @@ const OPENCODE_PROVIDERS = {
 
 // A path already in its plain form: no `.` or `..` segment, no empty one, no `%` escape and no backslash.
 const UNPLAIN_PATH_RE = /[%\\]|\/\/|(?:^|\/)\.{1,2}(?:\/|$)/;
-// Ours to set, or the connection's own: never passed on.
+// Ours to set, or the connection's own: never passed on. OpenAI's organization and project headers too: they pick which
+// of the author's projects a key acts in, which is the key's own, never the review's to choose.
 const DROPPED_HEADERS = new Set(['host', 'connection', 'keep-alive', 'proxy-connection', 'authorization', 'x-api-key',
-  'cookie', 'chatgpt-account-id', 'anthropic-api-key']);
+  'cookie', 'chatgpt-account-id', 'anthropic-api-key', 'openai-organization', 'openai-project']);
 
 const under = (pathname, prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`);
 

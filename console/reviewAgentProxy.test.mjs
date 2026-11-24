@@ -63,9 +63,9 @@ async function setup(t, { on = { grok: ['gil', 'lou', 'old'], opencode: ['oto', 
   const port = await listen(server);
   t.after(() => { server.close(); upstream.close(); });
   // As sent, with no tidying of `..` (fetch would resolve it before sending).
-  const call = (token, path = '/grok/v1/chat/completions', { method = 'POST', header = 'authorization' } = {}) => new Promise((resolve, reject) => {
+  const call = (token, path = '/grok/v1/chat/completions', { method = 'POST', header = 'authorization', extra = {} } = {}) => new Promise((resolve, reject) => {
     const auth = token ? { [header]: header === 'authorization' ? `Bearer ${token}` : token } : {};
-    const r = http.request({ host: '127.0.0.1', port, method, path, headers: { 'content-type': 'application/json', 'x-grok-client-mode': 'headless', ...auth } }, (res) => {
+    const r = http.request({ host: '127.0.0.1', port, method, path, headers: { 'content-type': 'application/json', 'x-grok-client-mode': 'headless', ...extra, ...auth } }, (res) => {
       let body = '';
       res.on('data', (c) => { body += c; });
       res.on('end', () => resolve({ status: res.statusCode, body }));
@@ -225,9 +225,10 @@ test('a review\'s OpenCode reaches Anthropic on its author\'s API key, from open
 
 test('a review\'s OpenCode reaches OpenAI on its author\'s API key, and loses it when the key is gone from auth.json', async (t) => {
   const { seen, call } = await setup(t);
-  assert.equal((await call('review-ovi', '/opencode/openai/v1/responses')).status, 200);
+  assert.equal((await call('review-ovi', '/opencode/openai/v1/responses', { extra: { 'openai-organization': 'org-other', 'openai-project': 'proj_other' } })).status, 200);
   assert.equal(seen[0].url, '/openai/v1/responses');
   assert.equal(seen[0].headers.authorization, 'Bearer sk-made-up-ovi');
+  assert.deepEqual([seen[0].headers['openai-organization'], seen[0].headers['openai-project']], [undefined, undefined], 'the review picks none of the key\'s projects');
   const swapped = await setup(t, { signIns: { opencode: { ovi: JSON.stringify({ anthropic: { type: 'api', key: 'sk-ant-made-up-ovi' } }) } } });
   const res = await swapped.call('review-ovi', '/opencode/openai/v1/responses');
   assert.equal(res.status, 403);
