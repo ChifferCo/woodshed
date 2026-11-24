@@ -313,9 +313,13 @@ and the app was never started in this session: none of its `app.logs` has
 anything in it, and the session's saved home does not keep them. With several
 apps (`apps`) each counts alone: a change under one app's `paths` needs that
 app's own logs written, whichever other app ran. Claude reads why, and either
-starts the app and proves the change, or opens a draft and posts a
-`Needs a human:` comment tagging whoever started it (#26686 was opened ready
-without the app ever running). Anything the hook cannot work out lets the call
+starts the app and proves the change, or, when the change cannot be shown in
+it or the start fails, writes what it tried under `## Proof` and opens the pull
+request ready all the same; only an app that cannot start at all, with nothing
+in its logs, leaves it a draft (#26686 was opened ready without the app
+ever running). Sessions open their pull requests ready (`prompt.md`): a draft
+is for unfinished work, since the review's tag and the console's QA label only
+follow a ready one. Anything the hook cannot work out lets the call
 through.
 
 ## Running one locally

@@ -534,7 +534,7 @@ appRules() {
 }
 
 writeRules() {
-  local rules setup notes tag apps added
+  local rules setup notes tag qaLabel apps added
   leaveOutConsoleLinks
   # Woodshed's own rules, then the project's: its skills, checks and review workflow.
   rules=$(cat "$SESSION_DIR/prompt.md"; printf '\n'; project file rules) || die "the project's rules could not be read"
@@ -556,6 +556,19 @@ writeRules() {
     rules=${rules//"{{REVIEW_TAG}}"/"$tag"}
   else
     rules=$(grep -vF '{{REVIEW_TAG}}' <<< "$rules" || true)
+  fi
+  # The QA label, which a session adds to its pull request once ready, for QA the repo's CI runs (pullRequests.qa.runner:
+  # actions). Not for QA run here: the console adds it itself with qa.autoLabel, and without it starts QA only for a
+  # person's label, never the App's that a shared session's gh acts as (fleet.mjs, startQa). A label is GitHub's to
+  # name, so plain substitution again, and shell-quoted for the command. The command is GitHub's API, which takes the
+  # label whole: `gh pr edit --add-label` reads a comma in it as two labels.
+  qaLabel=
+  [ "$(project get pullRequests.qa.runner 2>/dev/null)" != actions ] || qaLabel=$(project get pullRequests.qa.label 2>/dev/null) || qaLabel=
+  if [ -n "$qaLabel" ]; then
+    rules=${rules//"{{QA_LABEL_ARG}}"/"$(printf '%q' "labels[]=$qaLabel")"}
+    rules=${rules//"{{QA_LABEL}}"/"$qaLabel"}
+  else
+    rules=$(grep -vF '{{QA_LABEL}}' <<< "$rules" || true)
   fi
   # The project's environment notes. A shared session gets them inline. A private one is often just a conversation,
   # so it gets a pointer to them instead of the whole text: claudeHooks.json lets claude read that file, outside the
@@ -594,7 +607,7 @@ writeRules() {
     added=$(REPO_SETTINGS_FILE=$REPO_SETTINGS_JSON project add-instructions /tmp/woodshed-rules.md) || die "the repo's instructions could not be added to the rules"
     [ -z "$added" ] || log "Instructions added to the rules" "($added)"
   fi
-  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, docker: ${WOODSHED_SESSION_DOCKER:-none}, apps: $(project get apps | grep -c . || true))"
+  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, QA label: ${qaLabel:-none}, docker: ${WOODSHED_SESSION_DOCKER:-none}, apps: $(project get apps | grep -c . || true))"
 }
 
 # With this machine's Docker, the ports its containers publish are forwarded to the same ports on 127.0.0.1 here, where

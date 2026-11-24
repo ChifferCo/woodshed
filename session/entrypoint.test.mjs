@@ -183,6 +183,47 @@ test('a repo with no app, or no project file, has its rules say what Set up app 
   assert.doesNotMatch(writePrompt({ attachments: false, repoDir: withApp }).rules, /Set up app/);
 });
 
+test('a project whose CI runs QA on a label tells its sessions to add it once ready; QA run by the console, or none, says nothing', () => {
+  assert.doesNotMatch(writePrompt({ attachments: false }).rules, /QA runs in its CI|\{\{QA_LABEL/);
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-qalabel-'));
+  try {
+    fs.mkdirSync(path.join(repo, '.woodshed'));
+    const review = { author: 'ci[bot]', heading: '## Review', workflow: '.github/workflows/review.yml', rerun: '[run-review]', commentAuthor: null };
+    const withQa = (q) => fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ pullRequests: { review, suites: [], qa: q, mergeRisk: null } }));
+    // QA in the repo's CI: a label added with the session's gh, the App's or its owner's, starts the workflow.
+    withQa({ check: 'QA', label: "qa: Bob's, run", heading: '## QA', author: 'ci[bot]', runner: 'actions' });
+    for (const kind of ['shared', 'private']) {
+      const told = writePrompt({ attachments: false, kind, repoDir: repo });
+      assert.ok(told.rules.includes("PR that has the `qa: Bob's, run` label"), kind);
+      assert.ok(told.rules.includes("`gh api repos/{owner}/{repo}/issues/<PR number>/labels -f labels\\[\\]=qa:\\ Bob\\'s\\,\\ run`"), 'whole, shell-quoted for the command, brackets and all');
+      assert.match(told.rules, /once the PR is ready for review, when you open it ready or mark a draft ready, never to a draft/);
+      assert.doesNotMatch(told.rules, /\{\{/);
+      assert.match(told.out, /QA label: qa: Bob's, run/);
+    }
+    // QA run by the console: it starts for a person's label, or the console's own with autoLabel, never the App's that a
+    // session adds, so a session is not told to add it.
+    for (const q of [{ check: 'QA', label: 'run-qa', heading: '## QA', runner: 'woodshed' }, { check: 'QA', label: 'run-qa', heading: '## QA', runner: 'woodshed', autoLabel: true }]) {
+      withQa(q);
+      const told = writePrompt({ attachments: false, kind: 'shared', repoDir: repo });
+      assert.doesNotMatch(told.rules, /QA runs in its CI|\{\{QA_LABEL/, JSON.stringify(q));
+      assert.match(told.out, /QA label: none/);
+    }
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('sessions open their pull requests ready, and a requirement they could not prove is no reason for a draft', () => {
+  for (const kind of ['shared', 'private']) {
+    const { rules } = writePrompt({ attachments: false, kind });
+    assert.match(rules, /^- Open the PR ready for review, not as a draft\. A draft is only for work that is not finished/m, kind);
+    assert.match(rules, /A requirement you could not prove is not a reason for a draft/);
+    assert.match(rules, /Always try your best to check it in the running app/);
+    assert.doesNotMatch(rules, /could have proven it here and did not, open the PR as a draft/);
+    assert.doesNotMatch(rules, /Once the PR is ready for review/, 'the review tag goes on from the first push');
+  }
+});
+
 test('a project with a review tag tells its sessions to end each push\'s last commit with it; one with none says nothing', () => {
   const none = writePrompt({ attachments: false, kind: 'shared' });
   assert.doesNotMatch(none.rules, /code review runs on a push|\{\{REVIEW_TAG\}\}/);
@@ -195,7 +236,7 @@ test('a project with a review tag tells its sessions to end each push\'s last co
     fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ pullRequests: { review, suites: [], qa: null, mergeRisk: null } }));
     for (const kind of ['shared', 'private']) {
       const tagged = writePrompt({ attachments: false, kind, repoDir: repo });
-      assert.ok(tagged.rules.includes('end the subject of the last commit of each push with ` [run-review]`'), kind);
+      assert.ok(tagged.rules.includes('End the subject of the last commit of each push with ` [run-review]`'), kind);
       assert.match(tagged.rules, /keep the tag out of the PR title/);
       assert.doesNotMatch(tagged.rules, /\{\{/);
       assert.match(tagged.out, /review tag: \[run-review\]/);
@@ -212,7 +253,7 @@ test('a project with a review tag tells its sessions to end each push\'s last co
   after(() => fs.rmSync(bare, { recursive: true, force: true }));
   fixtureCheckout(bare);
   const byDefault = writePrompt({ attachments: false, repoDir: bare, reviewTag: '[woodshed-review]' });
-  assert.ok(byDefault.rules.includes('end the subject of the last commit of each push with ` [woodshed-review]`'));
+  assert.ok(byDefault.rules.includes('End the subject of the last commit of each push with ` [woodshed-review]`'));
   assert.match(byDefault.out, /review tag: \[woodshed-review\]/);
 });
 
