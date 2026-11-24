@@ -92,7 +92,7 @@ test('every variable the fleet sets for each kind of session reaches an ECS task
   await fleet.resumePrivate({ owner: 'joel', id: tainted.id });
   assert.equal(started.length, 9);
   const set = new Set(started.flatMap((env) => Object.keys(env)));
-  for (const name of ['WOODSHED_PROD_MCP', 'WOODSHED_MCP_SERVERS', 'WOODSHED_TAINTED', 'WOODSHED_EGRESS_PROXY', 'SESSION_MODE', 'ASKED_BY', 'ISSUE', 'PR', 'MODEL', 'REVIEW_ONLY', 'SESSION_KIND', 'ATTACHMENTS', 'AGENT', 'PROJECT_REPO', 'SESSION_APP_DOMAIN', 'QA_BASE', 'REVIEW_BASE', 'REVIEW_AUTHOR', 'REVIEW_AGENTS', 'REVIEW_CODEX_AUTH', 'REVIEW_CODEX_ACCOUNT', 'WOODSHED_HERDR_PARENT', 'WOODSHED_REVIEW_TAG']) {
+  for (const name of ['WOODSHED_PROD_MCP', 'WOODSHED_MCP_SERVERS', 'WOODSHED_TAINTED', 'WOODSHED_EGRESS_PROXY', 'SESSION_MODE', 'ASKED_BY', 'ISSUE', 'PR', 'MODEL', 'REVIEW_ONLY', 'SESSION_KIND', 'ATTACHMENTS', 'AGENT', 'PROJECT_REPO', 'SESSION_APP_DOMAIN', 'QA_BASE', 'REVIEW_BASE', 'REVIEW_AUTHOR', 'REVIEW_AGENTS', 'REVIEW_CODEX_AUTH', 'REVIEW_CODEX_ACCOUNT', 'WOODSHED_HERDR_PARENT', 'WOODSHED_REVIEW_TAG', 'WOODSHED_START_TOKEN']) {
     assert.ok(set.has(name), `the sessions above set ${name}`);
   }
   for (const env of started) {

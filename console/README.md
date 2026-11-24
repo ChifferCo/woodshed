@@ -826,6 +826,46 @@ that it fetches no managed settings or organization policy with a custom base
 URL (`/status` says so). The docker launcher's sessions, which get the team key
 in their env file, use it directly.
 
+### Sessions that start sessions
+
+Claude in a My Woodshed session can hand a piece of work to a new session of the same person's: asked to "open a
+session for X", it writes the new session's first prompt as a full brief and runs `woodshed-session new --prompt-file
+<file>` (`session/startSessions.mjs`; the session's rules say how, `session/prompt.md`). The new session is an ordinary
+private session of that person's, with a branch of its own, and `woodshed-session list` and `get <id>` say how each it
+started is doing: its state, branch, pull request, last line and link. The two are not tied together otherwise:
+stopping one does nothing to the other.
+
+- **The credential is its own** (`console/sessionStarts.mjs`). At each launch of a private session the console makes a
+  start token, `wst_` and 64 hex, keeps only its sha256 on the session (`startTokenHash`, which `publicSession` never
+  sends to a page) and hands the token in `WOODSHED_START_TOKEN`. The entrypoint writes it to
+  `/tmp/woodshed-start-token` (mode 0600) and unsets it before anything starts (`keepStartToken`), so neither statusd nor
+  the app it starts has it in their environment; `woodshed-session` reads the file. It works only on the session API's
+  `/sessions` routes, never on `/api/cli` or a page, which no browser reaches, and refuses any call with an Origin. It
+  does nothing once the session stops (the hash goes with its run), and a resume makes another. A session's app, which
+  runs as the same user in the same container, can read the file if it goes looking: what the token can do is bounded
+  instead, below. `ownsSessionToken` knows it too, so a host routes the call to its installation as it does the session
+  token's.
+- **Who gets one**: a running private session, never a shared one, a question from Slack, a review or QA run, or a
+  session that has seen production data (its prompt could carry that data to an untainted session; a taint after the
+  launch makes the token do nothing).
+- **The start** is New session's own (`startMine` in `server.mjs`), as the session's owner: their Claude token (or Codex
+  sign-in), their databases, write access to the project's repo (the session's own unless `--repo` names another
+  project), and the project's readiness; the owner must still be on the console and still have write access to its repo on GitHub, checked as for a command
+  line token (once an hour per person, `createWriteAccess`): New session's project check asks nothing of the default
+  project, whose writers the page's sign-in rechecks. It counts
+  in their My Woodshed sessions and waits in line past the limit, and a hosted console bills it as any session. Its
+  permission mode is the starting session's (`acceptEdits` becomes `default` for Codex), never one it picks. A branch
+  that is the starting session's own is refused. It gets nothing of the starting session's but `startedFrom`, its id.
+- **Limits**: none of its own. The person's **My Woodshed sessions per person** applies as it does to New session: past
+  it, a started session waits in line.
+- **How it shows**: the started session's hover card and Details say **Started from** with the other's name (a link in
+  Details), and the other's say **Started here** with each it started.
+
+The console logs `sessionStarts: session started` with `from`, the new `id` and its `status` (`queued` when it waits in line), `sessionStarts: start
+refused` with `why` (`no prompt`, `same branch`, `not a member`, `write access gone`, or `start checks` with
+New session's `status`), `refused, no running session has that start token` and `refused, a browser's call`. The
+session's log says `Session starts on` when it got a token.
+
 ### MCP servers
 
 Admins give sessions' claude MCP servers on Console settings' **MCP servers** card, or through its API

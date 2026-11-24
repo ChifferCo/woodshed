@@ -591,7 +591,8 @@ export function statusUpdate(session, status, nowIso) {
  * @param {object} session
  * @returns {object}  the session as the browser sees it: no token, no endpoint
  */
-export function publicSession({ token, terminalToken, endpoint, pendingMessages, reportedPrUrl, agentOnlySend, ...rest }) {
+// The start token's hash too (sessionStarts.mjs): a page never needs it.
+export function publicSession({ token, terminalToken, startTokenHash, endpoint, pendingMessages, reportedPrUrl, agentOnlySend, ...rest }) {
   // A session whose image predates the Terminal tab has no shell ttyd to open.
   // The page's ids of the messages held, never their text: a send whose answer it lost can tell it is still held.
   const heldIds = (pendingMessages ?? []).filter((m) => m && typeof m === 'object' && m.id).map((m) => m.id);
