@@ -88,13 +88,15 @@ test('a start that failed before its servers logged anything still counts, by St
   assert.equal(appStartedIn({ repoDir, app: one, home, startLog }), false, 'an empty start log is not a try');
   fs.writeFileSync(startLog, 'Stopping the servers…\n');
   assert.equal(appStartedIn({ repoDir, app: one, home, startLog }), false, 'Stop app writes here too, and is no start');
-  fs.writeFileSync(startLog, '\n# Woodshed: starting app\nError: Cannot find module \'pg\'\n');
+  fs.writeFileSync(startLog, '\n# Woodshed: starting app in /work/other-clone\nError: Cannot find module \'pg\'\n');
+  assert.equal(appStartedIn({ repoDir, app: one, home, startLog }), false, 'another checkout\'s app of the same name is not this one');
+  fs.writeFileSync(startLog, '\n# Woodshed: starting app in /work/app\nError: Cannot find module \'pg\'\n');
   assert.equal(appStartedIn({ repoDir, app: one, home, startLog }), true);
   assert.equal(appStartedIn({ repoDir, app: null, home, startLog }), false, 'no app, nothing started');
   // Of several apps, only the one the log says was started.
   const web = { ...app, name: 'web' };
   const admin = { ...app, name: 'admin' };
-  fs.writeFileSync(startLog, '\n# Woodshed: starting web\nError: port 3000 in use\n');
+  fs.writeFileSync(startLog, '\n# Woodshed: starting web in /work/app\nError: port 3000 in use\n');
   assert.equal(appStartedIn({ repoDir, app: web, home, startLog }), true);
   assert.equal(appStartedIn({ repoDir, app: admin, home, startLog }), false);
 });
@@ -140,7 +142,7 @@ test('run as the hook, it blocks with exit code 2 and its reason on stderr, and 
   });
   fs.writeFileSync(startLog, 'Stopping the servers…\n');
   assert.equal(hook('gh pr create -t x -F b.md').status, 2);
-  fs.writeFileSync(startLog, '\n# Woodshed: starting app\nError: Cannot find module \'pg\'\n');
+  fs.writeFileSync(startLog, `\n# Woodshed: starting app in ${fs.realpathSync(repo)}\nError: Cannot find module 'pg'\n`);
   assert.deepEqual([hook('gh pr create -t x -F b.md').status, hook('gh pr create -t x -F b.md').stderr], [0, '']);
 
   const logDir = path.join(home, '.cache', 'servers', path.basename(repo));

@@ -296,7 +296,7 @@ test('statusd probes and reports the project file\'s own ports, and none with no
 });
 
 test('statusd stops the app with the token only, a start still waiting on its health checks included', async (t) => {
-  const { call, calls } = await statusdWithApp(t);
+  const { repo, call, calls } = await statusdWithApp(t);
   assert.equal((await call('POST', '/app/stop', 'wrong')).status, 401);
   assert.deepEqual(await calls(), []);
 
@@ -313,9 +313,10 @@ test('statusd stops the app with the token only, a start still waiting on its he
   }
   assert.equal(after, 'stopped', 'the interrupted start does not read as failed');
   assert.deepEqual(await calls(), ['start', 'stop']);
-  // One app too: a line names each start, which readyGate counts as a try, since Stop app writes to the same log.
+  // One app too: a line names each start and its checkout, which readyGate counts as a try, since Stop app writes to the
+  // same log. The log is the session's own /tmp file, so only this test's checkout, a new folder, tells its line apart.
   const startLog = (await call('GET', '/applog')).body.logs.find((l) => l.name === 'start');
-  assert.match(startLog.text, /# Woodshed: starting app\n/);
+  assert.ok(startLog.text.includes(`# Woodshed: starting app in ${await fs.realpath(repo)}\n`), startLog.text.slice(-300));
   assert.equal((await call('POST', '/app/start')).body.started, true, 'a new start is allowed once the stop is done');
 });
 
@@ -387,7 +388,7 @@ test('with several apps, one runs at a time: starting another stops the first, a
   assert.equal(await listeningOn(webPort), false, 'the web app was stopped first');
   const logs = (await call('GET', '/applog')).body.logs;
   assert.deepEqual(logs.map((l) => l.name), ['start', 'admin'], 'the App log follows the running app');
-  assert.match(logs[0].text, /# Woodshed: starting web\n[\s\S]*# Woodshed: starting admin\n/);
+  assert.match(logs[0].text, new RegExp(`# Woodshed: starting web in ${await fs.realpath(repo)}\n[\\s\\S]*# Woodshed: starting admin in ${await fs.realpath(repo)}\n`));
   assert.equal(logs[1].text, 'admin listening\n');
   assert.deepEqual((await fs.readFile(path.join(repo, 'calls'), 'utf8')).trim().split('\n'), ['start web', 'stop web', 'start admin']);
 

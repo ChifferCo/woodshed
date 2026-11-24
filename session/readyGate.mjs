@@ -86,16 +86,17 @@ function checkoutOf(cwd) {
   }
 }
 
-// Where Start app (statusd) writes the project's app.start output, after a `# Woodshed: starting <name>` line for each
-// start: the first thing written when a start fails before its servers log anything.
+// Where Start app (statusd) writes the project's app.start output, after a `# Woodshed: starting <name> in <checkout>`
+// line for each start: the first thing written when a start fails before its servers log anything.
 const START_LOG = '/tmp/woodshed-app.log';
 
 // An app was started when one of its logs has something in it. They are outside the Claude home a session keeps (the
 // project file's app.logs, such as ~/.cache/<app>/<checkout>/), so a log there was written in this container. Each of
 // several apps counts by its own logs alone. Start app's own log counts too, since a start that failed there is a try,
-// once it says that app was started (statusd's `# Woodshed: starting <name>` line): Stop app writes there as well.
+// once it says that app was started in this checkout (statusd's `# Woodshed: starting <name> in <checkout>` line): Stop
+// app writes there as well, and a second clone's app of the same name is another app.
 export function appStartedIn({ repoDir, app, home = os.homedir(), startLog = START_LOG }) {
-  if (app && startLog && startedInLog(startLog, app.name)) return true;
+  if (app && startLog && startedInLog(startLog, `${app.name} in ${repoDir}`)) return true;
   return Object.values(app?.logs ?? {}).some((log) => sizeOf(expandPath(log, { repoDir, home })) > 0);
 }
 
