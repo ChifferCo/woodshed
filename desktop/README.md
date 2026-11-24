@@ -127,8 +127,9 @@ nothing refers to is garbage collected, and its click then fires nothing, so the
 whatever session it showed.
 
 **The bell.** In the app the console's rail has a bell in its foot, beside the user menu (`console/public/notificationBell.js`), listing the
-notifications the app showed, newest first: the session's name, what it said and when, each opening its session. Its
-count is the ones not read yet: a notification is read once its session is opened (from the list, a card, the OS's,
+notifications the app showed, one row per session: its name, what it said last and when, and how many times it
+notified, each opening its session. Sessions with something new come first, under New, then the rest, dimmed, under
+Earlier. Its count is the sessions with something new: a notification is read once its session is opened (from the list, a card, the OS's,
 the rail or a link), or with the list's Mark all read. Opening the list marks nothing. **⌘J** (Ctrl+J off a Mac) opens
 the same list in the middle of the screen, on any page of the console: ↑↓ pick one, ⏎ opens its session, esc closes it;
 the command palette lists it as Notifications. A notification about the session you are looking at is

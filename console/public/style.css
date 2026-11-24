@@ -169,6 +169,11 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 .bell-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .bell-title { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bell-item:not(.is-new) .bell-title { font-weight: 500; color: var(--sub); }
+/* Earlier: seen already, and quieter than what is new: its dot faded, what it said in meta. */
+.bell-item:not(.is-new) .bell-dot { opacity: 0.45; }
+.bell-item:not(.is-new) .bell-body { color: var(--meta); }
+/* New and Earlier, the list's two parts, named as the palette names its groups, when both are there. */
+.bell-part { padding: 8px 10px 4px; font: 500 9.5px/1.4 var(--mono); letter-spacing: 0.13em; text-transform: uppercase; color: var(--meta); }
 .bell-body { font-size: 12.5px; color: var(--sub); overflow-wrap: anywhere; }
 .bell-when { font-family: var(--mono); font-size: 11px; color: var(--meta); }
 /* With the app in front its notifications show here, at the bottom right, rather than in the OS's: bell rows on a menu

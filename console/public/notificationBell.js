@@ -43,29 +43,61 @@
     go(sessionHref(n.id));
   }
 
-  // One notification as a row: its session's name, what it said and when; a new one in bold.
-  function row(n, extra = {}) {
+  // The list as the person reads it: one group per session, its latest notification first, the sessions with something
+  // new before the rest (Earlier), each part newest first. The count is of sessions, not of notifications.
+  function grouped() {
+    const bySession = new Map();
+    for (const n of list.items) {
+      const g = bySession.get(n.id) ?? { id: n.id, latest: n, times: 0, unread: [] };
+      g.times += 1;
+      if (!n.read) g.unread.push(n.key);
+      bySession.set(n.id, g);
+    }
+    const all = [...bySession.values()];
+    return { fresh: all.filter((g) => g.unread.length), earlier: all.filter((g) => !g.unread.length) };
+  }
+  const newSessions = () => grouped().fresh.length;
+  function openGroup(g) {
+    for (const key of g.unread) bridge.markRead(key);
+    go(sessionHref(g.id));
+  }
+
+  // One session's notifications as a row: its name, what it said last and when, how many times it did; a new one bold.
+  function row(g, extra = {}) {
+    const n = g.latest;
     return h('a', {
-      class: `bell-item${n.read ? '' : ' is-new'}`, href: sessionHref(n.id), ...extra,
+      class: `bell-item${g.unread.length ? ' is-new' : ''}`, href: sessionHref(g.id), ...extra,
       onclick: (e) => {
         if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
         e.preventDefault();
         extra.beforeOpen?.();
-        openEntry(n);
+        openGroup(g);
       },
     },
     h('span', { class: `bell-dot ${DOTS[n.kind] || 'is-other'}`, 'aria-hidden': 'true' }),
     h('span', { class: 'bell-text' },
       h('b', { class: 'bell-title' }, n.title),
       h('span', { class: 'bell-body' }, n.body),
-      h('span', { class: 'bell-when' }, when(n.at))));
+      h('span', { class: 'bell-when' }, when(n.at), g.times > 1 ? ` · ${g.times} notifications` : '')));
+  }
+  // The rows under their parts' names, New and Earlier, each named only when both are there.
+  function rowsOf(groups, rowFor) {
+    const { fresh, earlier } = groups;
+    if (!fresh.length && !earlier.length) return [empty()];
+    const both = fresh.length && earlier.length;
+    return [
+      both ? h('div', { class: 'bell-part' }, 'New') : null,
+      ...fresh.map((g, i) => rowFor(g, i)),
+      both ? h('div', { class: 'bell-part' }, 'Earlier') : null,
+      ...earlier.map((g, i) => rowFor(g, fresh.length + i)),
+    ].filter(Boolean);
   }
   const empty = () => h('p', { class: 'bell-empty' }, 'Nothing yet. What this app notifies you of shows here too.');
   // The list's head: its name, and Mark all read while something is new.
   function head(onMark) {
     return h('div', { class: 'bell-head' },
       h('span', { class: 'menu-label' }, 'Notifications'),
-      list.unread ? h('button', { type: 'button', class: 'bell-mark', onclick: (e) => { e.stopPropagation(); onMark?.(); markAllRead(); } }, 'Mark all read') : null);
+      newSessions() ? h('button', { type: 'button', class: 'bell-mark', onclick: (e) => { e.stopPropagation(); onMark?.(); markAllRead(); } }, 'Mark all read') : null);
   }
   // In a browser, its own notifications for when no tab of the console is in front: asked for once, from a click. The
   // desktop app's are the OS's already.
@@ -95,17 +127,17 @@
     const el = h('div', { class: 'rail-bell-wrap' }, button, panel);
 
     function drawButton() {
-      count.hidden = !list.unread;
-      count.textContent = list.unread > 99 ? '99+' : String(list.unread);
-      const label = list.unread ? `Notifications, ${list.unread} new` : 'Notifications';
+      const fresh = newSessions();
+      count.hidden = !fresh;
+      count.textContent = fresh > 99 ? '99+' : String(fresh);
+      const label = fresh ? `Notifications, ${fresh} ${fresh === 1 ? 'session' : 'sessions'} with something new` : 'Notifications';
       button.setAttribute('aria-label', label);
       button.dataset.hint = label;
     }
     function drawPanel() {
       const hadFocus = panel.contains(document.activeElement);
-      panel.replaceChildren(head(), h('div', { class: 'bell-rows' }, list.items.length
-        ? list.items.map((n) => row(n, { beforeOpen: () => setOpen(false) }))
-        : empty()), ask(drawPanel) ?? '');
+      panel.replaceChildren(head(), h('div', { class: 'bell-rows' }, rowsOf(grouped(), (g) => row(g, { beforeOpen: () => setOpen(false) }))),
+        ask(drawPanel) ?? '');
       // Mark all read goes with what it marked: focus goes back to the bell, where Escape still closes the list.
       if (hadFocus && !panel.contains(document.activeElement)) button.focus();
     }
@@ -135,23 +167,27 @@
   const dialog = available ? h('div', { class: 'palette bell-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Notifications', tabindex: '-1' }) : null;
   const overlay = available ? h('div', { class: 'overlay', hidden: true }, dialog) : null;
   let cursor = 0;
-  // The notification the keys are on, so one arriving above it leaves them on it rather than on whatever takes its place.
+  // The session the keys are on, so one arriving above it leaves them on it rather than on whatever takes its place.
   let cursorKey = null;
+  // The groups in the order the dialog shows them, for its keys.
+  let order = [];
   let returnFocus = null;
   function drawDialog() {
     if (!overlay || overlay.hidden) return;
-    const at = cursorKey === null ? -1 : list.items.findIndex((n) => n.key === cursorKey);
-    cursor = at >= 0 ? at : Math.min(cursor, Math.max(0, list.items.length - 1));
-    cursorKey = list.items[cursor]?.key ?? null;
+    const groups = grouped();
+    order = [...groups.fresh, ...groups.earlier];
+    const at = cursorKey === null ? -1 : order.findIndex((g) => g.id === cursorKey);
+    cursor = at >= 0 ? at : Math.min(cursor, Math.max(0, order.length - 1));
+    cursorKey = order[cursor]?.id ?? null;
     // A redraw takes away what had focus in it (Mark all read, gone once nothing is new): the dialog keeps it, for its keys.
     const hadFocus = dialog.contains(document.activeElement);
-    const rows = list.items.map((n, i) => row(n, {
+    const rows = rowsOf(groups, (g, i) => row(g, {
       'data-cursor': String(i === cursor), beforeOpen: closeDialog,
-      onmousemove: () => { if (cursor !== i) { cursor = i; cursorKey = n.key; drawDialog(); } },
+      onmousemove: () => { if (cursor !== i) { cursor = i; cursorKey = g.id; drawDialog(); } },
     }));
     const hint = (label, key) => h('span', null, h('kbd', null, key), label);
-    dialog.replaceChildren(head(), h('div', { class: 'plist bell-rows' }, rows.length ? rows : empty()), ask(drawDialog) ?? '',
-      h('div', { class: 'pfoot' }, list.items.length ? [hint('Select', '↑↓'), hint('Open', '⏎')] : null, hint('Close', 'esc')));
+    dialog.replaceChildren(head(), h('div', { class: 'plist bell-rows' }, rows), ask(drawDialog) ?? '',
+      h('div', { class: 'pfoot' }, order.length ? [hint('Select', '↑↓'), hint('Open', '⏎')] : null, hint('Close', 'esc')));
     dialog.querySelector('[data-cursor="true"]')?.scrollIntoView({ block: 'nearest' });
     if (hadFocus && !dialog.contains(document.activeElement)) dialog.focus();
   }
@@ -176,18 +212,18 @@
   if (overlay) {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) closeDialog(); });
     dialog.addEventListener('keydown', (e) => {
-      const n = list.items.length;
+      const n = order.length;
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         if (n) cursor = (cursor + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
-        cursorKey = list.items[cursor]?.key ?? null;
+        cursorKey = order[cursor]?.id ?? null;
         drawDialog();
       } else if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
-        const item = list.items[cursor];
-        if (!item) return;
+        const g = order[cursor];
+        if (!g) return;
         closeDialog();
-        openEntry(item);
+        openGroup(g);
       } else if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
