@@ -677,7 +677,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       call: async () => { me = { ...me, ...(await W.postJson('/api/my/claude-model', { model })) }; },
     });
     return line('My Claude model', [
-      current ? `New session starts Claude Code on ${current}.` : 'New session starts Claude Code on Claude\u2019s own default model.',
+      // Default names no model: which one it is is Anthropic's to change, so the page never says.
+      current ? `New session starts Claude Code on ${current}.` : 'New session leaves the model to Claude Code: whichever Anthropic makes its default.',
       ' You can still pick another there for one session.', modelStatus,
     ], seg('My Claude model', MODELS, current, pick, busy.has('model') || !me.available), { id: 'my-model' });
   }
