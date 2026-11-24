@@ -1,7 +1,8 @@
 // readyGate: a PreToolUse hook (claudeHooks.json) that refuses to open or mark ready a pull request that changes an
 // app when that app was never started in this session, since nothing can have been checked in it (#26686 did this
-// with the proof rules in its prompt). A draft is always allowed: the session opens one, says under `## Proof` why
-// the change cannot be shown here, and asks for a person with a `Needs a human:` comment.
+// with the proof rules in its prompt). It asks for a try, not a success: an app whose start failed has still been
+// started, and the session then opens the pull request ready with what failed under `## Proof` (prompt.md). A draft
+// is never gated.
 //
 // It only says no. Anything it cannot work out, such as git failing, lets the call through: a broken hook must not
 // stop a session's work. Exit code 2 is Claude Code's "block this call", and what goes to stderr is shown to claude.
@@ -59,8 +60,8 @@ function refusalText(app, appFiles, several) {
   return [
     `Not opened: this branch changes ${which} (${named}${appFiles.length > FILES_NAMED ? ', …' : ''}), but ${which} was never started in this session, so nothing was checked in it.`,
     `${app.howToProve} Put what you saw under \`## Proof\`, then run this again.`,
-    'If it really cannot be shown here, open the pull request as a draft (`gh pr create --draft`) with the reason under `## Proof`, '
-      + 'post a PR comment that opens with `Needs a human:`, tags the person on the PR body\'s `Started by @…` line and says what could not be proven and why, then stop.',
+    `If ${which} will not start, or the change cannot be shown in it here, run this again once you have tried: a start that failed counts. `
+      + 'Write what you tried and why it failed under `## Proof`, and open the pull request ready all the same.',
   ].join('\n\n');
 }
 
@@ -85,17 +86,34 @@ function checkoutOf(cwd) {
   }
 }
 
+// Where Start app (statusd) writes the project's app.start output, the first thing written when a start fails before
+// its servers log anything.
+const START_LOG = process.env.WOODSHED_APP_START_LOG || '/tmp/woodshed-app.log';
+
 // An app was started when one of its logs has something in it. They are outside the Claude home a session keeps (the
 // project file's app.logs, such as ~/.cache/<app>/<checkout>/), so a log there was written in this container. Each of
-// several apps counts by its own logs alone.
-export function appStartedIn({ repoDir, app, home = os.homedir() }) {
-  return Object.values(app?.logs ?? {}).some((log) => {
-    try {
-      return fs.statSync(expandPath(log, { repoDir, home })).size > 0;
-    } catch {
-      return false;
-    }
-  });
+// several apps counts by its own logs alone. Start app's own log counts too, since a start that failed there is a try:
+// for one of several apps, only once it says that app was started (statusd's `# Woodshed: starting <name>` line).
+export function appStartedIn({ repoDir, app, home = os.homedir(), startLog = START_LOG, several = false }) {
+  if (app && startLog && startedInLog(startLog, several ? app.name : null)) return true;
+  return Object.values(app?.logs ?? {}).some((log) => sizeOf(expandPath(log, { repoDir, home })) > 0);
+}
+
+function startedInLog(file, name) {
+  if (!name) return sizeOf(file) > 0;
+  try {
+    return fs.readFileSync(file, 'utf8').includes(`# Woodshed: starting ${name}\n`);
+  } catch {
+    return false;
+  }
+}
+
+function sizeOf(file) {
+  try {
+    return fs.statSync(file).size;
+  } catch {
+    return 0;
+  }
 }
 
 // A project file that does not read refuses the call: a branch can break its own file, and the gate must not open
@@ -135,7 +153,7 @@ function main() {
     process.exit(2);
   }
   const changedFiles = changedFilesIn(cwd);
-  const apps = project.apps.map((app) => ({ ...app, started: appStartedIn({ repoDir, app }) }));
+  const apps = project.apps.map((app) => ({ ...app, started: appStartedIn({ repoDir, app, several: project.apps.length > 1 }) }));
   const reason = brokenFileRefusal({ project, changedFiles }) ?? refusal({ payload, changedFiles, apps });
   if (!reason) return;
   process.stderr.write(`${reason}\n`);

@@ -307,13 +307,17 @@ GitHub MCP's pull request calls. It refuses to open a pull request for review,
 or to mark one ready (`gh pr create` without `--draft`, `gh pr ready`, or the
 MCP with `draft` false), when the branch changes the project file's `app.paths`
 and the app was never started in this session: none of its `app.logs` has
-anything in it, and the session's saved home does not keep them. With several
+anything in it, and the session's saved home does not keep them, nor has Start
+app's own `/tmp/woodshed-app.log`. With several
 apps (`apps`) each counts alone: a change under one app's `paths` needs that
-app's own logs written, whichever other app ran. Claude reads why, and either
-starts the app and proves the change, or opens a draft and posts a
-`Needs a human:` comment tagging whoever started it (#26686 was opened ready
-without the app ever running). Anything the hook cannot work out lets the call
-through.
+app's own logs written (or Start app's log saying it started that one), whichever
+other app ran. It asks for a try, not a success (#26686 was opened ready without
+the app ever running): claude reads why, starts the app and proves the change,
+or, when the start fails or the change cannot be shown here, writes what it
+tried under `## Proof` and opens the pull request ready all the same. Sessions
+open their pull requests ready (`prompt.md`): a draft is for unfinished work,
+since the review's tag and the console's QA label only follow a ready one.
+Anything the hook cannot work out lets the call through.
 
 ## Running one locally
 

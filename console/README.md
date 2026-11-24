@@ -2574,8 +2574,7 @@ pull request can be done:
   next read is not messaged again, and finishing a turn is not a question.
 - **Needs a human:** the session left a comment that opens with
   `Needs a human:` on its issue or pull request, as its prompt and the review
-  and CI feedback ask when it cannot go on (`session/readyGate.mjs` asks for one
-  when a change cannot be proven in the session). The webhooks handler (the
+  and CI feedback ask when it cannot go on. The webhooks handler (the
   Lambda, or the local provider's receiver) passes on each such comment with
   its author, and the console keeps only one from its own App, `<slug>[bot]`
   as GitHub names it (`console/appIdentity.mjs`), since that is how a session

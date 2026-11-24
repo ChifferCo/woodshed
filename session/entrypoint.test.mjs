@@ -182,6 +182,41 @@ test('a repo with no app, or no project file, has its rules say what Set up app 
   assert.doesNotMatch(writePrompt({ attachments: false, repoDir: withApp }).rules, /Set up app/);
 });
 
+test('a project whose QA runs on a label tells its sessions to add it; one whose console adds it, or with no QA, says nothing', () => {
+  assert.doesNotMatch(writePrompt({ attachments: false }).rules, /QA runs on a PR|\{\{QA_LABEL\}\}/);
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-qalabel-'));
+  try {
+    fs.mkdirSync(path.join(repo, '.woodshed'));
+    const review = { author: 'ci[bot]', heading: '## Review', workflow: '.github/workflows/review.yml', rerun: '[run-review]', commentAuthor: null };
+    const qa = { check: 'QA', label: 'run-qa', heading: '## QA', runner: 'woodshed' };
+    const withQa = (q) => fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ pullRequests: { review, suites: [], qa: q, mergeRisk: null } }));
+    withQa(qa);
+    for (const kind of ['shared', 'private']) {
+      const told = writePrompt({ attachments: false, kind, repoDir: repo });
+      assert.ok(told.rules.includes("`gh pr edit <PR number> --add-label 'run-qa'`"), kind);
+      assert.doesNotMatch(told.rules, /\{\{/);
+      assert.match(told.out, /QA label: run-qa/);
+    }
+    withQa({ ...qa, autoLabel: true });
+    const auto = writePrompt({ attachments: false, repoDir: repo });
+    assert.doesNotMatch(auto.rules, /QA runs on a PR/, 'the console adds it on a ready pull request');
+    assert.match(auto.out, /QA label: none/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('sessions open their pull requests ready, and a requirement they could not prove is no reason for a draft', () => {
+  for (const kind of ['shared', 'private']) {
+    const { rules } = writePrompt({ attachments: false, kind });
+    assert.match(rules, /^- Open the PR ready for review, not as a draft\. A draft is only for work that is not finished/m, kind);
+    assert.match(rules, /A requirement you could not prove is not a reason for a draft/);
+    assert.match(rules, /Always try your best to check it in the running app/);
+    assert.doesNotMatch(rules, /could have proven it here and did not, open the PR as a draft/);
+    assert.doesNotMatch(rules, /Once the PR is ready for review/, 'the review tag goes on from the first push');
+  }
+});
+
 test('a project with a review tag tells its sessions to end each push\'s last commit with it; one with none says nothing', () => {
   const none = writePrompt({ attachments: false, kind: 'shared' });
   assert.doesNotMatch(none.rules, /code review runs on a push|\{\{REVIEW_TAG\}\}/);
@@ -194,7 +229,7 @@ test('a project with a review tag tells its sessions to end each push\'s last co
     fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ pullRequests: { review, suites: [], qa: null, mergeRisk: null } }));
     for (const kind of ['shared', 'private']) {
       const tagged = writePrompt({ attachments: false, kind, repoDir: repo });
-      assert.ok(tagged.rules.includes('end the subject of the last commit of each push with ` [run-review]`'), kind);
+      assert.ok(tagged.rules.includes('End the subject of the last commit of each push with ` [run-review]`'), kind);
       assert.match(tagged.rules, /keep the tag out of the PR title/);
       assert.doesNotMatch(tagged.rules, /\{\{/);
       assert.match(tagged.out, /review tag: \[run-review\]/);
@@ -211,7 +246,7 @@ test('a project with a review tag tells its sessions to end each push\'s last co
   after(() => fs.rmSync(bare, { recursive: true, force: true }));
   fixtureCheckout(bare);
   const byDefault = writePrompt({ attachments: false, repoDir: bare, reviewTag: '[woodshed-review]' });
-  assert.ok(byDefault.rules.includes('end the subject of the last commit of each push with ` [woodshed-review]`'));
+  assert.ok(byDefault.rules.includes('End the subject of the last commit of each push with ` [woodshed-review]`'));
   assert.match(byDefault.out, /review tag: \[woodshed-review\]/);
 });
 
