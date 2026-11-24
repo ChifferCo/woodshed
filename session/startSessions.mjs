@@ -3,7 +3,7 @@
 // (console/sessionStarts.mjs). It reads the session's start token from the file the entrypoint wrote (keepStartToken),
 // which nothing's environment holds.
 //
-//   woodshed-session new [--separate] [--branch B] [--repo R] [--name N] [--agent claude|codex] [--model M] [--effort E]
+//   woodshed-session new [--separate] [--branch B] [--repo R] [--name N] [--agent claude|codex|grok|opencode] [--model M] [--effort E]
 //                        (--prompt-file F | "prompt" | - for stdin)
 //   woodshed-session list [--all] [--json]
 //   woodshed-session get <id> [--json]
@@ -17,8 +17,11 @@
 //   woodshed-session agent list | send <agent-N> "<message>" [--wait] | read <agent-N> [--last N] | stop <agent-N>
 
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 
 import { isMain } from '../shared/isMain.mjs';
+
+const { AGENT_IDS } = createRequire(import.meta.url)('../shared/agents.cjs');
 
 export const START_TOKEN_FILE = '/tmp/woodshed-start-token';
 const REQUEST_MS = 30_000;
@@ -40,7 +43,8 @@ Commands:
       --repo <project>   another of the console's repos, by its project name (default: this session's)
       --name <name>      its name on the console (default: named from the prompt)
       --separate         work of its own, not a piece of this session's: at the top of the rail, and not in list
-      --agent claude|codex, --model <model>, --effort <effort>
+      --agent claude|codex|grok|opencode, --model <model>, --effort <effort>
+                         (Grok Build and OpenCode only once your person saved their sign-in for it on My settings)
   list                   the sessions this session started, with their state, branch, pull request and link
       --all              every private session of your person's, whoever started it
   get <id>               one of them
@@ -95,7 +99,7 @@ export function parseArgs(argv) {
 export function describe(s) {
   const state = s.status === 'running' && s.state ? `${s.status}, ${s.state}` : s.status;
   const lines = [`${s.id}  ${state}  ${s.title ?? ''}`.trimEnd(), `  ${s.url}`];
-  const facts = [s.branch ? `branch ${s.branch}` : null, s.prUrl ? `PR ${s.prUrl}` : null, s.agent === 'codex' ? 'codex' : null].filter(Boolean);
+  const facts = [s.branch ? `branch ${s.branch}` : null, s.prUrl ? `PR ${s.prUrl}` : null, s.agent && s.agent !== 'claude' ? s.agent : null].filter(Boolean);
   if (facts.length) lines.push(`  ${facts.join(', ')}`);
   if (s.error || s.stopReason) lines.push(`  ${s.error ? 'failed' : 'stopped'}: ${s.error ?? s.stopReason}`);
   if (s.lastMessage) lines.push(`  last: ${s.lastMessage.split('\n')[0].slice(0, 200)}`);
@@ -374,7 +378,7 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
       return 0;
     }
     const prompt = await words2text(args, 'give the new session its first prompt: --prompt-file <file>, the prompt in quotes, or - to read it from stdin');
-    if (flags.agent && !['claude', 'codex'].includes(flags.agent)) throw new Refused('--agent is claude or codex');
+    if (flags.agent && !AGENT_IDS.includes(flags.agent)) throw new Refused(`--agent is ${AGENT_IDS.join(', ')}`);
     const { session } = await call('POST', '/sessions', {
       prompt, ...(flags.branch ? { branch: flags.branch } : {}), ...(flags.repo ? { project: flags.repo } : {}), ...(flags.name ? { name: flags.name } : {}),
       ...(flags.agent ? { agent: flags.agent } : {}), ...(flags.model ? { model: flags.model } : {}), ...(flags.effort ? { effort: flags.effort } : {}),

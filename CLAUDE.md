@@ -132,6 +132,7 @@ All in us-east-1, everything named `<prefix>*` and tagged
 | `github-app-client-secret` | The console only, to sign people in with GitHub. Write-only on the Secrets tab. Never in a session | The base box's console always requires sign-in, so with no value or a wrong one nobody gets in: GitHub refuses each sign-in code and the console logs `auth: GitHub refused the sign-in code`. console/README.md, "Sign-in", sets it from a shell |
 | `users/<login>/claude-token` | The Claude plan of one person's My Woodshed sessions, and the shared sessions they start while their switch for it is on. Made by the console on My settings, never by Terraform; write-only there. Handed to that person's private sessions alone, in the `/settings` answer, for claude to call Anthropic with directly (the Artifact tool needs a real token). Never handed to a shared session: the console's Anthropic proxy adds it to the calls of a shared session whose `plan` is that login and who started it | The session's log says `could not get the owner's settings` and it fails. The console logs `sessionApi: no Claude token for the owner`, or `anthropicProxy: no Claude token saved for the plan` when it was removed mid-session from a shared session's starter. A running private session keeps the token it started with until it stops. claude asks to log in when the token was revoked: save a new one |
 | `users/<login>/codex-auth` | One person's Codex sign-in from My settings: an OpenAI API key, or `~/.codex/auth.json`. Handed to their private Codex sessions alone, in the `/settings` answer; a session writes a refreshed ChatGPT login back at stop (`POST /codex-auth`) since OpenAI rotates it. Never handed to a review: while their switch for reviews is on, the console's OpenAI proxy adds it to the calls of a review of their pull request (`review.codexLogin`), the access token and account of a ChatGPT login on `/chatgpt`, a key on `/openai`, and never refreshes it | The console logs `sessionApi: Codex sign-in decided` with `own`, and `Codex sign-in kept` or `refused` at stop; statusd logs `statusd: Codex sign-in sent back` with the status. For a review, `fleet: review session started` with `codex` (`own ChatGPT login`, `own key` or `team key`), `fleet: review runs other than the author chose` with `why` (an expired login), and `openaiProxy: refused, the author's sign-in not usable` when it was turned off or expired mid-review. codex asking to log in means the saved login expired or a session never stopped cleanly to save the rotated one: save a new one |
+| `users/<login>/grok-auth`, `…/opencode-auth` | One person's own sign-in for Grok Build (an xAI key or `~/.grok/auth.json`) or OpenCode (its `auth.json`), from My settings (`shared/agents.cjs`). Those agents run on nothing else: no team key, no proxy. Handed to that person's private sessions of that agent alone, in the `/settings` answer; never to a shared session, a question, a QA run or a review, which is why they review nothing. Their logins rotate, so a session writes the refreshed one back at stop (`POST /agent-auth`). No code of the branch's runs by itself in such a session: the start lists the installs a branch changed in `/tmp/woodshed-deps` (`skipped: this <Product> session runs none of the branch's installs by itself`), and the agent runs them as commands of its own. What the agent itself runs, or the app once started, can read it, as it can the owner's Claude token and Codex sign-in | New session refuses with `save your <Product> sign-in on My settings first`; a start whose sign-in was removed since logs `sessionApi: no <Product> sign-in for the owner`, and one that got it `sessionApi: <Product> sign-in handed out` (`apiKey` true or false, never the value). At stop, `sessionApi: <Product> sign-in kept`, `not kept, the saved one is newer`, `not kept, the saved one is not the one the session was given` (a sign-in saved on My settings while it ran, or another session's refresh: the saved one stays) or `refused`. The agent asking to log in means the saved login expired or a session never stopped cleanly to save the rotated one: save a new one |
 | `repos/<project>/env/<key>`, `repos/<project>/instructions`, `users/<login>/repos/<project>/...` | Repo settings (`console/repoSettings.mjs`, console/README.md "Repo settings"): the installation's values for each env file of a repo and its instructions, and each person's own. Made, read and deleted by the console, and the only place an env file's values are kept: no Terraform secret or task definition holds them. What each file must hold is the installation's: its `.woodshed/install/README.md`. Handed out by the session API's `POST /repo-settings`, the personal ones to that person's private sessions alone, which write them into the env files and the rules. The db-admin task's seed reads the default project's `repos/<project>/env/<key>` for its databases' env files itself (its entryPoint's `--project`; on AWS its role reads that project's and no other's) | The console logs `repoSettings: handed out` with the keys each layer gave. The session logs `Repo settings fetched` with the keys and sizes it got, and `Env files written` with each file's layers; `Repo settings not offered by the console` means a console from before them, and its env files get the repo's defaults alone. The db-admin task logs `Seed env files read` with where each key came from (`repo settings` or `none`), and its seed the same `Env files written` line; `none` for a key that Console settings → Repos shows a value for means the entryPoint's `--project` is not the console's default project (Terraform names it from `projects`, else from `github_repo`). Never print a value: these lines carry keys and sizes only |
 | `users/<login>/tmux-conf`, `…/gitconfig`, `…/inputrc`, `…/bash-aliases` | One person's own lines for tmux config and those dotfiles, from My settings' rows or `woodshed settings push`, written after the image's (or the start's) in their private sessions only. Readable by them, since their sessions hold the same text. The dotfiles take only what `shared/dotfiles.mjs` allows, which never holds an identity, a credential helper, a path or a credential. A `users/<login>/<env secret>` left from before Repo settings is read by nothing | A bad line breaks only that person's sessions: the session's log says `Owner's settings fetched` with `own lines in: ...`; **Clear mine** on My settings (the row, or the env file under Repo settings) fixes it. A refused save logs `userSettings: file refused` with the key (`cliSettings: dotfile refused` from a computer). The rules above apply to these too: no production credentials |
 | `users/<login>/github` | One person's GitHub App user token from Connect GitHub (JSON: the token, its expiry, the refresh token), for their private sessions' git and `gh`. Made and rotated by the console (`githubUser.mjs`); never in a session | Their next push fails with `GitHub no longer accepts @<login>'s authorization`: the console logs `githubUser: GitHub refused the refresh, disconnecting`. Connect GitHub again on My settings. A session whose project file says `githubAccess: repo` gets it scoped to that project's repo (`githubUser: scoped token made`); `githubUser: GitHub refused a scoped token` or `no scoped token, the console has no client secret`, then `sessionApi: no scoped owner token for the session's project`, means it pushes as the App instead |
@@ -652,7 +653,7 @@ URL on top of each env file's Repo settings values
   an app now` once claude wrote one, or `project file not read again, still no app` with the reason. The session log's `Project file read (from: …)` says whether it read the checkout's
   copy (`checkout`), the default branch's (`default branch`) or none. To see what it read, `cd` into the session's checkout and run
   `node /opt/woodshed/shared/project.mjs get app`.
-- **A session's dependencies are missing or old, or `/tmp/woodshed-deps` says `failed`.** At start the session's log
+- **A session's dependencies are missing or old, or `/tmp/woodshed-deps` says `failed` or `skipped`.** A Grok Build or OpenCode session runs none of the branch's installs by itself, since they could read its owner's sign-in: the file says `skipped: …` with each changed install's command and dir, the log `Dependencies not refreshed: this <Product> session runs none of the branch's installs by itself`, and the agent runs them. Otherwise, at start the session's log
   says `Dependency files changed since the image was built, reinstalling` with the dir for each install it ran again,
   then `Dependencies ready` or `ERROR: the install failed`. An install runs again when its `files` differ from the
   image's record of them, `/work/.woodshed-deps/<dir>/built-from` (each file's sha256): compare it with
@@ -926,7 +927,9 @@ URL on top of each env file's Repo settings values
   microphone. A terminal whose connection dropped logs `[terminal] websocket
   closed` with the code in its frame's console, and reconnects by itself.
 - **+ Another agent fails, or the agent switch is missing.** The switch shows only to the owner of a running My
-  Woodshed session whose statusd reports `agents` (an image from before `session/agents.mjs` reports none). From the
+  Woodshed session on Claude Code or Codex whose statusd reports `agents` (an image from before `session/agents.mjs`
+  reports none; a Grok Build or OpenCode session never does, and the console answers 409 `runs on its owner's own sign-in
+  alone`). From the
   command line it is `woodshed session agents|agent <id>`, which the console logs as `cliSessions: call` with the path,
   then the same lines below; `session connect <id> --agent agent-N` refused with 400 is a console from before it. A start
   logs `console: another agent asked for`, then in the session `agents: agent started` with its id, agent, model and
@@ -1026,10 +1029,27 @@ URL on top of each env file's Repo settings values
   shows. A session from an image before `session/sessionDiff.mjs` answers 404.
 - **The App log tab is empty.** statusd's `GET /applog` reads
   `/tmp/woodshed-app.log` and the project file's `app.logs` in the session; the tab says `Nothing logged yet` until Start app ran.
+- **New session does not offer Grok Build or OpenCode, or a session of one fails at start.** Each is offered
+  only to someone whose own sign-in for it is saved on My settings (`/api/my`'s `agents`), and only for a My Woodshed
+  session: a shared session, a question, QA or a review never runs one (`fleet: session refused, its agent needs an
+  owner's own sign-in`). The console logs `userSettings: <Product> sign-in saved` or `removed`; at start
+  `sessionApi: <Product> sign-in handed out`, or `no <Product> sign-in for the owner` with a 409, and the session's log
+  says `could not get the owner's settings`. None of them gets the console's MCP servers (`mcpRelay: refused` with `a
+  <Product> session gets no MCP servers`), and Grok Build runs no MCP server at all, a repo's own included: the image's
+  `/etc/grok/requirements.toml` locks them down (`grok inspect` in the session lists each as `BLOCKED`), and runs only the
+  session's own hooks from it. A Grok session that fails at start with `the repo's <file> points outside the checkout` is a
+  branch whose rules file (`AGENTS.md`, `CLAUDE.md`, a rules folder) is a symlink out of the repo, which Grok would read into
+  its first request: make it a file, or a link inside the repo.
 - **New session's Codex models are old, or say `codex's built-in list`.** The line under the menus says why. The console
   logs `codexModels: catalog read` with `source` (`own` or `team`) and how many `models`, `OpenAI refused the catalog`
   with the `status` (a 401 is a sign-in OpenAI no longer takes), `catalog not read`, `own sign-in expired, not read`
   (a Codex session refreshes it at its stop) or `credential not read`. It tries again a minute after a failure.
+- **New session's Grok Build Model is a box to type in, not a menu.** The console has no list of the person's models:
+  the line under the menus says why. It logs `grokModels: catalog read` with `source` (`login` or `key`) and how many
+  `models`, `xAI refused the catalog` with the `status` (a 401 is a sign-in xAI no longer takes), `catalog not read`
+  (with `timed out`, `the answer is not JSON` or `the catalog is too large`), `the catalog listed no models` (a key with
+  only image or video models), `own login expired, not read` (a Grok session refreshes it at its stop) or `credential
+  not read`. It tries again a minute after a failure, and at once after the sign-in is saved again.
 - **The `/` list in New session is empty.** The console logs `console: skills
   read` with the count, or `console: skills not readable` with gh's error.
 - **A pin or rename does not stick.** The page says `Not saved` with the
@@ -1138,6 +1158,11 @@ image from the worktree and pass its tag. For another kind of session, copy it: 
 the stand-in session API serves.
 `providers/aws/bin/qaInImage.mjs <image> <pull request number>` is that copy for a QA session: it keeps the report
 instead of writing the pull request's comment and check.
+`providers/aws/bin/agentInImage.mjs <image> <grok|opencode> [entrypoint.sh]` is the copy for a private session on
+Grok Build or OpenCode: it serves a made-up sign-in for the agent, and passes when the agent runs in the
+session's pane with its first message (its provider then refuses the made-up key, which says the key reached it). An
+image with no checkout clones `REPO` (default this repo) at start. In a Woodshed session, whose Docker is the machine's,
+`IN_IMAGE_CONSOLE_HOST` is this container's own address (`hostname -I`), not `host.docker.internal`.
 `providers/aws/bin/agentsInImage.mjs <image>` is the copy for the agents a private session's owner starts beside its own
 (`session/agents.mjs`): it copies the checkout's `session/` and `shared/` over the image's, runs a private claude start,
 then starts a claude and a codex through statusd's `/agents` and opens the TUI tab's ttyd for each, and prints PASSED or
@@ -1169,7 +1194,9 @@ worktree) behind a stand-in `gh`: its card shows a chip for each (`devAppsSessio
 `/s/c0de5e55` (codex) and `/s/c1a0de00` (claude) open on a Chat tab that works: the real statusd over a private tmux,
 whose pane runs a stand-in agent (`devChatAgent.mjs`) writing the agents' real record formats. `/s/c1a0de02` is that
 claude started from a Claude home holding an earlier session's conversation, as a private session started while another
-runs is: its Chat stays empty until it is sent a message. `/s/a6e1a6e1` is @local's own session on that stand-in codex, whose
+runs is: its Chat stays empty until it is sent a message. `/s/62000c0d` (Grok Build) and `/s/0c0de0c0` (OpenCode) open
+on a Chat tab that works the same way: the real statusd over a stand-in agent (`devChatAgent.mjs`) writing Grok Build's
+`updates.jsonl` and OpenCode's SQLite database. `/s/a6e1a6e1` is @local's own session on the stand-in codex, whose
 agent switch starts stand-in claudes and codexes beside it (`session/agents.mjs`), each with a Chat and a TUI tab that
 work. `/s/c1a0dea1` runs the
 real `claude` instead, in a clone of this checkout with no remote and with its TUI tab live, on this machine's Claude

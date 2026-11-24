@@ -57,6 +57,19 @@ test('the prompt may be words or stdin, and is required', async () => {
   assert.equal(none.out.calls.length, 0);
 });
 
+test('--agent takes every agent New session offers, Grok Build and OpenCode too, and nothing else', async () => {
+  for (const agent of ['claude', 'codex', 'grok', 'opencode']) {
+    const { out, args } = io({ files: { '/tmp/token': TOKEN }, answers: [[201, { session: { ...started, agent } }]] });
+    assert.equal(await run({ ...args, argv: ['new', '--agent', agent, 'Fix', 'it'] }), 0, agent);
+    assert.equal(out.calls[0].body.agent, agent);
+  }
+  const { out, args } = io({ files: { '/tmp/token': TOKEN } });
+  assert.equal(await run({ ...args, argv: ['new', '--agent', 'gemini', 'Fix', 'it'] }), 1);
+  assert.match(out.stderr, /--agent is claude, codex, grok, opencode/);
+  assert.equal(out.calls.length, 0);
+  assert.match(describe({ ...started, agent: 'grok' }).join('\n'), /^ {2}branch woodshed\/joel-eb7082e2, grok$/m);
+});
+
 test('without a start token it says why, and calls nothing', async () => {
   const { out, args } = io();
   assert.equal(await run({ ...args, argv: ['list'] }), 1);

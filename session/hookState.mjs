@@ -1,5 +1,8 @@
 // hookState: run by claude's own hooks (claudeHooks.json, passed with --settings), so statusd knows what claude is
-// doing from claude itself rather than from what its terminal draws.
+// doing from claude itself rather than from what its terminal draws. Grok Build runs it too, from the image's policy
+// file (/etc/grok/requirements.toml, session/grokRequirements.toml), the only hooks it runs in a session: the same
+// events in camelCase (`hookEventName`, `notificationType`, `subagentType`; docs.x.ai/build/features/hooks), and a StopCancelled for a turn
+// cut short, which claude never fires.
 //
 // Each firing writes the state to STATE_FILE; statusd reads it on every /status. A file, not a socket: it outlives
 // a statusd restart, and a hook that finds nobody listening loses nothing.
@@ -31,16 +34,31 @@ const STATE_BY_EVENT = {
   PermissionRequest: 'needs-you',
   Notification: 'needs-you',
   Stop: 'done',
+  // Grok's: a turn that ended on an API error, or was cut short (an interrupt, a declined approval, its turn limit).
+  StopFailure: 'done',
+  StopCancelled: 'done',
 };
+
+// What each agent names its fields: claude in snake_case, Grok Build in camelCase.
+const eventOf = (payload) => payload?.hook_event_name ?? payload?.hookEventName;
+const notificationOf = (payload) => payload?.notification_type ?? payload?.notificationType;
 
 /**
  * @param {any} payload  the hook's stdin, parsed
  * @returns {'working'|'needs-you'|'done'|null}  null for a firing that says nothing about the main turn
  */
 export function stateForHook(payload) {
-  const event = payload?.hook_event_name;
-  // Only a permission prompt blocks; the idle reminder fires on a claude that is already done.
-  if (event === 'Notification' && payload?.notification_type !== 'permission_prompt') return null;
+  const event = eventOf(payload);
+  // Grok's subagents fire the session's events too, marked with their type: a subagent's stop is not the session's.
+  if (payload?.subagentType) return null;
+  if (event === 'Notification') {
+    const type = notificationOf(payload);
+    if (type === 'permission_prompt') return 'needs-you';
+    // Grok's backstop for a turn that reported no Stop (a rewind, a superseded turn): it is at its prompt. claude's idle
+    // reminder fires on a claude that is already done, and says nothing new.
+    if (type === 'idle_prompt' && payload?.hookEventName) return 'done';
+    return null;
+  }
   // A background agent's tool calls go on after the main turn's Stop. The Stop itself says whether one is running.
   if ((event === 'PreToolUse' || event === 'PostToolUse') && payload?.agent_id) return null;
   // Claude wakes itself when the agent finishes: a UserPromptSubmit, then a Stop with no agent left. Background
@@ -72,7 +90,7 @@ const WAITING_JOB_RE = new RegExp([
 
 /** @returns {number}  the background shells still waiting on a job when claude's turn ends */
 export function runningShells(payload) {
-  if (payload?.hook_event_name !== 'Stop') return 0;
+  if (eventOf(payload) !== 'Stop') return 0;
   const tasks = Array.isArray(payload?.background_tasks) ? payload.background_tasks : [];
   return tasks.filter((t) => t?.type === 'shell' && t?.status === 'running' && WAITING_JOB_RE.test(String(t?.command ?? ''))).length;
 }
@@ -95,7 +113,7 @@ function main() {
   // The transcript the firing claude writes to: a second claude in the session (agents.mjs) reads its own conversation by
   // it, since a /clear starts another file.
   const transcript = typeof payload.transcript_path === 'string' ? payload.transcript_path.slice(0, 1000) : null;
-  fs.writeFileSync(tmp, JSON.stringify({ state, event: payload.hook_event_name, at: Date.now(), shells: runningShells(payload), transcript }));
+  fs.writeFileSync(tmp, JSON.stringify({ state, event: eventOf(payload), at: Date.now(), shells: runningShells(payload), transcript }));
   fs.renameSync(tmp, STATE_FILE);
 }
 

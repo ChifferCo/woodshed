@@ -119,7 +119,7 @@ function load(path, makePages = () => [], { me = null, hostPage = null } = {}) {
   const off = (where) => (type, fn) => { listeners[where][type] = (listeners[where][type] ?? []).filter((f) => f !== fn); };
   const shown = [];
   const window = {
-    WoodshedLogins: require('./public/logins.cjs'), WoodshedSetup: require('./public/setupSteps.cjs'),
+    WoodshedLogins: require('./public/logins.cjs'), WoodshedAgents: require('../shared/agents.cjs'), WoodshedSetup: require('./public/setupSteps.cjs'),
     addEventListener: on('window'), removeEventListener: off('window'),
     dispatchEvent(event) { if (event.type === 'woodshed:settings-shown') shown.push(location.pathname); for (const fn of listeners.window[event.type] ?? []) fn(event); },
     scrollTo() {},

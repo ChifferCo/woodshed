@@ -2,7 +2,7 @@
 // console's own session routes, signed in with the command line's token (console/cliSessions.mjs lists the routes it
 // reaches). A session started here is a private one, as My Woodshed's New session starts.
 //
-//   woodshed session new [--repo R] [--branch B] [--agent claude|codex] [--model M] [--no-wait|--connect|--herdr [--parent[=T]]] ["prompt"]
+//   woodshed session new [--repo R] [--branch B] [--agent claude|codex|grok|opencode] [--model M] [--no-wait|--connect|--herdr [--parent[=T]]] ["prompt"]
 //   woodshed session connect <id> [--shell]
 //   woodshed session herdr <id> [--parent[=T]]
 //   woodshed session list [--all]
@@ -55,6 +55,9 @@ import {
   sessionHere, shellQuote, startAgentTerminal, startWatcher, tunnelMachines,
 } from './hc.mjs';
 import { changes, eventDetail, herdrClear, herdrRecord, parseEvery, parseKinds, unreachableText } from './watch.mjs';
+import agents from '../shared/agents.cjs';
+
+const { AGENT_IDS, agentOfSession, agent: agentInfo } = agents;
 
 // Set in the environment of the watch --herdr starts in hc: that copy reports, rather than starting another.
 export const WATCH_IN_HERDR = 'WOODSHED_WATCH_IN_HERDR';
@@ -82,7 +85,8 @@ Commands:
   new [options] ["prompt"]   start a private session, and wait until it runs, fails or needs you
       --repo <owner/name>    the repo to work on (default: the one New session opens on for you)
       --branch <branch>      work on this branch, or a pull request or issue: 123, pr 123, or its URL
-      --agent claude|codex   the agent it runs (default claude)
+      --agent <agent>        the agent it runs: claude, codex, grok, opencode (default claude). Grok Build and
+                             OpenCode run on your own sign-in from My settings
       --model <model>        the agent's model (default the agent's own)
       --no-wait              print the session and return once the console has it
       --connect              once it runs, put this terminal on its agent's, as connect does
@@ -196,7 +200,7 @@ export function printable(text, most = 200) {
  * @returns {{key: string, word: string}}
  */
 export function stateOf(s) {
-  const agent = s.options?.agent === 'codex' ? 'codex' : 'claude';
+  const agent = AGENT_IDS.includes(s.options?.agent) ? s.options.agent : 'claude';
   if (s.status === 'running') {
     if (s.state === 'needs-you') return { key: 'needs-you', word: 'needs you' };
     if (s.state === 'working') return { key: 'working', word: 'working' };
@@ -425,7 +429,7 @@ export function summary(s, { origin, login, appsOn = null }) {
     project: printable(s.project, 60),
     repo: printable(s.repo, 100),
     branch: printable(s.branch, 200),
-    agent: s.options?.agent === 'codex' ? 'codex' : 'claude',
+    agent: agentOfSession(s),
     model: printable(s.options?.model, 60) || null,
     prUrl: printable(s.prUrl, 300),
     url: `${origin}/s/${s.id}`,
@@ -722,8 +726,9 @@ export async function sessionCommand({ origin, rest }, ctx) {
       : null;
     if (noParent) code = EXIT.failed;
     // Herdr hears of a turn ending or the agent blocking from the agent's own status records: claude sends them, the
-    // pinned codex none (session/agentPane.mjs), so a codex child wakes its parent's hc wait only by exiting.
-    const reportsStatus = shown.agent !== 'codex';
+    // pinned codex none (session/agentPane.mjs), nor do the other agents, so their child wakes its parent's hc wait only
+    // by exiting.
+    const reportsStatus = shown.agent === 'claude';
     const parentField = child ? { parent: child.made ? { made: true, terminal: parent, address: child.address, outlives: !opts['end-with-parent'], notify: !opts['no-notify'], reportsStatus } : { made: false, why: child.why, there: child.there, has: child.parent } } : {};
     if (json) {
       emit({ event: 'connected', session: shown, machine: { name, action: added.action, state: added.state }, agent, ...parentField });
@@ -732,7 +737,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
     }
     say(added.action === 'kept' ? `${name} was already in Herdr, connected.` : `${name} is in Herdr: it shows in the app's sidebar.`);
     if (child?.made) {
-      const wakes = reportsStatus ? 'when it ends a turn, blocks, errors or exits' : 'only when it exits: codex tells Herdr nothing of its turns';
+      const wakes = reportsStatus ? 'when it ends a turn, blocks, errors or exits' : `only when it exits: ${shown.agent} tells Herdr nothing of its turns`;
       say(`Its agent's terminal ${child.address} is a child of ${parent} here${opts['end-with-parent'] ? ', and ends with it' : ', and outlives it'}: hc wait --children any wakes ${parent} ${wakes}.`);
     }
     if (noParent) stderr.write(`woodshed: ${noParent}\n`);
@@ -756,7 +761,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
   // This terminal on the session's until one side ends it. A connection that drops (a network, a laptop that slept, a
   // console restarted) is opened again while the session runs: its terminal went on meanwhile, and is drawn again.
   async function onTerminal(s, kind, agent = null) {
-    const what = kind === 'shell' ? 'shell' : agent ? `${agent}'s terminal` : `${s.options?.agent === 'codex' ? 'codex' : 'claude'}'s terminal`;
+    const what = kind === 'shell' ? 'shell' : agent ? `${agent}'s terminal` : `${agentInfo(agentOfSession(s)).command}'s terminal`;
     const reconnect = `woodshed session connect ${s.id}${kind === 'shell' ? ' --shell' : ''}${agent ? ` --agent ${agent}` : ''} --console ${shellQuote(origin)}`;
     stderr.write(`Connecting to ${s.id}'s ${what}. Ctrl-\\ disconnects; the session goes on.\n`);
     let reconnectUntil = null;
@@ -1132,7 +1137,7 @@ export async function sessionCommand({ origin, rest }, ctx) {
   }
 
   if (sub === 'agents') {
-    const own = { id: 'own', agent: s.options?.agent === 'codex' ? 'codex' : 'claude', model: printable(s.options?.model, 64) || null, state: stateOf(s).word };
+    const own = { id: 'own', agent: agentOfSession(s), model: printable(s.options?.model, 64) || null, state: stateOf(s).word };
     const list = await agentsOf();
     if (json) {
       emit({ event: 'agents', session: id, own, agents: list });
@@ -1589,7 +1594,10 @@ export function parseSessionArgs(sub, words, fail) {
   if (sub === 'connect' && out.agent !== undefined) {
     if (!AGENT_ID_RE.test(out.agent)) throw fail(`--agent needs an agent beside the session's own, agent-2 to agent-9, as woodshed session agents lists them`);
     if (out.shell) throw fail('--agent is an agent\'s terminal, --shell the session\'s shell: pick one');
-  } else if (out.agent !== undefined && !['claude', 'codex'].includes(out.agent)) throw fail('--agent must be claude or codex');
+  } else if (sub === 'agent' && out.agent !== undefined && !['claude', 'codex'].includes(out.agent)) {
+    // The agents beside a session's own are Claude Code or Codex alone (session/agents.mjs).
+    throw fail('--agent must be claude or codex');
+  } else if (out.agent !== undefined && !AGENT_IDS.includes(out.agent)) throw fail(`--agent must be one of ${AGENT_IDS.join(', ')}`);
   for (const name of ['model', 'effort']) {
     if (sub === 'agent' && out[name] !== undefined && !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(out[name])) throw fail(`--${name} needs a name, such as New session offers`);
   }

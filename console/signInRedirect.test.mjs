@@ -15,7 +15,7 @@ function loadCommon({ pathname = '/s/aaaa1111', answer, state = null, stored = {
   const sessionStorage = { getItem: (k) => items[k] ?? null, setItem: (k, v) => { items[k] = String(v); }, removeItem: (k) => { delete items[k]; } };
   const location = { pathname, search: '?tab=terminal', href: `https://console.example${pathname}?tab=terminal`, origin: 'https://console.example', assign: (to) => assigned.push(to) };
   const window = {
-    WoodshedLogins: require('./public/logins.cjs'), WoodshedSetup: require('./public/setupSteps.cjs'),
+    WoodshedLogins: require('./public/logins.cjs'), WoodshedAgents: require('../shared/agents.cjs'), WoodshedSetup: require('./public/setupSteps.cjs'),
     fetch: async () => answer(), addEventListener() {}, history: { state }, sessionStorage,
   };
   const context = vm.createContext({

@@ -327,7 +327,7 @@
       others && h('p', { class: 'sub' }, 'Pick another repo above to start a session now.'));
   }
 
-  /** The setup card: what is left, with Claude or Codex taking you to that sign-in's box on My settings, and Open My settings for databases that did not start. */
+  /** The setup card: what is left, with each agent taking you to its sign-in's box on My settings, and Open My settings for databases that did not start. */
   function setupCard(me, { compact = false, steps = setupSteps(me) } = {}) {
     const after = steps.every((step) => step.optional);
     const rows = steps.map((step) => h('div', { class: `setup-step${step.done ? ' is-done' : ''}` },
@@ -336,10 +336,9 @@
       step.key === 'repo' ? (isAdmin() ? h('a', { class: 'btn btn-primary btn-sm', href: '/console-settings#card-projects' }, 'Add a repo') : null)
         : step.key === 'github' ? h('a', { class: `btn ${step.optional ? 'btn-plain' : 'btn-primary'} btn-sm`, href: '/setup/github' }, 'Set up')
         : step.key === 'reviewer' ? h('a', { class: 'btn btn-plain btn-sm', href: '/setup/github#reviewer' }, 'Set up')
-        // Two equal choices, each to its own box on My settings: neither agent is the default.
+        // Equal choices, each to its own box on My settings: no agent is the default.
         : step.key === 'token' && !step.done ? h('span', { class: 'setup-choices' },
-          h('a', { class: 'btn btn-plain btn-sm', href: '/settings#claude' }, 'Claude'),
-          h('a', { class: 'btn btn-plain btn-sm', href: '/settings#codex' }, 'Codex'))
+          window.WoodshedAgents.AGENT_IDS.map((id) => h('a', { class: 'btn btn-plain btn-sm', href: `/settings#${id}` }, window.WoodshedAgents.agent(id).name)))
         : step.todo ? h('a', { class: 'btn btn-plain btn-sm', href: '/settings' }, 'Open My settings') : null));
     return h('section', { class: `setup-card${compact ? ' is-compact' : ''}` },
       h('h3', null, after ? 'Finish setting up your Woodshed' : 'Set up your Woodshed'),
@@ -613,7 +612,7 @@
     const at = s.startSteps || {};
     const last = START_STEPS.reduce((found, [key], i) => (at[key] ? i : found), -1);
     let from = Date.parse(s.startedAt);
-    // The last step opens the session's own agent: claude, or codex.
+    // The last step opens the session's own agent, as its id names it: claude, codex, grok or opencode.
     const agent = agentOf(s);
     const steps = START_STEPS.map(([key, l, sh], i) => {
       const [label, short] = key === 'claude' ? [`Opening ${agent}`, `opening ${agent}`] : [l, sh];
@@ -660,14 +659,19 @@
     return s.kind === 'pr' ? `PR #${s.number}` : `#${s.number}`;
   }
 
-  /** @returns {'claude'|'codex'}  the agent the session runs, as its command is named: claude unless it was started on Codex */
+  /** @returns {string}  the agent the session runs, its id in shared/agents.cjs: claude unless it was started on another */
   function agentOf(s) {
-    return s?.options?.agent === 'codex' ? 'codex' : 'claude';
+    return window.WoodshedAgents.agentOfSession(s);
   }
 
-  /** @returns {'Claude'|'Codex'}  the agent's name, as a product */
+  /** @returns {string}  the agent's short name: Claude, Codex, Grok or OpenCode */
   function agentTitle(s) {
-    return agentOf(s) === 'codex' ? 'Codex' : 'Claude';
+    return window.WoodshedAgents.agent(agentOf(s)).name;
+  }
+
+  /** @returns {boolean}  whether the person has saved anything an agent runs on: a Claude token, or a sign-in of any agent */
+  function anyAgentSignIn(me) {
+    return Boolean(me?.claudeToken?.set || me?.codexAuth?.set || Object.values(me?.agentAuth ?? {}).some((a) => a?.set));
   }
 
   /** @returns {boolean}  a session started from My Woodshed, which only its owner can see */
@@ -1443,7 +1447,7 @@
       const rolled = reset !== null && reset <= now;
       const usedPercent = !w ? null : rolled ? 0 : w.usedPercent;
       const pace = reset !== null && !rolled ? Math.min(1, Math.max(0, 1 - (reset - now) / ms)) : null;
-      return { key, short, label: agent === 'codex' && key === 'sevenDay' ? 'Week' : label, usedPercent, resetsAt: rolled ? null : w?.resetsAt ?? null, pace, level: planLevel(usedPercent) };
+      return { key, short, label: agent !== 'claude' && key === 'sevenDay' ? 'Week' : label, usedPercent, resetsAt: rolled ? null : w?.resetsAt ?? null, pace, level: planLevel(usedPercent) };
     });
     return {
       agent,
@@ -1468,19 +1472,19 @@
       h('div', { class: 'plan-bar', role: 'img', 'aria-label': w.usedPercent === null ? `${w.label}: not reported` : `${w.label}: ${Math.round(w.usedPercent)}% used` },
         h('i', { style: `width:${w.usedPercent ?? 0}%` }),
         w.pace !== null && h('span', { class: 'plan-pace', style: `left:${(w.pace * 100).toFixed(1)}%`, title: 'How much of the window has gone by' })),
-      h('div', { class: 'plan-sub' }, w.usedPercent === null ? `${u.agent === 'codex' ? 'Codex' : 'Claude Code'} has not reported it yet`
+      h('div', { class: 'plan-sub' }, w.usedPercent === null ? `${window.WoodshedAgents.agent(u.agent).product} has not reported it yet`
         : w.resetsAt ? `Resets ${resetText(w.resetsAt)} · in ${span(Date.parse(w.resetsAt) - Date.now())}` : 'Reset since the reading'));
     const others = u.running - 1;
-    const codex = u.agent === 'codex';
-    const name = codex ? 'Codex' : 'Claude';
+    const a = window.WoodshedAgents.agent(u.agent);
+    const name = a.name;
     return h('div', { class: 'plan-detail' },
       h('div', { class: 'card-menu-group' }, `Your ${name} plan`),
       ...u.windows.map(meter),
       h('p', { class: 'plan-foot' },
-        `${codex ? 'Last reported by Codex' : 'Read from Claude Code after its last answer'}${u.asOf ? `, ${ago(u.asOf)}` : ''}. `,
+        `${a.id === 'claude' ? 'Read from Claude Code after its last answer' : `Last reported by ${a.product}`}${u.asOf ? `, ${ago(u.asOf)}` : ''}. `,
         others > 0 ? `Shared with your ${others} other running private ${name} session${others === 1 ? '' : 's'}. ` : '',
         'The tick marks how much of each window has gone by. ',
-        h('a', { href: codex ? 'https://chatgpt.com/codex/settings/usage' : 'https://claude.ai/settings/usage', target: '_blank', rel: 'noopener' }, codex ? 'Codex usage ↗' : 'claude.ai usage ↗')));
+        a.usageUrl && h('a', { href: a.usageUrl, target: '_blank', rel: 'noopener' }, a.id === 'claude' ? 'claude.ai usage ↗' : `${name} usage ↗`)));
   }
 
   // Under the avatar, as most apps keep them, and on the settings pages' list: your own settings, and the console's own,
@@ -2118,7 +2122,7 @@
     invite, sessionTab, forgetSignedIn, forgetOtherLogins, signingOut, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, askChoice, pickedLogins, byQuery, peoplePicker,
-    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, hoursText, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
+    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, anyAgentSignIn, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, hoursText, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, hasPrs, shownPrs, prLines, peekView, startedLinks, railGroups, groupCounts, asksPerson, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
 })();
