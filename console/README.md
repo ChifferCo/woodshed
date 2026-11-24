@@ -559,7 +559,7 @@ And what the shed shows about each session:
   75% of its cores, red past 90% or 95%, the one over the line first.
 - **Plan**: in a private session's pane bar meter, how much of your session agent's (Claude, Codex or Grok Build) plan is used,
   its fullest window's share (`Plan 68%`), amber from 70%, red from 90% and `Plan out` at 100%. Click the meter for each
-  window's share and when it resets, a tick for how much of it has gone by (left off when a Grok period names no length), how old the reading
+  window's share and when it resets (a reset already past says so; a window with no end says neither), a tick for how much of it has gone by (left off when a Grok period names no length), how old the reading
   is, and the machine's CPU, memory and disk against their limits (on a phone, the plan under ⋯). Claude Code hands the limits only to its status
   line, after each answer: `session/statusline.sh` saves them to
   `~/.claude/woodshed-usage/claude.json` and statusd's `/status` returns them

@@ -115,9 +115,12 @@ export async function readGrokPlanUsage(file = defaultFile()) {
     const size = stat.size;
     const start = Math.max(0, size - TAIL_BYTES);
     const tail = newestIn(await readRange(handle, start, size), { dropFirst: start > 0, dropLast: false });
-    // The tail's line is the one to show. A tail with none keeps the last reading when the log has grown past it.
-    // A cold file larger than the tail is scanned once, only as far as SCAN_CAP.
-    const usage = tail ?? (prev ? prev.usage : size > TAIL_BYTES ? await scanBack(handle, size) : null);
+    // The tail's line is the one to show. A tail with none keeps a reading already found, once the log has grown past
+    // it. A cached null is not one: the line may sit in the gap a growth larger than the tail just covered, so that
+    // gap is scanned, up to SCAN_CAP, the same as a cold file. A smaller growth is already inside the tail.
+    const kept = prev?.usage ?? null;
+    const gap = Boolean(prev) && size - prev.size > TAIL_BYTES;
+    const usage = tail ?? kept ?? (size > TAIL_BYTES && (!prev || gap) ? await scanBack(handle, size) : null);
     cache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, usage });
     return usage;
   } finally {

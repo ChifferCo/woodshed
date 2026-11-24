@@ -78,6 +78,16 @@ test('a log that grows past the billing line keeps it, and a newer line replaces
   assert.notEqual(newer, first);
 });
 
+test('an empty read does not hide an allowance the next megabyte buries', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'grok-usage-gap-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'unified.jsonl');
+  await fs.writeFile(file, '');
+  assert.equal(await readGrokPlanUsage(file), null);
+  await fs.appendFile(file, line(62) + 'y'.repeat(TAIL + 10));
+  assert.equal((await readGrokPlanUsage(file)).sevenDay.usedPercent, 62);
+});
+
 test('a cold read still finds an allowance written before the last megabyte, including one split on the boundary', async (t) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'grok-usage-scan-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));

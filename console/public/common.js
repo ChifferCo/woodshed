@@ -1430,8 +1430,9 @@
 
   /**
    * @returns {{asOf: string|null, stale: boolean, running: number,
-   *            windows: {key: string, short: string, label: string, usedPercent: number|null, resetsAt: string|null, pace: number|null, level: string}[]}|null}
-   *   `pace` is how much of the window has gone by, from 0 to 1; a window whose reset has passed reads 0% however old the reading
+   *            windows: {key: string, short: string, label: string, usedPercent: number|null, resetsAt: string|null, rolled: boolean, pace: number|null, level: string}[]}|null}
+   *   `pace` is how much of the window has gone by, from 0 to 1; a window whose reset has passed reads 0% however old the reading.
+   *   `rolled` is that case: a reset the reading named is already past. A window that named no end is not rolled.
    */
   function planUsageOf(s, sessions) {
     if (!isPrivate(s)) return null;
@@ -1459,6 +1460,7 @@
         label: w?.label || (agent !== 'claude' && key === 'sevenDay' ? 'Week' : label),
         usedPercent,
         resetsAt: rolled ? null : w?.resetsAt ?? null,
+        rolled,
         pace,
         level: planLevel(usedPercent),
       }];
@@ -1481,13 +1483,17 @@
 
   // What the pane bar's meter opens: each window with when it resets, how old the reading is, and that it is shared.
   function planUsageDetails(u) {
-    const meter = (w) => h('div', { class: `plan-meter${w.level ? ` is-${w.level === 'out' ? 'hot' : w.level}` : ''}` },
-      h('div', { class: 'plan-row' }, h('span', null, w.label), h('b', null, w.usedPercent === null ? '—' : `${Math.round(w.usedPercent)}%`)),
-      h('div', { class: 'plan-bar', role: 'img', 'aria-label': w.usedPercent === null ? `${w.label}: not reported` : `${w.label}: ${Math.round(w.usedPercent)}% used` },
-        h('i', { style: `width:${w.usedPercent ?? 0}%` }),
-        w.pace !== null && h('span', { class: 'plan-pace', style: `left:${(w.pace * 100).toFixed(1)}%`, title: 'How much of the window has gone by' })),
-      h('div', { class: 'plan-sub' }, w.usedPercent === null ? `${window.WoodshedAgents.agent(u.agent).product} has not reported it yet`
-        : w.resetsAt ? `Resets ${resetText(w.resetsAt)} · in ${span(Date.parse(w.resetsAt) - Date.now())}` : 'Reset since the reading'));
+    const meter = (w) => {
+      const caption = w.usedPercent === null ? `${window.WoodshedAgents.agent(u.agent).product} has not reported it yet`
+        : w.resetsAt ? `Resets ${resetText(w.resetsAt)} · in ${span(Date.parse(w.resetsAt) - Date.now())}`
+        : w.rolled ? 'Reset since the reading' : null;
+      return h('div', { class: `plan-meter${w.level ? ` is-${w.level === 'out' ? 'hot' : w.level}` : ''}` },
+        h('div', { class: 'plan-row' }, h('span', null, w.label), h('b', null, w.usedPercent === null ? '—' : `${Math.round(w.usedPercent)}%`)),
+        h('div', { class: 'plan-bar', role: 'img', 'aria-label': w.usedPercent === null ? `${w.label}: not reported` : `${w.label}: ${Math.round(w.usedPercent)}% used` },
+          h('i', { style: `width:${w.usedPercent ?? 0}%` }),
+          w.pace !== null && h('span', { class: 'plan-pace', style: `left:${(w.pace * 100).toFixed(1)}%`, title: 'How much of the window has gone by' })),
+        caption && h('div', { class: 'plan-sub' }, caption));
+    };
     const others = u.running - 1;
     const a = window.WoodshedAgents.agent(u.agent);
     const name = a.name;

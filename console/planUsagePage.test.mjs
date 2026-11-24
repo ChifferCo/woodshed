@@ -68,6 +68,18 @@ test('Grok Build shows its one allowance and counts only its own sessions', () =
   assert.equal(week.windows[0].key, 'sevenDay');
   assert.equal(week.windows[0].label, 'Week');
   assert.equal(week.windows[0].short, 'wk');
+  assert.equal(week.windows[0].rolled, false);
+  assert.equal(week.windows[0].resetsAt, null);
+  assert.equal(week.windows[0].usedPercent, 70);
+  const past = new Date(Date.now() - 60_000).toISOString();
+  const passedSession = {
+    ...grok,
+    planUsage: { agent: 'grok', asOf: new Date().toISOString(), fiveHour: null, sevenDay: { usedPercent: 40, resetsAt: past, label: 'Week', short: 'wk', spanMs: 7 * 86400_000 } },
+  };
+  const passed = planUsageOf(passedSession, [passedSession]);
+  assert.equal(passed.windows[0].rolled, true);
+  assert.equal(passed.windows[0].usedPercent, 0);
+  assert.equal(passed.windows[0].resetsAt, null);
   assert.equal(planUsageOf(claude, [grok, claude]).windows[0].usedPercent, 99);
   assert.equal(planUsageOf({ owner: 'octocat', status: 'running', options: { agent: 'opencode' } }, [grok]), null);
   // A month that names a reset and no length must not borrow the seven-day span for its tick.
