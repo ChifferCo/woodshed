@@ -180,7 +180,7 @@ export function createSessionStarts({
       return reply(res, 401, { error: 'this session cannot start sessions: its start token is not one the console knows, or the session stopped' });
     }
     const agentPath = AGENTS_PATH_RE.exec(pathname);
-    if (agentPath) return agents(req, res, session, agentPath);
+    if (agentPath) return ownAgents(req, res, session, agentPath);
     if (pathname === '/rename') {
       if (req.method !== 'POST') return notFound(req, res);
       const read = await readJson(req);
@@ -241,7 +241,7 @@ export function createSessionStarts({
   }
 
   // The calling session's own agents, through the page's route (agentAction), which answers with statusd's reply.
-  async function agents(req, res, session, [, agentId = null, action = null]) {
+  async function ownAgents(req, res, session, [, agentId = null, action = null]) {
     if (!agentAction) {
       req.resume();
       return reply(res, 404, { error: 'this console cannot start agents from a session' });
@@ -265,13 +265,14 @@ export function createSessionStarts({
     if (!agentId) {
       const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
       if (!prompt) return reply(res, 400, { error: 'give the agent its first prompt: what to do, and what to answer with' });
-      // As loose as the calling session, never looser, as a session it starts.
+      // A helper is claude or codex, as + Another agent offers. As loose as the calling session, never looser, by the
+      // rule a session it starts gets (shared/agents.cjs, modeForStartedSession).
       const agent = body.agent === 'codex' ? 'codex' : 'claude';
-      const mode = session.options?.permissionMode || 'auto';
-      console.log('sessionStarts: agent asked for', { from: session.id, agent });
+      const permissionMode = agents.modeForStartedSession(agents.agentOfSession(session), session.options?.permissionMode || 'auto', agent);
+      console.log('sessionStarts: agent asked for', { from: session.id, agent, permissionMode });
       return agentAction(req, res, route, login, { body: {
         agent, model: typeof body.model === 'string' ? body.model : '', effort: typeof body.effort === 'string' ? body.effort : '',
-        permissionMode: agent === 'codex' && mode === 'acceptEdits' ? 'default' : mode, prompt: `[From this session's own agent]\n\n${prompt}`,
+        permissionMode, prompt: `[From this session's own agent]\n\n${prompt}`,
       } });
     }
     if (action === 'stop') return agentAction(req, res, route, login, { body: {} });

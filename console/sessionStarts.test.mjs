@@ -431,8 +431,8 @@ test('a session starts, messages, reads and stops the agents beside its own, thr
     ['GET', '/agents', `${session.id},,`, 'joel'],
     ['POST', '/agents/agent-2/stop', `${session.id},agent-2,stop`, 'joel'],
   ]);
-  assert.deepEqual(asked[0].body, { agent: 'codex', model: 'gpt-5', effort: '', permissionMode: 'default', prompt: '[From this session\'s own agent]\n\nWrite the tests for totals.ts' },
-    'the calling session\'s mode, never looser: codex has no acceptEdits');
+  assert.deepEqual(asked[0].body, { agent: 'codex', model: 'gpt-5', effort: '', permissionMode: agents.modeForStartedSession('claude', 'acceptEdits', 'codex'), prompt: '[From this session\'s own agent]\n\nWrite the tests for totals.ts' },
+    'never looser than the calling session, by the rule a session it starts gets (shared/agents.cjs)');
   assert.deepEqual(asked[1].body, { text: '[Message from this session\'s own agent]\n\nAlso the rounding case.' }, 'headed, so the agent and its Chat tell it from the person');
   assert.equal((await api.call('POST', '/agents', { token, body: { prompt: '  ' } })).status, 400);
 
