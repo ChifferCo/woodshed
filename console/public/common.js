@@ -1106,6 +1106,11 @@
       level && h('span', { class: `prchip-mark is-${level}`, 'aria-hidden': 'true' }, glyph));
   }
 
+  /** Whether the session has a pull request to show: its own repo's, or only one claude opened on another. */
+  function hasPrs(s) {
+    return Boolean(s.prUrl) || (s.prs?.length ?? 0) > 0;
+  }
+
   /**
    * The pull requests a session's card shows, oldest first: each one, but a merged or closed one only while no newer
    * one came after it. The newest always shows, so a session whose last pull request merged keeps its chip. A console
@@ -2005,6 +2010,6 @@
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, hoursText, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, peekView, startedLinks, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
+    startProgress, waitProgress, clock, prChip, prChips, hasPrs, shownPrs, prLines, peekView, startedLinks, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
 })();

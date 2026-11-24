@@ -971,7 +971,7 @@ URL on top of each env file's Repo settings values
   none there is an image from before it, which reports only the branch checked out. `statusd: pull requests of the
   other branches not read` gives gh's error. One opened from a second clone, or on another repo, is found only when
   claude opened it with `gh pr create` (claude's PostToolUse hook records it in `/tmp/woodshed-opened-pulls.json`,
-  `session/openedPulls.mjs`; codex has no hooks), and the console keeps it only on a repo of one of its projects: its
+  `session/openedPulls.mjs`; codex has no hooks), and the console keeps it only for a private session, on a project its owner may start sessions on: its
   chip names that repo (`woodshed-cloud #151`).
 - **A pull request's chip or Slack post lags by minutes after a change.**
   With pull request webhooks arriving, a change is read within seconds: the

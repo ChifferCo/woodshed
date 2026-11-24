@@ -433,7 +433,11 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const gatesOf = fileGatesOf;
   // What starts a review, by the tag or on demand, and the tag sessions are told: the file's, with every repo's default.
   const reviewGatesOf = async (name) => withAppLogins(withDefaultReview(await readerOf(name).pullRequests()), await logins());
+  // Made below, once sign-in and the view prefs are; the fleet asks it only on status reads, after the start.
+  let projectAccess = null;
   const fleet = createFleet({
+    // The repos a session's owner may start on, where it may report a pull request opened from another clone.
+    startableRepos: async (login) => (projectAccess ? (await projectAccess.startable(login)).map((p) => p.repo) : []),
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, qaRecordings, pullWebhooksFlowing: pullWebhooks.flowing,
     pullRequests: gatesOf, reviewGates: reviewGatesOf,
@@ -545,14 +549,15 @@ export async function createInstallation({ config: loaded, store, provider, trus
     config, store, supervisor: supervisorOf(process.env), repo: () => defaultProject(loaded).repo || null,
     token: tokens ? async () => (await tokens.console.token()).token : null,
   }) : null;
+  // Behind a hosting proxy nobody's write access is asked: the host says who is in.
+  projectAccess = createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) });
   const handle = createHandler({
     config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
     prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,
     workflowLinks: () => projectReader.workflowLinks(),
-    // Behind a hosting proxy nobody's write access is asked: the host says who is in.
-    projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) }),
+    projectAccess,
     githubFor,
     trusted,
     userMenu,

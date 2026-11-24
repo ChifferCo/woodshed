@@ -17,7 +17,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null, qaRecordings = null, reviewAgents = null, reviewGates = undefined } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null, qaRecordings = null, reviewAgents = null, reviewGates = undefined, startableRepos = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
@@ -111,7 +111,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     ...(runsOnName ? { runsOnName } : {}),
   };
   const fleet = createFleet({
-    config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, qaRecordings, now: () => clock,
+    config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, qaRecordings, now: () => clock, startableRepos,
     pings, pullRequests: async () => gates, ...(reviewGates !== undefined ? { reviewGates: typeof reviewGates === 'function' ? reviewGates : async () => reviewGates } : {}), projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, reviewAgents, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
@@ -395,6 +395,31 @@ test('a comment on the pull request a shared session opened goes to that session
   assert.deepEqual(resumed, { outcome: 'resumed', sessionId: session.id });
   assert.equal(fleet.sessions().length, 1);
   assert.equal(calls.started.length, 2);
+});
+
+test('a pull request on another repo is kept only for a private session, on a project its owner may start on', async () => {
+  const projects = [
+    { name: 'r', repo: 'o/r', default: true },
+    { name: 'cloud', repo: 'o/cloud', default: false },
+    { name: 'secret', repo: 'o/secret', default: false },
+  ];
+  const asked = [];
+  const { fleet, statuses } = setup({ projects, startableRepos: async (login) => { asked.push(login); return ['o/r', 'o/cloud']; } });
+  const own = 'https://github.com/o/r/pull/7';
+  const cloud = 'https://github.com/o/cloud/pull/151';
+  const secret = 'https://github.com/o/secret/pull/1';
+  const mine = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const shared = fleet.sessions().find((s) => !s.owner);
+  statuses[mine.id] = { state: 'done', prUrl: own, prUrls: [own, cloud, secret] };
+  statuses[shared.id] = { state: 'done', prUrl: own, prUrls: [own, cloud] };
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().find((s) => s.id === mine.id).prUrls, [own, cloud], 'a project the owner may not start on is dropped');
+  assert.deepEqual(fleet.sessions().find((s) => s.id === shared.id).prUrls, [own], 'a shared session keeps its own repo\'s alone');
+  assert.deepEqual(asked, ['joel'], 'asked for the private session alone');
+  statuses[mine.id] = { state: 'done', prUrl: own, prUrls: [own] };
+  await fleet.tick();
+  assert.equal(asked.length, 1, 'not asked when the status names no other repo');
 });
 
 test('a container that dies while starting fails with its last log line', async () => {
