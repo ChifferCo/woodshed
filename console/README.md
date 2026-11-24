@@ -887,7 +887,14 @@ stopping one does nothing to the other.
 - **Limits**: none of its own. The person's **My Woodshed sessions per person** applies as it does to New session: past
   it, a started session waits in line.
 - **How it shows**: the started session's hover card and Details say **Started from** with the other's name (a link in
-  Details), and the other's say **Started here** with each it started.
+  Details), and the other's say **Started here** with each it started. On Mine's rail it sits under the session that
+  started it while that one is live (`W.railGroups`), folded or open with the toggle on the main card (`3 sessions · 1
+  needs you`), and one that asks its person shows on Needs you too (design system, RailCard).
+- **A piece of the work, or work of its own**: by default a started session is a piece of the starting session's work:
+  it is grouped under it and in its `list`. `woodshed-session new --separate` starts work of its own
+  (`startedApart`): at the top of the rail, in no group and in no `list` but `--all`, still saying where it came from.
+  The session's rules (`session/prompt.md`) tell Claude to choose by what it is asked: related work is a piece, unrelated
+  work or work the person says they will drive is separate, and it says which it chose.
 
 The console logs `sessionStarts: session started` with `from`, the new `id` and its `status` (`queued` when it waits in line), `sessionStarts: start
 refused` with `why` (`no prompt`, `same branch`, `not a member`, `write access gone`, or `start checks` with

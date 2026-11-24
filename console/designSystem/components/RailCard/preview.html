@@ -1,4 +1,4 @@
-<!-- @dsCard group="Cards" height=360 subtitle="Needs you, working, about to pause and stopped, on Everyone, with two projects" -->
+<!-- @dsCard group="Cards" height=560 subtitle="Needs you, working, about to pause and stopped, on Everyone, with two projects; a group of the sessions one started" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
  body{margin:0;padding:20px;background:var(--stopped);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif;display:flex;flex-direction:column;gap:6px;max-width:340px}
@@ -21,6 +21,8 @@
  .timer{color:var(--amber-ink)}
  .plain{flex:none;font:600 11.5px "Red Hat Display",system-ui,sans-serif;min-height:24px;padding:0 8px;border-radius:var(--radius-sm);background:var(--ground);color:var(--ink);border:1px solid var(--line)}
  .card.stopped{background:var(--stopped);padding:6px 9px 6px 10px}.card.stopped .name{font-size:12px;font-weight:500}.card.stopped .sub{min-height:0}
+ .kids{align-self:flex-start;margin:1px 0 0 13px;font:400 10.5px "JetBrains Mono",ui-monospace,monospace;color:var(--sub)}.kids .n{color:var(--wait);font-weight:600}
+ .group{display:flex;flex-direction:column;gap:6px;margin-left:10px;padding-left:8px;border-left:2px solid var(--line)}
  .card.teal{border-left:3px solid var(--proj-teal);padding-left:8px}.card.plum{border-left:3px solid var(--proj-plum);padding-left:8px}
 </style>
 <div class="card open teal" title="Project api"><div class="top"><span class="dot" style="background:var(--wait)"></span><span class="name">ecsUtils.ts throws on empty task</span><span class="tag named">Mona Octocat</span><span class="marks">☆ ⋯</span></div><div class="sub"><span class="txt"><b class="wait">Paused</b> · 19 h ago</span><span class="pr bad">PR #26530 ✗</span><button class="go" type="button">Resume</button></div></div>
@@ -28,3 +30,6 @@
 <div class="card teal" title="Project api"><div class="top"><span class="dot" style="background:var(--green)"></span><span class="name">Split the billing page into steps</span><span class="marks">☆ ⋯</span></div><div class="sub"><span class="txt"><b class="done">Done</b></span><span class="pr more" title="2 more pull requests">+2</span><span class="pr">PR #26545 ✓</span><span class="pr">PR #26546</span></div></div>
 <div class="card teal" title="Project api"><div class="top"><span class="dot" style="background:var(--green)"></span><span class="name">Pause the importer when the queue drains</span><span class="marks">☆ ⋯</span></div><div class="sub"><span class="txt"><b class="done">Done</b> · <span class="timer">pauses in 10 min</span></span><span class="pr">PR #26340</span><button class="plain" type="button">Extend</button></div></div>
 <div class="card stopped teal" title="Project api"><div class="top"><span class="dot ring"></span><span class="name">Fix duplicate task runs</span><span class="marks">☆ ⋯</span></div><div class="sub"><span class="txt"><b>Stopped</b> · from ana-dev</span><span class="pr">PR #26502 ✓</span></div></div>
+<div class="card teal" title="Project api"><div class="top"><span class="dot" style="background:var(--slate)"></span><span class="name">Plan the billing page</span><span class="marks">☆ ⋯</span></div><div class="sub"><span class="txt"><b class="work">Working</b></span></div><span class="kids">▾ 2 sessions <span class="n">· 1 needs you</span></span></div>
+<div class="group"><div class="card teal" title="Project api"><div class="top"><span class="dot" style="background:var(--wait)"></span><span class="name">Invoice PDF export</span><span class="marks">☆ ⋯</span></div><div class="sub"><span class="txt"><b class="wait">Needs you</b></span></div></div>
+<div class="card teal" title="Project api"><div class="top"><span class="dot" style="background:var(--green)"></span><span class="name">Move invoice totals to the server</span><span class="marks">☆ ⋯</span></div><div class="sub"><span class="txt"><b class="done">Done</b></span><span class="pr">PR #26412 ✓</span></div></div></div>
