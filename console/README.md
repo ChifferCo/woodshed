@@ -97,7 +97,11 @@ and nothing after it refers back to bytes ttyd never saw. ttyd's output stays co
 preferences, as they did ttyd's page. tmux sizes the agent's window by the client used last, and only input counts, so after a phone opened a session a
 desktop that only scrolls or comes back to the front would stay at the phone's width: the page sends tmux a focus-in
 on a wheel, a click or tap, or its window coming to the front (at most every 2 s, and only while tmux asked for focus
-events, `focus-events on` in `session/tmux.conf`), which gives tmux that device's size again. In one browser,
+events, `focus-events on` in `session/tmux.conf`), which gives tmux that device's size again, and only from a terminal on
+screen: one not displayed (a phone on its list, another tab) never takes the window. Nor is a terminal ever fitted below
+20 columns or 5 rows: a frame squeezed to nothing for a moment as the page changes would make xterm's fit its 2x1
+minimum, tmux would draw every device's screen at 2 columns, and claude's lines would stay that narrow in their
+history. The last size stays until the next resize. In one browser,
 `localStorage['woodshed-terminal-page'] = 'ttyd'` goes back to
 ttyd's page (`session.js`, `terminalSrc`), which works as before without `/token`.
 
