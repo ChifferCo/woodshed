@@ -40,6 +40,8 @@ const OWN_SITE = new Set(['same-origin', 'none']);
 const PROXY_TIMEOUT_MS = 30_000;
 // The terminal's first message is its size as JSON: a few dozen bytes. A browser that sends more is not a terminal.
 const MAX_FIRST_MESSAGE = 4096;
+// ttyd's answer to the upgrade is a status line and a few headers.
+const MAX_ANSWER_HEAD = 16 * 1024;
 const TOKEN_RE = /^\/(?:term|shell)\/[0-9a-f]{8}\/token$/;
 
 /**
@@ -191,7 +193,22 @@ export function handleTerminalUpgrade(req, socket, head, ctx) {
       for (const v of [value].flat()) lines.push(`${key}: ${v}`);
     }
     upstream.write(`${lines.join('\r\n')}\r\n\r\n`);
-    upstream.pipe(socket);
+    // ttyd's answer is read whole and passed on with each message of the browser's compressed on its own, whatever
+    // ttyd said to that, then everything after it as it came.
+    let answer = Buffer.alloc(0);
+    const readAnswer = (chunk) => {
+      answer = Buffer.concat([answer, chunk]);
+      const end = answer.indexOf('\r\n\r\n');
+      if (end < 0) {
+        if (answer.length > MAX_ANSWER_HEAD) drop(new Error('an answer from ttyd with no end to its headers'));
+        return;
+      }
+      upstream.off('data', readAnswer);
+      socket.write(answerWithoutClientContext(answer.subarray(0, end + 4)));
+      if (answer.length > end + 4) socket.write(answer.subarray(end + 4));
+      upstream.pipe(socket);
+    };
+    upstream.on('data', readAnswer);
     // The browser's first message is read here and sent on as the console's; everything after it passes as it came.
     let buffered = head?.length ? Buffer.from(head) : Buffer.alloc(0);
     const readFirst = (chunk) => {
@@ -224,6 +241,20 @@ export function handleTerminalUpgrade(req, socket, head, ctx) {
   socket.on('close', () => upstream.destroy());
   socket.on('error', drop);
   return true;
+}
+
+/**
+ * ttyd's answer to a terminal's upgrade, with `client_no_context_takeover` on the compression it agreed to, should it
+ * leave that out: the browser then compresses each message on its own (RFC 7692 lets an answer add it unasked), so the
+ * first message the console sends in place of the browser's never leaves ttyd reading the rest against bytes it did
+ * not see. ttyd 1.7.7 agrees to it when asked (offerWithoutClientContext); this holds if a later one does not.
+ * @param {Buffer} head  the status line and headers, through the blank line
+ * @returns {Buffer}
+ */
+export function answerWithoutClientContext(head) {
+  const text = head.toString('latin1');
+  const changed = text.replace(/^(sec-websocket-extensions:[ \t]*)(.*)$/gim, (_, name, value) => `${name}${offerWithoutClientContext(value.replace(/\r$/, ''))}${value.endsWith('\r') ? '\r' : ''}`);
+  return changed === text ? head : Buffer.from(changed, 'latin1');
 }
 
 /**

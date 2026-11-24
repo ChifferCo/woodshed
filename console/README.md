@@ -91,8 +91,9 @@ it and opening a terminal loads only its websocket; ttyd's own page (190 KB gzip
 from the session through the console on every open. The session's ttyd is the connection alone. Its first message is
 the console's (`terminalProxy.mjs`): ttyd's credential with the size the page asked for, so the page never holds the
 credential, and `/<kind>/<id>/token` answers 404. A browser's compression offer goes to ttyd with
-`client_no_context_takeover` added, so the console can read that first message compressed and send its own
-uncompressed; ttyd's output stays compressed. The session's `-t` flags (theme, scrollback) reach the page as ttyd's
+`client_no_context_takeover` added, and ttyd's answer comes back with it too should ttyd leave it out, so the browser
+compresses each message on its own: the console can read that first message compressed and send its own uncompressed,
+and nothing after it refers back to bytes ttyd never saw. ttyd's output stays compressed. The session's `-t` flags (theme, scrollback) reach the page as ttyd's
 preferences, as they did ttyd's page. In one browser, `localStorage['woodshed-terminal-page'] = 'ttyd'` goes back to
 ttyd's page (`session.js`, `terminalSrc`), which works as before without `/token`.
 

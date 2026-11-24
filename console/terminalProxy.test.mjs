@@ -5,7 +5,9 @@ import net from 'node:net';
 import zlib from 'node:zlib';
 
 import { OP, acceptFor, createFrameReader, encodeFrame } from '../shared/wsFrames.mjs';
-import { basicAuth, handleTerminalRequest, handleTerminalUpgrade, offerWithoutClientContext, parseTerminalPath, takeFirstMessage } from './terminalProxy.mjs';
+import {
+  answerWithoutClientContext, basicAuth, handleTerminalRequest, handleTerminalUpgrade, offerWithoutClientContext, parseTerminalPath, takeFirstMessage,
+} from './terminalProxy.mjs';
 
 test('parseTerminalPath accepts only an 8-hex session id, on either terminal', () => {
   assert.deepEqual(parseTerminalPath('/term/0a1b2c3d/'), { app: 'term', id: '0a1b2c3d' });
@@ -122,6 +124,20 @@ test('a browser\'s compression offer asks for each of its messages compressed on
   assert.equal(offerWithoutClientContext(undefined), undefined);
 });
 
+test('ttyd\'s answer gets client_no_context_takeover when it left it out, and nothing else changes', () => {
+  const answer = (ext) => Buffer.from(['HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade',
+    'Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=', ...(ext ? [`Sec-WebSocket-Extensions: ${ext}`] : []), '', ''].join('\r\n'));
+  assert.equal(answerWithoutClientContext(answer('permessage-deflate')).toString(), answer('permessage-deflate; client_no_context_takeover').toString());
+  assert.equal(answerWithoutClientContext(answer('permessage-deflate; server_max_window_bits=10')).toString(),
+    answer('permessage-deflate; client_no_context_takeover; server_max_window_bits=10').toString());
+  const agreed = answer('permessage-deflate; client_no_context_takeover');
+  assert.equal(answerWithoutClientContext(agreed), agreed, 'ttyd 1.7.7\'s own answer passes as it is');
+  const plain = answer(null);
+  assert.equal(answerWithoutClientContext(plain), plain, 'no compression, nothing to add');
+  const refused = Buffer.from('HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\n\r\n');
+  assert.equal(answerWithoutClientContext(refused), refused);
+});
+
 test('through the proxy, ttyd gets the console\'s first message and then the browser\'s bytes', async (t) => {
   const received = [];
   let gotAll;
@@ -137,7 +153,7 @@ test('through the proxy, ttyd gets the console\'s first message and then the bro
       const request = head.subarray(0, end).toString();
       const key = /sec-websocket-key: (\S+)/i.exec(request)[1];
       received.push({ request: request.split('\r\n')[0], authorization: /authorization: (.+)/i.exec(request)?.[1], extensions: /sec-websocket-extensions: (.+)/i.exec(request)?.[1] });
-      conn.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acceptFor(key)}\r\nSec-WebSocket-Protocol: tty\r\n\r\n`);
+      conn.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acceptFor(key)}\r\nSec-WebSocket-Protocol: tty\r\nSec-WebSocket-Extensions: permessage-deflate\r\n\r\n`);
       read = createFrameReader((m) => {
         received.push(m.payload.toString());
         if (received.length === 3) gotAll();
@@ -160,8 +176,10 @@ test('through the proxy, ttyd gets the console\'s first message and then the bro
   client.write(['GET /term/0a1b2c3d/ws?arg=agent-2 HTTP/1.1', 'Host: console.example', 'Upgrade: websocket', 'Connection: Upgrade',
     'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==', 'Sec-WebSocket-Protocol: tty',
     'Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits', '', ''].join('\r\n'));
-  const answer = await new Promise((resolve) => client.once('data', (d) => resolve(d.toString().split('\r\n')[0])));
-  assert.equal(answer, 'HTTP/1.1 101 Switching Protocols');
+  const answer = await new Promise((resolve) => client.once('data', (d) => resolve(d.toString().split('\r\n'))));
+  assert.equal(answer[0], 'HTTP/1.1 101 Switching Protocols');
+  assert.ok(answer.includes('Sec-WebSocket-Extensions: permessage-deflate; client_no_context_takeover'),
+    'a ttyd that left it out still has the browser compress each message on its own');
   // The size, then a keystroke, split mid-frame as a network may.
   const sent = Buffer.concat([hello({ columns: 100, rows: 30 }), encodeFrame(OP.binary, Buffer.from('0q'))]);
   client.write(sent.subarray(0, 5));
