@@ -1108,18 +1108,21 @@
 
   /** Whether the session has a pull request to show: its own repo's, or only one claude opened on another. */
   function hasPrs(s) {
-    return Boolean(s.prUrl) || (s.prs?.length ?? 0) > 0;
+    return shownPrs(s).length > 0;
   }
 
   /**
    * The pull requests a session's card shows, oldest first: each one, but a merged or closed one only while no newer
-   * one came after it. The newest always shows, so a session whose last pull request merged keeps its chip. A console
-   * from before the list sends only `prUrl` and `pr`.
+   * one came after it. The newest always shows, so a session whose last pull request merged keeps its chip. One the
+   * console will read and has not yet (`reading`, as just after it starts) waits for it, so a merged one never shows as
+   * open and then goes; unless Woodshed's review or QA is at work on it, which its chip says. A console from before the
+   * list sends only `prUrl` and `pr`.
    * @returns {{url: string, pr: object|null}[]}
    */
   function shownPrs(s) {
     const all = s.prs?.length ? s.prs : s.prUrl ? [{ url: s.prUrl, pr: s.pr ?? null }] : [];
-    return all.filter(({ pr }, i) => i === all.length - 1 || !(pr?.state === 'merged' || pr?.state === 'closed'));
+    return all.filter(({ pr, reading, runs }, i) => (i === all.length - 1 || !(pr?.state === 'merged' || pr?.state === 'closed'))
+      && !(reading && !pr && !runsWord(runs)));
   }
 
   /**

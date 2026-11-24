@@ -1478,8 +1478,9 @@ export function createHandler({
         // /auth/app, which lends one.
         ...(appPorts && s.status === 'running' && s.kind !== 'ask' ? { appUrl: APP_HOLDS_PORT.has(s.app) ? appPorts.urlFor(s.id) : null } : {}),
         // Every pull request it opened, oldest first, for its chips (common.js shownPrs). `runs` is Woodshed's review
-        // and QA at work on it now, which its checks do not show until they report.
-        prs: prUrlsOf(s).map((url) => ({ url, pr: prChips?.view(url) ?? null, runs: runsOn(url) })) })).reverse(),
+        // and QA at work on it now, which its checks do not show until they report. `reading` is one the chips' next
+        // read will get (a cleaned-up session's are never read again), which the page holds back until then.
+        prs: prUrlsOf(s).map((url) => ({ url, pr: prChips?.view(url) ?? null, reading: !s.cleanedAt && (prChips?.reading?.(url) ?? false), runs: runsOn(url) })) })).reverse(),
       // Who may have a shared session, and whether the asker is one: the Assign menu and the rail's Mine read them.
       // `shared` is whether the rail has an Everyone tab.
       assignables: members?.assignables() ?? [],

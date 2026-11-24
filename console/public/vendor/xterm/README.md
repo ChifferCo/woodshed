@@ -5,9 +5,10 @@ The browser terminal behind the TUI and Terminal tabs (`../../terminalPage.js`, 
 no build step, so the one library a page needs is kept in the repo, served from `/static/` with the rest and cached by
 its hash like them.
 
-They are the versions ttyd 1.7.7 bundles in its own page, so `terminal.js` (find, copy, links, scrolling back, files
-dropped) meets the same xterm API on either page. ttyd's page also has the image, zmodem and trzsz add-ons; it loads
-them only when the session asks for sixel or file transfer, which a Woodshed session never does, so they are left out.
+They are the versions ttyd 1.7.7 bundles in its own page, which the tabs framed before, so `terminal.js` (find, copy,
+links, scrolling back, files dropped) kept the xterm API it was written for. ttyd's page also has the image, zmodem and
+trzsz add-ons; it loads them only when the session asks for sixel or file transfer, which a Woodshed session never does,
+so they are left out.
 
 | File | Package | sha256 |
 | --- | --- | --- |

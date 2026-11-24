@@ -156,3 +156,21 @@ test('every pull request a session opened is read, not only its last', async () 
   assert.deepEqual(asked, [[10, 11]]);
 });
 
+
+test('a pull request is reading until it is read, found missing, or GitHub fails; never where nothing polls', async () => {
+  let fail = false;
+  const github = { pullStatuses: async (numbers) => { if (fail) throw new Error('down'); return numbers.filter((n) => n !== 2).map((n) => pr(n)); } };
+  const url = (n) => `https://github.com/o/r/pull/${n}`;
+  const chips = createPrChips({ github, repo: 'o/r' });
+  assert.equal(chips.reading(url(1)), true);
+  assert.equal(chips.reading('https://github.com/other/repo/pull/1'), false, 'another repo\'s is never read');
+  await chips.refresh([{ prUrl: url(1), prUrls: [url(1), url(2)] }]);
+  assert.equal(chips.reading(url(1)), false, 'read');
+  assert.equal(chips.reading(url(2)), false, 'GitHub has none');
+  assert.equal(chips.reading(url(3)), true);
+  fail = true;
+  await assert.rejects(chips.refresh([{ prUrl: url(3) }]));
+  assert.equal(chips.reading(url(3)), false, 'while GitHub fails, shown as it is');
+  assert.equal(createPrChips({ github, repo: 'o/r', polled: false }).reading(url(1)), false);
+  assert.equal(createPrChips({ github: null, repo: 'o/r' }).reading(url(1)), false);
+});

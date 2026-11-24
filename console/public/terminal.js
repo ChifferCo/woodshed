@@ -1,4 +1,5 @@
-// The shed's terminal, around a session's ttyd frame (same-origin, so its window's `term` is xterm's): copy out by
+// The shed's terminal, around a session's terminal frame (terminalPage.js, same-origin, so its window's `term` is
+// xterm's; a dropped connection is that page's to open again): copy out by
 // OSC 52, tap a link on a phone, a picture's path opens it (a thumbnail on hover, a viewer on click), a file pasted or
 // dropped is saved in the session and its path typed at the prompt, and the wheel or a swipe scrolls the browser's own
 // history of the pane, or tmux's (terminalScroll.cjs says whose), and ⌘F finds text in it (terminalFind.cjs). Copy is a
@@ -14,7 +15,7 @@
   const FIND = window.WoodshedTerminalFind;
   const MAC = /Mac|iPhone|iPad/.test(window.navigator.platform || window.navigator.userAgent);
   const TERM_POLL_MS = 250;
-  // ttyd sets window.term after its token fetch, which the proxy gives 30 s.
+  // The terminal page sets window.term as its scripts run: a slow network can hold them that long.
   const TERM_WAIT_MS = 60_000;
   const OSC_DEDUPE_MS = 1000;
   // How long a copy the browser refused waits for the copy key.
@@ -545,7 +546,7 @@
 
   // ---- find: ⌘F (Ctrl+Shift+F off a Mac) searches the terminal's buffer, as the browser's find cannot ----
   // The buffer is the screen and what the browser kept since the terminal attached (10000 lines, session/entrypoint.sh).
-  // Matches are painted with xterm's decorations, not its selection: ttyd copies every selection to the clipboard, so
+  // Matches are painted with xterm's decorations, not its selection: the terminal page copies every selection to the clipboard, so
   // stepping through matches would overwrite it. Enter goes to an older match, Shift+Enter a newer one.
   const FIND_WATCH_MS = 400;
   // The design system's bar-amber-line under every match, and bar-amber under the one shown, with the terminal's ground
@@ -659,7 +660,7 @@
       finder.matches.slice(from, from + FIND_PAINTED).forEach((other) => other !== m && paint(term, buf, other, { backgroundColor: FIND_WASH }));
       paint(term, buf, m, FIND_CURRENT);
     } catch {
-      // An xterm without decorations: the match is shown as its selection instead, which ttyd also copies.
+      // An xterm without decorations: the match is shown as its selection instead, which the terminal page also copies.
       term.select(m.col, m.row, m.cells);
     }
     if (m.row < buf.viewportY || m.row >= buf.viewportY + term.rows) term.scrollToLine(Math.max(0, m.row - Math.floor(term.rows / 3)));
@@ -672,55 +673,6 @@
       e.stopPropagation();
       openFind(frame);
     }, true);
-  }
-
-  // ---- a dropped connection: ttyd's "Press ⏎ to Reconnect", pressed for you ----
-  // A phone closes the terminal's websocket while the page is in the background, and ttyd then waits for a key. Its
-  // overlay is a bare div on the terminal; an Enter on xterm's textarea is the key it waits for, and with the socket
-  // closed it reaches no program. Pressed once the page is in front, at most RECONNECTS_PER_MINUTE times, so a session
-  // that is gone for good is left on the overlay.
-  // A pattern, not the string: the return symbol has more than one spelling, and only ttyd's own one matches exactly.
-  const RECONNECT_RE = /^Press\s+\S+\s+to\s+Reconnect$/;
-  const RECONNECTS_PER_MINUTE = 3;
-  function bindReconnect(frame, sessionId) {
-    whenTerm(frame, (win, term) => {
-      const tries = [];
-      // ttyd adds its overlay once and changes only its text after: "Connection Closed", then the reconnect prompt.
-      const overlays = () => [...term.element.children].filter((d) => d.tagName === 'DIV' && !d.className && d.children.length === 0);
-      const waiting = () => overlays().some((d) => RECONNECT_RE.test(d.textContent.trim()));
-      const watched = new WeakSet();
-      function press() {
-        if (!frame.isConnected || document.hidden || !waiting()) return;
-        const now = Date.now();
-        while (tries.length && now - tries[0] > 60_000) tries.shift();
-        if (tries.length >= RECONNECTS_PER_MINUTE) return;
-        tries.push(now);
-        console.log('terminal: reconnecting', { sessionId, tries: tries.length });
-        for (const type of ['keydown', 'keypress']) {
-          term.textarea.dispatchEvent(new win.KeyboardEvent(type, {
-            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, charCode: type === 'keypress' ? 13 : 0, bubbles: true, cancelable: true,
-          }));
-        }
-      }
-      // The overlay can be there before this runs (ttyd shows the terminal's size in it as it opens), so it is looked
-      // for at once as well as when one is added.
-      const observer = new win.MutationObserver(scan);
-      function scan() {
-        for (const d of overlays()) {
-          if (watched.has(d)) continue;
-          watched.add(d);
-          observer.observe(d, { childList: true, characterData: true, subtree: true });
-        }
-        setTimeout(press, 300);
-      }
-      observer.observe(term.element, { childList: true });
-      scan();
-      function onShown() {
-        if (!frame.isConnected) return document.removeEventListener('visibilitychange', onShown);
-        if (!document.hidden) setTimeout(press, 300);
-      }
-      document.addEventListener('visibilitychange', onShown);
-    });
   }
 
   /**
@@ -739,7 +691,6 @@
       bindTouch(frame, doc, session, pane, handoff);
       bindClipboard(frame);
       bindImages(frame, doc, session);
-      bindReconnect(frame, session);
       bindFind(frame, doc);
     } catch {
       // Not same-origin after all: the terminal works, without these.
