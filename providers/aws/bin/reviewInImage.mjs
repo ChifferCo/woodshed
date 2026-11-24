@@ -3,12 +3,14 @@
 // own sign-in (console/reviewAgents.mjs): the whole entrypoint runs in the real session image with the environment ECS
 // would give it (the fleet builds the review's env, the ECS launcher's allowlist filters it, the task definition's
 // variables are added), and the console's real session API, with its real review agent proxy (reviewAgentProxy.mjs),
-// answers it from here. The author's sign-ins are made up: an xAI key for Grok Build, an Anthropic API key in OpenCode's
-// auth.json (or, with IN_IMAGE_OPENCODE_PROVIDER=openai, an OpenAI one). The proxy sends each model call to a recording
-// stand-in upstream on this computer (modelStandIn.mjs), never to xAI, Anthropic or OpenAI, which answers each agent's
-// first turn with a tool call and the next with a closing line, so each reviewer ends without a verdict. It prints the
-// fields of every body (names, never values): what the proxy's body scope (console/reviewAgentScope.mjs) allows. The
-// review's report is kept here, never sent to GitHub. Passes when each reviewer started in review mode and reached the
+// answers it from here. The author's sign-ins are made up: an xAI key for Grok Build (or, with IN_IMAGE_GROK_VIA=login, a
+// `grok login`, whose upstream's model list makes grok take its turns on /v1/responses and offer xAI's x_search there),
+// an Anthropic API key in OpenCode's auth.json (or, with IN_IMAGE_OPENCODE_PROVIDER=openai, an OpenAI one). The proxy
+// sends each model call to a recording stand-in upstream on this computer (modelStandIn.mjs), never to xAI, Anthropic or
+// OpenAI, which answers each agent's first turn with a tool call and the next with a closing line, so each reviewer ends
+// without a verdict. It prints the fields of every body (names, never values, and of tools[] only each tool's type):
+// what the proxy's body scope (console/reviewAgentScope.mjs) allows. The review's report is kept here, never sent to
+// GitHub. Passes when each reviewer started in review mode and reached the
 // console's proxy with the session's token alone, the proxy sent its calls on with the made-up sign-in in its place,
 // each agent took a turn after its tool call, and the proxy refused none of their bodies:
 //
@@ -53,8 +55,13 @@ const AUTHOR = 'in-image';
 // Made up, in the shape each agent's own sign-in check takes (shared/agents.cjs, checkSignIn): none reaches a provider.
 const OPENCODE_PROVIDER = process.env.IN_IMAGE_OPENCODE_PROVIDER === 'openai' ? 'openai' : 'anthropic';
 const OPENCODE_KEY = OPENCODE_PROVIDER === 'openai' ? 'sk-reviewInImage-not-a-real-key' : 'sk-ant-reviewInImage-not-a-real-key';
+// A login is what `grok login` saves (grokModels.mjs, credentialOf), with an expiry ahead: a review never uses one without.
+const GROK_VIA = process.env.IN_IMAGE_GROK_VIA === 'login' ? 'login' : 'key';
+const GROK_SECRET = GROK_VIA === 'login' ? 'grok-login-reviewInImage-not-a-real-access' : 'xai-reviewInImage-not-a-real-key-0123456789';
 const SIGN_INS = {
-  grok: 'xai-reviewInImage-not-a-real-key-0123456789',
+  grok: GROK_VIA === 'login'
+    ? JSON.stringify({ 'https://auth.x.ai::reviewInImage': { key: GROK_SECRET, refresh_token: 'reviewInImage-not-a-real-refresh', expires_at: new Date(Date.now() + 2 * 3_600_000).toISOString() } })
+    : GROK_SECRET,
   opencode: JSON.stringify({ [OPENCODE_PROVIDER]: { type: 'api', key: OPENCODE_KEY } }),
 };
 const GH_TOKEN = process.env.IN_IMAGE_GH_TOKEN || null;
@@ -74,7 +81,7 @@ const inspect = (req) => {
   const { authorization, 'x-api-key': apiKey } = req.headers;
   return {
     carried: [authorization && 'authorization', apiKey && 'x-api-key'].filter(Boolean),
-    grokKey: authorization === `Bearer ${SIGN_INS.grok}`,
+    grokKey: authorization === `Bearer ${GROK_SECRET}`,
     opencodeKey: (OPENCODE_PROVIDER === 'openai' ? authorization === `Bearer ${OPENCODE_KEY}` : apiKey === OPENCODE_KEY),
   };
 };
@@ -101,7 +108,7 @@ async function reviewEnv() {
     kind: 'pr', number: Number(NUMBER), title: 'Review: reviewInImage', startedBy: AUTHOR, trigger: 'review', branch: pull.headRefName,
     review: {
       base: pull.baseRefName, sha: pull.headRefOid, heading: '## Claude review', author: null, check: null, commentId: null,
-      agents: ['grok', 'opencode'], ownSignIns: { grok: { login: AUTHOR, via: 'key' }, opencode: { login: AUTHOR, provider: OPENCODE_PROVIDER } },
+      agents: ['grok', 'opencode'], ownSignIns: { grok: { login: AUTHOR, via: GROK_VIA }, opencode: { login: AUTHOR, provider: OPENCODE_PROVIDER } },
     },
   });
   return { fleet, overrides: sessionOverrides(started[0]) };
@@ -156,6 +163,8 @@ console.warn = (...args) => {
   if (String(args[0]).startsWith('reviewAgentProxy: refused, a body')) bodyRefusals.push(args[1]);
   warn(...args);
 };
+// A turn after a tool call: its result is in the body.
+const afterToolCall = (c) => c.fields.some((f) => /\.tool_call_id:|\{type=tool_result\}|\{type=function_call_output\}/.test(f));
 const { server: up, url: upUrl, calls: upstreamCalls } = await modelStandIn(inspect);
 const { fleet, overrides } = await reviewEnv();
 console.log('reviewInImage: passed to the task', overrides.map((o) => o.name).join(' '));
@@ -197,24 +206,29 @@ try {
   const pane = docker('exec', '-u', 'node', CONTAINER, 'tmux', 'capture-pane', '-p', '-J', '-S', '-200', '-t', 'claude');
   console.log(`--- the review's pane\n${pane.replace(/\n{3,}/g, '\n\n')}`);
   const env = docker('exec', '-u', 'node', CONTAINER, 'bash', '-c', 'tmux show-environment -t claude; cat /proc/1/environ | tr "\\0" "\\n"');
-  const leaked = Object.values(SIGN_INS).some((v) => env.includes(v)) || /xai-reviewInImage|sk-ant-reviewInImage|sk-reviewInImage/.test(docker('exec', '-u', 'node', CONTAINER, 'bash', '-c', 'grep -rl "reviewInImage-not-a-real" /home/node /tmp /work 2>/dev/null || true'));
+  const leaked = [...Object.values(SIGN_INS), GROK_SECRET].some((v) => env.includes(v)) || /xai-reviewInImage|sk-ant-reviewInImage|sk-reviewInImage/.test(docker('exec', '-u', 'node', CONTAINER, 'bash', '-c', 'grep -rl "reviewInImage-not-a-real" /home/node /tmp /work 2>/dev/null || true'));
   console.log('--- calls the console\'s proxy got', JSON.stringify(proxyCalls));
   console.log('--- calls the stand-in upstream got (which header carried a credential, and whether it was the made-up sign-in)', JSON.stringify(upstreamCalls));
-  console.log('--- the fields of each body the stand-in upstream got (names, and the value of each type and boolean)');
-  for (const c of upstreamCalls.filter((x) => x.method === 'POST')) console.log(`${c.url}\n  ${c.fields.filter((f) => !/^\.tools\[\]/.test(f)).join('\n  ')}`);
+  console.log('--- the fields of each body the stand-in upstream got (names, the value of each type and boolean, and of tools[] each type)');
+  // Of tools[], only each tool's type: their names, descriptions and schemas are the agent's own, and many.
+  const toolTypes = (c) => [...new Set(c.fields.filter((f) => /^\.tools\[\]/.test(f)).map((f) => /^\.tools\[\](\{type=[^}]*\})?/.exec(f)[0]))];
+  for (const c of upstreamCalls.filter((x) => x.method === 'POST')) console.log(`${c.url}\n  ${[...c.fields.filter((f) => !/^\.tools\[\]/.test(f)), ...toolTypes(c)].join('\n  ')}`);
   console.log('--- bodies the proxy refused', JSON.stringify(bodyRefusals));
   console.log('--- the report', reports[0] ? JSON.stringify(JSON.parse(reports[0]).conclusion) : 'none');
-  const grokCalls = upstreamCalls.filter((c) => c.url.startsWith('/xai/v1/'));
+  const grokCalls = upstreamCalls.filter((c) => c.url.startsWith(GROK_VIA === 'login' ? '/grok-login/v1/' : '/xai/v1/'));
+  const grokPosts = grokCalls.filter((c) => c.method === 'POST');
   const opencodeCalls = upstreamCalls.filter((c) => c.url.startsWith(`/${OPENCODE_PROVIDER}/v1/`));
-  // A turn after a tool call: its result is in the body.
-  const afterTool = (calls) => calls.some((c) => c.fields.some((f) => /\.tool_call_id:|\{type=tool_result\}|\{type=function_call_output\}/.test(f)));
+  const afterTool = (calls) => calls.some(afterToolCall);
   const checks = {
     'the review started in review mode': /mode: review|SESSION_MODE=review|Review of pull request/.test(logOf() + pane),
     'grok started in review mode': /Grok Build reviews on the author's own sign-in/.test(pane),
     'opencode started in review mode': new RegExp(`OpenCode reviews on the author's own ${OPENCODE_PROVIDER} key`).test(pane),
     'every call reached the console\'s proxy with the session\'s token alone': proxyCalls.length > 0 && proxyCalls.every((c) => c.sessionToken),
     'grok\'s first model call reached the console\'s proxy': proxyCalls.some((c) => c.url.startsWith('/grok/v1/')),
-    'the proxy sent grok\'s calls on with the made-up xAI key': grokCalls.length > 0 && grokCalls.every((c) => c.grokKey),
+    [`the proxy sent grok's calls on with the made-up ${GROK_VIA === 'login' ? 'login, to the login\'s upstream' : 'xAI key'}`]: grokCalls.length > 0 && grokCalls.every((c) => c.grokKey),
+    // On a login's model list its turns go to /v1/responses, where it offers x_search unless review.sh removes it.
+    ...(GROK_VIA === 'login' ? { 'grok took its turns on /v1/responses, as on a login': grokPosts.length > 1 && grokPosts.every((c) => c.url.endsWith('/responses')) } : {}),
+    'no provider tool reached the upstream, only functions': upstreamCalls.every((c) => toolTypes(c).every((t) => t === '.tools[]' || t === '.tools[]{type=function}')),
     [`the proxy sent opencode's calls on with the made-up ${OPENCODE_PROVIDER} key`]: opencodeCalls.length > 0 && opencodeCalls.every((c) => c.opencodeKey),
     'grok took a turn after its tool call, through the proxy\'s body scope': afterTool(grokCalls),
     'opencode took a turn after its tool call, through the proxy\'s body scope': afterTool(opencodeCalls),

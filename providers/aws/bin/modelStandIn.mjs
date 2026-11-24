@@ -8,6 +8,18 @@ import http from 'node:http';
 
 let n = 0;
 
+// A model as a `grok login`'s upstream (cli-chat-proxy.grok.com) lists it, read there on 2026-11-24 with its text cut:
+// `api_backend: responses` is what makes grok take its turns on /v1/responses rather than /v1/chat/completions, and
+// `supports_backend_search` what makes it offer xAI's own x_search tool there (console/reviewAgentScope.mjs). A key's
+// list (api.x.ai) has neither, so the stand-in answers the login's path with this one.
+const GROK_LOGIN_MODEL = {
+  id: 'grok-build', object: 'model', owned_by: 'xAI', model: 'grok-build', model_family: 'xai', name: 'Grok Build',
+  context_window: 256000, context_windows: [256000], auto_compact_threshold_percent: 80, system_prompt_label: 'Grok Build',
+  api_backend: 'responses', reasoning_effort: 'high', supports_reasoning_effort: true,
+  reasoning_efforts: [{ id: 'high', value: 'high', label: 'High', description: 'High', default: true }],
+  supports_backend_search: true, compactions_remaining: 1, compaction_at_tokens: true,
+};
+
 // Every path in a body, arrays as [], each object in an array tagged with its own `type`; JSON schemas are not walked.
 function shape(value, at = '', out = new Set(), depth = 0) {
   if (depth > 40) return out;
@@ -163,6 +175,7 @@ export function modelStandIn(inspect = () => ({})) {
       });
       if (path.endsWith('/models')) {
         res.writeHead(200, { 'content-type': 'application/json' });
+        if (path.includes('/grok-login/')) return res.end(JSON.stringify({ object: 'list', data: [GROK_LOGIN_MODEL] }));
         return res.end(JSON.stringify({ object: 'list', data: [{ id: 'grok-build', object: 'model', owned_by: 'xai', created: 1 }, { id: 'claude-sonnet-4-5', type: 'model', display_name: 'x', created_at: '2025-01-01T00:00:00Z' }, { id: 'gpt-5', object: 'model', owned_by: 'openai', created: 1 }], has_more: false }));
       }
       if (!body) { res.writeHead(400); return res.end('{}'); }
