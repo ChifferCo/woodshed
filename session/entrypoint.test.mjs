@@ -194,7 +194,7 @@ test('a project whose CI runs QA on a label tells its sessions to add it once re
     for (const kind of ['shared', 'private']) {
       const told = writePrompt({ attachments: false, kind, repoDir: repo });
       assert.ok(told.rules.includes("PR that has the `qa: Bob's, run` label"), kind);
-      assert.ok(told.rules.includes("`gh api repos/{owner}/{repo}/issues/<PR number>/labels -f labels[]=qa:\\ Bob\\'s\\,\\ run`"), 'whole, shell-quoted for the command');
+      assert.ok(told.rules.includes("`gh api repos/{owner}/{repo}/issues/<PR number>/labels -f labels\\[\\]=qa:\\ Bob\\'s\\,\\ run`"), 'whole, shell-quoted for the command, brackets and all');
       assert.match(told.rules, /once the PR is ready for review, when you open it ready or mark a draft ready, never to a draft/);
       assert.doesNotMatch(told.rules, /\{\{/);
       assert.match(told.out, /QA label: qa: Bob's, run/);

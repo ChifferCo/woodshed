@@ -544,7 +544,7 @@ writeRules() {
   qaLabel=
   [ "$(project get pullRequests.qa.runner 2>/dev/null)" != actions ] || qaLabel=$(project get pullRequests.qa.label 2>/dev/null) || qaLabel=
   if [ -n "$qaLabel" ]; then
-    rules=${rules//"{{QA_LABEL_ARG}}"/"$(printf '%q' "$qaLabel")"}
+    rules=${rules//"{{QA_LABEL_ARG}}"/"$(printf '%q' "labels[]=$qaLabel")"}
     rules=${rules//"{{QA_LABEL}}"/"$qaLabel"}
   else
     rules=$(grep -vF '{{QA_LABEL}}' <<< "$rules" || true)
