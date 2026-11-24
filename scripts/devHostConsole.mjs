@@ -8,7 +8,7 @@
 // forms post nowhere here.
 import { run } from '../providers/console.mjs';
 import { isMain } from '../shared/isMain.mjs';
-import { actions, button, form, group, howTo, html, note, pill, row, sub, textArea, valueBox } from '../console/settingsMarkup.mjs';
+import { actions, button, figures, form, group, howTo, html, note, pill, row, sub, textArea, valueBox } from '../console/settingsMarkup.mjs';
 
 const ACCOUNT = 'acme';
 const GRANT = { account: ACCOUNT, href: `https://github.com/organizations/${ACCOUNT}/settings/installations/1` };
@@ -78,6 +78,8 @@ export function devRepoPage() {
       row({ id: 'project-file', title: 'Project file', value: 'A draft the program wrote · not in the repository yet', pill: pill('Drafted', 'work') },
         form({ action: `/dev/host/${encodeURIComponent(name)}/project-file` }, textArea({ name: 'text', value: 'version: 1\napp:\n  start: npm run dev\n', rows: 5 }),
           actions(button('Save', { kind: 'primary' }), button('Save to repo'))))),
+    group({ id: 'host-usage', label: 'Usage', note: `What ${repo}'s sessions ran on this month. Made up.` },
+      figures([{ label: 'Sessions', value: '42', sub: '6 running now' }, { label: 'Session-hours', value: '318' }, { label: 'Charged', value: '$114.48', sub: '$0.36 an hour' }, { label: 'Dumps kept', value: '2', sub: '1 applied' }])),
     group({ id: 'host-session-data', label: 'Session data', note: 'What the databases of each new session start with.' },
       row({ id: 'data-postgres', title: 'Postgres', value: 'app.dump was not applied · new sessions start from the seed', pill: pill('Failed', 'bad') },
         note('pg_restore: error: unsupported version (1.16) in file header', { error: true }), sub('Nothing was lost.')),

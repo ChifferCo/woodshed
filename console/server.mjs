@@ -1729,6 +1729,39 @@ export function createHandler({
     }
   }
 
+  /**
+   * New session's start of a private session of `login`'s, with its checks: from the page, the command line, or one of
+   * their sessions (sessionStarts.mjs, which gives `startedFrom` and its own permission mode).
+   * @returns {Promise<{status: number, body: object}>}  201 and the session, or the refusal the caller answers with
+   */
+  async function startMine(login, body, { startedFrom = null } = {}) {
+    const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
+    const herdrParent = body.herdrParent === true;
+    await userSettings?.refresh?.(login, { force: true });
+    // A Codex session signs in with its own login or the team's OpenAI key: it needs no Claude token.
+    if (agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return { status: 409, body: { error: 'save your Claude token on My settings first' } };
+    if (agent === 'codex' && !userSettings?.view(login).codexAuth?.set && !(await readTeamOpenAiKey())) {
+      return { status: 409, body: { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' } };
+    }
+    // A Codex model or effort is one OpenAI's catalog offers this person now, as New session listed it.
+    const codexRefusal = agent === 'codex' && codexModels ? await codexModels.allows(login, String(model ?? ''), String(effort ?? '')) : null;
+    if (codexRefusal) return { status: 400, body: { error: codexRefusal } };
+    if (!databasesReady(login)) return { status: 409, body: { error: DATABASES_NOT_READY } };
+    const project = projectAccess ? await projectAccess.forStart(login, body.project) : undefined;
+    if (project === null) {
+      console.log('console: session start refused, project not open to the person', { login, project: String(body.project ?? '').slice(0, 40) });
+      return { status: 403, body: { error: `you cannot start sessions on a project named ${String(body.project ?? '').slice(0, 40)}: it is not one of this console's, or you have no write access to its repo` } };
+    }
+    try {
+      const session = await fleet.startPrivate({ owner: login, prompt, name, workOn, agent, model, effort, permissionMode, attachmentIds, background: true, project, herdrParent, startedFrom });
+      return { status: 201, body: publicSession(session) };
+    } catch (err) {
+      // The page's own refusals (a branch name git would refuse, a project not ready), as myWrite answers them.
+      if (!err?.shown) throw err;
+      return { status: err.status ?? 409, body: { error: err.message } };
+    }
+  }
+
   function databasesReady(login) {
     return !databases?.available || databases.view(login).status === 'ready';
   }
@@ -1829,24 +1862,8 @@ export function createHandler({
         return reply(res, 200, await userSettings.file(login, key));
       }
       if (pathname === '/api/my/sessions') {
-        const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
-        const herdrParent = body.herdrParent === true;
-        await userSettings?.refresh?.(login, { force: true });
-        // A Codex session signs in with its own login or the team's OpenAI key: it needs no Claude token.
-        if (agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
-        if (agent === 'codex' && !userSettings?.view(login).codexAuth?.set && !(await readTeamOpenAiKey())) {
-          return reply(res, 409, { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' });
-        }
-        // A Codex model or effort is one OpenAI's catalog offers this person now, as New session listed it.
-        const codexRefusal = agent === 'codex' && codexModels ? await codexModels.allows(login, String(model ?? ''), String(effort ?? '')) : null;
-        if (codexRefusal) return reply(res, 400, { error: codexRefusal });
-        if (!databasesReady(login)) return reply(res, 409, { error: DATABASES_NOT_READY });
-        const project = projectAccess ? await projectAccess.forStart(login, body.project) : undefined;
-        if (project === null) {
-          console.log('console: session start refused, project not open to the person', { login, project: String(body.project ?? '').slice(0, 40) });
-          return reply(res, 403, { error: `you cannot start sessions on a project named ${String(body.project ?? '').slice(0, 40)}: it is not one of this console's, or you have no write access to its repo` });
-        }
-        return reply(res, 201, publicSession(await fleet.startPrivate({ owner: login, prompt, name, workOn, agent, model, effort, permissionMode, attachmentIds, background: true, project, herdrParent })));
+        const started = await startMine(login, body);
+        return reply(res, started.status, started.body);
       }
       if (pathname === MY_DEFAULT_PROJECT_PATH) {
         if (!projectAccess || !viewPrefs) return reply(res, 404, { error: 'this console keeps no default project' });
@@ -2805,7 +2822,7 @@ export function createHandler({
     return answerWithView(res, (held) => writeRoute(req, held, pathname, login), () => configView({ userSettings, projectsView }, login), reply);
   }
 
-  return async function handle(req, res) {
+  const handle = async function handle(req, res) {
     // An app port answers its session's app and nothing else: the console's own pages there would share the app's origin.
     if (appPorts?.owns(req.socket?.localPort)) return appPortRequest(req, res, req.socket.localPort);
     const appId = appIdFor(req.headers.host, config.appDomain);
@@ -2981,6 +2998,9 @@ export function createHandler({
     if (pathname === '/healthz') return reply(res, 200, { ok: true });
     return reply(res, 404, { error: 'not found' });
   };
+  // New session's start, for a session starting one of its person's through the session API (sessionStarts.mjs).
+  handle.startMine = startMine;
+  return handle;
 }
 
 /**

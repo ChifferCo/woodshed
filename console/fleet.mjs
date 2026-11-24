@@ -20,6 +20,7 @@ import { blockerText } from './databaseGate.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 import { TAINT_MESSAGE } from './taint.mjs';
+import { mayStartSessions, newStartToken, startTokenHash } from './sessionStarts.mjs';
 import { checkLimits } from './userSettings.mjs';
 import {
   ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, isQa, isReview, keptIds, newSessionId, newSessionToken, sessionLink,
@@ -323,6 +324,8 @@ export function createFleet({
 
   function update(session, fields) {
     Object.assign(session, fields);
+    // A session that stops can start nothing more: its start token goes with its run (sessionStarts.mjs).
+    if (session.startTokenHash && !ACTIVE_STATUSES.has(session.status)) session.startTokenHash = null;
     store.save();
   }
 
@@ -597,7 +600,7 @@ export function createFleet({
     try {
       // Copied while the container starts: the session waits for them at the session API before it writes its env.
       if (((!session.owner && !isAsk(session) && !isReview(session)) || session.ownDatabases) && databases?.available) await databases.createForSession(session.id);
-      started = await launcher.start(session.id, sessionEnv(session));
+      started = await launcher.start(session.id, { ...sessionEnv(session), ...startTokenFor(session) });
     } catch (err) {
       const error = startError(err);
       // No room is AWS being full for now, not the session failing: it waits in the queue until a task stops.
@@ -623,6 +626,19 @@ export function createFleet({
     update(session, { ref, endpoint, startSteps: { machine: nowIso(), ...session.startSteps } });
     console.log('fleet: machine ready', { id: session.id, seconds: secondsSince(session.startedAt) });
   }
+
+  // Each run of a person's own session gets a token to start sessions of theirs with (sessionStarts.mjs), made here so the
+  // console only ever keeps its hash: the session holds the token, the record its hash, and a resume makes another.
+  function startTokenFor(session) {
+    if (!mayStartSessions(session)) {
+      if (session.startTokenHash) update(session, { startTokenHash: null });
+      return {};
+    }
+    const token = newStartToken();
+    update(session, { startTokenHash: startTokenHash(token) });
+    return { WOODSHED_START_TOKEN: token };
+  }
+
 
   async function startQueued() {
     const limits = { maxRunning: config.maxRunning, maxPrivate: config.maxPrivatePerPerson, maxAsks: config.maxAsks };
@@ -658,7 +674,7 @@ export function createFleet({
   async function createSession({
     kind, number, title, startedBy, trigger, prompt = '', branch = null, owner = null, options = null, resumeClaude = null, attach = null,
     background = false, reviewOnly = false, slack: thread = null, assignTo = null, project = defaultProject(config), qa = null, review = null,
-    herdrParent = false,
+    herdrParent = false, startedFrom = null,
   }) {
     refuseWithoutRepo(project, { kind, trigger });
     // A question from Slack, and a review that only reads the diff, get no databases, so they need none hosted.
@@ -685,6 +701,8 @@ export function createFleet({
       ...(attached ? { attachments: attached } : {}),
       ...(reviewOnly ? { reviewOnly: true } : {}),
       ...(owner && herdrParent ? { herdrParent: true } : {}),
+      // The session of the same person's that started this one (sessionStarts.mjs), for the pages to link both ways.
+      ...(owner && startedFrom ? { startedFrom } : {}),
       ...(qa ? { qa } : {}),
       ...(review ? { review } : {}),
       ...(assignTo ? { assignee: assignTo.login, assignedBy: assignTo.login, assignedHow: assignTo.how, assignedAt: nowIso() } : {}),
@@ -695,6 +713,7 @@ export function createFleet({
       id, kind, number, trigger, startedBy, private: Boolean(owner), resumed: Boolean(branch), background, assignee: session.assignee ?? null, qa: Boolean(qa),
       ...(project.default ? {} : { project: project.name, repo: project.repo }),
       ...(session.herdrParent ? { herdrParent: true } : {}),
+      ...(session.startedFrom ? { startedFrom: session.startedFrom } : {}),
     });
     await runStartQueued({ background });
     return session;
@@ -1743,7 +1762,7 @@ export function createFleet({
    * @param {{owner: string, prompt: string, name?: string, workOn?: string, model?: string, effort?: string,
    *          permissionMode?: string, background?: boolean}} args  `workOn` is the form's optional issue, pull request or branch
    */
-  async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], background = false, project = defaultProject(config), herdrParent = false, ...picked }) {
+  async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], background = false, project = defaultProject(config), herdrParent = false, startedFrom = null, ...picked }) {
     refuseWithoutRepo(project, { kind: 'task', trigger: 'my-woodshed' });
     const on = parseWorkOn(workOn, { defaultBranch: await githubOf(project).defaultBranch?.() ?? null });
     const reviewOnly = !String(prompt ?? '').trim() && on.kind !== 'task';
@@ -1762,7 +1781,7 @@ export function createFleet({
     const attach = attachments && attachmentIds?.length ? (sessionId) => attachments.claim({ login: owner, ids: attachmentIds, sessionId }) : null;
     const session = await createSession({
       ...target, title: given || titleFrom(text), startedBy: owner, owner, trigger: 'my-woodshed', prompt: text, options, attach, background, reviewOnly, project,
-      herdrParent,
+      herdrParent, startedFrom,
     });
     if (naming) renameWhenNamed(session, naming);
     return session;

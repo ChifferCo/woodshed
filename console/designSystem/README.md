@@ -57,6 +57,8 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - A program embedding the console draws its pages with the same components, rendered on its server
   (`console/settingsMarkup.mjs`): in the settings frame, as groups on a repo's settings page, or as a page that stands
   alone. It adds no component of its own; one it needs is added here first, for every page to have.
+- A group's totals (how many people, what is held, how full a pool is) are figures (`components/Figures`): label, value
+  in mono and a line under, in the group's box, never a column of cards. A list of records is still a table.
 - A few things each set on or off at once, such as who reviews your pull requests on My settings, are an on/off grid (`components/OnOffGrid`): radios under Off and On, a row each, saved as they are picked.
 - Two or three exclusive choices whose difference matters, such as an MCP server's Ordinary or Production, are choice
   cards (`components/ChoiceCards`): side by side, each a title and one line saying what it does, the picked one in the

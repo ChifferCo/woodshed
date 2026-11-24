@@ -395,6 +395,13 @@ URL on top of each env file's Repo settings values
   own line (`userSettings: terminal changed`, `reviews of my pull requests`, `own token for shared sessions`, `own
   Codex sign-in for reviews`, `git identity changed`). `answered 404` or `does not let the command line change` is a
   console from before `GET /api/cli/config` (cli/README.md, "Your choices on My settings").
+- **`woodshed-session` in a session refuses, or the session it started is missing.** It says why (console/README.md,
+  "Sessions that start sessions"): `only a My Woodshed session can` is no `/tmp/woodshed-start-token` (a shared session,
+  a question, review or QA run, a tainted one, or an image from before it; the session's log says `Session starts on`
+  when it got one), `its start token is not one the console knows` a token from a run that stopped, and `no longer has
+  write access to the repo on GitHub` its person's write access gone while they stay on People. The console
+  logs `sessionStarts: session started` or `start refused` with `why`, and for `start checks` the `status` New session's
+  own checks answered with, then the start's usual `fleet: session created` with `startedFrom`.
 - **A private session starts without its MCP logins, or Resume opens a blank
   claude.** The session's log says `Claude home restored`, `No Claude home
   saved yet` or `WARNING: Claude home not restored` with the status. Every 5

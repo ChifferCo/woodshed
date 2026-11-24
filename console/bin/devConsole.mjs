@@ -57,6 +57,13 @@ const server = path.join(woodshed, ...(process.env.DEV_CONSOLE_HOST_REPOS === '1
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-console-'));
 
 const now = new Date().toISOString();
+// /s/5747ed01's start token (console/sessionStarts.mjs), for session/bin/woodshed-session from this machine: with
+// DEV_CONSOLE_SESSION_API_PORT, `WOODSHED_CONSOLE_URL=http://127.0.0.1:<port> node session/startSessions.mjs` with this
+// file as its token file (WOODSHED_START_TOKEN_FILE). Only its hash is in the made-up state, as the console keeps it.
+const devStartToken = `wst_${crypto.randomBytes(32).toString('hex')}`;
+const devStartTokenFile = path.join(stateDir, 'start-token');
+fs.writeFileSync(devStartTokenFile, devStartToken, { mode: 0o600 });
+console.log('dev console: /s/5747ed01\'s start token for woodshed-session', { file: devStartTokenFile });
 const REVIEW_ID = 'beadfeed';
 // DEV_CONSOLE_REVIEW_PR=1 makes /s/beadfeed @local's own My Woodshed session, whose branch has a made-up open pull
 // request, #26701, answered by a stand-in gh (devReviewGh.mjs): for `woodshed review beadfeed`, which opens your own
@@ -253,6 +260,16 @@ const sessions = [
   }),
   // A private session that has seen production data (console/mcpRelay.mjs), owned by `local`: its card says Production in
   // place of Private, its pane bar Production data, and its pane offers no Share the app, Editor or Remote Control.
+  // A private session that handed a piece of work to a new session of local's (console/sessionStarts.mjs): the new one's
+  // hover card and Details say Started from, this one's Started here. It holds the start token above.
+  session('5747ed01', null, 'Plan the billing page', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true,
+    branch: 'woodshed/local-5747ed01', startTokenHash: crypto.createHash('sha256').update(devStartToken).digest('hex'),
+  }),
+  session('5747ed02', null, 'Move invoice totals to the server', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true,
+    branch: 'woodshed/local-5747ed02', startedFrom: '5747ed01', lastMessage: { role: 'assistant', text: 'Moved the totals into InvoiceService and opened a draft PR.' },
+  }),
   session('7a1e7ed1', null, 'Why order 42 shows as unpaid', {
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true, editor: true,
     taintedAt: new Date(Date.now() - 12 * 60_000).toISOString(), taintNoticedAt: new Date(Date.now() - 12 * 60_000).toISOString(),
