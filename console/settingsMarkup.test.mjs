@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 
-import { actions, button, checkbox, checklist, dialog, dialogActions, form, textField, escapeHtml, group, howTo, html, line, linkButton, Markup, note, pageHead, pill, row, steps, table, trusted, valueBox } from './settingsMarkup.mjs';
+import { actions, button, checkbox, checklist, dialog, figures, dialogActions, form, textField, escapeHtml, group, howTo, html, line, linkButton, Markup, note, pageHead, pill, row, steps, table, trusted, valueBox } from './settingsMarkup.mjs';
 import { standalonePage } from './server.mjs';
 
 // The console's own rows (public/settingsRows.js), drawn with an h() that keeps a tree, then written out as HTML the way
@@ -83,6 +83,16 @@ test('a checklist is the session start\'s: its marks, the step now named for a s
   const made = checklist([{ label: 'Org', state: 'done' }, { label: 'GitHub', state: 'now' }, { label: 'Repositories', state: 'next' }]).text;
   assert.match(made, /<li class="is-done"><span class="start-mark" aria-hidden="true">✓<\/span><span class="start-label">Org<\/span><\/li>/);
   assert.match(made, /<li class="is-now" aria-current="step">/);
+});
+
+test('figures are a group\'s numbers in its box: label, value and the line under, escaped, and none left empty', () => {
+  const made = group({ label: 'Credits' }, figures([{ label: 'Held', value: '$3,412.80' }, { label: 'Granted', value: '$3,960.00', sub: '198 <grants>' }, null])).text;
+  assert.equal(made, '<div class="set-group"><h2 class="set-group-label">Credits</h2><div class="set-rows-box"><div class="figures">'
+    + '<div class="figure"><div class="figure-label">Held</div><div class="figure-value">$3,412.80</div></div>'
+    + '<div class="figure"><div class="figure-label">Granted</div><div class="figure-value">$3,960.00</div><div class="figure-sub">198 &lt;grants&gt;</div></div>'
+    + '</div></div></div>');
+  const css = fs.readFileSync(new URL('./public/style.css', import.meta.url), 'utf8');
+  for (const c of ['figures', 'figure', 'figure-label', 'figure-value', 'figure-sub']) assert.match(css, new RegExp(`\\.${c} \\{`), `style.css draws .${c}`);
 });
 
 test('a page that stands alone: the settings frame drawn by the server, with the program\'s links, sign-out and dialog', () => {

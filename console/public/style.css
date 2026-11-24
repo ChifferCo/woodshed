@@ -779,6 +779,13 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .set-group-note { margin: 0 0 2px 2px; font-size: 13px; color: var(--sub); }
 .set-group-note .form-note { margin-top: 4px; }
 .set-rows-box { border: 1px solid var(--line); border-radius: 8px; }
+/* A group's numbers (components/Figures, settingsMarkup.mjs figures): a grid of label, value and line in the group's box,
+   split by `line-soft` rules, as many to a row as fit. */
+.figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); overflow: hidden; border-radius: 7px; }
+.figure { min-width: 0; padding: 12px 14px; margin: -1px 0 0 -1px; border-top: 1px solid var(--line-soft); border-left: 1px solid var(--line-soft); }
+.figure-label { font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--label); }
+.figure-value { margin-top: 4px; font-family: var(--mono); font-size: 20px; font-weight: 500; line-height: 1.3; overflow-wrap: anywhere; }
+.figure-sub { margin-top: 2px; font-size: 12.5px; color: var(--sub); }
 .set-rows-box > * + * { border-top: 1px solid var(--line-soft); }
 .set-rows-note { margin: 0; padding: 12px 14px; }
 .set-fold { scroll-margin-top: 12px; }

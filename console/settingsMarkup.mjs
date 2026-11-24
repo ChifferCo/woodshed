@@ -235,6 +235,18 @@ export function table(columns, rows, { minWidth = 640 } = {}) {
     el('tbody', null, rows.map((r) => el('tr', null, r.map((cell, i) => el('td', { class: cols[i]?.end ? 'end-cell' : null }, cell)))))));
 }
 
+/**
+ * A group's numbers, read at a glance (components/Figures): each a label, its value in mono, and an optional line
+ * under it. They go in a group's box, as rows do: `group({ label }, figures([...]))`.
+ * @param {{label: *, value: *, sub?: *}[]} items
+ */
+export function figures(items) {
+  return el('div', { class: 'figures' }, items.filter(Boolean).map(({ label, value, sub: under = null }) => el('div', { class: 'figure' },
+    el('div', { class: 'figure-label' }, label),
+    el('div', { class: 'figure-value' }, value),
+    under !== null && under !== '' && el('div', { class: 'figure-sub' }, under))));
+}
+
 /** A line of a log, as Webhook events draws one: when, what, its details, and its status word. */
 export function eventLine({ when, what, details = [], word, kind = null }) {
   return el('section', { class: 'set-fold is-plain event-line' }, el('div', { class: 'set-fold-head' },
