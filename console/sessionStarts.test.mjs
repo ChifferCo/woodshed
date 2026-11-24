@@ -49,7 +49,7 @@ async function serve({ sessions, startMine = null, allowed = () => true, canWrit
     });
     return { status: res.status, body: await res.json() };
   };
-  return { call, asked, starts, fleet, close: () => server.close() };
+  return { call, asked, starts, fleet, base: `http://127.0.0.1:${server.address().port}`, close: () => server.close() };
 }
 
 function holder(extra = {}) {
@@ -373,4 +373,47 @@ test('a session starts, messages, reads and stops the agents beside its own, thr
   assert.equal((await gone.call('POST', '/agents', { token, body: { prompt: 'x' } })).status, 403);
   assert.equal(asked.length, before, 'refused before the page\'s route');
   assert.equal((await api.call('GET', '/agents', { token: 'wst_nope' })).status, 401);
+});
+
+test('a message from the session waited on answers the wait, and is not typed in behind it', async (t) => {
+  const { token, session, child, sessions } = family();
+  const childToken = newStartToken();
+  child.startTokenHash = startTokenHash(childToken);
+  Object.assign(child, { state: 'working' });
+  const api = await serve({ sessions, noReplyMs: 60_000 });
+  t.after(api.close);
+  // The main session waits on the child (send --wait), and the child answers with woodshed-session reply.
+  const waiting = api.call('GET', `/sessions/${child.id}/wait?for=reply`, { token });
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(api.starts.openWaits(), 1);
+  const replied = await api.call('POST', `/sessions/${session.id}/messages`, { token: childToken, body: { text: 'For customers, I think.' } });
+  assert.deepEqual([replied.status, replied.body.sent, replied.body.answeredWait], [200, true, true]);
+  const answer = await waiting;
+  assert.equal(answer.body.reply.text, 'For customers, I think.');
+  assert.equal(answer.body.session.id, child.id);
+  assert.deepEqual(api.fleet.sent, [], 'handed to the wait, never typed in behind it');
+  assert.equal(api.starts.openWaits(), 0, 'the wait is gone once answered');
+
+  // With nobody waiting, a message is typed in as before.
+  await api.call('POST', `/sessions/${session.id}/messages`, { token: childToken, body: { text: 'One more thing.' } });
+  assert.equal(api.fleet.sent.length, 1);
+});
+
+test('a wait on a session that waits on this one answers at once, and a wait whose caller went is cleared', async (t) => {
+  const { token, session, child, sessions } = family();
+  const childToken = newStartToken();
+  child.startTokenHash = startTokenHash(childToken);
+  child.state = 'working';
+  const api = await serve({ sessions, waitMs: 60_000 });
+  t.after(api.close);
+  const ac = new AbortController();
+  const first = fetch(`${api.base}/sessions/${child.id}/wait?for=reply`, { headers: { authorization: `Bearer ${token}` }, signal: ac.signal }).catch(() => null);
+  await new Promise((r) => setTimeout(r, 40));
+  const back = await api.call('GET', `/sessions/${session.id}/wait?for=reply`, { token: childToken });
+  assert.deepEqual([back.status, back.body.waitingOnYou, back.body.session.id], [200, true, session.id]);
+  assert.equal(api.starts.openWaits(), 1, 'the answered-at-once wait never opened');
+  ac.abort();
+  await first;
+  for (let i = 0; i < 50 && api.starts.openWaits(); i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(api.starts.openWaits(), 0, 'gone once its caller went');
 });

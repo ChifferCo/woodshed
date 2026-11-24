@@ -69,6 +69,11 @@ const devAgentsToken = `wst_${crypto.randomBytes(32).toString('hex')}`;
 const devAgentsTokenFile = path.join(stateDir, 'start-token-agents');
 fs.writeFileSync(devAgentsTokenFile, devAgentsToken, { mode: 0o600 });
 console.log('dev console: /s/a6e1a6e1\'s start token for woodshed-session agent', { file: devAgentsTokenFile });
+// And /s/c1a0de02's, started from /s/5747ed01, so a reply can be sent as it (woodshed-session reply) while 5747ed01 waits.
+const devChatToken = `wst_${crypto.randomBytes(32).toString('hex')}`;
+const devChatTokenFile = path.join(stateDir, 'start-token-chat');
+fs.writeFileSync(devChatTokenFile, devChatToken, { mode: 0o600 });
+console.log('dev console: /s/c1a0de02\'s start token for woodshed-session', { file: devChatTokenFile });
 const REVIEW_ID = 'beadfeed';
 // DEV_CONSOLE_REVIEW_PR=1 makes /s/beadfeed @local's own My Woodshed session, whose branch has a made-up open pull
 // request, #26701, answered by a stand-in gh (devReviewGh.mjs): for `woodshed review beadfeed`, which opens your own

@@ -16,7 +16,10 @@
 //   POST /sessions/<id>/messages   {"text"}  ->  {"sent": true} or {"held": true}: typed in at its prompt as the Chat
 //                         tab's message is (fleet.send), headed with who sent it; held while it works, waits in line or
 //                         is paused, and typed once it is at its prompt again
-//   GET  /sessions/<id>/wait?for=reply|settled  ->  {"session", "deliveredAt", "waiting"?, "noReply"?}: answers once it
+//   GET  /sessions/<id>/wait?for=reply|settled  ->  {"session", "deliveredAt", "waiting"?, "noReply"?, "reply"?,
+//                         "waitingOnYou"?}: a message the other sends this one while it waits answers it (`reply`:
+//                         {text, at}), and is not typed in; a wait on a session that waits on this one answers at once
+//                         (`waitingOnYou`). Otherwise it answers once it
 //                         is done or needs the person (for=reply: once it worked after what was sent went in, a held
 //                         message counting from when it was typed), or stopped; {"waiting": true} after WAIT_MS, to ask
 //                         again
@@ -153,6 +156,9 @@ export function createSessionStarts({
 }) {
   const summary = (s) => startedSummary(s, { publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
 
+  // The open waits, by the waiting session's id: what it waits on, and how a reply from that session answers it.
+  const waits = new Map();
+
   function startedBy(session) {
     return fleet.sessions().filter((s) => s.startedFrom === session.id && s.owner === session.owner && !s.startedApart).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
@@ -204,7 +210,7 @@ export function createSessionStarts({
     if (wants === 'GET') req.resume();
     const query = new URL(req.url, 'http://console').searchParams;
     if (action === null) return reply(res, 200, { session: summary(other) });
-    if (action === 'wait') return wait(res, other, query.get('for') === 'reply' ? 'reply' : 'settled');
+    if (action === 'wait') return wait(res, session, other, query.get('for') === 'reply' ? 'reply' : 'settled');
     if (action === 'transcript') return transcript(res, session, other, query);
     if (!(await allowed(session.owner)) || !(await canWrite(session.owner))) {
       req.resume();
@@ -316,6 +322,15 @@ export function createSessionStarts({
     const head = to.startedFrom === from.id
       ? `[Message from ${named}, which started this session. Answer it with: woodshed-session reply "<answer>"]`
       : `[Message from ${named}, ${from.startedFrom === to.id ? 'which this session started' : 'another session of your person\'s'}. Answer it with: woodshed-session send ${from.id} "<answer>"]`;
+    // `to` is waiting on `from` (send --wait, wait): this is its answer, handed to that wait, not typed in behind it.
+    // Typed in, it would be held until that wait's turn ends, and that wait would never end.
+    const waiting = waits.get(to.id);
+    if (waiting && waiting.target === from.id) {
+      const at = new Date(now()).toISOString();
+      waiting.answer({ text: said, at });
+      console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome: 'answered a wait' });
+      return reply(res, 200, { sentAt: at, sent: true, answeredWait: true, session: summary(to) });
+    }
     const outcome = await fleet.send(to, `${head}\n\n${said}`);
     console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome });
     if (outcome === 'in-box') return reply(res, 409, { error: 'it went into the session\'s box but was not sent: a prompt came up as it was typed, which the person answers in its TUI tab' });
@@ -325,7 +340,33 @@ export function createSessionStarts({
   // The console's own reads of its statusd (fleet.readStatus, every few seconds) keep `state`: this watches it. For a
   // reply, only work after what was sent went in counts: a message held while the session worked goes in once that turn
   // is over, and the turn it was held behind is not its answer. `deliveredAt` says from when, for the caller's read.
-  async function wait(res, session, mode) {
+  async function wait(res, waiter, session, mode) {
+    const id = session.id;
+    // Each the other's: answered now, or both would wait for a reply neither can give.
+    if (waits.get(id)?.target === waiter.id) {
+      console.log('sessionStarts: wait answered at once, the other session waits on this one', { from: waiter.id, id });
+      return reply(res, 200, { session: summary(session), waitingOnYou: true });
+    }
+    // One open wait per session: a reply from the session it waits on answers it (message, above).
+    let replied = null;
+    let wake = null;
+    let closed = false;
+    const entry = { target: id, answer: (r) => { replied = r; wake?.(); } };
+    waits.set(waiter.id, entry);
+    // The request's own 'close' comes once its body is read; the response's, before it is sent, means the caller went.
+    res.on('close', () => {
+      if (res.writableFinished) return;
+      closed = true;
+      wake?.();
+    });
+    try {
+      return await waitLoop(res, session, mode, () => replied, () => closed, (resolve) => { wake = resolve; });
+    } finally {
+      if (waits.get(waiter.id) === entry) waits.delete(waiter.id);
+    }
+  }
+
+  async function waitLoop(res, session, mode, repliedOf, closedOf, onWake) {
     const id = session.id;
     const started = now();
     const lastAt = (s) => (s.lastMessage?.role === 'assistant' && s.lastMessage.at ? Date.parse(s.lastMessage.at) : 0);
@@ -334,6 +375,9 @@ export function createSessionStarts({
     for (;;) {
       const s = fleet.find(id);
       if (!s) return reply(res, 404, { error: `no session ${id}` });
+      // The waiting command went (Ctrl-C, its timeout): nothing to answer.
+      if (closedOf()) return res.end();
+      if (repliedOf()) return reply(res, 200, { session: summary(s), reply: repliedOf() });
       const at = deliveredAt === null ? null : new Date(deliveredAt).toISOString();
       if (!ACTIVE_STATUSES.has(s.status)) return reply(res, 200, { session: summary(s), deliveredAt: at });
       if (s.pendingMessages?.length) {
@@ -347,7 +391,10 @@ export function createSessionStarts({
       // Sent and gone in, but never seen at work since: it is not coming.
       if (settled && now() - deliveredAt >= noReplyMs) return reply(res, 200, { session: summary(s), deliveredAt: since, noReply: true });
       if (now() - started >= waitMs) return reply(res, 200, { session: summary(s), deliveredAt: since, waiting: true });
-      await new Promise((resolve) => setTimeout(resolve, pollMs));
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, pollMs);
+        onWake(() => { clearTimeout(timer); resolve(); });
+      });
     }
   }
 
@@ -408,5 +455,7 @@ export function createSessionStarts({
     handle,
     /** @returns {boolean}  whether the token is the start token of one of this console's running sessions */
     owns: (token) => Boolean(sessionForStartToken(token, fleet.sessions())),
+    /** @returns {number}  how many waits are open, for the tests */
+    openWaits: () => waits.size,
   };
 }

@@ -184,3 +184,26 @@ test('agent list, send, read and stop', async () => {
   assert.equal(await run({ ...args, argv: ['agent', 'send', 'claude', 'x'] }), 1);
   assert.match(out.stderr, /give the agent's id/);
 });
+
+test('send --wait prints the other session\'s reply; a wait on one waiting on this says so; reply never waits; --help anywhere', async () => {
+  const child = { ...started, id: 'c0c0c0c0', status: 'running', state: 'working', title: 'README summary' };
+  const { out, args } = io({ files: { '/tmp/token': TOKEN }, answers: [
+    [200, { sent: true, sentAt: '2026-11-24T17:10:00.000Z', session: child }],
+    [200, { session: child, reply: { text: 'Developers or customers?', at: '2026-11-24T17:11:00.000Z' } }],
+    [200, { session: { ...child, id: 'aaaa0001', title: 'Repo tour' }, waitingOnYou: true }],
+    [200, { sessions: [], startedFrom: { id: 'aaaa0001' } }],
+    [200, { sent: true, answeredWait: true, session: { id: 'aaaa0001' } }],
+  ] });
+  assert.equal(await run({ ...args, argv: ['send', 'c0c0c0c0', 'Ask', 'me', 'first', '--wait'] }), 0);
+  assert.match(out.stdout, /\[replied 17:11\] Developers or customers\?\n$/);
+  assert.equal(out.calls.filter((c) => c.url.includes('/transcript')).length, 0, 'the reply is the answer: nothing else to read');
+  assert.equal(await run({ ...args, argv: ['wait', 'aaaa0001', '--reply'] }), 0);
+  assert.match(out.stdout, /it is waiting on this session: answer it with woodshed-session send aaaa0001 "<answer>"/);
+  const before = out.stdout.length;
+  assert.equal(await run({ ...args, argv: ['reply', 'Customers.'] }), 0);
+  assert.doesNotMatch(out.stdout.slice(before), /Wait for it with/, 'a reply may be what the other waits for: never waited on');
+  const help = io();
+  assert.equal(await run({ ...help.args, argv: ['new', '--help'] }), 0);
+  assert.match(help.out.stdout, /^Usage: woodshed-session <command>/);
+  assert.equal(help.out.calls.length, 0);
+});

@@ -77,6 +77,7 @@ export function parseArgs(argv) {
       break;
     }
     if (word === '--json') flags.json = true;
+    else if (word === '--help' || word === '-h') flags.help = true;
     else if (word === '--wait') flags.wait = true;
     else if (word === '--reply') flags.reply = true;
     else if (word === '--all') flags.all = true;
@@ -117,9 +118,9 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
     return 2;
   }
   const { command, args, flags } = parsed;
-  if (!command || command === 'help' || command === '--help' || command === '-h') {
+  if (!command || command === 'help' || command === '--help' || command === '-h' || flags.help) {
     say(USAGE);
-    return command ? 0 : 2;
+    return command || flags.help ? 0 : 2;
   }
   if (!['new', 'list', 'get', 'send', 'reply', 'wait', 'read', 'stop', 'resume', 'rename', 'agent'].includes(command)) {
     stderr.write(`woodshed-session: unknown command ${command}\n\n${USAGE}\n`);
@@ -262,8 +263,18 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
     }
   }
 
+  function printWaited(session, { answer, waitingOnYou }) {
+    if (flags.json) return say(JSON.stringify({ session, ...(answer ? { reply: answer } : {}), ...(waitingOnYou ? { waitingOnYou: true } : {}) })), 0;
+    say(describe(session).join('\n'));
+    if (answer) say(`[replied ${String(answer.at ?? '').slice(11, 16)}] ${answer.text.trim()}`);
+    else say(`  it is waiting on this session: answer it with woodshed-session send ${session.id} "<answer>" (or reply, to the session that started this one), and end your turn`);
+    return 0;
+  }
+
   async function waitAndRead(id, sentAt) {
-    const { session, noReply, deliveredAt } = await waitFor(id, 'reply');
+    const { session, noReply, deliveredAt, reply: answer, waitingOnYou } = await waitFor(id, 'reply');
+    // It answered with a message of its own (woodshed-session reply or send) while this waited: that is the answer.
+    if (answer || waitingOnYou) return printWaited(session, { answer, waitingOnYou });
     // From when it went in: a message held behind a turn is answered after that turn, which is not its answer.
     const from = deliveredAt && deliveredAt > sentAt ? deliveredAt : sentAt;
     let entries = [];
@@ -313,13 +324,16 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
       if (flags.json && !flags.wait) return say(JSON.stringify(sent)), 0;
       say(sent.held ? `Held for session ${to}: it gets it once it is at its prompt (${sent.session?.status}${sent.session?.state ? `, ${sent.session.state}` : ''})`
         : `Sent to session ${to}${sent.unknown ? ' (the console did not hear back in time: it may have gone in)' : ''}`);
+      // A reply answers what the other session asked: it may be waiting for this very answer, so it is not waited on.
+      if (command === 'reply') return 0;
       if (!flags.wait) return say(`Wait for it with: woodshed-session wait ${to} --reply`), 0;
       return await waitAndRead(to, sent.sentAt);
     }
     if (command === 'wait') {
       const [id] = args;
       if (!ID_RE.test(id ?? '') || args.length > 1) throw new Refused('give the id of one session: woodshed-session wait <id>');
-      const { session, noReply } = await waitFor(id, flags.reply ? 'reply' : 'settled');
+      const { session, noReply, reply: answer, waitingOnYou } = await waitFor(id, flags.reply ? 'reply' : 'settled');
+      if (answer || waitingOnYou) return printWaited(session, { answer, waitingOnYou });
       say(flags.json ? JSON.stringify({ session, noReply: Boolean(noReply) }) : [...describe(session), ...waited(session, noReply)].join('\n'));
       return 0;
     }
