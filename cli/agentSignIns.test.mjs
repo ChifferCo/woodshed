@@ -11,7 +11,7 @@ import { createProjectAccess } from '../console/projectAccess.mjs';
 import { createHandler } from '../console/server.mjs';
 import { createUserSettings } from '../console/userSettings.mjs';
 import { createViewPrefs } from '../console/viewPrefs.mjs';
-import { readSignInFile, shownFile, signInFile } from './agentSignIns.mjs';
+import { consoleReason, readSignInFile, shownFile, signInFile } from './agentSignIns.mjs';
 import { createCredentials } from './credentials.mjs';
 import { EXIT, main } from './woodshed.mjs';
 
@@ -20,13 +20,16 @@ const OPENCODE_MARKER = 'OPENCODESECRETMARKER0123456789';
 const GROK_LOGIN = { default: { key: GROK_MARKER, refresh: `${GROK_MARKER}-refresh` } };
 const OPENCODE_LOGIN = { anthropic: { type: 'api', key: OPENCODE_MARKER } };
 
+const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 }
 
 // A console's real handler, command line sign-in and My settings over an in-memory secret store, with two people on it.
 // The command line is signed in as mia-dev, in a home of the test's own holding made-up sign-in files.
-async function consoleFor(t) {
+// `standIn(method, pathname, init)`: a Response in place of the console's own answer, for a gateway or another console.
+async function consoleFor(t, { standIn = () => null } = {}) {
   const store = { state: { people: { 'mia-dev': { claudeTokenAt: '2026-11-01T00:00:00.000Z' }, 'ola-dev': {} } }, save() {} };
   const saved = new Map();
   const secrets = {
@@ -61,7 +64,7 @@ async function consoleFor(t) {
       sleep: async () => {}, hostname: 'mia-laptop', platform: 'test', credentials,
       fetch: (url, init) => {
         asked.push(`${init?.method ?? 'GET'} ${new URL(url).pathname}`);
-        return fetch(url, init);
+        return standIn(init?.method ?? 'GET', new URL(url).pathname, init) ?? fetch(url, init);
       },
       openBrowser: (url) => { cli.decide({ code: new URL(url).searchParams.get('code'), login: 'mia-dev', approve: true }); },
     });
@@ -143,7 +146,7 @@ test('sign-in push refuses a malformed or missing file here, and sends nothing',
   c.write('.grok/auth.json', `{"default": "${GROK_MARKER}"}`);
   const bad = await c.run(['sign-in', 'push', 'grok', '--console', c.origin]);
   assert.equal(bad.code, EXIT.refused);
-  assert.match(bad.err, /\.grok\/auth\.json is not a Grok Build sign-in: that is not a Grok Build auth\.json: run grok login, then paste ~\/\.grok\/auth\.json\. Nothing was sent\./);
+  assert.match(bad.err, new RegExp(`${escaped(path.join('~', '.grok', 'auth.json'))} is not a Grok Build sign-in: that is not a Grok Build auth\.json: run grok login, then paste ~/\\.grok/auth\\.json\\. Nothing was sent\\.`));
   c.write('.local/share/opencode/auth.json', `not json ${OPENCODE_MARKER}`);
   const badJson = await c.run(['sign-in', 'push', 'opencode', '--json', '--console', c.origin]);
   assert.equal(badJson.code, EXIT.refused);
@@ -153,7 +156,7 @@ test('sign-in push refuses a malformed or missing file here, and sends nothing',
   fs.rmSync(path.join(c.home, '.grok'), { recursive: true });
   const missing = await c.run(['sign-in', 'push', 'grok', '--console', c.origin]);
   assert.equal(missing.code, EXIT.waiting);
-  assert.match(missing.err, /No Grok Build sign-in on this computer: ~\/\.grok\/auth\.json is not there\. Run grok login first\./);
+  assert.match(missing.err, new RegExp(`No Grok Build sign-in on this computer: ${escaped(path.join('~', '.grok', 'auth.json'))} is not there\\. Run grok login first\\.`));
   assert.deepEqual(c.saved.size, 0);
 });
 
@@ -199,4 +202,66 @@ test('each agent\'s file is where the agent keeps it', () => {
   assert.equal(shownFile(path.join(home, '.grok', 'auth.json'), home), path.join('~', '.grok', 'auth.json'));
   assert.equal(shownFile(path.join(path.sep, 'd', 'x'), home), path.join(path.sep, 'd', 'x'));
   assert.deepEqual(readSignInFile('grok', { env: {}, home: path.join(os.tmpdir(), 'woodshed-no-such-home') }).found, false);
+});
+
+// A gateway, or a console other than Woodshed's, that answers the save with what it was sent: the command line says its
+// own words, and none of the sign-in, in text or in --json.
+test('sign-in push never repeats a sign-in the console echoes back, whole or in part', async (t) => {
+  let answer = null;
+  const standIn = (method, pathname, init) => {
+    if (method !== 'POST' || !pathname.startsWith('/api/my/agent-auth/') || !answer) return null;
+    const { value } = JSON.parse(init.body);
+    const [status, body] = answer(value);
+    return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  };
+  const c = await consoleFor(t, { standIn });
+  c.write('.grok/auth.json', JSON.stringify(GROK_LOGIN));
+  c.write('.local/share/opencode/auth.json', JSON.stringify(OPENCODE_LOGIN));
+  const partial = GROK_MARKER.slice(5, 19);
+  const push = async (id, ...more) => {
+    const out = await c.run(['sign-in', 'push', id, '--console', c.origin, ...more]);
+    assert.doesNotMatch(out.out + out.err, new RegExp(partial), 'not even part of it');
+    return out;
+  };
+
+  answer = (value) => [400, { error: `bad request: ${value}` }];
+  const whole = await push('grok');
+  assert.equal(whole.code, EXIT.refused);
+  assert.equal(whole.err.trim(), `woodshed: ${c.origin} refused it (400) (its answer repeated part of the sign-in, so it is not shown).`);
+  const wholeJson = await push('opencode', '--json');
+  assert.equal(wholeJson.code, EXIT.refused);
+  assert.match(JSON.stringify(wholeJson.lines), /its answer repeated part of the sign-in, so it is not shown/);
+
+  // Only the key's middle, and with the console's own control characters around it.
+  answer = () => [409, { error: `no: …${partial}\u001b[0m` }];
+  const part = await push('grok');
+  assert.match(part.err, /refused it \(409\) \(its answer repeated part of the sign-in, so it is not shown\)\./);
+  answer = (value) => [502, { error: JSON.parse(value).default.refresh }];
+  const gateway = await push('grok', '--json');
+  assert.equal(gateway.code, EXIT.failed);
+  assert.match(JSON.stringify(gateway.lines), /answered 502 \(its answer repeated part of the sign-in, so it is not shown\)/);
+  answer = (value) => [403, { error: value }];
+  assert.match((await push('grok')).err, /did not take it \(403\): a console from before the command line could save a sign-in\. Save it on My settings\. \(its answer repeated/);
+
+  // A reason of the console's own, holding none of it, is still said after the command line's words.
+  answer = () => [409, { error: 'this console has no secret store, so My settings cannot be saved' }];
+  assert.match((await push('grok')).err, /refused it \(409\): this console has no secret store, so My settings cannot be saved\./);
+
+  // A success that echoes it: savedAt is a timestamp or nothing.
+  answer = (value) => [200, { agent: 'grok', set: true, savedAt: value }];
+  const echoedOk = await push('grok', '--json');
+  assert.equal(echoedOk.code, EXIT.done);
+  assert.equal(echoedOk.lines[0].savedAt, null);
+  assert.deepEqual(c.saved.size, 0, 'the stand-in answered every save');
+});
+
+test('consoleReason drops the whole value, any field of it, or a run of one', () => {
+  const value = JSON.stringify(GROK_LOGIN);
+  assert.deepEqual(consoleReason(`x ${value}`, value), { text: null, dropped: true });
+  assert.deepEqual(consoleReason(`x ${GROK_MARKER}-refresh`, value), { text: null, dropped: true });
+  assert.deepEqual(consoleReason(`…${GROK_MARKER.slice(3, 15)}…`, value), { text: null, dropped: true });
+  assert.deepEqual(consoleReason('xai-0123456789ab', 'xai-0123456789abcdefghij'), { text: null, dropped: true }, 'a key on its own, cut');
+  assert.deepEqual(consoleReason('that is not a Grok Build auth.json: run grok login, then paste ~/.grok/auth.json', value).dropped, false);
+  assert.deepEqual(consoleReason('a\u0007b', value), { text: 'ab', dropped: false });
+  assert.deepEqual(consoleReason(undefined, value), { text: null, dropped: false });
 });
