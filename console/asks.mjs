@@ -21,7 +21,11 @@ export function questionText(text) {
 
 // What of a thread reaches the session: the newest messages, within both caps.
 export const THREAD_MAX_MESSAGES = 30;
-export const THREAD_MAX_CHARS = 12_000;
+// The AWS launcher cuts a session's PROMPT to about 6,000 characters from the end (providers/aws/ecsLauncher.mjs), so the
+// thread, which follows the question, must fit in what is left or it loses its newest messages and its closing tag.
+export const THREAD_MAX_CHARS = 4_000;
+const PROMPT_ROOM_CHARS = 5_000;
+const THREAD_FRAME_CHARS = 400;
 const MESSAGE_MAX_CHARS = 2_000;
 
 /**
@@ -29,7 +33,7 @@ const MESSAGE_MAX_CHARS = 2_000;
  * @param {{name: string, text: string}[]} messages  oldest first
  * @returns {{block: string, count: number, chars: number}|null}  null with no messages; the newest are kept
  */
-export function threadBlock(messages) {
+export function threadBlock(messages, maxChars = THREAD_MAX_CHARS) {
   const lines = [];
   let chars = 0;
   for (const m of [...messages].reverse()) {
@@ -37,7 +41,7 @@ export function threadBlock(messages) {
     const text = m.text.replaceAll(/<\/?slack-thread>/gi, '').trim().slice(0, MESSAGE_MAX_CHARS);
     if (!text) continue;
     const line = `[${m.name.replaceAll(/[\]\n]/g, ' ')}] ${text}`;
-    if (chars + line.length > THREAD_MAX_CHARS && lines.length) break;
+    if (chars + line.length > maxChars) break;
     lines.unshift(line);
     chars += line.length;
   }
@@ -127,7 +131,7 @@ export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, n
    * missing scope or an unreachable Slack leaves it out.
    * @returns {Promise<string|null>}
    */
-  async function threadContext({ team, channel, threadTs, before, after = null }) {
+  async function threadContext({ team, channel, threadTs, before, after = null, questionChars = 0 }) {
     if (!threadTs || typeof slack.thread !== 'function') return null;
     try {
       const read = await slack.thread({ channel, threadTs, before, after });
@@ -144,7 +148,8 @@ export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, n
         if (!who?.member || (team && who.team && who.team !== team) || (team && m.team && m.team !== team)) continue;
         named.push({ name: nameOf(m.user, who.name) ?? m.user, text: m.text });
       }
-      const built = threadBlock(named);
+      const room = Math.min(THREAD_MAX_CHARS, PROMPT_ROOM_CHARS - questionChars - THREAD_FRAME_CHARS);
+      const built = room > 0 ? threadBlock(named, room) : null;
       console.log('asks: thread read', { channel, messages: built?.count ?? 0, chars: built?.chars ?? 0 });
       return built?.block ?? null;
     } catch (err) {
@@ -175,7 +180,7 @@ export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, n
     // A follow-up carries what others posted since the session's last answer; a new question, the thread so far.
     const sinceTs = session?.answeredAt ? (Date.parse(session.answeredAt) / 1000).toFixed(6) : null;
     const followUp = async () => {
-      const context = await threadContext({ team, channel, threadTs, before: ts, after: sinceTs });
+      const context = await threadContext({ team, channel, threadTs, before: ts, after: sinceTs, questionChars: question.length });
       return `Follow-up in the Slack thread from ${session.slack?.user === user ? 'the person who asked' : 'someone else'}:\n${question}${context ? `\n\n${context}` : ''}`;
     };
     if (session && ACTIVE_STATUSES.has(session.status)) {
@@ -194,7 +199,7 @@ export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, n
       return { outcome: 'resumed', sessionId: session.id };
     }
     console.log('asks: new question', { channel, threaded: Boolean(threadTs), chars: question.length });
-    const context = await threadContext({ team, channel, threadTs, before: ts });
+    const context = await threadContext({ team, channel, threadTs, before: ts, questionChars: question.length });
     return start({ channel, threadTs: thread, user, name: who.name, text: question, context });
   }
 

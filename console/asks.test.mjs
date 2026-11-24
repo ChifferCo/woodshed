@@ -254,3 +254,14 @@ test('threadBlock keeps the newest messages within its caps', () => {
   assert.doesNotMatch(block, /m19\b/);
   assert.equal(threadBlock([]), null);
 });
+
+test('the thread fits what is left of the prompt after the question, keeping the newest and a closed block', async () => {
+  const long = Array.from({ length: 20 }, (_, i) => ({ user: 'U2', team: 'T1', text: `m${i} ${'x'.repeat(500)}`, ts: `100.${i + 10}` }));
+  const { asks, fleet } = setup({ thread: async () => ({ messages: long }) });
+  const { sessionId } = await asks.handleMention(inThread);
+  const { prompt } = fleet.find(sessionId);
+  assert.ok(prompt.length < 5_000, `prompt is ${prompt.length}`);
+  assert.match(prompt, /m19 /);
+  assert.doesNotMatch(prompt, /m0 /);
+  assert.match(prompt, /<\/slack-thread>$/);
+});
