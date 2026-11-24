@@ -910,6 +910,10 @@ one session's machine to another's. `list --all` lists them; `list` alone the on
   prompt as the Chat tab's message is (`fleet.send`), headed `[Message from session <id> "<title>", …]` with how to
   answer, so the agent and its person tell it from what the person typed. It is held while that session works, waits
   in line or is paused, and typed once it is at its prompt again, as a held Chat message is.
+- A message from the session a wait is on answers that wait: `send … --wait` and `wait` print it (`[replied HH:MM] …`),
+  and it is not typed in behind the wait, where it would be held until the waiting turn ended, which it never would. A
+  wait on a session that is itself waiting on this one answers at once (`waitingOnYou`), so two sessions never wait on
+  each other: a session answering a message replies and ends its turn, and `reply` never waits.
 - `wait <id>` answers once it is done, needs its person, or stopped; `--reply` (and `send --wait`) once it has worked on
   what was sent, or says nothing took it up (never seen working, with nothing held, for 90 s). The console answers each
   wait within 4 minutes and the command asks again.
@@ -932,7 +936,7 @@ The console logs `sessionStarts: agent asked for` with `from` and `agent`, then 
 for`.
 
 The console logs `sessionStarts: message` with `from`, `to`, the `chars` and `outcome` (`sent`, `queued`, `in-box`,
-`unknown`), `sessionStarts: session stopped`, `sessionStarts: resume` with the `status`, `sessionStarts: session renamed`, and `sessionStarts: transcript
+`unknown`, `answered a wait`), `sessionStarts: wait answered at once, the other session waits on this one`, `sessionStarts: session stopped`, `sessionStarts: resume` with the `status`, `sessionStarts: session renamed`, and `sessionStarts: transcript
 not read` when the other's statusd did not answer.
 
 ### MCP servers
