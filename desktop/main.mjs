@@ -205,6 +205,8 @@ function createMainWindow({ waiting = false } = {}) {
   // rail, a notification), and on coming back to the window while it shows.
   const contents = mainWindow.webContents;
   contents.on('did-navigate', () => { bellOnPage = false; sessionOpened(); });
+  // A page that crashed shows nothing sent to it, until the next one asks for the list: the OS's notifications meanwhile.
+  contents.on('render-process-gone', () => { bellOnPage = false; });
   contents.on('did-navigate-in-page', (_event, _url, isMainFrame) => { if (isMainFrame) sessionOpened(); });
   mainWindow.on('focus', sessionOpened);
   guard(mainWindow);

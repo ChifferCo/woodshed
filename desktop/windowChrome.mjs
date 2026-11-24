@@ -8,9 +8,10 @@ export const TRAFFIC_LIGHTS = Object.freeze({ x: 16, y: 19 });
 // The room the lights take at the left of the row: 16px in, three lights 52px across, and a gap. `!important`, since the
 // console sets each bar's padding in more than one rule.
 const LIGHTS_ROOM = 80;
-// The rail's width less the lights' room: 448px at 100%, the row's 396 (360, and the app's notifications bell) with its
-// 10px to spare kept (designSystem/README.md).
-const RAIL_BASE = 368;
+// The rail's width less the lights' room: 412px at 100%, the row's 360 with its 10px to spare kept, and 448px with the
+// app's notifications bell in the row, which a console from before the bell does not draw (designSystem/README.md).
+const RAIL_BASE = 332;
+const BELL_ROOM = 36;
 
 // Anything a person clicks, types in or opens, inside a bar the window is dragged by, stays a control.
 const CONTROLS = ':is(a, button, input, select, textarea, label, summary, details, [role="button"], [role="tab"], [role="menu"], [tabindex], .who-list, .menu, [contenteditable])';
@@ -30,7 +31,7 @@ html::before { content: ""; position: fixed; top: 0; left: 0; right: 0; height: 
 .rail-head { padding-left: ${room}px !important; -webkit-app-region: drag; }
 /* The row keeps Mine | Everyone, People, + New session and the bell beside the lights: the rail is wider than in a browser by the
    room the lights take, less what the row had to spare. */
-@media (min-width: 900px) { .rail { flex-basis: ${RAIL_BASE + room}px !important; } }
+@media (min-width: 900px) { .rail { flex-basis: ${RAIL_BASE + room}px !important; } .shell:has(.rail-head.has-bell) .rail { flex-basis: ${RAIL_BASE + BELL_ROOM + room}px !important; } }
 /* The pane bar is the handle on the right. With the rail hidden it starts under the lights, so it makes room for them. */
 .pane-bar { -webkit-app-region: drag; }
 .shell.is-railless .pane-bar { padding-left: ${Math.max(0, room - 40)}px !important; }
