@@ -2,8 +2,10 @@
 // a session of its own (`woodshed-session new`, session/startSessions.mjs), starts it here, and follows it.
 //
 //   POST /sessions        Authorization: Bearer <WOODSHED_START_TOKEN>  {"prompt", "name"?, "branch"?, "project"?,
-//                         "agent"?, "model"?, "effort"?}  ->  201 {"session": <summary>}: a private session of the same
-//                         person, as New session starts one, with `startedFrom` naming this session
+//                         "agent"?, "model"?, "effort"?, "separate"?}  ->  201 {"session": <summary>}: a private session of
+//                         the same person, as New session starts one, with `startedFrom` naming this session. A piece of
+//                         this session's work nests under it on the rail and is in its list; `separate: true` is work
+//                         of its own (`startedApart`), at the top level and in no list but `?all=1`
 //   GET  /sessions[?all=1]  ->  {"sessions": [<summary>], "startedFrom": <summary>|null}: the sessions this one started
 //                         (all=1: every private session of the person's it reaches), newest first, and its starter
 //   GET  /sessions/<id>   ->  {"session": <summary>}: one of them; 404 for any other
@@ -99,6 +101,7 @@ export function startedSummary(s, { publicUrl, linkQuery = null }) {
     id: s.id, title: text(s.title, 200), status: s.status, state: s.state ?? null, project: s.project ?? null, branch: s.branch ?? null,
     agent: s.options?.agent === 'codex' ? 'codex' : 'claude', prUrl: s.prUrl ?? null, lastMessage: tainted ? null : text(s.lastMessage?.text, 500),
     ...(tainted ? { tainted: true } : {}),
+    ...(s.startedApart ? { separate: true } : {}),
     createdAt: s.createdAt ?? null, startedAt: s.startedAt ?? null, stoppedAt: s.stoppedAt ?? null, stopReason: text(s.stopReason, 200),
     error: text(s.error, 300), url: sessionLink(publicUrl, s.id, linkQuery),
   };
@@ -140,7 +143,7 @@ export function createSessionStarts({
   const summary = (s) => startedSummary(s, { publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
 
   function startedBy(session) {
-    return fleet.sessions().filter((s) => s.startedFrom === session.id && s.owner === session.owner).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    return fleet.sessions().filter((s) => s.startedFrom === session.id && s.owner === session.owner && !s.startedApart).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
   async function handle(req, res) {
@@ -335,6 +338,7 @@ export function createSessionStarts({
       prompt, name: typeof body.name === 'string' ? body.name : '', workOn: branch, agent,
       model: typeof body.model === 'string' ? body.model : '', effort: typeof body.effort === 'string' ? body.effort : '', permissionMode,
       project: typeof body.project === 'string' && body.project ? body.project : from.project, startedFrom: from.id,
+      ...(body.separate === true ? { startedApart: true } : {}),
     });
     if (answer.status !== 201) {
       console.log('sessionStarts: start refused', { from: from.id, owner: login, why: 'start checks', status: answer.status });

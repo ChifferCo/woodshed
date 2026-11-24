@@ -1178,6 +1178,74 @@
     return out;
   }
 
+  /**
+   * The rail's groups (session.js): a session started as a piece of another's work (`startedFrom`, not `startedApart`)
+   * nests under it while that one is live and on the same list, the same person's. Once it stops, they are each on their
+   * own again, so a live session never hides in a folded Stopped zone.
+   * @param {object[]} listed  the sessions the rail shows
+   * @returns {{top: object[], kids: Map<string, object[]>, parentOf: Map<string, object>}}  `top` the sessions in no
+   *   group, `kids` each group's sessions by its session's id (those asking their person first, asksPerson, then the
+   *   live, then the newest), `parentOf` the group each nested one is in
+   */
+  /**
+   * Whether a session in a group asks its person for something: a question or an approval on its screen, or paused
+   * waiting for Resume. Narrower than needsYou, which counts a live session that is done (waiting for the next message)
+   * too: a finished piece of a group's work is not a call for the person.
+   * @returns {boolean}
+   */
+  function asksPerson(s) {
+    return isLive(s) ? displayStatus(s).key === 'needs-you' : needsYou(s);
+  }
+
+  function railGroups(listed) {
+    const byId = new Map(listed.map((s) => [s.id, s]));
+    const parentOf = new Map();
+    for (const s of listed) {
+      const parent = s.startedFrom && !s.startedApart ? byId.get(s.startedFrom) : null;
+      if (parent && parent.id !== s.id && parent.owner && parent.owner === s.owner && isLive(parent)) parentOf.set(s.id, parent);
+    }
+    // A loop (two sessions each started from the other, which the console never makes) nests none of its sessions:
+    // all of them are found before any is taken out, so the last one is not left nested under the first.
+    const inLoop = [];
+    for (const id of parentOf.keys()) {
+      const seen = new Set([id]);
+      for (let p = parentOf.get(id); p; p = parentOf.get(p.id)) {
+        if (p.id === id) {
+          inLoop.push(id);
+          break;
+        }
+        if (seen.has(p.id)) break;
+        seen.add(p.id);
+      }
+    }
+    for (const id of inLoop) parentOf.delete(id);
+    const kids = new Map();
+    for (const s of listed) {
+      const parent = parentOf.get(s.id);
+      if (parent) kids.set(parent.id, [...(kids.get(parent.id) ?? []), s]);
+    }
+    const order = (s) => [asksPerson(s) ? 0 : 1, isLive(s) ? 0 : 1];
+    for (const list of kids.values()) {
+      list.sort((a, b) => {
+        const [x, y] = [order(a), order(b)];
+        return x[0] - y[0] || x[1] - y[1] || String(b.createdAt).localeCompare(String(a.createdAt));
+      });
+    }
+    return { top: listed.filter((s) => !parentOf.has(s.id)), kids, parentOf };
+  }
+
+  /** @returns {{count: number, needs: number}}  how many sessions are in a group, all the way down, and how many need their person */
+  function groupCounts(id, kids) {
+    let count = 0;
+    let needs = 0;
+    for (const s of kids.get(id) ?? []) {
+      const below = groupCounts(s.id, kids);
+      count += 1 + below.count;
+      needs += (asksPerson(s) ? 1 : 0) + below.needs;
+    }
+    return { count, needs };
+  }
+
   function peekView(s, data, { project = null, nowMs = Date.now() } = {}) {
     const st = displayStatus(s);
     const live = isLive(s);
@@ -2041,6 +2109,6 @@
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, askChoice, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, hoursText, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, waitProgress, clock, prChip, prChips, hasPrs, shownPrs, prLines, peekView, startedLinks, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
+    startProgress, waitProgress, clock, prChip, prChips, hasPrs, shownPrs, prLines, peekView, startedLinks, railGroups, groupCounts, asksPerson, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
 })();

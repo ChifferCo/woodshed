@@ -229,6 +229,13 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 .rsub { display: flex; align-items: center; gap: 6px; min-height: 24px; padding-left: 13px; font-family: var(--mono); font-size: 10.5px; color: var(--meta); }
 .rsub-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rsub b { font-weight: 600; }
+.rkids { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; margin: 1px 0 0 13px; padding: 1px 6px 1px 4px; border: 0; border-radius: 4px; background: none; font-family: var(--mono); font-size: 10.5px; color: var(--sub); cursor: pointer; }
+.rkids:hover { background: var(--chip-count); color: var(--ink); }
+.rkids .caret { width: 10px; text-align: center; }
+.rkids-needs { color: var(--wait); font-weight: 600; }
+.rgroup { display: flex; flex-direction: column; gap: 6px; margin-left: 10px; padding-left: 8px; border-left: 2px solid var(--line); }
+.rin { padding-left: 13px; font-size: 11px; color: var(--sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rin a { color: var(--sub); }
 .is-needs-you .rsub b { color: var(--wait); } .is-working .rsub b { color: var(--slate); } .is-done .rsub b { color: var(--green); }
 .is-review .rsub b, .is-job .rsub b { color: var(--slate); } .is-paused .rsub b { color: var(--wait); } .is-finished .rsub b { color: var(--green); }
 .is-failed .rsub b { color: var(--bad); } .is-queued .rsub b { color: var(--wait); }
@@ -1131,6 +1138,7 @@ table.layer-table { width: 100%; min-width: 460px; border-collapse: collapse; fo
   .zone { padding: 0; }
   .zone-head { padding: 12px 14px 6px; }
   .zone-cards { gap: 0; }
+  .rgroup { gap: 0; margin-left: 14px; padding-left: 0; border-left: 2px solid var(--line-soft); }
   .rcard, .rcard.is-stopped { gap: 3px; padding: 10px 6px 10px 14px; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; background: var(--ground); }
   .rcard[aria-current="true"] { box-shadow: inset 3px 0 0 var(--amber); }
   .rcard.has-project, .rcard.has-project.is-stopped, .rcard.has-project:hover { border-left: 3px solid var(--project, var(--line-soft)); padding-left: 11px; }
