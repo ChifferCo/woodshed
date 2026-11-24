@@ -1044,8 +1044,8 @@ URL on top of each env file's Repo settings values
   console's terminal page (console/README.md, "The terminal page"), and the session's ttyd only the connection. The
   frame's console logs `[terminal] websocket closed` with the code each time it drops. The console logs `terminal:
   first message refused` with why when what the browser sent first was no terminal's size, and `terminal: websocket
-  dropped` when the session's side went. `localStorage['woodshed-terminal-page'] = 'ttyd'` in the browser's console
-  opens ttyd's own page instead, to tell the page from the connection; `localStorage.removeItem` of it goes back.
+  dropped` when the session's side went. In the session, `/tmp/ttyd.log` (`/tmp/ttyd-shell.log` for the Terminal tab)
+  says when each websocket opened and closed.
 - **Open ▾ has no Redis, or Redis answers `not found` or `the Redis viewer is not running`.**
   No Redis means the project file's env never mentions `REDIS_URL`, so the session started none: its log says
   `Redis not started`, and statusd reports `redis: false`. `not found` means the session started from an image without
