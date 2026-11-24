@@ -31,6 +31,9 @@
 //                        (attachments.mjs)
 //   POST /answer         {"text": "<Markdown>"}  ->  {"posted": true|false}: an ask session's answer, posted in its
 //                        Slack thread (asks.mjs). 404 for any other session
+//   POST /issues         {"repo", "title", "body", "labels"?}  ->  {"number", "url", "labels", "labelsIgnored"}: an ask
+//                        session asks the console to open a GitHub issue with its App for whoever last mentioned the bot
+//                        (asks.mjs openIssue). 404 for any other session, 403 with why when refused
 //   POST /qa-report      {"verdict", "report", "sha", "costUsd"}  ->  204: a QA session's result (session/qa.sh), written
 //                        into the pull request's QA comment, after which the console stops the session
 //                        (qaSessions.mjs). 404 for any other session, 409 for a second report
@@ -72,7 +75,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { isAnthropicPath, proxyCredential } from './anthropicProxy.mjs';
 import { isMcpPath } from './mcpRelay.mjs';
 import { bearerOf, isOpenAiPath } from './openaiProxy.mjs';
-import { MAX_ANSWER_CHARS } from './asks.mjs';
+import { MAX_ANSWER_CHARS, MAX_ISSUE_BODY_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
 import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES, MAX_REPORT_CHARS, isWebm, parseQaReport } from './qaSessions.mjs';
@@ -85,6 +88,7 @@ const MAX_PROGRESS_BYTES = 256;
 const MAX_CODEX_AUTH_BYTES = 40_000;
 // JSON escapes can grow the text up to six-fold; past this the answer is over MAX_ANSWER_CHARS anyway.
 const MAX_ANSWER_BYTES = MAX_ANSWER_CHARS * 6;
+const MAX_ISSUE_BYTES = MAX_ISSUE_BODY_CHARS * 6 + 10_000;
 // The report, cut to MAX_REPORT_CHARS by the console, plus the verdict: the same six-fold for escapes.
 const MAX_QA_REPORT_BYTES = MAX_REPORT_CHARS * 6 + 10_000;
 // The QA sessions with a video or poster on its way: one at a time each, taken before the body is read, so videos sent at once
@@ -207,7 +211,7 @@ export function createSessionApi({
       }
       return mcpRelay.handle(req, res, sessionForAuthorization(req.headers.authorization, fleet.sessions()));
     }
-    const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/qa-video', '/qa-poster', '/review-report', '/egress'];
+    const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/issues', '/qa-report', '/qa-video', '/qa-poster', '/review-report', '/egress'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -219,6 +223,7 @@ export function createSessionApi({
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings, fleet);
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
     if (pathname === '/answer') return answerReply(req, res, session, asks);
+    if (pathname === '/issues') return issueReply(req, res, session, asks);
     if (pathname === '/qa-report') return qaReportReply(req, res, session, fleet);
     if (pathname === '/qa-video') return qaRecordingReply(req, res, session, fleet, VIDEO);
     if (pathname === '/qa-poster') return qaRecordingReply(req, res, session, fleet, POSTER);
@@ -457,6 +462,33 @@ async function progressReply(req, res, session, fleet) {
   fleet.startStep(session, step);
   res.writeHead(204);
   return res.end();
+}
+
+// An issue an ask session asks the console to open (asks.openIssue): {repo, title, body, labels?}. The console files it
+// with its App; the session's own token reads only. A refusal says why, for the session to tell the thread.
+async function issueReply(req, res, session, asks) {
+  if (!asks || !isAsk(session)) {
+    req.resume();
+    return reply(res, 404, { error: 'only a question from Slack opens issues' });
+  }
+  req.setEncoding('utf8');
+  let text = '';
+  for await (const chunk of req) {
+    text += chunk;
+    if (text.length > MAX_ISSUE_BYTES) return reply(res, 413, { error: 'too large' });
+  }
+  let issue;
+  try {
+    issue = JSON.parse(text);
+  } catch {
+    return reply(res, 400, { error: 'not JSON' });
+  }
+  try {
+    return reply(res, 200, await asks.openIssue(session, issue ?? {}));
+  } catch (err) {
+    if (!err.shown) throw err;
+    return reply(res, 403, { error: err.message });
+  }
 }
 
 // An ask session's answer, posted in its Slack thread.

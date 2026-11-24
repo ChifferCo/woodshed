@@ -13,6 +13,12 @@ const TITLE_CHARS = 80;
 const EVENTS_KEPT = 200;
 // The session API takes an answer up to this; Slack's own limit is per part, and slack.mjs splits a long one.
 export const MAX_ANSWER_CHARS = 40_000;
+// A thread cannot turn into a stream of issues: this many for one question, and this many for one person an hour.
+export const MAX_ISSUES_PER_QUESTION = 3;
+export const MAX_ISSUES_PER_PERSON_HOUR = 5;
+const MAX_ISSUE_TITLE = 200;
+export const MAX_ISSUE_BODY_CHARS = 20_000;
+const MAX_ISSUE_LABELS = 5;
 
 /** @returns {string}  the question without the mention of the bot that leads it */
 export function questionText(text) {
@@ -25,10 +31,13 @@ function titleFrom(text) {
 }
 
 /**
- * @param {{store: {state: object, save: () => void}, fleet: object, slack: object, publicUrl: string, now?: () => number}} deps
+ * @param {{store: {state: object, save: () => void}, fleet: object, slack: object, publicUrl: string, now?: () => number,
+ *          issues?: {projectForRepo: (repo: string) => object|null, githubOf: (project: object) => object,
+ *                    loginFor: (slackId: string) => string|null}|null}} deps
  *   `fleet` is fleet.mjs's: createSession, send, resumeShared, sessions
+ *   `issues` lets a question open GitHub issues (openIssue): the console's repos, their clients, and who a Slack user is on GitHub
  */
-export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, now = Date.now }) {
+export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, issues = null, now = Date.now }) {
   const { state } = store;
 
   // Events being handled now, and those handled. One is marked handled only once it is, so a mention whose handling
@@ -119,11 +128,13 @@ export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, n
         console.log('asks: follow-up for a stopping session', { id: session.id });
         return { outcome: 'ignored', reason: 'its session is stopping' };
       }
+      session.slack.lastUser = user;
       const sent = await fleet.send(session, followUp());
       console.log('asks: follow-up typed in', { id: session.id, outcome: sent });
       return { outcome: 'sent', sessionId: session.id };
     }
     if (session?.kept) {
+      session.slack.lastUser = user;
       await fleet.resumeShared(session, { text: followUp(), by: `slack:${user}`, why: 'slack' });
       update(session, { noticedAt: null });
       return { outcome: 'resumed', sessionId: session.id };
@@ -152,6 +163,75 @@ export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, n
     return posted;
   }
 
+  // When each person's issues were opened, for the hourly limit. Kept in memory: a restart gives a fresh hour.
+  const issuesByPerson = new Map();
+
+  function refuseIssue(session, why, extra = {}) {
+    console.warn('asks: issue refused', { id: session.id, why, ...extra });
+    return Object.assign(new Error(why), { shown: true });
+  }
+
+  /**
+   * Opens a GitHub issue for a question, as the console's App: the session's token never writes. For whoever last
+   * mentioned the bot in the thread, only when Slack's user is linked to a GitHub login that writes to the repo.
+   * @param {object} session  an ask session
+   * @param {{repo?: string, title?: string, body?: string, labels?: string[]}} issue
+   * @returns {Promise<{number: number, url: string, labels: string[], labelsIgnored: string[]}>}
+   * @throws {Error}  `shown`, with why it was refused
+   */
+  async function openIssue(session, issue) {
+    if (!isAsk(session) || !session.slack) throw Object.assign(new Error('only a question from Slack opens issues'), { shown: true });
+    if (!issues) throw refuseIssue(session, 'this console opens no issues');
+    // Asks are never tainted today; a session that had seen production data must not file anything.
+    if (session.taintedAt || session.tainted) throw refuseIssue(session, 'a session that has seen production data opens no issues');
+    const title = String(issue?.title ?? '').trim();
+    const body = String(issue?.body ?? '').trim();
+    if (!title || title.length > MAX_ISSUE_TITLE || typeof issue?.body !== 'string' || body.length > MAX_ISSUE_BODY_CHARS) {
+      throw refuseIssue(session, `give a title (at most ${MAX_ISSUE_TITLE} characters) and a body (at most ${MAX_ISSUE_BODY_CHARS})`);
+    }
+    if (issue.labels !== undefined && (!Array.isArray(issue.labels) || issue.labels.length > MAX_ISSUE_LABELS || issue.labels.some((l) => typeof l !== 'string'))) {
+      throw refuseIssue(session, `labels are a list of at most ${MAX_ISSUE_LABELS} names`);
+    }
+    const repo = String(issue?.repo ?? '');
+    const project = issues.projectForRepo(repo);
+    if (!project) throw refuseIssue(session, `${repo || 'no repo'} is not one of this console's repos`, { repo });
+    const asker = session.slack.lastUser ?? session.slack.user;
+    const login = issues.loginFor(asker);
+    if (!login) throw refuseIssue(session, 'the person who asked is not linked to a GitHub account on People', { repo, asker });
+    if ((session.issuesOpened ?? 0) >= MAX_ISSUES_PER_QUESTION) {
+      throw refuseIssue(session, `at most ${MAX_ISSUES_PER_QUESTION} issues for one question`, { repo, asker: login });
+    }
+    const recent = (issuesByPerson.get(login) ?? []).filter((t) => now() - t < 3_600_000);
+    if (recent.length >= MAX_ISSUES_PER_PERSON_HOUR) {
+      throw refuseIssue(session, `at most ${MAX_ISSUES_PER_PERSON_HOUR} issues per person an hour`, { repo, asker: login });
+    }
+    const gh = issues.githubOf(project);
+    let writes;
+    try {
+      writes = await gh.canWrite(login);
+    } catch (err) {
+      throw refuseIssue(session, 'GitHub would not say whether the person can write to the repo: try again', { repo, asker: login, message: String(err?.message ?? err).split('\n')[0] });
+    }
+    if (!writes) throw refuseIssue(session, `@${login} has no write access to ${project.repo}`, { repo: project.repo, asker: login });
+    let known = [];
+    const asked = (issue.labels ?? []).map((l) => l.trim()).filter(Boolean);
+    if (asked.length) known = await gh.labelNames().catch(() => []);
+    const labels = asked.map((l) => known.find((k) => k.toLowerCase() === l.toLowerCase())).filter(Boolean);
+    const labelsIgnored = asked.filter((l) => !known.some((k) => k.toLowerCase() === l.toLowerCase()));
+    issuesByPerson.set(login, [...recent, now()]);
+    let created;
+    try {
+      created = await gh.createIssue({ title, body: `${body}\n\n---\nAsked by @${login} in Slack`, labels });
+    } catch (err) {
+      issuesByPerson.set(login, recent);
+      const message = String(err?.message ?? err).split('\n')[0];
+      throw refuseIssue(session, `GitHub would not open the issue (the App may lack Issues: write on ${project.repo})`, { repo: project.repo, asker: login, message });
+    }
+    update(session, { issuesOpened: (session.issuesOpened ?? 0) + 1 });
+    console.log('asks: issue opened', { id: session.id, repo: project.repo, number: created.number, asker: login });
+    return { number: created.number, url: created.url, labels, labelsIgnored };
+  }
+
   // A question whose session failed, or stopped before it answered, is told so in its thread, once per run.
   async function tick() {
     for (const session of fleet.sessions()) {
@@ -175,5 +255,5 @@ export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, n
     return out;
   }
 
-  return { handleMention, answer, tick, names };
+  return { handleMention, answer, openIssue, tick, names };
 }

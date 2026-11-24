@@ -292,7 +292,7 @@ test('every file outside the repo that Woodshed points claude at is one claude r
   ].join('\n');
   const paths = [...new Set([...told.matchAll(/\/tmp\/[\w.\-/]+/g)].map((m) => m[0]))];
   paths.push(ENTRYPOINT.match(/^DEPS_STATUS=(\S+)$/m)[1]);
-  assert.deepEqual(paths.sort(), ['/tmp/answer.md', '/tmp/woodshed-deps', '/tmp/woodshed-docker-ports.log', '/tmp/woodshed-dockerd.log', '/tmp/woodshed-setup.md']);
+  assert.deepEqual(paths.sort(), ['/tmp/answer.md', '/tmp/issue.json', '/tmp/woodshed-deps', '/tmp/woodshed-docker-ports.log', '/tmp/woodshed-dockerd.log', '/tmp/woodshed-setup.md']);
   for (const p of paths) {
     const allowed = hooks.permissions.allow.includes(`Read(/${p})`) || addDirs.some((dir) => p.startsWith(`${dir}/`));
     assert.ok(allowed, `${p} has a Read rule in claudeHooks.json (an absolute path is written //${p.slice(1)})`);
