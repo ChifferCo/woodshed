@@ -826,7 +826,13 @@ export function createFleet({
    *   in the agent's box unsent, for the person to send or clear in the TUI tab; never typed again
    */
   async function send(session, raw, { id = null } = {}) {
-    answered(session, 'a message');
+    const outcome = await sendNow(session, raw, { id });
+    // On its way, or in: an answer to a question the session asked. One left in its box unsent is not, yet.
+    if (outcome !== 'in-box') answered(session, 'a message');
+    return outcome;
+  }
+
+  async function sendNow(session, raw, { id = null } = {}) {
     // As statusd will take it (session/statusd.mjs, typeableText), so what is held is what can be typed, and the same
     // length the page is told of.
     const text = String(raw).replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');

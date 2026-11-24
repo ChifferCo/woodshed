@@ -4256,7 +4256,7 @@ test('the review report credits Codex when Claude Code wrote no verdict', async 
 });
 
 test('a session that asked a question waits for its answer until it is sent a message or works again', async () => {
-  const { fleet, statuses } = setup();
+  const { fleet, statuses, answers } = setup();
   const child = await fleet.startPrivate({ owner: 'joel', prompt: 'Write NOTES.md' });
   statuses[child.id] = { state: 'working' };
   await fleet.tick();
@@ -4277,6 +4277,15 @@ test('a session that asked a question waits for its answer until it is sent a me
   await fleet.tick();
   await fleet.send(child, 'Customers.');
   assert.equal(child.askedAt, null, 'a message typed into it answers it');
+
+  // A message left in its box unsent (a prompt came up as it was typed) is no answer yet.
+  fleet.noteQuestion(child, { to: 'aaaa0001' });
+  statuses[child.id] = { state: 'done' };
+  await fleet.tick();
+  answers['/send'] = { then: (_, reject) => reject(Object.assign(new Error('statusd /send answered 409'), { status: 409, body: { typed: true } })) };
+  assert.equal(await fleet.send(child, 'Customers.'), 'in-box');
+  assert.ok(child.askedAt, 'still asking: the answer is in its box, not sent');
+  delete answers['/send'];
 
   // Stopped with a question open: its Resume starts with none.
   fleet.noteQuestion(child, { to: 'aaaa0001' });

@@ -19,9 +19,13 @@ async function serve({ sessions, startMine = null, allowed = () => true, canWrit
     questions: [],
     noteQuestion(session, { to }) { fleet.questions.push(['asked', session.id, to]); session.askedAt = 'now'; },
     clearQuestion(session) { if (session.askedAt) fleet.questions.push(['answered', session.id]); session.askedAt = null; },
+    // As the fleet's send: a message that went in, or is held to, answers a question it asked; one left in its box not.
+    answerOnSend(session, outcome) { if (outcome !== 'in-box') fleet.clearQuestion(session); },
     async send(session, text) {
       fleet.sent.push({ id: session.id, text });
-      return send ? send(session, text) : 'sent';
+      const outcome = send ? await send(session, text) : 'sent';
+      fleet.answerOnSend(session, outcome);
+      return outcome;
     },
     rename(session, name) {
       if (!name.trim()) throw Object.assign(new Error('a name cannot be empty'), { shown: true });
