@@ -87,6 +87,19 @@ export function isConsoleMe(me) {
  * resolve off it (`//host`, `/\\host`, a scheme) is the console's home.
  * @returns {string}
  */
+/**
+ * @returns {string|null}  the session a console page shows (`/s/<id>`), or null for any other page or another site
+ */
+export function sessionShown(url, consoleUrl) {
+  try {
+    const page = new URL(url);
+    if (!consoleUrl || page.origin !== new URL(consoleUrl).origin) return null;
+    return /^\/s\/([0-9a-f]{8})$/.exec(page.pathname)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function consolePath(consoleUrl, path) {
   const home = new URL(consoleUrl);
   if (typeof path !== 'string' || !/^\/(?![/\\])/.test(path)) return home.href;

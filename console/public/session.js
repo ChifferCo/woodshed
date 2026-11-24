@@ -380,6 +380,8 @@
     if (onMy) launcher.applyQuery();
     render();
     refresh();
+    // For what follows the page's address without drawing it (notificationBell.js).
+    window.dispatchEvent(new Event('woodshed:route'));
   }
   window.addEventListener('popstate', moved);
   // Going away altogether (My settings, another page of the console, a reload, closing the browser tab) puts the tab

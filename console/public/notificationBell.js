@@ -89,10 +89,45 @@
       button.focus();
     });
     bridge.onChange?.(show);
+    bridge.onArrived?.((n) => arrived(n, navigate, bridge));
     bridge.list().then(show).catch(() => {});
     drawButton();
     return el;
   }
+
+  // With the app in front, a notification shows here rather than in the OS's (desktop/main.mjs): a card at the window's
+  // bottom right, opening its session, gone after a while or once its session is opened. The bell keeps it too.
+  const SHOWN_MS = 10_000;
+  let stack = null;
+  function arrived(n, navigate, bridge) {
+    if (!n?.id) return;
+    stack ??= document.body.appendChild(h('div', { class: 'bell-toasts', role: 'status', 'aria-live': 'polite' }));
+    let timer = null;
+    const close = () => { clearTimeout(timer); card.remove(); };
+    const open = () => {
+      close();
+      bridge.markRead(n.key);
+      navigate(`/s/${encodeURIComponent(n.id)}`);
+    };
+    const card = h('div', { class: 'bell-toast', 'data-session': n.id },
+      h('button', { type: 'button', class: 'bell-toast-open', onclick: open },
+        h('span', { class: `bell-dot ${DOTS[n.kind] || 'is-other'}`, 'aria-hidden': 'true' }),
+        h('span', { class: 'bell-text' }, h('b', { class: 'bell-title' }, n.title), h('span', { class: 'bell-body' }, n.body))),
+      h('button', { type: 'button', class: 'bell-toast-close', 'aria-label': 'Dismiss', onclick: close }, '×'));
+    // Its session already open, or opened from anywhere since: nothing to tell.
+    for (const old of stack.querySelectorAll(`[data-session="${CSS.escape(n.id)}"]`)) old.remove();
+    stack.append(card);
+    const later = () => { timer = setTimeout(close, SHOWN_MS); };
+    card.addEventListener('mouseenter', () => clearTimeout(timer));
+    card.addEventListener('mouseleave', later);
+    later();
+  }
+  // Opening a session takes its cards away, as it takes the OS's.
+  function sessionOpened() {
+    const id = /^\/s\/([0-9a-f]{8})$/.exec(location.pathname)?.[1];
+    if (id && stack) for (const card of stack.querySelectorAll(`[data-session="${id}"]`)) card.remove();
+  }
+  window.addEventListener('woodshed:route', sessionOpened);
 
   W.notificationBell = create;
 })();

@@ -108,10 +108,19 @@ notification is a change between two reads, in the console's words, and clicking
 | A session is assigned to you | `Assigned to you by <name>.`, when someone else hands you a shared session | Yes |
 | A pull request is opened | `Pull request opened: PR 12, <title>.` (not the one a session was started on) | Yes |
 | A pull request is merged or closed | `Merged: PR 12, <title>.` or `Closed without merging: …` | Yes |
-| A review of your pull request finished | `Review finished: approved.`, `changes requested`, `commented`, `approved, held until QA reports`, or `Review finished without a verdict.` | Yes |
-| A QA run on your pull request finished | `QA passed: <its check's title>.`, `QA failed: …` or `QA finished: …` | Yes |
+| A review of your pull request finished | `Review finished: approved.`, `changes requested`, `commented`, `approved, held until QA reports`, or `Review finished without a verdict.` | No: every pull request gets one, again on each push, and its verdict reaches the session that opened the pull request |
+| A QA run on your pull request finished | `QA passed: <its check's title>.`, `QA failed: …` or `QA finished: …` | No: as reviews |
 | A pull request's checks fail or pass | `Checks failing: 1 of 5 on PR 12, <title>.` or `Checks passing: all 5 on …` | No: each push runs them again, and claude usually watches them itself |
 | A session is paused at its idle or lifetime limit | `Paused: idle 2 h. Resume it from the console.` | No: an idle pause follows a needs-you or done already heard |
+
+**Where it shows.** With the app's window in front, a notification is not the OS's: the console's page shows it as a
+card at the window's bottom right, beside the bell (below), which opens its session and goes after 10 seconds (held
+while the pointer is on it). Behind other windows, minimised or closed, it is the OS's. A page with no bell (a settings
+page, a console from before it) gets the OS's in front too.
+
+**Opening a session clears its notifications**: under the bell, the OS's (taken back from its notification centre),
+and its cards, however it was opened (the rail, a link, a notification), and on coming back to the window while it
+shows that session.
 
 Clicking a notification opens its session. The app holds each one it showed (the 50 latest) until it is clicked: one
 nothing refers to is garbage collected, and its click then fires nothing, so the OS only brings the window forward on
@@ -119,7 +128,7 @@ whatever session it showed.
 
 **The bell.** In the app the console's rail head ends with a bell (`console/public/notificationBell.js`), listing the
 notifications the app showed, newest first: the session's name, what it said and when, each opening its session. Its
-count is the ones not seen yet; opening the list sees them all. A notification about the session you are looking at is
+count is the ones not seen yet; opening the list sees them all, and so does opening their session. A notification about the session you are looking at is
 listed as seen and not shown. The list is kept by the main process (`notificationLog.mjs`), in memory, for this console
 and this sign-in: Change console…, signing in and signing out empty it, and so does quitting the app. The page reads it
 through the preload's `window.woodshedNotifications` (below), which a browser does not have, so the console in a
@@ -130,15 +139,15 @@ badge counts whatever they say. A switched-off kind is still followed, so switch
 with several changes in one read rings once, for the most pressing. The first read after a start notifies about nothing,
 so opening the app does not replay every waiting session, nor does a session you are looking at. A pull request's review
 decision is left out: Woodshed's own review rings from its review session, and a person's review reaches the session
-that opened the pull request, whose next needs-you or done rings. Questions from Slack never count, and reviews and QA
-runs only for their verdict. Signed out, the badge is cleared and what was seen forgotten, so signing in again starts
+that opened the pull request, whose next needs-you or done rings. Questions from Slack never count, and a review or QA
+run only for its verdict, when that is switched on: never for failing, pausing or being handed over. Signed out, the badge is cleared and what was seen forgotten, so signing in again starts
 from a first read. A read that answers after Change console… (or a sign-in) is dropped: it can neither change the new
 console's badge nor notify about the old one's sessions.
 
 ## What a page may do
 
 Windows run with context isolation, the sandbox and no Node. The preload exposes the app's own setup and sign-in pages'
-calls to them alone, and to any other page in the main window the notifications list (`list`, `markRead`, `onChange`),
+calls to them alone, and to any other page in the main window the notifications list (`list`, `markRead`, `onChange`, `onArrived`),
 which main.mjs answers only to the console's own page there. The console's page may use the microphone (dictation), notifications and the clipboard; a
 session app's page the clipboard and full screen; anything else is refused. No page may add a `<webview>`.
 

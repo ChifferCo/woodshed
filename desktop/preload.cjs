@@ -15,6 +15,12 @@ if (location.protocol === 'file:') {
     list: () => ipcRenderer.invoke('notifications:list'),
     // One entry by its key, or every one with none.
     markRead: (key) => ipcRenderer.invoke('notifications:read', typeof key === 'string' ? key : null),
+    // Called with each notification the app shows in the page rather than the OS's, as it arrives (the app is in front).
+    onArrived: (fn) => {
+      const listener = (_event, entry) => fn(entry);
+      ipcRenderer.on('notifications:arrived', listener);
+      return () => ipcRenderer.removeListener('notifications:arrived', listener);
+    },
     // Called with the new list each time it changes; returns a function that stops it.
     onChange: (fn) => {
       const listener = (_event, list) => fn(list);

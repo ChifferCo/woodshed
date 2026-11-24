@@ -11,3 +11,6 @@ the app, which hands the page its list (desktop/README.md, "Notifications and th
   when in `meta` mono. The text starts with its word (Needs you, Done, Failed), so the dot is never alone: `wait` for
   needs you, `bad` for failed, `green` for done, merged, a review or QA finished, `slate` for the rest.
 - Empty, it says so in `sub`. Escape or a click outside closes it.
+- With the app in front, a notification shows as a card at the window's bottom right rather than the OS's: the bell's
+  row (dot, name, what it said) on a `menu` surface, 340px, with a quiet × to dismiss. The card opens its session, goes
+  after 10 seconds unless the pointer is on it, and goes when its session is opened. Cards stack upward, newest last.

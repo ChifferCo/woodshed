@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { attention, enabledKinds, NOTIFICATION_KINDS } from './attention.mjs';
-import { consoleUrlFrom, destination, isConsoleMe, consolePath } from './links.mjs';
+import { consoleUrlFrom, destination, isConsoleMe, consolePath, sessionShown } from './links.mjs';
 import { APP_PAGE_CHROME_CSS, consoleChromeCss, TRAFFIC_LIGHTS } from './windowChrome.mjs';
 import { overlayFor } from './overlay.mjs';
 import { createNotificationLog } from './notificationLog.mjs';
@@ -201,6 +201,12 @@ function createMainWindow({ waiting = false } = {}) {
   mainWindow.on('resized', keepBounds);
   mainWindow.on('moved', keepBounds);
   mainWindow.on('closed', () => { mainWindow = null; });
+  // Opening a session clears its notifications, under the bell and in the OS's list: on the way to it (a link, the
+  // rail, a notification), and on coming back to the window while it shows.
+  const contents = mainWindow.webContents;
+  contents.on('did-navigate', () => { bellOnPage = false; sessionOpened(); });
+  contents.on('did-navigate-in-page', (_event, _url, isMainFrame) => { if (isMainFrame) sessionOpened(); });
+  mainWindow.on('focus', sessionOpened);
   guard(mainWindow);
   addChrome(mainWindow.webContents);
   if (waiting) return mainWindow.loadFile(path.join(here, 'signin.html')).catch(() => {});
@@ -576,17 +582,38 @@ function fromConsolePage(event) {
     return false;
   }
 }
-ipcMain.handle('notifications:list', (event) => (fromConsolePage(event) ? log.list() : { items: [], unread: 0 }));
+// Whether the page in the main window has a bell to show a notification in (it asks for the list as it starts): a
+// settings page, setup, or a console from before the bell has none, and gets the OS's.
+let bellOnPage = false;
+ipcMain.handle('notifications:list', (event) => {
+  if (!fromConsolePage(event)) return { items: [], unread: 0 };
+  bellOnPage = true;
+  return log.list();
+});
 ipcMain.handle('notifications:read', (event, key) => {
   if (!fromConsolePage(event)) return;
   if (log.markRead(typeof key === 'string' ? key : null)) logChanged();
 });
 
-// Each notification shown, until it is clicked or 50 newer ones were: one nothing refers to is garbage collected, and
-// its click then fires nothing, so the OS only brings the app forward on whatever session it showed. Not dropped at its
-// `close`, which some systems send when the banner goes into their notification centre, where it can still be clicked.
-const shownNotifications = new Set();
+// Each notification shown, with its session, until it is clicked, its session opened, or 50 newer ones were: one
+// nothing refers to is garbage collected, and its click then fires nothing, so the OS only brings the app forward on
+// whatever session it showed. Not dropped at its `close`, which some systems send when the banner goes into their
+// notification centre, where it can still be clicked.
+const shownNotifications = new Map();
 const KEEP_SHOWN = 50;
+
+// The session the main window shows, opened: its notifications are seen, and the OS's are taken back.
+function sessionOpened() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const id = sessionShown(mainWindow.webContents.getURL(), consoleUrl);
+  if (!id) return;
+  if (log.markSessionRead(id)) logChanged();
+  for (const [shown, of] of shownNotifications) {
+    if (of !== id) continue;
+    shownNotifications.delete(shown);
+    shown.close();
+  }
+}
 
 function openSession(base, id) {
   // The console this read came from: a notification from before Change console… does not open on the new one.
@@ -694,12 +721,19 @@ async function poll() {
   if (!notify.length) return;
   for (const n of notify) {
     // The person is looking at it already: listed under the bell as seen, and not shown.
-    const looking = Boolean(mainWindow?.isFocused() && mainWindow.webContents.getURL().includes(`/s/${n.id}`));
+    const inFront = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused() && mainWindow.isVisible());
+    const looking = inFront && sessionShown(mainWindow.webContents.getURL(), consoleUrl) === n.id;
     const entry = log.add(n, { read: looking });
-    if (looking || !Notification.isSupported()) continue;
+    if (looking) continue;
+    // The app in front: shown in it, beside the bell (notificationBell.js), not by the OS.
+    if (inFront && bellOnPage) {
+      mainWindow.webContents.send('notifications:arrived', entry);
+      continue;
+    }
+    if (!Notification.isSupported()) continue;
     const shown = new Notification({ title: n.title, body: n.body, icon, silent: false });
-    shownNotifications.add(shown);
-    if (shownNotifications.size > KEEP_SHOWN) shownNotifications.delete(shownNotifications.values().next().value);
+    shownNotifications.set(shown, n.id);
+    if (shownNotifications.size > KEEP_SHOWN) shownNotifications.delete(shownNotifications.keys().next().value);
     const done = () => shownNotifications.delete(shown);
     shown.on('click', () => {
       done();
