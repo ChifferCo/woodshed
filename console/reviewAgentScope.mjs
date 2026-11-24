@@ -16,9 +16,21 @@
 // The IDs that do pass are the conversation's own, matched within the same body: a tool call's id or call_id, and the
 // tool result's tool_use_id or tool_call_id. Beyond what was measured, only what names nothing passes: an image given
 // inline (base64, or a data: URL), never by URL or file; a tool result's is_error; Anthropic's redacted_thinking.
-// Tools are functions alone: a provider's own tools (file_search, code_interpreter, web search, MCP) have a `type` of
-// their own, or none listed here, and are refused. A tool's JSON schema and a tool call's arguments are the agent's own
-// and not walked.
+// Tools are functions alone: a provider's own tools (file_search, code_interpreter, web search, X search, MCP) have a
+// `type` of their own, or none listed here, and are refused. A tool's JSON schema and a tool call's arguments are the
+// agent's own and not walked.
+//
+// Measured again on a `grok login` (grok 1.0.92, through a recording stand-in that forwarded to the login's upstream):
+// that upstream's model list says `api_backend: responses` and `supports_backend_search: true` for each model, so grok
+// makes every turn on /v1/responses, never /v1/chat/completions (providers/aws/bin/reviewInImage.mjs with
+// IN_IMAGE_GROK_VIA=login answers it so), with `prompt_cache_key`, `include: ["reasoning.encrypted_content"]` and
+// `reasoning.effort`, and offers xAI's own `x_search` tool, which --disable-web-search leaves in (session/review.sh
+// removes it with --disallowed-tools x_search, and it stays refused here). From its second turn it sends its reasoning
+// items back with their `id` beside their encrypted_content and summary. With store false the id names nothing xAI
+// needs: each turn went on with the ids taken out. Since an id is what a stored item is read back by, it is never
+// passed: withoutReasoningIds drops it before the check, and the body goes on as checked. Its function_call and
+// assistant message items were measured with no `id` (a call_id only), so an `input[].id` on one of those is a grok
+// that sends more, and stays refused until it is measured.
 
 const S = 'string';
 const N = 'number';
@@ -63,7 +75,8 @@ const ANTHROPIC_MESSAGES = obj({
   output_config: obj({ effort: S }),
 });
 
-// OpenAI's Responses API, as opencode's OpenAI provider calls it, and xAI's, as grok calls it for its title.
+// OpenAI's Responses API, as opencode's OpenAI provider calls it, and xAI's, as grok calls it for its title (on a key)
+// and its turns (on a login's model list).
 const R_CONTENT = typed({
   input_text: obj({ type: S, text: S }),
   output_text: obj({ type: S, text: S, annotations: arr(obj({})) }),
@@ -169,6 +182,28 @@ export function refusedField(api, path, body) {
   const spec = BODIES[api]?.[path];
   const refused = spec ? firstRefused(body, spec, '') : '';
   return refused === null ? null : refused.replace(/^\./, '') || 'the body';
+}
+
+/**
+ * Takes the `id` off each reasoning item grok sends back on /v1/responses, before the body is checked: it names a
+ * response item, which xAI does not need with the item's encrypted_content beside it (measured, above), and which a
+ * body must never name. Any other api or path is left as it is.
+ * @param {string} api
+ * @param {string} path
+ * @param {unknown} body  the call's JSON, changed in place
+ * @returns {number}  how many ids it took off
+ */
+export function withoutReasoningIds(api, path, body) {
+  if (api !== 'grok' || path !== '/v1/responses') return 0;
+  if (!body || typeof body !== 'object' || !Array.isArray(body.input)) return 0;
+  let taken = 0;
+  for (const item of body.input) {
+    if (item && typeof item === 'object' && item.type === 'reasoning' && Object.hasOwn(item, 'id')) {
+      delete item.id;
+      taken++;
+    }
+  }
+  return taken;
 }
 
 /** @returns {boolean}  whether calls to this path carry a body to check */

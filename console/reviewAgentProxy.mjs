@@ -20,7 +20,7 @@
 // Each body is read whole (up to MAX_BODY_BYTES) and checked before the sign-in is read or added: it must be JSON with
 // only the fields the review's agent was measured to send (reviewAgentScope.mjs), so a call cannot name a response,
 // file, vector store, container or anything else the author's account already holds and have the provider read it for
-// a prompt planted in the pull request. A GET passes with no body.
+// a prompt planted in the pull request. The body sent on is the checked one, written again. A GET passes with no body.
 
 import crypto from 'node:crypto';
 import http from 'node:http';
@@ -28,7 +28,7 @@ import https from 'node:https';
 import agents from '../shared/agents.cjs';
 import { isReview } from './sessions.mjs';
 import { ownReviewCredential } from './reviewAgents.mjs';
-import { refusedField } from './reviewAgentScope.mjs';
+import { refusedField, withoutReasoningIds } from './reviewAgentScope.mjs';
 
 const GROK_PREFIX = '/grok';
 const OPENCODE_PREFIX = '/opencode';
@@ -238,11 +238,16 @@ export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}
     } catch {
       return refused(400, 'not JSON', null, `a review's ${product} sends JSON the console can check, and this call is not`);
     }
+    // grok's reasoning items come back with an id the provider does not need (reviewAgentScope.mjs): taken off.
+    withoutReasoningIds(api, route.path, parsed);
     const field = refusedField(api, route.path, parsed);
     if (field !== null) {
       return refused(403, 'a field not allowed', field, `a review's ${product} does not send ${field} to ${route.path}: the console passes only what a review's ${product} sends, never a field that could name something the author's account holds`);
     }
-    return body;
+    // What goes on is what was checked, written again from it, never the bytes as sent: JSON.parse keeps a key's last
+    // value, so `"store": true, "store": false` passes the check as false, and a provider that read the first would store
+    // the response in the author's project.
+    return Buffer.from(JSON.stringify(parsed));
   }
 
   async function handle(req, res, session) {

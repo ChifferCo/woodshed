@@ -265,6 +265,20 @@ const MEASURED = {
     reasoning: { summary: 'auto' }, store: false, stream: true, temperature: 0,
     tool_choice: { type: 'function', name: 'title' }, tools: [{ type: 'function', name: 'title', description: 'Names it', parameters: { type: 'object' } }],
   }],
+  // On a login's model list grok makes its turns on /v1/responses (reviewAgentScope.mjs), its reasoning items sent back
+  // with their encrypted_content; the id it sends beside it is taken off (the next test).
+  grokLoginTurn: ['review-lou', '/grok/v1/responses', {
+    model: 'grok-made-up', prompt_cache_key: 'made-up', include: ['reasoning.encrypted_content'],
+    reasoning: { effort: 'high', summary: 'auto' }, store: false, stream: true,
+    input: [
+      { type: 'message', role: 'system', content: 'You review.' }, { type: 'message', role: 'user', content: 'Review this.' },
+      { type: 'reasoning', summary: [], encrypted_content: 'opaque' }, { type: 'message', role: 'assistant', content: 'Looking.' },
+      { type: 'function_call', arguments: '{"path":"a"}', call_id: 'call_1', name: 'read_file' },
+      { type: 'function_call_output', call_id: 'call_1', output: 'file' },
+      { type: 'reasoning', summary: [{ type: 'summary_text', text: 'hm' }], encrypted_content: 'opaque' },
+    ],
+    tools: [{ type: 'function', name: 'read_file', description: 'Reads', parameters: { type: 'object' } }],
+  }],
   anthropicTurn: ['review-oto', '/opencode/anthropic/v1/messages', {
     model: 'claude-made-up', max_tokens: 1000, stream: true, output_config: { effort: 'high' },
     thinking: { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'restart' } },
@@ -327,6 +341,10 @@ test('a body naming an object the author\'s account holds is refused, top level 
     'grok search_parameters': edit('grokTurn', (b) => { b.search_parameters = { sources: [{ type: 'x' }] }; }),
     'grok title previous_response_id': edit('grokTitle', (b) => { b.previous_response_id = SECRET_ID; }),
     'grok title input[].type': edit('grokTitle', (b) => { b.input.push({ type: 'item_reference', id: SECRET_ID }); }),
+    'grok x_search': edit('grokLoginTurn', (b) => { b.tools.push({ type: 'x_search' }); }),
+    'grok login turn item_reference': edit('grokLoginTurn', (b) => { b.input.push({ type: 'item_reference', id: SECRET_ID }); }),
+    'grok login turn previous_response_id': edit('grokLoginTurn', (b) => { b.previous_response_id = SECRET_ID; }),
+    'grok function_call id': edit('grokLoginTurn', (b) => { b.input[4].id = SECRET_ID; }),
     'anthropic document': edit('anthropicTurn', (b) => { b.messages[0].content.push({ type: 'document', source: { type: 'file', file_id: SECRET_ID } }); }),
     'anthropic image by file': edit('anthropicTurn', (b) => { b.messages[0].content.push({ type: 'image', source: { type: 'file', file_id: SECRET_ID } }); }),
     'anthropic tool result image by file': edit('anthropicTurn', (b) => { b.messages[2].content[0].content = [{ type: 'image', source: { type: 'file', file_id: SECRET_ID } }]; }),
@@ -348,6 +366,34 @@ test('a body naming an object the author\'s account holds is refused, top level 
     assert.ok(refusals.some((l) => l.includes(`"field":${field}`)), `the log names ${field}`);
   }
   assert.ok(!lines.join('\n').includes(SECRET_ID), 'no value is logged');
+});
+
+test('grok\'s reasoning items go on without their id, and the body that reaches xAI is the one checked', async (t) => {
+  const { seen, call } = await setup(t);
+  const [token, path, turn] = MEASURED.grokLoginTurn;
+  const sent = structuredClone(turn);
+  sent.input[2].id = 'rs_made_up_1';
+  sent.input[6].id = SECRET_ID;
+  const res = await call(token, path, { body: sent });
+  assert.equal(res.status, 200);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].url, '/grok-login/v1/responses');
+  assert.deepEqual(JSON.parse(seen[0].body), turn, 'the same call, with no reasoning item\'s id');
+  assert.ok(!seen[0].body.includes(SECRET_ID) && !seen[0].body.includes('rs_made_up_1'));
+  assert.equal(seen[0].headers['content-length'], String(Buffer.byteLength(seen[0].body)), 'its length is the body sent');
+  // Only grok's reasoning items: OpenAI's keep refusing an id, and so does grok's chat completions, which has none.
+  const [oToken, oPath, oTurn] = edit('openaiTurn', (b) => { b.input[2].id = SECRET_ID; });
+  assert.equal((await call(oToken, oPath, { body: oTurn })).status, 403);
+  assert.equal(seen.length, 1);
+});
+
+test('what reaches the provider is the body as checked, so a key sent twice goes on once, with the value checked', async (t) => {
+  const { seen, call } = await setup(t);
+  const raw = '{"model":"grok-build","store":true,"stream":true,"store":false}';
+  assert.equal((await call('review-gil', '/grok/v1/responses', { body: raw })).status, 200);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].body, '{"model":"grok-build","store":false,"stream":true}', 'never the bytes as sent');
+  assert.equal(seen[0].headers['content-length'], String(Buffer.byteLength(seen[0].body)));
 });
 
 test('a body that is not JSON, not an object, or compressed is refused, and never reaches the provider', async (t) => {

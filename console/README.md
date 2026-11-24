@@ -1322,10 +1322,13 @@ Grok Build and OpenCode review the same way, on the author's own sign-in alone, 
   agent on the Reviews card is what makes it review. The review keeps `review.ownSignIns`: whose sign-in and how
   (`{grok: {login, via: 'key'|'login'}, opencode: {login, provider}}`), never the sign-in itself.
 - **Grok Build** runs with `XAI_API_KEY` set to the session's token and `GROK_MODELS_BASE_URL` at the console's
-  `/grok/v1`, which takes all its model traffic: `GET /v1/models`, `POST /v1/responses` (its session title) and `POST
-  /v1/chat/completions` (its turns), measured with grok 1.0.92. The proxy sends them on with the author's xAI key to
-  `api.x.ai/v1`, or with a login's access token to `cli-chat-proxy.grok.com/v1`, only while its `expires_at` is ahead:
-  the console never refreshes a login (`grokModels.mjs` says why), which a Grok session of theirs does at its stop.
+  `/grok/v1`, which takes all its model traffic: `GET /v1/models`, `POST /v1/responses` (its session title on a key, and
+  its turns on a login's model list) and `POST /v1/chat/completions` (its turns on a key), measured with grok 1.0.92.
+  It runs with `--disallowed-tools x_search`, since `--disable-web-search` leaves xAI's X search in, and the proxy takes
+  the `id` off the reasoning items it sends back on `/v1/responses` (reviewAgentScope.mjs says why). The proxy sends
+  them on with the author's xAI key to `api.x.ai/v1`, or with a login's access token to `cli-chat-proxy.grok.com/v1`,
+  only while its `expires_at` is ahead: the console never refreshes a login (`grokModels.mjs` says why), which a Grok
+  session of theirs does at its stop.
 - **OpenCode** reviews only on an API key (`{type: 'api'}`) of Anthropic or OpenAI, the first of those the author's
   `auth.json` has (`OPENCODE_REVIEW_PROVIDERS` in shared/agents.cjs), and the session gets `REVIEW_OPENCODE_PROVIDER`.
   Its own config points that provider alone at the console's `/opencode/<provider>/v1` (its `baseURL`), with the
