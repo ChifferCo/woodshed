@@ -676,7 +676,7 @@ export function createFleet({
   async function createSession({
     kind, number, title, startedBy, trigger, prompt = '', branch = null, owner = null, options = null, resumeClaude = null, attach = null,
     background = false, reviewOnly = false, slack: thread = null, assignTo = null, project = defaultProject(config), qa = null, review = null,
-    herdrParent = false, startedFrom = null,
+    herdrParent = false, startedFrom = null, startedApart = false,
   }) {
     refuseWithoutRepo(project, { kind, trigger });
     // A question from Slack, and a review that only reads the diff, get no databases, so they need none hosted.
@@ -704,7 +704,9 @@ export function createFleet({
       ...(reviewOnly ? { reviewOnly: true } : {}),
       ...(owner && herdrParent ? { herdrParent: true } : {}),
       // The session of the same person's that started this one (sessionStarts.mjs), for the pages to link both ways.
-      ...(owner && startedFrom ? { startedFrom } : {}),
+      // `startedApart`: started on its own (woodshed-session new --separate), not as a piece of the starting session's
+      // work: the rail shows it at the top level, and the starting session's own list leaves it out.
+      ...(owner && startedFrom ? { startedFrom, ...(startedApart ? { startedApart: true } : {}) } : {}),
       ...(qa ? { qa } : {}),
       ...(review ? { review } : {}),
       ...(assignTo ? { assignee: assignTo.login, assignedBy: assignTo.login, assignedHow: assignTo.how, assignedAt: nowIso() } : {}),
@@ -715,7 +717,7 @@ export function createFleet({
       id, kind, number, trigger, startedBy, private: Boolean(owner), resumed: Boolean(branch), background, assignee: session.assignee ?? null, qa: Boolean(qa),
       ...(project.default ? {} : { project: project.name, repo: project.repo }),
       ...(session.herdrParent ? { herdrParent: true } : {}),
-      ...(session.startedFrom ? { startedFrom: session.startedFrom } : {}),
+      ...(session.startedFrom ? { startedFrom: session.startedFrom, ...(session.startedApart ? { startedApart: true } : {}) } : {}),
     });
     await runStartQueued({ background });
     return session;
@@ -1789,7 +1791,7 @@ export function createFleet({
    * @param {{owner: string, prompt: string, name?: string, workOn?: string, model?: string, effort?: string,
    *          permissionMode?: string, background?: boolean}} args  `workOn` is the form's optional issue, pull request or branch
    */
-  async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], background = false, project = defaultProject(config), herdrParent = false, startedFrom = null, ...picked }) {
+  async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], background = false, project = defaultProject(config), herdrParent = false, startedFrom = null, startedApart = false, ...picked }) {
     refuseWithoutRepo(project, { kind: 'task', trigger: 'my-woodshed' });
     const on = parseWorkOn(workOn, { defaultBranch: await githubOf(project).defaultBranch?.() ?? null });
     const reviewOnly = !String(prompt ?? '').trim() && on.kind !== 'task';
@@ -1808,7 +1810,7 @@ export function createFleet({
     const attach = attachments && attachmentIds?.length ? (sessionId) => attachments.claim({ login: owner, ids: attachmentIds, sessionId }) : null;
     const session = await createSession({
       ...target, title: given || titleFrom(text), startedBy: owner, owner, trigger: 'my-woodshed', prompt: text, options, attach, background, reviewOnly, project,
-      herdrParent, startedFrom,
+      herdrParent, startedFrom, startedApart,
     });
     if (naming) renameWhenNamed(session, naming);
     return session;

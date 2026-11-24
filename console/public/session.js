@@ -991,9 +991,11 @@
     if (!cardMenu.el.hidden && (e.target === document || slots.rail?.contains(e.target))) closeCardMenu();
   }, true);
 
-  function menuButton(s) {
+  // `key`: the menu's own, the session's id, or another for a second card of it (the Needs you copy), so each menu stays
+  // on the card it opened from.
+  function menuButton(s, key = s.id) {
     return h('button', {
-      type: 'button', class: 'rmenu', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === s.id), 'data-session': s.id, 'data-menu-for': s.id,
+      type: 'button', class: 'rmenu', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === key), 'data-session': s.id, 'data-menu-for': key,
       'aria-label': `Actions for ${s.title}`, title: 'Actions',
       onclick: (e) => { e.preventDefault(); e.stopPropagation(); openCardMenu(e.currentTarget, s); },
     }, '⋯');
@@ -1070,7 +1072,9 @@
   // After the shed's rail: a card per session, its issue or PR on the right, a status line, and the app's button.
   // The card is not one link, since it holds a button: the title is the link, and a click anywhere else on the card
   // follows it too.
-  function railCard(s) {
+  // `group`: the sessions started as pieces of this one's work, counted on its card with the toggle that folds them
+  // (railGroup). `inGroup`: the session whose group this card also sits in, said on the copy Needs you shows.
+  function railCard(s, { group = null, inGroup = null } = {}) {
     const st = W.displayStatus(s);
     const live = W.isLive(s);
     const word = h('b', null, st.word.charAt(0).toUpperCase() + st.word.slice(1));
@@ -1090,7 +1094,7 @@
           : [word, who && [' · ', who]];
     const href = sessionHref(s);
     return h('div', {
-      class: `rcard is-${st.key}${live ? '' : ' is-stopped'}${project ? ` has-project${project.color ? ` proj-${project.color}` : ''}` : ''}`,
+      class: `rcard is-${st.key}${live ? '' : ' is-stopped'}${project ? ` has-project${project.color ? ` proj-${project.color}` : ''}` : ''}${inGroup ? ' is-copy' : ''}`,
       'aria-current': s.id === id ? 'true' : null,
       'data-session': s.id,
       // Where the pointer can rest, the hover card says the project and the whole title (railPeek); a tooltip too would
@@ -1103,14 +1107,61 @@
         h('a', { class: 'rname', href, title: peekable() ? null : project ? `${s.title} · project ${project.name}` : s.title, 'aria-label': project ? `${s.title}, project ${project.name}` : null }, s.title),
         // The word Assigned on Mine means yours; a session you started that someone else has names them, as on Everyone.
         showOwnerTag(s) && W.ownerTag(s, { named: !railMine() || !W.sameLogin(s.assignee, data.login) }),
-        h('span', { class: 'rmarks' }, starButton(s), menuButton(s))),
+        h('span', { class: 'rmarks' }, starButton(s), menuButton(s, inGroup ? `${s.id}:copy` : s.id))),
       h('div', { class: 'rsub' },
         h('span', { class: 'rsub-text' }, sub),
         W.hasPrs(s) ? W.prChips(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
         W.isUnassigned(s) && data.assignable && takeButton(s),
         live && W.canExtend(s, data) && extendButton(s),
         !live && W.canResumePrivate(s) && resumeButton(s, true),
-        W.isResumable(s) && W.group(s) !== 'merged' && W.resumeSharedButton(s, { small: true, onDone: refresh })));
+        W.isResumable(s) && W.group(s) !== 'merged' && W.resumeSharedButton(s, { small: true, onDone: refresh })),
+      inGroup && h('div', { class: 'rin' }, 'In ', h('a', { href: sessionHref(inGroup) }, inGroup.title)),
+      group && group.count > 0 && groupToggle(s, group));
+  }
+
+  // ---- groups: the sessions a session started as pieces of its work (W.railGroups) ----
+  // Each viewer folds a group in their own browser; a group is open until folded.
+  const GROUPS_KEY = 'woodshed-rail-groups';
+  const foldedGroups = (() => {
+    try {
+      return new Set(JSON.parse(window.localStorage.getItem(GROUPS_KEY) || '[]'));
+    } catch {
+      return new Set();
+    }
+  })();
+  function toggleGroup(sessionId) {
+    if (foldedGroups.has(sessionId)) foldedGroups.delete(sessionId);
+    else foldedGroups.add(sessionId);
+    try {
+      window.localStorage.setItem(GROUPS_KEY, JSON.stringify([...foldedGroups]));
+    } catch {
+      // A private window keeps the choice for this page only.
+    }
+    render();
+  }
+
+  // On the card: how many it started and how many of those need the person, which is also what a folded group shows.
+  function groupToggle(s, { count, needs }) {
+    const open = !foldedGroups.has(s.id);
+    return h('button', {
+      type: 'button', class: 'rkids', 'aria-expanded': String(open), 'aria-controls': open ? `group-${s.id}` : null,
+      title: open ? 'Fold the sessions it started' : 'Show the sessions it started',
+      onclick: () => toggleGroup(s.id),
+    },
+      h('span', { class: 'caret', 'aria-hidden': 'true' }, open ? '▾' : '▸'),
+      `${count} ${count === 1 ? 'session' : 'sessions'}`,
+      needs > 0 && h('span', { class: 'rkids-needs' }, ` · ${needs} ${needs === 1 ? 'needs' : 'need'} you`));
+  }
+
+  // A card, and under it the sessions of its group, each with its own group, while the group is open.
+  function railCardAndGroup(s, groups) {
+    if (!groups) return railCard(s);
+    const counts = W.groupCounts(s.id, groups.kids);
+    const card = railCard(s, { group: counts });
+    const kids = groups.kids.get(s.id);
+    if (!kids?.length || foldedGroups.has(s.id)) return card;
+    return [card, h('div', { class: 'rgroup', id: `group-${s.id}`, role: 'group', 'aria-label': `Started from ${s.title}` },
+      kids.map((k) => railCardAndGroup(k, groups)))];
   }
 
   // ---- the rail's hover card ----
@@ -1125,7 +1176,8 @@
     return hoverable.matches && !narrow.matches;
   }
   // `by` is what opened it, the pointer or the keyboard's focus: focus moving elsewhere hides only a card focus opened.
-  const peek = { el: h('div', { class: 'rail-peek', id: 'rail-peek', role: 'tooltip', hidden: true }), id: null, timer: null, shown: false, by: null };
+  // `copy`: the card it is beside is the copy Needs you shows of a session in a group, which has the same id.
+  const peek = { el: h('div', { class: 'rail-peek', id: 'rail-peek', role: 'tooltip', hidden: true }), id: null, copy: false, timer: null, shown: false, by: null };
   document.body.append(peek.el);
 
   function peekBody(s) {
@@ -1159,13 +1211,13 @@
     peek.el.style.top = `${top}px`;
   }
 
-  function cardOf(sessionId) {
-    return slots.railBody?.querySelector(`.rcard[data-session="${CSS.escape(sessionId)}"]`) ?? null;
+  function cardOf(sessionId, copy = false) {
+    return slots.railBody?.querySelector(`.rcard[data-session="${CSS.escape(sessionId)}"]${copy ? '.is-copy' : ':not(.is-copy)'}`) ?? null;
   }
 
   function showPeek() {
     const s = data?.sessions.find((x) => x.id === peek.id);
-    const card = peek.id && cardOf(peek.id);
+    const card = peek.id && cardOf(peek.id, peek.copy);
     if (!peekable() || !s || !card || !card.getClientRects().length) return hidePeek();
     peek.el.replaceChildren(...peekBody(s));
     peek.el.hidden = false;
@@ -1176,17 +1228,19 @@
 
   function hidePeek() {
     clearTimeout(peek.timer);
-    if (peek.id) cardOf(peek.id)?.querySelector('.rname')?.removeAttribute('aria-describedby');
+    if (peek.id) cardOf(peek.id, peek.copy)?.querySelector('.rname')?.removeAttribute('aria-describedby');
     peek.id = null;
+    peek.copy = false;
     peek.by = null;
     peek.shown = false;
     peek.el.hidden = true;
   }
 
-  function peekSoon(sessionId, by) {
-    if (sessionId === peek.id) return;
+  function peekSoon(sessionId, by, copy = false) {
+    if (sessionId === peek.id && copy === peek.copy) return;
     hidePeek();
     peek.id = sessionId;
+    peek.copy = copy;
     peek.by = by;
     peek.timer = setTimeout(showPeek, PEEK_DELAY_MS);
   }
@@ -1204,7 +1258,7 @@
     const card = e.target.closest?.('.rail .rcard');
     // A chip, the star, ⋯ or a button on the card has its own tooltip.
     const control = card && e.target.closest('a:not(.rname), button, .prchip');
-    if (card && !control) peekSoon(card.dataset.session, 'pointer');
+    if (card && !control) peekSoon(card.dataset.session, 'pointer', card.classList.contains('is-copy'));
     else if (peek.id) hidePeek();
   });
   // A pointer that leaves a card straight into the terminal, the review or another iframe sends this page no further
@@ -1215,7 +1269,7 @@
   });
   document.addEventListener('focusin', (e) => {
     const name = peekable() && e.target.closest?.('.rail .rcard .rname');
-    if (name && name.matches(':focus-visible')) peekSoon(name.closest('.rcard').dataset.session, 'focus');
+    if (name && name.matches(':focus-visible')) peekSoon(name.closest('.rcard').dataset.session, 'focus', name.closest('.rcard').classList.contains('is-copy'));
     // The redraw giving a project chip its focus back is not the person moving on from the card the pointer rests on.
     else if (peek.by === 'focus') hidePeek();
   });
@@ -1310,7 +1364,8 @@
     paused: 'dot ring is-paused', needs: 'dot zone-dot is-waiting', unassigned: 'dot zone-dot is-waiting',
   };
 
-  function zone(key, title, sessions) {
+  // `card` draws each session: with its group under it on Mine, and as the copy of a nested one on Needs you.
+  function zone(key, title, sessions, card = (s) => railCard(s)) {
     if (!sessions.length) return null;
     const open = !folded[key];
     return h('section', { class: `zone is-${key}-zone${open ? '' : ' is-folded'}` },
@@ -1319,7 +1374,7 @@
         h('span', null, title),
         h('span', { class: 'caret', 'aria-hidden': 'true' }, open ? '▾' : '▸'),
         h('span', { class: 'count' }, sessions.length)),
-      open && h('div', { class: 'zone-cards' }, pinnedFirst(sessions).map((s) => railCard(s))));
+      open && h('div', { class: 'zone-cards' }, pinnedFirst(sessions).map(card)));
   }
 
   // One head for both views of the rail: Mine | Everyone, the people filter while Everyone shows, and New session, all
@@ -1525,12 +1580,18 @@
     const checks = listed.filter(W.isPullCheck);
     const work = listed.filter((s) => !W.isPullCheck(s));
     const unassigned = railMine() ? [] : work.filter(W.isUnassigned);
-    const rest = railMine() ? work : work.filter((s) => !W.isUnassigned(s));
+    // On Mine, a session started as a piece of another's work sits under it while that one is live (W.railGroups); one
+    // that asks the person something (W.asksPerson) shows on Needs you too, so a folded group never hides it.
+    const groups = railMine() ? W.railGroups(work) : null;
+    const rest = railMine() ? groups.top : work.filter((s) => !W.isUnassigned(s));
+    const inGroups = groups ? [...groups.parentOf.keys()].map((sid) => work.find((s) => s.id === sid)).filter(W.asksPerson) : [];
+    const grouped = (s) => railCardAndGroup(s, groups);
+    const needsCard = (s) => (groups?.parentOf.has(s.id) ? railCard(s, { inGroup: groups.parentOf.get(s.id) }) : grouped(s));
     const zones = railMine()
-      ? [zone('needs', 'Needs you', rest.filter((s) => !W.isLive(s) && W.needsYou(s)).sort((a, b) => Date.parse(b.stoppedAt ?? b.createdAt) - Date.parse(a.stoppedAt ?? a.createdAt))),
-        zone('active', 'Active', rest.filter(W.isLive).sort((a, b) => Number(W.needsYou(b)) - Number(W.needsYou(a)))),
-        zone('finished', 'Finished', rest.filter((s) => W.group(s) === 'finished')),
-        zone('stopped', 'Stopped', rest.filter((s) => !W.isLive(s) && !W.needsYou(s) && W.group(s) !== 'finished'))]
+      ? [zone('needs', 'Needs you', [...inGroups, ...rest.filter((s) => !W.isLive(s) && W.needsYou(s)).sort((a, b) => Date.parse(b.stoppedAt ?? b.createdAt) - Date.parse(a.stoppedAt ?? a.createdAt))], needsCard),
+        zone('active', 'Active', rest.filter(W.isLive).sort((a, b) => Number(W.needsYou(b)) - Number(W.needsYou(a))), grouped),
+        zone('finished', 'Finished', rest.filter((s) => W.group(s) === 'finished'), grouped),
+        zone('stopped', 'Stopped', rest.filter((s) => !W.isLive(s) && !W.needsYou(s) && W.group(s) !== 'finished'), grouped)]
       : [zone('unassigned', 'Unassigned', unassigned),
         ...W.GROUPS.filter((g) => status === 'all' || g.key === status).map((g) => zone(g.key, g.title, rest.filter((s) => W.group(s) === g.key)))];
     return [

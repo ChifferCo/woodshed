@@ -39,7 +39,7 @@ test('new reads the prompt from a file and posts it with its options, on the sta
     url: 'http://10.8.0.1:7691/sessions', method: 'POST', auth: `Bearer ${TOKEN}`,
     body: { prompt: 'Add CSV export.\nDone when it downloads.', branch: 'joel/csv', project: 'api', name: 'CSV export' },
   }]);
-  assert.match(out.stdout, /Started session eb7082e2: CSV export\n {2}https:\/\/console\.example\/s\/eb7082e2\n/);
+  assert.match(out.stdout, /Started session eb7082e2: CSV export, as part of this session's work\n {2}https:\/\/console\.example\/s\/eb7082e2\n/);
   assert.match(out.stdout, /waiting in line/);
 });
 
@@ -140,4 +140,11 @@ test('rename names this session, or another when given its id', async () => {
 test('a session that has seen production data is said to be so, with no last line', () => {
   const lines = describe({ id: 'c0c0c0c0', status: 'running', state: 'done', title: 'Prod check', url: 'https://console.example/s/c0c0c0c0', lastMessage: null, tainted: true });
   assert.deepEqual(lines.slice(2), ['  has seen production data: what it says stays on the console']);
+});
+
+test('new --separate asks for work of its own, and says so', async () => {
+  const { out, args } = io({ files: { '/tmp/token': TOKEN }, answers: [[201, { session: { ...started, separate: true } }]] });
+  assert.equal(await run({ ...args, argv: ['new', '--separate', 'Audit', 'the', 'refund', 'flow'] }), 0);
+  assert.deepEqual(out.calls[0].body, { prompt: 'Audit the refund flow', separate: true });
+  assert.match(out.stdout, /^Started session eb7082e2: CSV export, on its own\n/);
 });

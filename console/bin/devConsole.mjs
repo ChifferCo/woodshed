@@ -271,6 +271,17 @@ const sessions = [
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true,
     branch: 'woodshed/local-5747ed02', startedFrom: '5747ed01', lastMessage: { role: 'assistant', text: 'Moved the totals into InvoiceService and opened a draft PR.' },
   }),
+  // Two more of 5747ed01's: one piece of its work asking its person, which the rail shows in 5747ed01's group and on
+  // Needs you too, and one started on its own (`startedApart`, woodshed-session new --separate), at the top level.
+  session('5747ed03', null, 'Invoice PDF export', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'needs-you', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true,
+    branch: 'woodshed/local-5747ed03', startedFrom: '5747ed01',
+    lastMessage: { role: 'assistant', text: 'Should I add pdfkit, or use the headless Chrome the app already has?' },
+  }),
+  session('5747ed04', null, 'Refund flow audit', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true,
+    branch: 'woodshed/local-5747ed04', startedFrom: '5747ed01', startedApart: true,
+  }),
   session('7a1e7ed1', null, 'Why order 42 shows as unpaid', {
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true, editor: true,
     taintedAt: new Date(Date.now() - 12 * 60_000).toISOString(), taintNoticedAt: new Date(Date.now() - 12 * 60_000).toISOString(),
