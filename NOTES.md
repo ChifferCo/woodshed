@@ -1,0 +1,10 @@
+- Woodshed is an open-source platform that runs coding agents (Claude Code or Codex) in cloud dev environments.
+- It is for developers and teams who want agents to work on their GitHub repositories, several tasks side by side.
+- Each task gets a session: a container with its own branch, its own copy of the databases and a running copy of the app.
+- The console is the one web page (also a desktop app) where you start, follow, review and take over every session.
+- Providers decide where sessions run: `local` uses Docker on a laptop or server, `aws` uses one Fargate task per session.
+- A repository opts in with `.woodshed/project.yaml`, which says what to install, which env files to write and how to start the app.
+- A session starts from the console's New session, an issue's `woodshed` label, a `/woodshed <task>` comment, or a Slack mention.
+- The agent makes the change, checks it in a browser against the running app, and opens a pull request with its proof.
+- You follow along in the console's tabs (terminal, chat, diff, review), and later comments or review feedback go back to the same session.
+- An idle session pushes its work and pauses until it is resumed, and sessions never hold cloud keys or production credentials.
