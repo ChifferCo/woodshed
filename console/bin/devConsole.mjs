@@ -264,7 +264,7 @@ const sessions = [
   // hover card and Details say Started from, this one's Started here. It holds the start token above.
   session('5747ed01', null, 'Plan the billing page', {
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true,
-    branch: 'woodshed/local-5747ed01', startTokenHash: crypto.createHash('sha256').update(devStartToken).digest('hex'), startsThisRun: 1,
+    branch: 'woodshed/local-5747ed01', startTokenHash: crypto.createHash('sha256').update(devStartToken).digest('hex'),
   }),
   session('5747ed02', null, 'Move invoice totals to the server', {
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true,

@@ -1204,7 +1204,6 @@ test('each run of a person\'s own session gets a start token, kept only as its h
   assert.ok(again && again !== token, 'a resume is a new run, with a token of its own');
   assert.equal(sessionForStartToken(token, fleet.sessions()), null, 'the last run\'s token still does nothing');
   assert.equal(sessionForStartToken(again, fleet.sessions())?.id, mine.id);
-  assert.equal(mine.startsThisRun, 0);
 
   // Once it has seen production data it starts nothing, whatever token it holds.
   mine.taintedAt = new Date().toISOString();

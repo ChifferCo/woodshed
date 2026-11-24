@@ -13,18 +13,17 @@
 // anything starts, so neither statusd nor the app it starts has it. It works on these routes alone, on the session API,
 // which no browser reaches: a session's app never has a way to it but reading that file, which it can, as the same
 // user in the same container. What the token can do is bounded so: start sessions of its own person's, each checked as
-// New session checks its start, at most STARTS_PER_RUN in one run, and never past the person's own limit (below).
+// New session checks its start.
 //
-// A started session is the person's own, as any of theirs: counted in their limit, billed as any, with its own branch and nothing of the starting session's but `startedFrom`. Stopping one does nothing to
-// the other.
+// A started session is the person's own, as any of theirs: counted in their limit (waiting in line past it, as one
+// from New session does), billed as any, with its own branch and nothing of the starting session's but `startedFrom`.
+// Stopping one does nothing to the other. There is no cap of its own: the person's limit is the only one.
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
-import { ACTIVE_STATUSES, activePrivateCount, isAsk, isQa, isReview, sessionLink } from './sessions.mjs';
+import { ACTIVE_STATUSES, isAsk, isQa, isReview, sessionLink } from './sessions.mjs';
 
 export const START_TOKEN_PREFIX = 'wst_';
-/** How many sessions one run of a session may start. A resume is a new run. */
-export const STARTS_PER_RUN = 5;
 const MAX_BODY_BYTES = 64 * 1024;
 // A first prompt is the whole brief for a session that knows nothing else: room for a long one, not for a dump.
 export const MAX_PROMPT_CHARS = 20_000;
@@ -93,8 +92,8 @@ async function readJson(req) {
 }
 
 /**
- * @param {{fleet: {sessions: () => object[], find: (id: string) => object|null, noteSessionStarted: (session: object) => void},
- *          config: {publicUrl: string, linkQuery?: object|null, maxPrivatePerPerson?: number},
+ * @param {{fleet: {sessions: () => object[], find: (id: string) => object|null},
+ *          config: {publicUrl: string, linkQuery?: object|null},
  *          startMine: (login: string, body: object) => Promise<{status: number, body: object}>,
  *          allowed?: (login: string) => Promise<boolean>|boolean}} deps
  *   `startMine` is New session's own start, with its checks (server.mjs); `allowed` whether the person may still use
@@ -150,17 +149,6 @@ export function createSessionStarts({ fleet, config, startMine, allowed = () => 
     if (!prompt) return refuse(400, 'no prompt', 'give the new session its first prompt: what to do, the context it needs, and what done looks like');
     if (prompt.length > MAX_PROMPT_CHARS) return refuse(400, 'prompt too long', `the prompt is over ${MAX_PROMPT_CHARS} characters`);
     if (!(await allowed(login))) return refuse(403, 'not a member', `@${login} can no longer use this console`);
-    if ((from.startsThisRun ?? 0) >= STARTS_PER_RUN) {
-      return refuse(429, 'run limit', `this session has started ${STARTS_PER_RUN} sessions in this run, as many as one run may`);
-    }
-    // The person's own limit, Console settings' My Woodshed sessions per person: New session puts a session past it in
-    // line, a session's start is refused instead, so sessions starting sessions never pile up a line of their own.
-    const limit = config.maxPrivatePerPerson ?? 3;
-    const sessions = fleet.sessions();
-    const open = activePrivateCount(sessions, login) + sessions.filter((s) => s.owner === login && s.status === 'queued').length;
-    if (open >= limit) {
-      return refuse(429, 'person limit', `@${login} has ${open} sessions open, as many as Console settings allows (${limit} per person): stop one, then start this again`);
-    }
     const branch = typeof body.branch === 'string' ? body.branch.trim() : '';
     if (branch && from.branch && branch === from.branch) return refuse(400, 'same branch', `${branch} is this session's own branch: give the new session one of its own, or none`);
     // As loose as the starting session, never looser: a mode it was not given, it cannot give.
@@ -177,8 +165,7 @@ export function createSessionStarts({ fleet, config, startMine, allowed = () => 
       return reply(res, answer.status, answer.body);
     }
     const started = fleet.find(answer.body.id);
-    fleet.noteSessionStarted(from);
-    console.log('sessionStarts: session started', { from: from.id, owner: login, id: answer.body.id, project: started?.project ?? null, startsThisRun: from.startsThisRun });
+    console.log('sessionStarts: session started', { from: from.id, owner: login, id: answer.body.id, project: started?.project ?? null, status: started?.status ?? null });
     return reply(res, 201, { session: summary(started ?? answer.body) });
   }
 

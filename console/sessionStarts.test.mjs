@@ -2,22 +2,21 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 
-import { STARTS_PER_RUN, createSessionStarts, newStartToken, startTokenHash } from './sessionStarts.mjs';
+import { createSessionStarts, newStartToken, startTokenHash } from './sessionStarts.mjs';
 
 const NOW = Date.parse('2026-11-23T12:00:00.000Z');
 
 // A console's session API with only these routes: a made-up fleet, and New session's start as a stand-in that records
 // what it was asked and answers as server.mjs's startMine does.
-async function serve({ sessions, startMine = null, allowed = () => true, perPerson = 3 } = {}) {
+async function serve({ sessions, startMine = null, allowed = () => true } = {}) {
   const asked = [];
   const fleet = {
     sessions: () => sessions,
     find: (id) => sessions.find((s) => s.id === id) ?? null,
-    noteSessionStarted: (s) => { s.startsThisRun = (s.startsThisRun ?? 0) + 1; },
   };
   let next = 0;
   const starts = createSessionStarts({
-    fleet, config: { publicUrl: 'https://console.example', maxPrivatePerPerson: perPerson }, allowed,
+    fleet, config: { publicUrl: 'https://console.example' }, allowed,
     startMine: startMine ?? (async (login, body) => {
       asked.push({ login, body });
       const made = { id: `5e55${String(next++).padStart(4, '0')}`, owner: login, title: body.name || 'Named from the prompt', status: 'queued', branch: body.workOn || `woodshed/${login}-x`,
@@ -44,7 +43,7 @@ function holder(extra = {}) {
     token,
     session: {
       id: 'aaaa0001', owner: 'joel', status: 'running', kind: 'task', project: 'web', branch: 'woodshed/joel-aaaa0001',
-      options: { agent: 'claude', permissionMode: 'acceptEdits' }, startTokenHash: startTokenHash(token), startsThisRun: 0,
+      options: { agent: 'claude', permissionMode: 'acceptEdits' }, startTokenHash: startTokenHash(token),
       createdAt: new Date(NOW - 3 * 3_600_000).toISOString(), ...extra,
     },
   };
@@ -62,7 +61,6 @@ test('a session starts a session of its person\'s, as New session does, with sta
   } }]);
   assert.equal(out.body.session.url, `https://console.example/s/${out.body.session.id}`);
   assert.equal(out.body.session.branch, 'joel/csv');
-  assert.equal(session.startsThisRun, 1);
 
   await api.call('POST', '/sessions', { token, body: { prompt: 'Try it in codex', agent: 'codex', project: 'api' } });
   assert.equal(api.asked[1].body.permissionMode, 'default', 'codex has no acceptEdits: it gets the stricter mode');
@@ -97,25 +95,10 @@ test('it refuses what it must', async (t) => {
   assert.match((await start({ prompt: 'x', branch: session.branch })).body.error, /this session's own branch/);
   assert.equal(api.asked.length, 0, 'nothing refused reached New session\'s start');
 
-  session.startsThisRun = STARTS_PER_RUN;
-  assert.equal((await start({ prompt: 'x' })).status, 429, 'one run starts so many');
-  session.startsThisRun = 0;
-
-  // The person's own limit, with the starting session in it: one running and one waiting make three.
-  sessions.push({ id: 'dddd0001', owner: 'joel', status: 'running', createdAt: new Date(NOW).toISOString() },
-    { id: 'dddd0002', owner: 'joel', status: 'queued', createdAt: new Date(NOW).toISOString() },
-    { id: 'dddd0003', owner: 'someone', status: 'running', createdAt: new Date(NOW).toISOString() });
-  const full = await serve({ sessions, perPerson: 3 });
-  t.after(full.close);
-  const atLimit = await full.call('POST', '/sessions', { token, body: { prompt: 'x' } });
-  assert.equal(atLimit.status, 429, 'at the person\'s limit, refused rather than put in line');
-  assert.match(atLimit.body.error, /has 3 sessions open, as many as Console settings allows \(3 per person\)/);
-  assert.equal(full.asked.length, 0);
-  const room = await serve({ sessions, perPerson: 4 });
-  t.after(room.close);
-  assert.equal((await room.call('POST', '/sessions', { token, body: { prompt: 'x' } })).status, 201, 'another person\'s sessions count for nothing');
+  // No cap of its own: past the person's limit the start is New session's, which puts it in line. Six in a row all start.
+  for (let i = 0; i < 6; i++) assert.equal((await start({ prompt: `piece ${i}` })).status, 201, `start ${i + 1}`);
   sessions.splice(1);
-  session.startsThisRun = 0;
+
 
   const gone = await serve({ sessions: [session], allowed: () => false });
   t.after(gone.close);
@@ -125,7 +108,6 @@ test('it refuses what it must', async (t) => {
   t.after(refused.close);
   const why = await refused.call('POST', '/sessions', { token, body: { prompt: 'x' } });
   assert.deepEqual([why.status, why.body.error], [409, 'save your Claude token on My settings first'], 'New session\'s refusal, as it is');
-  assert.equal(session.startsThisRun, 0, 'a refused start counts for nothing');
 });
 
 test('only a running session of a person\'s own, never tainted, a question, review or QA run, starts sessions', async (t) => {

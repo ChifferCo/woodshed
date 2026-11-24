@@ -851,18 +851,16 @@ stopping one does nothing to the other.
 - **The start** is New session's own (`startMine` in `server.mjs`), as the session's owner: their Claude token (or Codex
   sign-in), their databases, write access to the project's repo (the session's own unless `--repo` names another
   project), and the project's readiness; the owner must still be on the console, as for a command line token. It counts
-  in their My Woodshed sessions, and a hosted console bills it as any session. Its
+  in their My Woodshed sessions and waits in line past the limit, and a hosted console bills it as any session. Its
   permission mode is the starting session's (`acceptEdits` becomes `default` for Codex), never one it picks. A branch
   that is the starting session's own is refused. It gets nothing of the starting session's but `startedFrom`, its id.
-- **Limits**: the person's own, Console settings' **My Woodshed sessions per person**, with no setting of its own. Where
-  New session puts a session past it in line, a session's start is refused while the person's running and waiting
-  sessions reach it, so sessions starting sessions never pile up a line. And at most 5 starts in one run of a session
-  (`STARTS_PER_RUN`). Each refusal answers 429 with why.
+- **Limits**: none of its own. The person's **My Woodshed sessions per person** applies as it does to New session: past
+  it, a started session waits in line.
 - **How it shows**: the started session's hover card and Details say **Started from** with the other's name (a link in
   Details), and the other's say **Started here** with each it started.
 
-The console logs `sessionStarts: session started` with `from`, the new `id` and `startsThisRun`, `sessionStarts: start
-refused` with `why` (`no prompt`, `run limit`, `person limit`, `same branch`, `not a member`, or `start checks` with
+The console logs `sessionStarts: session started` with `from`, the new `id` and its `status` (`queued` when it waits in line), `sessionStarts: start
+refused` with `why` (`no prompt`, `same branch`, `not a member`, or `start checks` with
 New session's `status`), `refused, no running session has that start token` and `refused, a browser's call`. The
 session's log says `Session starts on` when it got a token.
 

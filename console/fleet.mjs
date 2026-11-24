@@ -635,14 +635,10 @@ export function createFleet({
       return {};
     }
     const token = newStartToken();
-    update(session, { startTokenHash: startTokenHash(token), startsThisRun: 0 });
+    update(session, { startTokenHash: startTokenHash(token) });
     return { WOODSHED_START_TOKEN: token };
   }
 
-  /** One more session started by `session` in this run, which STARTS_PER_RUN caps. */
-  function noteSessionStarted(session) {
-    update(session, { startsThisRun: (session.startsThisRun ?? 0) + 1 });
-  }
 
   async function startQueued() {
     const limits = { maxRunning: config.maxRunning, maxPrivate: config.maxPrivatePerPerson, maxAsks: config.maxAsks };
@@ -2964,7 +2960,7 @@ export function createFleet({
 
   return {
     createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
-    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find, noteSessionStarted,
+    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),
   };
