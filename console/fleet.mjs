@@ -1021,7 +1021,7 @@ export function createFleet({
       }
       const wasStarting = session.status === 'starting';
       const wasAsking = session.state === 'needs-you';
-      update(session, statusUpdate(session, status, nowIso()));
+      update(session, statusUpdate(session, status, nowIso(), { repos: allProjects(config).map((p) => p.repo) }));
       // A message left in the box: sent or cleared in the TUI tab once the box is empty again.
       if (session.leftInBox && status.boxText === false) {
         update(session, { leftInBox: null });

@@ -51,7 +51,8 @@ export function describePr(raw) {
 
 /** @returns {number|null}  the number of a pull request on `repo` */
 export function prNumberOf(prUrl, repo) {
-  const match = new RegExp(`^https://github\\.com/${repo.replace('/', '\\/')}/pull/(\\d+)$`).exec(String(prUrl ?? ''));
+  // GitHub's names are any case: a session's URL from `gh pr create` and the project's repo may differ in it.
+  const match = new RegExp(`^https://github\\.com/${repo.replace('/', '\\/')}/pull/(\\d+)$`, 'i').exec(String(prUrl ?? ''));
   return match ? Number(match[1]) : null;
 }
 
