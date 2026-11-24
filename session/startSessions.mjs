@@ -5,13 +5,14 @@
 //
 //   woodshed-session new [--branch B] [--repo R] [--name N] [--agent claude|codex] [--model M] [--effort E]
 //                        (--prompt-file F | "prompt" | - for stdin)
-//   woodshed-session list [--json]
+//   woodshed-session list [--all] [--json]
 //   woodshed-session get <id> [--json]
 //   woodshed-session send <id> ("message" | --prompt-file F | -) [--wait]
 //   woodshed-session reply ("message" | --prompt-file F | -) [--wait]
 //   woodshed-session wait <id> [--reply]
 //   woodshed-session read <id> [--last N] [--since <time>]
 //   woodshed-session stop <id> | resume <id>
+//   woodshed-session rename [<id>] "<name>"
 
 import fs from 'node:fs';
 
@@ -36,10 +37,11 @@ Commands:
       --name <name>      its name on the console (default: named from the prompt)
       --agent claude|codex, --model <model>, --effort <effort>
   list                   the sessions this session started, with their state, branch, pull request and link
+      --all              every private session of your person's, whoever started it
   get <id>               one of them
   send <id> ("<message>" | --prompt-file <file> | -)
-                         type a message into a session this one started, at its prompt: held while it works, waits in
-                         line or is paused. It sees who sent it and how to answer
+                         type a message into another private session of your person's, at its prompt: held while it
+                         works, waits in line or is paused. It sees who sent it and how to answer
       --wait             then wait for it to work on it, and print what it said
   reply ("<message>" | --prompt-file <file> | -) [--wait]
                          the same, to the session that started this one
@@ -47,6 +49,7 @@ Commands:
   read <id> [--last <n>] [--since <time>]
                          what it was asked and said, newest last (default the last 10)
   stop <id>, resume <id> as Stop and Resume on the console
+  rename [<id>] "<name>" rename this session on the console, or another of your person's
   --json                 print the console's answer as JSON`;
 
 class Refused extends Error {}
@@ -66,6 +69,7 @@ export function parseArgs(argv) {
     if (word === '--json') flags.json = true;
     else if (word === '--wait') flags.wait = true;
     else if (word === '--reply') flags.reply = true;
+    else if (word === '--all') flags.all = true;
     else if (takes.has(word)) {
       if (i + 1 >= words.length) throw new Refused(`${word} needs a value`);
       flags[word.slice(2).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = words[++i];
@@ -105,7 +109,7 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
     say(USAGE);
     return command ? 0 : 2;
   }
-  if (!['new', 'list', 'get', 'send', 'reply', 'wait', 'read', 'stop', 'resume'].includes(command)) {
+  if (!['new', 'list', 'get', 'send', 'reply', 'wait', 'read', 'stop', 'resume', 'rename'].includes(command)) {
     stderr.write(`woodshed-session: unknown command ${command}\n\n${USAGE}\n`);
     return 2;
   }
@@ -193,15 +197,15 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
 
   try {
     if (command === 'list') {
-      const { sessions = [] } = await call('GET', '/sessions');
+      const { sessions = [] } = await call('GET', flags.all ? '/sessions?all=1' : '/sessions');
       if (flags.json) return say(JSON.stringify({ sessions })), 0;
-      if (!sessions.length) say('This session has started no sessions.');
+      if (!sessions.length) say(flags.all ? 'Your person has no other private session.' : 'This session has started no sessions. list --all shows every session of your person\'s.');
       for (const s of sessions) say(describe(s).join('\n'));
       return 0;
     }
     if (command === 'get') {
       const [id] = args;
-      if (!ID_RE.test(id ?? '') || args.length > 1) throw new Refused('give the id of one session this session started: woodshed-session get <id>');
+      if (!ID_RE.test(id ?? '') || args.length > 1) throw new Refused('give the id of one session: woodshed-session get <id>');
       const { session } = await call('GET', `/sessions/${id}`);
       say(flags.json ? JSON.stringify({ session }) : describe(session).join('\n'));
       return 0;
@@ -211,7 +215,7 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
       let words = args;
       if (command === 'send') {
         [to, ...words] = args;
-        if (!ID_RE.test(to ?? '')) throw new Refused('give the id of a session this one started: woodshed-session send <id> "<message>"');
+        if (!ID_RE.test(to ?? '')) throw new Refused('give the id of a session of your person\'s: woodshed-session send <id> "<message>" (list --all shows them)');
       } else {
         const { startedFrom } = await call('GET', '/sessions');
         if (!startedFrom) throw new Refused('no session started this one: reply answers the session that started it');
@@ -243,6 +247,15 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
       const shown = entries.slice(-last);
       if (flags.json) return say(JSON.stringify({ entries: shown })), 0;
       say(shown.length ? shown.map(entryLines).join('\n') : 'Nothing said yet.');
+      return 0;
+    }
+    if (command === 'rename') {
+      const [first, ...rest] = args;
+      const other = ID_RE.test(first ?? '') && rest.length ? first : null;
+      const name = (other ? rest : args).join(' ').trim();
+      if (!name) throw new Refused('give the name: woodshed-session rename "<name>", or rename <id> "<name>" for another session');
+      const { session } = await call('POST', other ? `/sessions/${other}/rename` : '/rename', { name });
+      say(flags.json ? JSON.stringify({ session }) : `Renamed ${session.id}: ${session.title}`);
       return 0;
     }
     if (command === 'stop' || command === 'resume') {

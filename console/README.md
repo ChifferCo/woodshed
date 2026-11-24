@@ -882,8 +882,9 @@ refused` with `why` (`no prompt`, `same branch`, `not a member`, `write access g
 New session's `status`), `refused, no running session has that start token` and `refused, a browser's call`. The
 session's log says `Session starts on` when it got a token.
 
-**Messages between them.** A session reaches the sessions it started and the one that started it, the same person's,
-and no other, on the same token and the same session API: nothing goes from one session's machine to another's.
+**Messages between them.** A session reaches every other private session of the same person's (never anyone else's, a
+shared one, a question from Slack, a review or a QA run), on the same token and the same session API: nothing goes from
+one session's machine to another's. `list --all` lists them; `list` alone the ones this session started.
 
 - `woodshed-session send <id> "<message>"` (`reply "<message>"` for the session's starter) types it in at the other's
   prompt as the Chat tab's message is (`fleet.send`), headed `[Message from session <id> "<title>", …]` with how to
@@ -895,9 +896,10 @@ and no other, on the same token and the same session API: nothing goes from one 
 - `read <id>` is what it was asked and said, from its statusd's `/transcript`, tools left out. A session that has seen
   production data is never read by another (403).
 - `stop <id>` and `resume <id>` are the page's Stop and Resume, with Resume's checks (`resumeMine` in `server.mjs`).
+- `rename "<name>"` renames the session itself, `rename <id> "<name>"` another of the person's, as the page's rename.
 
 The console logs `sessionStarts: message` with `from`, `to`, the `chars` and `outcome` (`sent`, `queued`, `in-box`,
-`unknown`), `sessionStarts: session stopped`, `sessionStarts: resume` with the `status`, and `sessionStarts: transcript
+`unknown`), `sessionStarts: session stopped`, `sessionStarts: resume` with the `status`, `sessionStarts: session renamed`, and `sessionStarts: transcript
 not read` when the other's statusd did not answer.
 
 ### MCP servers

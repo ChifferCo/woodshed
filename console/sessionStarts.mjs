@@ -4,12 +4,12 @@
 //   POST /sessions        Authorization: Bearer <WOODSHED_START_TOKEN>  {"prompt", "name"?, "branch"?, "project"?,
 //                         "agent"?, "model"?, "effort"?}  ->  201 {"session": <summary>}: a private session of the same
 //                         person, as New session starts one, with `startedFrom` naming this session
-//   GET  /sessions        ->  {"sessions": [<summary>], "startedFrom": <summary>|null}: the sessions this one started,
-//                         newest first, and the one that started it
+//   GET  /sessions[?all=1]  ->  {"sessions": [<summary>], "startedFrom": <summary>|null}: the sessions this one started
+//                         (all=1: every private session of the person's it reaches), newest first, and its starter
 //   GET  /sessions/<id>   ->  {"session": <summary>}: one of them; 404 for any other
 //
-// And between a session and the ones it reaches: those it started, and the one that started it. Nothing else of the
-// person's, and nobody else's:
+// And between a session and the others it reaches: every private session of the same person's (a coding session of
+// theirs, never a question from Slack, a review or a QA run), and nobody else's, nor a shared one:
 //
 //   POST /sessions/<id>/messages   {"text"}  ->  {"sent": true} or {"held": true}: typed in at its prompt as the Chat
 //                         tab's message is (fleet.send), headed with who sent it; held while it works, waits in line or
@@ -23,6 +23,7 @@
 //                         production data, which no other session reads
 //   POST /sessions/<id>/stop        stop it, as Stop on the page does
 //   POST /sessions/<id>/resume      Resume, with the page's checks (server.mjs's resumeMine)
+//   POST /sessions/<id>/rename      {"name"}  as the page's rename; POST /rename names the calling session itself
 //
 // The token is its own, not SESSION_TOKEN, which the app's environment holds (statusd starts the app): it is made
 // for each run of a private session at its launch (fleet.mjs), kept here only as its hash, and does nothing once the
@@ -44,7 +45,7 @@ export const START_TOKEN_PREFIX = 'wst_';
 const MAX_BODY_BYTES = 64 * 1024;
 // A first prompt is the whole brief for a session that knows nothing else: room for a long one, not for a dump.
 export const MAX_PROMPT_CHARS = 20_000;
-const SESSION_PATH_RE = /^\/sessions\/([0-9a-f]{8})(?:\/(messages|wait|transcript|stop|resume))?$/;
+const SESSION_PATH_RE = /^\/sessions\/([0-9a-f]{8})(?:\/(messages|wait|transcript|stop|resume|rename))?$/;
 // statusd types no more in one go (session/statusd.mjs, MAX_SEND_CHARS), less the line that says who sent it.
 export const MAX_MESSAGE_CHARS = 7500;
 // A wait is answered at least this often, so no proxy in between drops it; the command asks again.
@@ -82,7 +83,7 @@ export function sessionForStartToken(given, sessions) {
 
 /** @returns {boolean}  whether the path is one of these routes */
 export function isStartsPath(pathname) {
-  return pathname === '/sessions' || SESSION_PATH_RE.test(pathname);
+  return pathname === '/sessions' || pathname === '/rename' || SESSION_PATH_RE.test(pathname);
 }
 
 const text = (value, max) => (typeof value === 'string' && value ? value.slice(0, max) : null);
@@ -151,11 +152,18 @@ export function createSessionStarts({
       console.warn('sessionStarts: refused, no running session has that start token', { pathname });
       return reply(res, 401, { error: 'this session cannot start sessions: its start token is not one the console knows, or the session stopped' });
     }
+    if (pathname === '/rename') {
+      if (req.method !== 'POST') return notFound(req, res);
+      const read = await readJson(req);
+      if (read.tooLarge || read.bad) return reply(res, 400, { error: 'the body must be a JSON object' });
+      return rename(res, session, session, read.body);
+    }
     if (pathname === '/sessions') {
       if (req.method === 'GET') {
         req.resume();
         const starter = session.startedFrom ? reached(session, session.startedFrom) : null;
-        return reply(res, 200, { sessions: startedBy(session).map(summary), startedFrom: starter ? summary(starter) : null });
+        const all = new URL(req.url, 'http://console').searchParams.get('all') === '1';
+        return reply(res, 200, { sessions: (all ? allOf(session) : startedBy(session)).map(summary), startedFrom: starter ? summary(starter) : null });
       }
       if (req.method !== 'POST') return notFound(req, res);
       const read = await readJson(req);
@@ -167,7 +175,7 @@ export function createSessionStarts({
     const other = reached(session, id);
     if (!other) {
       req.resume();
-      return reply(res, 404, { error: `no session ${id} that this session started or was started by` });
+      return reply(res, 404, { error: `no session ${id} of your person's that another session may reach` });
     }
     const wants = action === null || action === 'wait' || action === 'transcript' ? 'GET' : 'POST';
     if (req.method !== wants) return notFound(req, res);
@@ -199,7 +207,19 @@ export function createSessionStarts({
     const read = await readJson(req);
     if (read.tooLarge) return reply(res, 413, { error: 'too large' });
     if (read.bad) return reply(res, 400, { error: 'the body must be a JSON object' });
+    if (action === 'rename') return rename(res, session, other, read.body);
     return message(res, session, other, read.body);
+  }
+
+  function rename(res, from, session, body) {
+    try {
+      fleet.rename(session, typeof body.name === 'string' ? body.name : '');
+    } catch (err) {
+      if (!err?.shown) throw err;
+      return reply(res, 400, { error: err.message });
+    }
+    console.log('sessionStarts: session renamed', { from: from.id, id: session.id });
+    return reply(res, 200, { session: summary(session) });
   }
 
   function notFound(req, res) {
@@ -207,11 +227,20 @@ export function createSessionStarts({
     return reply(res, 404, { error: 'not found' });
   }
 
-  /** @returns {object|null}  the session `id`, when `from` started it or was started by it, and it is the same person's */
+  /**
+   * @returns {object|null}  the session `id`, when it is another private session of the same person's: never anyone
+   *   else's, a shared one, a question from Slack, a review or a QA run
+   */
   function reached(from, id) {
     const other = fleet.find(id);
-    if (!other || other.owner !== from.owner || other.id === from.id) return null;
-    return other.startedFrom === from.id || from.startedFrom === other.id ? other : null;
+    if (!other || !other.owner || other.owner !== from.owner || other.id === from.id) return null;
+    return isAsk(other) || isQa(other) || isReview(other) ? null : other;
+  }
+
+  /** @returns {object[]}  every private session of the person's but this one, newest first */
+  function allOf(session) {
+    return fleet.sessions().filter((s) => s.owner === session.owner && reached(session, s.id))
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   }
 
   async function message(res, from, to, body) {
@@ -220,10 +249,10 @@ export function createSessionStarts({
     if (said.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in one message` });
     // Who it is from, and how to answer, on a line of its own: the session reading it, and the person in its Chat tab,
     // tell it from what the person typed.
-    const fromStarter = to.startedFrom === from.id;
-    const head = fromStarter
-      ? `[Message from session ${from.id} "${text(from.title, 80) ?? ''}", which started this session. Answer it with: woodshed-session reply "<answer>"]`
-      : `[Message from session ${from.id} "${text(from.title, 80) ?? ''}", which this session started. Answer it with: woodshed-session send ${from.id} "<answer>"]`;
+    const named = `session ${from.id} "${text(from.title, 80) ?? ''}"`;
+    const head = to.startedFrom === from.id
+      ? `[Message from ${named}, which started this session. Answer it with: woodshed-session reply "<answer>"]`
+      : `[Message from ${named}, ${from.startedFrom === to.id ? 'which this session started' : 'another session of your person\'s'}. Answer it with: woodshed-session send ${from.id} "<answer>"]`;
     const outcome = await fleet.send(to, `${head}\n\n${said}`);
     console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome });
     if (outcome === 'in-box') return reply(res, 409, { error: 'it went into the session\'s box but was not sent: a prompt came up as it was typed, which the person answers in its TUI tab' });

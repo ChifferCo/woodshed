@@ -19,6 +19,11 @@ async function serve({ sessions, startMine = null, allowed = () => true, canWrit
       fleet.sent.push({ id: session.id, text });
       return send ? send(session, text) : 'sent';
     },
+    rename(session, name) {
+      if (!name.trim()) throw Object.assign(new Error('a name cannot be empty'), { shown: true });
+      session.title = name.trim();
+      return session;
+    },
     async stop(session, reason, { by }) {
       fleet.stopped.push({ id: session.id, reason, by });
       session.status = 'stopped';
@@ -77,7 +82,7 @@ test('a session starts a session of its person\'s, as New session does, with sta
   assert.equal(api.asked[1].body.project, 'api', 'another of the console\'s repos, which New session\'s own check decides');
 });
 
-test('it lists and reads only the sessions it started', async (t) => {
+test('it lists the sessions it started, and reads another of its person\'s too', async (t) => {
   const { token, session } = holder();
   const mine = { id: 'bbbb0002', owner: 'joel', status: 'running', state: 'done', startedFrom: session.id, title: 'CSV export', createdAt: new Date(NOW).toISOString(), lastMessage: { role: 'assistant', text: 'Done.\nThe export downloads.' } };
   const other = { id: 'cccc0003', owner: 'joel', status: 'running', title: 'Another of joel\'s', createdAt: new Date(NOW).toISOString() };
@@ -88,7 +93,7 @@ test('it lists and reads only the sessions it started', async (t) => {
   assert.equal(list.body.sessions[0].lastMessage, 'Done.\nThe export downloads.', 'statusd\'s {role, text}, as its text');
   assert.equal(list.body.sessions[0].token, undefined);
   assert.equal((await api.call('GET', '/sessions/bbbb0002', { token })).body.session.state, 'done');
-  assert.equal((await api.call('GET', '/sessions/cccc0003', { token })).status, 404, 'a session it did not start is not its to read');
+  assert.equal((await api.call('GET', '/sessions/cccc0003', { token })).status, 200, 'another private session of the person\'s, which it did not start');
 });
 
 test('it refuses what it must', async (t) => {
@@ -181,11 +186,21 @@ test('a session messages the sessions it started, and they answer it, with who s
   assert.equal((await api.call('POST', `/sessions/${child.id}/messages`, { token, body: { text: '  ' } })).status, 400);
 });
 
-test('it reaches only the sessions it started and its starter, never another of the person\'s or anyone else\'s', async (t) => {
-  const { token, sibling, strangers, sessions } = family();
+test('it reaches every private session of its person\'s, and never anyone else\'s, a shared one, a question, review or QA run', async (t) => {
+  const { token, session, sibling, strangers, sessions } = family();
+  const shared = { id: '5a5a5a5a', owner: null, status: 'running', state: 'done', createdAt: new Date(NOW).toISOString() };
+  const ask = { id: 'a5a5a5a5', owner: 'joel', kind: 'ask', status: 'running', state: 'done', createdAt: new Date(NOW).toISOString() };
+  const qa = { id: 'abcdabcd', owner: 'joel', qa: { base: 'main' }, status: 'running', state: 'done', createdAt: new Date(NOW).toISOString() };
+  sessions.push(shared, ask, qa);
   const api = await serve({ sessions });
   t.after(api.close);
-  for (const other of [sibling, strangers]) {
+  const sent = await api.call('POST', `/sessions/${sibling.id}/messages`, { token, body: { text: 'Are you touching invoices too?' } });
+  assert.equal(sent.status, 200, 'another session of the person\'s, which neither started');
+  assert.equal(api.fleet.sent[0].text, `[Message from session ${session.id} "Plan the billing page", another session of your person's. Answer it with: woodshed-session send ${session.id} "<answer>"]\n\nAre you touching invoices too?`);
+  const all = await api.call('GET', '/sessions?all=1', { token });
+  assert.deepEqual(all.body.sessions.map((s) => s.id).sort(), ['babababa', 'c0c0c0c0'], 'list --all: its person\'s private sessions but itself');
+  api.fleet.sent.length = 0;
+  for (const other of [strangers, shared, ask, qa]) {
     for (const [method, path] of [['POST', 'messages'], ['GET', 'wait'], ['GET', 'transcript'], ['POST', 'stop'], ['POST', 'resume'], ['GET', '']]) {
       const out = await api.call(method, `/sessions/${other.id}${path ? `/${path}` : ''}`, { token, ...(method === 'POST' ? { body: { text: 'x' } } : {}) });
       assert.equal(out.status, 404, `${other.id} ${path}`);
@@ -278,4 +293,15 @@ test('stop and resume, as the page\'s, and only while the person may still', asy
   t.after(gone.close);
   assert.equal((await gone.call('POST', `/sessions/${child.id}/messages`, { token, body: { text: 'x' } })).status, 403);
   assert.equal(gone.fleet.sent.length, 0);
+});
+
+test('a session renames itself, and another of its person\'s, as the page does', async (t) => {
+  const { token, session, child, strangers, sessions } = family();
+  const api = await serve({ sessions });
+  t.after(api.close);
+  const self = await api.call('POST', '/rename', { token, body: { name: 'Billing page: plan and split' } });
+  assert.deepEqual([self.status, session.title], [200, 'Billing page: plan and split']);
+  assert.equal((await api.call('POST', `/sessions/${child.id}/rename`, { token, body: { name: 'Invoice totals in cents' } })).body.session.title, 'Invoice totals in cents');
+  assert.equal((await api.call('POST', '/rename', { token, body: { name: '  ' } })).status, 400);
+  assert.equal((await api.call('POST', `/sessions/${strangers.id}/rename`, { token, body: { name: 'x' } })).status, 404);
 });

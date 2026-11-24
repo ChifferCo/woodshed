@@ -128,3 +128,11 @@ test('read prints the conversation, wait says when nothing took up a message, st
     'GET /sessions/c0c0c0c0/transcript?limit=50', 'GET /sessions/c0c0c0c0/wait?for=reply', 'POST /sessions/c0c0c0c0/stop',
   ]);
 });
+
+test('rename names this session, or another when given its id', async () => {
+  const { out, args } = io({ files: { '/tmp/token': TOKEN }, answers: [[200, { session: { id: 'aaaa0001', title: 'Billing page' } }], [200, { session: { id: 'c0c0c0c0', title: 'Totals in cents' } }]] });
+  assert.equal(await run({ ...args, argv: ['rename', 'Billing', 'page'] }), 0);
+  assert.equal(await run({ ...args, argv: ['rename', 'c0c0c0c0', 'Totals', 'in', 'cents'] }), 0);
+  assert.deepEqual(out.calls.map((c) => [c.url.replace('http://10.8.0.1:7691', ''), c.body.name]), [['/rename', 'Billing page'], ['/sessions/c0c0c0c0/rename', 'Totals in cents']]);
+  assert.match(out.stdout, /^Renamed aaaa0001: Billing page\nRenamed c0c0c0c0: Totals in cents\n$/);
+});
