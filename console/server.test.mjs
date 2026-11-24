@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import fs from 'node:fs';
+import net from 'node:net';
 
 import { CONSOLE_FAILED, createAuth } from './auth.mjs';
 import { createAddedProjects, createHostProjects } from './addedProjects.mjs';
@@ -8,7 +10,7 @@ import { createConsoleSettings, liveConfig } from './consoleSettings.mjs';
 import { createProjectColors } from './projectColors.mjs';
 import { createTunnel } from './dbTunnel.mjs';
 import { createCliSignIn } from './cliSignIn.mjs';
-import { createHandler } from './server.mjs';
+import { createConsoleUpgrade, createHandler } from './server.mjs';
 import agentsRegistry from '../shared/agents.cjs';
 import { createSlack } from './slack.mjs';
 import { createUserSettings } from './userSettings.mjs';
@@ -746,7 +748,15 @@ test('with sign-in available but not turned on, the menu and the server agree th
 // never existed, and nothing reaches the session. Its owner gets through on each.
 test('a teammate gets the unknown-id answer on every route of someone\'s private session', async (t) => {
   const reached = [];
-  const mine = { id: '3f9a1c20', status: 'running', title: 'mine', owner: 'octocat', startedBy: 'octocat', token: 'tok', terminalToken: 'tt', endpoint: { host: '127.0.0.1', termPort: 1, statusPort: 1, shellPort: 1 } };
+  // The session's ttyd: whoever's terminal websocket reaches it.
+  const ttyd = net.createServer((conn) => {
+    conn.once('data', (d) => reached.push(`ttyd ${d.toString().split(' ')[1]}`));
+    conn.on('error', () => {});
+    conn.end();
+  });
+  const termPort = await listen(ttyd);
+  t.after(() => ttyd.close());
+  const mine = { id: '3f9a1c20', status: 'running', title: 'mine', owner: 'octocat', startedBy: 'octocat', token: 'tok', terminalToken: 'tt', endpoint: { host: '127.0.0.1', termPort, statusPort: 1, shellPort: 1 } };
   const shared = { id: '7c21e0d4', status: 'running', title: 'shared', owner: null, startedBy: 'sam-ops' };
   const fleet = {
     sessions: () => [mine, shared],
@@ -772,8 +782,24 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
   };
   const handle = createHandler({ config, fleet, auth, review });
   const server = http.createServer((req, res) => { handle(req, res); });
+  server.on('upgrade', createConsoleUpgrade({ config, fleet, auth }));
   const port = await listen(server);
   t.after(() => server.close());
+
+  // A terminal's websocket, the only way into one: its answer's first line, or what came back before it closed.
+  function websocket(login, id, kind = 'term') {
+    return new Promise((resolve) => {
+      const client = net.connect(port, '127.0.0.1', () => {
+        client.write([`GET /${kind}/${id}/ws HTTP/1.1`, 'Host: console.example', 'Origin: https://console.example', `Cookie: woodshed_session=${login}`,
+          'Upgrade: websocket', 'Connection: Upgrade', 'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+          'Sec-WebSocket-Protocol: tty', '', ''].join('\r\n'));
+      });
+      let got = '';
+      client.on('data', (d) => { got += d; });
+      client.on('error', () => {});
+      client.on('close', () => resolve(got.split('\r\n')[0]));
+    });
+  }
 
   async function answer(login, id, { method = 'GET', path, host = 'console.example' }) {
     const headers = { host, cookie: `woodshed_session=${login}`, accept: 'text/html', 'x-woodshed': '1', origin: 'https://console.example' };
@@ -807,6 +833,9 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
     const nobody = await answer('mia-dev', 'ffffffff', { ...route, host: route.host?.replace('ID', 'ffffffff') });
     assert.deepEqual(theirs, nobody, `${route.method ?? 'GET'} ${route.host ?? ''}${route.path}`);
   }
+  for (const kind of ['term', 'shell']) {
+    assert.equal(await websocket('mia-dev', mine.id, kind), await websocket('mia-dev', 'ffffffff', kind), `${kind} websocket`);
+  }
   assert.deepEqual(reached, [], 'nothing reached the private session for a teammate');
 
   const listed = JSON.parse((await answer('mia-dev', '', { path: '/api/sessions' })).body).sessions.map((s) => s.id);
@@ -817,7 +846,8 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
   assert.equal((await answer('octocat', mine.id, { method: 'POST', path: '/api/sessions/ID/stop' })).status, 200);
   assert.equal((await answer('octocat', mine.id, { path: '/api/sessions/ID/review' })).status, 200);
   assert.equal((await answer('octocat', mine.id, { path: '/auth/app?id=ID&next=/' })).status, 302);
-  assert.notEqual((await answer('octocat', mine.id, { path: '/term/ID/' })).status, 404, 'the owner reaches the terminal');
+  await websocket('octocat', mine.id);
+  assert.deepEqual(reached.splice(-1), ['ttyd /term/3f9a1c20/ws'], 'the owner reaches the terminal, by its websocket');
   assert.equal((await answer('octocat', mine.id, { method: 'POST', path: '/api/sessions/ID/extend' })).status, 200);
   assert.equal((await answer('octocat', mine.id, { method: 'POST', path: '/api/sessions/ID/limits' })).status, 200);
   assert.deepEqual(reached, ['stop 3f9a1c20', 'review 3f9a1c20', 'appCode', 'extend 3f9a1c20', 'setLimits 3f9a1c20']);
@@ -897,8 +927,17 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
     // Whose page it is, so the rail draws from what it kept only for the same person.
     assert.match(await getBody(port, page, as('octocat')), /<meta name="woodshed-login" content="octocat">/, `${page} names who it is for`);
     // The same scripts on each, since session.js moves between them in place.
-    assert.deepEqual(scripts.slice(-9), ['terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'], `${page} is the shell`);
+    assert.deepEqual(scripts.slice(-8), ['dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'], `${page} is the shell`);
+    // The notifications on every page, ahead of the shell that opens them on ⌘J: the browser's own list, then the bell.
+    assert.deepEqual(scripts.slice(scripts.indexOf('keys.cjs'), scripts.indexOf('keys.cjs') + 4), ['keys.cjs', 'browserNotifications.js', 'notificationBell.js', 'shell.js'], `${page} has the notifications`);
   }
+  // The browser's bell runs the desktop app's own rule for what notifies, served from desktop/ under the page's version.
+  const attentionUrl = /data-attention="(\/static\/attention\.mjs\?v=[0-9a-f]{12})"/.exec(await getBody(port, '/', as('octocat')))?.[1];
+  assert.ok(attentionUrl, 'the page names the rule');
+  const rule = await fetch(`http://127.0.0.1:${port}${attentionUrl}`);
+  assert.equal(rule.status, 200);
+  assert.match(rule.headers.get('content-type'), /javascript/);
+  assert.equal(await rule.text(), fs.readFileSync(new URL('../desktop/attention.mjs', import.meta.url), 'utf8'));
   assert.match(await getBody(port, '/static/sharedHome.js', as('octocat')), /createSharedHome/);
   assert.match(await getBody(port, '/static/messageBox.js', as('octocat')), /createMessageBox/);
   assert.match(await getBody(port, '/static/chatThread.cjs', as('octocat')), /WoodshedChatThread/);

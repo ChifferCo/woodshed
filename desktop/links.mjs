@@ -83,6 +83,19 @@ export function isConsoleMe(me) {
 }
 
 /**
+ * @returns {string|null}  the session a console page shows (`/s/<id>`), or null for any other page or another site
+ */
+export function sessionShown(url, consoleUrl) {
+  try {
+    const page = new URL(url);
+    if (!consoleUrl || page.origin !== new URL(consoleUrl).origin) return null;
+    return /^\/s\/([0-9a-f]{8})$/.exec(page.pathname)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * A path on the console as a URL on it, and never anywhere else: `/s/x` is the console's, and anything that would
  * resolve off it (`//host`, `/\\host`, a scheme) is the console's home.
  * @returns {string}

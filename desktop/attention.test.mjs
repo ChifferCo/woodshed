@@ -84,7 +84,7 @@ const chip = (more = {}) => ({ number: 12, title: 'Fix CSV upload', state: 'open
 const withPr = (pr, more = {}) => mine('a', { prUrl: PR, prs: [{ url: PR, pr }], ...more });
 
 test('which kinds are on by default, and a saved choice wins', () => {
-  assert.deepEqual([...enabledKinds()], ['needs-you', 'done', 'failed', 'assigned', 'pr-opened', 'merged', 'review', 'qa']);
+  assert.deepEqual([...enabledKinds()], ['needs-you', 'done', 'failed', 'assigned', 'pr-opened', 'merged']);
   const saved = enabledKinds({ done: false, checks: true, paused: 'yes' });
   assert.ok(!saved.has('done') && saved.has('checks') && !saved.has('paused'));
 });
@@ -166,6 +166,21 @@ test('a review or QA run on your pull request finishing, with its verdict', () =
   // Someone else's pull request's run is not yours.
   const theirs = { login: 'octocat', sessions: [{ ...qa({ conclusion: 'success' }), startedBy: 'ana-dev' }] };
   assert.deepEqual(attention(theirs, attention({ ...theirs, sessions: [{ ...qa(), startedBy: 'ana-dev' }] }, null, { first: true }).now).notify, []);
+});
+
+test('reviews and QA runs ring for nothing until switched on, and then only for their verdict', () => {
+  const run = (trigger, more = {}) => shared('r', { startedBy: 'octocat', trigger, kind: 'pr', number: 12, title: 'Review: Fix CSV upload', review: { heading: 'Woodshed review' }, ...more });
+  const read = (s) => ({ login: 'octocat', sessions: [s] });
+  for (const trigger of ['review', 'qa']) {
+    const seen = attention(read(run(trigger, { status: 'starting' })), null, { first: true }).now;
+    const verdict = run(trigger, { review: { reported: true, conclusion: 'APPROVE' }, qa: { conclusion: 'success' } });
+    assert.deepEqual(attention(read(verdict), seen).notify, [], `${trigger}: off by default`);
+    const all = new Set(NOTIFICATION_KINDS.map((k) => k.key));
+    // Failing, pausing or being handed over never ring for one, whatever is on.
+    for (const after of [run(trigger, { status: 'failed', error: 'boom' }), run(trigger, { status: 'stopped', stopReason: 'idle for 1 h' }), run(trigger, { assignee: 'octocat', assignedBy: 'ana-dev' })]) {
+      assert.deepEqual(attention(read(after), seen, { enabled: all }).notify, [], `${trigger}: ${after.status} ${after.assignee ?? ''}`);
+    }
+  }
 });
 
 test('one notification per session per read, the most pressing', () => {

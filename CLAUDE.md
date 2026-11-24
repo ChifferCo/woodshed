@@ -127,7 +127,7 @@ All in us-east-1, everything named `<prefix>*` and tagged
 | `oidc-signing-key` | The console only, to sign the tokens its MCP relay adds for a server whose auth is a signed token (`console/oidcIssuer.mjs`); made by the console the first time one is signed. Its public half is at `<console>/.well-known/jwks.json`. Never in a session | `oidcIssuer: signing key not read` or `not saved`, and the relay answers 503; replacing it by hand keeps the old key in the JWKS for 15 minutes, so tokens in flight still check |
 | `mcp-servers/<name>/header` | The console only: the value of the header its MCP relay adds to that server's calls (`console/mcpServers.mjs`), set on Console settings' MCP servers card or its API, write-only there, and deleted with the server or when its auth stops being a header. Never in a session, which reaches the server through the relay | The session's call answers 503 `has no value yet` (`mcpRelay: auth not added`) when none is saved, and `mcpRelay: the MCP server refused what the console added` with the status when the server takes it no more: save a new one on the card (`mcpServers: header saved` with the bytes, never the value). On AWS an `AccessDeniedException` saving it means the base box role lacks `mcp-servers/*` in `PeoplesAndSessionsOwnSecrets` (an apply is due) |
 | `github-app-key` | The console only, to mint installation tokens for itself and for sessions. Read straight from Secrets Manager, never written to disk, and write-only on the Secrets tab. Never in a session | With no value the console logs `no GitHub App key yet` at start and skips polling until one is uploaded. Otherwise it logs `GitHub refused an installation token` with GitHub's reason. A session's `gh` says `could not get a GitHub token`: check `sessionApi:` lines in the console's log, then that port 7691 is open from the sessions' security group |
-| `slack-bot-token` | The console only, to post each pull request a session opens to its project's channel on the Console settings page (or the Slack card's), and to answer questions from Slack in their threads. Set on Console settings' Slack card (Set up Slack, Replace keys), which checks it with Slack's `auth.test` first and never shows it back; the Secrets page no longer lists it. Never in a session | The card says **Token refused** with Slack's error. The console logs `slack: no bot token yet, nothing sent`, or `slack: call refused` with the method and Slack's error: `not_in_channel` means the bot was not invited, `invalid_auth` a wrong token, `channel_not_found` a name where the ID belongs, `missing_scope` a scope console/README.md's "Setting it up: the Slack card" lists (`app_mentions:read`, `channels:read`, `chat:write`, `groups:read`, `reactions:write`, `users:read`, `users:read.email`) and the app lacks. `missing_scope` for `conversations.list` is an app made before the channel picker: the picker asks for the channel's ID until `channels:read` and `groups:read` are added and the app reinstalled. `slack: keys saved` says who set it, never the value |
+| `slack-bot-token` | The console only, to post each pull request a session opens to its project's channel on the Console settings page (or the Slack card's), and to answer questions from Slack in their threads. Set on Console settings' Slack card (Set up Slack, Replace keys), which checks it with Slack's `auth.test` first and never shows it back; the Secrets page no longer lists it. Never in a session | The card says **Token refused** with Slack's error. The console logs `slack: no bot token yet, nothing sent`, or `slack: call refused` with the method and Slack's error: `not_in_channel` means the bot was not invited, `invalid_auth` a wrong token, `channel_not_found` a name where the ID belongs, `missing_scope` a scope console/README.md's "Setting it up: the Slack card" lists (`app_mentions:read`, `channels:history`, `channels:read`, `chat:write`, `groups:read`, `reactions:write`, `users:read`, `users:read.email`) and the app lacks. `missing_scope` for `conversations.list` is an app made before the channel picker: the picker asks for the channel's ID until `channels:read` and `groups:read` are added and the app reinstalled. `slack: keys saved` says who set it, never the value |
 | `slack-signing-secret` | The webhooks Lambda only, to check each Slack event (`/slack`). Set on Console settings' Slack card with the bot token, never shown back | Every mention is refused: the Lambda logs `webhooks: bad or missing Slack signature`, and Slack's Event Subscriptions page says the Request URL failed. With no value at all the Lambda fails the read, and Slack sees a 502 |
 | `github-app-client-secret` | The console only, to sign people in with GitHub. Write-only on the Secrets tab. Never in a session | The base box's console always requires sign-in, so with no value or a wrong one nobody gets in: GitHub refuses each sign-in code and the console logs `auth: GitHub refused the sign-in code`. console/README.md, "Sign-in", sets it from a shell |
 | `users/<login>/claude-token` | The Claude plan of one person's My Woodshed sessions, and the shared sessions they start while their switch for it is on. Made by the console on My settings, never by Terraform; write-only there. Handed to that person's private sessions alone, in the `/settings` answer, for claude to call Anthropic with directly (the Artifact tool needs a real token). Never handed to a shared session: the console's Anthropic proxy adds it to the calls of a shared session whose `plan` is that login and who started it | The session's log says `could not get the owner's settings` and it fails. The console logs `sessionApi: no Claude token for the owner`, or `anthropicProxy: no Claude token saved for the plan` when it was removed mid-session from a shared session's starter. A running private session keeps the token it started with until it stops. claude asks to log in when the token was revoked: save a new one |
@@ -396,6 +396,16 @@ URL on top of each env file's Repo settings values
   own line (`userSettings: terminal changed`, `reviews of my pull requests`, `own token for shared sessions`, `own
   Codex sign-in for reviews`, `git identity changed`). `answered 404` or `does not let the command line change` is a
   console from before `GET /api/cli/config` (cli/README.md, "Your choices on My settings").
+- **`woodshed-session` in a session refuses, or the session it started is missing.** It says why (console/README.md,
+  "Sessions that start sessions"): `only a My Woodshed session can` is no `/tmp/woodshed-start-token` (a shared session,
+  a question, review or QA run, a tainted one, or an image from before it; the session's log says `Session starts on`
+  when it got one), `its start token is not one the console knows` a token from a run that stopped, and `no longer has
+  write access to the repo on GitHub` its person's write access gone while they stay on People. The console
+  logs `sessionStarts: session started` or `start refused` with `why`, and for `start checks` the `status` New session's
+  own checks answered with, then the start's usual `fleet: session created` with `startedFrom`. A message between two sessions logs
+  `sessionStarts: message` with its `outcome`: `queued` is held until the other is at its prompt (it works, waits in
+  line or is paused), as Chat's held messages are; a `send --wait` that says `it did not take up what was sent` saw the
+  other neither work nor hold it for 90 s.
 - **A private session starts without its MCP logins, or Resume opens a blank
   claude.** The session's log says `Claude home restored`, `No Claude home
   saved yet` or `WARNING: Claude home not restored` with the status. Every 5
@@ -850,6 +860,13 @@ URL on top of each env file's Repo settings values
   `fleet: QA check failed` gives GitHub's reply: a 403 means the installation has not accepted the App's Checks: write.
   `fleet: QA check skipped, not the pull request's commit` means the report named a commit that was neither the one the
   session started on nor the pull request's head: the pull request's code can send the report, so it gets no check.
+- **A question in Slack asked for an issue and none was opened.** The ask session's `issue.sh` prints the console's reason, and the
+  console logs `asks: issue opened` with the session, `repo`, `number` and `asker`, or `asks: issue refused` with `why`: the person
+  who last mentioned the bot is not linked to GitHub on People (`slackAccounts`), has no write access to the repo, the repo is
+  not one of Console settings' Repos, or GitHub refused the App
+  (`Issues: write` not accepted on that installation). The session's own token never writes: only the console's App files it
+  (`POST /issues`, `console/asks.mjs` `openIssue`), and the console posts the issue's link in the thread (`asks: issue link not posted` when Slack refused). Never for a tainted session, and asks are never tainted.
+- **A question ignores the thread it was asked in.** The console logs `asks: thread read` with the `messages` and `chars` given, or `asks: thread not read` with Slack's error: `missing_scope` means the app lacks `channels:history` (reinstall it); a private channel gets `missing_scope` on purpose, since the app has no `groups:history`. Guests and other organizations' messages are left out on purpose.
 - **A question got 👀 and no answer.** Open the session from the link in the
   thread. The session's log says `mode: ask`; the console logs `asks: answer
   posted` with `posted: false` when Slack refused the reply (`slack: call
@@ -906,8 +923,8 @@ URL on top of each env file's Repo settings values
   statusd `statusd: text sent to claude`; a file from **📎** logs `statusd:
   file uploaded` with `typed: null`. The mic is hidden where the browser has no
   speech recognition, and says why in a toast when the site may not use the
-  microphone. A terminal that reconnected by itself logs `terminal:
-  reconnecting` in the browser's console.
+  microphone. A terminal whose connection dropped logs `[terminal] websocket
+  closed` with the code in its frame's console, and reconnects by itself.
 - **+ Another agent fails, or the agent switch is missing.** The switch shows only to the owner of a running My
   Woodshed session on Claude Code or Codex whose statusd reports `agents` (an image from before `session/agents.mjs`
   reports none; a Grok Build or OpenCode session never does, and the console answers 409 `runs on its owner's own sign-in
@@ -964,8 +981,10 @@ URL on top of each env file's Repo settings values
   the branch checked out and those of the checkout's other local branches (`prUrls`), from the session's own repo
   alone. In the session, `curl -s -H "Authorization: Bearer $SESSION_TOKEN" localhost:7682/status` shows `prUrls`;
   none there is an image from before it, which reports only the branch checked out. `statusd: pull requests of the
-  other branches not read` gives gh's error. A pull request whose branch was never a local branch of the checkout
-  (opened from a second clone, or on another repo) is not found.
+  other branches not read` gives gh's error. One opened from a second clone, or on another repo, is found only when
+  claude opened it with `gh pr create` (claude's PostToolUse hook records it in `/tmp/woodshed-opened-pulls.json`,
+  `session/openedPulls.mjs`; codex has no hooks), and the console keeps it only for a private session, on a project its owner may start sessions on: its
+  chip names that repo (`woodshed-cloud #151`).
 - **A pull request's chip or Slack post lags by minutes after a change.**
   With pull request webhooks arriving, a change is read within seconds: the
   console logs `pullWebhooks: pull request marked due` with the numbers, what
@@ -1041,6 +1060,12 @@ URL on top of each env file's Repo settings values
   has no `shellPort` for it), or the session is not running. Inside a session,
   `/tmp/ttyd-shell.log` is its log. A connection that hangs means the sessions'
   security group lacks the `shell` rule for 7684 (an apply is due).
+- **A TUI or Terminal tab stays blank, or keeps saying `Reconnecting…` or `Press ⏎ to reconnect`.** Both tabs are the
+  console's terminal page (console/README.md, "The terminal page"), and the session's ttyd only the connection. The
+  frame's console logs `[terminal] websocket closed` with the code each time it drops. The console logs `terminal:
+  first message refused` with why when what the browser sent first was no terminal's size, and `terminal: websocket
+  dropped` when the session's side went. In the session, `/tmp/ttyd.log` (`/tmp/ttyd-shell.log` for the Terminal tab)
+  says when each websocket opened and closed.
 - **Open ▾ has no Redis, or Redis answers `not found` or `the Redis viewer is not running`.**
   No Redis means the project file's env never mentions `REDIS_URL`, so the session started none: its log says
   `Redis not started`, and statusd reports `redis: false`. `not found` means the session started from an image without
@@ -1159,7 +1184,7 @@ for the pane bar's buttons, but has no container: it cannot show a live terminal
 nowhere. `/s/5a5a5a5a` is starting, for the start checklist in the local provider's words, until the start timeout
 fails it. `/s/c0ffee11` is running with a live TUI where ttyd and tmux are on the PATH (as in a Woodshed
 session): `devTerminalSession.mjs` runs them on `session/tmux.conf` over a made-up conversation, for find, copy, links
-and scrolling back. `/s/beadfeed?tab=review` is running with a Review tab that works: `devReviewSession.mjs` answers it with
+and scrolling back, with a second ttyd on a shell for its Terminal tab. `/s/beadfeed?tab=review` is running with a Review tab that works: `devReviewSession.mjs` answers it with
 the shed's real review page over a made-up change it commits to a scratch repo, with an analysis already written. Its
 chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and app go nowhere. `/s/abbaabba` is running on a project with two apps behind the real statusd,
 whose checkout has three branches with a pull request each (one checked out, one pushed and left, one in a git

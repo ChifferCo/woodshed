@@ -30,7 +30,7 @@ still says its value.
 ## From a program's server
 
 A program embedding the console draws the same rows on its server (`console/settingsMarkup.mjs`: `group`, `row`,
-`line`, `howTo`, `pill`, `button`, `steps`, `valueBox`, `table`, `eventLine`, `checklist`, `pageHead`, `dialog`), for
+`line`, `howTo`, `pill`, `button`, `steps`, `valueBox`, `table`, `figures`, `eventLine`, `checklist`, `pageHead`, `dialog`), for
 its pages in the settings frame, its groups on a repo's settings page (the `repoPage` hook) and its pages that stand
 alone (`standalonePage` in `server.mjs`). `settingsMarkup.test.mjs` holds its rows to `public/settingsRows.js`'s, so the
 two never drift. What is new there:
