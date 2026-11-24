@@ -11,7 +11,7 @@ import { createProjectAccess } from '../console/projectAccess.mjs';
 import { createHandler } from '../console/server.mjs';
 import { createUserSettings } from '../console/userSettings.mjs';
 import { createViewPrefs } from '../console/viewPrefs.mjs';
-import { consoleReason, readSignInFile, shownFile, signInFile } from './agentSignIns.mjs';
+import { readSignInFile, shownFile, signInFile } from './agentSignIns.mjs';
 import { createCredentials } from './credentials.mjs';
 import { EXIT, main } from './woodshed.mjs';
 
@@ -146,7 +146,7 @@ test('sign-in push refuses a malformed or missing file here, and sends nothing',
   c.write('.grok/auth.json', `{"default": "${GROK_MARKER}"}`);
   const bad = await c.run(['sign-in', 'push', 'grok', '--console', c.origin]);
   assert.equal(bad.code, EXIT.refused);
-  assert.match(bad.err, new RegExp(`${escaped(path.join('~', '.grok', 'auth.json'))} is not a Grok Build sign-in: that is not a Grok Build auth\.json: run grok login, then paste ~/\\.grok/auth\\.json\\. Nothing was sent\\.`));
+  assert.match(bad.err, new RegExp(`${escaped(path.join('~', '.grok', 'auth.json'))} is not a Grok Build sign-in: that is not a Grok Build auth\\.json: run grok login, then paste ~/\\.grok/auth\\.json\\. Nothing was sent\\.`));
   c.write('.local/share/opencode/auth.json', `not json ${OPENCODE_MARKER}`);
   const badJson = await c.run(['sign-in', 'push', 'opencode', '--json', '--console', c.origin]);
   assert.equal(badJson.code, EXIT.refused);
@@ -204,9 +204,9 @@ test('each agent\'s file is where the agent keeps it', () => {
   assert.deepEqual(readSignInFile('grok', { env: {}, home: path.join(os.tmpdir(), 'woodshed-no-such-home') }).found, false);
 });
 
-// A gateway, or a console other than Woodshed's, that answers the save with what it was sent: the command line says its
-// own words, and none of the sign-in, in text or in --json.
-test('sign-in push never repeats a sign-in the console echoes back, whole or in part', async (t) => {
+// A gateway, or a console other than Woodshed's, that answers the save with what it was sent: the command line says only
+// its own words for the status, so none of the sign-in reaches the output, in text or in --json, however short it is.
+test('sign-in push never repeats anything of the console\'s answer, so an echoed sign-in is never shown', async (t) => {
   let answer = null;
   const standIn = (method, pathname, init) => {
     if (method !== 'POST' || !pathname.startsWith('/api/my/agent-auth/') || !answer) return null;
@@ -214,54 +214,37 @@ test('sign-in push never repeats a sign-in the console echoes back, whole or in 
     const [status, body] = answer(value);
     return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   };
-  const c = await consoleFor(t, { standIn });
-  c.write('.grok/auth.json', JSON.stringify(GROK_LOGIN));
-  c.write('.local/share/opencode/auth.json', JSON.stringify(OPENCODE_LOGIN));
-  const partial = GROK_MARKER.slice(5, 19);
-  const push = async (id, ...more) => {
-    const out = await c.run(['sign-in', 'push', id, '--console', c.origin, ...more]);
-    assert.doesNotMatch(out.out + out.err, new RegExp(partial), 'not even part of it');
-    return out;
+  const c = await consoleFor(t);
+  const echoing = await consoleFor(t, { standIn });
+  // A short key, shorter than any run a check of the echo would look for, and a login.
+  const SHORT = 'xai-shortkey12';
+  echoing.write('.grok/auth.json', SHORT);
+  echoing.write('.local/share/opencode/auth.json', JSON.stringify(OPENCODE_LOGIN));
+  const never = (out, ...values) => {
+    for (const v of values) assert.ok(!(out.out + out.err).includes(v), `${v.slice(0, 6)}… is never shown`);
   };
-
-  answer = (value) => [400, { error: `bad request: ${value}` }];
-  const whole = await push('grok');
-  assert.equal(whole.code, EXIT.refused);
-  assert.equal(whole.err.trim(), `woodshed: ${c.origin} refused it (400) (its answer repeated part of the sign-in, so it is not shown).`);
-  const wholeJson = await push('opencode', '--json');
-  assert.equal(wholeJson.code, EXIT.refused);
-  assert.match(JSON.stringify(wholeJson.lines), /its answer repeated part of the sign-in, so it is not shown/);
-
-  // Only the key's middle, and with the console's own control characters around it.
-  answer = () => [409, { error: `no: …${partial}\u001b[0m` }];
-  const part = await push('grok');
-  assert.match(part.err, /refused it \(409\) \(its answer repeated part of the sign-in, so it is not shown\)\./);
-  answer = (value) => [502, { error: JSON.parse(value).default.refresh }];
-  const gateway = await push('grok', '--json');
-  assert.equal(gateway.code, EXIT.failed);
-  assert.match(JSON.stringify(gateway.lines), /answered 502 \(its answer repeated part of the sign-in, so it is not shown\)/);
-  answer = (value) => [403, { error: value }];
-  assert.match((await push('grok')).err, /did not take it \(403\): a console from before the command line could save a sign-in\. Save it on My settings\. \(its answer repeated/);
-
-  // A reason of the console's own, holding none of it, is still said after the command line's words.
-  answer = () => [409, { error: 'this console has no secret store, so My settings cannot be saved' }];
-  assert.match((await push('grok')).err, /refused it \(409\): this console has no secret store, so My settings cannot be saved\./);
-
+  const statuses = [[400, 'refused it (400). Its log says why; or save it on My settings.', EXIT.refused],
+    [409, 'refused it (409). Its log says why; or save it on My settings.', EXIT.refused],
+    [403, 'did not take it (403): a console from before the command line could save a sign-in. Save it on My settings.', EXIT.refused],
+    [413, 'refused it (413): it is larger than the console takes. Save it on My settings.', EXIT.refused],
+    [502, 'answered 502. Try again, or save it on My settings.', EXIT.failed]];
+  for (const [status, words, code] of statuses) {
+    // The key's part after `xai-`: shorter than a run a check of the echo would look for, and not the whole value.
+    answer = (value) => [status, { error: `no: ${value.startsWith('xai-') ? value.slice(4) : value} \u001b[0m` }];
+    const text = await echoing.run(['sign-in', 'push', 'grok', '--console', echoing.origin]);
+    assert.equal(text.code, code, String(status));
+    assert.equal(text.err.trim(), `woodshed: ${echoing.origin} ${words}`);
+    never(text, SHORT.slice(4));
+    const json = await echoing.run(['sign-in', 'push', 'opencode', '--json', '--console', echoing.origin]);
+    assert.equal(json.code, code, `${status} --json`);
+    assert.ok(JSON.stringify(json.lines).includes(words.replace(/\.$/, '')), `${status} --json says the command's words`);
+    never(json, JSON.stringify(OPENCODE_LOGIN), OPENCODE_MARKER);
+  }
   // A success that echoes it: savedAt is a timestamp or nothing.
   answer = (value) => [200, { agent: 'grok', set: true, savedAt: value }];
-  const echoedOk = await push('grok', '--json');
+  const echoedOk = await echoing.run(['sign-in', 'push', 'grok', '--json', '--console', echoing.origin]);
   assert.equal(echoedOk.code, EXIT.done);
   assert.equal(echoedOk.lines[0].savedAt, null);
-  assert.deepEqual(c.saved.size, 0, 'the stand-in answered every save');
-});
-
-test('consoleReason drops the whole value, any field of it, or a run of one', () => {
-  const value = JSON.stringify(GROK_LOGIN);
-  assert.deepEqual(consoleReason(`x ${value}`, value), { text: null, dropped: true });
-  assert.deepEqual(consoleReason(`x ${GROK_MARKER}-refresh`, value), { text: null, dropped: true });
-  assert.deepEqual(consoleReason(`…${GROK_MARKER.slice(3, 15)}…`, value), { text: null, dropped: true });
-  assert.deepEqual(consoleReason('xai-0123456789ab', 'xai-0123456789abcdefghij'), { text: null, dropped: true }, 'a key on its own, cut');
-  assert.deepEqual(consoleReason('that is not a Grok Build auth.json: run grok login, then paste ~/.grok/auth.json', value).dropped, false);
-  assert.deepEqual(consoleReason('a\u0007b', value), { text: 'ab', dropped: false });
-  assert.deepEqual(consoleReason(undefined, value), { text: null, dropped: false });
+  never(echoedOk, SHORT);
+  assert.equal(c.saved.size, 0);
 });

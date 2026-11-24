@@ -125,18 +125,17 @@ export async function signInCommand(ctx) {
   }
 
   const sent = await call(origin, `/api/my/agent-auth/${id}`, { method: 'POST', token, body: { value: read.value } });
-  // Each status gets words of this command's own. The console's reason follows them only when it holds no part of what
-  // was sent: a gateway, or a console other than Woodshed's, could echo the sign-in back in its error.
-  const reason = consoleReason(sent.body?.error, read.value);
-  const why = reason.dropped ? ' (its answer repeated part of the sign-in, so it is not shown)' : reason.text ? `: ${reason.text}` : '';
+  // Each status gets words of this command's own, and nothing of the console's answer: a gateway, or a console other than
+  // Woodshed's, could echo the sign-in back in its error, and no check of the echo catches a short key for certain. The
+  // console's own log says why it refused.
   if (sent.status === 401) throw fail(`The sign-in to ${origin} ended. Run: woodshed login --console ${origin}`, { code: EXIT.waiting, status: 'signed-out' });
   if (sent.status === 403 || sent.status === 404) {
-    throw fail(`${origin} did not take it (${sent.status}): a console from before the command line could save a sign-in. Save it on My settings.${reason.dropped ? why : ''}`, { code: EXIT.refused, status: 'refused' });
+    throw fail(`${origin} did not take it (${sent.status}): a console from before the command line could save a sign-in. Save it on My settings.`, { code: EXIT.refused, status: 'refused' });
   }
-  if (sent.status === 413) throw fail(`${origin} refused it (413): it is larger than the console takes. Save it on My settings.${reason.dropped ? why : ''}`, { code: EXIT.refused, status: 'refused' });
-  if (sent.status === 429) throw fail(`${origin} refused it (429): too many calls just now. Try again in a minute.${reason.dropped ? why : ''}`, { code: EXIT.refused, status: 'refused' });
-  if (sent.status >= 400 && sent.status < 500) throw fail(`${origin} refused it (${sent.status})${why}.`, { code: EXIT.refused, status: 'refused' });
-  if (sent.status !== 200 || sent.body?.set !== true) throw fail(`${origin} answered ${sent.status}${why}. Try again, or save it on My settings.`);
+  if (sent.status === 413) throw fail(`${origin} refused it (413): it is larger than the console takes. Save it on My settings.`, { code: EXIT.refused, status: 'refused' });
+  if (sent.status === 429) throw fail(`${origin} refused it (429): too many calls just now. Try again in a minute.`, { code: EXIT.refused, status: 'refused' });
+  if (sent.status >= 400 && sent.status < 500) throw fail(`${origin} refused it (${sent.status}). Its log says why; or save it on My settings.`, { code: EXIT.refused, status: 'refused' });
+  if (sent.status !== 200 || sent.body?.set !== true) throw fail(`${origin} answered ${sent.status}. Try again, or save it on My settings.`);
   // A timestamp, or nothing: never other text from the answer.
   const savedAt = typeof sent.body.savedAt === 'string' && ISO_TIME.test(sent.body.savedAt) ? sent.body.savedAt : null;
   if (json) emit({ event: 'sign-in', agent: id, file: read.file, console: origin, saved: true, replaced: saved, savedAt });
@@ -145,58 +144,3 @@ export async function signInCommand(ctx) {
 }
 
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
-// A run of this many characters of a secret in the answer counts as an echo of it, so a cut or partial copy counts too.
-const ECHO_RUN = 12;
-
-/**
- * The parts of a sign-in that are secret: the whole value, and each string in its JSON (keys, tokens) long enough to be
- * one. `runs`: a run of ECHO_RUN characters of it counts as an echo too. Not the whole JSON's, whose runs are its
- * punctuation and field names as much as anything secret.
- * @returns {{text: string, runs: boolean}[]}
- */
-function secretParts(value) {
-  const parts = [{ text: value, runs: true }];
-  const walk = (node) => {
-    if (typeof node === 'string') {
-      if (node.length >= 8) parts.push({ text: node, runs: true });
-    } else if (node && typeof node === 'object') {
-      for (const [key, inner] of Object.entries(node)) {
-        if (key.length >= 8) parts.push({ text: key, runs: true });
-        walk(inner);
-      }
-    }
-  };
-  try {
-    const json = JSON.parse(value);
-    if (json && typeof json === 'object') {
-      parts[0].runs = false;
-      walk(json);
-    }
-  } catch {
-    // A key on its own (xai-…): the whole value is the one part, its runs included.
-  }
-  return parts;
-}
-
-/**
- * The console's error text, when it is safe to show: printable, cut short, and holding no part of what was sent.
- * @param {unknown} error  the answer's `error`
- * @param {string} value   what was sent
- * @returns {{text: string|null, dropped: boolean}}
- */
-export function consoleReason(error, value) {
-  if (typeof error !== 'string' || !error) return { text: null, dropped: false };
-  const raw = error;
-  const flat = error.replace(/[^\x20-\x7e]/g, '');
-  const echoes = secretParts(String(value ?? '')).some(({ text, runs }) => {
-    if (raw.includes(text) || flat.includes(text)) return true;
-    for (let i = 0; runs && i + ECHO_RUN <= text.length; i += 1) {
-      const run = text.slice(i, i + ECHO_RUN);
-      if (raw.includes(run) || flat.includes(run)) return true;
-    }
-    return false;
-  });
-  if (echoes) return { text: null, dropped: true };
-  const text = flat.slice(0, 200).trim();
-  return { text: text || null, dropped: false };
-}
