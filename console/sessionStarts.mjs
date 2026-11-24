@@ -337,10 +337,12 @@ export function createSessionStarts({
       return refuse(400, 'no such agent', `the agent is one of ${agents.AGENT_IDS.join(', ')}`);
     }
     const agent = body.agent || 'claude';
-    // As loose as the starting session, never looser: a mode it was not given, it cannot give. One the new session's
-    // agent has not (acceptEdits, for Codex and OpenCode) asks before each change instead.
-    const mode = from.options?.permissionMode || 'auto';
-    const permissionMode = agents.agent(agent).permissionModes.includes(mode) ? mode : 'default';
+    // As loose as the starting session, never looser: a mode it was not given, it cannot give. The new session's agent
+    // gets the loosest of its own modes that does no more unasked (shared/agents.cjs, modeForStartedSession): Codex's
+    // own policy runs commands unasked, so a Codex session started from one that asks before commands is read-only.
+    const fromMode = from.options?.permissionMode || 'auto';
+    const permissionMode = agents.modeForStartedSession(agents.agentOfSession(from), fromMode, agent);
+    if (permissionMode !== fromMode) console.log('sessionStarts: mode tightened for the agent', { from: from.id, fromAgent: agents.agentOfSession(from), fromMode, agent, permissionMode });
     const answer = await startMine(login, {
       prompt, name: typeof body.name === 'string' ? body.name : '', workOn: branch, agent,
       model: typeof body.model === 'string' ? body.model : '', effort: typeof body.effort === 'string' ? body.effort : '', permissionMode,

@@ -907,7 +907,7 @@ stopping one does nothing to the other.
   line token (once an hour per person, `createWriteAccess`): New session's project check asks nothing of the default
   project, whose writers the page's sign-in rechecks. It counts
   in their My Woodshed sessions and waits in line past the limit, and a hosted console bills it as any session. Its
-  permission mode is the starting session's (`acceptEdits` becomes `default` for Codex and OpenCode, which have none; an agent other than those `shared/agents.cjs` lists is refused with 400), never one it picks. A branch
+  permission mode is the starting session's, never one it picks and never looser: the new agent gets the loosest of its own modes that does no more unasked (`modeForStartedSession` in `shared/agents.cjs`, which ranks every agent's modes; the console logs `sessionStarts: mode tightened for the agent` when it differs). Codex's `default` edits and runs sandboxed commands unasked, so a Codex session started from a `default` or `acceptEdits` one runs in `plan`, its read-only sandbox, where each write asks. An agent other than those `shared/agents.cjs` lists is refused with 400. A branch
   that is the starting session's own is refused. It gets nothing of the starting session's but `startedFrom`, its id.
 - **Limits**: none of its own. The person's **My Woodshed sessions per person** applies as it does to New session: past
   it, a started session waits in line.

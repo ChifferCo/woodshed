@@ -1210,8 +1210,12 @@ configureOpencode() {
   # opencode's own AGENTS.md, copied once here: never named by path, which a symlink made later in the session could
   # turn into another file, and never through a symlink, which could point at auth.json and send every saved provider
   # key to the model.
-  jq -n --arg effort "${EFFORT:-}" '{"$schema": "https://opencode.ai/config.json", autoupdate: false, share: "disabled"}
-    + (if $effort == "" then {} else {agent: {build: {variant: $effort}, plan: {variant: $effort}}} end)' \
+  jq -n --arg effort "${EFFORT:-}" --argjson permission "$(opencodePermission)" \
+    '{"$schema": "https://opencode.ai/config.json", autoupdate: false, share: "disabled"}
+    + (if $permission.global == null then {} else {permission: $permission.global} end)
+    + ([(if $effort == "" then {} else {agent: {build: {variant: $effort}, plan: {variant: $effort}}} end),
+        (if $permission.plan == null then {} else {agent: {plan: {permission: $permission.plan}}} end)]
+       | reduce .[] as $part ({}; . * $part))' \
     > "$OPENCODE_CONFIG_DIR/opencode.json"
   cp /tmp/woodshed-rules.md "$OPENCODE_CONFIG_DIR/AGENTS.md"
   local rules
@@ -1228,8 +1232,28 @@ configureOpencode() {
   log "opencode runs on the owner's own provider sign-ins, directly" "(providers: $(jq -r 'keys | join(" ")' "$OWN_AGENT_AUTH_FILE"))"
 }
 
-# OpenCode's flags: auto answers every ask itself, plan is its plan agent (edits refused), default leaves its own policy
-# (which allows most and asks for little).
+# OpenCode's permission rules for New session's mode, so each means what it does for Claude Code: its own policy allows
+# almost everything, edits and commands included. {global, plan}: `permission` for every agent, and the plan agent's own,
+# which OpenCode 1.19.6 applies after the global (its agent.ts: the last rule that matches wins), so plan's edit deny
+# holds where the global asks. Measured with 1.19.6 against a stand-in model (PR #335):
+#   default      edits and commands ask
+#   acceptEdits  edits allowed, commands ask
+#   plan         the plan agent: edits refused (the edit tools are not even offered), commands ask, so a write through
+#                bash waits for a person; a switch to the build agent asks for both
+#   auto         none: --auto answers every ask itself
+# A web fetch asks in all three, as Claude Code's does.
+opencodePermission() {
+  local asks='{"edit": "ask", "bash": "ask", "webfetch": "ask"}'
+  case "${PERMISSION_MODE:-auto}" in
+    default) printf '{"global": %s}' "$asks" ;;
+    acceptEdits) printf '{"global": {"edit": "allow", "bash": "ask", "webfetch": "ask"}}' ;;
+    plan) printf '{"global": %s, "plan": {"edit": "deny", "bash": "ask"}}' "$asks" ;;
+    *) printf '{}' ;;
+  esac
+}
+
+# OpenCode's flags: auto answers every ask itself, plan is its plan agent; the other modes are its build agent under the
+# rules opencodePermission writes.
 opencodeFlags() {
   case "${PERMISSION_MODE:-auto}" in
     auto) printf ' --auto' ;;
