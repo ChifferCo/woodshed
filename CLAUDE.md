@@ -975,8 +975,10 @@ URL on top of each env file's Repo settings values
   the branch checked out and those of the checkout's other local branches (`prUrls`), from the session's own repo
   alone. In the session, `curl -s -H "Authorization: Bearer $SESSION_TOKEN" localhost:7682/status` shows `prUrls`;
   none there is an image from before it, which reports only the branch checked out. `statusd: pull requests of the
-  other branches not read` gives gh's error. A pull request whose branch was never a local branch of the checkout
-  (opened from a second clone, or on another repo) is not found.
+  other branches not read` gives gh's error. One opened from a second clone, or on another repo, is found only when
+  claude opened it with `gh pr create` (claude's PostToolUse hook records it in `/tmp/woodshed-opened-pulls.json`,
+  `session/openedPulls.mjs`; codex has no hooks), and the console keeps it only for a private session, on a project its owner may start sessions on: its
+  chip names that repo (`woodshed-cloud #151`).
 - **A pull request's chip or Slack post lags by minutes after a change.**
   With pull request webhooks arriving, a change is read within seconds: the
   console logs `pullWebhooks: pull request marked due` with the numbers, what

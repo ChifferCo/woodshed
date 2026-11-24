@@ -74,6 +74,7 @@ import { promisify } from 'node:util';
 
 import { parseTranscriptTail } from '../shared/sessionState.mjs';
 import { STATE_FILE } from './hookState.mjs';
+import { readOpened } from './openedPulls.mjs';
 import { STOP_TIMEOUT_MS, SYNC_EVERY_MS, exchange, readState, syncOnce, writeState } from './settingsSync.mjs';
 import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs';
 import { readDisk, readUsage, usageBetween } from './usage.mjs';
@@ -560,9 +561,11 @@ const lookupBranchPulls = createBranchPulls({
   isAncestor: async (sha, branch) => { await git('merge-base', '--is-ancestor', sha, `refs/heads/${branch}`); return true; },
 });
 
+// The checkout's branches' pull requests, then those claude opened from anywhere else (openedPulls.mjs): the console
+// keeps the ones on a repo of its projects.
 async function prUrls() {
   if (ASK || QA) return [];
-  return lookupBranchPulls();
+  return [...new Set([...await lookupBranchPulls(), ...readOpened()])];
 }
 
 const ghPrUrl = async () => (await run('gh', ['pr', 'view', '--json', 'url', '--jq', '.url'], { cwd: REPO_DIR })).stdout.trim();

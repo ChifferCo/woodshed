@@ -54,6 +54,7 @@ test('each session\'s pull request is read in one call, again after a minute, an
   await chips.refresh(sessions);
   assert.deepEqual(asked.at(-1), [10, 11]);
   assert.equal(prNumberOf('https://github.com/o/r/pull/10/files', 'o/r'), null);
+  assert.equal(prNumberOf('https://github.com/O/R/pull/10', 'o/r'), 10, 'GitHub\'s names are any case');
 });
 
 test('a number GitHub has no pull request for is asked again only as often as a settled one', async () => {

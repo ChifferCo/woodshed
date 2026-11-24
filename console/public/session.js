@@ -1072,7 +1072,6 @@
   // follows it too.
   function railCard(s) {
     const st = W.displayStatus(s);
-    const pr = W.prNumber(s.prUrl);
     const live = W.isLive(s);
     const word = h('b', null, st.word.charAt(0).toUpperCase() + st.word.slice(1));
     const pauses = W.pausesIn(s, data);
@@ -1107,7 +1106,7 @@
         h('span', { class: 'rmarks' }, starButton(s), menuButton(s))),
       h('div', { class: 'rsub' },
         h('span', { class: 'rsub-text' }, sub),
-        pr ? W.prChips(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
+        W.hasPrs(s) ? W.prChips(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
         W.isUnassigned(s) && data.assignable && takeButton(s),
         live && W.canExtend(s, data) && extendButton(s),
         !live && W.canResumePrivate(s) && resumeButton(s, true),
@@ -1924,7 +1923,6 @@
   }
 
   function paneBar(s, view) {
-    const pr = W.prNumber(s.prUrl);
     const typing = s.status === 'running' && !PAGE_TABS.has(view);
     // A question from Slack reads the default branch: it has no branch, app or databases of its own.
     const tools = s.status === 'running' && s.kind !== 'ask';
@@ -1972,7 +1970,7 @@
       // A phone's two rows: the name over one line of its state, its PR and its usage, with ⋯ for the rest.
       h('div', { class: 'pphone' },
         h('b', { class: 'pphone-title', title: s.title }, s.title),
-        h('span', { class: 'pphone-meta' }, W.statusBadge(s), s.taintedAt && W.productionTag(s), W.pausesIn(s, data) && h('span', { class: 'ptimer' }, W.pausesIn(s, data)), phoneAppState(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
+        h('span', { class: 'pphone-meta' }, W.statusBadge(s), s.taintedAt && W.productionTag(s), W.pausesIn(s, data) && h('span', { class: 'ptimer' }, W.pausesIn(s, data)), phoneAppState(s), W.hasPrs(s) && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
       h('button', {
         type: 'button', class: 'pmore', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === `${s.id}:phone`), 'data-menu-for': `${s.id}:phone`,
         'aria-label': `Actions for ${s.title}`, title: 'Actions',
@@ -1997,7 +1995,7 @@
       W.statusBadge(s),
       s.taintedAt && W.productionTag(s, { long: true }),
       s.number && h('a', { class: 'pref', href: W.issueUrl(s.repo ?? data.repo, s), target: '_blank', rel: 'noopener', title: s.kind === 'pr' ? 'Open the pull request' : 'Open the issue' }, W.ref(s)),
-      pr && s.kind !== 'pr' && W.prChips(s, { asLink: true }),
+      W.hasPrs(s) && s.kind !== 'pr' && W.prChips(s, { asLink: true }),
       barMenuButton(s, {
         key: 'details', label: 'Details ▾', className: 'pdetails', title: 'Its branch, who started it, how long it has run, whose Claude it runs on and who can see it',
         // What the narrowing rules took off the bar comes here: the meter's readings and Invite.

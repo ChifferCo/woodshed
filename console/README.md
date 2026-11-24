@@ -537,8 +537,12 @@ And what the shed shows about each session:
   nothing of them until they report; a failing check keeps its ✗ beside the word. The hover
   card and the chip's tooltip say `Woodshed review running`. A session that opens another pull request keeps each one
   it reported (`prUrls`, oldest first, by number): the one of the branch checked out and
-  those of its checkout's other branches, a git worktree's included (statusd's `prUrls`,
-  session/README.md). It shows a chip for each, but a merged
+  those of its checkout's other branches, a git worktree's included, and those claude opened with `gh pr create` from
+  another clone (statusd's `prUrls`, session/README.md). One on another repo is kept only for a private session, and only
+  on a project its owner may start sessions on (`projectAccess`, as New session offers them), since the console reads
+  it with that project's token (`reportableRepos` in `console/fleet.mjs`): a shared session, review, QA run or question
+  keeps its own repo's alone; its chip names its repo (`woodshed-cloud #151`), and it goes where it was
+  first seen, since two repos' numbers say nothing of which came first. It shows a chip for each, but a merged
   or closed one only while no newer one came after it, so the newest always
   stays. The card and pane bar show the newest two of those, a phone's bar
   the newest one, and the older fold into a `+N` chip that names each on hover;

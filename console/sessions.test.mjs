@@ -258,6 +258,22 @@ test('statusUpdate takes the pull requests of the session\'s other branches, in 
   assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrls: many }, 'now').prUrls, many.slice(-20), 'the 20 newest');
 });
 
+test('statusUpdate takes a pull request claude opened on another of the console\'s repos, and no other repo\'s', () => {
+  const own = 'https://github.com/o/r/pull/358';
+  const other = 'https://github.com/O/Cloud/pull/151';
+  const status = { state: 'done', prUrl: own, prUrls: [own, other, 'https://github.com/evil/r/pull/1'] };
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: null }), status, 'now', { repos: ['o/r', 'o/cloud'] }).prUrls, [own, other]);
+  // Another repo's numbers say nothing of when: a lower number opened later is still the newest, and folds last.
+  const later = statusUpdate(session({ repo: 'o/r', prUrl: own, prUrls: [own] }), { state: 'done', prUrl: own, prUrls: [other] }, 'now', { repos: ['o/cloud'] });
+  assert.deepEqual(later.prUrls, [own, other]);
+  const older = 'https://github.com/o/r/pull/300';
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: own, prUrls: later.prUrls }), { state: 'done', prUrl: own, prUrls: [older] }, 'now', { repos: ['o/cloud'] }).prUrls,
+    [older, own, other], 'on its own repo, an older one found later still goes before');
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: null }), status, 'now').prUrls, [own], 'with no other project, only its own repo');
+  assert.equal(statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done', prUrl: other }, 'now', { repos: ['o/cloud'] }).prUrl, null,
+    'prUrl stays the checked-out branch\'s, on its own repo');
+});
+
 test('a pull request says which of Woodshed\'s review and QA are at work on it', () => {
   const url = (n) => `https://github.com/o/r/pull/${n}`;
   const run = (number, extra) => session({ repo: 'o/r', kind: 'pr', number, status: 'running', ...extra });

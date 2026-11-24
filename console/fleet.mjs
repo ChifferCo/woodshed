@@ -24,13 +24,15 @@ import { mayStartSessions, newStartToken, startTokenHash } from './sessionStarts
 import { checkLimits } from './userSettings.mjs';
 import {
   ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, isQa, isReview, keptIds, newSessionId, newSessionToken, sessionLink,
-  parseWorkOn, pullNumber, QA_ALREADY_RUNNING, routeQa, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitProgressFrom, waitsForRetry,
+  parseWorkOn, pullNumber, pullRepo, QA_ALREADY_RUNNING, routeQa, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitProgressFrom, waitsForRetry,
   EXTEND_MS, EXTEND_WINDOW_MS, pauseAt, withSessionLimits,
 } from './sessions.mjs';
 import logins from './public/logins.cjs';
 const { findLogin, sameLogin } = logins;
 
 const CHECKPOINT_TIMEOUT_MS = 90_000;
+// How long the repos a session's owner may start on are kept, for the pull requests it reports (reportableRepos).
+const STARTABLE_KEEP_MS = 60_000;
 const STATUS_TIMEOUT_MS = 5_000;
 // How long statusd may take to type a private session's review feedback after getting it (it reads GitHub first).
 const GUARDED_SEND_WITHIN_MS = 20_000;
@@ -271,7 +273,7 @@ export function failedComment({ session, publicUrl, linkQuery = null, consoleNam
  *   it, every repo has the console's label and both on
  */
 export function createFleet({
-  config, store, launcher, github, statusd = callStatusd, now = Date.now, databases = null, slack = null, homes = null,
+  config, store, launcher, github, statusd = callStatusd, startableRepos = null, now = Date.now, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, qaRecordings = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, reviewGates = async (name) => withDefaultReview(await pullRequests(name)), projectBlocker = async () => null, githubFor = null,
   consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null, repoTriggers = null, reviewAgents = null,
@@ -1006,6 +1008,31 @@ export function createFleet({
     await readStatus(session);
   }
 
+  /**
+   * The repos besides its own a session may report a pull request on (claude's, opened from another clone:
+   * session/openedPulls.mjs). The console reads each with that project's token and shows its title and state, so only a
+   * private session's, on the repos its owner may start on, as New session and /api/pulls allow; a shared session,
+   * review, QA run or question has none. Asked only when the status names another repo's.
+   * @returns {Promise<string[]>}
+   */
+  const startableKept = new Map();
+  async function reportableRepos(session, status) {
+    if (!session.owner || !startableRepos || !Array.isArray(status.prUrls)) return [];
+    const own = String(session.repo ?? '').toLowerCase();
+    if (!status.prUrls.some((url) => { const repo = pullRepo(url); return repo && repo.toLowerCase() !== own; })) return [];
+    // Kept a minute per owner: projectAccess keeps no failed write check, which would be asked again on every read.
+    const kept = startableKept.get(session.owner);
+    if (kept && now() - kept.at < STARTABLE_KEEP_MS) return kept.repos;
+    try {
+      const repos = (await startableRepos(session.owner)).filter((repo) => allProjects(config).some((p) => p.repo === repo));
+      startableKept.set(session.owner, { at: now(), repos });
+      return repos;
+    } catch (err) {
+      console.warn('fleet: the owner\'s projects not read, other repos\' pull requests left out', { id: session.id, message: firstLine(err) });
+      return [];
+    }
+  }
+
   async function readStatus(session, timeoutMs = STATUS_TIMEOUT_MS) {
     if (readingStatus.has(session.id)) return;
     readingStatus.add(session.id);
@@ -1021,7 +1048,7 @@ export function createFleet({
       }
       const wasStarting = session.status === 'starting';
       const wasAsking = session.state === 'needs-you';
-      update(session, statusUpdate(session, status, nowIso()));
+      update(session, statusUpdate(session, status, nowIso(), { repos: await reportableRepos(session, status) }));
       // A message left in the box: sent or cleared in the TUI tab once the box is empty again.
       if (session.leftInBox && status.boxText === false) {
         update(session, { leftInBox: null });

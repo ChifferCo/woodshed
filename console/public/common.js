@@ -684,8 +684,16 @@
     return `https://github.com/${repo}/${s.kind === 'pr' ? 'pull' : 'issues'}/${s.number}`;
   }
 
-  function prNumber(prUrl) {
-    return prUrl ? `#${prUrl.split('/').pop()}` : null;
+  /**
+   * `#151`, or `woodshed-cloud #151` for one on another repo than the session's `repo` (a pull request claude opened
+   * from another clone: session/openedPulls.mjs).
+   */
+  function prNumber(prUrl, repo = null) {
+    if (!prUrl) return null;
+    const number = `#${prUrl.split('/').pop()}`;
+    const on = /^https:\/\/github\.com\/[^/]+\/([^/]+)\/pull\//.exec(prUrl);
+    const own = !repo || prUrl.toLowerCase().startsWith(`https://github.com/${repo.toLowerCase()}/pull/`);
+    return own || !on ? number : `${on[1]} ${number}`;
   }
 
   // The line under a card's title: claude's last message, or what the console knows.
@@ -1077,14 +1085,16 @@
    * @returns {HTMLElement|null}
    */
   function prChip(s, { asLink = false } = {}) {
-    const number = prNumber(s.prUrl);
+    const number = prNumber(s.prUrl, s.repo);
     if (!number) return null;
+    // Another repo's names its repo, which is label enough: `woodshed-cloud #151`.
+    const label = number.startsWith('#') ? `PR ${number}` : number;
     const pr = s.pr;
     const running = runsWord(s.runs);
     const link = { href: asLink ? s.prUrl : null, target: asLink ? '_blank' : null, rel: asLink ? 'noopener' : null };
     const runningParts = (ring) => running && [h('span', { class: 'prchip-word' }, running.word), ring && h('span', { class: 'prchip-mark is-pending', 'aria-hidden': 'true' })];
     // One the console has not read yet still says Woodshed is at work on it.
-    if (!pr) return h(asLink ? 'a' : 'span', { class: 'prchip', title: running?.tip ?? null, ...link }, `PR ${number}`, runningParts(true));
+    if (!pr) return h(asLink ? 'a' : 'span', { class: 'prchip', title: running?.tip ?? null, ...link }, label, runningParts(true));
     const queued = pr.state === 'queued';
     const level = queued ? null : prMarkLevel(pr, Boolean(running));
     const glyph = { fail: '✗', changes: '✗', pending: '', pass: '✓' }[level];
@@ -1092,8 +1102,13 @@
     const tip = [`${number} ${pr.title}`, [stateWord, checksWord(pr.checks), REVIEW_WORD[pr.review], running?.tip].filter(Boolean).join(' · '), s.branch].filter(Boolean).join('\n');
     // A failing check or changes requested keeps its ✗, which needs the look first: the word still says who is at work.
     return h(asLink ? 'a' : 'span', { class: `prchip is-${pr.state}`, title: tip, ...link },
-      `PR ${number}`, queued && h('span', { class: 'prchip-word' }, 'queued'), runningParts(false),
+      label, queued && h('span', { class: 'prchip-word' }, 'queued'), runningParts(false),
       level && h('span', { class: `prchip-mark is-${level}`, 'aria-hidden': 'true' }, glyph));
+  }
+
+  /** Whether the session has a pull request to show: its own repo's, or only one claude opened on another. */
+  function hasPrs(s) {
+    return Boolean(s.prUrl) || (s.prs?.length ?? 0) > 0;
   }
 
   /**
@@ -1115,12 +1130,12 @@
   function prChips(s, { max = 2, ...opts } = {}) {
     const shown = shownPrs(s);
     const folded = shown.slice(0, Math.max(0, shown.length - max));
-    const chips = shown.slice(folded.length).map(({ url, pr, runs }) => prChip({ prUrl: url, pr, runs, branch: s.branch }, opts));
+    const chips = shown.slice(folded.length).map(({ url, pr, runs }) => prChip({ prUrl: url, pr, runs, branch: s.branch, repo: s.repo }, opts));
     if (!folded.length) return chips;
-    const tip = folded.map(({ url, pr }) => [prNumber(url), pr?.title, pr && PR_STATE_WORD[pr.state]].filter(Boolean).join(' · ')).join('\n');
+    const tip = folded.map(({ url, pr }) => [prNumber(url, s.repo), pr?.title, pr && PR_STATE_WORD[pr.state]].filter(Boolean).join(' · ')).join('\n');
     return [h('span', {
       class: 'prchip is-more', title: `${folded.length} more pull request${folded.length === 1 ? '' : 's'}:\n${tip}`,
-      'aria-label': `${folded.length} more pull request${folded.length === 1 ? '' : 's'}: ${folded.map(({ url }) => prNumber(url)).join(', ')}`,
+      'aria-label': `${folded.length} more pull request${folded.length === 1 ? '' : 's'}: ${folded.map(({ url }) => prNumber(url, s.repo)).join(', ')}`,
     }, `+${folded.length}`), ...chips];
   }
 
@@ -1131,7 +1146,7 @@
   function prLines(s) {
     const all = s.prs?.length ? s.prs : s.prUrl ? [{ url: s.prUrl, pr: s.pr ?? null }] : [];
     return all.map(({ url, pr }, i) => [i ? h('br') : null,
-      h('a', { href: url, target: '_blank', rel: 'noopener' }, prNumber(url)),
+      h('a', { href: url, target: '_blank', rel: 'noopener' }, prNumber(url, s.repo)),
       pr && ` · ${PR_STATE_WORD[pr.state]}${pr.title ? ` · ${pr.title}` : ''}`]);
   }
 
@@ -1191,7 +1206,7 @@
     // Every pull request it opened, a merged or closed one the chips no longer show too, as Details lists them.
     const allPrs = s.prs?.length ? s.prs : s.prUrl ? [{ url: s.prUrl, pr: s.pr ?? null }] : [];
     const prs = allPrs.map(({ url, pr, runs }) => ({
-      number: prNumber(url), title: pr?.title ?? null,
+      number: prNumber(url, s.repo), title: pr?.title ?? null,
       state: pr ? (pr.state === 'queued' && pr.queuePosition ? `${PR_STATE_WORD.queued}, position ${pr.queuePosition}` : PR_STATE_WORD[pr.state]) : null,
       checks: pr ? checksWord(pr.checks) : null,
       level: pr?.checks ? (pr.checks.fail ? 'fail' : pr.checks.pending ? 'pending' : 'pass') : null,
@@ -2026,6 +2041,6 @@
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, askChoice, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, hoursText, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, peekView, startedLinks, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
+    startProgress, waitProgress, clock, prChip, prChips, hasPrs, shownPrs, prLines, peekView, startedLinks, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
 })();
