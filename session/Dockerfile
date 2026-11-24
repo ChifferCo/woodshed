@@ -51,6 +51,15 @@ ARG BUILDX_SHA256_ARM64=3b83b3731916ba433feccaaa689fe5bcdc81c641d92c8e6c2ea865df
 # pg_dump would write dumps a 16 server cannot restore.
 ARG PG_CLIENT_MAJOR=16
 
+# The agents that run on their owner's own sign-in (shared/agents.cjs), installed in the runtime stage. Global, so the
+# last stage can add them to a published runtime from before them.
+ARG OPENCODE_VERSION=1.19.6
+# Grok Build: the raw binary x.ai's installer downloads (https://x.ai/cli/install.sh), which publishes no checksums: these
+# are sha256 of the 1.0.92 binaries as downloaded, so a changed file fails the build.
+ARG GROK_VERSION=1.0.92
+ARG GROK_SHA256_AMD64=add4d201dbf2c0bd6077a36feb55a76939de30bae48dbb06f16b2307d38ceacb
+ARG GROK_SHA256_ARM64=8c74f1dc6cdc1befff6b9faada06bec4cf6759d04f2a60cdc28ece5ff696b44f
+
 FROM node:22.16.0-bookworm-slim AS base
 
 ARG TTYD_VERSION=1.7.7
@@ -158,6 +167,27 @@ RUN case "$TARGETARCH" in \
   && echo "${buildx_sha}  /usr/local/lib/docker/cli-plugins/docker-buildx" | sha256sum -c - \
   && chmod 755 /usr/local/lib/docker/cli-plugins/docker-buildx
 
+# Grok Build as `grok`, the name its own installer gives it, and OpenCode from npm, whose postinstall puts the
+# platform's binary in place of a stub (so scripts must run). Pinned by the ARGs at the top. Neither updates itself in
+# a session: their wrappers in session/bin and the configs the entrypoint writes turn their updaters off, rather than
+# ENV here, which the db-admin task would refuse (dbAdmin.mjs, unexpectedEnv). The last stage installs them again on a
+# published runtime built before they were in it.
+ARG OPENCODE_VERSION
+ARG GROK_VERSION
+ARG GROK_SHA256_AMD64
+ARG GROK_SHA256_ARM64
+RUN case "$TARGETARCH" in \
+    amd64) grok_arch=x86_64; grok_sha="$GROK_SHA256_AMD64" ;; \
+    arm64) grok_arch=aarch64; grok_sha="$GROK_SHA256_ARM64" ;; \
+    *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+  esac \
+  && { curl -fsSL -o /tmp/grok "https://x.ai/cli/grok-${GROK_VERSION}-linux-${grok_arch}" \
+    || curl -fsSL -o /tmp/grok "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-${GROK_VERSION}-linux-${grok_arch}"; } \
+  && echo "${grok_sha}  /tmp/grok" | sha256sum -c - \
+  && install -m 755 /tmp/grok /usr/local/bin/grok && rm /tmp/grok \
+  && npm install -g "opencode-ai@${OPENCODE_VERSION}" && npm cache clean --force \
+  && echo "grok ${GROK_VERSION}, opencode ${OPENCODE_VERSION}" > /usr/local/share/woodshed-agents
+
 # The session should not be root: the node image's own uid 1000 user runs everything below.
 USER node
 ENV PATH=/home/node/.local/bin:$PATH
@@ -252,6 +282,25 @@ RUN if docker --version 2>/dev/null | grep -qF "version ${DOCKER_VERSION}," \
   && echo "${buildx_sha}  /usr/local/lib/docker/cli-plugins/docker-buildx" | sha256sum -c - \
   && chmod 755 /usr/local/lib/docker/cli-plugins/docker-buildx
 
+# The runtime stage's agents, for a published runtime built before they were in it: the same install, skipped when the
+# runtime has these versions.
+ARG OPENCODE_VERSION
+ARG GROK_VERSION
+ARG GROK_SHA256_AMD64
+ARG GROK_SHA256_ARM64
+RUN if [ "$(cat /usr/local/share/woodshed-agents 2>/dev/null)" = "grok ${GROK_VERSION}, opencode ${OPENCODE_VERSION}" ]; then echo "agents from the runtime"; exit 0; fi \
+  && case "$TARGETARCH" in \
+    amd64) grok_arch=x86_64; grok_sha="$GROK_SHA256_AMD64" ;; \
+    arm64) grok_arch=aarch64; grok_sha="$GROK_SHA256_ARM64" ;; \
+    *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+  esac \
+  && { curl -fsSL -o /tmp/grok "https://x.ai/cli/grok-${GROK_VERSION}-linux-${grok_arch}" \
+    || curl -fsSL -o /tmp/grok "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-${GROK_VERSION}-linux-${grok_arch}"; } \
+  && echo "${grok_sha}  /tmp/grok" | sha256sum -c - \
+  && install -m 755 /tmp/grok /usr/local/bin/grok && rm /tmp/grok \
+  && npm install -g "opencode-ai@${OPENCODE_VERSION}" && npm cache clean --force \
+  && echo "grok ${GROK_VERSION}, opencode ${OPENCODE_VERSION}" > /usr/local/share/woodshed-agents
+
 # The base stage's psql, for a published runtime built before it was there: the same install, skipped when the runtime
 # has that major.
 ARG PG_CLIENT_MAJOR
@@ -261,6 +310,10 @@ RUN if psql --version 2>/dev/null | grep -qE "^psql \(PostgreSQL\) ${PG_CLIENT_M
   && apt-get update \
   && apt-get install -y --no-install-recommends "postgresql-client-${PG_CLIENT_MAJOR}" \
   && rm -rf /var/lib/apt/lists/*
+
+# Grok Build's policy folder, made here as root and readable by node: copying its file below into a folder that is not
+# there yet would give the folder the file's mode, 644, which node cannot open, and grok refuses to start (fail closed).
+RUN install -d -m 755 /etc/grok
 
 USER node
 
@@ -320,6 +373,8 @@ COPY --chown=node:node woodshed/session/tmux.conf /home/node/.tmux.conf
 # Ahead of /usr/bin/gh in every PATH, login shells included: gh gets a short-lived token each run.
 # No --link: on a one-file copy over the 4 GB tree it cost 17 s of merging.
 COPY woodshed/session/gh.sh /usr/local/bin/gh
+# Grok Build's machine policy, root-owned: no repo-defined MCP server starts in a Grok session (the file says why).
+COPY --chmod=644 woodshed/session/grokRequirements.toml /etc/grok/requirements.toml
 
 # The entrypoint and statusd read it: it is where the project file and the app are.
 ENV REPO_DIR=${REPO_DIR}

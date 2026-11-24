@@ -1,0 +1,12 @@
+  Reading package.json
+
+Allow `npm`?
+
+  $ npm run migrate
+
+  1. Yes, and don't ask again for anything (always-approve mode)
+❯ 2. Yes, proceed
+  3. Always allow: npm run
+  4. No, reject (type to add feedback)
+
+  grok-build · /work/app

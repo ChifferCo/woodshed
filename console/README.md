@@ -816,6 +816,29 @@ answering, the menus are your last list read, or else codex's built-in list (`BU
 --bundled` of the image's codex), and a line under them says so. `CODEX_CLIENT_VERSION` follows the image's
 `CODEX_VERSION`, which `codexModels.test.mjs` checks; refresh `BUILT_IN` with it.
 
+**Grok Build** and **OpenCode** are on the Agent menu too (`shared/agents.cjs`), each only for someone whose own sign-in
+for it is saved on My settings: they run on nothing else, since the console holds no team key or proxy for them. The
+sign-in is `users/<login>/grok-auth` (an xAI key, `xai-…`, or `~/.grok/auth.json` from `grok login`) or `opencode-auth`
+(`~/.local/share/opencode/auth.json` from `opencode auth login`), saved with `POST /api/my/agent-auth/<agent>` and
+removed with `…/remove`. It is handed to that person's private sessions of that agent alone (`/settings`'s `agentAuth`),
+never to a shared session, a question, QA or a review: so they review nothing, and a resume needs it saved as a start
+does. Their logins rotate their refresh token at each use, so a session sends the refreshed one back at stop
+(`POST /agent-auth`, with the digest of the sign-in it was given), kept only while the saved one is still that sign-in (not a
+key or login saved since, nor another session's refresh) and does not run out before it. Their **Model** is a name their
+own `--model` takes, blank for the agent's default (OpenCode's is `provider/model`); **Effort** and **Permissions**
+offer what each one's command line has (`efforts` and `permissionModes` in the registry). None of them gets the
+console's MCP servers yet, and Grok Build runs none of a repo's own either (`session/grokRequirements.toml`).
+
+Grok Build's **Model** is a menu when the console could read its models on your own Grok sign-in (`grokModels.mjs`,
+`GET /api/my/grok-models`), as Codex's is: a login (`~/.grok/auth.json`) asks `GET
+https://cli-chat-proxy.grok.com/v1/models` with its access token, and an xAI key `GET https://api.x.ai/v1/models`, whose
+image and video models a session cannot use and are left out. The list is kept 10 minutes, tried again a minute after a
+failure, and forgotten when you save or remove the sign-in. **Effort** is then the picked model's efforts, its default
+marked, kept to the registry's. As for Codex, the console never refreshes the login: one whose `expires_at` has passed is
+not sent, and gives your last list read or none. With none (no sign-in, an expired login, xAI not answering) the
+Model is the box to type in again, and a line under the menus says why. A start is checked against the registry's shape
+alone, never the list, so a model typed while the list cannot be read still starts.
+
 Under the token, the switch **Also use it for shared sessions I start from
 GitHub** (on by default, and only with a token saved) runs the shared
 sessions you start, with the label or a `/woodshed` comment, on your plan too.
@@ -878,12 +901,13 @@ stopping one does nothing to the other.
   session that has seen production data (its prompt could carry that data to an untainted session; a taint after the
   launch makes the token do nothing).
 - **The start** is New session's own (`startMine` in `server.mjs`), as the session's owner: their Claude token (or Codex
-  sign-in), their databases, write access to the project's repo (the session's own unless `--repo` names another
+  sign-in, or for `--agent grok` or `opencode` their own Grok Build or OpenCode sign-in saved on My settings, the same
+  `signInRefusal`; Resume asks it the same way), their databases, write access to the project's repo (the session's own unless `--repo` names another
   project), and the project's readiness; the owner must still be on the console and still have write access to its repo on GitHub, checked as for a command
   line token (once an hour per person, `createWriteAccess`): New session's project check asks nothing of the default
   project, whose writers the page's sign-in rechecks. It counts
   in their My Woodshed sessions and waits in line past the limit, and a hosted console bills it as any session. Its
-  permission mode is the starting session's (`acceptEdits` becomes `default` for Codex), never one it picks. A branch
+  permission mode is the starting session's, never one it picks and never looser: the new agent gets the loosest of its own modes that does no more unasked (`modeForStartedSession` in `shared/agents.cjs`, which ranks every agent's modes; the console logs `sessionStarts: mode tightened for the agent` when it differs). Codex's `default` edits and runs sandboxed commands unasked, so a Codex session started from a `default` or `acceptEdits` one runs in `plan`, its read-only sandbox, where each write asks. An agent other than those `shared/agents.cjs` lists is refused with 400. A branch
   that is the starting session's own is refused. It gets nothing of the starting session's but `startedFrom`, its id.
 - **Limits**: none of its own. The person's **My Woodshed sessions per person** applies as it does to New session: past
   it, a started session waits in line.
@@ -940,7 +964,7 @@ server (`mcpServers.mjs`, `checkServer`):
   console can lock a session down: the docker launcher, or AWS with `prod_mcp`'s guarded network, and a session API and
   egress proxy address. Otherwise the page and the API say why.
 - `shared` (ordinary ones only): shared sessions and questions from Slack get it too. A QA run or a review never gets
-  any, since it runs a pull request's code, nor does a Codex session yet.
+  any, since it runs a pull request's code, nor does a Codex, Grok Build or OpenCode session yet.
 - `auth`, what the relay adds to each call: `oidc`, a five-minute token the console signs for `audience` (below);
   `header`, a header (`header`, such as `authorization` or `x-api-key`) whose value is kept in the secret store as
   `mcp-servers/<name>/header`, written once on the card or with `/header` and never read back; or `none`.
@@ -2281,8 +2305,8 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   (`href`) in place of Replace keys. Core has no install flow of its own: whatever `href` leads to writes the same
   `slack-bot-token` the dialog does. Without the hook the dialog opens on the own app's steps.
 
-A Claude token or Codex sign-in written straight into the secret store, as `users/<login>/claude-token` or
-`codex-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
+A Claude token, Codex sign-in or own sign-in for another agent written straight into the secret store, as
+`users/<login>/claude-token`, `codex-auth`, `grok-auth` or `opencode-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
 
 ## Slack
 

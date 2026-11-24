@@ -1,0 +1,7 @@
+  Reading package.json
+
+┃ △ Permission required
+┃   # Shell command
+┃   $ npm run migrate
+┃
+┃  Allow once   Allow always   Reject       ⇆ select  enter confirm

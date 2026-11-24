@@ -172,7 +172,9 @@
       // A private window keeps the pick for this page only.
     }
   }
-  const canRunAgents = (s) => s?.status === 'running' && Array.isArray(s.agents) && Boolean(s.owner) && s.owner === data?.login;
+  // Only beside Claude Code or Codex (shared/agents.cjs, teamCredential): a Grok Build or OpenCode session starts none.
+  const canRunAgents = (s) => s?.status === 'running' && Array.isArray(s.agents) && Boolean(s.owner) && s.owner === data?.login
+    && window.WoodshedAgents.agent(W.agentOf(s)).teamCredential;
   // This run's: a Resume starts the session's own agent alone, and the console's last read may still be the run before.
   // One started from this page, until the console's read of the session has it (a read asked for before the start
   // would take it off the switch again for a few seconds).
@@ -189,10 +191,10 @@
     const picked = agentPicks[s?.id];
     return picked ? agentsOf(s).find((a) => a.id === picked) ?? null : null;
   }
-  const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
-  // `Claude`, `Codex · gpt-5.5`: the agent, and its model when one was picked.
+  // `Claude`, `Codex · gpt-5.5`: the agent (shared/agents.cjs), and its model when one was picked.
   function agentLabel(agent, model) {
-    return `${AGENT_NAMES[agent] ?? agent}${model ? ` · ${model}` : ''}`;
+    const name = window.WoodshedAgents.isAgent(agent) ? window.WoodshedAgents.agent(agent).name : agent;
+    return `${name}${model ? ` · ${model}` : ''}`;
   }
   const AGENT_STATE_WORDS = { starting: 'Starting', working: 'Working', 'needs-you': 'Needs you', done: 'Done', 'not-running': 'Exited' };
   // What Chat shows for the agent picked: the session as Chat reads it, with the agent's id, state and message ids, and
@@ -262,7 +264,9 @@
     const C = W.agentChoices;
     const select = (options) => h('select', { class: 'field' }, options.map(([value, label, title]) => h('option', { value, title }, label)));
     const fill = (el, options) => el.replaceChildren(...options.map(([value, label, title]) => h('option', { value, title }, label)));
-    const agent = select(C.AGENTS);
+    // Claude Code or Codex alone beside a session's own (session/agents.mjs): Grok Build and OpenCode run only as a
+    // session's own agent, on their owner's own sign-in.
+    const agent = select(C.AGENTS.filter(([value]) => window.WoodshedAgents.isAgent(value) && window.WoodshedAgents.agent(value).teamCredential));
     const model = select(C.MODELS);
     const effort = select(C.EFFORTS);
     const mode = select(C.MODES);
@@ -522,9 +526,9 @@
     if (!(await resumePrivate(s))) row.classList.remove('is-busy');
   }
 
-  // What Resume does for a private session: claude picks its conversation up again; codex keeps none between runs.
+  // What Resume does for a private session: claude picks its conversation up again; the other agents keep none between runs.
   function resumeNote(s) {
-    return W.agentOf(s) === 'codex' ? 'Start it again on its branch, in a new Codex conversation' : 'Start it again on its branch, with claude\'s conversation';
+    return W.agentOf(s) !== 'claude' ? `Start it again on its branch, in a new ${W.agentTitle(s)} conversation` : 'Start it again on its branch, with claude\'s conversation';
   }
 
   // Resume, as the shed has it: a stopped private session again, on its branch, with claude's conversation.
@@ -1781,7 +1785,8 @@
     const trigger = s.trigger === 'label' ? `with the ${label} label` : s.trigger === 'comment' ? 'with a /woodshed comment'
       : s.trigger === 'my-woodshed' ? 'from My Woodshed' : s.trigger === 'slack' ? 'with a question in Slack'
         : s.trigger === 'qa' ? 'with the QA label, to test the pull request' : 'from the console';
-    const claude = W.agentOf(s) === 'codex' ? 'Your Codex sign-in, or the team\'s OpenAI key without one' : W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
+    const own = window.WoodshedAgents.agent(W.agentOf(s));
+    const claude = own.signIn ? `Your own ${own.product} sign-in` : W.agentOf(s) === 'codex' ? 'Your Codex sign-in, or the team\'s OpenAI key without one' : W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
     const row = (term, value) => value && [h('dt', null, term), h('dd', null, value)];
     return h('dl', { class: 'card-menu-dl' },
       row('Branch', s.branch),
@@ -1924,7 +1929,7 @@
     const planText = !plan ? null : out ? 'Plan out' : fullest ? `Plan ${Math.round(fullest.usedPercent)}%` : 'Plan —';
     const level = planLevel === 'out' || planLevel === 'hot' || usage?.level === 'hot' ? 'hot' : planLevel || usage?.level || '';
     const tip = [
-      plan && `Your ${plan.agent === 'codex' ? 'Codex' : 'Claude'} plan: ${used.map((w) => `${w.short} ${Math.round(w.usedPercent)}%`).join(', ') || 'not reported yet'}${out?.resetsAt ? ', out until its reset' : ''}${plan.stale && plan.asOf ? `, read ${W.ago(plan.asOf)}` : ''}`,
+      plan && `Your ${window.WoodshedAgents.agent(plan.agent).name} plan: ${used.map((w) => `${w.short} ${Math.round(w.usedPercent)}%`).join(', ') || 'not reported yet'}${out?.resetsAt ? ', out until its reset' : ''}${plan.stale && plan.asOf ? `, read ${W.ago(plan.asOf)}` : ''}`,
       usage?.tip,
       'Click for each window, the machine\'s limits and when they reset',
     ].filter(Boolean).join('\n');
@@ -2313,8 +2318,8 @@
     return h('div', { class: 'ended' },
       h('h2', null, stoppedHeading(s, paused)),
       W.isPrivate(s)
-        ? [h('p', null, W.agentOf(s) === 'codex'
-          ? 'Work in progress is committed and pushed to the branch before a stop. Resume starts codex again on the same branch, in a new conversation: Codex keeps none between runs.'
+        ? [h('p', null, W.agentOf(s) !== 'claude'
+          ? `Work in progress is committed and pushed to the branch before a stop. Resume starts ${W.agentOf(s)} again on the same branch, in a new conversation: ${W.agentTitle(s)} keeps none between runs.`
           : 'Work in progress is committed and pushed to the branch before a stop, and your Claude home saved. Resume starts it again on the same branch, with claude\'s conversation.'),
           h('div', { class: 'row' }, W.canResumePrivate(s) && resumeButton(s, false), removeButton(s))]
         : s.kind === 'ask' ? h('p', null, 'Its conversation is deleted. Mention the bot in a Slack thread to ask again.')

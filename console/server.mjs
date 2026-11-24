@@ -16,11 +16,14 @@
 //                                (`woodshed session new --herdr --parent`), and the session waits for it
 //   GET  /api/my/projects        the projects you can start sessions on, and the one New session opens on for you
 //   GET  /api/my/codex-models    the Codex models New session offers you: OpenAI's catalog, read on your Codex sign-in or the team key
+//   GET  /api/my/grok-models     the Grok Build models New session offers you, read on your own Grok sign-in (none without one)
 //   POST /api/my/projects/default {"project": "<name>"}   New session opens on it for you
 //   POST /api/my/claude-token    {"value": "sk-ant-..."}
 //   POST /api/my/codex-auth      {"value": "sk-..." or the text of ~/.codex/auth.json}
 //   POST /api/my/codex-auth/remove
 //   POST /api/my/codex-auth/reviews  {"on": true|false}   reviews of my pull requests run Codex on this sign-in (reviewAgents.mjs)
+//   POST /api/my/agent-auth/<agent>  {"value": ...}   my own Grok Build or OpenCode sign-in (shared/agents.cjs)
+//   POST /api/my/agent-auth/<agent>/remove
 //   GET  /api/my/reviews              who reviews my pull requests, and the choices this console can run for me
 //   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|null}   null is the most there is
 //   POST /api/my/terminal             {"terminal": "tmux"|"herdr"}   what my private sessions run their agent in
@@ -240,6 +243,7 @@ import { QA_POSTER_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
 import { CONNECTION_PATH } from './dbTunnel.mjs';
 import { checkGh } from './github.mjs';
 import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
+import agentsRegistry from '../shared/agents.cjs';
 import { applyStored, createGitHubAppSetup, supervisorOf } from './githubAppSetup.mjs';
 import { createInstallation } from './installation.mjs';
 import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf, publicSession, sessionOptions, sharedRunningCount, woodshedRunsOn } from './sessions.mjs';
@@ -263,8 +267,12 @@ import { ROLES, roleById, roleDiffers, roleOf } from './peopleRoles.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // Served from elsewhere in the repo: the desktop app's rule for what notifies, which the console in a browser runs too
-// (public/browserNotifications.js). The console image copies it to the same place (Dockerfile).
-const STATIC_ELSEWHERE = { 'attention.mjs': path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'desktop', 'attention.mjs') };
+// (public/browserNotifications.js), and the agents a session can run, which the session image and the command line
+// read as well (shared/agents.cjs). The console image copies each to the same place (Dockerfile).
+const STATIC_ELSEWHERE = {
+  'attention.mjs': path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'desktop', 'attention.mjs'),
+  'agents.cjs': path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'shared', 'agents.cjs'),
+};
 const staticPath = (file) => STATIC_ELSEWHERE[file] ?? path.join(PUBLIC_DIR, file);
 // /, /all and a session's page are one page, session.js last.
 // The settings pages are one page too: each address loads every settings page's script, and common.js shows the one the
@@ -331,6 +339,8 @@ const STATIC_FILES = {
   'vendor/xterm/addon-unicode11.js': 'text/javascript; charset=utf-8',
   'vendor/xterm/addon-webgl.js': 'text/javascript; charset=utf-8',
   'vendor/xterm/addon-canvas.js': 'text/javascript; charset=utf-8',
+  // The agents a session can run, which the session image and the command line read too (shared/agents.cjs).
+  'agents.cjs': 'text/javascript; charset=utf-8',
 };
 // The page behind the TUI and Terminal tabs, made here rather than kept as a file so that it names each of its files
 // by hash: /static/term.html, the same for every session (its fragment names which), kept by the browser.
@@ -347,6 +357,8 @@ const REPO_SETTINGS_PAGE_RE = /^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]
 // The console's own settings pages, served as one page with /settings (SETTINGS_SCRIPTS).
 const SETTINGS_PAGE_RE = new RegExp(`^/(?:events|secrets|people|console-settings)$|${REPO_SETTINGS_PAGE_RE.source}`);
 const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove|reviews))?$/;
+// An agent that runs on its owner's own sign-in alone (shared/agents.cjs, OWN_SIGN_IN_AGENTS): any other id is a 404.
+const MY_AGENT_AUTH_RE = /^\/api\/my\/agent-auth\/([a-z]+)(?:\/(remove))?$/;
 const MY_LIMITS_PATH = '/api/my/limits';
 const PROJECTS_PATH = '/api/console-settings/projects';
 const UPDATES_PATH = '/api/console-settings/updates';
@@ -631,6 +643,7 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <body>
 <div id="app"></div>${hostPage}
 <script src="${staticUrl('logins.cjs')}"></script>
+<script src="${staticUrl('agents.cjs')}"></script>
 <script src="${staticUrl('setupSteps.cjs')}"></script>
 <script src="${staticUrl('inviteLink.cjs')}"></script>
 <script src="${staticUrl('openPulls.cjs')}"></script>
@@ -892,7 +905,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, signOut = null, woodshedUpdate = null, codexModels = null, grokModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
   cli = null, reviewReadiness = null,
 }) {
@@ -1678,11 +1691,16 @@ export function createHandler({
   }
 
   function myView(login) {
-    const view = userSettings ? userSettings.view(login) : { claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: false, available: false };
+    const view = userSettings ? userSettings.view(login) : { claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, agentAuth: {}, setUp: false, available: false };
     return {
       login, ...view,
       // The agents New session offers: each only with something to run it on.
-      agents: { claude: Boolean(view.claudeToken?.set), codex: Boolean(view.codexAuth?.set) || teamOpenAiKey }, databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last(defaultProject(config).name) ?? null,
+      // Grok Build and OpenCode run on their owner's own sign-in alone (shared/agents.cjs).
+      agents: {
+        claude: Boolean(view.claudeToken?.set), codex: Boolean(view.codexAuth?.set) || teamOpenAiKey,
+        ...Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, Boolean(view.agentAuth?.[id]?.set)])),
+      },
+      databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last(defaultProject(config).name) ?? null,
       // Each project the person may start on that is not ready, by name (databaseGate.mjs), as last read.
       projectBlockers: blockersSeen.get(login) ?? {}, restore: dbRestore?.view(login) ?? null, tunnel: tunnel?.view(login) ?? null, running: activePrivateCount(fleet.sessions(), login),
       // The computers the woodshed command line is signed in on as this person (cliSignIn.mjs), never a token.
@@ -1740,11 +1758,6 @@ export function createHandler({
   }
 
   /**
-   * New session's start of a private session of `login`'s, with its checks: from the page, the command line, or one of
-   * their sessions (sessionStarts.mjs, which gives `startedFrom` and its own permission mode).
-   * @returns {Promise<{status: number, body: object}>}  201 and the session, or the refusal the caller answers with
-   */
-  /**
    * My Woodshed's Resume, with its checks, for the page and for a session resuming one it started (sessionStarts.mjs).
    * @returns {Promise<{status: number, body: object}>}
    */
@@ -1753,7 +1766,10 @@ export function createHandler({
     // Whose it is before anything of it is read: someone else's private session answers as one that does not exist.
     if (!resuming || resuming.owner !== login) return { status: 409, body: { error: 'no session you can open with that id' } };
     await userSettings?.refresh?.(login, { force: true });
-    if (resuming.options?.agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return { status: 409, body: { error: 'save your Claude token on My settings first' } };
+    const resumingAgent = agentsRegistry.agentOfSession(resuming);
+    const ownRefusal = signInRefusal(login, resumingAgent);
+    if (ownRefusal) return { status: 409, body: { error: ownRefusal } };
+    if (resumingAgent === 'claude' && !userSettings?.view(login).claudeToken.set) return { status: 409, body: { error: 'save your Claude token on My settings first' } };
     if (!databasesReady(login)) return { status: 409, body: { error: DATABASES_NOT_READY } };
     // Write access to a project's repo can be taken away after a session started on it: Resume asks again, as a start does.
     if (projectAccess && (await projectAccess.forStart(login, resuming.project)) === null) {
@@ -1768,12 +1784,20 @@ export function createHandler({
     }
   }
 
+  /**
+   * New session's start of a private session of `login`'s, with its checks: from the page, the command line, or one of
+   * their sessions (sessionStarts.mjs, which gives `startedFrom` and its own permission mode).
+   * @returns {Promise<{status: number, body: object}>}  201 and the session, or the refusal the caller answers with
+   */
   async function startMine(login, body, { startedFrom = null, startedApart = false } = {}) {
     const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
     const herdrParent = body.herdrParent === true;
     await userSettings?.refresh?.(login, { force: true });
-    // A Codex session signs in with its own login or the team's OpenAI key: it needs no Claude token.
-    if (agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return { status: 409, body: { error: 'save your Claude token on My settings first' } };
+    // A Codex session signs in with its own login or the team's OpenAI key, and Grok Build and OpenCode with their
+    // owner's own sign-in alone: none of them needs a Claude token.
+    const ownRefusal = signInRefusal(login, agent);
+    if (ownRefusal) return { status: 409, body: { error: ownRefusal } };
+    if ((!agent || agent === 'claude') && !userSettings?.view(login).claudeToken.set) return { status: 409, body: { error: 'save your Claude token on My settings first' } };
     if (agent === 'codex' && !userSettings?.view(login).codexAuth?.set && !(await readTeamOpenAiKey())) {
       return { status: 409, body: { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' } };
     }
@@ -1798,6 +1822,13 @@ export function createHandler({
 
   function databasesReady(login) {
     return !databases?.available || databases.view(login).status === 'ready';
+  }
+
+  // An agent that runs on its owner's own sign-in alone starts only with it saved: the session would fail at start.
+  function signInRefusal(login, agent) {
+    if (!agentsRegistry.OWN_SIGN_IN_AGENTS.includes(agent)) return null;
+    if (userSettings?.view(login).agentAuth?.[agent]?.set) return null;
+    return `save your ${agentsRegistry.agent(agent).product} sign-in on My settings first`;
   }
 
   // The Claude token is what makes My Woodshed usable, so saving the first one starts making the databases too. A
@@ -1842,7 +1873,9 @@ export function createHandler({
     let body;
     const fileMatch = MY_FILE_RE.exec(pathname);
     try {
-      body = await readJson(req, fileMatch ? MAX_FILE_BODY_BYTES : undefined);
+      // A sign-in file is held to its agent's own limit once decoded (shared/agents.cjs, checkSignIn); escaped in JSON it
+      // takes more than the usual body, so its request gets the secrets' bound.
+      body = await readJson(req, fileMatch ? MAX_FILE_BODY_BYTES : MY_AGENT_AUTH_RE.test(pathname) ? MAX_SECRET_BODY_BYTES : undefined);
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }
@@ -1940,6 +1973,18 @@ export function createHandler({
         }
         // The models list was read on the sign-in that is gone: the next look reads it on the new one.
         codexModels?.forget(login);
+        return reply(res, 200, myView(login));
+      }
+      const agentMatch = MY_AGENT_AUTH_RE.exec(pathname);
+      if (agentMatch) {
+        if (!agentsRegistry.OWN_SIGN_IN_AGENTS.includes(agentMatch[1])) return reply(res, 404, { error: 'no such agent sign-in' });
+        if (agentMatch[2]) await userSettings.removeAgentAuth(login, agentMatch[1]);
+        else {
+          await userSettings.setAgentAuth(login, agentMatch[1], body.value);
+          await firstDatabases(login);
+        }
+        // As for Codex: the Grok models list was read on the sign-in that is gone.
+        if (agentMatch[1] === 'grok') grokModels?.forget(login);
         return reply(res, 200, myView(login));
       }
       if (pathname === MY_LIMITS_PATH) {
@@ -2086,6 +2131,12 @@ export function createHandler({
       req.resume();
       return reply(res, 409, { error: 'the session is not running' });
     }
+    // Only beside Claude Code or Codex (shared/agents.cjs, teamCredential): a Grok Build or OpenCode session runs on its
+    // owner's own sign-in and nothing else, and its statusd starts no other agent.
+    if (!agentsRegistry.agent(agentsRegistry.agentOfSession(session)).teamCredential) {
+      req.resume();
+      return reply(res, 409, { error: 'this session runs on its owner\'s own sign-in alone: no other agent starts in it' });
+    }
     const url = new URL(req.url, 'http://console.invalid');
     if (!agentId) {
       if (req.method === 'GET') return toStatusd(req, res, session, { method: 'GET', path: '/agents' });
@@ -2103,6 +2154,8 @@ export function createHandler({
       } catch (err) {
         return reply(res, 400, { error: err.message });
       }
+      // The agents beside a session's own are Claude Code or Codex alone (session/agents.mjs).
+      if (!agentsRegistry.agent(picked.agent).teamCredential) return reply(res, 400, { error: 'the agent must be claude or codex' });
       const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
       if (prompt.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in the first message` });
       // A Codex agent beside claude runs on its owner's own Codex sign-in, handed to the session with the start itself and
@@ -2731,7 +2784,7 @@ export function createHandler({
     if (pathname === MY_SESSION_VIEW_PATH) return mySessionViewWrite(req, res, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH || pathname === PROJECT_TRIGGERS_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
-    if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
+    if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_AGENT_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
       || MY_GITHUB_RE.test(pathname) || MY_SESSION_ACTION_RE.test(pathname) || pathname === '/api/my/home/forget' || pathname === '/api/my/databases'
       || MY_TUNNEL_RE.test(pathname) || MY_RESTORE_RE.test(pathname)) {
       return myWrite(req, res, pathname, login);
@@ -2950,6 +3003,7 @@ export function createHandler({
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
     if (pathname === '/api/my/projects') return reply(res, 200, await projectsView(user.login));
     if (pathname === '/api/my/codex-models') return reply(res, 200, codexModels ? await codexModels.list(user.login) : { models: BUILT_IN_CODEX_MODELS, source: 'built-in', note: null });
+    if (pathname === '/api/my/grok-models') return reply(res, 200, grokModels ? await grokModels.list(user.login) : { models: [], source: null, note: 'type a model name, since this console reads no Grok Build models' });
     if (pathname === '/api/skills') {
       // Another project's list only for someone who may start sessions on it, as New session offers it; anyone else,
       // and a project this console does not have, gets the default project's.

@@ -38,6 +38,7 @@ import { createMcpRelay } from './mcpRelay.mjs';
 import { createMcpServers, mcpSettings } from './mcpServers.mjs';
 import { createOpenAiProxy } from './openaiProxy.mjs';
 import { createCodexModels } from './codexModels.mjs';
+import { createGrokModels } from './grokModels.mjs';
 import { createSessionApi, sessionForToken } from './sessionApi.mjs';
 import { createSessionStarts, sessionForStartToken } from './sessionStarts.mjs';
 import { createReviewSource } from './review.mjs';
@@ -400,6 +401,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // In AWS the team key is the console's alone; the docker launcher's sessions keep the one in its env file.
   const openai = createOpenAiProxy({ secrets, teamKey: config.sessionEnv.OPENAI_API_KEY ?? null, userSettings });
   const codexModels = createCodexModels({ userSettings, teamCredential: openai.teamCredential });
+  const grokModels = createGrokModels({ userSettings });
   const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
   const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });
   const access = mcpAccess({ loaded, secrets, launcher: provider.launcher });
@@ -557,7 +559,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const handle = createHandler({
     config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
-    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
+    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, grokModels, openaiTeamKey: openai.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,
     workflowLinks: () => projectReader.workflowLinks(),
     projectAccess,

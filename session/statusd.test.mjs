@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { isolatedEnv } from '../test/isolatedEnv.mjs';
-import { AGENT_PANE_FORMAT, sendNotAfter, sendWithinMs, stillThePull, appState, branchPullsQuery, createBranchPulls, createPrLookup, githubRepoOf, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps, typeableText } from './statusd.mjs';
+import { AGENT_PANE_FORMAT, sendNotAfter, sendWithinMs, stillThePull, appState, branchPullsQuery, createBranchPulls, createPrLookup, githubRepoOf, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps, typeableText, changedLogin } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -1544,6 +1544,28 @@ test('a guarded send carries its caller\'s own deadline', () => {
   for (const raw of ['{"text":"x"}', '{"text":"x","notAfter":"soon"}', '{"text":"x","notAfter":-1}', 'nope']) assert.equal(sendNotAfter(raw), null, raw);
 });
 
+test('Grok Build and OpenCode get pastes, as codex does', () => {
+  for (const agent of ['grok', 'opencode']) {
+    assert.deepEqual(typingSteps('fix it\nplease', agent), [{ paste: 'fix it\nplease', pauseMs: 50 }], agent);
+  }
+});
+
+test('an agent\'s own login goes back only when this session refreshed it, and a key never does', () => {
+  const login = JSON.stringify({ openai: { type: 'oauth', refresh: 'r1', access: 'a1', expires: 1 } });
+  const refreshed = JSON.stringify({ openai: { type: 'oauth', refresh: 'r2', access: 'a2', expires: 2 } });
+  assert.equal(changedLogin(login, refreshed), true);
+  assert.equal(changedLogin(login, `${login}\n`), false, 'the same login, written again');
+  assert.equal(changedLogin('xai-abc', refreshed), false, 'a key');
+  assert.equal(changedLogin(null, refreshed), false, 'nothing given');
+  assert.equal(changedLogin(login, 'not json'), false);
+});
+
+test('tmux\'s test of the pane names every agent\'s program', () => {
+  for (const name of ['claude', 'codex', 'grok', 'opencode']) assert.ok(AGENT_PANE_FORMAT.includes(`#{==:#{pane_current_command},${name}}`), name);
+  assert.equal(isAgentCommand('opencode'), true);
+  assert.equal(isAgentCommand('bash'), false);
+});
+
 // An agent started beside the session's own (agents.mjs) through statusd's routes, in a real tmux: the stand-in picker
 // stands in for its claude, and is asked and answered on that agent's routes, never the session's own pane.
 test('an agent beside the session\'s own starts in its own tmux session, and its question is read and answered on its routes', async (t) => {
@@ -1594,6 +1616,26 @@ test('an agent beside the session\'s own starts in its own tmux session, and its
   assert.deepEqual((await call('POST', '/agents/agent-2/stop', 'sess', '{}')).body, { stopped: 'agent-2' });
   assert.deepEqual((await call('GET', '/agents', 'sess')).body, { agents: [] });
   assert.ok((await tmux('ls')).stdout.includes('claude:'), 'the session\'s own is still there');
+});
+
+// A Grok Build or OpenCode session runs on its owner's own sign-in alone: no claude or codex starts beside it, and
+// /status leaves `agents` out, so the page shows no switch.
+test('a Grok Build or OpenCode session starts no agent beside its own', async (t) => {
+  for (const agent of ['grok', 'opencode']) {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), `statusd-no-agents-${agent}-`));
+    t.after(() => fs.rm(dir, { recursive: true, force: true }));
+    await fs.writeFile(path.join(dir, 'flags'), '');
+    await fs.writeFile(path.join(dir, 'codex-ready'), '');
+    const { call } = await statusdWithApp(t, { env: {
+      AGENT: agent, TMUX: '', TMUX_TMPDIR: dir, SESSION_KIND: 'private', SESSION_MODE: '', WOODSHED_AGENT_BIN: path.join(dir, 'bin'),
+      WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'), WOODSHED_CODEX_READY_FILE: path.join(dir, 'codex-ready'), WOODSHED_AGENT_STATE_DIR: dir,
+      WOODSHED_CLAUDE_STATE_FILE: path.join(dir, 'own-state.json'),
+    } });
+    assert.equal((await call('GET', '/agents', 'sess')).status, 404, agent);
+    assert.equal((await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'claude' }))).status, 404, agent);
+    assert.equal((await call('GET', '/agents/agent-2/transcript', 'sess')).status, 404, agent);
+    assert.equal('agents' in (await call('GET', '/status', 'sess')).body, false, agent);
+  }
 });
 
 // A Codex agent beside claude on its owner's own sign-in (agents.mjs, codexBeside): written into codex's home as the

@@ -41,6 +41,7 @@
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
+import agents from '../shared/agents.cjs';
 import { ACTIVE_STATUSES, isAsk, isQa, isReview, sessionLink } from './sessions.mjs';
 
 export const START_TOKEN_PREFIX = 'wst_';
@@ -99,7 +100,7 @@ export function startedSummary(s, { publicUrl, linkQuery = null }) {
   const tainted = Boolean(s.taintedAt);
   return {
     id: s.id, title: text(s.title, 200), status: s.status, state: s.state ?? null, project: s.project ?? null, branch: s.branch ?? null,
-    agent: s.options?.agent === 'codex' ? 'codex' : 'claude', prUrl: s.prUrl ?? null, lastMessage: tainted ? null : text(s.lastMessage?.text, 500),
+    agent: agents.agentOfSession(s), prUrl: s.prUrl ?? null, lastMessage: tainted ? null : text(s.lastMessage?.text, 500),
     ...(tainted ? { tainted: true } : {}),
     ...(s.startedApart ? { separate: true } : {}),
     createdAt: s.createdAt ?? null, startedAt: s.startedAt ?? null, stoppedAt: s.stoppedAt ?? null, stopReason: text(s.stopReason, 200),
@@ -330,10 +331,18 @@ export function createSessionStarts({
     if (!(await canWrite(login))) return refuse(403, 'write access gone', `@${login} no longer has write access to the repo on GitHub`);
     const branch = typeof body.branch === 'string' ? body.branch.trim() : '';
     if (branch && from.branch && branch === from.branch) return refuse(400, 'same branch', `${branch} is this session's own branch: give the new session one of its own, or none`);
-    // As loose as the starting session, never looser: a mode it was not given, it cannot give.
-    const agent = body.agent === 'codex' ? 'codex' : 'claude';
-    const mode = from.options?.permissionMode || 'auto';
-    const permissionMode = agent === 'codex' && mode === 'acceptEdits' ? 'default' : mode;
+    // Any agent New session offers (shared/agents.cjs), with New session's own checks in startMine: Grok Build and
+    // OpenCode only on the person's own sign-in saved for it.
+    if (body.agent !== undefined && body.agent !== '' && !agents.isAgent(body.agent)) {
+      return refuse(400, 'no such agent', `the agent is one of ${agents.AGENT_IDS.join(', ')}`);
+    }
+    const agent = body.agent || 'claude';
+    // As loose as the starting session, never looser: a mode it was not given, it cannot give. The new session's agent
+    // gets the loosest of its own modes that does no more unasked (shared/agents.cjs, modeForStartedSession): Codex's
+    // own policy runs commands unasked, so a Codex session started from one that asks before commands is read-only.
+    const fromMode = from.options?.permissionMode || 'auto';
+    const permissionMode = agents.modeForStartedSession(agents.agentOfSession(from), fromMode, agent);
+    if (permissionMode !== fromMode) console.log('sessionStarts: mode tightened for the agent', { from: from.id, fromAgent: agents.agentOfSession(from), fromMode, agent, permissionMode });
     const answer = await startMine(login, {
       prompt, name: typeof body.name === 'string' ? body.name : '', workOn: branch, agent,
       model: typeof body.model === 'string' ? body.model : '', effort: typeof body.effort === 'string' ? body.effort : '', permissionMode,

@@ -196,6 +196,23 @@ test('a label from a writer starts a session and announces it on the issue', asy
   assert.equal(env.PGHOST, 'db');
 });
 
+test('a private session names its agent to the container, and a resume of one but claude starts its prompt again', async () => {
+  const { fleet, calls } = setup();
+  const grok = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', agent: 'grok', model: 'grok-build', effort: 'high', permissionMode: 'acceptEdits' });
+  assert.deepEqual([calls.started[0].env.AGENT, calls.started[0].env.MODEL, calls.started[0].env.EFFORT], ['grok', 'grok-build', 'high']);
+  await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', agent: 'opencode', model: 'anthropic/claude-sonnet-4-5' });
+  assert.equal(calls.started[1].env.AGENT, 'opencode');
+  await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  assert.equal(calls.started[2].env.AGENT, undefined, 'claude is the image\'s default');
+  await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: '', agent: 'grok' }), /say what Grok Build should do/);
+  await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: 'x', agent: 'opencode', model: 'no-provider' }), /not a name OpenCode takes/);
+  grok.claudeSession = '0b6e9c7a-1d2f-4e5a-9b8c-7d6e5f4a3b2c';
+  await fleet.stopSession?.(grok.id).catch(() => {});
+  grok.status = 'stopped';
+  await fleet.resumePrivate({ owner: 'joel', id: grok.id });
+  assert.equal(grok.resumeClaude, null, 'only claude reopens a conversation');
+});
+
 test('a session is told the domain its app answers under, and nothing when session apps are off', async () => {
   const { fleet, calls } = setup({ appDomain: 'apps.console.test' });
   await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });

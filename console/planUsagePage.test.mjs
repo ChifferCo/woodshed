@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
+const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedAgents: require('../shared/agents.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
 vm.runInNewContext(fs.readFileSync(new URL('./public/common.js', import.meta.url), 'utf8'), {
   window, console,
   document: { addEventListener() {}, querySelector() {}, createElement: () => ({}) },

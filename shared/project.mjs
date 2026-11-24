@@ -665,7 +665,14 @@ function gitShow(repoDir, file) {
  */
 export function readRepoFile(repoDir, file) {
   const local = path.join(repoDir, file);
-  if (fs.existsSync(local)) return { text: fs.readFileSync(local, 'utf8'), from: 'checkout' };
+  if (fs.existsSync(local)) {
+    // Never through a link out of the checkout: what is read here goes into a session's rules, its first request to the
+    // agent's model, and a branch's link could name the owner's sign-in. `file` itself is already inside (repoPath).
+    const root = fs.realpathSync(repoDir);
+    const real = fs.realpathSync(local);
+    if (real !== root && !real.startsWith(`${root}${path.sep}`)) fail(`${file} is a link to a file outside the checkout, which is never read`);
+    return { text: fs.readFileSync(local, 'utf8'), from: 'checkout' };
+  }
   const text = gitShow(repoDir, file);
   return text === null ? null : { text, from: 'default branch' };
 }

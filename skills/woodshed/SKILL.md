@@ -40,6 +40,9 @@ approve the CLI sign-in and install any GitHub Apps in their browser.
   (`claude setup-token` for Claude; `codex login`, then `~/.codex/auth.json` or an OpenAI API key, for Codex). They
   paste it on My settings themselves: never ask for, read, or pass a token. If they say they use only one, rerun with
   `--agent claude` or `--agent codex`, and setup does not ask for the other.
+  Grok Build and OpenCode are not part of setup: a session runs them only on the person's own sign-in, pasted on My
+  settings (`grok login` then `~/.grok/auth.json` or an xAI key; `opencode auth login` then
+  `~/.local/share/opencode/auth.json`), and `woodshed status --json` lists each in `sessionSignIns`.
   After showing them the steps from that exit 2, don't wait for them to say they are done: run the same setup
   command again with `--wait` added (check `woodshed setup --help` lists it; on older builds, rerun when they say).
   It prints the steps again (`status: "waiting"`), asks the console every 5 seconds, reports each agent as it
@@ -163,7 +166,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed repo list` | Shows connected repos and, for admins, repos available to add and GitHub App access | 0 listed, 2 sign in, 1 failed | main |
 | `woodshed repo add <owner/name> [--name N]` | Adds a repo to the console | 0 added, 2 needs GitHub App access or sign-in, 3 refused, 1 failed | main |
 | `woodshed repo remove <owner/name>` | Removes a repo and its Woodshed settings | 0 removed, 2 sign in, 3 refused, 1 failed | main |
-| `woodshed session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--no-wait\|--connect\|--herdr [--parent[=T] [--no-notify] [--end-with-parent]]] ["prompt"]` | Starts a private session and waits, step by step, until it runs; `--connect` then puts the terminal on its agent's, `--herdr` adds it to Herdr as below (by default when you run in Herdr on their computer with `hc` ok; never inside a Woodshed session, where it adds nothing and says so), and `--parent` with it makes the session's agent a child of this Herdr terminal (section 5) | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on, no `hc`, `--parent` outside a Herdr terminal or inside a Woodshed session | main |
+| `woodshed session new [--repo R] [--branch B] [--agent claude\|codex\|grok\|opencode] [--model M] [--no-wait\|--connect\|--herdr [--parent[=T] [--no-notify] [--end-with-parent]]] ["prompt"]` | Starts a private session and waits, step by step, until it runs; `--connect` then puts the terminal on its agent's, `--herdr` adds it to Herdr as below (by default when you run in Herdr on their computer with `hc` ok; never inside a Woodshed session, where it adds nothing and says so), and `--parent` with it makes the session's agent a child of this Herdr terminal (section 5) | 0 running, 2 needs the person, 1 failed or stopped, 3 a repo they cannot start on, no `hc`, `--parent` outside a Herdr terminal or inside a Woodshed session | main |
 | `woodshed session connect <id> [--shell]` | Puts the person's own terminal on the session's agent, or its shell; resumes a paused one first. Interactive: suggest it to them, and use `tunnel` yourself | 0 disconnected, 1 could not open, 2 sign-in ended, 3 shared or saw production | main |
 | `woodshed session herdr <id> [--parent[=T] …]` | Makes a session a machine in Herdr and shows its Herdr agent in a space named after the session, in a tab named after its agent (never over names the person gave; run it again to pick up a later title). Resumes a paused session first, and re-adds the machine, which a plain `resume` leaves unreachable. With `--parent`, a paused one is resumed waiting for its agent's terminal from this one. Run on the person's computer: inside a Woodshed session it does nothing | 0 connected, 2 needs the person, 1 failed, or `--parent` on a session whose agent's terminal was already there, 3 no `hc` 0.1.21 or newer, shared, saw production, `--parent` outside a Herdr terminal, or inside a Woodshed session (`in-session`) | main |
 | `woodshed session list [--all]` | Their sessions and the shared ones they see, with state, kind (`private`, `shared`, `review`, `qa`, `ask`) and when each pauses; each session's pull request (state, verdict, checks), `review it: woodshed review <id>` under those they can review, and their own open pull requests with no session; in `--json` also a review's or QA's `verdict` once it reported, and whether the console's Mine lists it (`inMine`); names Herdr machines of sessions no longer on the console | 0 | main |
@@ -325,8 +328,8 @@ hc wait --children any --json
 
 The last line is `connected` with `parent: {"made": true, "address": "woodshed-<id>/t1", …}`: the session's agent runs
 as Woodshed starts it, in a terminal that is your child and outlives you (`--end-with-parent` to end it with you,
-`--no-notify` for no notes typed into you). With `--agent codex`, `parent.reportsStatus` is false: codex tells Herdr
-nothing of its turns, so `hc wait --children` wakes you only when it exits; poll `woodshed session get <id> --json`
+`--no-notify` for no notes typed into you). With any agent but claude, `parent.reportsStatus` is false: codex, grok and opencode tell
+Herdr nothing of their turns, so `hc wait --children` wakes you only when it exits; poll `woodshed session get <id> --json`
 for its state instead. `hc read woodshed-<id>/claude` shows its screen; `hc send` types to it.
 Exit 3 with `no-parent`: you are not in a Herdr terminal; leave out `--parent`. Exit 3 with `in-session`: you run
 inside a Woodshed session, whose Herdr their computer does not show; nothing was started: start it without `--herdr
@@ -398,7 +401,8 @@ woodshed move --from herdr --space api --to new                    # or --to <id
 `--terminal <t>` (repeatable, `hc ls` addresses), `--tab` or `--space` (by id or name, `herdr-app ls`) choose what moves.
 Each agent between turns moves with its conversation. If one is mid-turn, wait for it to finish. When the CLI cannot
 tell which conversation belongs to a terminal, use `hc label <t> claude.session=<id>` for Claude Code or
-`hc label <t> codex.session=<id>` for Codex. The session uses its own databases. Ignored files (`.env`) stay local.
+`hc label <t> codex.session=<id>` for Codex. Grok Build and OpenCode conversations are not moved yet: the
+move refuses them, and a session running one, so leave those terminals out. The session uses its own databases. Ignored files (`.env`) stay local.
 `settings push --own-files` gives their sessions their own.
 
 ### See and try a session's app

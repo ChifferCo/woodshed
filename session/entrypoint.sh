@@ -59,7 +59,9 @@
 #                         it, instead of the team key, on the owner's own databases;
 #                         the owner's own lines for the project's env files and ~/.tmux.conf, where they keep
 #                         some, go after the shared ones
-#   AGENT                codex: a private session runs codex in place of claude (default claude)
+#   AGENT                codex, grok or opencode: a private session runs that agent in place of claude
+#                        (default claude; shared/agents.cjs). Grok Build and OpenCode run only on their
+#                        owner's own sign-in, which the console hands this session alone (fetchOwnerSettings)
 #   MODEL, EFFORT, PERMISSION_MODE                                  optional: claude's flags, from New session
 #   RESUME_SESSION       Resume on a stopped private session: claude's conversation id, reopened with --resume
 #                        from the owner's Claude home, which a private session restores at start. When the home
@@ -317,7 +319,15 @@ checkoutBranch() {
 # claude read it without asking: change both together.
 DEPS_STATUS=/tmp/woodshed-deps
 refreshDeps() {
-  local manifest kind dir files output command start=$SECONDS
+  local manifest kind dir files output command start=$SECONDS product=
+  # A Grok Build or OpenCode session runs none of the branch's installs by itself: run by the start, before anyone asked,
+  # its command would be code from the branch that can read the owner's own sign-in, in Plan mode too. It says which
+  # changed, and the agent runs them when it needs what they install, as a command of its own.
+  case "${AGENT:-claude}" in
+    grok) product='Grok Build' ;;
+    opencode) product=OpenCode ;;
+  esac
+  local -a left=()
   # Each install's dir is relative to the checkout, and its record is keyed on it (deps.sh). This is its own shell.
   cd "$REPO_DIR" || { echo "failed: the checkout $REPO_DIR is not there" > "$DEPS_STATUS"; return; }
   # Read on its own: a failure inside the loop's input would not stop it, and would report ready having checked nothing.
@@ -329,6 +339,10 @@ refreshDeps() {
   while IFS=$'\t' read -r kind dir files output command; do
     [ "$kind" = install ] || continue
     if depsBuiltFrom "$dir" "$files" "$output"; then continue; fi
+    if [ -n "$product" ]; then
+      left+=("\`$command\` in $dir")
+      continue
+    fi
     log "Dependency files changed since the image was built, reinstalling" "(dir: $dir)"
     # An install may empty what it keeps first, so a failed one can leave nothing to run with.
     if ! depsRun "$dir" "$command"; then
@@ -339,6 +353,13 @@ refreshDeps() {
     mkdir -p "$(dirname "$(depsRecordFile "$dir")")"
     depsRecord "$dir" "$files" "$output" > "$(depsRecordFile "$dir")"
   done <<< "$manifest"
+  if [ ${#left[@]} -gt 0 ]; then
+    local each
+    each=$(printf '%s; ' "${left[@]}")
+    log "Dependencies not refreshed: this $product session runs none of the branch's installs by itself" "(changed: ${#left[@]})"
+    echo "skipped: this $product session runs none of the branch's installs by itself, since they could read its owner's own sign-in. These changed since the image was built, and are yours to run before you need what they install: ${each%; }." > "$DEPS_STATUS"
+    return
+  fi
   echo ready > "$DEPS_STATUS"
   log "Dependencies ready" "(seconds: $((SECONDS - start)))"
 }
@@ -367,12 +388,12 @@ configureEgress() {
 # The MCP servers the console hands this session (console/mcpServers.mjs), for claude: each at the console's relay,
 # with the session's own token, which no server ever sees (taint.mjs mcp-config). A production server is off in /mcp
 # until the person turns it on, since its first call of any kind locks the session down for good; a tainted session
-# gets its production servers alone, on. Only for claude: Codex gets none yet.
+# gets its production servers alone, on. Only for claude: Codex, Grok Build and OpenCode get none yet.
 MCP_CONFIG=/tmp/woodshed-mcp.json
 # taint.mjs's TAINTED_CLAUDE_FLAGS, which statusd adds when the session is tainted while it runs.
 TAINTED_CLAUDE_FLAGS=' --strict-mcp-config --disallowedTools WebSearch,WebFetch'
 configureMcp() {
-  [ -n "${WOODSHED_MCP_SERVERS:-}" ] && [ "${AGENT:-claude}" != codex ] && [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
+  [ -n "${WOODSHED_MCP_SERVERS:-}" ] && [ "${AGENT:-claude}" = claude ] && [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
   local made
   made=$(cd "$REPO_DIR" 2>/dev/null; REPO_DIR=$REPO_DIR node "$SESSION_DIR/taint.mjs" mcp-config) || { log "WARNING: MCP servers not configured"; return 0; }
   log "MCP servers offered" "$made$(tainted && echo ' (tainted: production only, on)' || true)"
@@ -708,6 +729,13 @@ OWN_FILES_JSON=$HOME/.config/woodshed/own-files.json
 # The owner's own Codex sign-in, for a Codex session: written into codex's own home by configureCodex.
 OWN_CODEX_AUTH_FILE=$HOME/.config/woodshed/codex-auth
 CODEX_HOME_DIR=${CODEX_HOME:-$HOME/.codex}
+# The owner's own sign-in for Grok Build or OpenCode (`agentAuth` in the /settings answer): written into the
+# agent's own home by its configure function, and kept as given, for statusd to tell a login the agent refreshed from
+# it (keepAgentAuth). Outside every home a session saves.
+OWN_AGENT_AUTH_FILE=$HOME/.config/woodshed/agent-auth
+GROK_HOME_DIR=${GROK_HOME:-$HOME/.grok}
+OPENCODE_DATA_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/opencode
+OPENCODE_CONFIG_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
 # Written once codex's home is made (configureCodex): statusd starts a Codex agent beside the session's only then.
 CODEX_READY_FILE=/tmp/woodshed-codex-ready
 
@@ -741,6 +769,16 @@ fetchOwnerSettings() {
     mkdir -p "$(dirname "$OWN_CODEX_AUTH_FILE")"
     (umask 077 && printf '%s' "$token" > "$OWN_CODEX_AUTH_FILE")
   fi
+  case "${AGENT:-claude}" in
+    grok | opencode)
+      # Their own sign-in or nothing: these agents run on no team credential. The console refuses the start without one
+      # (409), so a console that answered without it is older than the agent.
+      token=$(jq -r '.agentAuth // empty' <<< "$answer")
+      [ -n "$token" ] || die "the console sent no sign-in for ${AGENT}: save yours on My settings"
+      mkdir -p "$(dirname "$OWN_AGENT_AUTH_FILE")"
+      (umask 077 && printf '%s' "$token" > "$OWN_AGENT_AUTH_FILE")
+      ;;
+  esac
   # Their own whole files, for writeOwnFiles once the branch is checked out. Kept outside ~/.claude, which is saved.
   if jq -e '(.ownFiles // {}) | length > 0' <<< "$answer" >/dev/null; then
     mkdir -p "$(dirname "$OWN_FILES_JSON")"
@@ -1064,6 +1102,180 @@ codexFlags() {
   [ -z "${EFFORT:-}" ] || printf ' -c model_reasoning_effort=\\"%s\\"' "$EFFORT"
 }
 
+# The owner's own sign-in, as fetchOwnerSettings kept it: a key, or a login file's JSON.
+ownAgentAuthIsKey() { ! head -c 1 "$OWN_AGENT_AUTH_FILE" | grep -q '{'; }
+
+# The agent's folder for its own files, refused when it is a symlink: what is written there must land there.
+agentDir() {
+  [ ! -L "$1" ] || die "$2's folder $1 is a symlink"
+  mkdir -p "$1"
+  chmod 700 "$1"
+}
+
+# Grok Build (shared/agents.cjs): the owner's own sign-in, an xAI key that session/bin/grok hands it in XAI_API_KEY, or
+# the login `grok login` saved, as ~/.grok/auth.json, which statusd sends back refreshed at stop (its refresh token works
+# once). Its config turns off its updater, its telemetry and what it would take from ~/.claude (MCP servers, hooks:
+# claude's are Woodshed's own); trusts the checkout, so the repo's AGENTS.md and rules load; and the rules go in
+# ~/.grok/rules/, which it reads at every start. Its hooks tell statusd what it is doing, as claude's do (hookState.mjs).
+# The rules files Grok Build reads into its first request by itself (measured with 1.0.92, `grok inspect`'s Project
+# Instructions), where a branch's symlink could point at the owner's sign-in. One that resolves outside the checkout, or
+# a rules folder that does, stops the start: Grok cannot be told to skip it. A link inside the checkout (AGENTS.md to
+# CLAUDE.md) is a repo's own choice.
+refuseRulesOutsideCheckout() {
+  local checkout path real
+  checkout=$(realpath -m "$REPO_DIR")
+  outside() {
+    real=$(realpath -m "$1")
+    case "$real/" in "$checkout"/*) return 1 ;; esac
+  }
+  for path in AGENTS.md CLAUDE.md .claude .claude/CLAUDE.md .claude/rules .grok .grok/rules .cursor .cursor/rules; do
+    [ -e "$REPO_DIR/$path" ] || [ -L "$REPO_DIR/$path" ] || continue
+    ! outside "$REPO_DIR/$path" || die "the repo's $path points outside the checkout, where Grok Build would read it into its first request: it is not started on this branch"
+  done
+  while IFS= read -r -d '' path; do
+    ! outside "$path" || die "the repo's ${path#"$REPO_DIR"/} points outside the checkout, where Grok Build would read it into its first request: it is not started on this branch"
+  done < <(find "$REPO_DIR/.claude/rules" "$REPO_DIR/.grok/rules" "$REPO_DIR/.cursor/rules" -type l -print0 2>/dev/null)
+}
+
+configureGrok() {
+  agentDir "$GROK_HOME_DIR" grok
+  refuseRulesOutsideCheckout
+  local file
+  for file in auth.json config.toml trusted_folders.toml rules; do
+    [ ! -L "$GROK_HOME_DIR/$file" ] || die "grok's $file is a symlink"
+  done
+  if ownAgentAuthIsKey; then
+    rm -f "$GROK_HOME_DIR/auth.json"
+    log "grok runs on the owner's own xAI key, directly"
+  else
+    (umask 077 && cp "$OWN_AGENT_AUTH_FILE" "$GROK_HOME_DIR/auth.json")
+    log "grok runs on the owner's own Grok Build login, directly"
+  fi
+  cat > "$GROK_HOME_DIR/config.toml" <<'TOML'
+[cli]
+auto_update = false
+
+[features]
+telemetry = false
+feedback = false
+
+[compat.claude]
+mcps = false
+hooks = false
+
+[compat.cursor]
+mcps = false
+TOML
+  # A key is used only when grok is told to prefer it: with none of this, grok 1.0.92 opens its browser sign-in whatever
+  # XAI_API_KEY holds (measured in the session image).
+  if ownAgentAuthIsKey; then printf '\n[auth]\npreferred_method = "api_key"\n' >> "$GROK_HOME_DIR/config.toml"; fi
+  printf '[folders.%s]\ntrusted = true\ndecided_at = %s\n' "$(jq -Rn --arg p "$REPO_DIR" '$p')" "$(date +%s)" > "$GROK_HOME_DIR/trusted_folders.toml"
+  mkdir -p "$GROK_HOME_DIR/rules"
+  cp /tmp/woodshed-rules.md "$GROK_HOME_DIR/rules/woodshed.md"
+  # Its hooks, statusd's word on what it does, are in the image's /etc/grok/requirements.toml
+  # (session/grokRequirements.toml), the only hooks Grok runs in a session: none of a repo's own.
+}
+
+# Grok Build's flags for what New session picked: auto approves every call (the container is the sandbox, as for
+# codex), acceptEdits and plan are its own modes of those names, default leaves its own policy. Inline, never full
+# screen, as claude and codex are, and never updating itself.
+grokFlags() {
+  local mode=${PERMISSION_MODE:-auto}
+  # No --add-dir for the uploads, as claude and codex get: grok 1.0.92 refuses a session that has one ("additionalDirectories
+  # is not supported: a session works only in its cwd", measured in the session image).
+  printf ' --no-alt-screen --no-auto-update'
+  case "$mode" in
+    auto) printf ' --always-approve' ;;
+    acceptEdits | plan) printf ' --permission-mode %s' "$mode" ;;
+  esac
+  [ -z "${MODEL:-}" ] || printf ' --model %s' "$MODEL"
+  [ -z "${EFFORT:-}" ] || printf ' --effort %s' "$EFFORT"
+}
+
+# OpenCode: the providers the owner signed in to, as `opencode auth login` saved them, as its own auth.json, which
+# statusd sends back refreshed at stop. Its config turns off its updater and sharing, and gives the effort (its
+# `variant`) to the build and plan agents; the rules go in its global AGENTS.md, which it reads with the repo's own.
+configureOpencode() {
+  agentDir "$OPENCODE_DATA_DIR" opencode
+  agentDir "$OPENCODE_CONFIG_DIR" opencode
+  local file
+  for file in "$OPENCODE_DATA_DIR/auth.json" "$OPENCODE_CONFIG_DIR/opencode.json" "$OPENCODE_CONFIG_DIR/AGENTS.md"; do
+    [ ! -L "$file" ] || die "opencode's $(basename "$file") is a symlink"
+  done
+  ! ownAgentAuthIsKey || die "OpenCode takes its auth.json, and the console sent something else"
+  (umask 077 && cp "$OWN_AGENT_AUTH_FILE" "$OPENCODE_DATA_DIR/auth.json")
+  # session/bin/opencode turns the repo's own config off (OPENCODE_DISABLE_PROJECT_CONFIG): an opencode.json in the
+  # repo could point a provider at another address, which would get the owner's key. That also leaves out the repo's
+  # AGENTS.md (measured with 1.19.6), so its text, or CLAUDE.md's where the repo has none, goes after the rules in
+  # opencode's own AGENTS.md, copied once here: never named by path, which a symlink made later in the session could
+  # turn into another file, and never through a symlink, which could point at auth.json and send every saved provider
+  # key to the model.
+  jq -n --arg effort "${EFFORT:-}" --argjson permission "$(opencodePermission)" \
+    '{"$schema": "https://opencode.ai/config.json", autoupdate: false, share: "disabled"}
+    + (if $permission.global == null then {} else {permission: $permission.global} end)
+    + ([(if $effort == "" then {} else {agent: {build: {variant: $effort}, plan: {variant: $effort}}} end),
+        (if $permission.plan == null then {} else {agent: {plan: {permission: $permission.plan}}} end)]
+       | reduce .[] as $part ({}; . * $part))' \
+    > "$OPENCODE_CONFIG_DIR/opencode.json"
+  cp /tmp/woodshed-rules.md "$OPENCODE_CONFIG_DIR/AGENTS.md"
+  local rules
+  for rules in AGENTS.md CLAUDE.md; do
+    if [ -L "$REPO_DIR/$rules" ]; then
+      log "WARNING: the repo's $rules is a symlink, so OpenCode does not get it"
+      break
+    fi
+    if [ -f "$REPO_DIR/$rules" ]; then
+      { printf '\n\n# The repo\x27s own %s\n\n' "$rules"; cat "$REPO_DIR/$rules"; } >> "$OPENCODE_CONFIG_DIR/AGENTS.md"
+      break
+    fi
+  done
+  log "opencode runs on the owner's own provider sign-ins, directly" "(providers: $(jq -r 'keys | join(" ")' "$OWN_AGENT_AUTH_FILE"))"
+}
+
+# OpenCode's permission rules for New session's mode, so each means what it does for Claude Code: its own policy allows
+# almost everything, edits and commands included. {global, plan}: `permission` for every agent, and the plan agent's own,
+# which OpenCode 1.19.6 applies after the global (its agent.ts: the last rule that matches wins), so plan's edit deny
+# holds where the global asks. Measured with 1.19.6 against a stand-in model (PR #335):
+#   default      edits and commands ask
+#   acceptEdits  edits allowed, commands ask
+#   plan         the plan agent: edits refused (the edit tools are not even offered), commands ask, so a write through
+#                bash waits for a person; a switch to the build agent asks for both
+#   auto         none: --auto answers every ask itself
+# A web fetch asks in all three, as Claude Code's does.
+opencodePermission() {
+  local asks='{"edit": "ask", "bash": "ask", "webfetch": "ask"}'
+  case "${PERMISSION_MODE:-auto}" in
+    default) printf '{"global": %s}' "$asks" ;;
+    acceptEdits) printf '{"global": {"edit": "allow", "bash": "ask", "webfetch": "ask"}}' ;;
+    plan) printf '{"global": %s, "plan": {"edit": "deny", "bash": "ask"}}' "$asks" ;;
+    *) printf '{}' ;;
+  esac
+}
+
+# OpenCode's flags: auto answers every ask itself, plan is its plan agent; the other modes are its build agent under the
+# rules opencodePermission writes.
+opencodeFlags() {
+  case "${PERMISSION_MODE:-auto}" in
+    auto) printf ' --auto' ;;
+    plan) printf ' --agent plan' ;;
+  esac
+  [ -z "${MODEL:-}" ] || printf ' --model %s' "$MODEL"
+}
+
+# The agent's command, as session/bin has it, with its flags; and how it takes its first message.
+agentCommand() {
+  case "${AGENT:-claude}" in
+    codex) printf '%s/bin/codex%s' "$SESSION_DIR" "$(codexFlags)" ;;
+    grok) printf '%s/bin/grok%s' "$SESSION_DIR" "$(grokFlags)" ;;
+    opencode) printf '%s/bin/opencode%s' "$SESSION_DIR" "$(opencodeFlags)" ;;
+  esac
+}
+promptFlag() {
+  case "${AGENT:-claude}" in
+    opencode) printf ' --prompt' ;;
+  esac
+}
+
 # What the agent runs in (session/agentPane.mjs): Herdr only in a private coding session whose owner picked it on My
 # settings (fetchOwnerSettings), or whose owner's Herdr makes its terminal (WOODSHED_HERDR_PARENT, below), and tmux
 # everywhere else: a shared session, a question, a review and a QA run.
@@ -1147,7 +1359,7 @@ agentRun() {
 }
 
 # The agent, typed into its terminal (agentRun) with the flags woodshed-login and move reuse: the QA run, the review, or
-# claude or codex on the prompt, the conversation it resumes, or nothing for a review-only session.
+# claude or another agent (agentCommand) on the prompt, the conversation it resumes, or nothing for a review-only session.
 startAgent() {
   if [ "${SESSION_MODE:-}" = qa ]; then
     # After statusd's port is open: the run asks it for the app's port and to start the app. Working from the start.
@@ -1157,12 +1369,12 @@ startAgent() {
     # The review reads the diff and sends its verdict to the console; no app, so it does not wait on statusd.
     touch /tmp/review-running
     agentRun "SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/review.sh"
-  elif [ "${AGENT:-claude}" = codex ]; then
-    # A Codex conversation is not kept between runs, so a resume starts the prompt again.
+  elif [ "${AGENT:-claude}" != claude ]; then
+    # Only claude's conversation is kept between runs (its Claude home), so another agent's resume starts the prompt again.
     if [ "${REVIEW_ONLY:-}" = 1 ]; then
-      agentRun "$SESSION_DIR/bin/codex$(codexFlags)"
+      agentRun "$(agentCommand)"
     else
-      agentRun "$SESSION_DIR/bin/codex$(codexFlags) \"\$(cat /tmp/woodshed-prompt.md)\""
+      agentRun "$(agentCommand)$(promptFlag) \"\$(cat /tmp/woodshed-prompt.md)\""
     fi
   elif resumable; then
     agentRun "$SESSION_DIR/bin/claude$(claudeFlags) --resume $RESUME_SESSION"
@@ -1191,11 +1403,19 @@ startClaude() {
   fi
   # woodshed-login reopens claude with the same flags once it signed in, and `woodshed move --from herdr` opens a conversation moved
   # from a laptop with the agent's own (cli/move.mjs).
-  if [ "${AGENT:-claude}" = codex ]; then codexFlags > /tmp/woodshed-codex-flags; else claudeFlags > /tmp/woodshed-claude-flags; fi
+  case "${AGENT:-claude}" in
+    codex) codexFlags > /tmp/woodshed-codex-flags ;;
+    grok) grokFlags > /tmp/woodshed-grok-flags ;;
+    opencode) opencodeFlags > /tmp/woodshed-opencode-flags ;;
+    *) claudeFlags > /tmp/woodshed-claude-flags ;;
+  esac
   # The agents a person starts beside this one (session/agents.mjs, statusd's /agents) take the session's own flags for
-  # claude, without the model, effort and mode New session picked: they pick their own.
+  # claude, without the model, effort and mode New session picked: they pick their own. Only beside Claude Code or Codex:
+  # a Grok Build or OpenCode session runs on its owner's own sign-in and nothing else, so none starts beside it.
   if [ "${SESSION_KIND:-}" = private ] && [ -z "${SESSION_MODE:-}" ] && ! tainted; then
-    MODEL='' EFFORT='' PERMISSION_MODE=default claudeFlags > /tmp/woodshed-agent-claude-flags
+    case "${AGENT:-claude}" in
+      claude | codex) MODEL='' EFFORT='' PERMISSION_MODE=default claudeFlags > /tmp/woodshed-agent-claude-flags ;;
+    esac
   fi
   # A terminal its owner's Herdr makes comes once the session runs, after statusd opened the tunnel it comes through:
   # the agent is typed into it then, in the background, as into the session's own. Handed to the init like progress's
@@ -1336,32 +1556,37 @@ runSession() {
   configureMcp
   configureClaude
   fetchAttachments
-  # Resume reopens claude's own conversation, which already holds the task. A Codex session always writes its prompt.
+  # Resume reopens claude's own conversation, which already holds the task. Any other agent always writes its prompt.
   if [ "${SESSION_MODE:-}" = qa ]; then
     log "Prompt skipped" "(QA: session/qa.sh runs the QA prompts)"
   elif [ "${SESSION_MODE:-}" = review ]; then
     log "Prompt skipped" "(review: session/review.sh runs the review prompt)"
-  elif [ "${AGENT:-claude}" != codex ] && resumable; then
+  elif [ "${AGENT:-claude}" = claude ] && resumable; then
     log "Resuming claude's conversation" "(id: $RESUME_SESSION)"
   else
     [ -z "${RESUME_SESSION:-}" ] || log "WARNING: the conversation to resume is not in the Claude home, starting the prompt again" "(id: $RESUME_SESSION)"
     writePrompt
   fi
   writeRules
-  if [ "${AGENT:-claude}" = codex ]; then
-    configureCodex
-    touch "$CODEX_READY_FILE"
-  else
-    restorePlugins
-    installDefaultPlugins
-    installSyncedPlugins
-    # A private session's owner may start a Codex agent beside claude (session/agents.mjs): its home is made now, and a
-    # problem with it never stops claude's start.
-    if [ "${SESSION_KIND:-}" = private ] && [ -z "${SESSION_MODE:-}" ] && ! tainted; then
-      if (configureCodex beside); then touch "$CODEX_READY_FILE"; else log "WARNING: codex not set up, no Codex agent can start beside claude"; fi
-    fi
-  fi
-  # Both have read it: the env files are written, and the instructions are in the rules (and codex's AGENTS.override.md).
+  case "${AGENT:-claude}" in
+    codex)
+      configureCodex
+      touch "$CODEX_READY_FILE"
+      ;;
+    grok) configureGrok ;;
+    opencode) configureOpencode ;;
+    *)
+      restorePlugins
+      installDefaultPlugins
+      installSyncedPlugins
+      # A private session's owner may start a Codex agent beside claude (session/agents.mjs): its home is made now, and a
+      # problem with it never stops claude's start.
+      if [ "${SESSION_KIND:-}" = private ] && [ -z "${SESSION_MODE:-}" ] && ! tainted; then
+        if (configureCodex beside); then touch "$CODEX_READY_FILE"; else log "WARNING: codex not set up, no Codex agent can start beside claude"; fi
+      fi
+      ;;
+  esac
+  # Both have read it: the env files are written, and the instructions are in the rules (and each agent's own copy).
   rm -f "$REPO_SETTINGS_JSON"
   progress env
   startClaude

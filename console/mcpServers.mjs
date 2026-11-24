@@ -24,6 +24,7 @@ import net from 'node:net';
 
 import { issuerFrom } from './oidcIssuer.mjs';
 import { isAsk, isQa, isReview } from './sessions.mjs';
+import agents from '../shared/agents.cjs';
 
 export const ENVIRONMENT_SERVER_NAME = 'woodshed-prod';
 export const PROD_MCP_AUDIENCE = 'woodshed-prod-mcp';
@@ -140,7 +141,8 @@ export function checkServer(input) {
  * @returns {{ok: true}|{ok: false, why: string}}
  */
 export function serverEligibility(server, session, repo) {
-  if (session?.options?.agent === 'codex') return { ok: false, why: 'a Codex session gets no MCP servers from the console yet' };
+  const agent = agents.agentOfSession(session);
+  if (agent !== 'claude') return { ok: false, why: `a ${agents.agent(agent).product} session gets no MCP servers from the console yet` };
   if (isQa(session) || isReview(session)) return { ok: false, why: 'a QA run or a review gets no MCP servers from the console' };
   const isPrivate = Boolean(session?.owner) && !isAsk(session);
   if (server.production) {

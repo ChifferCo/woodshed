@@ -3,6 +3,7 @@
 // (githubBroker.test.mjs, trustedIdentity.test.mjs); these are the console's routes and websockets with them on.
 
 import { test } from 'node:test';
+import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
@@ -79,6 +80,8 @@ async function hostedConsole(t, { sessions = [], extra = {}, config = CONFIG } =
   t.after(() => server.close());
   return { port, reached };
 }
+
+const { OWN_SIGN_IN_AGENTS } = createRequire(import.meta.url)('../shared/agents.cjs');
 
 test('behind a hosting proxy its header is the only sign-in: missing, expired, forged or on another secret, nobody gets in', async (t) => {
   const { port } = await hostedConsole(t);
@@ -481,8 +484,10 @@ test('My Woodshed\'s first look waits for the secret store, and its polls after 
   const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets });
   const { port } = await hostedConsole(t, { extra: { userSettings } });
   assert.equal((await send(port, { path: '/api/my', headers: MEMBER() })).body.claudeToken.set, true, 'the first look found it');
-  assert.equal(reads, 2);
+  // One read for each sign-in: the Claude token, the Codex sign-in, and each other agent's own (shared/agents.cjs).
+  const signIns = 2 + OWN_SIGN_IN_AGENTS.length;
+  assert.equal(reads, signIns);
   values.delete('users/sam-member/claude-token');
   assert.equal((await send(port, { path: '/api/my', headers: MEMBER() })).body.claudeToken.set, true, 'a poll inside the minute does not ask');
-  assert.equal(reads, 2);
+  assert.equal(reads, signIns);
 });

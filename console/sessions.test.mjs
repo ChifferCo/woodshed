@@ -372,6 +372,14 @@ test('the New session form\'s Work on names an issue or PR by number, or a branc
   assert.throws(() => sessionOptions({ agent: 'gemini' }), /the agent must be one of/);
   assert.throws(() => sessionOptions({ model: 'gpt' }), /the model must be one of/);
   assert.throws(() => sessionOptions({ permissionMode: 'bypassPermissions' }), /permission mode/);
+  // Grok Build and OpenCode: a model of the registry's shape, its efforts and its permission modes.
+  assert.deepEqual(sessionOptions({ agent: 'grok', model: 'grok-build', effort: 'high', permissionMode: 'acceptEdits' }), { agent: 'grok', model: 'grok-build', effort: 'high', permissionMode: 'acceptEdits' });
+  assert.deepEqual(sessionOptions({ agent: 'opencode' }), { agent: 'opencode', model: '', effort: '', permissionMode: 'auto' });
+  assert.deepEqual(sessionOptions({ agent: 'opencode', model: 'anthropic/claude-sonnet-4-5', permissionMode: 'plan' }).model, 'anthropic/claude-sonnet-4-5');
+  assert.throws(() => sessionOptions({ agent: 'opencode', model: 'claude-sonnet' }), /not a name OpenCode takes/, 'OpenCode names its provider');
+  for (const bad of ['grok build', 'x"y', '-x', 'a;rm']) assert.throws(() => sessionOptions({ agent: 'grok', model: bad }), /not a name Grok Build takes/, bad);
+  assert.equal(sessionOptions({ agent: 'opencode', permissionMode: 'acceptEdits' }).permissionMode, 'acceptEdits', 'held by configureOpencode\'s rules');
+  assert.throws(() => sessionOptions({ agent: 'grok', effort: 'minimal' }), /the effort must be one of/, 'Grok Build takes low to max');
 });
 
 test('statusd\'s claude session id is kept only when it looks like one', () => {
