@@ -268,7 +268,7 @@ const sessions = [
   }),
   session('5747ed02', null, 'Move invoice totals to the server', {
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true,
-    branch: 'woodshed/local-5747ed02', startedFrom: '5747ed01', lastMessage: 'Moved the totals into InvoiceService and opened a draft PR.',
+    branch: 'woodshed/local-5747ed02', startedFrom: '5747ed01', lastMessage: { role: 'assistant', text: 'Moved the totals into InvoiceService and opened a draft PR.' },
   }),
   session('7a1e7ed1', null, 'Why order 42 shows as unpaid', {
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true, editor: true,

@@ -66,7 +66,7 @@ const text = (value, max) => (typeof value === 'string' && value ? value.slice(0
 export function startedSummary(s, { publicUrl, linkQuery = null }) {
   return {
     id: s.id, title: text(s.title, 200), status: s.status, state: s.state ?? null, project: s.project ?? null, branch: s.branch ?? null,
-    agent: s.options?.agent === 'codex' ? 'codex' : 'claude', prUrl: s.prUrl ?? null, lastMessage: text(s.lastMessage, 500),
+    agent: s.options?.agent === 'codex' ? 'codex' : 'claude', prUrl: s.prUrl ?? null, lastMessage: text(s.lastMessage?.text, 500),
     createdAt: s.createdAt ?? null, startedAt: s.startedAt ?? null, stoppedAt: s.stoppedAt ?? null, stopReason: text(s.stopReason, 200),
     error: text(s.error, 300), url: sessionLink(publicUrl, s.id, linkQuery),
   };
@@ -95,11 +95,13 @@ async function readJson(req) {
  * @param {{fleet: {sessions: () => object[], find: (id: string) => object|null},
  *          config: {publicUrl: string, linkQuery?: object|null},
  *          startMine: (login: string, body: object) => Promise<{status: number, body: object}>,
- *          allowed?: (login: string) => Promise<boolean>|boolean}} deps
+ *          allowed?: (login: string) => Promise<boolean>|boolean, canWrite?: (login: string) => Promise<boolean>|boolean}} deps
  *   `startMine` is New session's own start, with its checks (server.mjs); `allowed` whether the person may still use
- *   the console, as a command line token's person must (cliSignIn.mjs)
+ *   the console, and `canWrite` whether GitHub still lets them write to the console's repo, as a command line token's
+ *   person must (cliSignIn.mjs, createWriteAccess). New session's project check asks nothing of the default project,
+ *   whose writers the page's sign-in rechecks every hour: a session's start must ask it here.
  */
-export function createSessionStarts({ fleet, config, startMine, allowed = () => true }) {
+export function createSessionStarts({ fleet, config, startMine, allowed = () => true, canWrite = () => true }) {
   const summary = (s) => startedSummary(s, { publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
 
   function startedBy(session) {
@@ -149,6 +151,7 @@ export function createSessionStarts({ fleet, config, startMine, allowed = () => 
     if (!prompt) return refuse(400, 'no prompt', 'give the new session its first prompt: what to do, the context it needs, and what done looks like');
     if (prompt.length > MAX_PROMPT_CHARS) return refuse(400, 'prompt too long', `the prompt is over ${MAX_PROMPT_CHARS} characters`);
     if (!(await allowed(login))) return refuse(403, 'not a member', `@${login} can no longer use this console`);
+    if (!(await canWrite(login))) return refuse(403, 'write access gone', `@${login} no longer has write access to the repo on GitHub`);
     const branch = typeof body.branch === 'string' ? body.branch.trim() : '';
     if (branch && from.branch && branch === from.branch) return refuse(400, 'same branch', `${branch} is this session's own branch: give the new session one of its own, or none`);
     // As loose as the starting session, never looser: a mode it was not given, it cannot give.

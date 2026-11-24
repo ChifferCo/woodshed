@@ -850,7 +850,9 @@ stopping one does nothing to the other.
   launch makes the token do nothing).
 - **The start** is New session's own (`startMine` in `server.mjs`), as the session's owner: their Claude token (or Codex
   sign-in), their databases, write access to the project's repo (the session's own unless `--repo` names another
-  project), and the project's readiness; the owner must still be on the console, as for a command line token. It counts
+  project), and the project's readiness; the owner must still be on the console and still have write access to its repo on GitHub, checked as for a command
+  line token (once an hour per person, `createWriteAccess`): New session's project check asks nothing of the default
+  project, whose writers the page's sign-in rechecks. It counts
   in their My Woodshed sessions and waits in line past the limit, and a hosted console bills it as any session. Its
   permission mode is the starting session's (`acceptEdits` becomes `default` for Codex), never one it picks. A branch
   that is the starting session's own is refused. It gets nothing of the starting session's but `startedFrom`, its id.
@@ -860,7 +862,7 @@ stopping one does nothing to the other.
   Details), and the other's say **Started here** with each it started.
 
 The console logs `sessionStarts: session started` with `from`, the new `id` and its `status` (`queued` when it waits in line), `sessionStarts: start
-refused` with `why` (`no prompt`, `same branch`, `not a member`, or `start checks` with
+refused` with `why` (`no prompt`, `same branch`, `not a member`, `write access gone`, or `start checks` with
 New session's `status`), `refused, no running session has that start token` and `refused, a browser's call`. The
 session's log says `Session starts on` when it got a token.
 

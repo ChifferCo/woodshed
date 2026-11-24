@@ -8,7 +8,7 @@ const NOW = Date.parse('2026-11-23T12:00:00.000Z');
 
 // A console's session API with only these routes: a made-up fleet, and New session's start as a stand-in that records
 // what it was asked and answers as server.mjs's startMine does.
-async function serve({ sessions, startMine = null, allowed = () => true } = {}) {
+async function serve({ sessions, startMine = null, allowed = () => true, canWrite = () => true } = {}) {
   const asked = [];
   const fleet = {
     sessions: () => sessions,
@@ -16,7 +16,7 @@ async function serve({ sessions, startMine = null, allowed = () => true } = {}) 
   };
   let next = 0;
   const starts = createSessionStarts({
-    fleet, config: { publicUrl: 'https://console.example' }, allowed,
+    fleet, config: { publicUrl: 'https://console.example' }, allowed, canWrite,
     startMine: startMine ?? (async (login, body) => {
       asked.push({ login, body });
       const made = { id: `5e55${String(next++).padStart(4, '0')}`, owner: login, title: body.name || 'Named from the prompt', status: 'queued', branch: body.workOn || `woodshed/${login}-x`,
@@ -69,13 +69,13 @@ test('a session starts a session of its person\'s, as New session does, with sta
 
 test('it lists and reads only the sessions it started', async (t) => {
   const { token, session } = holder();
-  const mine = { id: 'bbbb0002', owner: 'joel', status: 'running', state: 'done', startedFrom: session.id, title: 'CSV export', createdAt: new Date(NOW).toISOString(), lastMessage: 'Done.' };
+  const mine = { id: 'bbbb0002', owner: 'joel', status: 'running', state: 'done', startedFrom: session.id, title: 'CSV export', createdAt: new Date(NOW).toISOString(), lastMessage: { role: 'assistant', text: 'Done.\nThe export downloads.' } };
   const other = { id: 'cccc0003', owner: 'joel', status: 'running', title: 'Another of joel\'s', createdAt: new Date(NOW).toISOString() };
   const api = await serve({ sessions: [session, mine, other] });
   t.after(api.close);
   const list = await api.call('GET', '/sessions', { token });
   assert.deepEqual(list.body.sessions.map((s) => s.id), ['bbbb0002']);
-  assert.equal(list.body.sessions[0].lastMessage, 'Done.');
+  assert.equal(list.body.sessions[0].lastMessage, 'Done.\nThe export downloads.', 'statusd\'s {role, text}, as its text');
   assert.equal(list.body.sessions[0].token, undefined);
   assert.equal((await api.call('GET', '/sessions/bbbb0002', { token })).body.session.state, 'done');
   assert.equal((await api.call('GET', '/sessions/cccc0003', { token })).status, 404, 'a session it did not start is not its to read');
@@ -103,6 +103,14 @@ test('it refuses what it must', async (t) => {
   const gone = await serve({ sessions: [session], allowed: () => false });
   t.after(gone.close);
   assert.equal((await gone.call('POST', '/sessions', { token, body: { prompt: 'x' } })).status, 403, 'someone taken off the console starts nothing');
+
+  // Still on People, but GitHub took their write access: on the default project, which New session's project check
+  // asks nothing of, the start is refused here.
+  const noWrite = await serve({ sessions: [session], canWrite: (login) => login !== 'joel' });
+  t.after(noWrite.close);
+  const lost = await noWrite.call('POST', '/sessions', { token, body: { prompt: 'x' } });
+  assert.deepEqual([lost.status, lost.body.error], [403, '@joel no longer has write access to the repo on GitHub']);
+  assert.equal(noWrite.asked.length, 0, 'it never reached New session\'s start');
 
   const refused = await serve({ sessions: [session], startMine: async () => ({ status: 409, body: { error: 'save your Claude token on My settings first' } }) });
   t.after(refused.close);
