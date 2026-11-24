@@ -1035,7 +1035,7 @@ URL on top of each env file's Repo settings values
 - **A private session's Plan reading is missing or old.** It shows, in the pane bar's meter, once Claude has answered: in the session's
   Terminal, `cat ~/.claude/woodshed-usage/claude.json` is what the status line saved. No file means Claude Code sent no
   `rate_limits` (a session not on a Pro, Max or Ultra plan, or none answered yet), or the status line is not
-  `session/statusline.sh`. statusd logs `statusd: plan usage not read` with the error once per reason. The meter shows
+  `session/statusline.sh`. A Grok Build session reads `~/.grok/logs/unified.jsonl` (`billing: fetched credits config`, `session/grokPlanUsage.mjs`) instead, and an image from before that reader has none. statusd logs `statusd: plan usage not read` with the error once per reason. The meter shows
   the newest reading of all your private sessions, its age past 30 minutes in its tooltip, and none from an image before
   `session/planUsage.mjs`.
 - **The Review tab is blank, or says `no review for this session`.** The tab frames

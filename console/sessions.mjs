@@ -478,13 +478,22 @@ function isoOrNull(v) {
   return typeof v === 'string' && v.length <= 40 && !Number.isNaN(Date.parse(v)) ? new Date(v).toISOString() : null;
 }
 
+// Grok Build names its one allowance a week or a month and how long that period is (session/grokPlanUsage.mjs).
+const PLAN_WINDOW_LABELS = new Set(['Week', 'Month']);
+const PLAN_WINDOW_SHORTS = new Set(['wk', 'mo']);
+const PLAN_SPAN_MAX_MS = 400 * 86400_000;
+
 function planWindowFrom(w) {
   if (typeof w?.usedPercent !== 'number' || !Number.isFinite(w.usedPercent)) return null;
-  return { usedPercent: Math.min(100, Math.max(0, w.usedPercent)), resetsAt: isoOrNull(w.resetsAt) };
+  const out = { usedPercent: Math.min(100, Math.max(0, w.usedPercent)), resetsAt: isoOrNull(w.resetsAt) };
+  if (PLAN_WINDOW_LABELS.has(w.label)) out.label = w.label;
+  if (PLAN_WINDOW_SHORTS.has(w.short)) out.short = w.short;
+  if (typeof w.spanMs === 'number' && Number.isFinite(w.spanMs) && w.spanMs > 0 && w.spanMs <= PLAN_SPAN_MAX_MS) out.spanMs = w.spanMs;
+  return out;
 }
 
 /**
- * @param {object} usage  statusd's `planUsage` (session/planUsage.mjs)
+ * @param {object} usage  statusd's `planUsage` (session/planUsage.mjs, codexPlanUsage.mjs, grokPlanUsage.mjs)
  * @returns {{asOf: string|null, fiveHour: object|null, sevenDay: object|null}|null}  in range, or null
  */
 export function planUsageFrom(usage) {
