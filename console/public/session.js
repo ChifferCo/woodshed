@@ -810,10 +810,13 @@
   function assignActions(s) {
     if (!data.assignable || W.isPrivate(s) || s.kind === 'ask' || W.isPullCheck(s)) return [];
     const mine = W.sameLogin(s.assignee, data.login);
+    const others = data.assignables.filter((l) => !W.sameLogin(l, data.login) && !W.sameLogin(l, s.assignee));
     return [
       !mine && { label: 'Assign to me', note: s.assignee ? `Take it from ${W.personText(s.assignee)}` : 'Nobody has it: take it', run: () => assignTo(s, data.login) },
-      ...data.assignables.filter((l) => !W.sameLogin(l, data.login) && !W.sameLogin(l, s.assignee))
-        .map((l) => ({ label: `Hand over to ${W.personText(l)}`, note: `@${l}`, run: () => assignTo(s, l) })),
+      others.length && {
+        label: 'Hand over…', note: others.length === 1 ? `Give it to ${W.personText(others[0])}` : `Give it to someone else who can be assigned (${others.length})`,
+        run: () => handOver(s, others),
+      },
       s.assignee && { label: 'Unassign', note: 'Nobody has it; anyone who can be assigned can take it', run: () => assignTo(s, null) },
     ].filter(Boolean);
   }
@@ -1018,6 +1021,14 @@
       W.shell.toast(`Not assigned: ${err.message}`);
     }
     refresh();
+  }
+
+  // Everyone who can be assigned, in one dropdown, rather than a row each in the ⋯ menu, which a team makes long.
+  async function handOver(s, logins) {
+    const options = logins.map((l) => ({ value: l, label: W.personText(l) === `@${l}` ? `@${l}` : `${W.personText(l)} (@${l})` }))
+      .sort((a, b) => a.label.replace(/^@/, '').localeCompare(b.label.replace(/^@/, ''), undefined, { sensitivity: 'base' }));
+    const to = await W.askChoice({ title: 'Hand over this session', label: 'To', options, goLabel: 'Hand over' });
+    if (to) await assignTo(s, to);
   }
 
   // Shown in a session's last 15 minutes before it pauses or stops by itself: an hour more, each press.

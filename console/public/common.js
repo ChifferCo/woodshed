@@ -1878,6 +1878,37 @@
     });
   }
 
+  /**
+   * One pick from a list, in the console's own dialog, as askText is for a line of text: a dropdown under its label,
+   * Cancel, then the one action.
+   * @param {{title: string, label: string, options: {value: string, label: string}[], goLabel: string}} opts
+   * @returns {Promise<string|null>}  the value picked, or null on Cancel or Escape
+   */
+  function askChoice({ title, label, options, goLabel }) {
+    return new Promise((resolve) => {
+      let answer = null;
+      const select = h('select', { class: 'field' }, options.map((o) => h('option', { value: o.value }, o.label)));
+      const form = h('form', { method: 'dialog' },
+        h('label', { class: 'field-label' }, h('span', null, label), select),
+        h('div', { class: 'dialog-actions' },
+          h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel'),
+          h('button', { type: 'submit', class: 'btn btn-open' }, goLabel)));
+      const dialog = h('dialog', { class: 'confirm', 'aria-labelledby': 'choice-title' }, h('h2', { id: 'choice-title' }, title), form);
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        answer = select.value || null;
+        dialog.close();
+      });
+      dialog.addEventListener('close', () => {
+        dialog.remove();
+        resolve(answer);
+      });
+      document.body.append(dialog);
+      dialog.showModal();
+      select.focus();
+    });
+  }
+
   // `?by=` holds the logins picked, comma-separated; none is everyone.
   function pickedLogins(search) {
     return (new URLSearchParams(search).get('by') || '').split(',').map((l) => l.trim()).filter(Boolean);
@@ -1993,7 +2024,7 @@
   window.Woodshed = {
     invite, sessionTab, forgetSignedIn, forgetOtherLogins, signingOut, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, pickedLogins, byQuery, peoplePicker,
+    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, askChoice, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, hoursText, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, peekView, startedLinks, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
