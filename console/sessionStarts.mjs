@@ -27,6 +27,16 @@
 //   POST /sessions/<id>/resume      Resume, with the page's checks (server.mjs's resumeMine)
 //   POST /sessions/<id>/rename      {"name"}  as the page's rename; POST /rename names the calling session itself
 //
+// And the agents beside the calling session's own, in its own container (session/agents.mjs), through the page's own
+// route for + Another agent (server.mjs agentAction), with its checks: a helper on the same work, in the same checkout.
+//
+//   GET  /agents                    ->  {"agents": [...]}: statusd's, each with its id (agent-2 ...) and state
+//   POST /agents                    {"prompt", "agent"?, "model"?, "effort"?}  starts one, in the calling session's own
+//                                   permission mode (never looser), as + Another agent does
+//   POST /agents/<agent-N>/send     {"text"}  typed in at its prompt, held while it works
+//   GET  /agents/<agent-N>/transcript?limit=<n>   its conversation, as statusd reads it
+//   POST /agents/<agent-N>/stop
+//
 // The token is its own, not SESSION_TOKEN, which the app's environment holds (statusd starts the app): it is made
 // for each run of a private session at its launch (fleet.mjs), kept here only as its hash, and does nothing once the
 // session stops. The session's entrypoint writes it to a file of its own and takes it out of the environment before
@@ -48,6 +58,7 @@ const MAX_BODY_BYTES = 64 * 1024;
 // A first prompt is the whole brief for a session that knows nothing else: room for a long one, not for a dump.
 export const MAX_PROMPT_CHARS = 20_000;
 const SESSION_PATH_RE = /^\/sessions\/([0-9a-f]{8})(?:\/(messages|wait|transcript|stop|resume|rename))?$/;
+const AGENTS_PATH_RE = /^\/agents(?:\/(agent-[2-9])\/(transcript|send|stop))?$/;
 // statusd types no more in one go (session/statusd.mjs, MAX_SEND_CHARS), less the line that says who sent it.
 export const MAX_MESSAGE_CHARS = 7500;
 // A wait is answered at least this often, so no proxy in between drops it; the command asks again.
@@ -85,7 +96,7 @@ export function sessionForStartToken(given, sessions) {
 
 /** @returns {boolean}  whether the path is one of these routes */
 export function isStartsPath(pathname) {
-  return pathname === '/sessions' || pathname === '/rename' || SESSION_PATH_RE.test(pathname);
+  return pathname === '/sessions' || pathname === '/rename' || SESSION_PATH_RE.test(pathname) || AGENTS_PATH_RE.test(pathname);
 }
 
 const text = (value, max) => (typeof value === 'string' && value ? value.slice(0, max) : null);
@@ -137,7 +148,7 @@ async function readJson(req) {
  *   whose writers the page's sign-in rechecks every hour: a session's start must ask it here.
  */
 export function createSessionStarts({
-  fleet, config, startMine, resumeMine = null, statusd = null, allowed = () => true, canWrite = () => true,
+  fleet, config, startMine, resumeMine = null, statusd = null, agentAction = null, allowed = () => true, canWrite = () => true,
   waitMs = WAIT_MS, pollMs = WAIT_POLL_MS, noReplyMs = NO_REPLY_MS, now = Date.now,
 }) {
   const summary = (s) => startedSummary(s, { publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
@@ -161,6 +172,8 @@ export function createSessionStarts({
       console.warn('sessionStarts: refused, no running session has that start token', { pathname });
       return reply(res, 401, { error: 'this session cannot start sessions: its start token is not one the console knows, or the session stopped' });
     }
+    const agentPath = AGENTS_PATH_RE.exec(pathname);
+    if (agentPath) return agents(req, res, session, agentPath);
     if (pathname === '/rename') {
       if (req.method !== 'POST') return notFound(req, res);
       const read = await readJson(req);
@@ -218,6 +231,47 @@ export function createSessionStarts({
     if (read.bad) return reply(res, 400, { error: 'the body must be a JSON object' });
     if (action === 'rename') return rename(res, session, other, read.body);
     return message(res, session, other, read.body);
+  }
+
+  // The calling session's own agents, through the page's route (agentAction), which answers with statusd's reply.
+  async function agents(req, res, session, [, agentId = null, action = null]) {
+    if (!agentAction) {
+      req.resume();
+      return reply(res, 404, { error: 'this console cannot start agents from a session' });
+    }
+    const route = [undefined, session.id, agentId ?? undefined, action ?? undefined];
+    const login = session.owner;
+    if (req.method === 'GET' && (!agentId || action === 'transcript')) {
+      req.resume();
+      return agentAction(req, res, route, login);
+    }
+    if (req.method !== 'POST' || action === 'transcript') return notFound(req, res);
+    if (!(await allowed(login)) || !(await canWrite(login))) {
+      req.resume();
+      console.log('sessionStarts: refused', { from: session.id, action: `agents ${action ?? 'start'}`, why: 'no longer allowed' });
+      return reply(res, 403, { error: `@${login} can no longer use this console, or no longer writes to its repo` });
+    }
+    const read = await readJson(req);
+    if (read.tooLarge) return reply(res, 413, { error: 'too large' });
+    if (read.bad) return reply(res, 400, { error: 'the body must be a JSON object' });
+    const body = read.body;
+    if (!agentId) {
+      const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+      if (!prompt) return reply(res, 400, { error: 'give the agent its first prompt: what to do, and what to answer with' });
+      // As loose as the calling session, never looser, as a session it starts.
+      const agent = body.agent === 'codex' ? 'codex' : 'claude';
+      const mode = session.options?.permissionMode || 'auto';
+      console.log('sessionStarts: agent asked for', { from: session.id, agent });
+      return agentAction(req, res, route, login, { body: {
+        agent, model: typeof body.model === 'string' ? body.model : '', effort: typeof body.effort === 'string' ? body.effort : '',
+        permissionMode: agent === 'codex' && mode === 'acceptEdits' ? 'default' : mode, prompt: `[From this session's own agent]\n\n${prompt}`,
+      } });
+    }
+    if (action === 'stop') return agentAction(req, res, route, login, { body: {} });
+    const said = typeof body.text === 'string' ? body.text.trim() : '';
+    if (!said) return reply(res, 400, { error: 'nothing to send' });
+    if (said.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in one message` });
+    return agentAction(req, res, route, login, { body: { text: `[Message from this session's own agent]\n\n${said}` } });
   }
 
   function rename(res, from, session, body) {

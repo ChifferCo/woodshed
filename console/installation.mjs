@@ -597,6 +597,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const sessionStarts = createSessionStarts({
     fleet, config, startMine: (login, body) => handle.startMine(login, body, { startedFrom: body.startedFrom, startedApart: body.startedApart === true }),
     resumeMine: (login, id) => handle.resumeMine(login, id), statusd: callStatusd,
+    agentAction: (req, res, route, login, opts) => handle.agentAction(req, res, route, login, opts),
     allowed: (login) => (members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login)),
     canWrite: (login) => startsWriteAccess.allowed(login),
   });

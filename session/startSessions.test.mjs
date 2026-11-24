@@ -20,6 +20,7 @@ function io({ answers = [], files = {}, env = { WOODSHED_CONSOLE_URL: 'http://10
         throw Object.assign(new Error('missing'), { code: 'ENOENT' });
       },
       stdin: async () => 'Prompt from stdin',
+      sleep: async () => {},
       fetch: async (url, init) => {
         out.calls.push({ url, method: init.method, auth: init.headers.authorization, body: init.body ? JSON.parse(init.body) : null });
         const [status, body] = queue.shift() ?? [500, null];
@@ -147,4 +148,39 @@ test('new --separate asks for work of its own, and says so', async () => {
   assert.equal(await run({ ...args, argv: ['new', '--separate', 'Audit', 'the', 'refund', 'flow'] }), 0);
   assert.deepEqual(out.calls[0].body, { prompt: 'Audit the refund flow', separate: true });
   assert.match(out.stdout, /^Started session eb7082e2: CSV export, on its own\n/);
+});
+
+test('agent new --wait starts a helper beside this session\'s agent, waits for it to work and answer, and prints what it said', async () => {
+  const sentAt = new Date(Date.now() - 1000).toISOString();
+  const later = new Date(Date.now() + 60_000).toISOString();
+  const { out, args } = io({ files: { '/tmp/token': TOKEN }, answers: [
+    [200, { agent: { id: 'agent-2', agent: 'claude' } }],
+    [200, { agents: [{ id: 'agent-2', state: 'idle', heldIds: [] }] }],
+    [200, { agents: [{ id: 'agent-2', state: 'working', heldIds: [] }] }],
+    [200, { agents: [{ id: 'agent-2', state: 'done', heldIds: [] }] }],
+    [200, { entries: [{ role: 'user', text: 'Look into the flaky test', at: sentAt }, { role: 'tool', text: 'npm test', at: later }, { role: 'assistant', text: 'It races on the clock: fixed with a fake timer.', at: later }] }],
+  ] });
+  assert.equal(await run({ ...args, argv: ['agent', 'new', 'Look', 'into', 'the', 'flaky', 'test', '--wait'] }), 0);
+  assert.deepEqual(out.calls.map((c) => `${c.method} ${c.url.replace('http://10.8.0.1:7691', '')}`), [
+    'POST /agents', 'GET /agents', 'GET /agents', 'GET /agents', 'GET /agents/agent-2/transcript?limit=50',
+  ]);
+  assert.deepEqual(out.calls[0].body, { prompt: 'Look into the flaky test' });
+  assert.match(out.stdout, /^Started agent-2: claude, beside this session's own agent, in this checkout\nagent-2 {2}done\n\[said \d\d:\d\d\] It races on the clock: fixed with a fake timer\.\n$/);
+});
+
+test('agent list, send, read and stop', async () => {
+  const { out, args } = io({ files: { '/tmp/token': TOKEN }, answers: [
+    [200, { agents: [{ id: 'agent-2', state: 'working', agent: 'codex', model: 'gpt-5' }] }],
+    [200, { ok: true, held: true }],
+    [200, { entries: [{ role: 'user', text: 'Write the tests', at: null }, { role: 'assistant', text: 'Wrote 3.', at: null }] }],
+    [200, { ok: true }],
+  ] });
+  assert.equal(await run({ ...args, argv: ['agent', 'list'] }), 0);
+  assert.equal(await run({ ...args, argv: ['agent', 'send', 'agent-2', 'Also', 'rounding'] }), 0);
+  assert.equal(await run({ ...args, argv: ['agent', 'read', 'agent-2', '--last', '2'] }), 0);
+  assert.equal(await run({ ...args, argv: ['agent', 'stop', 'agent-2'] }), 0);
+  assert.equal(out.stdout, 'agent-2  working  codex gpt-5\nHeld for agent-2: it gets it once its turn ends\n[asked] Write the tests\n[said] Wrote 3.\nStopped agent-2\n');
+  assert.deepEqual(out.calls[1].body, { text: 'Also rounding' });
+  assert.equal(await run({ ...args, argv: ['agent', 'send', 'claude', 'x'] }), 1);
+  assert.match(out.stderr, /give the agent's id/);
 });

@@ -64,6 +64,11 @@ const devStartToken = `wst_${crypto.randomBytes(32).toString('hex')}`;
 const devStartTokenFile = path.join(stateDir, 'start-token');
 fs.writeFileSync(devStartTokenFile, devStartToken, { mode: 0o600 });
 console.log('dev console: /s/5747ed01\'s start token for woodshed-session', { file: devStartTokenFile });
+// And /s/a6e1a6e1's, whose stand-in agents (session/agents.mjs) `woodshed-session agent …` starts and follows.
+const devAgentsToken = `wst_${crypto.randomBytes(32).toString('hex')}`;
+const devAgentsTokenFile = path.join(stateDir, 'start-token-agents');
+fs.writeFileSync(devAgentsTokenFile, devAgentsToken, { mode: 0o600 });
+console.log('dev console: /s/a6e1a6e1\'s start token for woodshed-session agent', { file: devAgentsTokenFile });
 const REVIEW_ID = 'beadfeed';
 // DEV_CONSOLE_REVIEW_PR=1 makes /s/beadfeed @local's own My Woodshed session, whose branch has a made-up open pull
 // request, #26701, answered by a stand-in gh (devReviewGh.mjs): for `woodshed review beadfeed`, which opens your own
@@ -338,7 +343,7 @@ const sessions = [
   })] : []),
   ...(agentsChat ? [session(AGENTS_CHAT_ID, null, 'Several agents in one session', {
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null,
-    options: { agent: 'codex' }, hasShell: false,
+    options: { agent: 'codex' }, hasShell: false, startTokenHash: crypto.createHash('sha256').update(devAgentsToken).digest('hex'),
     ref: agentsChat.ref, endpoint: { host: '127.0.0.1', statusPort: agentsChat.port, termPort: agentsChat.termPort ?? agentsChat.port },
   })] : []),
   ...(newChat ? [session(NEW_CHAT_ID, null, 'A new session beside a running one', {
