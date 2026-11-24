@@ -314,7 +314,22 @@ const STATIC_FILES = {
   'people.js': 'text/javascript; charset=utf-8',
   // Run on people's own computers, so it is served before sign-in; it holds nothing secret.
   'woodshed-db.mjs': 'text/javascript; charset=utf-8',
+  // The terminal page's (terminalPageHtml): xterm.js as ttyd 1.7.7 bundles it (public/vendor/xterm/README.md), and the
+  // page's own script.
+  'terminalPage.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/xterm.css': 'text/css; charset=utf-8',
+  'vendor/xterm/xterm.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/addon-fit.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/addon-web-links.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/addon-unicode11.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/addon-webgl.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/addon-canvas.js': 'text/javascript; charset=utf-8',
 };
+// The page behind the TUI and Terminal tabs, made here rather than kept as a file so that it names each of its files
+// by hash: /static/term.html, the same for every session (its fragment names which), kept by the browser.
+const TERMINAL_PAGE = 'term.html';
+const TERMINAL_PAGE_SCRIPTS = ['vendor/xterm/xterm.js', 'vendor/xterm/addon-fit.js', 'vendor/xterm/addon-web-links.js',
+  'vendor/xterm/addon-unicode11.js', 'vendor/xterm/addon-webgl.js', 'vendor/xterm/addon-canvas.js', 'terminalPage.js'];
 const MAX_BODY_BYTES = 16 * 1024;
 // A whole .env file, JSON-escaped, under Secrets Manager's 64 KB.
 const MAX_SECRET_BODY_BYTES = 160 * 1024;
@@ -531,6 +546,43 @@ function staticUrl(file) {
 }
 
 /**
+ * The terminal page (public/terminalPage.js): xterm.js, filling the frame, and a line for the connection's state. Its
+ * background is the session's terminal ground (session/entrypoint.sh's theme), so a frame never shows white or grey
+ * before the terminal draws.
+ * @returns {string}
+ */
+export function terminalPageHtml() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminal</title>
+<link rel="stylesheet" href="${staticUrl('vendor/xterm/xterm.css')}">
+<style>
+html, body { height: 100%; margin: 0; overflow: hidden; background: #14171d; }
+#terminal-container { height: 100%; margin: 0 auto; padding: 0; width: auto; }
+#terminal-container .terminal { height: calc(100% - 10px); padding: 5px; }
+#overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10; padding: 10px 16px;
+  border-radius: 8px; background: rgba(27, 34, 50, .92); color: #e8ecf5; font: 500 15px/1.4 system-ui, sans-serif;
+  pointer-events: none; text-align: center; max-width: 80%; }
+</style>
+</head>
+<body>
+<div id="terminal-container"></div>
+<div id="overlay" role="status" hidden></div>
+${TERMINAL_PAGE_SCRIPTS.map((file) => `<script src="${staticUrl(file)}"></script>`).join('\n')}
+</body>
+</html>
+`;
+}
+
+/** @returns {string}  the terminal page's URL, versioned by what it holds, its files' hashes included */
+export function terminalPageUrl() {
+  return `/static/${TERMINAL_PAGE}?v=${createHash('sha256').update(terminalPageHtml()).digest('hex').slice(0, 12)}`;
+}
+
+/**
  * @param {{title: string, script: string|string[], login?: string|null, provider?: {name: string, words?: object}|null,
  *          linkQuery?: Record<string, string>|null, hostPage?: string, styles?: string[]}} args
  *   `title` is the console's name (config.consoleName): the page's title, the installed app's on a home screen, and
@@ -554,6 +606,7 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <meta name="viewport" content="width=device-width, initial-scale=1">${who}${queryMeta}
 <meta name="woodshed-provider" content="${providerMetaContent(provider)}">
 <meta name="woodshed-console-name" content="${name}">
+<meta name="woodshed-terminal-page" content="${terminalPageUrl()}">
 <title>${name}</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#1b2232">
@@ -695,6 +748,18 @@ export function servePublic(req, res, url, consoleName = DEFAULT_CONSOLE_NAME) {
   }
   if (PWA_PATHS.has(url.pathname) && handlePwaRequest(req, res)) return true;
   const file = url.pathname.startsWith('/static/') ? url.pathname.slice('/static/'.length) : null;
+  if (file === TERMINAL_PAGE) {
+    const page = terminalPageHtml();
+    const current = url.searchParams.get('v') === new URL(terminalPageUrl(), 'http://console.invalid').searchParams.get('v');
+    // Framed only by the console's own pages, as ttyd's page is (terminalProxy.mjs): one framing it could type into claude.
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': current ? 'public, max-age=31536000, immutable' : 'no-cache',
+      'content-security-policy': "frame-ancestors 'self'",
+    });
+    res.end(req.method === 'HEAD' ? undefined : page);
+    return true;
+  }
   if (!file || !STATIC_FILES[file]) return false;
   // Only the version a page names is kept: an old or missing ?v= is asked for again each time.
   const current = url.searchParams.get('v') === staticHash(file);
@@ -1664,6 +1729,39 @@ export function createHandler({
     }
   }
 
+  /**
+   * New session's start of a private session of `login`'s, with its checks: from the page, the command line, or one of
+   * their sessions (sessionStarts.mjs, which gives `startedFrom` and its own permission mode).
+   * @returns {Promise<{status: number, body: object}>}  201 and the session, or the refusal the caller answers with
+   */
+  async function startMine(login, body, { startedFrom = null } = {}) {
+    const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
+    const herdrParent = body.herdrParent === true;
+    await userSettings?.refresh?.(login, { force: true });
+    // A Codex session signs in with its own login or the team's OpenAI key: it needs no Claude token.
+    if (agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return { status: 409, body: { error: 'save your Claude token on My settings first' } };
+    if (agent === 'codex' && !userSettings?.view(login).codexAuth?.set && !(await readTeamOpenAiKey())) {
+      return { status: 409, body: { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' } };
+    }
+    // A Codex model or effort is one OpenAI's catalog offers this person now, as New session listed it.
+    const codexRefusal = agent === 'codex' && codexModels ? await codexModels.allows(login, String(model ?? ''), String(effort ?? '')) : null;
+    if (codexRefusal) return { status: 400, body: { error: codexRefusal } };
+    if (!databasesReady(login)) return { status: 409, body: { error: DATABASES_NOT_READY } };
+    const project = projectAccess ? await projectAccess.forStart(login, body.project) : undefined;
+    if (project === null) {
+      console.log('console: session start refused, project not open to the person', { login, project: String(body.project ?? '').slice(0, 40) });
+      return { status: 403, body: { error: `you cannot start sessions on a project named ${String(body.project ?? '').slice(0, 40)}: it is not one of this console's, or you have no write access to its repo` } };
+    }
+    try {
+      const session = await fleet.startPrivate({ owner: login, prompt, name, workOn, agent, model, effort, permissionMode, attachmentIds, background: true, project, herdrParent, startedFrom });
+      return { status: 201, body: publicSession(session) };
+    } catch (err) {
+      // The page's own refusals (a branch name git would refuse, a project not ready), as myWrite answers them.
+      if (!err?.shown) throw err;
+      return { status: err.status ?? 409, body: { error: err.message } };
+    }
+  }
+
   function databasesReady(login) {
     return !databases?.available || databases.view(login).status === 'ready';
   }
@@ -1764,24 +1862,8 @@ export function createHandler({
         return reply(res, 200, await userSettings.file(login, key));
       }
       if (pathname === '/api/my/sessions') {
-        const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
-        const herdrParent = body.herdrParent === true;
-        await userSettings?.refresh?.(login, { force: true });
-        // A Codex session signs in with its own login or the team's OpenAI key: it needs no Claude token.
-        if (agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
-        if (agent === 'codex' && !userSettings?.view(login).codexAuth?.set && !(await readTeamOpenAiKey())) {
-          return reply(res, 409, { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' });
-        }
-        // A Codex model or effort is one OpenAI's catalog offers this person now, as New session listed it.
-        const codexRefusal = agent === 'codex' && codexModels ? await codexModels.allows(login, String(model ?? ''), String(effort ?? '')) : null;
-        if (codexRefusal) return reply(res, 400, { error: codexRefusal });
-        if (!databasesReady(login)) return reply(res, 409, { error: DATABASES_NOT_READY });
-        const project = projectAccess ? await projectAccess.forStart(login, body.project) : undefined;
-        if (project === null) {
-          console.log('console: session start refused, project not open to the person', { login, project: String(body.project ?? '').slice(0, 40) });
-          return reply(res, 403, { error: `you cannot start sessions on a project named ${String(body.project ?? '').slice(0, 40)}: it is not one of this console's, or you have no write access to its repo` });
-        }
-        return reply(res, 201, publicSession(await fleet.startPrivate({ owner: login, prompt, name, workOn, agent, model, effort, permissionMode, attachmentIds, background: true, project, herdrParent })));
+        const started = await startMine(login, body);
+        return reply(res, started.status, started.body);
       }
       if (pathname === MY_DEFAULT_PROJECT_PATH) {
         if (!projectAccess || !viewPrefs) return reply(res, 404, { error: 'this console keeps no default project' });
@@ -2740,7 +2822,7 @@ export function createHandler({
     return answerWithView(res, (held) => writeRoute(req, held, pathname, login), () => configView({ userSettings, projectsView }, login), reply);
   }
 
-  return async function handle(req, res) {
+  const handle = async function handle(req, res) {
     // An app port answers its session's app and nothing else: the console's own pages there would share the app's origin.
     if (appPorts?.owns(req.socket?.localPort)) return appPortRequest(req, res, req.socket.localPort);
     const appId = appIdFor(req.headers.host, config.appDomain);
@@ -2916,6 +2998,9 @@ export function createHandler({
     if (pathname === '/healthz') return reply(res, 200, { ok: true });
     return reply(res, 404, { error: 'not found' });
   };
+  // New session's start, for a session starting one of its person's through the session API (sessionStarts.mjs).
+  handle.startMine = startMine;
+  return handle;
 }
 
 /**

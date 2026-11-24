@@ -131,6 +131,17 @@ test('write access is asked at a token\'s first use and then hourly, and GitHub 
   assert.equal(await access.allowed('mia'), false);
   assert.deepEqual(revoked, [['mia', 'write access gone']]);
   assert.equal(await createWriteAccess({ canWrite: null, revokeAll() {} }).allowed('mia'), true, 'no GitHub sign-in, nothing to ask');
+
+  // A session's start asks the same, and logs as itself.
+  const logged = [];
+  const log = console.log;
+  console.log = (...args) => logged.push(args[0]);
+  try {
+    assert.equal(await createWriteAccess({ canWrite: async () => false, revokeAll() {}, logAs: 'sessionStarts' }).allowed('mia'), false);
+  } finally {
+    console.log = log;
+  }
+  assert.deepEqual(logged, ['sessionStarts: refused, write access gone']);
 });
 
 // /api/cli/* over HTTP, as the console answers it, for mia-dev's token.

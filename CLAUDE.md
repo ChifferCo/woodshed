@@ -395,6 +395,13 @@ URL on top of each env file's Repo settings values
   own line (`userSettings: terminal changed`, `reviews of my pull requests`, `own token for shared sessions`, `own
   Codex sign-in for reviews`, `git identity changed`). `answered 404` or `does not let the command line change` is a
   console from before `GET /api/cli/config` (cli/README.md, "Your choices on My settings").
+- **`woodshed-session` in a session refuses, or the session it started is missing.** It says why (console/README.md,
+  "Sessions that start sessions"): `only a My Woodshed session can` is no `/tmp/woodshed-start-token` (a shared session,
+  a question, review or QA run, a tainted one, or an image from before it; the session's log says `Session starts on`
+  when it got one), `its start token is not one the console knows` a token from a run that stopped, and `no longer has
+  write access to the repo on GitHub` its person's write access gone while they stay on People. The console
+  logs `sessionStarts: session started` or `start refused` with `why`, and for `start checks` the `status` New session's
+  own checks answered with, then the start's usual `fleet: session created` with `startedFrom`.
 - **A private session starts without its MCP logins, or Resume opens a blank
   claude.** The session's log says `Claude home restored`, `No Claude home
   saved yet` or `WARNING: Claude home not restored` with the status. Every 5
@@ -1027,6 +1034,12 @@ URL on top of each env file's Repo settings values
   has no `shellPort` for it), or the session is not running. Inside a session,
   `/tmp/ttyd-shell.log` is its log. A connection that hangs means the sessions'
   security group lacks the `shell` rule for 7684 (an apply is due).
+- **A TUI or Terminal tab stays blank, or keeps saying `Reconnecting…` or `Press ⏎ to reconnect`.** Both tabs are the
+  console's terminal page (console/README.md, "The terminal page"), and the session's ttyd only the connection. The
+  frame's console logs `[terminal] websocket closed` with the code each time it drops. The console logs `terminal:
+  first message refused` with why when what the browser sent first was no terminal's size, and `terminal: websocket
+  dropped` when the session's side went. `localStorage['woodshed-terminal-page'] = 'ttyd'` in the browser's console
+  opens ttyd's own page instead, to tell the page from the connection; `localStorage.removeItem` of it goes back.
 - **Open ▾ has no Redis, or Redis answers `not found` or `the Redis viewer is not running`.**
   No Redis means the project file's env never mentions `REDIS_URL`, so the session started none: its log says
   `Redis not started`, and statusd reports `redis: false`. `not found` means the session started from an image without

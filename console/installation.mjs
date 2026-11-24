@@ -22,7 +22,7 @@ import { createDbRestore } from './dbRestore.mjs';
 import { createSlack } from './slack.mjs';
 import { checkSlackInstall, createSlackSetup } from './slackSetup.mjs';
 import { createTunnel, tunnelTargetsFor } from './dbTunnel.mjs';
-import { createCliSignIn, sessionSignInsOf } from './cliSignIn.mjs';
+import { createCliSignIn, createWriteAccess, sessionSignInsOf } from './cliSignIn.mjs';
 import { createExecPipe } from './execPipe.mjs';
 import { createFleet } from './fleet.mjs';
 import { createGitHub } from './github.mjs';
@@ -39,6 +39,7 @@ import { createMcpServers, mcpSettings } from './mcpServers.mjs';
 import { createOpenAiProxy } from './openaiProxy.mjs';
 import { createCodexModels } from './codexModels.mjs';
 import { createSessionApi, sessionForToken } from './sessionApi.mjs';
+import { createSessionStarts, sessionForStartToken } from './sessionStarts.mjs';
 import { createReviewSource } from './review.mjs';
 import { createConsoleSettings, liveConfig } from './consoleSettings.mjs';
 import { CHECK_EVERY_MS, createWoodshedUpdate } from './woodshedUpdate.mjs';
@@ -584,10 +585,19 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const execPipe = createExecPipe({ fleet, cli });
   const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts, execPipe });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
+  // A session starting sessions of its person's (sessionStarts.mjs), with New session's own checks, and the command
+  // line's for whether the person may still use the console and still writes to its repo: the same check, cached an
+  // hour per person (createWriteAccess). It ends no sign-in of theirs: the command line's own check does that.
+  const startsWriteAccess = createWriteAccess({ canWrite: auth?.canWrite ? (login) => (auth.enabled() ? auth.canWrite(login) : true) : null, revokeAll: () => {}, logAs: 'sessionStarts' });
+  const sessionStarts = createSessionStarts({
+    fleet, config, startMine: (login, body) => handle.startMine(login, body, { startedFrom: body.startedFrom }),
+    allowed: (login) => (members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login)),
+    canWrite: (login) => startsWriteAccess.allowed(login),
+  });
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
-    mcpRelay, egress: access.egress,
+    mcpRelay, egress: access.egress, sessionStarts,
     ownerTokenRepos: hostConnect ? () => allProjects(config).map((p) => p.repo).filter(Boolean) : null,
   }) : null;
   const webhookDispatch = createWebhookDispatch({ label: config.label, labelOf: (name) => repoTriggers.of(name ?? defaultProject(config).name).label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity, webhookSwitch });
@@ -667,7 +677,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
      */
     sessionSignIns: sessionSignInsOf(userSettings),
     /** @returns {boolean}  whether an active session of this installation holds `token` (the session API's bearer) */
-    ownsSessionToken: (token) => Boolean(sessionForToken(token, fleet.sessions())),
+    ownsSessionToken: (token) => Boolean(sessionForToken(token, fleet.sessions()) || sessionForStartToken(token, fleet.sessions())),
     /** One GitHub or Slack message, as the provider's webhook source hands it (webhookDispatch.mjs). */
     dispatchWebhook: (message) => webhookDispatch.dispatch(message),
     /**
