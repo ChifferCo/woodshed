@@ -91,6 +91,8 @@ test('figures are a group\'s numbers in its box: label, value and the line under
     + '<div class="figure"><div class="figure-label">Held</div><div class="figure-value">$3,412.80</div></div>'
     + '<div class="figure"><div class="figure-label">Granted</div><div class="figure-value">$3,960.00</div><div class="figure-sub">198 &lt;grants&gt;</div></div>'
     + '</div></div></div>');
+  assert.equal(figures([]).text, '', 'none: nothing drawn');
+  assert.equal(group({ label: 'Credits' }, figures([null])).text, '', 'and a group of none is left out');
   const css = fs.readFileSync(new URL('./public/style.css', import.meta.url), 'utf8');
   for (const c of ['figures', 'figure', 'figure-label', 'figure-value', 'figure-sub']) assert.match(css, new RegExp(`\\.${c} \\{`), `style.css draws .${c}`);
 });
