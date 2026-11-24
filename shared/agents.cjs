@@ -52,7 +52,7 @@
       teamCredential: false,
       signIn: {
         secret: 'grok-auth', label: 'Grok Build', placeholder: 'xai-… or the contents of ~/.grok/auth.json', maxChars: 20_000, rotates: true,
-        kinds: 'an xAI API key, or the login `grok login` saved',
+        kinds: 'an xAI API key, or the login file grok login saves',
         steps: [
           { text: 'Sign in to Grok Build on your laptop:', command: 'grok login' },
           { text: 'Copy the sign-in it saved without printing it, then paste it here (on Linux, wl-copy or xclip -selection clipboard, from the same file):', command: 'pbcopy < ~/.grok/auth.json' },
@@ -68,7 +68,7 @@
       teamCredential: false,
       signIn: {
         secret: 'opencode-auth', label: 'OpenCode', placeholder: 'the contents of ~/.local/share/opencode/auth.json', maxChars: 20_000, rotates: true,
-        kinds: 'the providers `opencode auth login` saved',
+        kinds: 'the sign-ins file opencode auth login saves',
         steps: [
           { text: 'Sign in to a provider with OpenCode on your laptop:', command: 'opencode auth login' },
           { text: 'Copy the sign-ins it saved without printing them, then paste them here (on Linux, wl-copy or xclip -selection clipboard, from the same file):', command: 'pbcopy < ~/.local/share/opencode/auth.json' },

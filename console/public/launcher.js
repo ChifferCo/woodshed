@@ -518,7 +518,9 @@
     // Grok Build's, read on the person's own Grok sign-in (GET /api/my/grok-models, grokModels.mjs): none without one,
     // and then the model is typed.
     let grokCatalog = null;
-    const typedModel = () => ownAgent() && !(agent.value === 'grok' && grokCatalog?.models?.length);
+    // A Grok model typed before its list came, and not on it: the text box stays, with what was typed (showGrokCatalog).
+    let grokTyped = false;
+    const typedModel = () => ownAgent() && !(agent.value === 'grok' && grokCatalog?.models?.length && !grokTyped);
     const modelValue = () => (typedModel() ? modelText.value.trim() : model.value);
     const effort = select('l-effort', EFFORTS);
     const effortField = field('l-effort', 'Effort', effort);
@@ -604,11 +606,21 @@
       catalogNote.textContent = catalog?.note ? `${words}: ${catalog.note}.` : '';
       catalogNote.hidden = !catalog?.note;
     }
+    modelText.addEventListener('input', () => {
+      if (agent.value === 'grok' && grokTyped && !modelText.value.trim()) {
+        grokTyped = false;
+        showGrokCatalog();
+      }
+    });
     function showGrokCatalog() {
+      // What was typed while there was no list is kept: picked in the menu when the list has it, in the box when not.
+      const typed = !modelText.hidden ? modelText.value.trim() : '';
+      if (typed) grokTyped = !(grokCatalog?.models ?? []).some((m) => m.slug === typed);
       const listed = !typedModel();
       model.hidden = !listed;
       modelText.hidden = listed;
       if (listed) keepPick(model, grokModelOptions());
+      if (listed && typed) model.value = typed;
       keepPick(effort, grokEffortOptions());
       showCatalogNote();
       showPicked();

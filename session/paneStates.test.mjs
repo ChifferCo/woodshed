@@ -61,7 +61,7 @@ test('a numbered list Grok printed is no approval', () => {
 test('OpenCode\'s approval is read through its border, and rejected with Esc', () => {
   const a = readApproval(fixture('pane-opencode-approval.txt'), 'opencode');
   assert.equal(a.agent, 'opencode');
-  assert.equal(a.what, '# Shell command');
+  assert.equal(a.what, 'Shell command', 'its heading\'s mark left out');
   assert.deepEqual(a.detail, ['$ npm run migrate']);
   assert.deepEqual(a.keys, { deny: ['Escape'] }, 'Approve walks from the pick its colours show (opencodeHighlight)');
   assert.equal(a.options[a.approve].label, 'Allow once');
@@ -106,7 +106,7 @@ test('OpenCode\'s pick is read from its colours, captured from the real prompt',
   assert.equal(opencodeHighlight(plainOf(OPENCODE_PICKS[2])), null, 'no colours, no pick');
   assert.equal(opencodeHighlight(fixture('pane-opencode-idle-captured.txt')), null);
   const a = readApproval(plainOf(OPENCODE_PICKS[0]), 'opencode');
-  assert.deepEqual([a.agent, a.what, a.detail], ['opencode', '# Shell command', ['$ echo hello']], 'the sidebar\'s footer beside it is not what it asks');
+  assert.deepEqual([a.agent, a.what, a.detail], ['opencode', 'Shell command', ['$ echo hello']], 'the sidebar\'s footer beside it is not what it asks');
 });
 
 // A stand-in OpenCode prompt: Left and Right move the pick round the three, Enter answers the one picked.

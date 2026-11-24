@@ -297,7 +297,8 @@ function opencodeApproval(raw) {
   const title = lastIndex(lines, OPENCODE_TITLE, choices);
   if (title === -1) return null;
   const body = asDrawn(lines.slice(title + 1, choices));
-  const what = body.shift()?.trim() ?? null;
+  // Its first line is markdown, a heading's `# ` and all (`# Shell command`): what it asks, without the mark.
+  const what = body.shift()?.trim().replace(/^#+\s+/, '') || null;
   const detail = asDrawn(body);
   // The panel's last lines can hold its sidebar's footer, drawn far to its right (`/tmp/r:master` on the real screen),
   // and blank lines: neither is what it asks.
