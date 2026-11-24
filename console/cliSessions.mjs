@@ -29,6 +29,11 @@
 //   GET  /api/review-readiness?repo=        woodshed review enable and status: whether a repo of theirs can be
 //                                           reviewed in a session, and what is missing (reviewReadiness.mjs)
 //   GET  /api/cli/config, and a few My settings writes   woodshed config: their choices, never a secret (cliConfig.mjs)
+//   POST /api/my/agent-auth/<agent>         woodshed sign-in push, and setup: their own Grok Build or OpenCode sign-in
+//                                           from this computer's file, saved as My settings' Save does (setAgentAuth,
+//                                           its turn and checkSignIn). The token's own person's alone: the path names no
+//                                           one. Never its removal, and never read back: the answer says whether one is
+//                                           saved and when (CLI_AGENT_AUTH_RE, server.mjs cliWrite)
 //
 // A review's calls, /reviews/claude-<id>/..., take the token too, for `woodshed review <id>`, through the review proxy's
 // own gate (reviewProxy.mjs forCli): owner only, never a session that has seen production data.
@@ -43,7 +48,11 @@
 // riding the browser's cookie. A token is sent by the command line alone, never by a browser on its own, so neither is
 // asked of it; a call that carries an Origin is a page's, and is refused.
 
+import agents from '../shared/agents.cjs';
 import { CONFIG_ROUTES } from './cliConfig.mjs';
+
+/** The save of an own sign-in (shared/agents.cjs, OWN_SIGN_IN_AGENTS), never its removal. */
+export const CLI_AGENT_AUTH_RE = new RegExp(`^/api/my/agent-auth/(${agents.OWN_SIGN_IN_AGENTS.join('|')})$`);
 
 const ROUTES = [
   ['GET', /^\/api\/sessions$/],
@@ -60,6 +69,7 @@ const ROUTES = [
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/agents$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/agents\/agent-[2-9]\/stop$/],
   ['GET', /^\/api\/review-readiness$/],
+  ['POST', CLI_AGENT_AUTH_RE],
   ...CONFIG_ROUTES,
 ];
 

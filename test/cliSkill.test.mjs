@@ -24,14 +24,17 @@ function help(...words) {
   }
 }
 
-// The commands `woodshed --help` lists: two spaces, then the command's name at the start of its line.
-const top = new Set([...help().matchAll(/^ {2}([a-z]+)\b/gm)].map((m) => m[1]));
+// The commands `woodshed --help` lists: two spaces, then the command's name at the start of its line (`sign-in` too).
+const top = new Set([...help().matchAll(/^ {2}([a-z][a-z-]*)(?= |$)/gm)].map((m) => m[1]));
 
 // The entries a help text lists: the first word of each indented line (`  new [options]`), or each of a `plan|push|pull`
-// synopsis, after the command's own name on its line. Words in a line's explanation are not entries.
+// synopsis, after the command's own name on its line, or after `Usage: woodshed <command>` (`sign-in push <agent>`).
+// Words in a line's explanation are not entries.
 function advertised(text, command) {
   const names = new Set();
   for (const line of text.split('\n')) {
+    const usage = /^Usage: woodshed (\S+) (\S+)/.exec(line);
+    if (usage?.[1] === command) for (const word of usage[2].split('|')) if (/^[a-z][a-z-]*$/.test(word)) names.add(word);
     const m = /^ {2,}(\S+)(?: +(\S+))?/.exec(line);
     if (!m) continue;
     for (const word of (m[1] === command ? m[2] ?? '' : m[1]).split('|')) if (/^[a-z][a-z-]*$/.test(word)) names.add(word);
@@ -40,7 +43,7 @@ function advertised(text, command) {
 }
 
 // Each row of the skill's command table: `woodshed <command> [<sub>] …` | does | exits | arrives in.
-const rows = [...body.matchAll(/^\| `woodshed ([a-z]+)(?: ([a-z]+))?[^`]*` \|.*\| ([^|]+) \|$/gm)]
+const rows = [...body.matchAll(/^\| `woodshed ([a-z][a-z-]*)(?: ([a-z][a-z-]*))?[^`]*` \|.*\| ([^|]+) \|$/gm)]
   .map(([line, command, sub, arrives]) => ({ line, command, sub, arrives: arrives.trim() }));
 
 test('the skill has a name, and a description an agent finds it by, as YAML every client reads', () => {
@@ -69,6 +72,11 @@ test('a command the skill marks main is one this checkout\'s CLI has', () => {
       assert.ok(advertised(help(row.command), row.command).has(row.sub), `woodshed ${row.command} --help lists no ${row.sub}`);
     }
   }
+});
+
+test('every command woodshed --help lists has a row in the skill\'s table, hyphenated ones too', () => {
+  assert.ok(top.has('sign-in'), 'the help\'s sign-in is read whole');
+  for (const command of top) assert.ok(rows.some((r) => r.command === command), `skills/woodshed/SKILL.md has no row for woodshed ${command}`);
 });
 
 test('a command this checkout\'s CLI has is not still marked as on its way', () => {
