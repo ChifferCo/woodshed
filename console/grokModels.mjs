@@ -108,6 +108,9 @@ export function credentialOf(saved, now = Date.now(), { loginUpstream = LOGIN_UP
  * @typedef {{models: ReturnType<typeof modelsFrom>, source: 'login'|'key'|null, note: string|null}} GrokCatalog
  *   `source` says which kind of sign-in read it; `note` says why the list is not a fresh one, or why there is none
  */
+// The errors this module throws itself, whose messages hold nothing of the person's.
+const OWN_MESSAGES = new Set(['the catalog is too large', 'the answer is not JSON']);
+
 export function createGrokModels({ userSettings = null, fetch: fetchImpl = globalThis.fetch, loginUpstream = LOGIN_UPSTREAM, keyUpstream = KEY_UPSTREAM, now = Date.now } = {}) {
   // By login: the last list read, when, and the last failed try.
   const kept = new Map();
@@ -124,6 +127,12 @@ export function createGrokModels({ userSettings = null, fetch: fetchImpl = globa
     if (!saved) return { failed: 'no Grok Build sign-in is saved' };
     const cred = credentialOf(saved, now(), { loginUpstream, keyUpstream });
     if (!cred) return { failed: 'your saved Grok Build sign-in has no token' };
+    // A token with anything but a header's printable characters (a line break in a pasted file) is never sent: fetch
+    // would refuse it in an error that quotes it.
+    if (cred.authorization && !/^[\x21-\x7e]+ [\x21-\x7e]+$/.test(cred.authorization)) {
+      console.warn('grokModels: catalog not read', { login, source: cred.source, message: 'the token is not one a header can carry' });
+      return { failed: 'your saved Grok Build sign-in has a token that cannot be sent: save it again' };
+    }
     if (cred.expired) {
       console.log('grokModels: own login expired, not read', { login });
       return { failed: 'your saved Grok Build login has expired: a Grok session refreshes it when it stops, or save a new one' };
@@ -156,7 +165,9 @@ export function createGrokModels({ userSettings = null, fetch: fetchImpl = globa
       console.log('grokModels: catalog read', { login, source: cred.source, models: models.length });
       return { models, source: cred.source };
     } catch (err) {
-      console.warn('grokModels: catalog not read', { login, source: cred.source, message: err?.name === 'TimeoutError' ? 'timed out' : err?.message });
+      // Only this module's own messages are logged: another's (fetch's, a socket's) can quote what was sent.
+      const message = err?.name === 'TimeoutError' ? 'timed out' : OWN_MESSAGES.has(err?.message) ? err.message : (err?.name || 'Error');
+      console.warn('grokModels: catalog not read', { login, source: cred.source, message });
       return { failed: 'xAI could not be reached' };
     }
   }

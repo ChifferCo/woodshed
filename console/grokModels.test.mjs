@@ -136,3 +136,24 @@ test('a changed sign-in is read again at once', async (t) => {
   grokModels.forget('ana');
   assert.equal((await grokModels.list('ana')).source, 'key');
 });
+
+test('a token no header can carry is never sent, and no error of another\'s reaches the log with what was sent', async (t) => {
+  const lines = [];
+  for (const level of ['log', 'warn']) t.mock.method(console, level, (...args) => lines.push(JSON.stringify(args)));
+  const MARK = 'INERT-MARKER-NOT-A-TOKEN';
+  // A pasted auth.json whose key holds a line break: fetch would refuse its header in an error quoting it.
+  let saved = login({ key: `${MARK}\nmore` });
+  const userSettings = { agentAuth: async () => saved };
+  const unsent = fakeFetch([{ status: 200, body: LOGIN_CATALOG }]);
+  const first = await createGrokModels({ userSettings, fetch: unsent }).list('ana');
+  assert.equal(unsent.calls.length, 0, 'never sent');
+  assert.deepEqual(first.models, []);
+  assert.match(first.note, /cannot be sent: save it again/);
+  // Any failure but this module's own is logged by its name alone, whatever its message holds.
+  saved = login({ key: MARK });
+  const quoting = fakeFetch([Object.assign(new TypeError(`Headers.append: "Bearer ${MARK}" is an invalid header value`), {})]);
+  await createGrokModels({ userSettings, fetch: quoting }).list('ana');
+  assert.equal(quoting.calls.length, 1);
+  assert.ok(lines.some((l) => l.includes('catalog not read') && l.includes('TypeError')), lines.join('\n'));
+  assert.ok(lines.every((l) => !l.includes(MARK)), lines.join('\n'));
+});
