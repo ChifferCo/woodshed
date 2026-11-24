@@ -31,6 +31,8 @@ import logins from './public/logins.cjs';
 const { findLogin, sameLogin } = logins;
 
 const CHECKPOINT_TIMEOUT_MS = 90_000;
+// How long the repos a session's owner may start on are kept, for the pull requests it reports (reportableRepos).
+const STARTABLE_KEEP_MS = 60_000;
 const STATUS_TIMEOUT_MS = 5_000;
 // How long statusd may take to type a private session's review feedback after getting it (it reads GitHub first).
 const GUARDED_SEND_WITHIN_MS = 20_000;
@@ -1013,13 +1015,18 @@ export function createFleet({
    * review, QA run or question has none. Asked only when the status names another repo's.
    * @returns {Promise<string[]>}
    */
+  const startableKept = new Map();
   async function reportableRepos(session, status) {
     if (!session.owner || !startableRepos || !Array.isArray(status.prUrls)) return [];
     const own = String(session.repo ?? '').toLowerCase();
     if (!status.prUrls.some((url) => { const repo = pullRepo(url); return repo && repo.toLowerCase() !== own; })) return [];
+    // Kept a minute per owner: projectAccess keeps no failed write check, which would be asked again on every read.
+    const kept = startableKept.get(session.owner);
+    if (kept && now() - kept.at < STARTABLE_KEEP_MS) return kept.repos;
     try {
-      const repos = await startableRepos(session.owner);
-      return repos.filter((repo) => allProjects(config).some((p) => p.repo === repo));
+      const repos = (await startableRepos(session.owner)).filter((repo) => allProjects(config).some((p) => p.repo === repo));
+      startableKept.set(session.owner, { at: now(), repos });
+      return repos;
     } catch (err) {
       console.warn('fleet: the owner\'s projects not read, other repos\' pull requests left out', { id: session.id, message: firstLine(err) });
       return [];

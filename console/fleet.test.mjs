@@ -404,7 +404,7 @@ test('a pull request on another repo is kept only for a private session, on a pr
     { name: 'secret', repo: 'o/secret', default: false },
   ];
   const asked = [];
-  const { fleet, statuses } = setup({ projects, startableRepos: async (login) => { asked.push(login); return ['o/r', 'o/cloud']; } });
+  const { fleet, statuses, advance } = setup({ projects, startableRepos: async (login) => { asked.push(login); return ['o/r', 'o/cloud']; } });
   const own = 'https://github.com/o/r/pull/7';
   const cloud = 'https://github.com/o/cloud/pull/151';
   const secret = 'https://github.com/o/secret/pull/1';
@@ -420,6 +420,12 @@ test('a pull request on another repo is kept only for a private session, on a pr
   statuses[mine.id] = { state: 'done', prUrl: own, prUrls: [own] };
   await fleet.tick();
   assert.equal(asked.length, 1, 'not asked when the status names no other repo');
+  statuses[mine.id] = { state: 'done', prUrl: own, prUrls: [own, cloud] };
+  await fleet.tick();
+  assert.equal(asked.length, 1, 'kept a minute');
+  advance(61_000);
+  await fleet.tick();
+  assert.equal(asked.length, 2, 'asked again after it');
 });
 
 test('a container that dies while starting fails with its last log line', async () => {
