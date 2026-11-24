@@ -56,9 +56,9 @@ woodshed setup --yes --repo acme/app --reviews default
 Use `--console <url>` for your own console and `--no-browser` to print links without opening them. When setup exits 2,
 follow the link or supply the choice it asks for, then run it again with the same options.
 
-It has seven steps and says which one it is on: `Setup has 7 steps: …` first, then `Step 2 of 7: Repos` as it comes to
+It has eight steps and says which one it is on: `Setup has 8 steps: …` first, then `Step 2 of 8: Repos` as it comes to
 each, and `[done] Setup is finished.` at the end. A run that stops (exit 2, 3 or 1) ends with `Setup is not finished: it
-stopped at step N of 7, <step>. Still to do after it: …`; running it again checks the steps done already and goes on.
+stopped at step N of 8, <step>. Still to do after it: …`; running it again checks the steps done already and goes on.
 On a terminal each question says what Enter takes.
 
 1. **Sign in.** A new CLI sign-in opens the console's page in your browser. On a terminal, or with `--wait`, setup
@@ -84,12 +84,29 @@ On a terminal each question says what Enter takes.
    never runs those commands or handles a token itself, so none passes through it or a coding agent running it. Use
    only one? Pass `--agent claude` or `--agent codex`, or answer so on a terminal, and setup does not ask for the
    other.
-4. **Review on your repos.** Every repo is reviewed by default, on a commit whose message has `[woodshed-review]`
+4. **Optional: Grok Build and OpenCode** (step `own-agents`), which run on your own sign-in alone, never a team's
+   (`shared/agents.cjs`). For each the console runs, setup looks for the file the agent's own login saved on this
+   computer, where the agent itself keeps it: Grok Build's `~/.grok/auth.json` from `grok login` (`$GROK_HOME/auth.json`
+   when `GROK_HOME` is set, `$GROK_AUTH_PATH` when that is; `%USERPROFILE%\.grok\auth.json` on Windows), and OpenCode's
+   `~/.local/share/opencode/auth.json` from `opencode auth login` (`$XDG_DATA_HOME/opencode/auth.json` when it is set; the
+   same path on macOS and Windows). With none there it says to run that login and setup again, or for Grok Build to
+   paste an xAI key (`xai-…`) on My settings, and goes on. A file it finds is checked here first, with the same check as
+   My settings' Save: one that is not a sign-in is said (`is not a Grok Build sign-in (…), so it was not sent`) and
+   nothing is sent. On a terminal setup names the file and the console and asks `[y/N]` before it sends it, and asks
+   again, saying so, before it replaces a sign-in the console has saved already: a no sends nothing and keeps the saved
+   one. Without a terminal, or with `--yes`, it sends nothing unless `--grok-sign-in` or `--opencode-sign-in` says to,
+   and replaces a saved one only with `--grok-sign-in=replace` (`--opencode-sign-in=replace`). The file goes to the
+   console through `woodshed sign-in push <grok|opencode>` (below), over the command line's sign-in, and is never
+   printed, by setup, the command or `--json`. `=replace` is passed on as `--replace` even when the console had none
+   saved when setup asked, so one saved since is replaced as the flag said. A save that fails after a yes on the
+   terminal is said, with why, as `skipped` with `saveFailed: true`, and setup goes on to the next step; with a flag it
+   stops setup, as any step the person asked for by name.
+5. **Review on your repos.** Every repo is reviewed by default, on a commit whose message has `[woodshed-review]`
    (sessions add it for you), with no checkout, project file or pull request: for each repo setup runs `woodshed review
    status --repo <repo>`, stops with the link when the console's reviewer App still has to be made or installed, and
    otherwise tells you the tag. `--reviews` sets your own reviewer choice (`default` is the most the console can run:
    both, once both are connected).
-5. **Reviews of your open pull requests**, the step setup is for: it lists your open pull requests on each repo
+6. **Reviews of your open pull requests**, the step setup is for: it lists your open pull requests on each repo
    (`woodshed review pulls`) and starts the console's review on them now (`woodshed review start`), then gives each
    review's link. On a terminal it asks which, Enter for all (closing the input, Ctrl-D, starts none). `--review-prs
    all`, `none` or numbers (`12,15`) say which: with several repos, each names its repo, as `owner/name#12` (a bare number
@@ -100,26 +117,27 @@ On a terminal each question says what Enter takes.
    ends with the review's tag (`[woodshed-review]` by default; a session adds it, on your own computer you add it).
    Every repo is reviewed by default; only one whose project file runs its review elsewhere (GitHub Actions, or
    another console by `runsOn`) gets none, and setup says why. With `--reviews none` it starts none.
-6. **Optional: the agent terminal**, Herdr or tmux, for new private sessions. On a terminal Enter keeps the saved
+7. **Optional: the agent terminal**, Herdr or tmux, for new private sessions. On a terminal Enter keeps the saved
    choice; `--terminal herdr` or `--terminal tmux` sets it. With Herdr and a compatible `hc` here, setup then starts
    `session watch --herdr --add` in Herdr (step `herdr-watch`), so each of your private sessions shows in Herdr's
    sidebar as it starts or resumes, wherever it was started: the console's page, Slack, or an agent in another session.
    It says so, and how to stop it (`hc kill woodshed-watch`); `--no-herdr-add` starts the watch without `--add`. One
    already running is kept as it was started. Inside a Woodshed session setup starts no watch and adds nothing to
    Herdr, and says to run the watch on your computer.
-7. **Optional: a first coding session**, only with `--prompt`, or a prompt typed in when asked. Without one, setup
+8. **Optional: a first coding session**, only with `--prompt`, or a prompt typed in when asked. Without one, setup
    finishes and says how to start one. When the terminal choice is Herdr and setup finds a compatible `hc` on macOS or
    Linux, it uses `session new --herdr` to show the agent in a space on the session's machine. On Windows it starts a
    regular session and prints the link. If a private session already exists for the first repo, setup gives you its
    link. Setup then ends with the reviews' links again.
 
-Use `--prompt=--help` for a prompt that looks like an option. `--skip-reviews` skips steps 4 and 5, and `--no-session`
-step 7.
+Use `--prompt=--help` for a prompt that looks like an option. `--skip-reviews` skips steps 5 and 6, and `--no-session`
+step 8.
 
 `--yes`, `--wait` at its step, and runs without a terminal never prompt. `--json` prints one checklist entry per line with
-`event: "setup"`, `step` (`login`, `repos`, `agent`, `repo-review`, `review-choice`, `pr-reviews`, `terminal`,
+`event: "setup"`, `step` (`login`, `repos`, `agent`, `own-agents`, `repo-review`, `review-choice`, `pr-reviews`, `terminal`,
 `herdr-watch`, `session`, `reviews`, `finished`), `status`, `message`, and a `url` when relevant; `pr-reviews` and `reviews` carry `reviews`, each
-with its `number`, `url` and `pullUrl`. `login` is `waiting` with `userCode` and `url` while setup waits for the
+with its `number`, `url` and `pullUrl`; `own-agents` carries `agent`, `file` (the path, never what is in it) and
+`saved` (whether the console has one). `login` is `waiting` with `userCode` and `url` while setup waits for the
 approval. The entry that stops setup carries `finished: false`, `stepNumber`, `stepTotal` and `left` (the keys of the
 steps after it); a run that ends with 0 ends with `step: "finished"` and `finished: true`. When this CLI lacks a repo, review, or config command, setup skips that step and
 says where to do it.
@@ -149,6 +167,7 @@ Keep a source explicit even when only one is supported. Keep session management 
 | `woodshed review pulls\|start` | Lists your open pull requests on a repo, and has the console review them now: [below](#reviewing-your-open-pull-requests-now). | 0 done, 2 a sign-in, 3 a pull request or repo not yours, or a repo whose project file runs its review elsewhere, 1 anything else |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 | `woodshed config list\|get\|set` | Reads or sets [your choices on My settings](#your-choices-on-my-settings). | as below |
+| `woodshed sign-in push grok\|opencode [--replace]` | Saves the Grok Build or OpenCode sign-in this computer's `grok login` or `opencode auth login` made as yours on My settings, from the file setup's step 4 names: checked here first, then sent over the command line's sign-in to the console's own save (`POST /api/my/agent-auth/<agent>`, as My settings' Save), and never printed. One saved already is replaced only with `--replace`. `--json` gives `{"event":"sign-in","agent","file","console","saved","replaced","savedAt"}` (`savedAt` a timestamp, or null). A refusal is said in the command's own words for its status; the console's reason follows only when it holds no part of what was sent (the whole value, any field of it, or 12 characters in a row of one), and otherwise `its answer repeated part of the sign-in, so it is not shown`. | 0 saved, 2 no file or not signed in, 3 not a sign-in, one saved already, or refused by the console, 1 failed |
 | `woodshed settings plan\|push\|pull` | Sync [Claude and Codex settings, plugins, dotfiles and ignored checkout files](#settings) with private sessions. Claude MCP definitions pushed from computers stay between computers. | as below |
 
 Every command takes:

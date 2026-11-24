@@ -40,6 +40,8 @@ test('the packed CLI installs offline and runs settings, config, repo and review
   assert.equal(JSON.parse(run(cli, ['settings', 'plan', '--only', 'skills', '--json'], 2)).status, 'signed-out');
   assert.equal(JSON.parse(run(cli, ['config', 'list', '--json'], 2)).status, 'signed-out');
   assert.match(run(cli, ['review', '--help']), /Usage: woodshed review/);
+  assert.match(run(cli, ['sign-in', '--help']), /Usage: woodshed sign-in push/);
+  assert.equal(JSON.parse(run(cli, ['sign-in', 'push', 'grok', '--json'], 2)).status, 'no-file');
   const repo = path.join(home, 'repo');
   run('git', ['init', '--quiet', repo]);
   run('git', ['-C', repo, 'remote', 'add', 'origin', 'https://github.com/example-org/example-repo.git']);
