@@ -19,6 +19,10 @@ const PER_SESSION_ENV = [
   'SESSION_ID', 'SESSION_TOKEN', 'TERMINAL_TOKEN', 'STARTED_BY', 'SESSION_URL', 'ISSUE', 'PR', 'BRANCH', 'PROMPT',
   'SESSION_KIND', 'AGENT', 'MODEL', 'EFFORT', 'PERMISSION_MODE', 'RESUME_SESSION', 'ATTACHMENTS', 'REVIEW_ONLY', 'SESSION_MODE', 'ASKED_BY', 'QA_BASE', 'REVIEW_BASE', 'REVIEW_AUTHOR', 'REVIEW_AGENTS', 'REVIEW_CODEX_AUTH', 'REVIEW_CODEX_ACCOUNT', 'REVIEW_OPENCODE_PROVIDER', 'PROJECT_REPO',
   'SESSION_APP_DOMAIN',
+  // A review's own knobs (session/review.sh), from the installation's session env: how long Codex, Grok Build and
+  // OpenCode may take, and Grok Build's and OpenCode's homes for a review. Numbers and paths, never a credential: the
+  // author's sign-in stays in the console (reviewAgentProxy.mjs).
+  'REVIEW_CODEX_MINUTES', 'REVIEW_AGENT_MINUTES', 'REVIEW_GROK_HOME', 'REVIEW_OPENCODE_HOME',
   // The tag that asks for the repo's review, for a coding session's rules (console/defaultReview.mjs).
   'WOODSHED_REVIEW_TAG',
   // A private session whose agent's terminal comes from its person's Herdr, as a child of theirs (cli/hc.mjs).

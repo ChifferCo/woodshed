@@ -1347,7 +1347,8 @@ the console adds to its calls`, then `Codex ended (exit=…)`, and `Codex took l
 when it did. Codex's own log is at `.review/logs/codex.jsonl`. Grok Build and OpenCode say `Grok Build reviews on the
 author's own sign-in, which the console adds to its calls` or `OpenCode reviews on the author's own <provider> key`,
 then `… ended (exit=…)`, and what the console refused (`Grok Build: @<login>'s saved Grok Build login has expired`);
-their logs are `.review/logs/grok.jsonl` and `opencode.jsonl`. They take `REVIEW_AGENT_MINUTES` (Codex's by default).
+their logs are `.review/logs/grok.jsonl` and `opencode.jsonl`. They take `REVIEW_AGENT_MINUTES` (Codex's by default),
+set in the installation's session env, which the ECS launcher passes on as it does `REVIEW_CODEX_MINUTES` (`PER_SESSION_ENV`).
 
 **A review asked for by hand.** `woodshed review start` (cli/README.md, "Reviewing your open pull requests now", and
 `woodshed setup`'s last review step) calls `POST /api/my/pulls/<number>/review` with the project's name, which the

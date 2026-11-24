@@ -70,7 +70,9 @@ test('every variable the fleet sets for each kind of session reaches an ECS task
   const config = {
     projects: [{ name: 'r', repo: 'o/r', default: true }, { name: 'tools', repo: 'o/tools', default: false }], label: 'woodshed', publicUrl: 'https://console.test', maxRunning: 5,
     limits: { idleMs: 3_600_000, lifetimeMs: 3_600_000, startTimeoutMs: 900_000 },
-    appDomain: 'apps.console.test', sessionEnv: {}, ghToken: null, pollMs: 30_000, fallbackPollMs: 300_000, maxPrivatePerPerson: 3,
+    appDomain: 'apps.console.test', ghToken: null, pollMs: 30_000, fallbackPollMs: 300_000, maxPrivatePerPerson: 3,
+    // A review's knobs an installation sets for every session (session/review.sh): ECS must not drop them either.
+    sessionEnv: { REVIEW_CODEX_MINUTES: '25', REVIEW_AGENT_MINUTES: '15', REVIEW_GROK_HOME: '/home/node/.grok-review', REVIEW_OPENCODE_HOME: '/home/node/.opencode-review' },
   };
   const databases = { available: true, async createForSession() {}, async sweep() {} };
   const mcpServers = createMcpServers({ store: { state: {} }, settings: mcpSettings({ WOODSHED_PROD_MCP_URL: 'https://prod-mcp.test', WOODSHED_PROD_MCP_PEOPLE: '*', WOODSHED_PROD_MCP_REPOS: '*' }, 'https://console.test'), lockdown: () => ({ available: true }) });
@@ -92,7 +94,7 @@ test('every variable the fleet sets for each kind of session reaches an ECS task
   await fleet.resumePrivate({ owner: 'joel', id: tainted.id });
   assert.equal(started.length, 9);
   const set = new Set(started.flatMap((env) => Object.keys(env)));
-  for (const name of ['WOODSHED_PROD_MCP', 'WOODSHED_MCP_SERVERS', 'WOODSHED_TAINTED', 'WOODSHED_EGRESS_PROXY', 'SESSION_MODE', 'ASKED_BY', 'ISSUE', 'PR', 'MODEL', 'REVIEW_ONLY', 'SESSION_KIND', 'ATTACHMENTS', 'AGENT', 'PROJECT_REPO', 'SESSION_APP_DOMAIN', 'QA_BASE', 'REVIEW_BASE', 'REVIEW_AUTHOR', 'REVIEW_AGENTS', 'REVIEW_CODEX_AUTH', 'REVIEW_CODEX_ACCOUNT', 'REVIEW_OPENCODE_PROVIDER', 'WOODSHED_HERDR_PARENT', 'WOODSHED_REVIEW_TAG', 'WOODSHED_START_TOKEN']) {
+  for (const name of ['WOODSHED_PROD_MCP', 'WOODSHED_MCP_SERVERS', 'WOODSHED_TAINTED', 'WOODSHED_EGRESS_PROXY', 'SESSION_MODE', 'ASKED_BY', 'ISSUE', 'PR', 'MODEL', 'REVIEW_ONLY', 'SESSION_KIND', 'ATTACHMENTS', 'AGENT', 'PROJECT_REPO', 'SESSION_APP_DOMAIN', 'QA_BASE', 'REVIEW_BASE', 'REVIEW_AUTHOR', 'REVIEW_AGENTS', 'REVIEW_CODEX_AUTH', 'REVIEW_CODEX_ACCOUNT', 'REVIEW_OPENCODE_PROVIDER', 'REVIEW_CODEX_MINUTES', 'REVIEW_AGENT_MINUTES', 'REVIEW_GROK_HOME', 'REVIEW_OPENCODE_HOME', 'WOODSHED_HERDR_PARENT', 'WOODSHED_REVIEW_TAG', 'WOODSHED_START_TOKEN']) {
     assert.ok(set.has(name), `the sessions above set ${name}`);
   }
   for (const env of started) {
