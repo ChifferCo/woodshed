@@ -641,7 +641,10 @@
         if (agent.value === 'grok') showGrokCatalog();
       });
     }
+    // Until the person picks a model here, Claude Code's is theirs from My settings (`claudeModel` in /api/my).
+    let modelPicked = false;
     model.addEventListener('change', () => {
+      modelPicked = true;
       if (agent.value === 'codex') keepPick(effort, codexEffortOptions());
       if (agent.value === 'grok') keepPick(effort, grokEffortOptions());
     });
@@ -670,6 +673,7 @@
     let agentPicked = false;
     agent.addEventListener('change', () => {
       agentPicked = true;
+      modelPicked = false;
       // A model name is one agent's own (OpenCode's `provider/model`, Grok's `grok-…`): another agent starts from its default.
       modelText.value = '';
       grokTyped = false;
@@ -744,6 +748,8 @@
         workOn.value = '';
         pulls.refresh();
         attachments.clear();
+        // A model picked for that one session: the next starts from theirs on My settings again.
+        modelPicked = false;
         start.disabled = false;
         (W.navigate ?? ((href) => { window.location.href = href; }))(`/s/${session.id}`);
       } catch (err) {
@@ -773,6 +779,12 @@
       if (me && !agentPicked && agent.value !== preferred) {
         agent.value = preferred;
         showAgent();
+      }
+      // Claude Code's model, their own from My settings, until they pick one here. A console from before it has none.
+      const ownModel = me?.claudeModel ?? '';
+      if (me && agent.value === 'claude' && !modelPicked && model.value !== ownModel && MODELS.some(([v]) => v === ownModel)) {
+        model.value = ownModel;
+        showPicked();
       }
       // The server refuses a start until the databases are ready too, so the form waits for the same things the card does.
       const ready = Boolean(me) && W.setupDone(me);

@@ -665,6 +665,23 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     call: async () => { projects = await W.postJson('/api/my/projects/default', { project: projectSelect.value }); },
   }));
 
+  // The Claude model New session starts with picked (launcher.js): MODELS in sessions.mjs, first claude's own default.
+  // One pick, saved as it is picked. Only the form's first pick: New session can still pick another for one session.
+  const MODELS = [['', 'Default', 'Claude\u2019s own default'], ['opus', 'opus', 'Most capable'], ['sonnet', 'sonnet', 'Balanced, faster'],
+    ['haiku', 'haiku', 'Smallest and quickest'], ['fable', 'fable', 'Newest generation']];
+  const modelStatus = h('p', { class: 'form-note', role: 'status' });
+  function modelCard() {
+    const current = MODELS.some(([value]) => value === me.claudeModel) ? me.claudeModel : '';
+    const pick = (model) => act({
+      card: 'model', note: modelStatus, done: 'Saved. New session starts with it picked.',
+      call: async () => { me = { ...me, ...(await W.postJson('/api/my/claude-model', { model })) }; },
+    });
+    return line('My Claude model', [
+      current ? `New session starts Claude Code on ${current}.` : 'New session starts Claude Code on Claude\u2019s own default model.',
+      ' You can still pick another there for one session.', modelStatus,
+    ], seg('My Claude model', MODELS, current, pick, busy.has('model') || !me.available), { id: 'my-model' });
+  }
+
   // What your private sessions run claude or codex in (session/agentPane.mjs): tmux, or Herdr's terminal runtime, which
   // your own Herdr can attach to. One pick, saved as it is picked (designSystem/components/SettingsRows). Your next
   // private session reads it; shared sessions, reviews, QA and questions are in tmux whatever it says.
@@ -893,7 +910,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       blockersCard(),
       // What a new person does first, then how their sessions run, what is kept between them, each repo's own, and the look.
       group({ id: 'set-signins', label: 'Sign-ins' }, tokenCard(), codexCard(), A.OWN_SIGN_IN_AGENTS.map(agentCard), githubCard(), cliCard()),
-      group({ id: 'set-sessions', label: 'Sessions' }, projectCard(), terminalCard(), reviewsCard(), limitsCard()),
+      group({ id: 'set-sessions', label: 'Sessions' }, projectCard(), modelCard(), terminalCard(), reviewsCard(), limitsCard()),
       group({ id: 'set-kept', label: 'Kept for you' }, databasesCard(), homeCard()),
       group({
         id: 'repo-settings', label: 'Repos and files',
