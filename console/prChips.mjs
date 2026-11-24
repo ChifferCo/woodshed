@@ -58,11 +58,14 @@ export function prNumberOf(prUrl, repo) {
 
 /**
  * @param {{github: {pullStatuses: (numbers: number[]) => Promise<object[]>}|null, repo: string, now?: () => number,
- *          webhooksFlowing?: () => boolean, fallbackMs?: number}} deps
- *   `webhooksFlowing` says pull request webhooks are arriving; `fallbackMs` is how often an open pull request is read then
+ *          webhooksFlowing?: () => boolean, fallbackMs?: number, polled?: boolean}} deps
+ *   `webhooksFlowing` says pull request webhooks are arriving; `fallbackMs` is how often an open pull request is read then;
+ *   `polled` is false where nothing calls `refresh` (a console with no GitHub App), so nothing is ever `reading`
  */
-export function createPrChips({ github, repo, now = Date.now, webhooksFlowing = () => false, fallbackMs = REFRESH_MS }) {
+export function createPrChips({ github, repo, now = Date.now, webhooksFlowing = () => false, fallbackMs = REFRESH_MS, polled = true }) {
   const known = new Map();
+  // Whether the last read failed: while GitHub fails, a chip not read yet shows as it is rather than not at all.
+  let failing = false;
   // When each number GitHub had no pull request for was asked: it is asked again only as often as a settled one.
   const missing = new Map();
 
@@ -92,7 +95,14 @@ export function createPrChips({ github, repo, now = Date.now, webhooksFlowing = 
     for (let i = 0; i < numbers.length; i += MAX_PER_CALL) {
       const batch = numbers.slice(i, i + MAX_PER_CALL);
       const from = now();
-      const found = await github.pullStatuses(batch);
+      let found;
+      try {
+        found = await github.pullStatuses(batch);
+      } catch (err) {
+        failing = true;
+        throw err;
+      }
+      failing = false;
       for (const raw of found) known.set(raw.number, { at: now(), pr: describePr(raw) });
       for (const number of batch) {
         // One GitHub no longer has is not asked again every refresh: it waits like a missing one.
@@ -110,7 +120,17 @@ export function createPrChips({ github, repo, now = Date.now, webhooksFlowing = 
     return number ? known.get(number)?.pr ?? null : null;
   }
 
-  return { refresh, view, stale };
+  /**
+   * Whether this reader will read the pull request and has not yet: the page holds its chip back until then, so a
+   * merged one never shows as open for a moment. One GitHub had no pull request for, another repo's, or a reader with
+   * no GitHub is never read, and shows as it is.
+   */
+  function reading(prUrl) {
+    const number = prNumberOf(prUrl, repo);
+    return Boolean(polled && !failing && github?.pullStatuses && number && !known.has(number) && !missing.has(number));
+  }
+
+  return { refresh, view, stale, reading };
 }
 
 /**
@@ -119,7 +139,7 @@ export function createPrChips({ github, repo, now = Date.now, webhooksFlowing = 
  * project it is about.
  * `projects` may be a function, read on every use, so a repo an admin adds or removes while the console runs is followed.
  * @param {{projects: {name: string, repo: string, default?: boolean}[]|(() => {name: string, repo: string, default?: boolean}[]), githubFor: (project: object) => object|null,
- *          now?: () => number, webhooksFlowing?: () => boolean, fallbackMs?: number}} deps
+ *          now?: () => number, webhooksFlowing?: () => boolean, fallbackMs?: number, polled?: boolean}} deps
  */
 export function createProjectPrChips({ projects, githubFor, ...rest }) {
   const current = typeof projects === 'function' ? projects : () => projects;
@@ -153,6 +173,9 @@ export function createProjectPrChips({ projects, githubFor, ...rest }) {
         if (pr) return pr;
       }
       return null;
+    },
+    reading(prUrl) {
+      return readersNow().some(({ chips }) => chips.reading(prUrl));
     },
     /** @param {string|null} [project]  another project's name; none for the default project's */
     stale(numbers, project = null) {
