@@ -1957,7 +1957,7 @@ test('Console settings turns each source\'s webhooks off and on, says who did, a
 test('My settings\' Reviews card: each person picks who reviews their pull requests, from what can run for them', async (t) => {
   const { createReviewAgents } = await import('./reviewAgents.mjs');
   const { createUserSettings } = await import('./userSettings.mjs');
-  const secrets = { values: new Map(), async read(n) { return this.values.get(n) ?? null; }, async write(n, v) { this.values.set(n, v); }, async remove(n) { this.values.delete(n); }, async list() { return [...this.values.keys()]; } };
+  const secrets = { values: new Map(), async read(n) { return this.values.get(n) ?? null; }, async write(n, v) { this.values.set(n, v); }, async save(n, v) { this.values.set(n, v); }, async remove(n) { this.values.delete(n); }, async list() { return [...this.values.keys()]; } };
   const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets });
   const reviewAgents = createReviewAgents({ userSettings, connected: async () => ({ claude: true, codex: false }) });
   const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
@@ -1969,7 +1969,8 @@ test('My settings\' Reviews card: each person picks who reviews their pull reque
   const as = { cookie: 'woodshed_session=mia-dev' };
   const get = async () => (await fetch(`http://127.0.0.1:${port}/api/my/reviews`, { headers: as })).json();
 
-  assert.deepEqual(await get(), { available: { claude: true, codex: false }, own: { claude: false, codex: false }, best: 'claude', choice: null },
+  const off = { grok: false, opencode: false };
+  assert.deepEqual(await get(), { available: { claude: true, codex: false, ...off }, own: { claude: false, codex: false, ...off }, ownWhy: { grok: null, opencode: null }, best: 'claude', choice: null },
     'the team Anthropic key alone: Claude Code is the most there is');
   const none = await post(port, '/api/my/reviews', { choice: 'none', login: 'joel' }, as);
   assert.equal(none.status, 200);
@@ -1979,6 +1980,16 @@ test('My settings\' Reviews card: each person picks who reviews their pull reque
   assert.equal((await post(port, '/api/my/reviews', { choice: 'everyone' }, as)).status, 400);
   assert.equal((await post(port, '/api/my/reviews', { choice: null }, as)).body.choice, null, 'back to the default');
   assert.equal((await post(port, '/api/my/reviews', { choice: 'both' }, { ...as, origin: 'https://evil.example' })).status, 403);
+
+  // Grok Build reviews only on the person's own sign-in, switched on for reviews: offered once one is saved.
+  assert.equal((await post(port, '/api/my/agent-auth/grok/reviews', { on: true }, as)).status, 409, 'no sign-in saved yet');
+  assert.equal((await post(port, '/api/my/agent-auth/grok', { value: 'xai-made-up-mia-0123456789' }, as)).status, 200);
+  assert.deepEqual([(await get()).available.grok, (await get()).own.grok], [true, true]);
+  const picked = await post(port, '/api/my/reviews', { choice: 'grok+claude' }, as);
+  assert.equal(picked.body.choice, 'claude+grok');
+  const offNow = await post(port, '/api/my/agent-auth/grok/reviews', { on: false }, as);
+  assert.deepEqual([offNow.status, offNow.body.ownAgentForReviews.grok, (await get()).available.grok], [200, false, false]);
+  assert.equal((await post(port, '/api/my/agent-auth/claude/reviews', { on: true }, as)).status, 404, 'Claude Code has no own sign-in here');
 });
 
 test('My settings\' Agent terminal: each person picks tmux or Herdr for their own private sessions, tmux by default', async (t) => {

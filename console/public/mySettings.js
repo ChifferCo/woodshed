@@ -148,7 +148,28 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   const agentStatus = Object.fromEntries(A.OWN_SIGN_IN_AGENTS.map((id) => [id, h('p', { class: 'form-note', role: 'status' })]));
 
   function agentChange(id, path, body, done, working) {
-    return act({ card: id, note: agentStatus[id], working, done, call: async () => { me = await W.postJson(path, body); agentInputs[id].value = ''; } });
+    return act({ card: id, note: agentStatus[id], working, done, call: async () => { me = await W.postJson(path, body); agentInputs[id].value = ''; loadReviews(); } });
+  }
+
+  // Whether reviews of your pull requests may run this agent on your sign-in, when you pick it under Reviews of my pull
+  // requests: Codex's switch, for an agent with no team key. On once a sign-in is saved, unless turned off; the console
+  // adds the sign-in to the agent's calls (console/reviewAgentProxy.mjs), never into the review session.
+  function agentReviewsSwitch(id) {
+    const a = A.agent(id);
+    if (!a.reviews) return null;
+    const saved = Boolean(me.agentAuth?.[id]?.set);
+    const on = Boolean(saved && me.ownAgentForReviews?.[id]);
+    const what = id === 'opencode' ? 'your Anthropic or OpenAI API key, of those saved here' : 'your sign-in';
+    return h('div', { class: `toggle-row${on ? '' : ' is-off'}` },
+      h('button', {
+        type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-labelledby': `${id}-reviews-label`, disabled: !saved || !me.available || busy.has(id),
+        onclick: () => agentChange(id, `/api/my/agent-auth/${id}/reviews`, { on: !on }, on ? `Off: ${a.name} does not review your pull requests.` : `On: pick ${a.name} under Reviews of my pull requests to have it review them.`),
+      }),
+      h('span', { class: 'toggle-label', id: `${id}-reviews-label` }, 'Also use it for reviews of my pull requests'),
+      h('p', { class: 'sub' }, on
+        ? `On: when you pick ${a.name} under Reviews of my pull requests, it reviews the pull requests you open on ${what}. The console adds it to ${a.name}\u2019s calls; it never goes into the review session.${a.signIn.rotates && id === 'grok' ? ' A login that has expired is not used: a Grok session of yours refreshes it.' : ''}`
+        : `Off: ${a.name} never reviews your pull requests. There is no team key for it.`),
+      !saved && h('p', { class: 'why-off' }, 'Save a sign-in above to turn this on.'));
   }
 
   function agentCard(id) {
@@ -161,9 +182,9 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     ];
     return row({
       id, title: a.product, pill,
-      value: set ? `Your own sign-in, for ${a.name} sessions` : `Save ${a.signIn.kinds}, and New session offers ${a.name}`,
+      value: set ? `Your own sign-in, for ${a.name} sessions${a.reviews && me.ownAgentForReviews?.[id] ? ' and, when you pick it, reviews of your pull requests' : ''}` :`Save ${a.signIn.kinds}, and New session offers ${a.name}`,
     },
-      h('p', { class: 'sub' }, `Choose ${a.name} as the agent in New session. It runs only on your own sign-in, handed to your own My Woodshed sessions and nobody else’s: ${a.name} never runs in a shared session and never reviews pull requests.`),
+      h('p', { class: 'sub' }, `Choose ${a.name} as the agent in New session. It runs only on your own sign-in, handed to your own My Woodshed sessions and nobody else’s: ${a.name} never runs in a shared session.${a.reviews ? ` It can review your own pull requests, below, without the sign-in ever entering the review.` : ''}`),
       set ? howTo('How to get a sign-in', how) : how,
       h('label', { class: 'field-label', for: `${id}-auth` }, h('span', null, set ? 'Replace the sign-in' : 'Paste your sign-in')),
       agentInputs[id],
@@ -174,6 +195,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
             if (window.confirm(`Remove your ${a.product} sign-in? New ${a.name} sessions are refused until you save one again.`)) agentChange(id, `/api/my/agent-auth/${id}/remove`, {}, 'Removed.', 'Removing…');
           },
         }, 'Remove')),
+      agentReviewsSwitch(id),
       !me.available && h('p', { class: 'form-note is-error' }, 'This console has no secrets manager yet, so nothing can be saved here. ', h('a', { href: '/secrets' }, 'Choose one on the Secrets page.')),
       agentStatus[id]);
   }
@@ -744,13 +766,12 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
         viewRow('phone', 'Sessions on a phone', 'The same for a narrow window, under 720px wide.'));
   }
 
-  // Who reviews the pull requests you open (console/reviewAgents.mjs), as a grid: Claude Code and Codex on their own
-  // rows, Off and On across the top (designSystem/components/OnOffGrid). Both on is both, both off is no code review.
-  // On is offered only while the team's key or your own sign-in can run it; with nothing saved, the most there is runs.
-  // A pick saves at once.
+  // Who reviews the pull requests you open (console/reviewAgents.mjs), as a grid: each agent that reviews on its own row
+  // (shared/agents.cjs), Off and On across the top (designSystem/components/OnOffGrid). Several on is all of them, all
+  // off is no code review. On is offered only while the team's key or your own sign-in can run it: Grok Build and
+  // OpenCode have no team key. With nothing saved, the most of Claude Code and Codex runs. A pick saves at once.
   let reviews = null;
   const reviewStatus = h('p', { class: 'form-note', role: 'status' });
-  const AGENTS_OF = { none: [], claude: ['claude'], codex: ['codex'], both: ['claude', 'codex'] };
   let reviewsLoaded = false;
   const loadReviews = () => W.getJson('/api/my/reviews').then((answer) => { reviews = answer; }, () => {}).finally(() => { reviewsLoaded = true; if (me) render(); });
 
@@ -760,27 +781,31 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
 
   function reviewsCard() {
     if (!reviews) return null;
-    const { available, best, choice } = reviews;
-    const on = new Set(AGENTS_OF[choice ?? best] ?? []);
-    const rows = [
-      ['claude', 'Claude Code', 'Needs a Claude token (Sign-ins), or the team\u2019s Anthropic key.'],
-      ['codex', 'Codex', 'Needs a Codex sign-in (Sign-ins), or the team\u2019s OpenAI key.'],
-    ];
+    const { available, best, choice, ownWhy = {} } = reviews;
+    const on = new Set(A.reviewersOf(choice ?? best) ?? []);
+    const needs = {
+      claude: 'Needs a Claude token (Sign-ins), or the team\u2019s Anthropic key.',
+      codex: 'Needs a Codex sign-in (Sign-ins), or the team\u2019s OpenAI key.',
+      grok: 'Needs your Grok Build sign-in (Sign-ins), on for reviews. There is no team key for it.',
+      opencode: 'Needs an Anthropic or OpenAI API key in your OpenCode sign-ins (Sign-ins), on for reviews. There is no team key for it.',
+    };
+    const rows = A.REVIEW_AGENT_IDS.map((id) => [id, A.agent(id).product, ownWhy[id] ? `${ownWhy[id].replace(/^the author's/, 'Your')}.` : needs[id]]);
     const pick = (agent, value) => {
       const next = new Set(on);
       if (value) next.add(agent); else next.delete(agent);
-      const chosen = next.has('claude') && next.has('codex') ? 'both' : next.has('claude') ? 'claude' : next.has('codex') ? 'codex' : 'none';
-      saveReviews(chosen, 'Saved. It applies to the next review.');
+      saveReviews(A.reviewChoiceOf([...next]), 'Saved. It applies to the next review.');
     };
     const radio = (agent, label, value) => h('input', {
       type: 'radio', name: `reviews-${agent}`, value: value ? 'on' : 'off', checked: on.has(agent) === value,
       disabled: busy.has('reviews') || (value && !available[agent]), 'aria-label': `${label} ${value ? 'on' : 'off'}`,
       onchange: () => pick(agent, value),
     });
-    const cantRun = choice && AGENTS_OF[choice].some((a) => !available[a]);
-    const who = on.has('claude') && on.has('codex') ? 'Claude Code and Codex both review' : on.has('claude') ? 'Claude Code reviews' : on.has('codex') ? 'Codex reviews' : 'No code review of';
+    const cantRun = choice && (A.reviewersOf(choice) ?? []).some((a) => !available[a]);
+    const names = A.REVIEW_AGENT_IDS.filter((id) => on.has(id)).map((id) => A.agent(id).product);
+    const listed = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
+    const who = !names.length ? 'No code review of' : names.length === 2 ? `${listed} both review` : names.length > 2 ? `${listed} all review` : `${listed} reviews`;
     return row({ id: 'my-reviews', title: 'Reviews of my pull requests', pill: h('span', { class: choice ? 'pill is-ok' : 'pill' }, choice ? 'Your own' : 'Default'), value: `${who} the pull requests you open` },
-      h('p', { class: 'sub' }, 'Who reviews a pull request you open, in repos that review with Woodshed sessions. With both on, the stricter verdict wins, so it is approved only when both approve. With both off, there is no code review, and the Slack post and QA go on without one.'),
+      h('p', { class: 'sub' }, 'Who reviews a pull request you open, in repos that review with Woodshed sessions. With several on, the strictest verdict wins, so it is approved only when all of them approve. With all off, there is no code review, and the Slack post and QA go on without one. Grok Build and OpenCode review only on your own sign-in, which the console adds to their calls: it never enters the review.'),
       h('table', { class: 'onoff-grid' },
         h('thead', null, h('tr', null, h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, 'Reviewer')), h('th', { scope: 'col' }, 'Off'), h('th', { scope: 'col' }, 'On'))),
         h('tbody', null, rows.map(([agent, label, needs]) => h('tr', { class: available[agent] ? null : 'is-unavailable' },
@@ -789,7 +814,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
           h('td', null, radio(agent, label, true)))))),
       h('p', { class: 'form-note' }, choice
         ? (cantRun ? 'What you chose cannot all run now, so your reviews get what of it can.' : 'Your own choice. ')
-        : 'Default: the most there is, from your sign-ins and the team\u2019s keys. ',
+        : 'Default: the most of Claude Code and Codex there is, from your sign-ins and the team\u2019s keys. ',
       choice && h('button', { type: 'button', class: 'btn-link', disabled: busy.has('reviews'), onclick: () => saveReviews(null, 'Back to the default.') }, 'Back to the default')),
       reviewStatus);
   }

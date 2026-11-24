@@ -822,9 +822,11 @@ sign-in is `users/<login>/grok-auth` (an xAI key, `xai-…`, or `~/.grok/auth.js
 (`~/.local/share/opencode/auth.json` from `opencode auth login`), saved with `POST /api/my/agent-auth/<agent>` and
 removed with `…/remove`. The save also takes the command line's token, for `woodshed setup` and `woodshed sign-in push`,
 which send the file from the person's computer after checking it there (cli/README.md, setup's step 4): as the token's
-own person only, through the same `setAgentAuth`, and answered with `{agent, set, savedAt}`, never the page's view. It is handed to that person's private sessions of that agent alone (`/settings`'s `agentAuth`),
-never to a shared session, a question, QA or a review: so they review nothing, and a resume needs it saved as a start
-does. Their logins rotate their refresh token at each use, so a session sends the refreshed one back at stop
+own person only, through the same `setAgentAuth`, and answered with `{agent, set, savedAt}`, never the page's view. It is
+handed to that person's private sessions of that agent alone (`/settings`'s `agentAuth`), never to a shared session, a
+question, QA or a review, and a resume needs it saved as a start does. A review of the person's own pull request may
+still run them on it, through the console, which never hands it over ("Who reviews", below). Their logins rotate their
+refresh token at each use, so a session sends the refreshed one back at stop
 (`POST /agent-auth`, with the digest of the sign-in it was given), kept only while the saved one is still that sign-in (not a
 key or login saved since, nor another session's refresh) and does not run out before it. Their **Model** is a name their
 own `--model` takes, blank for the agent's default (OpenCode's is `provider/model`); **Effort** and **Permissions**
@@ -1229,21 +1231,32 @@ console to post to GitHub:
   A session that ends without a review turns it into `The review did not finish` with the reason
   (`fleet: review ended without a report`).
 
-### Who reviews: Claude Code, Codex, both or none
+### Who reviews: Claude Code, Codex, Grok Build, OpenCode, several or none
 
 Each person picks who reviews the pull requests they open, on My settings' **Reviews of my pull requests** card
-(`reviewAgents.mjs`; kept with their settings, `userSettings.mjs` `reviewAgents`): **Claude Code and Codex**, **Claude
-Code only**, **Codex only** or **No code review**. A choice is offered only while something can run it:
+(`reviewAgents.mjs`; kept with their settings, `userSettings.mjs` `reviewAgents`): any of **Claude Code**, **Codex**,
+**Grok Build** and **OpenCode**, or **No code review**. The choice is saved as `none`, `claude`, `codex`, `both`, or the
+reviewers' ids joined with `+` in the registry's order (`claude+grok`; shared/agents.cjs, `reviewersOf`), and
+`woodshed config set reviews` takes the same. A choice is offered only while something can run it:
 
 - Claude Code: the team's `anthropic-api-key`, or their own Claude token while they run shared sessions on it;
-- Codex: the team's `openai-api-key`, or their own Codex sign-in while they use it for reviews (below).
+- Codex: the team's `openai-api-key`, or their own Codex sign-in while they use it for reviews (below);
+- Grok Build: their own Grok sign-in (an xAI key, or a `grok login` that has not expired) while they use it for reviews;
+- OpenCode: an Anthropic or OpenAI API key among their own OpenCode sign-ins, while they use them for reviews.
 
-With no choice saved, a review runs the most there is: both, else the one there is, else none. A saved choice that can
-no longer run keeps what of it can, else falls back the same way, and the console says why. A pull request is the
+There is no team key for Grok Build or OpenCode: with the author's own sign-in off, missing or expired, that reviewer is
+left out, and `fleet: review runs other than the author chose` says why (`Grok Build left out: …`). With no choice saved,
+a review runs the most of Claude Code and Codex there is: both, else the one there is, else none; Grok Build and
+OpenCode review only when picked. A saved choice that can no longer run keeps what of it can, else falls back the same
+way, and the console says why. A pull request is the
 person's whose session opened it, or its GitHub author otherwise (`pullOwner`); one whose author fails the identity
 checks of their Claude plan (`teamKeyReason`), or a bot, gets the most the team keys can run.
 
-The review gets `review.agents` and `REVIEW_AGENTS` (`claude`, `codex` or both), and `session/review.sh` runs each.
+The review gets `review.agents` and `REVIEW_AGENTS` (any of `claude`, `codex`, `grok`, `opencode`), and
+`session/review.sh` runs each, every one but Claude in the background beside it, in its own `.review/<agent>/`.
+Before any of them starts, it removes the whole `.review/` folder: a branch can commit one, verdict and all, which a
+reviewer that writes none would leave to be reported as its own (the pane says `The pull request carries a .review
+folder of its own`).
 Codex works as in a Codex session: it reads the checkout, runs what it likes (the container is the sandbox) and writes
 its verdict's files itself, in `.review/codex/`. It gets `REVIEW_CODEX_MINUTES` (20 by default), then is stopped, and
 Claude's verdict goes out alone. Codex alone sends its own verdict.
@@ -1253,18 +1266,21 @@ Claude's verdict goes out alone. Codex alone sends its own verdict.
 Slack post and its brief (the gates come without `review`, `gatesFor` in `fleet.mjs`) and QA (`reviewApproved`). A
 review that runs on it later clears the skip.
 
-The two verdicts become one (`codeReview.mjs merge`):
+The verdicts become one (`codeReview.mjs merge`, each reviewer named with its folder):
 
-- The stricter conclusion wins, so a pull request is approved only when both approve.
-- The highest reported merge risk wins. When both rate it High, the check prefers a report with a failure reason
+- The strictest conclusion wins, so a pull request is approved only when all approve.
+- The highest reported merge risk wins. When several rate it High, the check prefers a report with a failure reason
   and a pre-merge check.
-- The comment and summary have a section from each, and each inline comment says whose it is.
-- An earlier comment is resolved when the reviewer who wrote it (its `**Claude Code:**` or `**Codex:**`, read from the
+- The comment and summary have a section from each (`### Grok Build: COMMENT`), and each inline comment says whose it
+  is. The review's heading names them (`## Claude Code and Grok Build review`, `reviewHeading`), which the gates read
+  as the review's.
+- An earlier comment is resolved when the reviewer who wrote it (its `**Claude Code:**`, `**Codex:**`, `**Grok Build:**`
+  or `**OpenCode:**`, read from the
   comment records `review.sh` keeps in `earlier-comments.jsonl`) found it fixed;
   one with no such mark, or whose writer wrote no verdict, only when every reviewer that gave a verdict found it fixed.
-- When one writes no verdict, the other's goes out alone and says so.
+- When one writes no verdict, the others' go out and say so.
 
-The PR comment says `Reviewing with Claude Code and Codex`.
+The PR comment says `Reviewing with Claude Code and Codex` (or whoever reviews).
 
 No sign-in ever enters the review session, which reads what anyone who can push to the pull request wrote. The
 console's OpenAI proxy (`openaiProxy.mjs`) adds one of these to each of codex's calls, as the Anthropic proxy does for
@@ -1297,20 +1313,93 @@ claude:
 - **The team's `openai-api-key`**, on `/openai`, for everyone else (`REVIEW_CODEX_AUTH=key`), and for an author whose
   saved ChatGPT login has expired.
 
+Grok Build and OpenCode review the same way, on the author's own sign-in alone, which the console's review agent proxy
+(`reviewAgentProxy.mjs`) adds to each call; the session holds only its `SESSION_TOKEN`, as the agent's API key:
+
+- **The switch.** On My settings' Grok Build and OpenCode cards, **Also use it for reviews of my pull requests** is on
+  once a sign-in is saved, unless the person turns it off (`POST /api/my/agent-auth/<agent>/reviews`, `woodshed config
+  set grok-reviews|opencode-reviews`). It needs the same checks as Codex's (`teamKeyReason`; never a bot). Picking the
+  agent on the Reviews card is what makes it review. The review keeps `review.ownSignIns`: whose sign-in and how
+  (`{grok: {login, via: 'key'|'login'}, opencode: {login, provider}}`), never the sign-in itself.
+- **Grok Build** runs with `XAI_API_KEY` set to the session's token and `GROK_MODELS_BASE_URL` at the console's
+  `/grok/v1`, which takes all its model traffic: `GET /v1/models`, `POST /v1/responses` (its session title) and `POST
+  /v1/chat/completions` (its turns), measured with grok 1.0.92. The proxy sends them on with the author's xAI key to
+  `api.x.ai/v1`, or with a login's access token to `cli-chat-proxy.grok.com/v1`, only while its `expires_at` is ahead:
+  the console never refreshes a login (`grokModels.mjs` says why), which a Grok session of theirs does at its stop.
+- **OpenCode** reviews only on an API key (`{type: 'api'}`) of Anthropic or OpenAI, the first of those the author's
+  `auth.json` has (`OPENCODE_REVIEW_PROVIDERS` in shared/agents.cjs), and the session gets `REVIEW_OPENCODE_PROVIDER`.
+  Its own config points that provider alone at the console's `/opencode/<provider>/v1` (its `baseURL`), with the
+  session's token as the key: `x-api-key` for Anthropic, a bearer for OpenAI. The proxy swaps it for the author's key,
+  to `api.anthropic.com` (`POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/models`) or `api.openai.com`
+  (`POST /v1/responses`, `GET /v1/models`). A login (`oauth`: Claude Pro or Max through OpenCode, ChatGPT,
+  Copilot) is never used: those rotate, and OpenCode's plugins reshape their calls in ways a proxy should not copy.
+  Other key providers (OpenRouter, Google and the rest) are left out until each has its upstream, header and paths
+  here. OpenCode picks its model itself, its default for that provider.
+
+Each call is checked as Codex's are: only a review session running that agent with an author's sign-in recorded, the
+switch and the sign-in read again at each call (one turned off, removed, expired, or an OpenCode key gone from
+`auth.json`, stops at once), the provider the review started on, and only those paths, in plain form, each with the
+one method it names and no query string. The rest get a 404, or a 405 for a known path asked with another method
+(`reviewAgentProxy: refused a call a review's agent does not need`, with the method and the path but never a query):
+the same path read with another method is another API, such as OpenAI's `GET /v1/chat/completions`, which lists every
+stored completion in the key's project. A private Grok or OpenCode session never comes
+here: it runs on its owner's own sign-in, directly.
+
+Each call's body is read too (up to 32 MB) and checked before the author's sign-in is read or added
+(`reviewAgentScope.mjs`). A model API takes in a body the IDs of what the author's account already holds, and reads it
+for the model: OpenAI's and xAI's `previous_response_id`, `conversation`, a stored `prompt`, an `item_reference`, a
+`file_id`, a `file_search` tool's vector stores or `code_interpreter`'s container; Anthropic's file sources,
+`container` and `mcp_servers`. The review's agent reads what anyone who can push to the pull request wrote, and can
+run commands with the session's token, so a prompt planted there could have it send one. The check is an allowlist,
+not a denylist: only the fields each agent was measured to send pass, at the top level and nested (input items,
+content blocks, tools), each object picked by its `type`, so a field a provider adds later is refused until it is
+measured and listed. Measured in the session image with a recording stand-in upstream (`reviewInImage.mjs`, whose
+`modelStandIn.mjs` prints each body's field names) over a turn with a tool call and the turn after it: grok 1.0.92
+sends its whole conversation to `/v1/chat/completions` each turn and calls `/v1/responses` once, for its title, with
+`store: false`; OpenCode 1.19.6 on OpenAI sends `store: false` and its reasoning items back by `encrypted_content`, with
+no `id`; on Anthropic, text, thinking, tool use and tool result blocks. None sends `previous_response_id` or any other ID
+of a stored object, so none passes, not even one the provider gave the same review: the only IDs that pass are the
+conversation's own tool call IDs, matched within the same body. A Responses body must carry `store: false`: left out,
+OpenAI and xAI store the response in the author's API project, where its members could read a private pull request's
+content, so it is refused (`field: 'store'`). Beyond what was measured, only what names nothing
+passes: an image given inline (base64, or a `data:` URL, never a URL or a file), a tool result's `is_error`,
+Anthropic's `redacted_thinking`. Tools are functions alone; a provider's own tools have a `type` of their own and are
+refused. A tool's schema and a tool call's arguments are the agent's own and not walked. A body that is not JSON gets a
+400, a compressed one a 415, one over the cap a 413, and a field not listed a 403 naming the field
+(`reviewAgentProxy: refused, a body a review's agent does not send`, with `path`, `why` and `field`, never a value).
+When an agent's update changes what it sends, its reviews fail on that 403: run `reviewInImage.mjs` on the new image
+(with `IN_IMAGE_OPENCODE_PROVIDER=openai` for OpenCode on OpenAI), read the fields it prints, and list the new ones
+that name nothing.
+Grok's conversation and session ids (`x-grok-conv-id`, `x-grok-session-id`, `x-grok-conv-group-id`, any
+`x-grok-…-id`), which xAI may keep state by, reach xAI as ids of the review's own (`scopedId`): a UUID made from the
+review session, the header and the id sent, with a key the console makes at start. The same id stays the same within a
+review, so its turns stay one conversation, and no id a session sends ever names a conversation outside it.
+
 
 The console logs:
 
 - `userSettings: reviews of my pull requests` with the `choice`;
-- `userSettings: own Codex sign-in for reviews` on each person's switch;
-- `fleet: review session started` with its `agents` and `codex` (`own ChatGPT login`, `own key` or `team key`);
+- `userSettings: own Codex sign-in for reviews`, `own Grok Build sign-in for reviews` and `own OpenCode sign-in for
+  reviews` on each person's switches;
+- `fleet: review session started` with its `agents` and `codex` (`own ChatGPT login`, `own key` or `team key`), and
+  `grok` (`own key` or `own login`) and `opencode` (`own anthropic key`, `own openai key`) for those that run;
 - `fleet: review runs other than the author chose` with `choice`, `agents` and `why`;
 - `fleet: review not started` with `reason: 'the author chose no code review'`;
 - `openaiProxy: first call on the author's ChatGPT login`, `on the author's key` or `on the team key`;
-- `openaiProxy: refused, the author's sign-in not usable` with `why`.
+- `openaiProxy: refused, the author's sign-in not usable` with `why`;
+- `reviewAgentProxy: first call on the author's Grok Build sign-in` (or `OpenCode`) with `via`;
+- `reviewAgentProxy: refused, the author's sign-in not usable` with `why`, `refused, not a review session`, `refused,
+  the review does not run it`, `refused, not the provider the review started on`, `refused, a body a review's agent
+  does not send` with `why` (`not JSON`, `compressed`, `too large`, `a field not allowed`) and the `field`, and
+  `upstream not reached`.
 
 In the session's pane: `Codex reviews on the author's ChatGPT login, which the console adds to its calls` or `on a key
 the console adds to its calls`, then `Codex ended (exit=…)`, and `Codex took longer than … minutes and was stopped`
-when it did. Codex's own log is at `.review/logs/codex.jsonl`.
+when it did. Codex's own log is at `.review/logs/codex.jsonl`. Grok Build and OpenCode say `Grok Build reviews on the
+author's own sign-in, which the console adds to its calls` or `OpenCode reviews on the author's own <provider> key`,
+then `… ended (exit=…)`, and what the console refused (`Grok Build: @<login>'s saved Grok Build login has expired`);
+their logs are `.review/logs/grok.jsonl` and `opencode.jsonl`. They take `REVIEW_AGENT_MINUTES` (Codex's by default),
+set in the installation's session env, which the ECS launcher passes on as it does `REVIEW_CODEX_MINUTES` (`PER_SESSION_ENV`).
 
 **A review asked for by hand.** `woodshed review start` (cli/README.md, "Reviewing your open pull requests now", and
 `woodshed setup`'s last review step) calls `POST /api/my/pulls/<number>/review` with the project's name, which the

@@ -6,6 +6,8 @@
 //   POST /api/my/terminal                    terminal
 //   POST /api/my/reviews                     reviews
 //   POST /api/my/codex-auth/reviews          codex-reviews
+//   POST /api/my/agent-auth/<agent>/reviews  grok-reviews and opencode-reviews (never the sign-in itself, which is the
+//                                            same path without /reviews, and stays on My settings)
 //   POST /api/my/claude-token/shared         claude-token-shared
 //   POST /api/my/projects/default            default-repo
 //   POST /api/my/github/identity             github-name and github-email
@@ -17,7 +19,7 @@ export const CLI_CONFIG_PATH = '/api/cli/config';
 
 export const CONFIG_ROUTES = Object.freeze([
   ['GET', /^\/api\/cli\/config$/],
-  ['POST', /^\/api\/my\/(terminal|reviews|codex-auth\/reviews|claude-token\/shared|projects\/default|github\/identity)$/],
+  ['POST', /^\/api\/my\/(terminal|reviews|codex-auth\/reviews|agent-auth\/(?:grok|opencode)\/reviews|claude-token\/shared|projects\/default|github\/identity)$/],
 ]);
 
 /** @returns {boolean}  one of the writes above */
@@ -38,6 +40,8 @@ export async function configView({ userSettings, projectsView }, login) {
     terminal: userSettings ? userSettings.terminal(login) : 'tmux',
     reviews: userSettings?.reviewAgents(login) ?? 'default',
     'codex-reviews': userSettings?.usesOwnCodexForReviews(login) ? 'on' : 'off',
+    'grok-reviews': userSettings?.usesOwnAgentForReviews?.(login, 'grok') ? 'on' : 'off',
+    'opencode-reviews': userSettings?.usesOwnAgentForReviews?.(login, 'opencode') ? 'on' : 'off',
     'claude-token-shared': userSettings?.usesOwnTokenForShared(login) ? 'on' : 'off',
     'default-repo': defaultProject ?? null,
     'github-name': github?.connected ? github.name ?? null : null,

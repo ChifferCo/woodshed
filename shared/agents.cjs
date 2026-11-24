@@ -5,8 +5,9 @@
 // Claude Code and Codex are the two the console can run on a team's credential, through its own proxies
 // (anthropicProxy.mjs, openaiProxy.mjs). The two others run only on their owner's own sign-in, saved on My settings as
 // `users/<login>/<agent>-auth` and handed to that person's private sessions alone (sessionApi.mjs, /settings): never to a
-// shared session, a question from Slack, a QA run or a review, which hold no one's sign-in. That is why they review
-// nothing either: a review is a shared session.
+// shared session, a question from Slack, a QA run or a review, which hold no one's sign-in. A review of a person's own
+// pull request may still run them on that person's sign-in (console/reviewAgents.mjs), as Codex's does: the console's
+// proxy adds it to each call (console/reviewAgentProxy.mjs), and the review session holds only its own token.
 (function (root, factory) {
   const agents = factory();
   if (typeof module === 'object' && module.exports) module.exports = agents;
@@ -87,7 +88,7 @@
       permissionModes: ['auto', 'acceptEdits', 'plan', 'default'],
       // Its own modes of Claude Code's names (grok --help: default, acceptEdits, plan), and --always-approve for auto.
       modeRanks: { plan: RANKS.readOnly, default: RANKS.asksFirst, acceptEdits: RANKS.edits, auto: RANKS.everything },
-      efforts: ['', 'low', 'medium', 'high', 'xhigh', 'max'], modelHint: 'grok-build', modelRe: MODEL_NAME, reviews: false,
+      efforts: ['', 'low', 'medium', 'high', 'xhigh', 'max'], modelHint: 'grok-build', modelRe: MODEL_NAME, reviews: true,
       usageUrl: 'https://grok.com/build', docsUrl: 'https://docs.x.ai/build/overview',
     },
     opencode: {
@@ -106,7 +107,7 @@
       // which answers every ask itself.
       modeRanks: { plan: RANKS.readOnly, default: RANKS.asksFirst, acceptEdits: RANKS.edits, auto: RANKS.everything },
       modeWords: { default: 'Asks before edits and commands' },
-      efforts: ['', 'low', 'medium', 'high', 'max'], modelHint: 'anthropic/claude-sonnet-4-5', modelRe: PROVIDER_MODEL, reviews: false,
+      efforts: ['', 'low', 'medium', 'high', 'max'], modelHint: 'anthropic/claude-sonnet-4-5', modelRe: PROVIDER_MODEL, reviews: true,
       usageUrl: null, docsUrl: 'https://opencode.ai/docs',
     },
   };
@@ -115,6 +116,44 @@
   const AGENT_IDS = Object.freeze(Object.keys(AGENTS));
   /** The agents that run only on their owner's own sign-in. */
   const OWN_SIGN_IN_AGENTS = Object.freeze(AGENT_IDS.filter((id) => AGENTS[id].signIn));
+  /** The agents that may review a pull request, in the order a review's comment names them. */
+  const REVIEW_AGENT_IDS = Object.freeze(AGENT_IDS.filter((id) => AGENTS[id].reviews));
+  /**
+   * The OpenCode providers a review may run on, in the order one is picked from the author's auth.json: an API key
+   * (`{type: 'api'}`) for a provider whose API the console's proxy forwards as it is, with the key in a known header.
+   * Never a login (`oauth`): those rotate, and OpenCode's plugins reshape their calls in ways no proxy should copy.
+   */
+  const OPENCODE_REVIEW_PROVIDERS = Object.freeze(['anthropic', 'openai']);
+  // Who reviews a person's pull requests, as a choice is saved and typed (console/reviewAgents.mjs, `woodshed config set
+  // reviews`): a name for the choices from before Grok Build and OpenCode reviewed, and otherwise the reviewers' ids
+  // joined with `+` in the order above, such as `claude+grok`.
+  const REVIEW_PRESETS = Object.freeze({ none: [], claude: ['claude'], codex: ['codex'], both: ['claude', 'codex'] });
+
+  /**
+   * The reviewers a choice names, in the registry's order, or null for anything that is not a choice. Takes the ids in
+   * any order (`grok+claude`), each once.
+   * @param {unknown} choice
+   * @returns {string[]|null}
+   */
+  function reviewersOf(choice) {
+    if (typeof choice !== 'string' || !choice) return null;
+    if (Object.hasOwn(REVIEW_PRESETS, choice)) return [...REVIEW_PRESETS[choice]];
+    const ids = choice.split('+');
+    if (ids.some((id) => !REVIEW_AGENT_IDS.includes(id)) || new Set(ids).size !== ids.length) return null;
+    return REVIEW_AGENT_IDS.filter((id) => ids.includes(id));
+  }
+
+  /**
+   * The choice that names these reviewers, as it is saved: a preset's name where one fits, else the ids joined.
+   * @param {string[]} reviewers  ids of agents that review
+   * @returns {string}
+   */
+  function reviewChoiceOf(reviewers) {
+    const ids = REVIEW_AGENT_IDS.filter((id) => reviewers.includes(id));
+    const preset = Object.keys(REVIEW_PRESETS).find((name) => REVIEW_PRESETS[name].join('+') === ids.join('+'));
+    return preset ?? ids.join('+');
+  }
+
   /** Every name tmux or hc gives the agent's program, whichever agent it is. */
   const PROCESS_NAMES = Object.freeze([...new Set(AGENT_IDS.flatMap((id) => AGENTS[id].processNames))]);
 
@@ -210,5 +249,5 @@
     return require('node:crypto').createHash('sha256').update(canonical).digest('hex');
   }
 
-  return { AGENTS, AGENT_IDS, RANKS, modeForStartedSession, OWN_SIGN_IN_AGENTS, PROCESS_NAMES, isAgent, agent, agentOfSession, modelShapeOk, checkSignIn, signInDigest };
+  return { AGENTS, AGENT_IDS, RANKS, modeForStartedSession, OWN_SIGN_IN_AGENTS, REVIEW_AGENT_IDS, OPENCODE_REVIEW_PROVIDERS, REVIEW_PRESETS, reviewersOf, reviewChoiceOf, PROCESS_NAMES, isAgent, agent, agentOfSession, modelShapeOk, checkSignIn, signInDigest };
 });

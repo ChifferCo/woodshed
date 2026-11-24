@@ -19,6 +19,8 @@
 //                        for that agent, and 409 with none saved
 //   *    /anthropic/...  claude's calls to Anthropic, the real credential added here (anthropicProxy.mjs)
 //   *    /openai/...     a Codex session's calls to OpenAI on the team key, added here (openaiProxy.mjs)
+//   *    /grok/..., /opencode/...   a review's Grok Build and OpenCode calls, on its author's own sign-in, added here
+//                         (reviewAgentProxy.mjs)
 //   POST /codex-auth     a Codex session's refreshed ~/.codex/auth.json, kept for its owner's next session
 //   POST /agent-auth     a private Grok Build or OpenCode session's refreshed login (shared/agents.cjs, `rotates`), kept
 //                        as its owner's own sign-in for their next session
@@ -81,6 +83,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { isAnthropicPath, proxyCredential } from './anthropicProxy.mjs';
 import { isMcpPath } from './mcpRelay.mjs';
 import { bearerOf, isOpenAiPath } from './openaiProxy.mjs';
+import { isReviewAgentPath, reviewAgentTokenOf } from './reviewAgentProxy.mjs';
 import { MAX_ANSWER_CHARS, MAX_ISSUE_BODY_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
 import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
@@ -128,6 +131,7 @@ export function sessionTokenOf(req) {
   // The MCP relay takes the session token as a bearer, as every other route does.
   if (isMcpPath(pathname)) return /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? null;
   if (isOpenAiPath(pathname)) return bearerOf(req.headers);
+  if (isReviewAgentPath(pathname)) return reviewAgentTokenOf(req.headers);
   return /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? null;
 }
 
@@ -172,7 +176,7 @@ export function sessionForToken(given, sessions) {
  */
 export function createSessionApi({
   fleet, tokens, userSettings = null, githubUser = null, homes = null, databases = null, claudeSettings = null, anthropic = null, openai = null,
-  attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, repoSettings = null, sessionStarts = null,
+  reviewAgentProxy = null, attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, repoSettings = null, sessionStarts = null,
   ownerTokenRepos = null, mcpRelay = null, egress = null,
 }) {
   // The access last logged for each session: a session asks for a token on every git and gh call, so the decision is
@@ -211,6 +215,7 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
+    if (reviewAgentProxy?.isProxyPath(pathname)) return reviewAgentProxy.handle(req, res, sessionForToken(reviewAgentTokenOf(req.headers), fleet.sessions()));
     if (isMcpPath(pathname)) {
       if (!mcpRelay) {
         req.resume();

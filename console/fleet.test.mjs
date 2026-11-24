@@ -3072,6 +3072,24 @@ test('a review runs whom its author chose, and says so on the pull request', asy
   assert.match(codex.calls.comments[0].body, /Reviewing\*\* with Codex in/);
 });
 
+test('a review on its author\'s Grok Build and OpenCode sign-ins records whose they are, and the session gets none of them', async (t) => {
+  const lines = [];
+  t.mock.method(console, 'log', (...args) => lines.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')));
+  const ownSignIns = { grok: { login: 'joel', via: 'login' }, opencode: { login: 'joel', provider: 'openai' } };
+  const { fleet, calls } = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['claude', 'grok', 'opencode'], choice: 'claude+grok+opencode', ownSignIns, why: null }) } });
+  await fleet.reviewOnTag({ number: 7 });
+  const [session] = fleet.sessions();
+  assert.deepEqual(session.review.ownSignIns, ownSignIns);
+  await fleet.tick();
+  const env = calls.started[0].env;
+  assert.equal(env.REVIEW_AGENTS, 'claude grok opencode');
+  assert.equal(env.REVIEW_OPENCODE_PROVIDER, 'openai', 'which provider its config points at the console');
+  assert.equal(env.REVIEW_CODEX_AUTH, undefined);
+  assert.ok(!Object.keys(env).some((k) => /XAI_API_KEY|AGENT_AUTH|GROK|OPENAI_API_KEY|ANTHROPIC_API_KEY/.test(k)), 'no sign-in in the session');
+  assert.match(calls.comments[0].body, /Reviewing\*\* with Claude Code, Grok Build and OpenCode in/);
+  assert.ok(lines.some((l) => l.includes('fleet: review session started') && l.includes('"grok":"own login"') && l.includes('"opencode":"own openai key"')));
+});
+
 test('team keys that could not be read start no review and skip nothing: QA and the Slack post keep waiting', async () => {
   const unread = { forReview: async () => ({ agents: [], choice: null, why: 'the team keys could not be read: timed out', keysUnread: true }) };
   const gates = { ...QA_GATES, review: { ...PULL_GATES.review, rerun: '[woodshed-review]', runner: 'woodshed' } };

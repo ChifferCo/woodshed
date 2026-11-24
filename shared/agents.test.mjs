@@ -8,12 +8,14 @@ const agents = require('./agents.cjs');
 test('every agent is listed, Claude Code first, and only the new two need an own sign-in', () => {
   assert.deepEqual(agents.AGENT_IDS, ['claude', 'codex', 'grok', 'opencode']);
   assert.deepEqual(agents.OWN_SIGN_IN_AGENTS, ['grok', 'opencode']);
+  assert.deepEqual(agents.REVIEW_AGENT_IDS, ['claude', 'codex', 'grok', 'opencode']);
   for (const id of agents.AGENT_IDS) {
     const a = agents.agent(id);
     assert.equal(a.id, id);
     assert.ok(a.processNames.includes(a.command), `${id}: its command is one of its process names`);
-    // Only the agents the console has a proxy for may run where no one's sign-in may go: reviews and shared sessions.
-    assert.equal(a.reviews, a.teamCredential);
+    // Every agent reviews: the two on no team credential only on the author's own sign-in, which the console's proxy adds
+    // (console/reviewAgentProxy.mjs), never handed to the review.
+    assert.equal(a.reviews, true);
     assert.equal(Boolean(a.signIn), !a.teamCredential);
     assert.ok(a.permissionModes.includes('auto'));
   }

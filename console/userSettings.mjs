@@ -28,8 +28,12 @@ import { SETTINGS, settingProblem } from './consoleSettings.mjs';
 import agents from '../shared/agents.cjs';
 const { loginKey } = logins;
 
-// Who may review a person's pull requests, as reviewAgents.mjs reads it.
-const REVIEW_CHOICES = ['none', 'claude', 'codex', 'both'];
+// Who may review a person's pull requests, as reviewAgents.mjs reads it: a preset's name, or reviewers joined with `+`
+// (shared/agents.cjs, reviewersOf), kept as reviewChoiceOf writes it.
+const reviewChoice = (choice) => {
+  const reviewers = agents.reviewersOf(choice);
+  return reviewers ? agents.reviewChoiceOf(reviewers) : null;
+};
 // What the person's private sessions run their agent in (session/agentPane.mjs): tmux, as every session does, or Herdr's
 // terminal runtime, which their own Herdr can attach to. tmux is the default, and the only one for every other session.
 export const TERMINALS = Object.freeze(['tmux', 'herdr']);
@@ -242,7 +246,10 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
       agentAuth: Object.fromEntries(agents.OWN_SIGN_IN_AGENTS.map((id) => [id, { set: Boolean(record?.agentAuthAt?.[id]), savedAt: record?.agentAuthAt?.[id] ?? null }])),
       ownTokenForShared: record?.ownTokenForShared !== false,
       ownCodexForReviews: record?.ownCodexForReviews !== false,
-      reviewAgents: REVIEW_CHOICES.includes(record?.reviewAgents) ? record.reviewAgents : null,
+      // Whether reviews of their pull requests may run Grok Build and OpenCode on their own sign-in (reviewAgents.mjs).
+      ownAgentForReviews: Object.fromEntries(agents.OWN_SIGN_IN_AGENTS.filter((id) => agents.agent(id).reviews)
+        .map((id) => [id, usesOwnAgentForReviews(login, id)])),
+      reviewAgents: reviewChoice(record?.reviewAgents),
       terminal: terminal(login),
       limits: { ...record?.limits },
       github: { connected: Boolean(github?.connectedAt), connectedAt: github?.connectedAt ?? null, name: github?.name ?? null, email: github?.email ?? null },
@@ -489,20 +496,43 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   /**
-   * Who reviews this person's pull requests (reviewAgents.mjs): none, claude, codex or both, or null for the most this
-   * console can run, which is the default.
+   * The switch on the Grok Build and OpenCode cards: whether reviews of this person's pull requests may run that agent on
+   * their own sign-in, when they pick it on the Reviews card. On once a sign-in is saved, unless they turned it off, as
+   * Codex's is: picking the agent on the Reviews card is what makes it review. The sign-in never goes into the review
+   * session: the console's proxy adds it to the agent's calls (reviewAgentProxy.mjs).
+   * @throws {Error}  shown on the page, when it is turned on with no sign-in saved
+   */
+  function setOwnAgentForReviews(login, id, on) {
+    const agent = ownSignInAgent(id);
+    if (!agent.reviews) throw Object.assign(new Error(`${agent.product} does not review`), { shown: true });
+    if (on && !recordFor(login)?.agentAuthAt?.[id]) throw Object.assign(new Error(`save your ${agent.product} sign-in first`), { shown: true });
+    touch(login, { ownAgentForReviews: { ...recordFor(login)?.ownAgentForReviews, [id]: Boolean(on) } });
+    console.log(`userSettings: own ${agent.product} sign-in for reviews`, { login, agent: id, on: Boolean(on) });
+  }
+
+  /** @returns {boolean}  the switch is on and a sign-in is saved */
+  function usesOwnAgentForReviews(login, id) {
+    const record = recordFor(login);
+    return Boolean(agents.OWN_SIGN_IN_AGENTS.includes(id) && record?.ownAgentForReviews?.[id] !== false && record?.agentAuthAt?.[id]);
+  }
+
+  /**
+   * Who reviews this person's pull requests (reviewAgents.mjs): none, claude, codex or both, or any reviewers joined with
+   * `+` (claude+grok), or null for the most this console can run, which is the default.
    * @throws {Error}  shown on the page, for anything else
    */
   function setReviewAgents(login, choice) {
-    if (choice !== null && !REVIEW_CHOICES.includes(choice)) throw Object.assign(new Error(`reviews must be one of ${REVIEW_CHOICES.join(', ')}`), { shown: true, status: 400 });
-    touch(login, { reviewAgents: choice });
-    console.log('userSettings: reviews of my pull requests', { login, choice: choice ?? 'the most there is' });
+    const saved = choice === null ? null : reviewChoice(choice);
+    if (choice !== null && !saved) {
+      throw Object.assign(new Error(`reviews must be one of ${Object.keys(agents.REVIEW_PRESETS).join(', ')}, or reviewers joined with + (${agents.REVIEW_AGENT_IDS.join(', ')}), such as claude+grok`), { shown: true, status: 400 });
+    }
+    touch(login, { reviewAgents: saved });
+    console.log('userSettings: reviews of my pull requests', { login, choice: saved ?? 'the most there is' });
   }
 
   /** @returns {string|null}  the person's saved choice, or null for the default */
   function reviewAgents(login) {
-    const saved = recordFor(login)?.reviewAgents;
-    return REVIEW_CHOICES.includes(saved) ? saved : null;
+    return reviewChoice(recordFor(login)?.reviewAgents);
   }
 
   /**
@@ -559,7 +589,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   return {
-    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setAgentAuth, removeAgentAuth, agentAuth, agentAuthTurn, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setReviewAgents, reviewAgents, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
+    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setAgentAuth, removeAgentAuth, agentAuth, agentAuthTurn, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setOwnAgentForReviews, usesOwnAgentForReviews, setReviewAgents, reviewAgents, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }

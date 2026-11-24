@@ -1287,6 +1287,16 @@ test('the agent runs in Herdr only in a private session whose owner picked it, a
   }
 });
 
+test('a review that Grok Build or OpenCode reviews in still runs review.sh in tmux, and never the agent on a sign-in of its own', () => {
+  const start = fn('startAgent').replaceAll('/tmp/', '$HOME/');
+  for (const agents of ['claude grok', 'grok opencode']) {
+    const { calls } = agentTerminalRun({ mode: 'review', kind: '', env: { REVIEW_AGENTS: agents, SESSION_DIR: '/opt/woodshed/session', WOODSHED_TERMINAL: 'tmux' }, body: `${start}\nstartAgent` });
+    assert.equal(calls, 'tmux send-keys -t claude SESSION_DIR=/opt/woodshed/session bash /opt/woodshed/session/review.sh Enter\n', agents);
+  }
+  // A review session gets nobody's sign-in: the console's proxy adds the author's to its calls (reviewAgentProxy.mjs).
+  assert.doesNotMatch(fn('startAgent'), /configureGrok|configureOpencode|agentAuth/);
+});
+
 test('the owner\'s terminal comes from the /settings answer, read where the other own settings are', () => {
   const fetch = fn('fetchOwnerSettings');
   assert.match(fetch, /OWNER_TERMINAL=\$\(jq -r '\.terminal \/\/ empty' <<< "\$answer"\)/);

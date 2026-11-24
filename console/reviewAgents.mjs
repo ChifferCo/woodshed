@@ -1,20 +1,75 @@
 // Who reviews a pull request in a review session (pullRequests.review.runner: woodshed), as its author chose on My
-// settings' Reviews card: no review, Claude Code, Codex, or both, whose verdicts become one
+// settings' Reviews card: no review, or any of Claude Code, Codex, Grok Build and OpenCode, whose verdicts become one
 // (shared/codeReview/codeReview.mjs, mergeVerdicts). A choice is offered only while something can run it:
 //
 //   Claude Code   the team's anthropic-api-key, or the author's own Claude token while they run shared sessions on it
 //   Codex         the team's openai-api-key, or the author's own Codex sign-in while they use it for reviews
+//   Grok Build    the author's own Grok sign-in (an xAI key, or a login that has not expired) while they use it for
+//                 reviews. There is no team key for it
+//   OpenCode      the author's own OpenCode sign-ins while they use them for reviews, and only an API key of a provider
+//                 the proxy forwards (shared/agents.cjs, OPENCODE_REVIEW_PROVIDERS). There is no team key for it either
 //
-// With no choice saved, a review runs the most it can: both, else the one there is, else none. A saved choice that can
-// no longer run (a key removed since) falls back the same way, and says why. Either way the console's proxies add the
-// credential to each call (anthropicProxy.mjs, openaiProxy.mjs): no sign-in enters the review session.
-// The choice itself is kept with the person's settings (userSettings.mjs, reviewAgents).
+// With no choice saved, a review runs the most Claude Code and Codex can: both, else the one there is, else none. Grok
+// Build and OpenCode review only when the author picks them. A saved choice that can no longer run (a key removed, a
+// sign-in turned off or expired since) keeps what of it can, else falls back the same way, and says why. Either way the
+// console's proxies add the credential to each call (anthropicProxy.mjs, openaiProxy.mjs, reviewAgentProxy.mjs): no
+// sign-in enters the review session. The choice itself is kept with the person's settings (userSettings.mjs,
+// reviewAgents), as shared/agents.cjs names it (`both`, or ids joined with `+`).
 import { credentialOf } from './codexModels.mjs';
+import { credentialOf as grokCredentialOf } from './grokModels.mjs';
+import agentsRegistry from '../shared/agents.cjs';
 
-export const CHOICES = ['none', 'claude', 'codex', 'both'];
-const AGENTS_OF = { none: [], claude: ['claude'], codex: ['codex'], both: ['claude', 'codex'] };
+export const CHOICES = Object.keys(agentsRegistry.REVIEW_PRESETS);
+/** The agents a review may run on its author's own sign-in alone: no team key runs them. */
+export const OWN_ONLY_REVIEWERS = Object.freeze(agentsRegistry.REVIEW_AGENT_IDS.filter((id) => agentsRegistry.OWN_SIGN_IN_AGENTS.includes(id)));
 
-/** The most a review can run with these: both, else the one there is, else none. */
+/**
+ * The OpenCode provider a review runs on, from the author's auth.json: the first of OPENCODE_REVIEW_PROVIDERS saved
+ * with an API key. Never a login: see shared/agents.cjs.
+ * @param {string|null} saved  the auth.json as saved (checkSignIn)
+ * @returns {{provider: string, key: string}|null}
+ */
+export function opencodeReviewCredential(saved) {
+  if (typeof saved !== 'string' || !saved.startsWith('{')) return null;
+  let auth;
+  try {
+    auth = JSON.parse(saved);
+  } catch {
+    return null;
+  }
+  if (!auth || typeof auth !== 'object') return null;
+  for (const provider of agentsRegistry.OPENCODE_REVIEW_PROVIDERS) {
+    const entry = Object.hasOwn(auth, provider) ? auth[provider] : null;
+    if (entry?.type === 'api' && typeof entry.key === 'string' && /^[\x21-\x7e]{8,500}$/.test(entry.key)) return { provider, key: entry.key };
+  }
+  return null;
+}
+
+/**
+ * How a review's grok or opencode reaches the author's own sign-in, if it can: what the proxy will add, and what the
+ * fleet records (`via` for grok, `provider` for opencode); else why not.
+ * @param {string} id  grok or opencode
+ * @param {string|null} saved
+ * @returns {{via?: 'key'|'login', provider?: string, base?: string, authorization?: string, key?: string}|{why: string}}
+ */
+export function ownReviewCredential(id, saved, now = Date.now()) {
+  if (!saved) return { why: `the author has no ${agentsRegistry.agent(id).product} sign-in saved` };
+  if (id === 'grok') {
+    const cred = grokCredentialOf(saved, now);
+    if (!cred) return { why: 'the author\'s saved Grok Build sign-in has no token' };
+    if (cred.expired) return { why: 'the author\'s saved Grok Build login has expired' };
+    // A login whose end is not known is not offered: the console never refreshes one, so a review could start on a login
+    // that has already ended and spend its run on refusals.
+    if (cred.source === 'login' && cred.expiresAt === null) return { why: 'the author\'s saved Grok Build login does not say when it expires' };
+    if (!/^[\x21-\x7e]+ [\x21-\x7e]+$/.test(cred.authorization)) return { why: 'the author\'s saved Grok Build sign-in has a token that cannot be sent' };
+    return { via: cred.source, base: cred.base, authorization: cred.authorization };
+  }
+  const cred = opencodeReviewCredential(saved);
+  if (!cred) return { why: `the author's saved OpenCode sign-ins have no API key of ${agentsRegistry.OPENCODE_REVIEW_PROVIDERS.join(' or ')}, which a review runs on` };
+  return cred;
+}
+
+/** The most a review can run with these, when its author chose nothing: both, else the one there is, else none. */
 export function bestChoice({ claude, codex }) {
   if (claude && codex) return 'both';
   if (claude) return 'claude';
@@ -24,7 +79,9 @@ export function bestChoice({ claude, codex }) {
 /**
  * @param {{connected: () => Promise<{claude: boolean, codex: boolean}>,
  *          userSettings?: {reviewAgents: (login: string) => string|null, usesOwnTokenForShared: (login: string) => boolean,
- *            usesOwnCodexForReviews: (login: string) => boolean, codexAuth: (login: string) => Promise<string|null>}|null,
+ *            usesOwnCodexForReviews: (login: string) => boolean, codexAuth: (login: string) => Promise<string|null>,
+ *            usesOwnAgentForReviews?: (login: string, id: string) => boolean,
+ *            agentAuth?: (login: string, id: string) => Promise<string|null>}|null,
  *          now?: () => number}} deps
  *   `connected` says whether the console has each team key: Anthropic's and OpenAI's
  */
@@ -50,41 +107,72 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
     }
   }
 
+  // The author's own sign-in for an agent with no team key (Grok Build, OpenCode), when they use it for reviews and it
+  // can still be used: what the review records of it (never the credential itself), else why not. `off` says they did
+  // not turn it on for reviews, or saved none, which is no failure.
+  async function ownAgent(login, id) {
+    const product = agentsRegistry.agent(id).product;
+    if (!login || !userSettings?.usesOwnAgentForReviews?.(login, id)) return { use: null, off: true, why: `the author has no ${product} sign-in on for reviews` };
+    try {
+      const cred = ownReviewCredential(id, await userSettings.agentAuth(login, id), now());
+      if (cred.why) return { use: null, why: cred.why };
+      return { use: id === 'grok' ? { login, via: cred.via } : { login, provider: cred.provider }, why: null };
+    } catch (err) {
+      return { use: null, unread: true, why: `the author's ${product} sign-in could not be read: ${String(err?.message ?? err).split('\n')[0]}` };
+    }
+  }
+
+  async function ownAgents(login) {
+    return Object.fromEntries(await Promise.all(OWN_ONLY_REVIEWERS.map(async (id) => [id, await ownAgent(login, id)])));
+  }
+
   /**
-   * What `login` may choose from, and what they get with no choice saved.
+   * What `login` may choose from, and what they get with no choice saved. `ownWhy` says, for Grok Build and OpenCode
+   * turned on for reviews, why one cannot run now (an expired login, no provider a review runs on).
    * @param {string|null} login  null for nobody's own sign-ins: team keys only
    */
   async function options(login) {
     const team = await teamKeys();
+    const others = await ownAgents(login);
     const own = { claude: Boolean(login && userSettings?.usesOwnTokenForShared(login)), codex: Boolean((await ownCodex(login)).cred) };
+    for (const id of OWN_ONLY_REVIEWERS) own[id] = Boolean(others[id].use);
     const available = { claude: team.claude || own.claude, codex: team.codex || own.codex };
-    return { available, own, best: bestChoice(available) };
+    for (const id of OWN_ONLY_REVIEWERS) available[id] = own[id];
+    const ownWhy = Object.fromEntries(OWN_ONLY_REVIEWERS.map((id) => [id, others[id].use || others[id].off ? null : others[id].why]));
+    return { available, own, ownWhy, best: bestChoice(available) };
   }
 
   /**
    * The agents a review of `login`'s pull request runs, starting now. `codexLogin` when Codex runs on that person's own
    * sign-in, `codexVia` how the session's codex reaches its credential (`chatgpt` for a ChatGPT login, `key` for an API
-   * key, the author's or the team's) with `codexAccount` for a ChatGPT login, `choice` what they chose (null for none
-   * saved), `why` when what runs is not what they chose, or not on their own sign-in, and `keysUnread` when the team
-   * keys or the author's own Codex sign-in could not be read: then what runs is a guess, and no review is not a choice
-   * anyone made.
+   * key, the author's or the team's) with `codexAccount` for a ChatGPT login, `ownSignIns` for Grok Build and OpenCode
+   * (only ever on their author's own sign-in: `{grok: {login, via: 'key'|'login'}, opencode: {login, provider}}`, for
+   * those that run), `choice` what they chose (null for none saved), `why` when what runs is not what they chose, or
+   * not on their own sign-in, and `keysUnread` when the team keys or the author's own sign-ins could not be read: then
+   * what runs is a guess, and no review is not a choice anyone made.
    * @param {{login?: string|null}} [args]  the pull request's author, or null when nobody's own sign-in may be used
    * @returns {Promise<{agents: string[], choice: string|null, codexLogin: string|null, codexVia: 'chatgpt'|'key'|null,
-   *   codexAccount?: string, why: string|null, keysUnread: boolean}>}
+   *   codexAccount?: string, ownSignIns?: Record<string, {login: string, via?: string, provider?: string}>, why: string|null,
+   *   keysUnread: boolean}>}
    */
   async function forReview({ login = null } = {}) {
     const team = await teamKeys();
     const codexOwn = await ownCodex(login);
+    const others = await ownAgents(login);
     const claudeOwn = Boolean(login && userSettings?.usesOwnTokenForShared(login));
     const available = { claude: team.claude || claudeOwn, codex: team.codex || Boolean(codexOwn.cred) };
+    for (const id of OWN_ONLY_REVIEWERS) available[id] = Boolean(others[id].use);
     const saved = login ? userSettings?.reviewAgents?.(login) ?? null : null;
-    const choice = CHOICES.includes(saved) ? saved : null;
+    const chosen = agentsRegistry.reviewersOf(saved);
+    const choice = chosen ? saved : null;
     const why = [];
-    let agents = AGENTS_OF[choice ?? bestChoice(available)];
-    if (choice && agents.some((a) => !available[a])) {
+    let agents = chosen ?? agentsRegistry.REVIEW_PRESETS[bestChoice(available)];
+    if (chosen && agents.some((a) => !available[a])) {
       const left = agents.filter((a) => available[a]);
-      agents = left.length ? left : AGENTS_OF[bestChoice(available)];
       why.push(`the author chose ${choice}, which this console cannot run now`);
+      // Grok Build and OpenCode run on nothing but the author's own sign-in: why each was left out.
+      for (const id of agents.filter((a) => !available[a] && OWN_ONLY_REVIEWERS.includes(a))) why.push(`${agentsRegistry.agent(id).product} left out: ${others[id].why}`);
+      agents = left.length ? left : agentsRegistry.REVIEW_PRESETS[bestChoice(available)];
     }
     if (team.why) why.push(team.why);
     let codex = { codexLogin: null, codexVia: null };
@@ -97,9 +185,14 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
         if (codexOwn.why) why.push(codexOwn.why);
       }
     }
-    // An own sign-in that could not be read counts as unread too, whether or not Codex was left out for it.
-    if (codexOwn.unread && !why.includes(codexOwn.why)) why.push(codexOwn.why);
-    return { agents, choice, ...codex, why: why.length ? why.join('; ') : null, keysUnread: Boolean(team.why || codexOwn.unread) };
+    const ownSignIns = Object.fromEntries(OWN_ONLY_REVIEWERS.filter((id) => agents.includes(id)).map((id) => [id, others[id].use]));
+    // An own sign-in that could not be read counts as unread too, whether or not its agent was left out for it.
+    const unread = [codexOwn, ...Object.values(others)].filter((o) => o.unread);
+    for (const o of unread) if (!why.some((w) => w.endsWith(o.why))) why.push(o.why);
+    return {
+      agents, choice, ...codex, ...(Object.keys(ownSignIns).length ? { ownSignIns } : {}),
+      why: why.length ? why.join('; ') : null, keysUnread: Boolean(team.why || unread.length),
+    };
   }
 
   return { forReview, options };

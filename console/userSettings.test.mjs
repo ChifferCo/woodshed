@@ -147,6 +147,33 @@ test('the switch for reviews on your own Codex sign-in is on by default once one
   assert.equal(settings.usesOwnCodexForReviews('joel'), false, 'no sign-in, no effect');
 });
 
+test('the switches for reviews on your own Grok Build and OpenCode sign-ins work as Codex\'s, each its own', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: fakeSecrets() });
+  assert.equal(settings.usesOwnAgentForReviews('joel', 'grok'), false, 'nothing saved, nothing used');
+  assert.throws(() => settings.setOwnAgentForReviews('joel', 'grok', true), /save your Grok Build sign-in first/);
+  assert.throws(() => settings.setOwnAgentForReviews('joel', 'codex', true), /no own sign-in for codex/);
+  await settings.setAgentAuth('joel', 'grok', 'xai-made-up-joel-0123456789');
+  assert.deepEqual(settings.view('joel').ownAgentForReviews, { grok: true, opencode: false }, 'on by default once saved');
+  settings.setOwnAgentForReviews('joel', 'grok', false);
+  assert.deepEqual([settings.view('joel').ownAgentForReviews.grok, settings.usesOwnAgentForReviews('Joel', 'grok')], [false, false], 'turned off');
+  settings.setOwnAgentForReviews('joel', 'grok', true);
+  await settings.removeAgentAuth('joel', 'grok');
+  assert.equal(settings.usesOwnAgentForReviews('joel', 'grok'), false, 'no sign-in, no effect');
+});
+
+test('a review choice is a preset or reviewers joined with +, saved in the registry\'s order', (t) => {
+  t.mock.method(console, 'log', () => {});
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: fakeSecrets() });
+  settings.setReviewAgents('joel', 'opencode+claude');
+  assert.equal(settings.reviewAgents('joel'), 'claude+opencode');
+  settings.setReviewAgents('joel', 'codex+claude');
+  assert.equal(settings.reviewAgents('joel'), 'both', 'a preset\'s name where one fits');
+  assert.throws(() => settings.setReviewAgents('joel', 'grok+mystery'), (err) => err.status === 400 && /reviewers joined with \+/.test(err.message));
+  settings.setReviewAgents('joel', null);
+  assert.equal(settings.reviewAgents('joel'), null);
+});
+
 test('My settings\' files are tmux-conf and three dotfiles: an env file\'s own lines are Repo settings', async () => {
   const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: fakeSecrets() });
   const view = settings.view('mia');
