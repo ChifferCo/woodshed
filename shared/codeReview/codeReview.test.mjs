@@ -262,6 +262,21 @@ test('a reviewer that wrote no verdict is left out and named; with neither there
   assert.equal(mergeVerdicts([{ name: 'Claude Code', verdict: verdictOf(null) }, { name: 'Codex', verdict: verdictOf(null) }]).conclusion, null);
 });
 
+test('a panel of three or more that lost a reviewer says so after the sections of those that finished', () => {
+  const merged = mergeVerdicts([
+    { name: 'Claude Code', verdict: verdictOf('APPROVE') },
+    { name: 'Grok Build', verdict: verdictOf('COMMENT') },
+    { name: 'OpenCode', verdict: verdictOf(null, { tier: null }) },
+  ]);
+  assert.equal(merged.conclusion, 'COMMENT');
+  assert.ok(merged.comment.startsWith('### Claude Code: APPROVE\n\nAPPROVE comment\n\n### Grok Build: COMMENT\n\nCOMMENT comment'));
+  for (const field of ['comment', 'summary']) {
+    assert.ok(merged[field].endsWith('\n\nOpenCode wrote no verdict, so this is Claude Code and Grok Build\'s alone.'), field);
+  }
+  const whole = mergeVerdicts([{ name: 'Claude Code', verdict: verdictOf('APPROVE') }, { name: 'Grok Build', verdict: verdictOf('APPROVE') }]);
+  assert.doesNotMatch(whole.comment, /wrote no verdict/, 'a whole panel has no note');
+});
+
 test('the inline comments stay within what the console posts, half each when both wrote many', () => {
   const many = (n) => Array.from({ length: n }, (_, i) => ({ path: 'a.js', line: i + 1, body: `c${i}` }));
   const merged = mergeVerdicts([

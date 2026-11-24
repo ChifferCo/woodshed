@@ -165,9 +165,11 @@ export function mergeVerdicts(reviews, { authors = new Map() } = {}) {
   const missingNote = missing.length ? `${missing.join(' and ')} wrote no verdict, so this is ${done.map((r) => r.name).join(' and ')}'s alone.` : '';
   const conclusion = done.map((r) => r.verdict.conclusion).reduce((a, b) => (STRICTNESS[b] > STRICTNESS[a] ? b : a));
   const mergeRisk = combinedMergeRisk(done);
-  const sections = (field) => done.length === 1
-    ? [done[0].verdict[field], missingNote].filter(Boolean).join('\n\n')
-    : done.filter((r) => r.verdict[field]).map((r) => `### ${r.name}: ${r.verdict.conclusion}\n\n${r.verdict[field]}`).join('\n\n');
+  // The note goes after every reviewer's section too, so a partial run of three or more reads as one.
+  const sections = (field) => [
+    ...(done.length === 1 ? [done[0].verdict[field]] : done.filter((r) => r.verdict[field]).map((r) => `### ${r.name}: ${r.verdict.conclusion}\n\n${r.verdict[field]}`)),
+    missingNote,
+  ].filter(Boolean).join('\n\n');
   const perReviewer = Math.max(1, Math.floor(MAX_INLINE_COMMENTS / done.length));
   const inlineComments = done.flatMap((r) => r.verdict.inlineComments.slice(0, perReviewer)
     .map((c) => ({ ...c, body: done.length > 1 ? `**${r.name}:** ${c.body}` : c.body })));
