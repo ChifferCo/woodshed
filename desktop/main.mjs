@@ -578,8 +578,9 @@ function consoleInWindow() {
     return false;
   }
 }
+// And only to a page that asked for the list since it loaded (bellOnPage): one loading meanwhile asks for it whole.
 function logChanged() {
-  if (consoleInWindow()) mainWindow.webContents.send('notifications:changed', log.list());
+  if (bellOnPage && consoleInWindow()) mainWindow.webContents.send('notifications:changed', log.list());
 }
 function forgetLog() {
   if (log.clear()) logChanged();
