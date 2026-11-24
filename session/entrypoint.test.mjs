@@ -523,10 +523,13 @@ test('a Grok Build or OpenCode session runs none of the branch\'s installs by it
     assert.match(changed.stdout, new RegExp(`Dependencies not refreshed: this ${product} session runs none of the branch's installs by itself \\(changed: 1\\)`));
     assert.doesNotMatch(changed.stdout, /reinstalling/);
   }
-  // Claude Code and Codex sessions run it, as before.
-  const repo = depsRepo(t);
-  fs.writeFileSync(path.join(repo.repoDir, 'api/deps.lock'), 'v2');
-  for (const agent of ['claude', 'codex']) assert.equal(refreshDeps({ ...repo }, { AGENT: agent }).status, 'ready\n', agent);
+  // Claude Code and Codex sessions run it, as before: each on a fixture of its own, so each has a change to install.
+  for (const agent of ['claude', 'codex']) {
+    const repo = depsRepo(t);
+    fs.writeFileSync(path.join(repo.repoDir, 'api/deps.lock'), 'v2');
+    const installed = refreshDeps(repo, { AGENT: agent });
+    assert.deepEqual([installed.status, installed.runs], ['ready\n', 1], agent);
+  }
 });
 
 test('a reinstall reads the install secrets already in the session\'s environment, and not the manifest on its stdin', (t) => {
