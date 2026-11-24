@@ -206,6 +206,16 @@ export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, i
       throw refuseIssue(session, `at most ${MAX_ISSUES_PER_PERSON_HOUR} issues per person an hour`, { repo, asker: login });
     }
     const gh = issues.githubOf(project);
+    // Taken now and given back on a refusal, so two runs at once cannot both pass the limit.
+    update(session, { issuesOpened: (session.issuesOpened ?? 0) + 1 });
+    try {
+      return await fileIssue();
+    } catch (err) {
+      update(session, { issuesOpened: session.issuesOpened - 1 });
+      throw err;
+    }
+
+    async function fileIssue() {
     let writes;
     try {
       writes = await gh.canWrite(login);
@@ -215,7 +225,10 @@ export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, i
     if (!writes) throw refuseIssue(session, `@${login} has no write access to ${project.repo}`, { repo: project.repo, asker: login });
     let known = [];
     const asked = (issue.labels ?? []).map((l) => l.trim()).filter(Boolean);
-    if (asked.length) known = await gh.labelNames().catch(() => []);
+    if (asked.length) known = await gh.labelNames().catch((err) => {
+      console.warn('asks: repo labels not read, none applied', { id: session.id, repo: project.repo, message: String(err?.message ?? err).split('\n')[0] });
+      return [];
+    });
     const labels = asked.map((l) => known.find((k) => k.toLowerCase() === l.toLowerCase())).filter(Boolean);
     const labelsIgnored = asked.filter((l) => !known.some((k) => k.toLowerCase() === l.toLowerCase()));
     issuesByPerson.set(login, [...recent, now()]);
@@ -227,9 +240,9 @@ export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, i
       const message = String(err?.message ?? err).split('\n')[0];
       throw refuseIssue(session, `GitHub would not open the issue (the App may lack Issues: write on ${project.repo})`, { repo: project.repo, asker: login, message });
     }
-    update(session, { issuesOpened: (session.issuesOpened ?? 0) + 1 });
     console.log('asks: issue opened', { id: session.id, repo: project.repo, number: created.number, asker: login });
     return { number: created.number, url: created.url, labels, labelsIgnored };
+    }
   }
 
   // A question whose session failed, or stopped before it answered, is told so in its thread, once per run.
