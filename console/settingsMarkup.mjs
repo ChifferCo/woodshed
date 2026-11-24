@@ -79,9 +79,9 @@ export function line(name, help, control, attrs = {}) {
   return el('section', { class: 'set-line', ...attrs }, el('div', null, el('div', { class: 'set-name' }, name), el('div', { class: 'set-help' }, help)), el('div', { class: 'set-value' }, control));
 }
 
-/** A group of rows under its label. Rows that are not drawn (null) are left out, and a group with none is too. */
+/** A group of rows under its label. Rows that are not drawn (null, or markup of nothing) are left out, and a group with none is too. */
 export function group({ id = null, label = null, note = null, wide = false }, ...rows) {
-  const drawn = rows.flat(Infinity).filter((r) => r !== null && r !== undefined && r !== false && r !== '');
+  const drawn = rows.flat(Infinity).filter((r) => r !== null && r !== undefined && r !== false && r !== '' && !(r instanceof Markup && r.text === ''));
   if (!drawn.length) return new Markup('');
   // A group holding a table takes the page's width, as People's members do: a table is read across.
   return el('div', { class: 'set-group', id, style: wide ? 'max-width: none' : null },
@@ -233,6 +233,21 @@ export function table(columns, rows, { minWidth = 640 } = {}) {
   return el('div', { class: 'table-scroll' }, el('table', { class: 'people-table', style: `min-width: ${minWidth}px` },
     el('thead', null, el('tr', null, cols.map((c) => el('th', { class: c.end ? 'end-cell' : null }, c.label)))),
     el('tbody', null, rows.map((r) => el('tr', null, r.map((cell, i) => el('td', { class: cols[i]?.end ? 'end-cell' : null }, cell)))))));
+}
+
+/**
+ * A group's numbers, read at a glance (components/Figures): each a label, its value in mono, and an optional line
+ * under it. They go in a group's box, as rows do: `group({ label }, figures([...]))`. With none, nothing is drawn.
+ * @param {{label: *, value: *, sub?: *}[]} items
+ */
+export function figures(items) {
+  const drawn = items.filter(Boolean);
+  // None to show draws nothing, so a group holding only figures is left out, as one with no rows is.
+  if (!drawn.length) return new Markup('');
+  return el('div', { class: 'figures' }, drawn.map(({ label, value, sub: under = null }) => el('div', { class: 'figure' },
+    el('div', { class: 'figure-label' }, label),
+    el('div', { class: 'figure-value' }, value),
+    under !== null && under !== '' && el('div', { class: 'figure-sub' }, under))));
 }
 
 /** A line of a log, as Webhook events draws one: when, what, its details, and its status word. */
