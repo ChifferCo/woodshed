@@ -16,6 +16,7 @@
 //                                (`woodshed session new --herdr --parent`), and the session waits for it
 //   GET  /api/my/projects        the projects you can start sessions on, and the one New session opens on for you
 //   GET  /api/my/codex-models    the Codex models New session offers you: OpenAI's catalog, read on your Codex sign-in or the team key
+//   GET  /api/my/grok-models     the Grok Build models New session offers you, read on your own Grok sign-in (none without one)
 //   POST /api/my/projects/default {"project": "<name>"}   New session opens on it for you
 //   POST /api/my/claude-token    {"value": "sk-ant-..."}
 //   POST /api/my/codex-auth      {"value": "sk-..." or the text of ~/.codex/auth.json}
@@ -829,7 +830,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, signOut = null, woodshedUpdate = null, codexModels = null, grokModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
   cli = null, reviewReadiness = null,
 }) {
@@ -1875,6 +1876,8 @@ export function createHandler({
           await userSettings.setAgentAuth(login, agentMatch[1], body.value);
           await firstDatabases(login);
         }
+        // As for Codex: the Grok models list was read on the sign-in that is gone.
+        if (agentMatch[1] === 'grok') grokModels?.forget(login);
         return reply(res, 200, myView(login));
       }
       if (pathname === MY_LIMITS_PATH) {
@@ -2893,6 +2896,7 @@ export function createHandler({
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
     if (pathname === '/api/my/projects') return reply(res, 200, await projectsView(user.login));
     if (pathname === '/api/my/codex-models') return reply(res, 200, codexModels ? await codexModels.list(user.login) : { models: BUILT_IN_CODEX_MODELS, source: 'built-in', note: null });
+    if (pathname === '/api/my/grok-models') return reply(res, 200, grokModels ? await grokModels.list(user.login) : { models: [], source: null, note: 'type a model name, since this console reads no Grok Build models' });
     if (pathname === '/api/skills') {
       // Another project's list only for someone who may start sessions on it, as New session offers it; anyone else,
       // and a project this console does not have, gets the default project's.

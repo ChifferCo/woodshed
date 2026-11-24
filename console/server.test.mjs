@@ -1068,6 +1068,51 @@ test('Grok Build and OpenCode are offered and start only on their owner\'s own s
   assert.deepEqual(await post(port, '/api/my/agent-auth/opencode', { value: 'x'.repeat(170 * 1024) }, as), { status: 400, body: { error: 'body too large' } });
 });
 
+test('New session\'s Grok Build models are the owner\'s own list, forgotten when the sign-in changes', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const forgot = [];
+  const listed = { models: [{ slug: 'grok-4.7', name: 'Grok 4.7', description: '', efforts: ['low', 'high'], defaultEffort: 'high' }], source: 'login', note: null };
+  const grokModels = { list: async (login) => ({ ...listed, login }), forget: (login) => forgot.push(login) };
+  const own = new Map();
+  const userSettings = {
+    refresh: async () => {},
+    view: () => ({
+      claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: true, available: true,
+      agentAuth: Object.fromEntries(agentsRegistry.OWN_SIGN_IN_AGENTS.map((id) => [id, { set: own.has(id), savedAt: null }])),
+    }),
+    setAgentAuth: async (login, id, value) => { own.set(id, value); },
+    removeAgentAuth: async (login, id) => { own.delete(id); },
+  };
+  const started = [];
+  const fleet = { sessions: () => [], find: () => null, startPrivate: async (args) => { started.push(args); return { id: '0a1b2c3e', owner: args.owner, token: 'secret', status: 'queued' }; } };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet, auth, userSettings, grokModels });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+
+  assert.deepEqual(JSON.parse(await getBody(port, '/api/my/grok-models', as)), { ...listed, login: 'mia-dev' });
+  assert.equal((await post(port, '/api/my/agent-auth/grok', { value: 'xai-own-key-0123456789' }, as)).status, 200);
+  assert.deepEqual(forgot, ['mia-dev'], 'saving forgets the list');
+  // A model the list does not have still starts: the registry's shape is the check, as when the list cannot be read.
+  assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'grok', model: 'grok-typed-by-hand', effort: 'xhigh' }, as)).status, 201);
+  assert.equal(started[0].model, 'grok-typed-by-hand');
+  await post(port, '/api/my/agent-auth/opencode', { value: JSON.stringify({ p: { type: 'api', key: 'k' } }) }, as);
+  assert.deepEqual(forgot, ['mia-dev'], 'another agent\'s sign-in leaves it');
+  assert.equal((await post(port, '/api/my/agent-auth/grok/remove', {}, as)).status, 200);
+  assert.deepEqual(forgot, ['mia-dev', 'mia-dev'], 'removing forgets it too');
+
+  const handleWithout = createHandler({ config, fleet, auth, userSettings });
+  const without = http.createServer((req, res) => { handleWithout(req, res); });
+  const otherPort = await listen(without);
+  t.after(() => without.close());
+  const none = JSON.parse(await getBody(otherPort, '/api/my/grok-models', as));
+  assert.deepEqual([none.models, none.source], [[], null]);
+  assert.match(none.note, /type a model name/);
+});
+
 test('the first Claude token starts your own databases, and New session waits for them', async (t) => {
   const fleet = {
     sessions: () => [], find: () => null,

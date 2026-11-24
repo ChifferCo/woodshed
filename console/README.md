@@ -800,6 +800,16 @@ own `--model` takes, blank for the agent's default (OpenCode's is `provider/mode
 offer what each one's command line has (`efforts` and `permissionModes` in the registry). None of them gets the
 console's MCP servers yet, and Grok Build runs none of a repo's own either (`session/grokRequirements.toml`).
 
+Grok Build's **Model** is a menu when the console could read its models on your own Grok sign-in (`grokModels.mjs`,
+`GET /api/my/grok-models`), as Codex's is: a login (`~/.grok/auth.json`) asks `GET
+https://cli-chat-proxy.grok.com/v1/models` with its access token, and an xAI key `GET https://api.x.ai/v1/models`, whose
+image and video models a session cannot use and are left out. The list is kept 10 minutes, tried again a minute after a
+failure, and forgotten when you save or remove the sign-in. **Effort** is then the picked model's efforts, its default
+marked, kept to the registry's. As for Codex, the console never refreshes the login: one whose `expires_at` has passed is
+not sent, and gives your last list read or none. With none (no sign-in, an expired login, xAI not answering) the
+Model is the box to type in again, and a line under the menus says why. A start is checked against the registry's shape
+alone, never the list, so a model typed while the list cannot be read still starts.
+
 Under the token, the switch **Also use it for shared sessions I start from
 GitHub** (on by default, and only with a token saved) runs the shared
 sessions you start, with the label or a `/woodshed` comment, on your plan too.

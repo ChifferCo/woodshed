@@ -1024,6 +1024,12 @@ URL on top of each env file's Repo settings values
   logs `codexModels: catalog read` with `source` (`own` or `team`) and how many `models`, `OpenAI refused the catalog`
   with the `status` (a 401 is a sign-in OpenAI no longer takes), `catalog not read`, `own sign-in expired, not read`
   (a Codex session refreshes it at its stop) or `credential not read`. It tries again a minute after a failure.
+- **New session's Grok Build Model is a box to type in, not a menu.** The console has no list of the person's models:
+  the line under the menus says why. It logs `grokModels: catalog read` with `source` (`login` or `key`) and how many
+  `models`, `xAI refused the catalog` with the `status` (a 401 is a sign-in xAI no longer takes), `catalog not read`
+  (with `timed out`, `the answer is not JSON` or `the catalog is too large`), `the catalog listed no models` (a key with
+  only image or video models), `own login expired, not read` (a Grok session refreshes it at its stop) or `credential
+  not read`. It tries again a minute after a failure, and at once after the sign-in is saved again.
 - **The `/` list in New session is empty.** The console logs `console: skills
   read` with the count, or `console: skills not readable` with gh's error.
 - **A pin or rename does not stick.** The page says `Not saved` with the
