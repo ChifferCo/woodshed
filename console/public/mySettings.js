@@ -151,9 +151,9 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     return act({ card: id, note: agentStatus[id], working, done, call: async () => { me = await W.postJson(path, body); agentInputs[id].value = ''; loadReviews(); } });
   }
 
-  // Whether reviews of your pull requests may run this agent on your sign-in, when you pick it under Reviews of my pull
-  // requests: Codex's switch, for an agent with no team key. On once a sign-in is saved, unless turned off; the console
-  // adds the sign-in to the agent's calls (console/reviewAgentProxy.mjs), never into the review session.
+  // Whether reviews of your pull requests may run this agent on your sign-in. On once a sign-in is saved, unless turned
+  // off; the default then includes it (console/reviewAgents.mjs). A saved choice that leaves it out does not. The
+  // console adds the sign-in to the agent's calls (console/reviewAgentProxy.mjs), never into the review session.
   function agentReviewsSwitch(id) {
     const a = A.agent(id);
     if (!a.reviews) return null;
@@ -163,11 +163,11 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     return h('div', { class: `toggle-row${on ? '' : ' is-off'}` },
       h('button', {
         type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-labelledby': `${id}-reviews-label`, disabled: !saved || !me.available || busy.has(id),
-        onclick: () => agentChange(id, `/api/my/agent-auth/${id}/reviews`, { on: !on }, on ? `Off: ${a.name} does not review your pull requests.` : `On: pick ${a.name} under Reviews of my pull requests to have it review them.`),
+        onclick: () => agentChange(id, `/api/my/agent-auth/${id}/reviews`, { on: !on }, on ? `Off: ${a.name} does not review your pull requests.` : `On: ${a.name} reviews your pull requests, unless your own reviewer choice leaves it out.`),
       }),
       h('span', { class: 'toggle-label', id: `${id}-reviews-label` }, 'Also use it for reviews of my pull requests'),
       h('p', { class: 'sub' }, on
-        ? `On: when you pick ${a.name} under Reviews of my pull requests, it reviews the pull requests you open on ${what}. The console adds it to ${a.name}\u2019s calls; it never goes into the review session.${a.signIn.rotates && id === 'grok' ? ' A login that has expired is not used: a Grok session of yours refreshes it.' : ''}`
+        ? `On: ${a.name} reviews the pull requests you open on ${what}, with the other reviewers that can, unless your own choice under Reviews of my pull requests leaves it out. The console adds it to ${a.name}\u2019s calls; it never goes into the review session.${a.signIn.rotates && id === 'grok' ? ' A login that has expired is not used: a Grok session of yours refreshes it.' : ''}`
         : `Off: ${a.name} never reviews your pull requests. There is no team key for it.`),
       !saved && h('p', { class: 'why-off' }, 'Save a sign-in above to turn this on.'));
   }
@@ -182,7 +182,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     ];
     return row({
       id, title: a.product, pill,
-      value: set ? `Your own sign-in, for ${a.name} sessions${a.reviews && me.ownAgentForReviews?.[id] ? ' and, when you pick it, reviews of your pull requests' : ''}` :`Save ${a.signIn.kinds}, and New session offers ${a.name}`,
+      value: set ? `Your own sign-in, for ${a.name} sessions${a.reviews && me.ownAgentForReviews?.[id] ? ' and reviews of your pull requests' : ''}` :`Save ${a.signIn.kinds}, and New session offers ${a.name}`,
     },
       h('p', { class: 'sub' }, `Choose ${a.name} as the agent in New session. It runs only on your own sign-in, handed to your own My Woodshed sessions and nobody else’s: ${a.name} never runs in a shared session.${a.reviews ? ` It can review your own pull requests, below, without the sign-in ever entering the review.` : ''}`),
       set ? howTo('How to get a sign-in', how) : how,
@@ -769,7 +769,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   // Who reviews the pull requests you open (console/reviewAgents.mjs), as a grid: each agent that reviews on its own row
   // (shared/agents.cjs), Off and On across the top (designSystem/components/OnOffGrid). Several on is all of them, all
   // off is no code review. On is offered only while the team's key or your own sign-in can run it: Grok Build and
-  // OpenCode have no team key. With nothing saved, the most of Claude Code and Codex runs. A pick saves at once.
+  // OpenCode have no team key. With nothing saved, every reviewer that can run does. A pick saves at once.
   let reviews = null;
   const reviewStatus = h('p', { class: 'form-note', role: 'status' });
   let reviewsLoaded = false;
@@ -814,7 +814,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
           h('td', null, radio(agent, label, true)))))),
       h('p', { class: 'form-note' }, choice
         ? (cantRun ? 'What you chose cannot all run now, so your reviews get what of it can.' : 'Your own choice. ')
-        : 'Default: the most of Claude Code and Codex there is, from your sign-ins and the team\u2019s keys. ',
+        : 'Default: every reviewer that can run, from your sign-ins and the team\u2019s keys. Grok Build and OpenCode are included when their sign-in is on for reviews. ',
       choice && h('button', { type: 'button', class: 'btn-link', disabled: busy.has('reviews'), onclick: () => saveReviews(null, 'Back to the default.') }, 'Back to the default')),
       reviewStatus);
   }

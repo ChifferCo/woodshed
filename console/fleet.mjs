@@ -2520,7 +2520,7 @@ export function createFleet({
       },
     });
     console.log('fleet: review session started', {
-      id: session.id, number, login, base: pull.base.ref, agents, choice: choice ?? 'the most there is',
+      id: session.id, number, login, base: pull.base.ref, agents, choice: choice ?? 'every reviewer that can run',
       codex: agents.includes('codex') ? (codexLogin ? `own ${codexVia === 'chatgpt' ? 'ChatGPT login' : 'key'}` : 'team key') : null,
       ...(ownSignIns?.grok ? { grok: `own ${ownSignIns.grok.via === 'login' ? 'login' : 'key'}` } : {}),
       ...(ownSignIns?.opencode ? { opencode: `own ${ownSignIns.opencode.provider} key` } : {}),

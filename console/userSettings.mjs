@@ -497,9 +497,9 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
 
   /**
    * The switch on the Grok Build and OpenCode cards: whether reviews of this person's pull requests may run that agent on
-   * their own sign-in, when they pick it on the Reviews card. On once a sign-in is saved, unless they turned it off, as
-   * Codex's is: picking the agent on the Reviews card is what makes it review. The sign-in never goes into the review
-   * session: the console's proxy adds it to the agent's calls (reviewAgentProxy.mjs).
+   * their own sign-in. On once a sign-in is saved, unless they turned it off, as Codex's is. With no reviewer choice
+   * saved, the default includes it (reviewAgents.mjs); a saved choice that leaves it out does not. The sign-in never
+   * goes into the review session: the console's proxy adds it to the agent's calls (reviewAgentProxy.mjs).
    * @throws {Error}  shown on the page, when it is turned on with no sign-in saved
    */
   function setOwnAgentForReviews(login, id, on) {
@@ -518,7 +518,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
 
   /**
    * Who reviews this person's pull requests (reviewAgents.mjs): none, claude, codex or both, or any reviewers joined with
-   * `+` (claude+grok), or null for the most this console can run, which is the default.
+   * `+` (claude+grok), or null for every reviewer that can run, which is the default.
    * @throws {Error}  shown on the page, for anything else
    */
   function setReviewAgents(login, choice) {
@@ -527,7 +527,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
       throw Object.assign(new Error(`reviews must be one of ${Object.keys(agents.REVIEW_PRESETS).join(', ')}, or reviewers joined with + (${agents.REVIEW_AGENT_IDS.join(', ')}), such as claude+grok`), { shown: true, status: 400 });
     }
     touch(login, { reviewAgents: saved });
-    console.log('userSettings: reviews of my pull requests', { login, choice: saved ?? 'the most there is' });
+    console.log('userSettings: reviews of my pull requests', { login, choice: saved ?? 'every reviewer that can run' });
   }
 
   /** @returns {string|null}  the person's saved choice, or null for the default */

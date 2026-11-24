@@ -41,11 +41,15 @@ function setup({ team = { claude: true, codex: true }, claudeOwn = [], codexOwn 
   return createReviewAgents({ userSettings, connected, now: () => NOW });
 }
 
-test('the default is the most there is: both, else the one there is, else none', () => {
+test('the default is every reviewer that can run', () => {
   assert.equal(bestChoice({ claude: true, codex: true }), 'both');
   assert.equal(bestChoice({ claude: true, codex: false }), 'claude');
   assert.equal(bestChoice({ claude: false, codex: true }), 'codex');
   assert.equal(bestChoice({ claude: false, codex: false }), 'none');
+  assert.equal(bestChoice({ claude: true, codex: true, grok: true, opencode: true }), 'claude+codex+grok+opencode');
+  assert.equal(bestChoice({ claude: true, codex: false, grok: true }), 'claude+grok');
+  assert.equal(bestChoice({ grok: true, opencode: true }), 'grok+opencode');
+  assert.equal(bestChoice({}), 'none');
 });
 
 test('with no choice saved, a review runs both when the team keys can, on the team keys', async () => {
@@ -136,11 +140,16 @@ test('a choice is saved as a preset\'s name or the reviewers joined with +, and 
   assert.equal((await agents.forReview({ login: 'odd' })).choice, null);
 });
 
-test('Grok Build and OpenCode are never in the default: they review only when the author picks them', async () => {
+test('with no choice saved, a review runs every reviewer that can, Grok Build and OpenCode included', async () => {
   const agents = setup({ agentOwn: { grok: ['gil'], opencode: ['gil'] } });
-  assert.deepEqual((await agents.forReview({ login: 'gil' })).agents, ['claude', 'codex']);
-  const options = await agents.options('gil');
-  assert.deepEqual([options.available.grok, options.own.opencode, options.best], [true, true, 'both']);
+  const r = await agents.forReview({ login: 'gil' });
+  assert.deepEqual([r.agents, r.choice, r.why], [['claude', 'codex', 'grok', 'opencode'], null, null]);
+  assert.deepEqual(r.ownSignIns, { grok: { login: 'gil', via: 'key' }, opencode: { login: 'gil', provider: 'anthropic' } });
+  assert.equal((await agents.options('gil')).best, 'claude+codex+grok+opencode');
+  const picked = setup({ agentOwn: { grok: ['gil'], opencode: ['gil'] }, choices: { gil: 'both' } });
+  assert.deepEqual((await picked.forReview({ login: 'gil' })).agents, ['claude', 'codex'], 'a saved choice still leaves them out');
+  const grokOnly = setup({ team: { claude: false, codex: false }, agentOwn: { grok: ['gil'] } });
+  assert.deepEqual([(await grokOnly.forReview({ login: 'gil' })).agents, (await grokOnly.options('gil')).best], [['grok'], 'grok']);
 });
 
 test('Grok Build reviews on the author\'s key or unexpired login, and is left out, saying why, when it cannot', async () => {

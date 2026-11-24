@@ -1984,7 +1984,8 @@ test('My settings\' Reviews card: each person picks who reviews their pull reque
   // Grok Build reviews only on the person's own sign-in, switched on for reviews: offered once one is saved.
   assert.equal((await post(port, '/api/my/agent-auth/grok/reviews', { on: true }, as)).status, 409, 'no sign-in saved yet');
   assert.equal((await post(port, '/api/my/agent-auth/grok', { value: 'xai-made-up-mia-0123456789' }, as)).status, 200);
-  assert.deepEqual([(await get()).available.grok, (await get()).own.grok], [true, true]);
+  const withGrok = await get();
+  assert.deepEqual([withGrok.available.grok, withGrok.own.grok, withGrok.choice, withGrok.best], [true, true, null, 'claude+grok'], 'the default includes Grok Build once its sign-in is on for reviews');
   const picked = await post(port, '/api/my/reviews', { choice: 'grok+claude' }, as);
   assert.equal(picked.body.choice, 'claude+grok');
   const offNow = await post(port, '/api/my/agent-auth/grok/reviews', { on: false }, as);

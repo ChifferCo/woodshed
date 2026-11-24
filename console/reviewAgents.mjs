@@ -9,12 +9,12 @@
 //   OpenCode      the author's own OpenCode sign-ins while they use them for reviews, and only an API key of a provider
 //                 the proxy forwards (shared/agents.cjs, OPENCODE_REVIEW_PROVIDERS). There is no team key for it either
 //
-// With no choice saved, a review runs the most Claude Code and Codex can: both, else the one there is, else none. Grok
-// Build and OpenCode review only when the author picks them. A saved choice that can no longer run (a key removed, a
-// sign-in turned off or expired since) keeps what of it can, else falls back the same way, and says why. Either way the
-// console's proxies add the credential to each call (anthropicProxy.mjs, openaiProxy.mjs, reviewAgentProxy.mjs): no
-// sign-in enters the review session. The choice itself is kept with the person's settings (userSettings.mjs,
-// reviewAgents), as shared/agents.cjs names it (`both`, or ids joined with `+`).
+// With no choice saved, a review runs every reviewer that can: Claude Code and Codex from the team keys or the author's
+// own sign-ins, and Grok Build and OpenCode when the author's own sign-in is on for reviews. A saved choice that can no
+// longer run (a key removed, a sign-in turned off or expired since) keeps what of it can, else falls back the same way,
+// and says why. Either way the console's proxies add the credential to each call (anthropicProxy.mjs, openaiProxy.mjs,
+// reviewAgentProxy.mjs): no sign-in enters the review session. The choice itself is kept with the person's settings
+// (userSettings.mjs, reviewAgents), as shared/agents.cjs names it (`both`, or ids joined with `+`).
 import { credentialOf } from './codexModels.mjs';
 import { credentialOf as grokCredentialOf } from './grokModels.mjs';
 import agentsRegistry from '../shared/agents.cjs';
@@ -69,11 +69,14 @@ export function ownReviewCredential(id, saved, now = Date.now()) {
   return cred;
 }
 
-/** The most a review can run with these, when its author chose nothing: both, else the one there is, else none. */
-export function bestChoice({ claude, codex }) {
-  if (claude && codex) return 'both';
-  if (claude) return 'claude';
-  return codex ? 'codex' : 'none';
+/**
+ * Every reviewer that can run, when its author chose nothing, named as a choice (shared/agents.cjs, reviewChoiceOf):
+ * all of them, else what there is, else none. Grok Build and OpenCode are in it when `available` says they can run.
+ * @param {Record<string, boolean>} available
+ * @returns {string}
+ */
+export function bestChoice(available) {
+  return agentsRegistry.reviewChoiceOf(agentsRegistry.REVIEW_AGENT_IDS.filter((id) => available?.[id]));
 }
 
 /**
@@ -166,13 +169,14 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
     const chosen = agentsRegistry.reviewersOf(saved);
     const choice = chosen ? saved : null;
     const why = [];
-    let agents = chosen ?? agentsRegistry.REVIEW_PRESETS[bestChoice(available)];
+    const fallback = agentsRegistry.reviewersOf(bestChoice(available));
+    let agents = chosen ?? fallback;
     if (chosen && agents.some((a) => !available[a])) {
       const left = agents.filter((a) => available[a]);
       why.push(`the author chose ${choice}, which this console cannot run now`);
       // Grok Build and OpenCode run on nothing but the author's own sign-in: why each was left out.
       for (const id of agents.filter((a) => !available[a] && OWN_ONLY_REVIEWERS.includes(a))) why.push(`${agentsRegistry.agent(id).product} left out: ${others[id].why}`);
-      agents = left.length ? left : agentsRegistry.REVIEW_PRESETS[bestChoice(available)];
+      agents = left.length ? left : fallback;
     }
     if (team.why) why.push(team.why);
     let codex = { codexLogin: null, codexVia: null };

@@ -25,10 +25,10 @@
 //   POST /api/my/agent-auth/<agent>  {"value": ...}   my own Grok Build or OpenCode sign-in (shared/agents.cjs)
 //   POST /api/my/agent-auth/<agent>/remove
 //   POST /api/my/agent-auth/<agent>/reviews  {"on": true|false}   reviews of my pull requests may run Grok Build or
-//                                     OpenCode on this sign-in, when I pick it below (reviewAgents.mjs)
+//                                     OpenCode on this sign-in (reviewAgents.mjs): the default includes it while on
 //   GET  /api/my/reviews              who reviews my pull requests, and the choices this console can run for me
-//   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|"claude+grok"|…|null}   null is the most
-//                                     there is; any reviewers joined with + (shared/agents.cjs, reviewersOf)
+//   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|"claude+grok"|…|null}   null is every
+//                                     reviewer that can run; any reviewers joined with + (shared/agents.cjs, reviewersOf)
 //   POST /api/my/terminal             {"terminal": "tmux"|"herdr"}   what my private sessions run their agent in
 //   POST /api/my/claude-token/remove
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token

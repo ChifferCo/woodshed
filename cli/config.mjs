@@ -22,7 +22,7 @@ export const CONFIG_KEYS = Object.freeze({
   },
   reviews: {
     values: ['none', 'claude', 'codex', 'both', 'default'],
-    about: 'who reviews your pull requests; default is the most this console can run, and reviewers joined with + (claude+grok, codex+opencode) pick Grok Build or OpenCode too',
+    about: 'who reviews your pull requests; default is every reviewer that can run here, Grok Build and OpenCode included when their sign-in is on for reviews, and reviewers joined with + (claude+grok) are your own choice',
     path: '/api/my/reviews',
     body: (value) => ({ choice: value === 'default' ? null : value }),
     after: 'It applies to the next review.',
@@ -36,14 +36,14 @@ export const CONFIG_KEYS = Object.freeze({
   },
   'grok-reviews': {
     values: ['on', 'off'],
-    about: 'reviews of your pull requests may run Grok Build on your own sign-in (saved on My settings), when reviews names grok',
+    about: 'reviews of your pull requests may run Grok Build on your own sign-in (saved on My settings); the default includes it while this is on',
     path: '/api/my/agent-auth/grok/reviews',
     body: (value) => ({ on: value === 'on' }),
     after: 'It applies to the next review.',
   },
   'opencode-reviews': {
     values: ['on', 'off'],
-    about: 'reviews of your pull requests may run OpenCode on your own API key (saved on My settings), when reviews names opencode',
+    about: 'reviews of your pull requests may run OpenCode on your own API key (saved on My settings); the default includes it while this is on',
     path: '/api/my/agent-auth/opencode/reviews',
     body: (value) => ({ on: value === 'on' }),
     after: 'It applies to the next review.',

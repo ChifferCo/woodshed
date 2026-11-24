@@ -104,8 +104,8 @@ On a terminal each question says what Enter takes.
 5. **Review on your repos.** Every repo is reviewed by default, on a commit whose message has `[woodshed-review]`
    (sessions add it for you), with no checkout, project file or pull request: for each repo setup runs `woodshed review
    status --repo <repo>`, stops with the link when the console's reviewer App still has to be made or installed, and
-   otherwise tells you the tag. `--reviews` sets your own reviewer choice (`default` is the most the console can run:
-   both, once both are connected).
+   otherwise tells you the tag. `--reviews` sets your own reviewer choice (`default` is every reviewer the console can
+   run: Claude Code, Codex, and Grok Build and OpenCode once their sign-ins are on for reviews).
 6. **Reviews of your open pull requests**, the step setup is for: it lists your open pull requests on each repo
    (`woodshed review pulls`) and starts the console's review on them now (`woodshed review start`), then gives each
    review's link. On a terminal it asks which, Enter for all (closing the input, Ctrl-D, starts none). `--review-prs
@@ -746,9 +746,9 @@ or value `config` refused, so a token pasted in the wrong place stays out of cap
 | Key | Values | Route |
 | --- | --- | --- |
 | `terminal` | `tmux`, `herdr`: what your private sessions run their agent in. Your next private session starts in it; running ones keep theirs. | `POST /api/my/terminal` |
-| `reviews` | `none`, `claude`, `codex`, `both`, `default` (the most of Claude Code and Codex this console can run), or reviewers joined with `+` (`claude+grok`, `codex+opencode`): who reviews your pull requests. | `POST /api/my/reviews` |
+| `reviews` | `none`, `claude`, `codex`, `both`, `default` (every reviewer this console can run, Grok Build and OpenCode included when their sign-in is on for reviews), or reviewers joined with `+` (`claude+grok`, `codex+opencode`): who reviews your pull requests. | `POST /api/my/reviews` |
 | `codex-reviews` | `on`, `off`: reviews of your pull requests run Codex on your own sign-in. Needs a Codex sign-in saved on My settings. | `POST /api/my/codex-auth/reviews` |
-| `grok-reviews`, `opencode-reviews` | `on`, `off`: reviews of your pull requests may run Grok Build or OpenCode on your own sign-in, when `reviews` names it; there is no team key for them. Needs that sign-in saved on My settings (for OpenCode, an Anthropic or OpenAI API key). | `POST /api/my/agent-auth/<agent>/reviews` |
+| `grok-reviews`, `opencode-reviews` | `on`, `off`: reviews of your pull requests may run Grok Build or OpenCode on your own sign-in; the default includes it while this is on, and a saved `reviews` choice that leaves it out does not. There is no team key for them. Needs that sign-in saved on My settings (for OpenCode, an Anthropic or OpenAI API key). | `POST /api/my/agent-auth/<agent>/reviews` |
 | `claude-token-shared` | `on`, `off`: shared sessions you start from GitHub run on your own Claude token. Needs a token saved on My settings. | `POST /api/my/claude-token/shared` |
 | `default-repo` | A repo you can start sessions on, as `owner/name` or its name on the console: where New session and `session new` open. | `POST /api/my/projects/default` |
 | `github-name`, `github-email` | What your sessions' commits say. Needs GitHub connected on My settings; setting one keeps the other. | `POST /api/my/github/identity` |
