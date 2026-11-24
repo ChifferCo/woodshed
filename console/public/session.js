@@ -2107,6 +2107,21 @@
   // never hidden to warm it: with no box to measure, xterm makes ttyd attach tmux at 80x24 and tmux shrinks the
   // window for every other client of the session.
   const MAX_TERMINALS = 8;
+  // The console's own terminal page (terminalPage.js), which the browser keeps, so a frame loads only its websocket.
+  // `localStorage['woodshed-terminal-page'] = 'ttyd'` in this browser goes back to the page ttyd serves from the session.
+  const TERMINAL_PAGE = document.querySelector('meta[name="woodshed-terminal-page"]')?.content || null;
+  // `arg` names an agent beside the session's own (agent-2 …), which ttyd hands to woodshed-attach from its websocket's
+  // query: the console's page carries it in its fragment and puts it there, as ttyd's page passes on its own query.
+  function terminalSrc(path, id, arg = null) {
+    let page = TERMINAL_PAGE;
+    try {
+      if (window.localStorage.getItem('woodshed-terminal-page') === 'ttyd') page = null;
+    } catch {
+      // No storage here: the console's page.
+    }
+    const query = arg ? `?${new URLSearchParams({ arg })}` : '';
+    return page ? `${page}#${path}/${id}${query}` : `/${path}/${id}/${query}`;
+  }
 
   /**
    * @param {{pane: 'agent'|'terminal', root: () => HTMLElement, path: string, label: string, keyOf: (s: object) => string|null}} args
@@ -2128,7 +2143,7 @@
     function mount(s, key) {
       // An agent beside the session's own: ttyd hands `arg` to woodshed-attach, which attaches to its tmux session.
       const agent = agentOf(s);
-      const src = `/${path}/${s.id}/${agent ? `?${new URLSearchParams({ arg: agent.id })}` : ''}`;
+      const src = terminalSrc(path, s.id, agent?.id);
       const frame = h('iframe', { class: 'term', src, title: `${label} for ${s.title}${agent ? `: ${agentLabel(agent.agent, agent.model)}` : ''}`, onload: (e) => bindTerminal(e.target, s.id, agent ? agent.id : pane) });
       frames.set(key, frame);
       root().append(frame);

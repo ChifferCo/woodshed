@@ -84,6 +84,19 @@ whose it is: **My repo settings** and **My session timeouts** are yours; Setting
 Both terminals stay connected while another tab shows. A session started from an
 image without the second ttyd has Terminal greyed out.
 
+**The terminal page.** Both tabs frame the console's own page, `/static/term.html#term/<id>` (or `#shell/<id>`):
+xterm.js, copied into `public/vendor/xterm/` at the versions ttyd 1.7.7 bundles, and `public/terminalPage.js`, which
+speaks ttyd's protocol on `/<kind>/<id>/ws`. The page names its files by hash, as every page does, so the browser keeps
+it and opening a terminal loads only its websocket; ttyd's own page (190 KB gzipped, sent with no cache headers) came
+from the session through the console on every open. The session's ttyd is the connection alone. Its first message is
+the console's (`terminalProxy.mjs`): ttyd's credential with the size the page asked for, so the page never holds the
+credential, and every other ttyd path, `/<kind>/<id>/token` among them, answers 404. A browser's compression offer goes to ttyd with
+`client_no_context_takeover` added, and ttyd's answer comes back with it too should ttyd leave it out, so the browser
+compresses each message on its own: the console can read that first message compressed and send its own uncompressed,
+and nothing after it refers back to bytes ttyd never saw. ttyd's output stays compressed. The session's `-t` flags (theme, scrollback) reach the page as ttyd's
+preferences, as they did ttyd's page. In one browser, `localStorage['woodshed-terminal-page'] = 'ttyd'` goes back to
+ttyd's page (`session.js`, `terminalSrc`), which works as before without `/token`.
+
 On a phone (720px wide or less) it works as the shed does there: the sessions
 page is the rail, and a session's page is its pane alone, with **‹** back to the
 list. The terminal is drawn at 0.7 of its size so about 70 columns fit, and a
@@ -134,7 +147,8 @@ run beside the session's own, each in the same checkout in a terminal of its own
 session, or a Herdr terminal when the owner's Agent terminal is Herdr, which their own Herdr then shows beside `claude`. The
 switch lists them all with their state words and says how many others need you; picking one points Chat at its own
 conversation (`/api/sessions/<id>/agents/<agent-N>/transcript`, `send`, `interrupt`, `prompt`, `answer`) and the TUI
-tab at its terminal (`/term/<id>/?arg=agent-N`, ttyd's URL argument). The pick is kept per session in the browser tab.
+tab at its terminal (`#term/<id>?arg=agent-N` on the terminal page, which puts `arg` on its websocket for ttyd's URL
+argument; `/term/<id>/?arg=agent-N` on ttyd's own page). The pick is kept per session in the browser tab.
 **Stop** in the switch's menu ends one. A Codex agent beside claude runs on its owner's Codex sign-in, which the
 console sends with that start alone, or on the team's OpenAI key through the console's proxy, which the session may use
 only once the agent started (`fleet.allowAgent`), as a Codex session does. A session's lockdown drops that at once and cuts
@@ -152,8 +166,9 @@ recognition (hidden where the browser has none). Files go to `/tmp/uploads` with
 nothing typed (`upload?pane=none`); **Send** puts the text and their paths into
 claude as one message, through statusd's `POST /send`. Return is a new line. An
 unsent draft stays with its session in this tab. A terminal whose connection
-dropped while the phone was in the background (ttyd's "Press ⏎ to Reconnect")
-reconnects by itself once the page is in front, at most three times a minute.
+dropped (a phone in the background closes it) reconnects by itself once the page
+is in front, at most three times a minute; past that it says "Press ⏎ to
+reconnect" (`terminalPage.js`; on ttyd's own page, `terminal.js` presses it).
 
 Review, while the session runs, is the shed's own page and server, run inside
 the session: statusd hands `/shed-review/*` to `session/reviewShed/`, which
@@ -498,7 +513,8 @@ TUI and Terminal tabs):
   canvas, so the browser's own find sees nothing there: the bar reads xterm's buffer (`public/terminalFind.cjs`), which
   is the screen and the browser's scrollback, case ignored and a wrapped line read as one. Every match is marked, the
   one shown in bright amber and scrolled to; Enter goes to an older one, Shift+Enter a newer one, Esc closes it. The
-  marks are xterm decorations, not its selection, since ttyd copies every selection to the clipboard. What scrolled
+  marks are xterm decorations, not its selection, since the terminal page copies every selection to the clipboard, as
+  ttyd's did. What scrolled
   off before this browser attached is in tmux's history alone: scroll past the top into copy mode, then `?` searches it.
 - **The conversation so far**, the Chat tab's thread, for an app to show and scroll by itself, apart from the terminal:
   `GET /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>` answers what was asked, what the agent said, and a
@@ -1760,9 +1776,9 @@ exit code.
 with the same token and the size it opens at in `x-woodshed-terminal-size` (`<columns>x<rows>`). The console checks it
 as it does a pipe, as it opens and every 15 seconds after, and closes it on the same revokes and lockdown. It sends it
 on to the session's ttyd for that tab with ttyd's credential in place of the person's token, as `terminalProxy.mjs`
-does the page's. ttyd 1.7.7 also wants its credential in the terminal's first message, which a page reads from ttyd's
-`/token`: the console sends that message itself, with the size asked for, so `TERMINAL_TOKEN` never leaves it. No
-compression is asked for. Then it copies bytes both ways. The log lines are the pipe's, with `kind` (`term` or
+does the page's. ttyd 1.7.7 also wants its credential in the terminal's first message: the console sends that message
+itself, with the size asked for, as it does the page's, so `TERMINAL_TOKEN` never leaves it. No compression is asked
+for. Then it copies bytes both ways. The log lines are the pipe's, with `kind` (`term` or
 `shell`; `exec` for a pipe). It is the same terminal as the tab's: the agent's tmux or Herdr terminal, or the shell's
 tmux, so what is typed in one shows in the other.
 
@@ -1937,9 +1953,11 @@ redirect.
 - Writes and terminal websockets must come from the console's own origin
   (Woodshed's `sameOrigin.mjs`), and writes also need the `x-woodshed: 1`
   header, which a cross-site form cannot send.
-- The proxy adds each session's ttyd credentials. ttyd still gives that
-  terminal credential to the browser, so it is a separate token from the one
-  statusd checks, and only the console can reach statusd.
+- The proxy adds each session's ttyd credentials, in the terminal's first
+  websocket message too, and passes on only ttyd's page itself (`/<kind>/<id>/`,
+  as written: ttyd reads `%74oken`, `//token` and `token;x` as its `/token`),
+  so the browser never holds the terminal credential. It is a separate token from the one
+  statusd checks all the same, and only the console can reach statusd.
 - The database viewers and the Redis viewer have no login of their own, so a
   page on another site must not reach them through a signed-in browser.
   The console refuses any request to `/term/`, `/redis/`, `/pg/` or `/mongo/`
