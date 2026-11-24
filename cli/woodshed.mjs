@@ -20,6 +20,8 @@
 //   woodshed config list|get|set                       your choices on My settings, never a secret (config.mjs)
 //   woodshed settings plan|push|pull [...]             Claude and Codex settings, plugins, dotfiles and ignored files
 //                                                     (settings.mjs)
+//   woodshed sign-in push <grok|opencode> [--replace]  this computer's own Grok Build or OpenCode sign-in, saved on
+//                                                     My settings, never printed (agentSignIns.mjs)
 //
 // Every command takes --json. Exit codes: 0 done, 2 waiting on a person (a sign-in or an approval), 3 refused, 1 any
 // other failure.
@@ -41,6 +43,7 @@ import { moveCommand } from './move.mjs';
 import { programRunner } from './moveLayout.mjs';
 import { gitRunner } from './moveCode.mjs';
 import { settingsCommand } from './settings.mjs';
+import { signInCommand, SIGN_IN_USAGE } from './agentSignIns.mjs';
 import { setupCommand, SETUP_USAGE } from './setup.mjs';
 import { attach, openTerminal } from './terminal.mjs';
 import agents from '../shared/agents.cjs';
@@ -70,7 +73,7 @@ const REQUEST_MS = 20_000;
 export const EXIT = Object.freeze({ done: 0, failed: 1, waiting: 2, refused: 3 });
 
 // Commands that read their own options: what follows them, but --console, --json and --help, is theirs (in `args`).
-const OWN_ARGS = new Set(['session', 'move', 'config', 'repo', 'settings', 'setup']);
+const OWN_ARGS = new Set(['session', 'move', 'config', 'repo', 'settings', 'setup', 'sign-in']);
 
 const USAGE = `Usage: woodshed <command> [--console <url>] [--json]
 
@@ -97,6 +100,9 @@ Commands:
             sessions. Claude MCP definitions pushed from a computer stay between computers.
             Codex MCP definitions from a computer stay on that computer.
             plan lists each item and sends nothing (cli/README.md, "Settings")
+  sign-in   push grok|opencode [--replace]
+            save the Grok Build or OpenCode sign-in this computer's grok login or opencode auth login made as
+            yours on My settings: checked here, never printed, and replacing a saved one only with --replace
 
 Options:
   --console <url>  the console to use (default: the one you last signed in to, else ${DEFAULT_CONSOLE};
@@ -550,6 +556,7 @@ export async function main(argv, deps = {}) {
     json = args.json;
     if (args.command === 'repo' && args.help) return repoCommand(args, { stdout, EXIT });
     if (args.command === 'setup' && args.help) { stdout.write(`${SETUP_USAGE}\n`); return EXIT.done; }
+    if (args.command === 'sign-in' && args.help) { stdout.write(`${SIGN_IN_USAGE}\n`); return EXIT.done; }
     if (args.command === 'session' && args.help) return await sessionCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.command === 'move' && args.help) return await moveCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
     if (args.command === 'review' && args.help) return await reviewCommand({ origin: null, rest: ['help'] }, { stdout, EXIT });
@@ -561,7 +568,13 @@ export async function main(argv, deps = {}) {
     const chosen = args.console ?? env.WOODSHED_CONSOLE ?? readConfig(dir).current ?? DEFAULT_CONSOLE;
     const origin = consoleOrigin(chosen);
     if (args.command === 'login') return await login(origin, { browser: args.browser, noWait: args.args.includes('--no-wait') });
-    if (args.command === 'setup') return await setupCommand({ ...args, origin }, { env, stdout, stderr, open, EXIT, emit, say, fail: (message) => new CliError(message), self: deps.self ?? selfCommand({ env }), platform });
+    if (args.command === 'setup') return await setupCommand({ ...args, origin }, { env, stdout, stderr, open, EXIT, emit, say, fail: (message) => new CliError(message), self: deps.self ?? selfCommand({ env }), platform, home: deps.home ?? os.homedir() });
+    if (args.command === 'sign-in') {
+      return await signInCommand({
+        rest: args.args, origin, token: signedIn(origin).token, env, home: deps.home ?? os.homedir(), json, call, say, emit, EXIT,
+        fail: (message, opts) => new CliError(message, opts),
+      });
+    }
     if (args.command === 'logout') return await logout(origin);
     if (args.command === 'status') return await status(origin);
     if (args.command === 'tunnel') return await tunnel(origin, args);

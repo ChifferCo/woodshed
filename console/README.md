@@ -820,7 +820,9 @@ answering, the menus are your last list read, or else codex's built-in list (`BU
 for it is saved on My settings: they run on nothing else, since the console holds no team key or proxy for them. The
 sign-in is `users/<login>/grok-auth` (an xAI key, `xai-…`, or `~/.grok/auth.json` from `grok login`) or `opencode-auth`
 (`~/.local/share/opencode/auth.json` from `opencode auth login`), saved with `POST /api/my/agent-auth/<agent>` and
-removed with `…/remove`. It is handed to that person's private sessions of that agent alone (`/settings`'s `agentAuth`),
+removed with `…/remove`. The save also takes the command line's token, for `woodshed setup` and `woodshed sign-in push`,
+which send the file from the person's computer after checking it there (cli/README.md, setup's step 4): as the token's
+own person only, through the same `setAgentAuth`, and answered with `{agent, set, savedAt}`, never the page's view. It is handed to that person's private sessions of that agent alone (`/settings`'s `agentAuth`),
 never to a shared session, a question, QA or a review: so they review nothing, and a resume needs it saved as a start
 does. Their logins rotate their refresh token at each use, so a session sends the refreshed one back at stop
 (`POST /agent-auth`, with the digest of the sign-in it was given), kept only while the saved one is still that sign-in (not a
@@ -1801,7 +1803,9 @@ while `woodshed review` uses `GET /api/review-readiness` ("The reviewer App"). F
 (`console/cliConfig.mjs`), `GET /api/cli/config` returns the person's choices on My settings and
 never a secret, and `POST /api/my/terminal`, `/api/my/reviews`, `/api/my/codex-auth/reviews`,
 `/api/my/claude-token/shared`, `/api/my/projects/default` and `/api/my/github/identity`, which answer the token with
-that same view rather than the page's whole My settings answer. Each is answered by the page's own code as the token's
+that same view rather than the page's whole My settings answer. `woodshed sign-in push` (and setup) uses
+`POST /api/my/agent-auth/grok|opencode`, the own sign-in's save alone (never `…/remove`), answered with whether one is
+saved and when. Each is answered by the page's own code as the token's
 person, so it sees and changes exactly what they could on the page.
 Every other route refuses it with 403, and so do those for a call with an Origin header (a page's). Those writes need no
 `x-woodshed` header or Origin, which only stand between another site and the browser's cookie; each logs
@@ -2217,7 +2221,8 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
 - The command line's routes are core's own (`cliSignIn.mjs`): `/cli` is behind the program's sign-in like any page, and
   `/api/cli/*` carries its own token in `Authorization`, so the program's proxy passes those through without its
   sign-in, as it does `/api/tunnel/*`. When a request carries `Authorization: Bearer wsc_…`, also pass through the
-  session routes listed in `cliSessions.mjs` and the six settings writes listed in `cliConfig.mjs`. The console checks
+  session routes listed in `cliSessions.mjs` (the own sign-in's save among them) and the six settings writes listed in
+  `cliConfig.mjs`. The console checks
   the token itself and refuses it on other routes.
 - `cliDevices`, from `createCliDevices()` (`cliSignIn.mjs`): for a program serving several installations at one address,
   one waiting room for the command line's sign-ins that it gives them all. `POST /api/cli/device` and `/api/cli/token`
