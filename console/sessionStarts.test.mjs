@@ -82,6 +82,31 @@ test('a session starts a session of its person\'s, as New session does, with sta
   assert.equal(api.asked[1].body.project, 'api', 'another of the console\'s repos, which New session\'s own check decides');
 });
 
+test('a session starts Grok Build and OpenCode sessions as New session does, and no agent it does not know', async (t) => {
+  const { token, session } = holder();
+  const api = await serve({ sessions: [session] });
+  t.after(api.close);
+  const grok = await api.call('POST', '/sessions', { token, body: { prompt: 'Try it in grok', agent: 'grok', model: 'grok-build', effort: 'high' } });
+  assert.equal(grok.status, 201);
+  assert.equal(grok.body.session.agent, 'grok');
+  assert.deepEqual([api.asked[0].body.agent, api.asked[0].body.model, api.asked[0].body.effort, api.asked[0].body.permissionMode], ['grok', 'grok-build', 'high', 'acceptEdits'],
+    'Grok Build has acceptEdits; its sign-in is startMine\'s check, as New session\'s');
+  const opencode = await api.call('POST', '/sessions', { token, body: { prompt: 'Try it in opencode', agent: 'opencode' } });
+  assert.equal(opencode.body.session.agent, 'opencode');
+  assert.equal(api.asked[1].body.permissionMode, 'default', 'OpenCode has no acceptEdits: it gets the stricter mode');
+  for (const agent of ['gemini', 'constructor', 7]) {
+    const refused = await api.call('POST', '/sessions', { token, body: { prompt: 'go', agent } });
+    assert.equal(refused.status, 400, String(agent));
+    assert.match(refused.body.error, /claude, codex, grok, opencode/);
+  }
+  assert.equal(api.asked.length, 2);
+
+  // Its own sign-in, refused by New session's check, is refused here the same.
+  const unsaved = await serve({ sessions: [session], startMine: async () => ({ status: 409, body: { error: 'save your OpenCode sign-in on My settings first' } }) });
+  t.after(unsaved.close);
+  assert.deepEqual(await unsaved.call('POST', '/sessions', { token, body: { prompt: 'go', agent: 'opencode' } }), { status: 409, body: { error: 'save your OpenCode sign-in on My settings first' } });
+});
+
 test('it lists the sessions it started, and reads another of its person\'s too', async (t) => {
   const { token, session } = holder();
   const mine = { id: 'bbbb0002', owner: 'joel', status: 'running', state: 'done', startedFrom: session.id, title: 'CSV export', createdAt: new Date(NOW).toISOString(), lastMessage: { role: 'assistant', text: 'Done.\nThe export downloads.' } };

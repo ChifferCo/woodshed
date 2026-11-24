@@ -901,12 +901,13 @@ stopping one does nothing to the other.
   session that has seen production data (its prompt could carry that data to an untainted session; a taint after the
   launch makes the token do nothing).
 - **The start** is New session's own (`startMine` in `server.mjs`), as the session's owner: their Claude token (or Codex
-  sign-in), their databases, write access to the project's repo (the session's own unless `--repo` names another
+  sign-in, or for `--agent grok` or `opencode` their own Grok Build or OpenCode sign-in saved on My settings, the same
+  `signInRefusal`; Resume asks it the same way), their databases, write access to the project's repo (the session's own unless `--repo` names another
   project), and the project's readiness; the owner must still be on the console and still have write access to its repo on GitHub, checked as for a command
   line token (once an hour per person, `createWriteAccess`): New session's project check asks nothing of the default
   project, whose writers the page's sign-in rechecks. It counts
   in their My Woodshed sessions and waits in line past the limit, and a hosted console bills it as any session. Its
-  permission mode is the starting session's (`acceptEdits` becomes `default` for Codex), never one it picks. A branch
+  permission mode is the starting session's (`acceptEdits` becomes `default` for Codex and OpenCode, which have none; an agent other than those `shared/agents.cjs` lists is refused with 400), never one it picks. A branch
   that is the starting session's own is refused. It gets nothing of the starting session's but `startedFrom`, its id.
 - **Limits**: none of its own. The person's **My Woodshed sessions per person** applies as it does to New session: past
   it, a started session waits in line.

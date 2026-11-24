@@ -1088,11 +1088,19 @@ test('Grok Build and OpenCode are offered and start only on their owner\'s own s
     { status: 409, body: { error: 'save your Grok Build sign-in on My settings first' } });
   assert.deepEqual(await post(port, `/api/my/sessions/${stopped.id}/resume`, {}, as),
     { status: 409, body: { error: 'save your Grok Build sign-in on My settings first' } }, 'a resume needs it too');
+  // A session starting or resuming one of its person's goes through the same checks (sessionStarts.mjs).
+  assert.deepEqual(await handle.startMine('mia-dev', { prompt: 'go', agent: 'grok' }, { startedFrom: 'aaaa0001' }),
+    { status: 409, body: { error: 'save your Grok Build sign-in on My settings first' } });
+  assert.deepEqual(await handle.resumeMine('mia-dev', stopped.id), { status: 409, body: { error: 'save your Grok Build sign-in on My settings first' } });
+  assert.equal(started.length, 0);
   const saved = await post(port, '/api/my/agent-auth/grok', { value: 'xai-own-key-0123456789' }, as);
   assert.equal(saved.status, 200);
   assert.deepEqual([saved.body.agents.grok, saved.body.agentAuth.grok.set], [true, true]);
   assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'grok', model: 'grok-build' }, as)).status, 201, 'no Claude token needed');
   assert.equal(started[0].agent, 'grok');
+  assert.equal((await handle.startMine('mia-dev', { prompt: 'go', agent: 'grok' }, { startedFrom: 'aaaa0001' })).status, 201);
+  assert.deepEqual([started[1].agent, started[1].startedFrom], ['grok', 'aaaa0001']);
+  assert.equal((await handle.startMine('mia-dev', { prompt: 'go', agent: 'opencode' }, { startedFrom: 'aaaa0001' })).status, 409, 'opencode\'s sign-in is not saved');
   assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'opencode' }, as)).status, 409);
   for (const id of ['codex', 'claude', 'nope']) assert.equal((await post(port, `/api/my/agent-auth/${id}`, { value: 'x' }, as)).status, 404, id);
   assert.equal((await post(port, '/api/my/agent-auth/grok/remove', {}, as)).body.agents.grok, false);
