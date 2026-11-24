@@ -2261,8 +2261,8 @@ Console settings has one **Slack** group for all of it, a row each for the bot, 
 
 1. **Create the app from this manifest**: the console makes a Slack app manifest (`slackManifest`) with the bot's
    scopes (`app_mentions:read`, `channels:history`, `channels:read`, `chat:write`, `groups:read`,
-   `reactions:write`, `users:read`, `users:read.email`; the two `history` scopes let a question read the thread it was
-   asked in, and an app made before them is reinstalled with them: until then the console logs `slack: call refused`
+   `reactions:write`, `users:read`, `users:read.email`; the `channels:history` scope lets a question read the thread it was
+   asked in, and an app made before it is reinstalled with it: until then the console logs `slack: call refused`
    with `missing_scope` and `asks: thread not read`, and answers from the mention alone), the Messages tab the assignee's direct messages need, and this console's events Request URL
    with the `app_mention` bot event. The URL is the embedding program's (`slackEventsUrl`), else the provider's: the
    webhooks Lambda's function URL at `/slack` on AWS, the local receiver's `WOODSHED_LOCAL_WEBHOOK_URL` at `/slack`.
