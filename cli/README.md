@@ -727,8 +727,9 @@ or value `config` refused, so a token pasted in the wrong place stays out of cap
 | Key | Values | Route |
 | --- | --- | --- |
 | `terminal` | `tmux`, `herdr`: what your private sessions run their agent in. Your next private session starts in it; running ones keep theirs. | `POST /api/my/terminal` |
-| `reviews` | `none`, `claude`, `codex`, `both`, `default` (the most this console can run): who reviews your pull requests. | `POST /api/my/reviews` |
+| `reviews` | `none`, `claude`, `codex`, `both`, `default` (the most of Claude Code and Codex this console can run), or reviewers joined with `+` (`claude+grok`, `codex+opencode`): who reviews your pull requests. | `POST /api/my/reviews` |
 | `codex-reviews` | `on`, `off`: reviews of your pull requests run Codex on your own sign-in. Needs a Codex sign-in saved on My settings. | `POST /api/my/codex-auth/reviews` |
+| `grok-reviews`, `opencode-reviews` | `on`, `off`: reviews of your pull requests may run Grok Build or OpenCode on your own sign-in, when `reviews` names it; there is no team key for them. Needs that sign-in saved on My settings (for OpenCode, an Anthropic or OpenAI API key). | `POST /api/my/agent-auth/<agent>/reviews` |
 | `claude-token-shared` | `on`, `off`: shared sessions you start from GitHub run on your own Claude token. Needs a token saved on My settings. | `POST /api/my/claude-token/shared` |
 | `default-repo` | A repo you can start sessions on, as `owner/name` or its name on the console: where New session and `session new` open. | `POST /api/my/projects/default` |
 | `github-name`, `github-email` | What your sessions' commits say. Needs GitHub connected on My settings; setting one keeps the other. | `POST /api/my/github/identity` |

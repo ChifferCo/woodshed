@@ -75,11 +75,13 @@ export function modelsFrom(body) {
 /**
  * How a saved Grok sign-in reaches a catalog: where, its header, and which kind it is.
  * @param {string} saved  an `xai-` key, or the JSON of ~/.grok/auth.json (checkSignIn in shared/agents.cjs)
- * @returns {{url: string, authorization: string, source: 'login'|'key'}|{expired: true}|null}  null: nothing usable
+ * @returns {{url: string, base: string, authorization: string, source: 'login'|'key'}|{expired: true}|null}  null:
+ *   nothing usable. `base` is the API the sign-in calls, under which `url` is the model list: a review's grok reaches it
+ *   through the console (reviewAgentProxy.mjs)
  */
 export function credentialOf(saved, now = Date.now(), { loginUpstream = LOGIN_UPSTREAM, keyUpstream = KEY_UPSTREAM } = {}) {
   if (typeof saved !== 'string' || !saved) return null;
-  const key = (k) => ({ url: `${keyUpstream}/models`, authorization: `Bearer ${k}`, source: 'key' });
+  const key = (k) => ({ url: `${keyUpstream}/models`, base: keyUpstream, authorization: `Bearer ${k}`, source: 'key' });
   if (!saved.startsWith('{')) return key(saved);
   let auth;
   try {
@@ -97,7 +99,7 @@ export function credentialOf(saved, now = Date.now(), { loginUpstream = LOGIN_UP
     const at = Date.parse(entry.expires_at);
     if (!Number.isFinite(at) || at <= now) return { expired: true };
   }
-  return { url: `${loginUpstream}/models`, authorization: `Bearer ${entry.key}`, source: 'login' };
+  return { url: `${loginUpstream}/models`, base: loginUpstream, authorization: `Bearer ${entry.key}`, source: 'login' };
 }
 
 /**

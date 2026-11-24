@@ -1,12 +1,13 @@
 // The AI reviews on a pull request: the verdicts Woodshed's review session posts (console/fleet.mjs, submitReview) and
 // the Actions review that shares its prompt, read back out of GitHub's reviews into something the page and the terminal
-// can draw: who reviewed (Claude Code, Codex or both), the verdict, each reviewer's part, and each finding on its line.
+// can draw: who reviewed (Claude Code, Codex, Grok Build, OpenCode, or several), the verdict, each reviewer's part, and
+// each finding on its line.
 //
 // Nothing here is new data. The review's verdict is a GitHub review whose body opens `## <name> review — <CONCLUSION>`
 // (reviewHeading in console/reviewSessions.mjs; a project file may name another heading, such as `## Verdict`, which
-// reads too: any App's review whose first line is `## <heading> — <CONCLUSION>`), written by an App. When both
-// reviewed, the body has a `### Claude Code: <CONCLUSION>` and a `### Codex: <CONCLUSION>` section, and each inline
-// comment opens `**Claude Code:**` or `**Codex:**` (mergeVerdicts in shared/codeReview/codeReview.mjs). When GitHub
+// reads too: any App's review whose first line is `## <heading> — <CONCLUSION>`), written by an App. When several
+// reviewed, the body has a `### <reviewer>: <CONCLUSION>` section for each (`### Claude Code: APPROVE`, `### Codex: …`),
+// and each inline comment opens `**<reviewer>:**` (mergeVerdicts in shared/codeReview/codeReview.mjs). When GitHub
 // refused the inline comments, they are folded into the body under `**Inline comments**`, one `` - `path:line`: body ``
 // a line (withFoldedComments in console/fleet.mjs). A review by a person, or a body shaped otherwise, is not an AI review.
 //
@@ -14,8 +15,9 @@
 
 const CONCLUSIONS = ['APPROVE', 'REQUEST_CHANGES', 'COMMENT'];
 const HEADING_RE = /^##[ \t]+(.{1,120}?)[ \t]+[—–-][ \t]+(APPROVE|REQUEST_CHANGES|COMMENT)\b/;
-const SECTION_RE = /^###[ \t]+(Claude Code|Codex):[ \t]+(APPROVE|REQUEST_CHANGES|COMMENT)[ \t]*$/;
-const MARK_RE = /^\*\*(Claude Code|Codex):\*\*[ \t]*/;
+const REVIEWERS = '(Claude Code|Codex|Grok Build|OpenCode)';
+const SECTION_RE = new RegExp(`^###[ \\t]+${REVIEWERS}:[ \\t]+(APPROVE|REQUEST_CHANGES|COMMENT)[ \\t]*$`);
+const MARK_RE = new RegExp(`^\\*\\*${REVIEWERS}:\\*\\*[ \\t]*`);
 const FOLDED_HEAD = '**Inline comments**';
 const FOLDED_RE = /^- `([^`\n]+):([0-9]{1,7})`: (.*)$/;
 
@@ -26,11 +28,16 @@ export function isBotAuthor(author) {
   return author.__typename === 'Bot' || /\[bot\]$/.test(login) || login === 'github-actions';
 }
 
-/** The reviewers a heading names: `Claude review` is Claude Code's, `Claude Code and Codex review` both. */
+/**
+ * The reviewers a heading names: `Claude review` is Claude Code's, `Claude Code and Codex review` both, `Claude Code and
+ * Grok Build review` Claude Code's and Grok Build's.
+ */
 export function agentsOfHeading(name) {
   const agents = [];
   if (/claude/i.test(name)) agents.push('Claude Code');
   if (/codex/i.test(name)) agents.push('Codex');
+  if (/grok/i.test(name)) agents.push('Grok Build');
+  if (/opencode/i.test(name)) agents.push('OpenCode');
   return agents;
 }
 

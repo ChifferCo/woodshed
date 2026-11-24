@@ -386,6 +386,9 @@ export function createFleet({
         env.REVIEW_CODEX_AUTH = session.review.codexVia === 'chatgpt' ? 'chatgpt' : 'key';
         if (env.REVIEW_CODEX_AUTH === 'chatgpt' && session.review.codexAccount) env.REVIEW_CODEX_ACCOUNT = session.review.codexAccount;
       }
+      // OpenCode reviews on one provider's API key, which the console adds (reviewAgentProxy.mjs): which provider its
+      // config points at the console. Grok Build needs nothing more: it calls the console's /grok on a key either way.
+      if (session.review.agents?.includes('opencode') && session.review.ownSignIns?.opencode?.provider) env.REVIEW_OPENCODE_PROVIDER = session.review.ownSignIns.opencode.provider;
     } else if (session.kind === 'pr') env.PR = String(session.number);
     else {
       if (session.kind === 'issue') env.ISSUE = String(session.number);
@@ -2439,7 +2442,7 @@ export function createFleet({
     // The author's choice and own sign-ins only for someone who passed the same checks as their Claude plan; never a
     // bot's. Anyone else's review runs the most the team keys can.
     const ownLogin = teamKeyWhy || login.endsWith('[bot]') ? null : login;
-    const { agents, choice = null, codexLogin = null, codexVia = null, codexAccount = null, why: agentsWhy, keysUnread = false } = reviewAgents
+    const { agents, choice = null, codexLogin = null, codexVia = null, codexAccount = null, ownSignIns = null, why: agentsWhy, keysUnread = false } = reviewAgents
       ? await reviewAgents.forReview({ login: ownLogin }) : { agents: ['claude'], why: null };
     if (agentsWhy) console.warn('fleet: review runs other than the author chose', { number, login, choice, agents, why: agentsWhy, ...projectField(project) });
     if (!agents.length && choice !== 'none' && keysUnread) {
@@ -2462,10 +2465,19 @@ export function createFleet({
       review: {
         base: pull.base.ref, sha: pull.head.sha, heading: review.heading, author: review.author ?? null, check: mergeRisk?.check ?? null, commentId,
         agents, ...(codexLogin ? { codexLogin } : {}), ...(codexVia ? { codexVia } : {}), ...(codexAccount ? { codexAccount } : {}),
+        // Whose sign-in a Grok Build or OpenCode reviewer runs on, and how: never the sign-in itself, which the console's
+        // proxy reads at each call (reviewAgentProxy.mjs).
+        ...(ownSignIns ? { ownSignIns } : {}),
         ...(teamKeyWhy ? { teamKey: true } : {}),
       },
     });
-    console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, agents, choice: choice ?? 'the most there is', codex: agents.includes('codex') ? (codexLogin ? `own ${codexVia === 'chatgpt' ? 'ChatGPT login' : 'key'}` : 'team key') : null, ...projectField(project) });
+    console.log('fleet: review session started', {
+      id: session.id, number, login, base: pull.base.ref, agents, choice: choice ?? 'the most there is',
+      codex: agents.includes('codex') ? (codexLogin ? `own ${codexVia === 'chatgpt' ? 'ChatGPT login' : 'key'}` : 'team key') : null,
+      ...(ownSignIns?.grok ? { grok: `own ${ownSignIns.grok.via === 'login' ? 'login' : 'key'}` } : {}),
+      ...(ownSignIns?.opencode ? { opencode: `own ${ownSignIns.opencode.provider} key` } : {}),
+      ...projectField(project),
+    });
     update(session, { review: { ...session.review, runningPosted: true } });
     await postReviewComment(session, gh, reviewRunningComment({ sessionUrl: await qaSessionUrl(session, project), agents }));
     return { outcome: 'started', sessionId: session.id };

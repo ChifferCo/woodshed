@@ -24,8 +24,11 @@
 //   POST /api/my/codex-auth/reviews  {"on": true|false}   reviews of my pull requests run Codex on this sign-in (reviewAgents.mjs)
 //   POST /api/my/agent-auth/<agent>  {"value": ...}   my own Grok Build or OpenCode sign-in (shared/agents.cjs)
 //   POST /api/my/agent-auth/<agent>/remove
+//   POST /api/my/agent-auth/<agent>/reviews  {"on": true|false}   reviews of my pull requests may run Grok Build or
+//                                     OpenCode on this sign-in, when I pick it below (reviewAgents.mjs)
 //   GET  /api/my/reviews              who reviews my pull requests, and the choices this console can run for me
-//   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|null}   null is the most there is
+//   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|"claude+grok"|…|null}   null is the most
+//                                     there is; any reviewers joined with + (shared/agents.cjs, reviewersOf)
 //   POST /api/my/terminal             {"terminal": "tmux"|"herdr"}   what my private sessions run their agent in
 //   POST /api/my/claude-token/remove
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
@@ -64,7 +67,7 @@
 //   POST /api/my/sessions/<id>/resume|remove, POST /api/sessions/<id>/stop|extend|limits, the agents beside a
 //   session's own (GET and POST /api/sessions/<id>/agents, POST …/agents/<agent-N>/stop) and GET /api/review-readiness,
 //   as its person (cliSessions.mjs); and to GET /api/cli/config, its person's choices on My settings and never a secret, and the
-//   writes of them: POST /api/my/terminal, /reviews, /codex-auth/reviews, /claude-token/shared, /projects/default and
+//   writes of them: POST /api/my/terminal, /reviews, /codex-auth/reviews, /agent-auth/<agent>/reviews, /claude-token/shared, /projects/default and
 //   /github/identity, each answering with that config alone (cliConfig.mjs)
 //   POST /api/sessions           {"number": 123, "startedBy": "login", "prompt": "..."}
 //   POST /api/sessions/<id>/stop
@@ -335,7 +338,7 @@ const REPO_SETTINGS_PAGE_RE = /^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]
 const SETTINGS_PAGE_RE = new RegExp(`^/(?:events|secrets|people|console-settings)$|${REPO_SETTINGS_PAGE_RE.source}`);
 const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove|reviews))?$/;
 // An agent that runs on its owner's own sign-in alone (shared/agents.cjs, OWN_SIGN_IN_AGENTS): any other id is a 404.
-const MY_AGENT_AUTH_RE = /^\/api\/my\/agent-auth\/([a-z]+)(?:\/(remove))?$/;
+const MY_AGENT_AUTH_RE = /^\/api\/my\/agent-auth\/([a-z]+)(?:\/(remove|reviews))?$/;
 const MY_LIMITS_PATH = '/api/my/limits';
 const PROJECTS_PATH = '/api/console-settings/projects';
 const UPDATES_PATH = '/api/console-settings/updates';
@@ -1871,6 +1874,11 @@ export function createHandler({
       const agentMatch = MY_AGENT_AUTH_RE.exec(pathname);
       if (agentMatch) {
         if (!agentsRegistry.OWN_SIGN_IN_AGENTS.includes(agentMatch[1])) return reply(res, 404, { error: 'no such agent sign-in' });
+        if (agentMatch[2] === 'reviews') {
+          if (typeof body.on !== 'boolean') return reply(res, 400, { error: 'on must be true or false' });
+          userSettings.setOwnAgentForReviews(login, agentMatch[1], body.on);
+          return reply(res, 200, myView(login));
+        }
         if (agentMatch[2]) await userSettings.removeAgentAuth(login, agentMatch[1]);
         else {
           await userSettings.setAgentAuth(login, agentMatch[1], body.value);
@@ -2401,9 +2409,9 @@ export function createHandler({
 
   /** My settings' Reviews card: who reviews my pull requests, and what this console can run for me (reviewAgents.mjs). */
   async function myReviewsView(login) {
-    if (!reviewAgents) return { available: { claude: false, codex: false }, best: 'none', choice: null };
-    const { available, own, best } = await reviewAgents.options(login);
-    return { available, own, best, choice: userSettings?.reviewAgents(login) ?? null };
+    if (!reviewAgents) return { available: Object.fromEntries(agentsRegistry.REVIEW_AGENT_IDS.map((id) => [id, false])), best: 'none', choice: null };
+    const { available, own, ownWhy, best } = await reviewAgents.options(login);
+    return { available, own, ownWhy, best, choice: userSettings?.reviewAgents(login) ?? null };
   }
 
   // `woodshed review start`: the console's review of one of the person's own open pull requests, now (fleet.mjs,

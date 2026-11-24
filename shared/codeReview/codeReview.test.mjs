@@ -270,3 +270,21 @@ test('the inline comments stay within what the console posts, half each when bot
   ]);
   assert.equal(merged.inlineComments.length, 18);
 });
+
+test('merge takes each reviewer named with its folder, and the verdict names them', (t) => {
+  const dirs = { claude: dir(t), grok: dir(t), opencode: dir(t) };
+  for (const [agent, d] of Object.entries(dirs)) {
+    fs.writeFileSync(path.join(d, 'verdict.txt'), agent === 'grok' ? 'COMMENT\n' : 'APPROVE\n');
+    fs.writeFileSync(path.join(d, 'summary.md'), `${agent} says fine.`);
+    fs.writeFileSync(path.join(d, 'merge-risk.md'), 'LOW\nSmall.\n');
+  }
+  const script = fileURLToPath(new URL('./codeReview.mjs', import.meta.url));
+  const verdict = JSON.parse(execFileSync(process.execPath, [script, 'merge', ...Object.entries(dirs).map(([a, d]) => `${a}=${d}`)], { encoding: 'utf8' }));
+  assert.equal(verdict.conclusion, 'COMMENT');
+  assert.deepEqual(verdict.agents, ['claude', 'grok', 'opencode']);
+  assert.match(verdict.summary, /### Grok Build: COMMENT/);
+  assert.match(verdict.summary, /### OpenCode: APPROVE/);
+  const alone = JSON.parse(execFileSync(process.execPath, [script, 'verdict', dirs.grok, 'grok'], { encoding: 'utf8' }));
+  assert.deepEqual(alone.agents, ['grok']);
+  assert.throws(() => execFileSync(process.execPath, [script, 'merge', `grok=${dirs.grok}`, `grok=${dirs.claude}`], { stdio: 'pipe' }), /names each reviewer once/);
+});

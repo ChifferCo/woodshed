@@ -3,6 +3,7 @@
 import { execFile } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { setTimeout as delay } from 'node:timers/promises';
+import agentRegistry from '../shared/agents.cjs';
 import { CONFIG_KEYS, CONFIG_UNAVAILABLE } from './config.mjs';
 import { ORIGIN_RE } from './credentials.mjs';
 import { sessionHere } from './hc.mjs';
@@ -47,6 +48,8 @@ it prints what is needed, says it is not finished and what is left, and exits 2:
 
 const REPO = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\/(?!\.{1,2}$)[\w.-]+$/i;
 const REVIEW_CHOICES = ['none', 'claude', 'codex', 'both', 'default'];
+// Any reviewers joined with + are a choice too (claude+grok), as My settings saves one and the console checks it.
+const isReviewChoice = (value) => REVIEW_CHOICES.includes(value) || agentRegistry.reviewersOf(value) !== null;
 const TERMINAL_CHOICES = CONFIG_KEYS.terminal.values;
 const AGENT_NAMES = { claude: 'Claude Code', codex: 'Codex' };
 // How to connect each, as My settings' own rows say it (console/public/mySettings.js): what to run in a terminal of the
@@ -128,7 +131,7 @@ function options(args, fail) {
       out.repos.push(value);
     } else out[name] = value;
   }
-  if (out['--reviews'] && !REVIEW_CHOICES.includes(out['--reviews'])) throw fail(`--reviews must be one of ${REVIEW_CHOICES.join(', ')}.`);
+  if (out['--reviews'] && !isReviewChoice(out['--reviews'])) throw fail(`--reviews must be one of ${REVIEW_CHOICES.join(', ')}, or reviewers joined with + (claude+grok).`);
   if (out['--agent'] && !['claude', 'codex'].includes(out['--agent'])) throw fail('--agent must be claude or codex.');
   if (out['--terminal'] && !TERMINAL_CHOICES.includes(out['--terminal'])) throw fail('--terminal must be herdr or tmux.');
   if (out['--skip-reviews'] && out['--reviews']) throw fail('Choose either --reviews or --skip-reviews.');
@@ -507,14 +510,14 @@ export async function setupCommand(args, ctx) {
       report('review-choice', 'skipped', `This CLI has no config command yet. Set your reviewer choice on My settings, or use: ${command('config', 'set', 'reviews', opts['--reviews'] ?? '<choice>')}.`, { url: `${origin}/settings` });
     } else {
       const current = await call('config list', 'config', 'list');
-      if (current.code !== EXIT.done || !REVIEW_CHOICES.includes(current.last?.config?.reviews)) return childError('review-choice', current, 'Could not read your reviewer choice.');
+      if (current.code !== EXIT.done || !isReviewChoice(current.last?.config?.reviews)) return childError('review-choice', current, 'Could not read your reviewer choice.');
       const prior = current.last.config.reviews;
       let value = opts['--reviews'];
       if (!value && choose) {
         const answer = await choose(`Who should review your pull requests (${REVIEW_CHOICES.join(', ')})? Enter keeps ${prior}. `);
         if (answer !== null) value = answer || prior;
       }
-      if (!REVIEW_CHOICES.includes(value)) return stop('review-choice', EXIT.waiting, `Choose who reviews your pull requests with --reviews ${REVIEW_CHOICES.join('|')}, or use --skip-reviews. Current choice: ${prior}.`);
+      if (!isReviewChoice(value)) return stop('review-choice', EXIT.waiting, `Choose who reviews your pull requests with --reviews ${REVIEW_CHOICES.join('|')}, or use --skip-reviews. Current choice: ${prior}.`);
       if (value !== prior) {
         const set = await call('config set reviews', 'config', 'set', 'reviews', value);
         if (set.code !== EXIT.done) return childError('review-choice', set, 'Could not save your reviewer choice.');

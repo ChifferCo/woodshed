@@ -1,0 +1,202 @@
+// A review's Grok Build and OpenCode calls to their model APIs, on the session API's port, on the pull request author's
+// own sign-in. Those agents have no team key (shared/agents.cjs): a review runs one only when its author picked it on
+// My settings and turned their sign-in on for reviews (reviewAgents.mjs), and the review records whose it is
+// (`review.ownSignIns`). As the OpenAI proxy does for a review's Codex (openaiProxy.mjs), the sign-in is added here, so it
+// never enters the review session, which reads what anyone who can push to the pull request wrote. The session's agent
+// holds only its SESSION_TOKEN, as its API key:
+//
+//   /grok/v1/<path>                 Authorization: Bearer <SESSION_TOKEN>  ->  the author's xAI key at api.x.ai/v1/<path>,
+//                                   or their `grok login` at cli-chat-proxy.grok.com/v1/<path> (grokModels.mjs, credentialOf)
+//   /opencode/anthropic/v1/<path>   x-api-key: <SESSION_TOKEN>             ->  api.anthropic.com/v1/<path>, on the author's key
+//   /opencode/openai/v1/<path>      Authorization: Bearer <SESSION_TOKEN>  ->  api.openai.com/v1/<path>, on the author's key
+//
+// The session's grok reaches here by GROK_MODELS_BASE_URL, and its opencode by a provider's `baseURL` in its own config
+// (session/review.sh). Only what a review's model calls need passes: its turns and the model list, never a key's files,
+// batches or anything else. The sign-in is read at each call, so one turned off, removed or expired since the review
+// started stops being used at once. The console never refreshes a Grok login (grokModels.mjs says why): one whose
+// `expires_at` has passed is refused, and the review's grok says so. OpenCode runs only on an API key here, never a login
+// (OPENCODE_REVIEW_PROVIDERS says why). Nothing of a sign-in is logged: the login, the agent, how, and a status.
+
+import http from 'node:http';
+import https from 'node:https';
+import agents from '../shared/agents.cjs';
+import { isReview } from './sessions.mjs';
+import { ownReviewCredential } from './reviewAgents.mjs';
+
+const GROK_PREFIX = '/grok';
+const OPENCODE_PREFIX = '/opencode';
+
+// What of each API a review's agent may reach, under its /v1. Measured with grok 1.0.92 on a key: GET /v1/models, POST
+// /v1/responses (its session title) and POST /v1/chat/completions (its turns); with opencode 1.19.6, POST /v1/messages
+// for Anthropic and POST /v1/responses for OpenAI.
+const GROK_PATH_RE = /^\/v1\/(?:models|chat\/completions|responses)$/;
+const OPENCODE_PROVIDERS = {
+  anthropic: { upstream: 'https://api.anthropic.com', paths: /^\/v1\/(?:messages(?:\/count_tokens)?|models)$/, header: (key) => ({ 'x-api-key': key }) },
+  openai: { upstream: 'https://api.openai.com', paths: /^\/v1\/(?:responses|chat\/completions|models)$/, header: (key) => ({ authorization: `Bearer ${key}` }) },
+};
+
+// A path already in its plain form: no `.` or `..` segment, no empty one, no `%` escape and no backslash.
+const UNPLAIN_PATH_RE = /[%\\]|\/\/|(?:^|\/)\.{1,2}(?:\/|$)/;
+// Ours to set, or the connection's own: never passed on.
+const DROPPED_HEADERS = new Set(['host', 'connection', 'keep-alive', 'proxy-connection', 'authorization', 'x-api-key',
+  'cookie', 'chatgpt-account-id', 'anthropic-api-key']);
+
+const under = (pathname, prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`);
+
+/** @returns {boolean}  whether a session API path is this proxy's */
+export function isReviewAgentPath(pathname) {
+  return under(pathname, GROK_PREFIX) || under(pathname, OPENCODE_PREFIX);
+}
+
+/**
+ * The session token a call carries: a bearer, or Anthropic's x-api-key, which opencode's Anthropic provider sends its key in.
+ * @returns {string|null}
+ */
+export function reviewAgentTokenOf(headers) {
+  const bearer = /^Bearer (\S+)$/.exec(String(headers.authorization ?? ''))?.[1];
+  if (bearer) return bearer;
+  const key = headers['x-api-key'];
+  return typeof key === 'string' && /^\S+$/.test(key) ? key : null;
+}
+
+/**
+ * Which agent a call is for, and what of its API it asks: null for anything a review's agent has no business with.
+ * @param {string} url  the request's path and query
+ * @returns {{agent: 'grok'|'opencode', provider: string|null, path: string}|{agent: string, refused: string}|null}
+ */
+export function reviewAgentRoute(url) {
+  const q = url.indexOf('?');
+  const pathname = q === -1 ? url : url.slice(0, q);
+  const search = q === -1 ? '' : url.slice(q);
+  let agent;
+  let provider = null;
+  let rest;
+  if (under(pathname, GROK_PREFIX)) {
+    agent = 'grok';
+    rest = pathname.slice(GROK_PREFIX.length);
+  } else if (under(pathname, OPENCODE_PREFIX)) {
+    agent = 'opencode';
+    const m = /^\/([a-z0-9-]+)(\/.*)?$/.exec(pathname.slice(OPENCODE_PREFIX.length));
+    if (!m || !Object.hasOwn(OPENCODE_PROVIDERS, m[1])) return { agent, refused: 'not a provider a review\'s OpenCode runs on' };
+    provider = m[1];
+    rest = m[2] ?? '';
+  } else return null;
+  const allowed = agent === 'grok' ? GROK_PATH_RE : OPENCODE_PROVIDERS[provider].paths;
+  if (UNPLAIN_PATH_RE.test(rest) || !allowed.test(rest) || search.includes('#')) return { agent, refused: `not something a review's ${agents.agent(agent).product} needs` };
+  return { agent, provider, path: rest + search };
+}
+
+function refuse(res, code, message) {
+  res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+  res.end(JSON.stringify({ error: { type: code === 401 ? 'authentication_error' : 'permission_error', message } }));
+}
+
+/**
+ * @param {{userSettings?: {usesOwnAgentForReviews: (login: string, id: string) => boolean,
+ *            agentAuth: (login: string, id: string) => Promise<string|null>}|null,
+ *          grokUpstreams?: {key: string, login: string}, opencodeUpstreams?: Record<string, string>, now?: () => number}} opts
+ *   the upstreams are for tests: a recording stand-in in place of xAI's, Anthropic's and OpenAI's
+ * @returns {{isProxyPath: (pathname: string) => boolean,
+ *            handle: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, session: object|null) => Promise<void>}}
+ */
+export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}, opencodeUpstreams = {}, now = Date.now } = {}) {
+  const routed = new Set();
+
+  /**
+   * The author's own sign-in for the review's agent, read at each call.
+   * @returns {Promise<{target: URL, headers: Record<string, string>, via: string}|{refused: string}>}
+   */
+  async function authorCredential(login, agent, provider) {
+    const product = agents.agent(agent).product;
+    if (!userSettings?.usesOwnAgentForReviews(login, agent)) return { refused: `@${login} no longer has their ${product} sign-in on for reviews` };
+    const cred = ownReviewCredential(agent, await userSettings.agentAuth(login, agent), now());
+    if (cred.why) return { refused: cred.why.replace('the author', `@${login}`) };
+    if (agent === 'grok') {
+      const base = (cred.via === 'login' ? grokUpstreams.login : grokUpstreams.key) ?? cred.base;
+      return { target: new URL(base), headers: { authorization: cred.authorization }, via: cred.via };
+    }
+    if (cred.provider !== provider) return { refused: `@${login}'s saved OpenCode sign-ins no longer have the ${provider} API key this review started on` };
+    return { target: new URL(opencodeUpstreams[provider] ?? OPENCODE_PROVIDERS[provider].upstream), headers: OPENCODE_PROVIDERS[provider].header(cred.key), via: provider };
+  }
+
+  function forward(req, res, { target, path, headers: added, product }) {
+    const transport = target.protocol === 'http:' ? http : https;
+    const headers = {};
+    for (const [name, value] of Object.entries(req.headers)) if (!DROPPED_HEADERS.has(name)) headers[name] = value;
+    Object.assign(headers, added, { host: target.host });
+    const base = target.pathname.replace(/\/+$/, '');
+    // The base names the API's /v1 (a Grok upstream) or none (Anthropic's, OpenAI's): the path asked for has its own.
+    const upstreamPath = base.endsWith('/v1') ? `${base}${path.slice('/v1'.length)}` : `${base}${path}`;
+    const out = transport.request({
+      protocol: target.protocol, hostname: target.hostname, port: target.port || undefined, method: req.method, path: upstreamPath, headers,
+    }, (answer) => {
+      res.writeHead(answer.statusCode, answer.headers);
+      answer.pipe(res);
+    });
+    out.on('error', (err) => {
+      console.warn('reviewAgentProxy: upstream not reached', { product, path: path.slice(0, 120), message: err?.code ?? err?.name ?? 'Error' });
+      if (!res.headersSent) return refuse(res, 502, `the console could not reach ${product}'s API`);
+      res.destroy();
+    });
+    // The agent cancels a turn by closing its request: the upstream call goes with it.
+    res.on('close', () => { if (!res.writableFinished) out.destroy(); });
+    req.pipe(out);
+  }
+
+  async function handle(req, res, session) {
+    const route = reviewAgentRoute(req.url);
+    const product = agents.agent(route?.agent).product;
+    if (!session) {
+      req.resume();
+      console.warn('reviewAgentProxy: refused, no active session has that token', { from: req.socket.remoteAddress });
+      return refuse(res, 401, 'not an active Woodshed session');
+    }
+    if (!isReview(session)) {
+      req.resume();
+      console.warn('reviewAgentProxy: refused, not a review session', { sessionId: session.id, agent: route?.agent ?? null });
+      return refuse(res, 403, `only a review of its author's pull request runs ${product} through the console`);
+    }
+    // A review is never tainted (production access is a private session's alone): one that is, is refused all the same.
+    if (session.taintedAt) {
+      req.resume();
+      console.warn('reviewAgentProxy: refused, a tainted session', { sessionId: session.id });
+      return refuse(res, 403, 'this session has seen production data');
+    }
+    if (!route || route.refused) {
+      req.resume();
+      console.warn('reviewAgentProxy: refused a path a review\'s agent does not need', { sessionId: session.id, agent: route?.agent ?? null, path: req.url.slice(0, 120) });
+      return refuse(res, 404, route?.refused ?? 'not something a review needs');
+    }
+    const own = session.review.agents?.includes(route.agent) ? session.review.ownSignIns?.[route.agent] ?? null : null;
+    if (!own?.login) {
+      req.resume();
+      console.warn('reviewAgentProxy: refused, the review does not run it', { sessionId: session.id, agent: route.agent });
+      return refuse(res, 403, `this review does not run ${product}`);
+    }
+    if (route.agent === 'opencode' && own.provider !== route.provider) {
+      req.resume();
+      console.warn('reviewAgentProxy: refused, not the provider the review started on', { sessionId: session.id, provider: route.provider, started: own.provider ?? null });
+      return refuse(res, 403, `this review's OpenCode runs on ${own.provider ?? 'no provider'}, not ${route.provider}`);
+    }
+    let cred;
+    try {
+      cred = await authorCredential(own.login, route.agent, route.provider);
+    } catch (err) {
+      req.resume();
+      console.warn('reviewAgentProxy: credential not read', { sessionId: session.id, agent: route.agent, message: err?.name ?? 'Error' });
+      return refuse(res, 502, 'the console could not read the credential for this call');
+    }
+    if (cred.refused) {
+      req.resume();
+      console.warn('reviewAgentProxy: refused, the author\'s sign-in not usable', { sessionId: session.id, agent: route.agent, author: own.login, why: cred.refused });
+      return refuse(res, 403, cred.refused);
+    }
+    if (!routed.has(`${session.id}/${route.agent}`)) {
+      routed.add(`${session.id}/${route.agent}`);
+      console.log(`reviewAgentProxy: first call on the author's ${product} sign-in`, { sessionId: session.id, agent: route.agent, author: own.login, via: cred.via });
+    }
+    return forward(req, res, { target: cred.target, path: route.path, headers: cred.headers, product });
+  }
+
+  return { isProxyPath: isReviewAgentPath, handle };
+}

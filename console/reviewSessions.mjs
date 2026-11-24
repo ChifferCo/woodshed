@@ -2,6 +2,7 @@
 // console submits as a formal review, and the merge-risk the console posts as the Merge risk check. The session has
 // already read these from its files with shared/codeReview/codeReview.mjs; this only validates what arrived.
 import { MAX_REPORT_CHARS, SPINNER_HTML } from './qaSessions.mjs';
+import agentsRegistry from '../shared/agents.cjs';
 
 const CONCLUSIONS = new Set(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']);
 const TIERS = new Set(['Low', 'Medium', 'High']);
@@ -12,18 +13,30 @@ const MAX_RESOLVED = 100;
 
 // The legacy Claude heading also identifies Woodshed verdicts to the gate. Accept it alongside the new headings.
 const CLAUDE_HEADING = '## Claude review';
-const CODEX_HEADING = '## Codex review';
-const BOTH_HEADING = '## Claude Code and Codex review';
+// Each reviewer's name in a heading and the running comment: Claude Code, Codex, Grok Build, OpenCode.
+const productOf = (id) => agentsRegistry.agent(id).product;
+const PRODUCT_NAMES = agentsRegistry.REVIEW_AGENT_IDS.map(productOf);
+const NAMES_RE = new RegExp(`^## (?:${PRODUCT_NAMES.join('|')})(?:(?:, | and )(?:${PRODUCT_NAMES.join('|')}))* review — `);
 
+/** @returns {string}  the reviewers' names as a sentence lists them: `Claude Code, Codex and Grok Build` */
+export function reviewerNames(agents) {
+  const names = agentsRegistry.REVIEW_AGENT_IDS.filter((id) => agents.includes(id)).map(productOf);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0] ?? '';
+}
+
+/**
+ * The review's heading for the reviewers that wrote its verdict: the project's own heading, or for a woodshed review by
+ * any but Claude Code alone, theirs (`## Codex review`, `## Claude Code and Codex review`, `## Claude Code and Grok
+ * Build review`).
+ */
 export function reviewHeading(heading, agents) {
-  if (heading !== CLAUDE_HEADING || !agents?.includes('codex')) return heading;
-  return agents.includes('claude') ? BOTH_HEADING : CODEX_HEADING;
+  if (heading !== CLAUDE_HEADING || !agents?.length || (agents.length === 1 && agents[0] === 'claude')) return heading;
+  return `## ${reviewerNames(agents)} review`;
 }
 
 export function matchesReviewHeading(body, review) {
   if (body.startsWith(review.heading)) return true;
-  return review.runner === 'woodshed' && review.heading === CLAUDE_HEADING
-    && [CODEX_HEADING, BOTH_HEADING].some((heading) => body.startsWith(`${heading} — `));
+  return review.runner === 'woodshed' && review.heading === CLAUDE_HEADING && NAMES_RE.test(body);
 }
 
 // The inline comments the session wrote, each on a file and a line of the head; anything else is dropped.
@@ -47,8 +60,7 @@ function resolvedOf(raw) {
  */
 export function reviewRunningComment({ sessionUrl, agents = ['claude'] }) {
   const where = sessionUrl ? `[a Woodshed session](${sessionUrl})` : 'a Woodshed session';
-  const names = { claude: 'Claude Code', codex: 'Codex' };
-  const who = agents.includes('codex') ? ` with ${agents.map((a) => names[a] ?? a).join(' and ')}` : '';
+  const who = agents.length === 1 && agents[0] === 'claude' ? '' : ` with ${reviewerNames(agents)}`;
   return `**Reviewing**${who} in ${where}: the review and its merge risk follow here when it ends. ${SPINNER_HTML}\n`;
 }
 
@@ -86,7 +98,7 @@ export function parseReviewReport(raw) {
   if (body?.conclusion !== null && !CONCLUSIONS.has(body?.conclusion)) throw new Error('conclusion must be APPROVE, REQUEST_CHANGES, COMMENT or null');
   if (typeof body.sha !== 'string' || !/^[0-9a-f]{40}$/.test(body.sha)) throw new Error('sha must be a commit');
   const mr = body.mergeRisk ?? {};
-  const agents = Array.isArray(body.agents) ? ['claude', 'codex'].filter((agent) => body.agents.includes(agent)) : [];
+  const agents = Array.isArray(body.agents) ? agentsRegistry.REVIEW_AGENT_IDS.filter((agent) => body.agents.includes(agent)) : [];
   return {
     conclusion: body.conclusion,
     ...(agents.length ? { agents } : {}),

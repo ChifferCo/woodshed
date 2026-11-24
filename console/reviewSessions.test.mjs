@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseReviewReport } from './reviewSessions.mjs';
+import { matchesReviewHeading, parseReviewReport, reviewHeading, reviewRunningComment } from './reviewSessions.mjs';
 
 const SHA = 'a'.repeat(40);
 const body = (over = {}) => JSON.stringify({
@@ -40,4 +40,20 @@ test('an unknown tier and a non-number cost come back null', () => {
   const r = parseReviewReport(body({ mergeRisk: { tier: 'Lowish', reason: 'x', summary: 'y' }, costUsd: 'free' }));
   assert.equal(r.mergeRisk.tier, null);
   assert.equal(r.costUsd, null);
+});
+
+test('a woodshed review\'s heading names whoever wrote its verdict, and the gate knows each such heading', () => {
+  const heading = '## Claude review';
+  assert.equal(reviewHeading(heading, ['claude']), heading);
+  assert.equal(reviewHeading(heading, ['codex']), '## Codex review');
+  assert.equal(reviewHeading(heading, ['claude', 'codex']), '## Claude Code and Codex review');
+  assert.equal(reviewHeading(heading, ['claude', 'grok', 'opencode']), '## Claude Code, Grok Build and OpenCode review');
+  assert.equal(reviewHeading('## Verdict', ['grok']), '## Verdict', 'a project\'s own heading stays');
+  const review = { runner: 'woodshed', heading };
+  for (const h of ['## Grok Build review', '## Claude Code, Codex, Grok Build and OpenCode review', '## Codex and OpenCode review']) {
+    assert.ok(matchesReviewHeading(`${h} — APPROVE`, review), h);
+  }
+  assert.ok(!matchesReviewHeading('## Someone else review — APPROVE', review));
+  assert.match(reviewRunningComment({ sessionUrl: null, agents: ['grok'] }), /Reviewing\*\* with Grok Build in/);
+  assert.deepEqual(parseReviewReport(body({ agents: ['grok', 'opencode', 'mystery'] })).agents, ['grok', 'opencode']);
 });
