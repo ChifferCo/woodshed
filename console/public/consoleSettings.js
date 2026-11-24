@@ -11,8 +11,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
   // Which rows are open is kept for the page's life, since it is drawn again on each answer.
   const { open, row, line, group, follow, reveal } = window.WoodshedSettingsRows.create({ render });
   // The numbers, in the blocks they are saved by: a block is one row's fields and its Save. The two limits on how many
-  // run at once, and how many a person's sessions may start (console/sessionStarts.mjs), are a row of their own; whatever
-  // else the sessions group holds is its timeouts.
+  // run at once are a row of their own; whatever else the sessions group holds is its timeouts.
   const RUNNING_KEYS = ['maxRunning', 'maxPrivatePerPerson'];
   const BLOCKS = {
     running: (s) => s.group === 'sessions' && RUNNING_KEYS.includes(s.key),
