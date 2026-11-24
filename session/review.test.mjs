@@ -62,7 +62,7 @@ echo '{"type":"turn.completed"}'
 
 // A fake grok that reviews only as the review must run it: on the session's token as its xAI key, with its models API
 // pointed at the console, in a home of the review's own that prefers that key and trusts no folder, headless and with
-// its own approvals, and no web. Its first model call reaches the console, as the real one's does.
+// its own approvals, and no web or X search. Its first model call reaches the console, as the real one's does.
 const FAKE_GROK = `#!/bin/bash
 [ "$XAI_API_KEY" = "$SESSION_TOKEN" ] || exit 2
 [ "$GROK_MODELS_BASE_URL" = "$WOODSHED_CONSOLE_URL/grok/v1" ] || exit 2
@@ -71,6 +71,7 @@ grep -q 'preferred_method = "api_key"' "$GROK_HOME/config.toml" || exit 2
 [ "$WOODSHED_CLAUDE_STATE_FILE" = "$GROK_HOME/state.json" ] || exit 2
 args=" $* "
 for flag in --always-approve --no-memory --disable-web-search --no-auto-update; do [[ "$args" == *" $flag "* ]] || exit 3; done
+[[ "$args" == *" --disallowed-tools x_search "* ]] || exit 3
 [ "$1" = -p ] || exit 3
 prompt=$2
 case "$prompt" in "You are Grok Build"*) ;; *) exit 3 ;; esac

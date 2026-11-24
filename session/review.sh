@@ -125,6 +125,9 @@ sayRefusal() {
 # image's /etc/grok/requirements.toml keeps every MCP server and the repo's hooks off, as in a Grok session; its hooks
 # write their state to this home, not the pane's. Headless, it approves its own tool calls, as codex's review does in its
 # container (--always-approve, as a Grok session in auto mode): it may write only the files its prompt names.
+# No X search either: on a login's model list grok makes its turns on /v1/responses and offers xAI's own x_search tool
+# there, which --disable-web-search leaves in, and the console's proxy refuses every provider tool (reviewAgentScope.mjs),
+# so with it in, grok's first turn is refused and the review gets no verdict from it.
 runGrok() {
   local code
   prepareAgentDir "$GROK_DIR" "Grok Build" "$1" || { say "Could not write Grok Build's review prompt"; return 0; }
@@ -135,7 +138,8 @@ runGrok() {
   XAI_API_KEY=$SESSION_TOKEN GROK_HOME=$GROK_REVIEW_HOME GROK_MODELS_BASE_URL=$WOODSHED_CONSOLE_URL/grok/v1 \
     WOODSHED_CLAUDE_STATE_FILE=$GROK_REVIEW_HOME/state.json \
     timeout --kill-after=30 "$AGENT_MINUTES"m "$SESSION_DIR/bin/grok" -p "$(agentPrompt "Grok Build" "$GROK_DIR")" \
-    --always-approve --no-auto-update --no-memory --disable-web-search --output-format streaming-json \
+    --always-approve --no-auto-update --no-memory --disable-web-search --disallowed-tools x_search \
+    --output-format streaming-json \
     > "$DIR/logs/grok.jsonl" 2>&1 < /dev/null
   code=$?
   [ "$code" = 124 ] && say "Grok Build took longer than $AGENT_MINUTES minutes and was stopped"

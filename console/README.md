@@ -557,13 +557,13 @@ And what the shed shows about each session:
 - **CPU and memory**: the container's, from statusd's `/status`, in the pane bar's meter (`CPU 41%` while all is
   well, the whole line once one runs high), and after the status word on a phone. Amber past 70% of its memory or
   75% of its cores, red past 90% or 95%, the one over the line first.
-- **Plan**: in a private session's pane bar meter, how much of your session agent's (Claude or Codex) plan is used,
+- **Plan**: in a private session's pane bar meter, how much of your session agent's (Claude, Codex or Grok Build) plan is used,
   its fullest window's share (`Plan 68%`), amber from 70%, red from 90% and `Plan out` at 100%. Click the meter for each
-  window's share and when it resets, a tick for how much of it has gone by, how old the reading
+  window's share and when it resets (a reset already past says so; a window with no end says neither), a tick for how much of it has gone by (left off when a Grok period names no length), how old the reading
   is, and the machine's CPU, memory and disk against their limits (on a phone, the plan under ⋯). Claude Code hands the limits only to its status
   line, after each answer: `session/statusline.sh` saves them to
   `~/.claude/woodshed-usage/claude.json` and statusd's `/status` returns them
-  (`session/planUsage.mjs`; Codex uses local rollout limits from `session/codexPlanUsage.mjs`). Readings and running counts are shared only between private sessions using the same agent. Every private session on the same agent
+  (`session/planUsage.mjs`; Codex uses local rollout limits from `session/codexPlanUsage.mjs`; Grok Build uses the allowance it logs in `~/.grok/logs/unified.jsonl`, `session/grokPlanUsage.mjs`, one week or month). OpenCode reports none. Readings and running counts are shared only between private sessions using the same agent. Every private session on the same agent
   shows the newest reading any of them has, a stopped one's last
   included, and a window whose reset has passed reads 0%. Claude Code reports
   the all-models week only, not claude.ai's per-model one, and leaves a window
@@ -1323,10 +1323,13 @@ Grok Build and OpenCode review the same way, on the author's own sign-in alone, 
   reviewer choice saved, the default includes it; a saved choice that leaves it out does not, unless none of that choice can run, in which case the default runs. The review keeps `review.ownSignIns`: whose sign-in and how
   (`{grok: {login, via: 'key'|'login'}, opencode: {login, provider}}`), never the sign-in itself.
 - **Grok Build** runs with `XAI_API_KEY` set to the session's token and `GROK_MODELS_BASE_URL` at the console's
-  `/grok/v1`, which takes all its model traffic: `GET /v1/models`, `POST /v1/responses` (its session title) and `POST
-  /v1/chat/completions` (its turns), measured with grok 1.0.92. The proxy sends them on with the author's xAI key to
-  `api.x.ai/v1`, or with a login's access token to `cli-chat-proxy.grok.com/v1`, only while its `expires_at` is ahead:
-  the console never refreshes a login (`grokModels.mjs` says why), which a Grok session of theirs does at its stop.
+  `/grok/v1`, which takes all its model traffic: `GET /v1/models`, `POST /v1/responses` (its session title on a key, and
+  its turns on a login's model list) and `POST /v1/chat/completions` (its turns on a key), measured with grok 1.0.92.
+  It runs with `--disallowed-tools x_search`, since `--disable-web-search` leaves xAI's X search in, and the proxy takes
+  the `id` off the reasoning items it sends back on `/v1/responses` (reviewAgentScope.mjs says why). The proxy sends
+  them on with the author's xAI key to `api.x.ai/v1`, or with a login's access token to `cli-chat-proxy.grok.com/v1`,
+  only while its `expires_at` is ahead: the console never refreshes a login (`grokModels.mjs` says why), which a Grok
+  session of theirs does at its stop.
 - **OpenCode** reviews only on an API key (`{type: 'api'}`) of Anthropic or OpenAI, the first of those the author's
   `auth.json` has (`OPENCODE_REVIEW_PROVIDERS` in shared/agents.cjs), and the session gets `REVIEW_OPENCODE_PROVIDER`.
   Its own config points that provider alone at the console's `/opencode/<provider>/v1` (its `baseURL`), with the
@@ -2718,8 +2721,7 @@ pull request can be done:
   next read is not messaged again, and finishing a turn is not a question.
 - **Needs a human:** the session left a comment that opens with
   `Needs a human:` on its issue or pull request, as its prompt and the review
-  and CI feedback ask when it cannot go on (`session/readyGate.mjs` asks for one
-  when a change cannot be proven in the session). The webhooks handler (the
+  and CI feedback ask when it cannot go on. The webhooks handler (the
   Lambda, or the local provider's receiver) passes on each such comment with
   its author, and the console keeps only one from its own App, `<slug>[bot]`
   as GitHub names it (`console/appIdentity.mjs`), since that is how a session

@@ -1630,6 +1630,8 @@ test('a Grok Build or OpenCode session starts no agent beside its own', async (t
       AGENT: agent, TMUX: '', TMUX_TMPDIR: dir, SESSION_KIND: 'private', SESSION_MODE: '', WOODSHED_AGENT_BIN: path.join(dir, 'bin'),
       WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'), WOODSHED_CODEX_READY_FILE: path.join(dir, 'codex-ready'), WOODSHED_AGENT_STATE_DIR: dir,
       WOODSHED_CLAUDE_STATE_FILE: path.join(dir, 'own-state.json'),
+      // The Plan chip reads this home's log. A test must not read the machine's.
+      GROK_HOME: dir,
     } });
     assert.equal((await call('GET', '/agents', 'sess')).status, 404, agent);
     assert.equal((await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'claude' }))).status, 404, agent);

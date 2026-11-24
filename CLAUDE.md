@@ -972,9 +972,15 @@ URL on top of each env file's Repo settings values
   proxy's body scope (console/README.md, the review agents): only the fields each agent was measured to send pass, never
   one that names what the author's account holds (`previous_response_id`, a `file_id`, a vector store, a container). The
   same field in every review after an agent update is one the new version sends: run `reviewInImage.mjs` on the new
-  image, read the fields it prints, and list the new one in `console/reviewAgentScope.mjs` if it names nothing. In the
-  session, `.review/logs/grok.jsonl` or `opencode.jsonl` is the agent's own output, and `REVIEW_OPENCODE_PROVIDER` the
-  provider OpenCode was pointed at.
+  image (with `IN_IMAGE_GROK_VIA=login` for a Grok login), read the fields it prints, and list the new one in
+  `console/reviewAgentScope.mjs` if it names nothing. So is one that comes only with one kind of sign-in: a `grok
+  login`'s model list says `api_backend: responses`, so grok makes its turns on `/v1/responses` (the review's `first
+  call` line says `via: 'login'`; the refusal has no `via`). There, `field: 'tools[].type'` is its `x_search` tool, from
+  a session image before `review.sh` ran it with `--disallowed-tools x_search`. `field: 'input[].id'` is an id on a
+  reasoning item from a console before it took those off (reviewAgentScope.mjs, `withoutReasoningIds`), or, on a console
+  that does, an id on another item (a `function_call` or a message), which grok 1.0.92 was measured not to send: measure
+  the new version before passing it. In the session, `.review/logs/grok.jsonl` or `opencode.jsonl` is the agent's own
+  output, and `REVIEW_OPENCODE_PROVIDER` the provider OpenCode was pointed at.
 - **Chat's Send says `Not sent: this session started before Chat could send safely`.** Its statusd predates the
   guarded send (its `/status` has no `safeSend`), and would type blind, Enter and all, into whatever is on screen: the
   console logs `console: message from the page refused, the session cannot send safely`. Type in the TUI tab, or start
@@ -1031,7 +1037,7 @@ URL on top of each env file's Repo settings values
 - **A private session's Plan reading is missing or old.** It shows, in the pane bar's meter, once Claude has answered: in the session's
   Terminal, `cat ~/.claude/woodshed-usage/claude.json` is what the status line saved. No file means Claude Code sent no
   `rate_limits` (a session not on a Pro, Max or Ultra plan, or none answered yet), or the status line is not
-  `session/statusline.sh`. statusd logs `statusd: plan usage not read` with the error once per reason. The meter shows
+  `session/statusline.sh`. A Grok Build session reads `~/.grok/logs/unified.jsonl` (`billing: fetched credits config`, `session/grokPlanUsage.mjs`) instead, and an image from before that reader has none. statusd logs `statusd: plan usage not read` with the error once per reason. The meter shows
   the newest reading of all your private sessions, its age past 30 minutes in its tooltip, and none from an image before
   `session/planUsage.mjs`.
 - **The Review tab is blank, or says `no review for this session`.** The tab frames
