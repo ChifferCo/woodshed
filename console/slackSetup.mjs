@@ -7,7 +7,7 @@
 import { CHANNEL_SCOPES, SLACK_SIGNING_SECRET, SLACK_TOKEN_SECRET } from './slack.mjs';
 
 /** What the console asks of its bot: posts, replies and reactions, who an asker is, and listing channels to pick. */
-export const BOT_SCOPES = ['app_mentions:read', 'channels:read', 'chat:write', 'groups:read', 'reactions:write', 'users:read', 'users:read.email'];
+export const BOT_SCOPES = ['app_mentions:read', 'channels:history', 'channels:read', 'chat:write', 'groups:history', 'groups:read', 'reactions:write', 'users:read', 'users:read.email'];
 
 // A Bot User OAuth Token; a user token (xoxp-) would post as a person.
 const BOT_TOKEN_RE = /^xoxb-[A-Za-z0-9-]{10,}$/;
