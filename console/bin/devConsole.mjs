@@ -353,6 +353,7 @@ const sessions = [
   })] : []),
   ...(newChat ? [session(NEW_CHAT_ID, null, 'A new session beside a running one', {
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, startedFrom: '5747ed01',
+    startTokenHash: crypto.createHash('sha256').update(devChatToken).digest('hex'),
     ref: newChat.ref, endpoint: { host: '127.0.0.1', statusPort: newChat.port, termPort: newChat.termPort ?? newChat.port },
   })] : []),
   ...(realClaude ? [session(REAL_ID, null, 'Real claude on a clone of this checkout', {
