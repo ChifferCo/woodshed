@@ -21,7 +21,7 @@ every session, with no switch, and its head reads **My sessions** (`/all` opens 
 loopback alone), one whose People list has a single member, or one whose `WOODSHED_ONE_PERSON` is `1`. The setting
 decides when set, `0` keeping the two views (the dev console sets it, `DEV_CONSOLE_ONE_PERSON=1` for the one list);
 `/api/sessions` says which in `onePerson`. **Take it** on
-an unassigned card, or **Assign to me**, **Hand over to** and **Unassign** in the card's ⋯ menu, change
+an unassigned card, or **Assign to me**, **Hand over…** (a dropdown of who can be assigned) and **Unassign** in the card's ⋯ menu, change
 who has it; only someone who can be assigned can (`POST /api/sessions/<id>/assign`). A later comment from someone else does not move it, but
 someone who can be assigned commenting on an unassigned session takes it. Assignment is a label, not a permission: a shared session stays visible
 to everyone with Sessions from GitHub, and a private one cannot be assigned. On an issue's session the GitHub issue follows: the assignee is put on
@@ -94,7 +94,15 @@ credential, and every other ttyd path, `/<kind>/<id>/token` among them, answers 
 `client_no_context_takeover` added, and ttyd's answer comes back with it too should ttyd leave it out, so the browser
 compresses each message on its own: the console can read that first message compressed and send its own uncompressed,
 and nothing after it refers back to bytes ttyd never saw. ttyd's output stays compressed. The session's `-t` flags (theme, scrollback) reach the page as ttyd's
-preferences, as they did ttyd's page. In one browser, `localStorage['woodshed-terminal-page'] = 'ttyd'` goes back to
+preferences, as they did ttyd's page. tmux sizes the agent's window by the client used last, and only input counts, so after a phone opened a session a
+desktop that only scrolls or comes back to the front would stay at the phone's width: the page sends tmux a focus-in
+on a wheel, a click or tap, or its window coming to the front (at most every 2 s, and only while tmux asked for focus
+events, `focus-events on` in `session/tmux.conf`), which gives tmux that device's size again, and only from a terminal on
+screen: one not displayed (a phone on its list, another tab) never takes the window. Nor is a terminal ever fitted below
+20 columns or 5 rows: a frame squeezed to nothing for a moment as the page changes would make xterm's fit its 2x1
+minimum, tmux would draw every device's screen at 2 columns, and claude's lines would stay that narrow in their
+history. The last size stays until the next resize. In one browser,
+`localStorage['woodshed-terminal-page'] = 'ttyd'` goes back to
 ttyd's page (`session.js`, `terminalSrc`), which works as before without `/token`.
 
 On a phone (720px wide or less) it works as the shed does there: the sessions
@@ -533,8 +541,12 @@ And what the shed shows about each session:
   nothing of them until they report; a failing check keeps its ✗ beside the word. The hover
   card and the chip's tooltip say `Woodshed review running`. A session that opens another pull request keeps each one
   it reported (`prUrls`, oldest first, by number): the one of the branch checked out and
-  those of its checkout's other branches, a git worktree's included (statusd's `prUrls`,
-  session/README.md). It shows a chip for each, but a merged
+  those of its checkout's other branches, a git worktree's included, and those claude opened with `gh pr create` from
+  another clone (statusd's `prUrls`, session/README.md). One on another repo is kept only for a private session, and only
+  on a project its owner may start sessions on (`projectAccess`, as New session offers them), since the console reads
+  it with that project's token (`reportableRepos` in `console/fleet.mjs`): a shared session, review, QA run or question
+  keeps its own repo's alone; its chip names its repo (`woodshed-cloud #151`), and it goes where it was
+  first seen, since two repos' numbers say nothing of which came first. It shows a chip for each, but a merged
   or closed one only while no newer one came after it, so the newest always
   stays. The card and pane bar show the newest two of those, a phone's bar
   the newest one, and the older fold into a `+N` chip that names each on hover;
@@ -2339,8 +2351,10 @@ Console settings has one **Slack** group for all of it, a row each for the bot, 
 "Embedding the console"), the dialog first asks which way to connect; otherwise it opens on the own app's steps:
 
 1. **Create the app from this manifest**: the console makes a Slack app manifest (`slackManifest`) with the bot's
-   scopes (`app_mentions:read`, `channels:read`, `chat:write`, `groups:read`, `reactions:write`, `users:read`,
-   `users:read.email`), the Messages tab the assignee's direct messages need, and this console's events Request URL
+   scopes (`app_mentions:read`, `channels:history`, `channels:read`, `chat:write`, `groups:read`,
+   `reactions:write`, `users:read`, `users:read.email`; the `channels:history` scope lets a question read the thread it was
+   asked in, and an app made before it is reinstalled with it: until then the console logs `slack: call refused`
+   with `missing_scope` and `asks: thread not read`, and answers from the mention alone), the Messages tab the assignee's direct messages need, and this console's events Request URL
    with the `app_mention` bot event. The URL is the embedding program's (`slackEventsUrl`), else the provider's: the
    webhooks Lambda's function URL at `/slack` on AWS, the local receiver's `WOODSHED_LOCAL_WEBHOOK_URL` at `/slack`.
    With neither the manifest has no events, and the dialog says where the address comes from. Paste it at
@@ -2607,7 +2621,10 @@ anyone Slack will not say anything about.
    it gets no repo settings, and the install secrets are unset before claude starts.
    `session/ask.md` tells claude to read the code, link each claim to it at the
    commit it read, and post the answer with `session/answer.sh`, which goes
-   through the session API's `POST /answer` to the thread.
+   through the session API's `POST /answer` to the thread. When the person who mentioned it asked for an issue in that
+   message, it searches for an open one first, then runs `session/issue.sh`, which goes through `POST /issues`: the
+   console opens the issue with its App (the session's token never writes). Only for someone linked on People whose GitHub login writes to that repo, only on the console's own repos,
+   labels the repo already has. The console posts the issue's link in the thread; a refusal's reason is told to the session.
 4. Another mention in the same thread is typed into that session, or resumes it
    with its conversation once it has stopped. A mention in a new thread is a new
    question.
@@ -2621,7 +2638,7 @@ A follow-up has to mention the bot too: the app reads mentions only
 (`app_mention`), not every message in a channel.
 
 To turn it on, on the same Slack app as the pull request posts: Set up Slack on the Slack card (above, "Setting it up:
-the Slack card"). An app made from its manifest already has the scopes (`app_mentions:read`, `chat:write`,
+the Slack card"). An app made from its manifest already has the scopes (`app_mentions:read`, `channels:history`, `chat:write`,
 `reactions:write`, `users:read` and `users:read.email` for questions) and Event Subscriptions with this console's
 Request URL (on AWS, the `slack_events_url` Terraform output; Slack checks it at once) and the bot event
 `app_mention`; paste its **Signing Secret** in the dialog's third step. An app made by hand needs the same, then

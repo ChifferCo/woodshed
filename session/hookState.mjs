@@ -11,6 +11,7 @@
 
 import fs from 'node:fs';
 import { isMain } from '../shared/isMain.mjs';
+import { pullsOpened, recordOpened } from './openedPulls.mjs';
 
 // WOODSHED_CLAUDE_STATE_FILE moves it, for a second claude on one machine with a statusd of its own: the dev console's
 // real-agent session (console/bin/devChatSession.mjs), beside the session's own claude. The fleet never sets it, so no
@@ -83,6 +84,11 @@ function main() {
   } catch {
     return;
   }
+  // A pull request opened from another clone or on another repo, which statusd would not find (openedPulls.mjs). A
+  // background agent's counts too. Its failing must not lose the state below.
+  try {
+    recordOpened(pullsOpened(payload));
+  } catch { /* the card misses that chip; claude's state still goes */ }
   const state = stateForHook(payload);
   if (!state) return;
   const tmp = `${STATE_FILE}.${process.pid}`;

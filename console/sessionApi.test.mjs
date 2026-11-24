@@ -5,6 +5,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
+import { createAsks } from './asks.mjs';
 import { MAX_QA_POSTER_BYTES } from './qaRecordings.mjs';
 import { MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES } from './qaSessions.mjs';
 import { createSessionApi, sessionForAuthorization } from './sessionApi.mjs';
@@ -982,4 +983,59 @@ test('a review whose Codex runs on its author\'s sign-in is never handed that si
   assert.ok(!JSON.stringify(settings.body).includes('rt'), 'the console\'s proxy adds it to the calls instead');
   assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer review-own', body: '{"tokens":{"refresh_token":"x"}}' })).status, 404);
   assert.deepEqual(saved, []);
+});
+
+test('an ask session opens issues through /issues with the console\'s App; every other refusal says why', async (t) => {
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'running', token: 'ask-token', kind: 'ask', slack: { channel: 'C1', threadTs: '1.1', user: 'U1' } },
+    { id: 'a2a2a2a2', status: 'running', token: 'stranger-token', kind: 'ask', slack: { channel: 'C1', threadTs: '2.2', user: 'U2' } },
+    { id: 'a3a3a3a3', status: 'running', token: 'reader-token', kind: 'ask', slack: { channel: 'C1', threadTs: '3.3', user: 'U3' } },
+    { id: 'bbbbbbbb', status: 'running', token: 'issue-token', kind: 'issue' },
+    { id: 'cccccccc', status: 'running', token: 'review-token', kind: 'pr', number: 7, review: { base: 'main' } },
+    { id: 'dddddddd', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main' } },
+  ];
+  const opened = [];
+  const replies = [];
+  const gh = {
+    async canWrite(login) { return login !== 'reader'; },
+    async labelNames() { return ['bug', 'Docs']; },
+    async createIssue(issue) { opened.push(issue); return { number: 40 + opened.length, url: `https://github.com/o/r/issues/${40 + opened.length}` }; },
+  };
+  const links = { U1: 'ana', U3: 'reader' };
+  const asks = createAsks({
+    store: { state: {}, save() {} }, fleet: { sessions: () => sessions }, slack: { reply: async (a) => { replies.push(a); return true; } }, publicUrl: 'https://console.test',
+    issues: { projectForRepo: (repo) => (repo.toLowerCase() === 'o/r' ? { repo: 'o/r' } : null), githubOf: () => gh, loginFor: (id) => links[id] ?? null },
+  });
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, asks });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const file = (token, body) => request(port, { path: '/issues', authorization: `Bearer ${token}`, body: JSON.stringify({ repo: 'o/r', title: 'Retry loops', body: 'It retries forever.', ...body }) });
+
+  const ok = await file('ask-token', { labels: ['BUG', 'nope'] });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.body, { number: 41, url: 'https://github.com/o/r/issues/41', labels: ['bug'], labelsIgnored: ['nope'] });
+  assert.equal(opened[0].body, 'It retries forever.');
+  assert.deepEqual(replies, [{ channel: 'C1', threadTs: '1.1', markdown: 'Opened [o/r#41](https://github.com/o/r/issues/41): Retry loops' }]);
+  assert.deepEqual(opened[0].labels, ['bug']);
+
+  // Not an ask session: refused with 404, and nothing opened.
+  for (const token of ['issue-token', 'review-token', 'qa-token']) assert.equal((await file(token, {})).status, 404);
+  // No link on People, no write access, a repo the console lacks.
+  const unlinked = await file('stranger-token', {});
+  assert.equal(unlinked.status, 403);
+  assert.match(unlinked.body.error, /not linked/);
+  assert.match((await file('reader-token', {})).body.error, /@reader has no write access to o\/r/);
+  assert.match((await file('ask-token', { repo: 'x/y' })).body.error, /x\/y is not one of this console's repos/);
+  assert.equal((await file('ask-token', { title: '' })).status, 403);
+  assert.equal(opened.length, 1);
+
+  // No limit: a fourth for the same question opens too.
+  for (let i = 0; i < 4; i++) assert.equal((await file('ask-token', {})).status, 200);
+  assert.equal(opened.length, 5);
+
+  // A session that has seen production data opens none.
+  sessions[0].taintedAt = '2026-11-24T10:00:00.000Z';
+  assert.match((await file('ask-token', {})).body.error, /production/);
 });

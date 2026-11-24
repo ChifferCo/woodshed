@@ -380,6 +380,8 @@
     if (onMy) launcher.applyQuery();
     render();
     refresh();
+    // For what follows the page's address without drawing it (notificationBell.js).
+    window.dispatchEvent(new Event('woodshed:route'));
   }
   window.addEventListener('popstate', moved);
   // Going away altogether (My settings, another page of the console, a reload, closing the browser tab) puts the tab
@@ -808,10 +810,13 @@
   function assignActions(s) {
     if (!data.assignable || W.isPrivate(s) || s.kind === 'ask' || W.isPullCheck(s)) return [];
     const mine = W.sameLogin(s.assignee, data.login);
+    const others = data.assignables.filter((l) => !W.sameLogin(l, data.login) && !W.sameLogin(l, s.assignee));
     return [
       !mine && { label: 'Assign to me', note: s.assignee ? `Take it from ${W.personText(s.assignee)}` : 'Nobody has it: take it', run: () => assignTo(s, data.login) },
-      ...data.assignables.filter((l) => !W.sameLogin(l, data.login) && !W.sameLogin(l, s.assignee))
-        .map((l) => ({ label: `Hand over to ${W.personText(l)}`, note: `@${l}`, run: () => assignTo(s, l) })),
+      others.length && {
+        label: 'Hand over…', note: others.length === 1 ? `Give it to ${W.personText(others[0])}` : `Give it to someone else who can be assigned (${others.length})`,
+        run: () => handOver(s, others),
+      },
       s.assignee && { label: 'Unassign', note: 'Nobody has it; anyone who can be assigned can take it', run: () => assignTo(s, null) },
     ].filter(Boolean);
   }
@@ -1018,6 +1023,14 @@
     refresh();
   }
 
+  // Everyone who can be assigned, in one dropdown, rather than a row each in the ⋯ menu, which a team makes long.
+  async function handOver(s, logins) {
+    const options = logins.map((l) => ({ value: l, label: W.personText(l) === `@${l}` ? `@${l}` : `${W.personText(l)} (@${l})` }))
+      .sort((a, b) => a.label.replace(/^@/, '').localeCompare(b.label.replace(/^@/, ''), undefined, { sensitivity: 'base' }));
+    const to = await W.askChoice({ title: 'Hand over this session', label: 'To', options, goLabel: 'Hand over' });
+    if (to) await assignTo(s, to);
+  }
+
   // Shown in a session's last 15 minutes before it pauses or stops by itself: an hour more, each press.
   function extendButton(s, { bar = false } = {}) {
     const pauses = W.pausesIn(s, data);
@@ -1059,7 +1072,6 @@
   // follows it too.
   function railCard(s) {
     const st = W.displayStatus(s);
-    const pr = W.prNumber(s.prUrl);
     const live = W.isLive(s);
     const word = h('b', null, st.word.charAt(0).toUpperCase() + st.word.slice(1));
     const pauses = W.pausesIn(s, data);
@@ -1094,7 +1106,7 @@
         h('span', { class: 'rmarks' }, starButton(s), menuButton(s))),
       h('div', { class: 'rsub' },
         h('span', { class: 'rsub-text' }, sub),
-        pr ? W.prChips(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
+        W.hasPrs(s) ? W.prChips(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
         W.isUnassigned(s) && data.assignable && takeButton(s),
         live && W.canExtend(s, data) && extendButton(s),
         !live && W.canResumePrivate(s) && resumeButton(s, true),
@@ -1367,7 +1379,8 @@
   // each refresh replaces, so the menu keeps its focus through a refresh.
   let railUser = null;
   function railUserFoot() {
-    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot(), railToggle('rail-hide', 'Hide the rail'));
+    // In the desktop app, its notifications under a bell beside the menu (notificationBell.js); nothing in a browser.
+    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot(), W.notificationBell?.({ navigate }) ?? null, railToggle('rail-hide', 'Hide the rail'));
     return railUser;
   }
 
@@ -1910,7 +1923,6 @@
   }
 
   function paneBar(s, view) {
-    const pr = W.prNumber(s.prUrl);
     const typing = s.status === 'running' && !PAGE_TABS.has(view);
     // A question from Slack reads the default branch: it has no branch, app or databases of its own.
     const tools = s.status === 'running' && s.kind !== 'ask';
@@ -1958,7 +1970,7 @@
       // A phone's two rows: the name over one line of its state, its PR and its usage, with ⋯ for the rest.
       h('div', { class: 'pphone' },
         h('b', { class: 'pphone-title', title: s.title }, s.title),
-        h('span', { class: 'pphone-meta' }, W.statusBadge(s), s.taintedAt && W.productionTag(s), W.pausesIn(s, data) && h('span', { class: 'ptimer' }, W.pausesIn(s, data)), phoneAppState(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
+        h('span', { class: 'pphone-meta' }, W.statusBadge(s), s.taintedAt && W.productionTag(s), W.pausesIn(s, data) && h('span', { class: 'ptimer' }, W.pausesIn(s, data)), phoneAppState(s), W.hasPrs(s) && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
       h('button', {
         type: 'button', class: 'pmore', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === `${s.id}:phone`), 'data-menu-for': `${s.id}:phone`,
         'aria-label': `Actions for ${s.title}`, title: 'Actions',
@@ -1983,7 +1995,7 @@
       W.statusBadge(s),
       s.taintedAt && W.productionTag(s, { long: true }),
       s.number && h('a', { class: 'pref', href: W.issueUrl(s.repo ?? data.repo, s), target: '_blank', rel: 'noopener', title: s.kind === 'pr' ? 'Open the pull request' : 'Open the issue' }, W.ref(s)),
-      pr && s.kind !== 'pr' && W.prChips(s, { asLink: true }),
+      W.hasPrs(s) && s.kind !== 'pr' && W.prChips(s, { asLink: true }),
       barMenuButton(s, {
         key: 'details', label: 'Details ▾', className: 'pdetails', title: 'Its branch, who started it, how long it has run, whose Claude it runs on and who can see it',
         // What the narrowing rules took off the bar comes here: the meter's readings and Invite.

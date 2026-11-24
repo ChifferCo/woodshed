@@ -6,9 +6,10 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { attention, enabledKinds, NOTIFICATION_KINDS } from './attention.mjs';
-import { consoleUrlFrom, destination, isConsoleMe, consolePath } from './links.mjs';
+import { consoleUrlFrom, destination, isConsoleMe, consolePath, sessionShown } from './links.mjs';
 import { APP_PAGE_CHROME_CSS, consoleChromeCss, TRAFFIC_LIGHTS } from './windowChrome.mjs';
 import { overlayFor } from './overlay.mjs';
+import { createNotificationLog } from './notificationLog.mjs';
 import { CONSOLE_SIGN_IN_PATHS, PROTOCOL, browserUrl, createPending, linkInArgs, parseSetCookie, parseSignedInLink, signInPathsFrom, signInStep } from './signIn.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -200,6 +201,14 @@ function createMainWindow({ waiting = false } = {}) {
   mainWindow.on('resized', keepBounds);
   mainWindow.on('moved', keepBounds);
   mainWindow.on('closed', () => { mainWindow = null; });
+  // Opening a session clears its notifications, under the bell and in the OS's list: on the way to it (a link, the
+  // rail, a notification), and on coming back to the window while it shows.
+  const contents = mainWindow.webContents;
+  contents.on('did-navigate', () => { bellOnPage = false; sessionOpened(); });
+  // A page that crashed shows nothing sent to it, until the next one asks for the list: the OS's notifications meanwhile.
+  contents.on('render-process-gone', () => { bellOnPage = false; });
+  contents.on('did-navigate-in-page', (_event, _url, isMainFrame) => { if (isMainFrame) sessionOpened(); });
+  mainWindow.on('focus', sessionOpened);
   guard(mainWindow);
   addChrome(mainWindow.webContents);
   if (waiting) return mainWindow.loadFile(path.join(here, 'signin.html')).catch(() => {});
@@ -555,6 +564,82 @@ function forget() {
   showOverlay(0);
 }
 
+// What the notifications said, for the bell on the console's page (notificationLog.mjs, console/public/
+// notificationBell.js). It is this console's and this sign-in's: a new console, a sign-in or signing out empties it.
+// Kept while the app runs, never on disk.
+const log = createNotificationLog();
+// Sent only while the main window shows the console's own page: the preload hands the bridge to any page, and a sign-in
+// page on GitHub's site, which the window shows too, is no reader of it.
+function consoleInWindow() {
+  if (!mainWindow || mainWindow.isDestroyed() || !consoleUrl) return false;
+  try {
+    return new URL(mainWindow.webContents.getURL()).origin === new URL(consoleUrl).origin;
+  } catch {
+    return false;
+  }
+}
+// And only to a page that asked for the list since it loaded (bellOnPage): one loading meanwhile asks for it whole.
+function logChanged() {
+  if (bellOnPage && consoleInWindow()) mainWindow.webContents.send('notifications:changed', log.list());
+}
+function forgetLog() {
+  if (log.clear()) logChanged();
+}
+// The console's page in the main window, and nothing else: its bell is the only one that reads the list.
+function fromConsolePage(event) {
+  if (!mainWindow || event.sender !== mainWindow.webContents || !consoleUrl) return false;
+  try {
+    return new URL(event.senderFrame?.url ?? '').origin === new URL(consoleUrl).origin;
+  } catch {
+    return false;
+  }
+}
+// Whether the page in the main window has a bell to show a notification in (it asks for the list as it starts): a
+// settings page, setup, or a console from before the bell has none, and gets the OS's.
+let bellOnPage = false;
+ipcMain.handle('notifications:list', (event) => {
+  if (!fromConsolePage(event)) return { items: [], unread: 0 };
+  bellOnPage = true;
+  return log.list();
+});
+ipcMain.handle('notifications:read', (event, key) => {
+  if (!fromConsolePage(event)) return;
+  if (log.markRead(typeof key === 'string' ? key : null)) logChanged();
+});
+
+// Each notification shown, with its session, until it is clicked, its session opened, or 50 newer ones were (it is then
+// closed): one
+// nothing refers to is garbage collected, and its click then fires nothing, so the OS only brings the app forward on
+// whatever session it showed. Not dropped at its `close`, which some systems send when the banner goes into their
+// notification centre, where it can still be clicked.
+const shownNotifications = new Map();
+const KEEP_SHOWN = 50;
+
+// The session the main window shows, opened: its notifications are seen, and the OS's are taken back.
+function sessionOpened() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const id = sessionShown(mainWindow.webContents.getURL(), consoleUrl);
+  if (!id) return;
+  if (log.markSessionRead(id)) logChanged();
+  for (const [shown, of] of shownNotifications) {
+    if (of !== id) continue;
+    shownNotifications.delete(shown);
+    shown.close();
+  }
+}
+
+function openSession(base, id) {
+  // The console this read came from: a notification from before Change console… does not open on the new one.
+  if (base !== consoleUrl) return;
+  if (!mainWindow) createMainWindow();
+  // Through loadConsole, as File → Sessions: the console's ready answer first, so a signed-out redirect to its
+  // sign-in goes to the browser.
+  loadConsole(mainWindow, new URL(`s/${encodeURIComponent(id)}`, base).href);
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
 // Windows has no badge count (app.setBadgeCount does nothing there): the count is drawn over the taskbar button
 // instead, from badges/ (overlay.mjs), with its words for screen readers. `--win-overlay` takes this path elsewhere, to
 // check it on another system, where the call is a stand-in's.
@@ -573,6 +658,7 @@ function startWatching() {
   reading = false;
   failures = 0;
   forget();
+  forgetLog();
   clearTimeout(timer);
   poll();
 }
@@ -635,6 +721,7 @@ async function poll() {
   if (signedOut) {
     if (seen) console.log('woodshed-desktop: signed out, the badge cleared');
     forget();
+    forgetLog();
     return;
   }
   if (!result) return;
@@ -644,24 +731,37 @@ async function poll() {
   firstRead = false;
   app.setBadgeCount(badge);
   showOverlay(badge);
-  if (!Notification.isSupported()) return;
+  if (!notify.length) return;
   for (const n of notify) {
-    // The person is looking at it already.
-    if (mainWindow?.isFocused() && mainWindow.webContents.getURL().includes(`/s/${n.id}`)) continue;
+    // The person is looking at it already: listed under the bell as seen, and not shown.
+    const inFront = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused() && mainWindow.isVisible());
+    const looking = inFront && sessionShown(mainWindow.webContents.getURL(), consoleUrl) === n.id;
+    const entry = log.add(n, { read: looking });
+    if (looking) continue;
+    // The app in front: shown in it, beside the bell (notificationBell.js), not by the OS.
+    if (inFront && bellOnPage && consoleInWindow()) {
+      mainWindow.webContents.send('notifications:arrived', entry);
+      continue;
+    }
+    if (!Notification.isSupported()) continue;
     const shown = new Notification({ title: n.title, body: n.body, icon, silent: false });
+    shownNotifications.set(shown, n.id);
+    // The oldest let go is taken back from the OS's list too: left there, its click would do nothing.
+    if (shownNotifications.size > KEEP_SHOWN) {
+      const oldest = shownNotifications.keys().next().value;
+      shownNotifications.delete(oldest);
+      oldest.close();
+    }
+    const done = () => shownNotifications.delete(shown);
     shown.on('click', () => {
-      // The console this read came from: a notification from before Change console… does not open on the new one.
-      if (base !== consoleUrl) return;
-      if (!mainWindow) createMainWindow();
-      // Through loadConsole, as File → Sessions: the console's ready answer first, so a signed-out redirect to its
-      // sign-in goes to the browser.
-      loadConsole(mainWindow, new URL(`s/${encodeURIComponent(n.id)}`, base).href);
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.show();
-      mainWindow.focus();
+      done();
+      if (log.markRead(entry.key)) logChanged();
+      openSession(base, n.id);
     });
+    shown.on('failed', done);
     shown.show();
   }
+  logChanged();
 }
 
 // --- Permissions: the console's page may use the microphone (dictation), notifications and the clipboard; an app's

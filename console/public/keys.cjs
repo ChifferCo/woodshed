@@ -14,6 +14,8 @@
     { id: 'palette', mod: '⌘K', bare: '/', what: 'Jump to a session, or run a command' },
     { id: 'new', mod: '⇧⌘O', bare: 'N', what: 'New session' },
     { id: 'rail', mod: '⌘.', what: 'Show or hide the rail' },
+    // The desktop app's alone (notificationBell.js): a browser keeps ⌘J and Ctrl+J for itself, and the sheet leaves it off.
+    { id: 'notifications', mod: '⌘J', what: 'Notifications', desktop: true },
     { id: 'settings', mod: '⇧⌘,', what: 'Display settings: theme, review files, Chat or TUI' },
     // Read by the New session form itself (launcher.js), from any of its fields: `where` says so on the sheet.
     { id: 'start', mod: '⌘↵', what: 'Start the session', where: 'New session' },
@@ -80,6 +82,7 @@
       if (e.altKey) return null;
       if (e.key === '?' || (e.shiftKey && code === 'Slash')) return 'keys';
       if (code === 'KeyK' && !e.shiftKey) return 'palette';
+      if (code === 'KeyJ' && !e.shiftKey) return 'notifications';
       if (code === 'Comma') return 'settings';
       if (code === 'Period') return 'rail';
       if (code === 'KeyO' && e.shiftKey) return 'new';

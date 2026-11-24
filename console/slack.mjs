@@ -13,11 +13,13 @@ const CHANNEL_RE = /^[CG][A-Z0-9]{8,}$/;
 const MEMBER_RE = /^[UW][A-Z0-9]{6,}$/;
 
 const API = 'https://slack.com/api/';
-const READ_METHODS = new Set(['users.info', 'users.lookupByEmail', 'users.list', 'conversations.list']);
+const READ_METHODS = new Set(['users.info', 'users.lookupByEmail', 'users.list', 'conversations.list', 'conversations.replies']);
 // Slack returns at most 1,000 members a call, so this reads two: only the first 2,000 can be found by name. A member
 // ID always works. Channels are read the same way, so a workspace past 2,000 channels finds the rest by ID.
 const LIST_LIMIT = 1000;
 const LIST_PAGES = 2;
+const THREAD_PAGES = 5;
+const THREAD_PAGE_SIZE = 200;
 // The channel picker asks on each keystroke (after a pause); Slack allows conversations.list about 20 times a minute,
 // so the list is kept this long and searched here, as the member search does with users.list.
 const CHANNELS_KEPT_MS = 60_000;
@@ -336,6 +338,41 @@ export function createSlack({ store, secrets, fetchImpl = fetch, now = Date.now 
     }
   }
 
+  /**
+   * The messages of a thread, oldest first, as `conversations.replies` gives them (needs `channels:history`; the app has no
+   * `groups:history`, so private channels are refused). Messages by bots and other subtypes (joins, edits' notices) are left out, so the bot's own
+   * answers are not among them. At most `THREAD_PAGES` calls, from the oldest message: a longer thread gives its first pages.
+   * @param {{channel: string, threadTs: string, before?: string, after?: string}} args  `before` is a message `ts` the
+   *   read stops short of; `after` one it starts after (both exclusive)
+   * @returns {Promise<{messages: {user: string, team: string|null, text: string, ts: string}[]}|{error: string}>}
+   *   `error` is Slack's (`missing_scope`, `thread_not_found`), or `no bot token yet`
+   * @throws {Error}  when Slack could not be reached
+   */
+  async function thread({ channel: to, threadTs, before = null, after = null }) {
+    const token = await savedToken();
+    if (!token) return { error: 'no bot token yet' };
+    const all = [];
+    let cursor = null;
+    for (let page = 0; page < THREAD_PAGES; page++) {
+      const query = { channel: to, ts: threadTs, limit: String(THREAD_PAGE_SIZE) };
+      if (before) query.latest = before;
+      if (after) { query.oldest = after; }
+      if (cursor) query.cursor = cursor;
+      const { status, answer } = await send(token, 'conversations.replies', query);
+      if (!answer?.ok) {
+        console.warn('slack: call refused', { method: 'conversations.replies', status, error: answer?.error ?? null });
+        return { error: answer?.error ?? `status ${status}` };
+      }
+      for (const m of answer.messages ?? []) {
+        if (m.bot_id || m.subtype || !m.user || typeof m.text !== 'string') continue;
+        all.push({ user: m.user, team: m.team ?? m.user_team ?? null, text: m.text, ts: m.ts });
+      }
+      cursor = answer.response_metadata?.next_cursor || null;
+      if (!cursor) break;
+    }
+    return { messages: all };
+  }
+
   function personOf(u) {
     const profile = u.profile;
     return {
@@ -434,6 +471,7 @@ export function createSlack({ store, secrets, fetchImpl = fetch, now = Date.now 
     reply,
     dm,
     react,
+    thread,
     person,
     personByEmail,
     personByHandle,

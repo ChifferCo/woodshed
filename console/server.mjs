@@ -294,6 +294,7 @@ const STATIC_FILES = {
   'chatThread.cjs': 'text/javascript; charset=utf-8',
   'chat.js': 'text/javascript; charset=utf-8',
   'appShare.js': 'text/javascript; charset=utf-8',
+  'notificationBell.js': 'text/javascript; charset=utf-8',
   'session.js': 'text/javascript; charset=utf-8',
   'events.js': 'text/javascript; charset=utf-8',
   'secrets.js': 'text/javascript; charset=utf-8',
@@ -633,6 +634,7 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <script src="${staticUrl('settingsSearch.js')}"></script>
 <script src="${staticUrl('keys.cjs')}"></script>
 <script src="${staticUrl('shell.js')}"></script>
+<script src="${staticUrl('notificationBell.js')}"></script>
 ${[script].flat().map((s) => `<script src="${staticUrl(s)}"></script>`).join('\n')}
 </body>
 </html>

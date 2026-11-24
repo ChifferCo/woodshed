@@ -463,6 +463,21 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
       const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/check-runs`, ...fields]);
       return created?.html_url ?? null;
     },
+    /** @returns {Promise<string[]>}  the names of the labels the repo already has (the first 300) */
+    async labelNames() {
+      const names = [];
+      for (let page = 1; page <= 3; page++) {
+        const batch = (await ghApi([`repos/${currentRepo()}/labels?per_page=100&page=${page}`])) ?? [];
+        names.push(...batch.map((l) => l.name));
+        if (batch.length < 100) break;
+      }
+      return names;
+    },
+    /** Opens an issue as the console's App. @returns {Promise<{number: number, url: string}>} */
+    async createIssue({ title, body, labels = [] }) {
+      const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/issues`, '-f', `title=${title}`, '-f', `body=${body}`, ...labels.flatMap((l) => ['-f', `labels[]=${l}`])]);
+      return { number: created.number, url: created.html_url };
+    },
     async comment(number, body) {
       const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/issues/${number}/comments`, '-f', `body=${body}`]);
       return created?.id ?? null;

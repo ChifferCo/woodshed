@@ -82,3 +82,14 @@ test('a path to open after signing in stays on the console', () => {
   // What stripping the slash used to make of it: a scheme, and so another site.
   assert.equal(consolePath(home, '/https:evil.test'), 'http://localhost:7690/https:evil.test');
 });
+
+test('the session a console page shows', async () => {
+  const { sessionShown } = await import('./links.mjs');
+  const base = 'https://console.example.com/';
+  assert.equal(sessionShown('https://console.example.com/s/aaaa1111', base), 'aaaa1111');
+  assert.equal(sessionShown('https://console.example.com/s/aaaa1111?tab=tui', base), 'aaaa1111');
+  for (const url of ['https://console.example.com/', 'https://console.example.com/all', 'https://evil.example/s/aaaa1111', 'https://console.example.com/s/aaaa1111/x', 'file:///setup.html', 'not a url']) {
+    assert.equal(sessionShown(url, base), null, url);
+  }
+  assert.equal(sessionShown('https://console.example.com/s/aaaa1111', null), null);
+});

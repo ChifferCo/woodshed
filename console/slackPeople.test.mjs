@@ -145,3 +145,11 @@ test('search lists Slack members, and says so when Slack would not', async () =>
   await assert.rejects(people.search({ query: 'zzz' }), (err) => err.shown === true && /users:read/.test(err.message));
   await assert.rejects(createSlackPeople({ store: { state: {}, save() {} }, slack: null }).search({ query: 'a' }), (err) => err.shown === true);
 });
+
+test('loginFor finds the handle a Slack user is linked to', () => {
+  const store = { state: { slackAccounts: { ana: { slackId: 'U1' }, bea: { checkedAt: 1 } } }, save() {} };
+  const people = createSlackPeople({ store, slack: null });
+  assert.equal(people.loginFor('U1'), 'ana');
+  assert.equal(people.loginFor('U9'), null);
+  assert.equal(people.loginFor(undefined), null);
+});
