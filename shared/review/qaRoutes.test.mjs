@@ -332,6 +332,74 @@ test('a Re-review starts a new Q&A for the new diff, once, with its analysis', a
   await removeReviewSession({ ctx, sessionName: session });
 });
 
+// The page's own Re-review (?follow=1), when it saw the pull request's head move on GitHub: a checkout still at the
+// commit the review read takes nothing, so a GitHub behind the session never pays for the same commit again. A moved
+// one takes, and a press without follow still takes whatever the tree holds.
+test('a followed Re-review takes only when the commit moved, a pressed one always', async () => {
+  const session = 'claude-0e0e0e03';
+  const origin = path.join(DIR, 'follow-origin.git');
+  const wt = path.join(DIR, 'follow-wt');
+  const g = (cwd, ...args) => execFileSync(REAL_GIT, ['-C', cwd, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  execFileSync(REAL_GIT, ['init', '-q', '--bare', '-b', 'main', origin]);
+  execFileSync(REAL_GIT, ['clone', '-q', origin, wt], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(wt, 'a.txt'), 'one\n');
+  g(wt, 'add', '-A');
+  g(wt, 'commit', '-q', '-m', 'base');
+  g(wt, 'push', '-q', 'origin', 'HEAD:main');
+  g(wt, 'remote', 'set-head', 'origin', 'main');
+  g(wt, 'checkout', '-q', '-b', 'feature');
+  fs.writeFileSync(path.join(wt, 'a.txt'), 'two\n');
+  g(wt, 'commit', '-q', '-am', 'two');
+  const events = [];
+  const ctx = {
+    reqId: 't', repoRoot: wt, worktreePathFor: () => wt,
+    log: (event, fields) => events.push([event, fields]),
+    json: (res, status, body) => { res.status = status; res.body = body; },
+  };
+  const take = async (query = '') => {
+    const res = {};
+    await handleReviewRequest({ method: 'POST', url: `/reviews/${session}${query}`, headers: {} }, res, ctx);
+    return res;
+  };
+  const count = (name) => events.filter(([event]) => event === name).length;
+  const record = () => JSON.parse(fs.readFileSync(path.join(process.env.WOODSHED_REVIEWS, session, 'session.json'), 'utf8'));
+
+  assert.equal((await take()).status, 200);
+  const first = record();
+  assert.equal(count('review.worktree_started'), 1);
+  await until(() => (readQa(session)?.status === 'ready' ? readQa(session) : null));
+
+  // Unmoved, followed: nothing taken, no analysis or Q&A started, the record as it was.
+  const same = await take('?follow=1');
+  assert.equal(same.status, 200, JSON.stringify(same.body));
+  assert.deepEqual(same.body, { ok: true, unchanged: true, headSha: first.headSha });
+  assert.equal(count('review.worktree_started'), 1, 'no analysis for the same commit');
+  assert.equal(count('review.worktree_prepared'), 1, 'no new take');
+  assert.equal(record().createdAt, first.createdAt);
+  assert.equal(readQa(session)?.status, 'ready', 'the Q&A kept');
+
+  // Moved, followed: taken at the new commit.
+  fs.writeFileSync(path.join(wt, 'b.txt'), 'b\n');
+  g(wt, 'add', '-A');
+  g(wt, 'commit', '-q', '-m', 'b');
+  const moved = await take('?follow=1');
+  assert.equal(moved.status, 200, JSON.stringify(moved.body));
+  assert.notEqual(moved.body.unchanged, true);
+  assert.equal(record().headSha, g(wt, 'rev-parse', 'HEAD'));
+  assert.equal(count('review.worktree_started'), 2);
+  await until(() => (readQa(session)?.status === 'ready' ? readQa(session) : null));
+
+  // Unmoved, pressed: the button still takes the tree as it is.
+  const second = record();
+  const pressed = await take();
+  assert.equal(pressed.status, 200, JSON.stringify(pressed.body));
+  assert.notEqual(pressed.body.unchanged, true);
+  assert.notEqual(record().createdAt, second.createdAt);
+  assert.equal(count('review.worktree_started'), 3);
+  await until(() => (readQa(session)?.status === 'ready' ? readQa(session) : null));
+  await removeReviewSession({ ctx, sessionName: session });
+});
+
 // The copy is the tree's bytes as git stores them, which is what the diff compares. A smudge filter configured in the
 // checkout (what checkout-index applies) and export-ignore (what git archive honours) must change nothing in it, and a
 // symlink must not point out of it.

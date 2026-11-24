@@ -257,6 +257,7 @@ function mcpAccess({ loaded: given, secrets, launcher }) {
  *          recordings?: object|null (where QA recordings are kept: qaRecordings.mjs),
  *          webhookUrl?: (() => Promise<string|null>)|null, slackEventsUrl?: (() => Promise<string|null>)|null}, trusted?: {userFor: Function}|null, githubSetup?: object|null,
  *          userMenu?: ((headers: object) => object)|null, settingsTabs?: ((headers: object) => object[])|null,
+ *          repoPage?: ((repo: {name: string, repo: string, headers: object}) => Promise<string|object|null>)|null,
  *          signOut?: ((req: object) => Promise<{location?: string, setCookie?: string|string[]}>)|null, newId?: () => string, repos?: object|null,
  *          projectReadiness?: ((project: {name: string, repo: string}) => Promise<object|null>)|null,
  *          hostApp?: object|null, woodshedUpdate?: boolean, slackEventsUrl?: (() => Promise<string|null>)|null,
@@ -273,7 +274,8 @@ function mcpAccess({ loaded: given, secrets, launcher }) {
  *   something in front of the console signs people in; `userMenu(headers)` adds to the user menu and the settings
  *   list for that person (`{subtitle, you, groups, sections}`, server.mjs's menuOf), and `settingsTabs(headers)` adds
  *   tabs of its own pages to Settings (`[{label, href}]`, server.mjs's settingsTabsOf; each page is drawn with
- *   settingsFrame, as are the menu's own pages). Behind `trusted`,
+ *   settingsFrame, as are the menu's own pages). `repoPage({name, repo, headers})` adds groups of its own after a
+ *   repo's settings page's (repoSettings.mjs, `host`): markup made with settingsMarkup.mjs, or null for none. Behind `trusted`,
  *   `signOut(req)` ends the person's sign-in for the user menu's Sign out, answering where to go and the cookies to
  *   set (`{location?, setCookie?}`); without it a hosted console has no Sign out; `newId` makes a session
  *   id, for ids unique beyond this installation.
@@ -300,10 +302,11 @@ function mcpAccess({ loaded: given, secrets, launcher }) {
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null, mcpServers: mcpServersHook = null, cliDevices = undefined }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, repoPage = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null, mcpServers: mcpServersHook = null, cliDevices = undefined }) {
   checkMembersHook(memberList, trusted);
   if (mcpServersHook && ['list', 'save', 'remove'].some((f) => typeof mcpServersHook[f] !== 'function')) throw new Error('mcpServers needs list, save and remove');
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
+  if (repoPage != null && typeof repoPage !== 'function') throw new Error('repoPage must be a function');
   if (slackEventsUrl != null && typeof slackEventsUrl !== 'function') throw new Error('slackEventsUrl must be a function');
   checkSlackInstall(slackInstall);
   if (hostApp && (typeof hostApp.login !== 'function' || (hostApp.reviewer != null && ['login', 'configured', 'submitReview'].some((f) => typeof hostApp.reviewer[f] !== 'function')))) {
@@ -457,6 +460,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // What a session has open that its lockdown would not close goes the moment it starts.
   if (egressProxy) fleet.onLocking((id) => egressProxy.cut(id));
   fleet.onLocking((id) => mcpRelay.cut(id));
+  // A Codex agent's calls on the team key, opened before its session's lockdown (session/agents.mjs).
+  fleet.onLocking((id) => openai.cut(id));
   // Sessions of anyone the program's list does not have go back to Unassigned, now for the first read and at each after.
   members?.whenGone?.((login) => fleet.releaseAssignments({ login, by: 'the program' }));
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
@@ -551,6 +556,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     trusted,
     userMenu,
     settingsTabs,
+    repoPage,
     signOut,
     appPorts,
     githubConnectHref: hostConnect ? githubConnect.href : null,

@@ -1,6 +1,8 @@
 // The terminal page behind the TUI and Terminal tabs, served by the console as /static/term.html (server.mjs,
 // terminalPageHtml) and kept by the browser by its hash, so opening a session's terminal loads nothing but its
-// websocket. The address's fragment says which: #term/<id> for the agent's tmux, #shell/<id> for the plain shell.
+// websocket. The address's fragment says which: #term/<id> for the agent's tmux, #shell/<id> for the plain shell, and
+// #term/<id>?arg=agent-<n> for an agent beside the session's own, whose `arg` goes on the websocket's query for ttyd to
+// hand to woodshed-attach.
 //
 // It does what ttyd 1.7.7's own page does, so the session's ttyd is only the connection: xterm.js (vendor/xterm/, the
 // versions ttyd bundles), and ttyd's protocol on the websocket at /<kind>/<id>/ws, subprotocol `tty`. The first
@@ -14,7 +16,7 @@
 // opened again by itself while the page is in front, a few times a minute; past that, Enter opens it.
 (function () {
   'use strict';
-  const ROUTE_RE = /^#(term|shell)\/([0-9a-f]{8})$/;
+  const ROUTE_RE = /^#(term|shell)\/([0-9a-f]{8})(?:\?arg=(agent-[2-9]))?$/;
   // ttyd's own defaults, with the session's theme over them so nothing flashes grey before its preferences arrive
   // (session/entrypoint.sh's `theme`, which still comes after, as ttyd's '2' message).
   const OPTIONS = {
@@ -43,7 +45,8 @@
     showOverlay('No terminal named in this address');
     return;
   }
-  const [, kind, id] = route;
+  const [, kind, id, arg] = route;
+  const query = arg ? `?${new URLSearchParams({ arg })}` : '';
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   let socket = null;
@@ -98,7 +101,7 @@
   function connect() {
     retryTimer = null;
     const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${scheme}//${window.location.host}/${kind}/${id}/ws`, ['tty']);
+    const ws = new WebSocket(`${scheme}//${window.location.host}/${kind}/${id}/ws${query}`, ['tty']);
     ws.binaryType = 'arraybuffer';
     socket = ws;
     ws.addEventListener('open', () => {

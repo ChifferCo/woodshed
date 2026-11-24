@@ -252,3 +252,21 @@ test('the real ttyd, as a session runs it, takes the console\'s first message an
   assert.deepEqual(await ended, { status: 'closed', code: 1000 });
   assert.match(io.drawn(), /got:hello\r\n40 120/);
 });
+
+// woodshed session connect --agent: the TUI's terminal of an agent started beside the session's own, which its ttyd
+// attaches to by the URL argument it is handed (session/bin/woodshed-attach).
+test('a terminal on an agent beside the session\'s own reaches its ttyd with the agent named, and nothing else does', async (t) => {
+  const ttyd = await standInTtyd(t);
+  const c = await consoleFor(t, { termPort: ttyd.port });
+  const { token } = c.signIn('mia-dev');
+  const opened = await openTerminal({ origin: c.origin, token, session: 'aaaa1111', kind: 'term', size: { columns: 100, rows: 30 }, agent: 'agent-2' });
+  assert.ok(opened.socket, JSON.stringify(opened));
+  opened.socket.destroy();
+  await until(() => ttyd.seen.requests.length === 1);
+  assert.equal(ttyd.seen.requests[0].url, '/term/aaaa1111/ws?arg=agent-2');
+  for (const [kind, agent] of [['term', 'agent-1'], ['term', 'claude'], ['term', 'agent-2&arg=x'], ['shell', 'agent-2']]) {
+    const refused = await openTerminal({ origin: c.origin, token, session: 'aaaa1111', kind, size: { columns: 100, rows: 30 }, agent });
+    assert.equal(refused.refused?.status, 400, `${kind} ${agent}`);
+  }
+  assert.equal(ttyd.seen.requests.length, 1, 'nothing refused reached the session');
+});

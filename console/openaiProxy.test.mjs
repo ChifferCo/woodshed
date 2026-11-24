@@ -161,3 +161,39 @@ test('a review on a key reaches Codex\'s calls alone, never the key\'s files or 
   assert.equal(await raw('review-both', '/v1/models', '/openai', 'GET'), 200);
   assert.equal(await raw('codex-private', '/v1/files', '/openai', 'GET'), 200, 'a private Codex session is its owner\'s, as before');
 });
+
+// A private claude session whose owner started a Codex agent beside it (session/agents.mjs): its calls ride the team key
+// until its lockdown starts, and the lockdown cuts one already on its way.
+test('a Codex agent beside claude uses the team key, and its lockdown cuts a call on its way and refuses the next', async (t) => {
+  const session = { id: '22222222', status: 'running', token: 'beside', owner: 'joel', options: { agent: 'claude' }, extraAgents: ['codex'] };
+  let arrived;
+  const reached = new Promise((resolve) => { arrived = resolve; });
+  const upstream = http.createServer((req, res) => {
+    // Streams, as a turn does, and never ends by itself.
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('data: {}\n\n');
+    arrived();
+  });
+  const upPort = await listen(upstream);
+  const openai = createOpenAiProxy({ teamKey: 'sk-team', upstream: `http://127.0.0.1:${upPort}`, now: () => NOW });
+  const handle = createSessionApi({ fleet: { sessions: () => [session] }, tokens: { token: async () => ({}) }, openai });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => { server.close(); upstream.closeAllConnections(); upstream.close(); });
+  const call = () => fetch(`http://127.0.0.1:${port}/openai/v1/responses`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer beside' }, body: '{"model":"gpt-5.5"}',
+  });
+
+  const files = await fetch(`http://127.0.0.1:${port}/openai/v1/files`, { headers: { authorization: 'Bearer beside' } });
+  assert.equal(files.status, 404, 'codex\'s own calls alone: none of the team key\'s files');
+  const open = await call();
+  assert.equal(open.status, 200);
+  await reached;
+  const reader = open.body.getReader();
+  await reader.read();
+  // The lockdown starts: the fleet drops the agent's access (fleet.taint) and cuts what is open (fleet.onLocking).
+  session.extraAgents = null;
+  openai.cut(session.id);
+  await assert.rejects(async () => { for (;;) if ((await reader.read()).done) throw new Error('ended'); }, 'the call on its way ends');
+  assert.equal((await call()).status, 403, 'and the next is refused');
+});

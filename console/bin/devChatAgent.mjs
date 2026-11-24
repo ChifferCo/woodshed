@@ -13,15 +13,19 @@
 // command in this session`, `No, and tell Codex what to do differently`, `Press enter to confirm or esc to cancel`), and
 // its layout (the `›` on the highlighted row, the numbers, each option's key after it) is how codex's list draws them,
 // as far as could be told without a signed-in codex to capture.
-// Usage: node devChatAgent.mjs codex|claude <record dir> <repo dir>
+// Usage: node devChatAgent.mjs codex|claude <record dir> <repo dir> [flags]
+// Of the flags an agent started beside the session's (session/agents.mjs) is given, it reads claude's --session-id, which
+// names its transcript as claude's does; codex's rollout is held open while it runs, as codex's is, which is how
+// agents.mjs finds a codex's own.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-const [format, dir, repo] = process.argv.slice(2);
+const [format, dir, repo, ...flags] = process.argv.slice(2);
 const now = () => new Date().toISOString();
-const id = crypto.randomUUID();
+const named = flags.indexOf('--session-id');
+const id = named !== -1 && /^[0-9a-f-]{36}$/.test(flags[named + 1] ?? '') ? flags[named + 1] : crypto.randomUUID();
 let file;
 if (format === 'codex') {
   const d = new Date();
@@ -32,7 +36,9 @@ if (format === 'codex') {
   fs.mkdirSync(dir, { recursive: true });
   file = path.join(dir, `${id}.jsonl`);
 }
-const write = (record) => fs.appendFileSync(file, `${JSON.stringify(record)}\n`);
+// codex keeps its rollout open; claude appends to its transcript.
+const held = format === 'codex' ? fs.openSync(file, 'a') : null;
+const write = (record) => (held !== null ? fs.writeSync(held, `${JSON.stringify(record)}\n`) : fs.appendFileSync(file, `${JSON.stringify(record)}\n`));
 
 // ---- One record line for each thing said or run, in the agent's own shape.
 let call = 0;
@@ -276,3 +282,6 @@ process.stdin.on('data', (chunk) => {
   }
 });
 draw();
+// The first message, as the real agents take it: the last word of the command line, after the flags and their values.
+const first = flags.length && !flags.at(-1).startsWith('-') && !['--session-id', '--model', '--effort', '--permission-mode', '-c', '--add-dir', '--sandbox', '--ask-for-approval'].includes(flags.at(-2)) ? flags.at(-1) : '';
+if (first.trim()) submit(first);

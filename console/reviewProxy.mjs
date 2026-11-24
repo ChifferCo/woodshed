@@ -11,11 +11,25 @@
 import http from 'node:http';
 
 import { ownerOnly } from './execPipe.mjs';
+import { prUrlsOf } from './sessions.mjs';
 import { isSameOrigin } from '../shared/sameOrigin.mjs';
 
 const SHED_PREFIX = '/shed-review';
-const SESSION_PARAM_RE = /^claude-([0-9a-f]{8})$/;
-const REVIEWS_RE = /^\/reviews\/claude-([0-9a-f]{8})(\/[A-Za-z0-9/-]*)?$/;
+// A session's review is `claude-<id>`, of its checkout, or `claude-<id>-pr<n>`, of another pull request it opened.
+const SESSION_PARAM_RE = /^claude-([0-9a-f]{8})(?:-pr[1-9][0-9]{0,8})?$/;
+const REVIEWS_RE = /^\/reviews\/claude-([0-9a-f]{8})(?:-pr[1-9][0-9]{0,8})?(\/[A-Za-z0-9/-]*)?$/;
+// The session's pull requests, by number, which statusd reviews one at a time (session/reviewShed/host.mjs).
+const PULLS_HEADER = 'x-woodshed-pulls';
+
+/** @returns {string}  the numbers of the session's pull requests on its own repo, oldest first, comma separated */
+export function sessionPulls(session) {
+  const repo = String(session?.repo ?? '').toLowerCase();
+  const numbers = prUrlsOf(session).map((url) => {
+    const match = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d{1,9})$/i.exec(String(url));
+    return match && match[1].toLowerCase() === repo ? Number(match[2]) : null;
+  }).filter(Boolean);
+  return [...new Set(numbers)].join(',');
+}
 const FORWARDED_METHODS = new Set(['GET', 'HEAD', 'POST', 'PATCH', 'DELETE']);
 const MAX_BODY_BYTES = 1024 * 1024;
 const TIMEOUT_MS = 120_000;
@@ -112,7 +126,7 @@ export function createReviewProxy({ findFor, request = http.request, fleet = nul
   function forward(req, res, target, session) {
     if (session.status !== 'running' || !session.endpoint) return refuse(req, res, 409, 'the session is not running');
     const { host, statusPort } = session.endpoint;
-    const headers = { authorization: `Bearer ${session.token}` };
+    const headers = { authorization: `Bearer ${session.token}`, [PULLS_HEADER]: sessionPulls(session) };
     if (req.headers['content-type']) headers['content-type'] = req.headers['content-type'];
     // Node sends no body on a DELETE unless told how long it is, and the page deletes a comment with one.
     if (req.headers['content-length']) headers['content-length'] = req.headers['content-length'];

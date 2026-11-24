@@ -156,7 +156,8 @@ test('through the proxy, ttyd gets the console\'s first message and then the bro
   const client = net.connect(proxyPort, '127.0.0.1');
   t.after(() => client.destroy());
   await new Promise((resolve) => client.on('connect', resolve));
-  client.write(['GET /term/0a1b2c3d/ws HTTP/1.1', 'Host: console.example', 'Upgrade: websocket', 'Connection: Upgrade',
+  // An agent beside the session's own: ttyd reads `arg` from the websocket's query (session.js, terminalSrc).
+  client.write(['GET /term/0a1b2c3d/ws?arg=agent-2 HTTP/1.1', 'Host: console.example', 'Upgrade: websocket', 'Connection: Upgrade',
     'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==', 'Sec-WebSocket-Protocol: tty',
     'Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits', '', ''].join('\r\n'));
   const answer = await new Promise((resolve) => client.once('data', (d) => resolve(d.toString().split('\r\n')[0])));
@@ -168,7 +169,7 @@ test('through the proxy, ttyd gets the console\'s first message and then the bro
   client.write(sent.subarray(5));
   await done;
 
-  assert.deepEqual(received[0], { request: 'GET /term/0a1b2c3d/ws HTTP/1.1', authorization: basicAuth('secret'),
+  assert.deepEqual(received[0], { request: 'GET /term/0a1b2c3d/ws?arg=agent-2 HTTP/1.1', authorization: basicAuth('secret'),
     extensions: 'permessage-deflate; client_no_context_takeover; client_max_window_bits' });
   assert.deepEqual(JSON.parse(received[1]), { AuthToken: CREDENTIAL, columns: 100, rows: 30 });
   assert.equal(received[2], '0q');

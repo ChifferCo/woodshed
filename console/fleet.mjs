@@ -440,6 +440,12 @@ export function createFleet({
       if (!session.mayUseProduction) {
         throw shown('this session started before it could use production, so it holds its owner\'s databases: start a new My Woodshed session, which starts ready for it');
       }
+      // The agents its owner started beside its own lose what they were allowed (a Codex one's sign-in and the team's
+      // OpenAI key) from the moment the lockdown starts, whether or not it succeeds: statusd stops them at its taint.
+      if (session.extraAgents?.length) {
+        console.log('fleet: other agents\' access dropped at the lockdown', { id: session.id, agents: session.extraAgents });
+        update(session, { extraAgents: null });
+      }
       // Whatever it has open that the lockdown does not cover (the egress proxy's tunnels, an ordinary MCP server's
       // stream) is cut before anything of production reaches it.
       for (const cut of lockingListeners) {
@@ -1716,6 +1722,22 @@ export function createFleet({
   }
 
   /**
+   * Another agent started in a private session beside its own (session/agents.mjs), recorded once the session started
+   * it: a Codex one may then use the team's key (openaiProxy.mjs) and send its refreshed sign-in back at the stop
+   * (sessionApi.mjs POST /codex-auth), as a Codex session does.
+   * @param {object} session
+   * @param {'claude'|'codex'} agent
+   * @returns {boolean}  whether it was allowed now, rather than before
+   */
+  function allowAgent(session, agent) {
+    if ((session.extraAgents ?? []).includes(agent)) return false;
+    console.log('fleet: another agent allowed in the session', { id: session.id, agent });
+    update(session, { extraAgents: [...(session.extraAgents ?? []), agent] });
+    return true;
+  }
+
+
+  /**
    * New session on My Woodshed: a session private to `owner`, on their own Claude token. The console posts no comment
    * or reaction; the session itself still pushes its branch and opens a PR, as any session does.
    * @param {{owner: string, prompt: string, name?: string, workOn?: string, model?: string, effort?: string,
@@ -1787,6 +1809,9 @@ export function createFleet({
       endpoint: null, startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: session.claudeSession ?? null,
       lastActiveAt: null, checkedAt: null, app: null, appServers: null, appName: null, apps: null, resumedAt: nowIso(), resumedBy: owner, queuedAt: nowIso(),
       herdrParent: herdrParent ? true : null,
+      // A Resume starts its own agent alone: what the agents of the last run were allowed (a Codex one's sign-in) is
+      // not this run's, and the last run's list is not either.
+      extraAgents: null, agents: null,
       // Its pull request's watch ended when it stopped: it is watched again once statusd reports it.
       announcedPrUrl: null,
       // A tainted session starts locked down, its entrypoint told so (WOODSHED_TAINTED): its statusd needs no notice.
@@ -2238,8 +2263,8 @@ export function createFleet({
 
   /**
    * A pull request whose review runs in a session (pullRequests.review.runner: woodshed): when its head commit carries
-   * the review's rerun tag and no session has reviewed that commit, a review session starts, as the pull request's
-   * author. Once for each commit. Cheap to call on any pull request change: it returns early unless the runner is
+   * the review's rerun tag, or was pushed over the review's approval and dismissed it (approvalDismissed), and no
+   * session has reviewed that commit, a review session starts, as the pull request's author. Once for each commit. Cheap to call on any pull request change: it returns early unless the runner is
    * `woodshed`.
    * @param {{number: number, project?: string|null}} args
    */
@@ -2254,10 +2279,26 @@ export function createFleet({
     if (state.sessions.some((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.sha === pull.head.sha)) return { unrecorded: true };
     if (review.rerun) {
       const message = await safely('review head commit', () => gh.commitMessage(pull.head.sha));
-      if (!message || !message.includes(review.rerun)) return { unrecorded: true };
+      const tagged = Boolean(message?.includes(review.rerun));
+      if (!tagged && !(await approvalDismissed(project, gh, number, pull.head.sha))) return { unrecorded: true };
     }
     const owner = pullOwner(project, pull, number);
     return startReview({ project, gates, number, login: owner.login, owner, pull });
+  }
+
+  /**
+   * Whether the review's own last verdict on this pull request was an approval of an older commit, which GitHub now
+   * shows dismissed: a push to a repo that dismisses stale approvals took it away. Such a push is reviewed tag or not,
+   * since nothing else gives the approval back and git's own merge message carries no tag (#333, #334). A fix after
+   * changes were asked for, or a push to a repo that keeps stale approvals, still waits for the tag.
+   */
+  async function approvalDismissed(project, gh, number, head) {
+    const last = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.conclusion && s.review.posted).at(-1);
+    if (last?.review.conclusion !== 'APPROVE' || last.review.sha === head) return false;
+    const reviews = await safely('reviews of the pull request', () => gh.reviews(number));
+    const dismissed = Boolean(reviews?.some((r) => r.commit_id === last.review.sha && r.state === 'DISMISSED'));
+    if (dismissed) console.log('fleet: the review\'s approval was dismissed by a push, reviewing it again', { number, approved: last.review.sha, head, ...projectField(project) });
+    return dismissed;
   }
 
   /**
@@ -2899,7 +2940,7 @@ export function createFleet({
   }
 
   return {
-    createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

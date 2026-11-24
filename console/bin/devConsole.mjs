@@ -9,7 +9,8 @@
 // (devChatSession.mjs): a message is answered with a few tool calls and a reply, one that says "fail" has a tool fail,
 // and one that says "ask" puts the codex session at Needs you until Enter in its TUI tab.
 // /s/c1a0de02 is the same claude, started from a Claude home that holds an earlier session's conversation, as a private
-// session started while another runs is: its Chat stays empty until it is sent a message.
+// session started while another runs is: its Chat stays empty until it is sent a message. /s/a6e1a6e1 is @local's own
+// session on that codex, whose pane bar's agent switch starts a stand-in claude or codex beside it (session/agents.mjs).
 // DEV_CONSOLE_APP_PORTS=7701-7703 puts session apps on those ports of localhost, in place of `<id>.apps.localhost`.
 // DEV_CONSOLE_SESSION_APP=1, in a session (SESSION_ID set), also answers under the session's app name,
 // `<SESSION_ID>.<SESSION_APP_DOMAIN>`, as Woodshed's own app does behind the console's app proxy (scripts/devConsoleApp.sh).
@@ -60,8 +61,10 @@ const REVIEW_ID = 'beadfeed';
 // DEV_CONSOLE_REVIEW_PR=1 makes /s/beadfeed @local's own My Woodshed session, whose branch has a made-up open pull
 // request, #26701, answered by a stand-in gh (devReviewGh.mjs): for `woodshed review beadfeed`, which opens your own
 // sessions only, and for the review's writes (comment, verdict, rename, merge), which a shared session's review refuses.
+// It opened #26695 before it, on a branch of its own: its Review switches between the two, each with its own review.
 const reviewPr = process.env.DEV_CONSOLE_REVIEW_PR === '1'
-  ? { number: 26701, title: 'Retry webhook deliveries with backoff', login: 'local', slug: 'example-org/example-repo' } : null;
+  ? { number: 26701, title: 'Retry webhook deliveries with backoff', login: 'local', slug: 'example-org/example-repo',
+    earlier: { number: 26695, branch: `woodshed/${REVIEW_ID}-docs`, title: 'Say what a webhook subscriber should answer' } } : null;
 // The PATH before the review's stand-in gh goes first on it: everything else here, the console's own gh among it,
 // keeps the PATH it had.
 const basePath = process.env.PATH;
@@ -86,6 +89,10 @@ const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, ...tokensOf(C
 // session's conversation, and its own claude has written nothing yet. Its Chat is empty until it is sent a message.
 const NEW_CHAT_ID = 'c1a0de02';
 const newChat = await startDevChatSession({ id: NEW_CHAT_ID, ...tokensOf(NEW_CHAT_ID), agent: 'claude', restoredHome: true, nextPath: [claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
+// A private session of the dev login's on a stand-in codex, whose pane bar offers + Another agent (session/agents.mjs):
+// the agents it starts are stand-ins too, a claude and a codex, each with its own Chat and TUI.
+const AGENTS_CHAT_ID = 'a6e1a6e1';
+const agentsChat = await startDevChatSession({ id: AGENTS_CHAT_ID, ...tokensOf(AGENTS_CHAT_ID), agent: 'codex', nextPath: [newChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) });
 // A real agent runs on this machine's credentials, so it is never served behind the session's app name: Open app and
 // app shares reach that console, which has no sign-in. Run it on a port of its own instead, which only this machine
 // reaches: DEV_CONSOLE_REAL_CLAUDE=1 node console/bin/devConsole.mjs 7700.
@@ -97,14 +104,14 @@ const realAllowed = wantsReal && !sessionApp;
 const REAL_ID = 'c1a0dea1';
 const realClaude = realAllowed && process.env.DEV_CONSOLE_REAL_CLAUDE === '1'
   ? await startDevChatSession({ id: REAL_ID, ...tokensOf(REAL_ID), agent: 'claude', real: true,
-    nextPath: [newChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) })
+    nextPath: [agentsChat?.binDir, newChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) })
   : null;
 if (realAllowed && process.env.DEV_CONSOLE_REAL_CLAUDE === '1' && !realClaude) console.warn('dev console: no real claude, it needs claude, ttyd and tmux on the PATH');
 // DEV_CONSOLE_REAL_CODEX=1: /s/c0dea1ed runs the real codex the same way, on this machine's Codex sign-in.
 const REAL_CODEX_ID = 'c0dea1ed';
 const realCodex = realAllowed && process.env.DEV_CONSOLE_REAL_CODEX === '1'
   ? await startDevChatSession({ id: REAL_CODEX_ID, ...tokensOf(REAL_CODEX_ID), agent: 'codex', real: true,
-    nextPath: [realClaude?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) })
+    nextPath: [realClaude?.binDir, agentsChat?.binDir, newChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter) })
   : null;
 function session(id, number, title, extra = {}) {
   return {
@@ -273,7 +280,10 @@ const sessions = [
   session(REVIEW_ID, 26701, 'Retry webhook deliveries with backoff', {
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
     endpoint: { host: '127.0.0.1', statusPort: review.port, termPort: review.port },
-    ...(reviewPr ? { kind: 'task', trigger: 'my-woodshed', owner: 'local', assignee: null, prUrl: `https://github.com/${reviewPr.slug}/pull/${reviewPr.number}` } : {}),
+    ...(reviewPr ? {
+      kind: 'task', trigger: 'my-woodshed', owner: 'local', assignee: null, prUrl: `https://github.com/${reviewPr.slug}/pull/${reviewPr.number}`,
+      prUrls: [reviewPr.earlier.number, reviewPr.number].map((n) => `https://github.com/${reviewPr.slug}/pull/${n}`),
+    } : {}),
   }),
   // Running on a project that declares two apps, with the real statusd behind it: Start app ▾ lists them.
   // Its checkout's three branches have a pull request each, which that statusd reports: three chips on its card.
@@ -291,15 +301,20 @@ const sessions = [
   // its pane; the claude one keeps this one. Their TUI tab has no ttyd, and their Terminal, Diff and app go nowhere.
   ...(codexChat ? [session(CODEX_CHAT_ID, 26704, 'Back off webhook retries for longer', {
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', options: { agent: 'codex' },
-    ref: codexChat.ref, endpoint: { host: '127.0.0.1', statusPort: codexChat.port, termPort: codexChat.port },
+    ref: codexChat.ref, endpoint: { host: '127.0.0.1', statusPort: codexChat.port, termPort: codexChat.termPort ?? codexChat.port },
   })] : []),
   ...(claudeChat ? [session(CLAUDE_CHAT_ID, 26705, 'Why webhook deliveries fail after a deploy', {
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
-    ref: claudeChat.ref, endpoint: { host: '127.0.0.1', statusPort: claudeChat.port, termPort: claudeChat.port },
+    ref: claudeChat.ref, endpoint: { host: '127.0.0.1', statusPort: claudeChat.port, termPort: claudeChat.termPort ?? claudeChat.port },
+  })] : []),
+  ...(agentsChat ? [session(AGENTS_CHAT_ID, null, 'Several agents in one session', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null,
+    options: { agent: 'codex' }, hasShell: false,
+    ref: agentsChat.ref, endpoint: { host: '127.0.0.1', statusPort: agentsChat.port, termPort: agentsChat.termPort ?? agentsChat.port },
   })] : []),
   ...(newChat ? [session(NEW_CHAT_ID, null, 'A new session beside a running one', {
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null,
-    ref: newChat.ref, endpoint: { host: '127.0.0.1', statusPort: newChat.port, termPort: newChat.port },
+    ref: newChat.ref, endpoint: { host: '127.0.0.1', statusPort: newChat.port, termPort: newChat.termPort ?? newChat.port },
   })] : []),
   ...(realClaude ? [session(REAL_ID, null, 'Real claude on a clone of this checkout', {
     kind: 'task', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', hasShell: false,
@@ -530,7 +545,7 @@ function startConsole() {
   child = spawn(process.execPath, [server], {
     stdio: 'inherit',
     env: {
-      ...inherited, PATH: [devGhDir, realCodex?.binDir, realClaude?.binDir, newChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
+      ...inherited, PATH: [devGhDir, realCodex?.binDir, realClaude?.binDir, agentsChat?.binDir, newChat?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, basePath].filter(Boolean).join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
       WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev',
       // DEV_CONSOLE_APP_PORTS (such as 7701-7703) puts session apps on ports of localhost instead, as a console reached
       // through Tailscale's serve has them (appPorts.mjs).
@@ -575,6 +590,7 @@ function startConsole() {
     codexChat?.close();
     claudeChat?.close();
     newChat?.close();
+    agentsChat?.close();
     realClaude?.close();
     realCodex?.close();
     fs.rmSync(stateDir, { recursive: true, force: true });

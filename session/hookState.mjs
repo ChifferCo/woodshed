@@ -86,7 +86,10 @@ function main() {
   const state = stateForHook(payload);
   if (!state) return;
   const tmp = `${STATE_FILE}.${process.pid}`;
-  fs.writeFileSync(tmp, JSON.stringify({ state, event: payload.hook_event_name, at: Date.now(), shells: runningShells(payload) }));
+  // The transcript the firing claude writes to: a second claude in the session (agents.mjs) reads its own conversation by
+  // it, since a /clear starts another file.
+  const transcript = typeof payload.transcript_path === 'string' ? payload.transcript_path.slice(0, 1000) : null;
+  fs.writeFileSync(tmp, JSON.stringify({ state, event: payload.hook_event_name, at: Date.now(), shells: runningShells(payload), transcript }));
   fs.renameSync(tmp, STATE_FILE);
 }
 

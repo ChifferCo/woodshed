@@ -524,8 +524,8 @@ URL on top of each env file's Repo settings values
   `hc get claude --json` its `status` (the agent's own word, which statusd logs as `source: 'herdr'`) and `hc read
   claude` its screen; the TUI tab is ttyd running `hc attach claude`. A Chat message that Herdr refused logs `statusd:
   Herdr did not send the message` with `why` (`prompt-open`, a question, approval or menu on screen, with `kind`;
-  `blocked`; `status_mismatch`, not idle; `not-at-prompt`). Shared sessions, questions, reviews and QA runs use tmux
-  whatever the pick.
+  `blocked`, hc's own refusal; `status_mismatch`, claude's record working, blocked or in error; `not-at-prompt`, its
+  screen not at the prompt). Shared sessions, questions, reviews and QA runs use tmux whatever the pick.
 - **`woodshed session new --herdr --parent` left the session's agent with no parent, or its agent sat unstarted for
   minutes.** The console logs `fleet: session created` (or `resuming a private session`) with `herdrParent`, and the
   session's log `Herdr started` with `made by: its parent`, then `Agent's terminal made by its parent` with the
@@ -907,6 +907,23 @@ URL on top of each env file's Repo settings values
   speech recognition, and says why in a toast when the site may not use the
   microphone. A terminal that reconnected by itself logs `terminal:
   reconnecting` in the browser's console.
+- **+ Another agent fails, or the agent switch is missing.** The switch shows only to the owner of a running My
+  Woodshed session whose statusd reports `agents` (an image from before `session/agents.mjs` reports none). From the
+  command line it is `woodshed session agents|agent <id>`, which the console logs as `cliSessions: call` with the path,
+  then the same lines below; `session connect <id> --agent agent-N` refused with 400 is a console from before it. A start
+  logs `console: another agent asked for`, then in the session `agents: agent started` with its id, agent, model and
+  mode, or the dialog says why: 409 `at most 3 agents`, `seen production data`, `started before it could start another
+  claude` (no `/tmp/woodshed-agent-claude-flags`: an image from before) or `codex is not set up` (no
+  `/tmp/woodshed-codex-ready`: configureCodex failed, `WARNING: codex not set up` in the session's log). A Codex agent
+  beside claude logs `statusd: Codex agent beside claude set up` with `own` (the console sent the owner's sign-in with
+  the start: `console: another agent asked for` with `ownCodex`); the console refuses the team key with `openaiProxy:
+  refused, not a Codex session` until the agent started (`fleet: another agent allowed in the session`), and again from
+  the moment the session's lockdown starts (`fleet: other agents' access dropped at the lockdown`). Its state changes log `agents: agent state changed`; in
+  the session, `tmux ls` lists `agent-2` and the rest (`hc ls` where the session runs in Herdr: `agents: agent started`
+  says which `terminal`), `cat /tmp/woodshed-agent-2-state.json` its last hook, and its TUI is `tmux attach -t =agent-2`
+  (`hc attach agent-2`). A Chat that shows another agent's conversation means its record was not told apart:
+  claude's by its `--session-id` or the transcript its hooks name, codex's by the rollout its process holds open
+  (`ls -l /proc/<codex pid>/fd`).
 - **Chat's Send says `Not sent: this session started before Chat could send safely`.** Its statusd predates the
   guarded send (its `/status` has no `safeSend`), and would type blind, Enter and all, into whatever is on screen: the
   console logs `console: message from the page refused, the session cannot send safely`. Type in the TUI tab, or start
@@ -1101,6 +1118,10 @@ image from the worktree and pass its tag. For another kind of session, copy it: 
 the stand-in session API serves.
 `providers/aws/bin/qaInImage.mjs <image> <pull request number>` is that copy for a QA session: it keeps the report
 instead of writing the pull request's comment and check.
+`providers/aws/bin/agentsInImage.mjs <image>` is the copy for the agents a private session's owner starts beside its own
+(`session/agents.mjs`): it copies the checkout's `session/` and `shared/` over the image's, runs a private claude start,
+then starts a claude and a codex through statusd's `/agents` and opens the TUI tab's ttyd for each, and prints PASSED or
+FAILED. `IN_IMAGE_TERMINAL=herdr` runs it with the owner's Agent terminal set to Herdr.
 `providers/aws/bin/herdrParentInImage.mjs <image> [entrypoint.sh]` is the copy for a private session started with
 `woodshed session new --herdr --parent`: it runs the whole start under ECS's init (`--init`) and waits for the agent's
 terminal, which a terminal in this computer's Herdr makes once the machine is added with `--via 'docker exec -i
@@ -1128,7 +1149,9 @@ worktree) behind a stand-in `gh`: its card shows a chip for each (`devAppsSessio
 `/s/c0de5e55` (codex) and `/s/c1a0de00` (claude) open on a Chat tab that works: the real statusd over a private tmux,
 whose pane runs a stand-in agent (`devChatAgent.mjs`) writing the agents' real record formats. `/s/c1a0de02` is that
 claude started from a Claude home holding an earlier session's conversation, as a private session started while another
-runs is: its Chat stays empty until it is sent a message. `/s/c1a0dea1` runs the
+runs is: its Chat stays empty until it is sent a message. `/s/a6e1a6e1` is @local's own session on that stand-in codex, whose
+agent switch starts stand-in claudes and codexes beside it (`session/agents.mjs`), each with a Chat and a TUI tab that
+work. `/s/c1a0dea1` runs the
 real `claude` instead, in a clone of this checkout with no remote and with its TUI tab live, on this machine's Claude
 credential, with `DEV_CONSOLE_REAL_CLAUDE=1`. It spends that credential's usage, and its session can run commands as
 this machine, so it is never behind Start app's console, which Open app and app shares reach with no sign-in:
@@ -1143,7 +1166,9 @@ does, and asks before it runs a command or edits a file, for the Chat tab's appr
 tab's approvals.
 `DEV_CONSOLE_HOST_REPOS=1` starts it as an embedding program would, with a made-up `repos` hook
 (`scripts/devHostConsole.mjs`): Console settings' Repos card then lists `acme/api`, `acme/web` and `acme/lib`, asks for no
-name, and refuses any other typed repo with a link to give the App access, as a hosted console does. With
+name, and refuses any other typed repo with a link to give the App access, as a hosted console does. Each repo's settings page
+then ends with two made-up groups of the program's own (the `repoPage` hook, drawn with `console/settingsMarkup.mjs`),
+whose forms post nowhere. With
 `DEV_CONSOLE_BLOCKED_REPO=acme/api` its made-up `projectReadiness` hook says that repo's image is not built, for the
 Needs setup card on New session and the Repos card; with `WOODSHED_PROJECTS` naming the three, the default can be the
 blocked one. The dev console has no sign-in, so everyone is an admin: to see the card as anyone else, answer `/api/me`

@@ -4,14 +4,14 @@
 // the pull request is hidden from the page (it draws no write control without one) and the writes are refused here
 // too, for a caller that skips the page.
 
-// [method, the path after /reviews/claude-<id>]
+// [method, the path after /reviews/claude-<id>, or /reviews/claude-<id>-pr<n> for the review of another of its pull requests]
 const WRITES = [
   ['POST', 'comments'], ['DELETE', 'comments'], ['POST', 'submit'], ['PATCH', 'title'], ['POST', 'viewed'], ['POST', 'merge'],
 ];
 
-/** @returns {string} the part after /reviews/claude-<id>/, '' for the status call */
+/** @returns {string} the part after /reviews/<review name>/, '' for the status call */
 export function sectionOf(pathname) {
-  return /^\/reviews\/claude-[0-9a-f]{8}\/?([a-z]*)/.exec(pathname)?.[1] ?? '';
+  return /^\/reviews\/claude-[0-9a-f]{8}(?:-pr[0-9]+)?(?:\/([a-z]*))?/.exec(pathname)?.[1] ?? '';
 }
 
 export function isGithubWrite({ method, pathname }) {

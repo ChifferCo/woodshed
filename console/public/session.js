@@ -149,6 +149,202 @@
   const launcher = W.createLauncher();
   const messageBox = W.createMessageBox();
   const chat = W.createChat({ openTerminal: () => setTab('tui'), openDiff: () => setTab('diff') });
+
+  // ---- The agents started beside a session's own (session/agents.mjs, statusd's /agents). Chat and TUI show the one
+  // picked on the pane bar's agent switch, kept per session in this browser tab; the session's own is shown when none is
+  // picked, or once the picked one stops. Only the owner of a running private session gets the switch, and only from a
+  // session image whose statusd starts them (its status says `agents`).
+  const AGENT_PICK_KEY = 'woodshed-agent-pick';
+  const agentPicks = (() => {
+    try {
+      const kept = JSON.parse(window.sessionStorage.getItem(AGENT_PICK_KEY) || '{}');
+      return kept && typeof kept === 'object' ? kept : {};
+    } catch {
+      return {};
+    }
+  })();
+  function keepAgentPick(sessionId, agentId) {
+    if (agentId) agentPicks[sessionId] = agentId;
+    else delete agentPicks[sessionId];
+    try {
+      window.sessionStorage.setItem(AGENT_PICK_KEY, JSON.stringify(agentPicks));
+    } catch {
+      // A private window keeps the pick for this page only.
+    }
+  }
+  const canRunAgents = (s) => s?.status === 'running' && Array.isArray(s.agents) && Boolean(s.owner) && s.owner === data?.login;
+  // This run's: a Resume starts the session's own agent alone, and the console's last read may still be the run before.
+  // One started from this page, until the console's read of the session has it (a read asked for before the start
+  // would take it off the switch again for a few seconds).
+  const justStarted = new Map();
+  function agentsOf(s) {
+    if (!canRunAgents(s)) return [];
+    const since = Date.parse(s.startedAt ?? '') || 0;
+    const listed = s.agents.filter((a) => !a.startedAt || Date.parse(a.startedAt) >= since);
+    const fresh = (justStarted.get(s.id) ?? []).filter((a) => Date.now() - a.seenAt < 30_000 && !listed.some((x) => x.id === a.id));
+    justStarted.set(s.id, fresh);
+    return [...listed, ...fresh];
+  }
+  function shownAgent(s) {
+    const picked = agentPicks[s?.id];
+    return picked ? agentsOf(s).find((a) => a.id === picked) ?? null : null;
+  }
+  const AGENT_NAMES = { claude: 'Claude', codex: 'Codex' };
+  // `Claude`, `Codex · gpt-5.5`: the agent, and its model when one was picked.
+  function agentLabel(agent, model) {
+    return `${AGENT_NAMES[agent] ?? agent}${model ? ` · ${model}` : ''}`;
+  }
+  const AGENT_STATE_WORDS = { starting: 'Starting', working: 'Working', 'needs-you': 'Needs you', done: 'Done', 'not-running': 'Exited' };
+  // What Chat shows for the agent picked: the session as Chat reads it, with the agent's id, state and message ids, and
+  // its routes (chat.js apiBase).
+  function chatView(s) {
+    const a = shownAgent(s);
+    if (!a) return s;
+    return {
+      // Its start in the key too: a new agent in a stopped one's place gets none of its drafts, bubbles or folds.
+      ...s, id: `${s.id}~${a.id}~${Date.parse(a.startedAt ?? '') || 0}`, options: { ...s.options, agent: a.agent, model: a.model },
+      state: a.state, boxText: false, heldIds: a.heldIds, deliveredIds: a.deliveredIds, refusedIds: a.refusedIds, unknownIds: [],
+      leftInBox: a.leftInBox, apiBase: `/api/sessions/${s.id}/agents/${a.id}`, uploadBase: `/api/sessions/${s.id}`,
+    };
+  }
+  function pickAgent(s, agentId) {
+    keepAgentPick(s.id, agentId);
+    render();
+  }
+
+  // The switch on the pane bar, while Chat or TUI shows: the agent shown, a menu of every agent in the session with its
+  // state, + Another agent, and Stop for the one shown when it is not the session's own.
+  function agentSwitch(s) {
+    if (!canRunAgents(s)) return null;
+    const list = agentsOf(s);
+    const shown = shownAgent(s);
+    const own = { id: null, agent: W.agentOf(s), model: s.options?.model || null, state: s.state };
+    const waiting = [own, ...list].filter((a) => a.state === 'needs-you' && a.id !== (shown?.id ?? null)).length;
+    const label = [
+      h('span', null, agentLabel((shown ?? own).agent, (shown ?? own).model)),
+      list.length > 0 && h('span', { class: 'pagent-count' }, `${list.length + 1} agents`),
+      waiting > 0 && h('span', { class: 'pagent-needs' }, `${waiting} needs you`),
+      ' ▾',
+    ];
+    const row = (a) => ({
+      group: 'Agents',
+      label: `${(shown?.id ?? null) === a.id ? '✓ ' : ''}${agentLabel(a.agent, a.model)}${a.id ? '' : ' (the session\'s own)'}`,
+      note: [AGENT_STATE_WORDS[a.state] ?? 'Starting', a.id && a.permissionMode && `${a.permissionMode} mode`, a.effort && `${a.effort} effort`].filter(Boolean).join(' · '),
+      run: () => pickAgent(s, a.id),
+    });
+    return barMenuButton(s, {
+      key: 'agents', className: `pagent${waiting > 0 ? ' is-needs' : ''}`,
+      title: 'Which agent Chat and TUI show: start another beside this one, with the agent and model you pick',
+      label,
+      open: () => ({
+        items: [
+          ...[own, ...list].map(row),
+          list.length < 3 && { group: 'Start', label: '+ Another agent', note: 'Claude or Codex, with the model you pick, in this checkout', run: () => newAgentDialog(s) },
+          shown && { group: 'Start', end: true, danger: true, label: `Stop ${agentLabel(shown.agent, shown.model)}`, note: 'Ends this agent: its conversation stays in the session\'s home', run: () => stopAgent(s, shown) },
+        ].filter(Boolean),
+      }),
+    });
+  }
+
+  async function stopAgent(s, a) {
+    try {
+      await W.postJson(`/api/sessions/${s.id}/agents/${a.id}/stop`, {});
+      keepAgentPick(s.id, null);
+      W.shell.toast(`${agentLabel(a.agent, a.model)} stopped`);
+    } catch (err) {
+      W.shell.toast(`Not stopped: ${err.message}`, { ms: 6000 });
+    }
+    refresh();
+  }
+
+  // + Another agent: the agent, model, effort and permissions, as New session picks them, and a first message.
+  function newAgentDialog(s) {
+    const C = W.agentChoices;
+    const select = (options) => h('select', { class: 'field' }, options.map(([value, label, title]) => h('option', { value, title }, label)));
+    const fill = (el, options) => el.replaceChildren(...options.map(([value, label, title]) => h('option', { value, title }, label)));
+    const agent = select(C.AGENTS);
+    const model = select(C.MODELS);
+    const effort = select(C.EFFORTS);
+    const mode = select(C.MODES);
+    const prompt = h('textarea', { class: 'field', rows: '3', placeholder: 'Optional: what it should do first. Leave it empty to write to it on the Chat tab.' });
+    const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+    const go = h('button', { type: 'submit', class: 'btn btn-open' }, 'Start agent');
+    const cancel = h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel');
+    let catalog = null;
+    const codexModels = () => [['', 'default', 'Codex\u2019s own default'], ...(catalog?.models ?? []).map((m) => [m.slug, m.slug, m.description || m.name])];
+    const codexEfforts = () => {
+      const picked = catalog?.models.find((m) => m.slug === model.value);
+      const efforts = picked ? picked.efforts : [...new Set((catalog?.models ?? []).flatMap((m) => m.efforts))];
+      return [['', picked?.defaultEffort ? `default (${picked.defaultEffort})` : 'default'], ...efforts.map((e) => [e, e])];
+    };
+    function showAgent() {
+      const codex = agent.value === 'codex';
+      fill(model, codex ? codexModels() : C.MODELS);
+      fill(effort, codex ? codexEfforts() : C.EFFORTS);
+      fill(mode, codex ? C.CODEX_MODES : C.MODES);
+      if (codex && !catalog) {
+        W.getJson('/api/my/codex-models').then((answer) => {
+          catalog = answer;
+          if (agent.value === 'codex') {
+            const was = model.value;
+            fill(model, codexModels());
+            model.value = was;
+            fill(effort, codexEfforts());
+          }
+        }, () => {});
+      }
+    }
+    agent.addEventListener('change', showAgent);
+    model.addEventListener('change', () => { if (agent.value === 'codex') fill(effort, codexEfforts()); });
+    // The other agent first: a second opinion is the usual reason to start one.
+    agent.value = W.agentOf(s) === 'codex' ? 'claude' : 'codex';
+    showAgent();
+    const field = (label, control) => h('label', { class: 'field-label' }, h('span', null, label), control);
+    const form = h('form', { method: 'dialog', class: 'agent-form' },
+      h('p', { class: 'sub' }, 'It works in this session\'s checkout, beside the agents already in it. Pick it above the tabs to chat with it or see its terminal.'),
+      h('div', { class: 'agent-grid' }, field('Agent', agent), field('Model', model), field('Effort', effort), field('Permissions', mode)),
+      field('First message', prompt),
+      error,
+      h('div', { class: 'dialog-actions' }, cancel, go));
+    const dialog = h('dialog', { class: 'confirm agent-dialog', 'aria-labelledby': 'agent-title' }, h('h2', { id: 'agent-title' }, 'Start another agent'), form);
+    let busy = false;
+    dialog.addEventListener('cancel', (e) => { if (busy) e.preventDefault(); });
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      busy = true;
+      go.disabled = true;
+      cancel.disabled = true;
+      go.textContent = 'Starting…';
+      error.hidden = true;
+      try {
+        const answer = await W.postJson(`/api/sessions/${s.id}/agents`, {
+          agent: agent.value, model: model.value, effort: effort.value, permissionMode: mode.value, prompt: prompt.value.trim(),
+        });
+        busy = false;
+        dialog.close();
+        const started = answer?.agent;
+        if (started?.id) {
+          // Shown as soon as it is in the session's list: until the console reads it, the page adds it itself.
+          justStarted.set(s.id, [...(justStarted.get(s.id) ?? []), { ...started, seenAt: Date.now() }]);
+          keepAgentPick(s.id, started.id);
+        }
+        W.shell.toast(`${agentLabel(agent.value, model.value)} is starting: it shows on ${tab === 'tui' ? 'TUI' : 'Chat'} as it opens`);
+        render();
+        refresh();
+      } catch (err) {
+        busy = false;
+        error.textContent = `Not started: ${err.message}`;
+        error.hidden = false;
+        go.disabled = false;
+        cancel.disabled = false;
+        go.textContent = 'Start agent';
+      }
+    });
+    dialog.addEventListener('close', () => dialog.remove());
+    document.body.append(dialog);
+    dialog.showModal();
+    agent.focus();
+  }
   // Made the first time /all shows, which may be after a move from another of these pages.
   let sharedHome = null;
 
@@ -404,6 +600,8 @@
     const title = slots.head.querySelector('.ptitle');
     const anchor = title?.getClientRects().length ? title : slots.head;
     const r = anchor.getBoundingClientRect();
+    // Measured from the left edge, where nothing squeezes it, then placed under the title.
+    offer.el.style.left = '8px';
     const width = offer.el.offsetWidth;
     offer.el.style.top = `${Math.round(r.bottom + 6)}px`;
     offer.el.style.left = `${Math.round(Math.max(8, Math.min(r.left, window.innerWidth - width - 8)))}px`;
@@ -419,6 +617,7 @@
     if (was === s.namedAt) {
       if (offer) {
         if (!offer.editing) offer.name.textContent = s.title;
+        offer.ttl?.sync(s);
         placeRenameOffer();
       }
       return;
@@ -440,6 +639,8 @@
       keep();
       if (offer.editing) return;
       offer.editing = true;
+      // The name's field needs the row: the pickers go under it, at any width.
+      el.classList.add('is-editing');
       const input = h('input', { class: 'field', value: currentSession?.title ?? s.title, maxlength: '120', 'aria-label': 'Session name', autocomplete: 'off' });
       const save = h('button', { type: 'submit', class: 'btn btn-plain btn-sm' }, 'Save');
       const form = h('form', { class: 'rename-offer-form' }, input, save,
@@ -468,8 +669,10 @@
     const body = h('div', { class: 'rename-offer-body', onclick: (e) => { if (!e.target.closest('form')) edit(); } },
       h('span', { class: 'rename-offer-line' }, 'Named ', name),
       h('button', { type: 'button', class: 'btn btn-plain btn-sm', onclick: edit }, 'Rename'));
+    const ttl = limitPicks(s);
     const el = h('div', { class: 'rename-offer', role: 'dialog', 'aria-label': 'Rename this session' },
       body,
+      ttl?.el,
       h('button', { type: 'button', class: 'rename-offer-close', 'aria-label': 'Close', title: 'Keep this name', onclick: (e) => { e.stopPropagation(); closeRenameOffer(); } }, '\u00d7'),
       h('span', { class: 'rename-offer-timer', 'aria-hidden': 'true', style: `animation-duration: ${RENAME_OFFER_MS}ms` }));
     el.addEventListener('pointerdown', keep);
@@ -480,8 +683,108 @@
       closeRenameOffer();
     });
     document.body.append(el);
-    offer = { id: s.id, el, name, kept: false, editing: false, timer: setTimeout(closeRenameOffer, RENAME_OFFER_MS) };
+    offer = { id: s.id, el, name, ttl, kept: false, editing: false, timer: setTimeout(closeRenameOffer, RENAME_OFFER_MS) };
     placeRenameOffer();
+  }
+
+  // The offer's other questions, while the session is new: how long it waits for input before it pauses, and how long
+  // it runs before it stops by itself (its own `idleHours` and `lifetimeHours`, as Pause and stop… sets them). Offered
+  // to whoever may change them (W.ownsLimits); each one's first option is what it runs on otherwise, and a pick is saved
+  // at once, with the other kept as it is. Each refresh draws them again from the latest copy of the session and the
+  // latest settings, while the offer stays open: a change made in Pause and stop… or My settings meanwhile shows here.
+  const LIMIT_PICKS = {
+    idleHours: [0.25, 0.5, 1, 2, 4],
+    lifetimeHours: [1, 2, 4, 8, 12, 24],
+  };
+  // How far along a clock is as the console counts it (sessions.mjs pauseAt): from its start, whatever claude is doing,
+  // and nothing while an Extend from this run still holds the session.
+  const clockPast = (x, from) => {
+    if (x.status !== 'running' || !from) return 0;
+    const held = Date.parse(x.extendedAt) >= Date.parse(x.startedAt) ? Date.parse(x.extendedUntil) : NaN;
+    if (Number.isFinite(held) && held > Date.now()) return 0;
+    return (Date.now() - Date.parse(from)) / 3_600_000;
+  };
+  const limitText = (n) => (n < 1 ? `${Math.round(n * 60)} min` : `${n} h`);
+  const limitWords = (n) => (n < 1 ? `${Math.round(n * 60)} minutes` : W.hoursText(n));
+  function limitPicks(s) {
+    if (s.kind === 'ask' || !data || !W.ownsLimits(s, data)) return null;
+    let latest = s;
+    let pending = false;
+    // How far the session already is along each clock: a pick at or under it would pause or stop it within seconds, so
+    // those are not offered (Pause and stop… still can).
+    const KINDS = {
+      idleHours: {
+        label: 'Pauses after', aria: 'Pause it after waiting for input for', cls: 'rename-offer-idle-pick',
+        fallback: () => (s.owner && data.myIdleHours) || data.idleHours,
+        past: (x) => clockPast(x, x.lastActiveAt),
+        saved: (n) => `Pauses after ${limitWords(n)} waiting for input`,
+        refused: (n) => `it has already waited for input for more than ${limitWords(n)}`,
+        title: 'How long it waits for input before it pauses. Resume picks it up where it was.',
+      },
+      lifetimeHours: {
+        label: 'Stops after', aria: 'Stop it after', cls: 'rename-offer-ttl-pick',
+        fallback: () => (s.owner && data.myLifetimeHours) || data.lifetimeHours,
+        past: (x) => clockPast(x, x.startedAt),
+        saved: (n) => `Stops after ${limitWords(n)} of running`,
+        refused: (n) => `it has already run past ${limitWords(n)}`,
+        title: 'How long it runs before it stops by itself. It tries to push its work first, and Resume picks it up.',
+      },
+    };
+    const selects = {};
+    const draw = (key) => {
+      const kind = KINDS[key];
+      const select = selects[key];
+      const own = latest.limits?.[key] ?? null;
+      const past = kind.past(latest);
+      const fallback = kind.fallback();
+      const picks = [...new Set([...LIMIT_PICKS[key], ...(own ? [own] : [])])].sort((a, b) => a - b);
+      const option = (value, text, hours) => h('option', { value, disabled: hours <= past && value !== String(own ?? '') }, text);
+      select.replaceChildren(
+        option('', fallback ? `${limitText(fallback)} (usual)` : 'Usual', fallback || Infinity),
+        ...picks.map((n) => option(String(n), limitText(n), n)));
+      select.value = own ? String(own) : '';
+    };
+    const drawAll = () => { for (const key of Object.keys(KINDS)) if (document.activeElement !== selects[key]) draw(key); };
+    const labels = Object.entries(KINDS).map(([key, kind]) => {
+      const select = selects[key] = h('select', { class: `field ${kind.cls}`, 'aria-label': kind.aria });
+      draw(key);
+      select.addEventListener('change', async () => {
+        const value = select.value ? Number(select.value) : null;
+        const effective = value ?? kind.fallback();
+        // Checked again now: the offer may have been open long enough for the session to get past the pick.
+        if (effective <= kind.past(latest)) {
+          W.shell.toast(`Not saved: ${kind.refused(effective)}. Pause and stop… can do it now.`, { ms: 6000 });
+          draw(key);
+          return;
+        }
+        for (const other of Object.values(selects)) other.disabled = true;
+        pending = true;
+        try {
+          // The other limit stays as it is now (a key left out would go back to the usual): read from the latest copy
+          // of this session, never the offer's first, which may hold one changed since.
+          const limits = { idleHours: latest.limits?.idleHours ?? null, lifetimeHours: latest.limits?.lifetimeHours ?? null, [key]: value };
+          await W.postJson(`/api/sessions/${s.id}/limits`, limits);
+          latest = { ...latest, limits };
+          W.shell.toast(kind.saved(effective));
+          refresh();
+        } catch (err) {
+          W.shell.toast(`Not saved: ${err.message}`, { ms: 6000 });
+        }
+        pending = false;
+        for (const other of Object.values(selects)) other.disabled = false;
+        draw(key);
+      });
+      return h('label', { class: 'rename-offer-limit', title: kind.title }, h('span', null, kind.label), select);
+    });
+    const el = h('div', { class: 'rename-offer-limits' }, ...labels);
+    // The latest copy is kept on every refresh; a picker's options are drawn again only when no save is on its way and
+    // its list cannot be open.
+    const sync = (next) => {
+      if (pending) return;
+      latest = next;
+      drawAll();
+    };
+    return { el, sync };
   }
 
   const STAR = 'M5 1.1 L5.99 3.94 L8.99 4 L6.6 5.82 L7.47 8.7 L5 6.98 L2.53 8.7 L3.4 5.82 L1.01 4 L4.01 3.94 Z';
@@ -1670,6 +1973,7 @@
         tabButton('terminal', 'Terminal'),
         tabButton('review', 'Review')),
       subTabs,
+      (view === 'chat' || view === 'tui') && agentSwitch(s),
       h('button', { type: 'button', class: 'ptitle', title: `${s.title}\nClick to rename it`, 'aria-label': `Rename ${s.title}`, onclick: () => rename(s) },
         h('span', { class: 'ptitle-text' }, s.title), h('span', { class: 'prename', 'aria-hidden': 'true' }, '✎')),
       W.statusBadge(s),
@@ -1802,21 +2106,24 @@
   // The console's own terminal page (terminalPage.js), which the browser keeps, so a frame loads only its websocket.
   // `localStorage['woodshed-terminal-page'] = 'ttyd'` in this browser goes back to the page ttyd serves from the session.
   const TERMINAL_PAGE = document.querySelector('meta[name="woodshed-terminal-page"]')?.content || null;
-  function terminalSrc(path, id) {
+  // `arg` names an agent beside the session's own (agent-2 …), which ttyd hands to woodshed-attach from its websocket's
+  // query: the console's page carries it in its fragment and puts it there, as ttyd's page passes on its own query.
+  function terminalSrc(path, id, arg = null) {
     let page = TERMINAL_PAGE;
     try {
       if (window.localStorage.getItem('woodshed-terminal-page') === 'ttyd') page = null;
     } catch {
       // No storage here: the console's page.
     }
-    return page ? `${page}#${path}/${id}` : `/${path}/${id}/`;
+    const query = arg ? `?${new URLSearchParams({ arg })}` : '';
+    return page ? `${page}#${path}/${id}${query}` : `/${path}/${id}/${query}`;
   }
 
   /**
    * @param {{pane: 'agent'|'terminal', root: () => HTMLElement, path: string, label: string, keyOf: (s: object) => string|null}} args
    *   `path` is the ttyd route (`term` or `shell`); `keyOf` is null for a session with nothing to show in this pane
    */
-  function createTerminalPool({ pane, root, path, label, keyOf }) {
+  function createTerminalPool({ pane, root, path, label, keyOf, agentOf = () => null }) {
     const cache = W.createTerminalCache({ max: MAX_TERMINALS });
     const frames = new Map();
     let shown = null;
@@ -1830,7 +2137,10 @@
     }
 
     function mount(s, key) {
-      const frame = h('iframe', { class: 'term', src: terminalSrc(path, s.id), title: `${label} for ${s.title}`, onload: (e) => bindTerminal(e.target, s.id, pane) });
+      // An agent beside the session's own: ttyd hands `arg` to woodshed-attach, which attaches to its tmux session.
+      const agent = agentOf(s);
+      const src = terminalSrc(path, s.id, agent?.id);
+      const frame = h('iframe', { class: 'term', src, title: `${label} for ${s.title}${agent ? `: ${agentLabel(agent.agent, agent.model)}` : ''}`, onload: (e) => bindTerminal(e.target, s.id, agent ? agent.id : pane) });
       frames.set(key, frame);
       root().append(frame);
     }
@@ -1878,7 +2188,16 @@
     return s?.hasShell ? termKey(s) : null;
   }
 
-  const agentPool = createTerminalPool({ pane: 'agent', root: () => slots.body, path: 'term', label: 'Terminal', keyOf: termKey });
+  // The TUI tab's frames, one for each agent of a session that was shown: the session's own, or one beside it.
+  // `pickedAgent` names a frame's agent where the pick does not (retain's list of every agent's frame): null the own.
+  const frameAgent = (s) => (s?.pickedAgent !== undefined ? s.pickedAgent : shownAgent(s));
+  function agentTermKey(s) {
+    const key = termKey(s);
+    const agent = frameAgent(s);
+    // Its start too: a new agent in a stopped one's place gets a frame of its own.
+    return key && `${key}:${agent ? `${agent.id}:${agent.startedAt ?? ''}` : 'own'}`;
+  }
+  const agentPool = createTerminalPool({ pane: 'agent', root: () => slots.body, path: 'term', label: 'Terminal', keyOf: agentTermKey, agentOf: frameAgent });
   const shellPool = createTerminalPool({ pane: 'terminal', root: () => slots.plain, path: 'shell', label: 'Shell', keyOf: shellKey });
 
   function showBody(s, tabPage) {
@@ -2310,7 +2629,7 @@
     if (s.status === 'starting') return `${s.id}:starting:${Date.now()}`;
     // A wait with steps counts its seconds, as a start does.
     if (W.waitsForRetry(s) && s.waitProgress) return `${s.id}:waiting:${Date.now()}`;
-    return s.status === 'running' ? `${termKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.stoppedBy}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}`;
+    return s.status === 'running' ? `${agentTermKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.stoppedBy}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}`;
   }
 
   let currentSession = null;
@@ -2380,7 +2699,8 @@
       // Someone else's private session gets the same words as an id that never existed.
       showBody(s, tabPage);
     }
-    agentPool.retain(data.sessions);
+    // Every agent's frame a running session has, kept as its own TUI was: a frame of an agent that stopped is dropped.
+    agentPool.retain(data.sessions.flatMap((x) => [{ ...x, pickedAgent: null }, ...agentsOf(x).map((a) => ({ ...x, pickedAgent: a }))]));
     shellPool.retain(data.sessions);
     // The shell's terminal, made the first time its tab opens and dropped once the session stops.
     const hasShell = Boolean(shellKey(s));
@@ -2424,8 +2744,9 @@
     offerRenameOnce(s);
     renderKeyBar(s);
     // A phone's message box, for claude on the TUI tab; the Terminal tab's shell takes the keyboard straight in.
-    messageBox.show(narrow.matches && s.status === 'running' && view === 'tui' ? s : null);
-    chat.show(view === 'chat' ? s : null);
+    // It types into the session's own agent: with another one shown, the phone writes to it on the Chat tab.
+    messageBox.show(narrow.matches && s.status === 'running' && view === 'tui' && !shownAgent(s) ? s : null);
+    chat.show(view === 'chat' ? chatView(s) : null);
     slots.body.hidden = view !== 'tui';
     slots.plain.hidden = tab !== 'terminal';
     slots.review.hidden = tab !== 'review';
