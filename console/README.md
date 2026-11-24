@@ -2260,7 +2260,7 @@ Console settings has one **Slack** group for all of it, a row each for the bot, 
 "Embedding the console"), the dialog first asks which way to connect; otherwise it opens on the own app's steps:
 
 1. **Create the app from this manifest**: the console makes a Slack app manifest (`slackManifest`) with the bot's
-   scopes (`app_mentions:read`, `channels:history`, `channels:read`, `chat:write`, `groups:history`, `groups:read`,
+   scopes (`app_mentions:read`, `channels:history`, `channels:read`, `chat:write`, `groups:read`,
    `reactions:write`, `users:read`, `users:read.email`; the two `history` scopes let a question read the thread it was
    asked in, and an app made before them is reinstalled with them: until then the console logs `slack: call refused`
    with `missing_scope` and `asks: thread not read`, and answers from the mention alone), the Messages tab the assignee's direct messages need, and this console's events Request URL
@@ -2544,7 +2544,7 @@ A follow-up has to mention the bot too: the app reads mentions only
 (`app_mention`), not every message in a channel.
 
 To turn it on, on the same Slack app as the pull request posts: Set up Slack on the Slack card (above, "Setting it up:
-the Slack card"). An app made from its manifest already has the scopes (`app_mentions:read`, `channels:history`, `groups:history`, `chat:write`,
+the Slack card"). An app made from its manifest already has the scopes (`app_mentions:read`, `channels:history`, `chat:write`,
 `reactions:write`, `users:read` and `users:read.email` for questions) and Event Subscriptions with this console's
 Request URL (on AWS, the `slack_events_url` Terraform output; Slack checks it at once) and the bot event
 `app_mention`; paste its **Signing Secret** in the dialog's third step. An app made by hand needs the same, then
