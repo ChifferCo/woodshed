@@ -13,10 +13,12 @@
 //
 // Needs Docker, and `gh` on this computer to read the pull request's branch and commit, here. The container runs the pull
 // request's code and the reviewers read what anyone who can push to it wrote, so it is handed no GitHub credential of
-// yours (as agentsInImage.mjs): its session API hands out a placeholder, git fetches a public repo without one, and the
-// review's own `gh` reads of the pull request's discussion fail, which the review takes as no context. For a private
-// repo, IN_IMAGE_GH_TOKEN gives the token to hand out instead: a fine-grained one that can only read that repo
-// (Contents and Pull requests: read), never `gh auth token`. REPO names the repo (owner/name, default this one), which an
+// yours (as agentsInImage.mjs): its session API hands out a placeholder, and a stand-in `gh` put in the container
+// ahead of the image's checks the pull request out from the public repo's pull ref by git alone (GitHub's GraphQL,
+// which `gh pr checkout` asks, takes no call without a token). The review's own `gh` reads of the pull request's
+// discussion fail, which it takes as no context. For a private repo, IN_IMAGE_GH_TOKEN gives the token to hand out
+// instead, and the image's own `gh` checks out: a fine-grained one that can only read that repo (Contents and Pull
+// requests: read), never `gh auth token`. REPO names the repo (owner/name, default this one), which an
 // image with no checkout clones at start; IN_IMAGE_CONSOLE_HOST the address the container reaches this computer at
 // (default host.docker.internal).
 
@@ -50,6 +52,16 @@ const SIGN_INS = {
   opencode: JSON.stringify({ anthropic: { type: 'api', key: 'sk-ant-reviewInImage-not-a-real-key' } }),
 };
 const OPENCODE_KEY = JSON.parse(SIGN_INS.opencode).anthropic.key;
+const GH_TOKEN = process.env.IN_IMAGE_GH_TOKEN || null;
+// With no token, the start's `gh pr checkout <n> --force` by git from the pull ref; anything else to the image's gh,
+// which holds only the placeholder.
+const STAND_IN_GH = `#!/bin/bash
+if [ "$1 $2" = "pr checkout" ]; then
+  git fetch --quiet origin "+refs/pull/$3/head:refs/heads/pr-$3" && git checkout --quiet --force "pr-$3"
+  exit $?
+fi
+exec /usr/local/bin/gh "$@"
+`;
 
 // The stand-in for xAI's and Anthropic's APIs: records each call, answers a model list, refuses each turn. It keeps
 // which header carried a credential and whether it was the made-up sign-in, never a header's value, so nothing printed
@@ -109,7 +121,7 @@ async function reviewEnv() {
 const proxyCalls = [];
 const reports = [];
 function serve(fleet, up) {
-  const ghToken = process.env.IN_IMAGE_GH_TOKEN || 'in-image-no-github-token';
+  const ghToken = GH_TOKEN || 'in-image-no-github-token';
   const userSettings = {
     claudeToken: async () => null,
     ownFiles: async () => ({}),
@@ -170,6 +182,12 @@ const printNew = () => {
 try {
   docker('rm', '-f', CONTAINER);
   docker('create', '--init', '--name', CONTAINER, '--add-host', 'host.docker.internal:host-gateway', '--env-file', envFile, IMAGE, 'session');
+  if (!GH_TOKEN) {
+    // /usr/local/sbin is ahead of the image's /usr/local/bin on the session's PATH.
+    const standIn = path.join(dir, 'gh');
+    fs.writeFileSync(standIn, STAND_IN_GH, { mode: 0o755 });
+    docker('cp', standIn, `${CONTAINER}:/usr/local/sbin/gh`);
+  }
   fs.rmSync(dir, { recursive: true });
   docker('start', CONTAINER);
   console.log(`--- container log (review session ${overrides.find((o) => o.name === 'SESSION_ID')?.value} of #${NUMBER})`);
