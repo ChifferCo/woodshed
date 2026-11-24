@@ -203,6 +203,8 @@ export function handleTerminalUpgrade(req, socket, head, ctx) {
   const target = { host: session.host, ...UPSTREAM[app](session) };
   // Until ttyd's answer is passed on, nothing pipes ttyd's side to the browser's: ttyd closing first must end it here.
   let answered = false;
+  // Until the browser's first message went on, nothing pipes the browser's side to ttyd's.
+  let piped = false;
 
   const credential = Buffer.from(`woodshed:${session.terminalToken}`).toString('base64');
   const upstream = net.connect(target.port, target.host, () => {
@@ -246,6 +248,7 @@ export function handleTerminalUpgrade(req, socket, head, ctx) {
       if (!first) return;
       socket.off('data', readFirst);
       upstream.write(first.forward);
+      piped = true;
       socket.pipe(upstream);
     };
     socket.on('data', readFirst);
@@ -260,8 +263,17 @@ export function handleTerminalUpgrade(req, socket, head, ctx) {
   upstream.on('error', drop);
   // After its answer, pipe() ends the browser's side once what ttyd sent is written; before it, the browser would wait
   // on a socket nothing writes to again, rather than see it close and open a new one.
+  // The browser's side already gone (a tab closed mid-handshake, a first message refused) is the console's close, not
+  // ttyd's.
   upstream.on('close', () => {
-    if (!answered) drop(new Error('ttyd closed before its answer'));
+    if (!answered && !socket.destroyed) drop(new Error('ttyd closed before its answer'));
+  });
+  // A tab closed before its first message went on only ends its side (nothing pipes it to ttyd's yet, and an upgraded
+  // socket stays half open): both go, or ttyd's would wait for a message that never comes. After it, pipe() ends ttyd's.
+  socket.on('end', () => {
+    if (piped) return;
+    socket.destroy();
+    upstream.destroy();
   });
   // Without these a tab closed mid-stream leaks the pair, or becomes an uncaught exception.
   socket.on('close', () => upstream.destroy());

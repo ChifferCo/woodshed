@@ -222,7 +222,7 @@ test('through the proxy, ttyd gets the console\'s first message and then the bro
   assert.equal(received[2], '0q');
 });
 
-test('a terminal websocket goes on only to ttyd\'s own /ws, and ends when ttyd closes before its answer', async (t) => {
+test('a terminal websocket goes on only to ttyd\'s own /ws, ends when ttyd closes before its answer, and ends ttyd\'s side when the tab closes first', async (t) => {
   const asked = [];
   const ttyd = net.createServer((conn) => {
     conn.once('data', (d) => {
@@ -246,8 +246,11 @@ test('a terminal websocket goes on only to ttyd\'s own /ws, and ends when ttyd c
     let got = '';
     client.on('data', (d) => { got += d; });
     client.on('error', () => {});
-    client.on('close', () => resolve(got));
-    setTimeout(() => { client.destroy(); resolve('still open after 3 s'); }, 3000);
+    const timer = setTimeout(() => { client.destroy(); resolve('still open after 3 s'); }, 3000);
+    client.on('close', () => {
+      clearTimeout(timer);
+      resolve(got);
+    });
   });
 
   for (const path of ['/term/0a1b2c3d/token', '/term/0a1b2c3d//ws', '/term/0a1b2c3d/%77s', '/term/0a1b2c3d/ws;x', '/shell/0a1b2c3d/']) {
@@ -255,8 +258,38 @@ test('a terminal websocket goes on only to ttyd\'s own /ws, and ends when ttyd c
   }
   assert.deepEqual(asked, [], 'ttyd was never asked');
 
+  const warned = t.mock.method(console, 'warn', () => {});
   assert.equal(await open('/shell/0a1b2c3d/ws?arg=x'), '', 'closed, so the page opens a new one, with nothing of ttyd\'s half answer');
   assert.deepEqual(asked, ['GET /shell/0a1b2c3d/ws?arg=x HTTP/1.1']);
+  const said = () => warned.mock.calls.filter((c) => c.arguments[1]?.message === 'ttyd closed before its answer').length;
+  assert.equal(said(), 1, 'ttyd\'s close is logged as its own');
+
+  // A tab closed while ttyd has not answered: the console's own close, never logged as ttyd's.
+  const held = [];
+  let heldClosed;
+  const closed = new Promise((resolve) => { heldClosed = resolve; });
+  const silent = net.createServer((conn) => {
+    held.push(conn);
+    // Read, so its end is seen, and answer nothing: a ttyd yet to answer.
+    conn.resume();
+    conn.on('error', () => {});
+    conn.on('close', () => heldClosed('closed'));
+  });
+  const silentPort = await listen(silent);
+  t.after(() => {
+    for (const conn of held) conn.destroy();
+    silent.close();
+  });
+  sessions['0a1b2c3d'].termPort = silentPort;
+  const client = net.connect(proxyPort, '127.0.0.1', () => {
+    client.write(['GET /term/0a1b2c3d/ws HTTP/1.1', 'Host: console.example', 'Upgrade: websocket', 'Connection: Upgrade',
+      'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==', 'Sec-WebSocket-Protocol: tty', '', ''].join('\r\n'));
+    setTimeout(() => client.destroy(), 100);
+  });
+  client.on('error', () => {});
+  const ended = await Promise.race([closed, new Promise((resolve) => setTimeout(() => resolve('still open after 2 s'), 2000))]);
+  assert.equal(ended, 'closed', 'ttyd\'s side goes with the tab, rather than wait for a first message');
+  assert.equal(said(), 1, 'a tab closed mid-handshake is not ttyd closing');
 });
 
 test('a Redis viewer request goes to statusd with the session token, and another site is refused', async (t) => {
