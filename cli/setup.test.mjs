@@ -896,7 +896,12 @@ const own = (saved = {}) => ({ status: result(0, { ...ready, sessionSignIns: { c
 const pushed = (id) => result(0, { event: 'sign-in', agent: id, saved: true });
 const ownEntries = (events) => events.filter((event) => event.step === 'own-agents');
 const pushes = (calls) => calls.filter(([a, b]) => a === 'sign-in' && b === 'push');
+// As setup shows them: with path.join, so backslashes on Windows. `G` and `O` are the same, escaped for a RegExp.
+const grokShown = path.join('~', '.grok', 'auth.json');
 const opencodeShown = path.join('~', '.local', 'share', 'opencode', 'auth.json');
+const escaped = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const G = escaped(grokShown);
+const O = escaped(opencodeShown);
 function assertNoContent(after) {
   const all = JSON.stringify([after.events, after.lines, after.questions, after.calls]);
   assert.doesNotMatch(all, new RegExp(`${GROK_MARKER}|${OPENCODE_MARKER}`), 'never prints a sign-in file\'s content');
@@ -908,11 +913,11 @@ test('on a terminal, setup offers each sign-in file it finds, naming the file an
   const after = await invoke('--repo', repo, '--skip-reviews', '--no-session');
   assert.equal(after.code, EXIT.done);
   assert.deepEqual(after.questions.slice(0, 2), [
-    `Send ~/.grok/auth.json to ${origin} as your Grok Build sign-in? It is sent over this command line's sign-in and never printed. [y/N] `,
+    `Send ${grokShown} to ${origin} as your Grok Build sign-in? It is sent over this command line's sign-in and never printed. [y/N] `,
     `Send ${opencodeShown} to ${origin} as your OpenCode sign-in? It is sent over this command line's sign-in and never printed. [y/N] `,
   ]);
   assert.deepEqual(pushes(after.calls), [['sign-in', 'push', 'grok'], ['sign-in', 'push', 'opencode']]);
-  assert.match(after.lines.join('\n'), /Step 4 of 8: Grok Build and OpenCode \(optional\)\n\[done\] Saved your Grok Build sign-in on https:\/\/console\.example, from ~\/\.grok\/auth\.json\./);
+  assert.match(after.lines.join('\n'), new RegExp(`Step 4 of 8: Grok Build and OpenCode \\(optional\\)\\n\\[done\\] Saved your Grok Build sign-in on https://console\\.example, from ${G}\\.`));
   assertNoContent(after);
 });
 
@@ -922,9 +927,9 @@ test('a no sends nothing, and keeps a sign-in saved already', async (t) => {
   const after = await invoke('--repo', repo, '--skip-reviews', '--no-session');
   assert.equal(after.code, EXIT.done);
   assert.deepEqual(pushes(after.calls), []);
-  assert.match(after.questions[1], /has an OpenCode sign-in of yours saved already\. Replace it with .*opencode\/auth\.json from this computer\?/);
+  assert.match(after.questions[1], new RegExp(`has an OpenCode sign-in of yours saved already\\. Replace it with ${O} from this computer\\?`));
   assert.deepEqual(ownEntries(after.events).map(({ status, message }) => [status, message]), [
-    ['skipped', 'Grok Build: ~/.grok/auth.json was not sent.'],
+    ['skipped', `Grok Build: ${grokShown} was not sent.`],
     ['skipped', `OpenCode: ${opencodeShown} was not sent, and the saved sign-in is kept.`],
   ]);
   assertNoContent(after);
@@ -934,18 +939,18 @@ test('a yes to replacing a saved sign-in sends it with --replace', async (t) => 
   const { home } = ownSignInHome(t, { opencode: null });
   const { invoke } = fake({ home, tty: true, input: ['y'], answers: { ...own({ grok: true }), 'sign-in push': pushed('grok') } });
   const after = await invoke('--repo', repo, '--skip-reviews', '--no-session');
-  assert.match(after.questions[0], /^https:\/\/console\.example has a Grok Build sign-in of yours saved already\. Replace it with ~\/\.grok\/auth\.json/);
+  assert.match(after.questions[0], new RegExp(`^https://console\\.example has a Grok Build sign-in of yours saved already\\. Replace it with ${G}`));
   assert.deepEqual(pushes(after.calls), [['sign-in', 'push', 'grok', '--replace']]);
   assert.match(ownEntries(after.events)[0].message, /^Replaced your Grok Build sign-in/);
   // No OpenCode file: optional, said with the registry's step, and never asked.
   assert.equal(after.questions.filter((q) => /OpenCode/.test(q)).length, 0);
-  assert.match(ownEntries(after.events)[1].message, /^Optional, for OpenCode: this computer has no .*opencode\/auth\.json\. To use it, run opencode auth login, then setup again\.$/);
+  assert.match(ownEntries(after.events)[1].message, new RegExp(`^Optional, for OpenCode: this computer has no ${O}\\. To use it, run opencode auth login, then setup again\\.$`));
 });
 
 test('with no Grok Build file, setup says to run grok login or paste an xAI key on My settings', async () => {
   const after = await fake({ answers: own() }).invoke('--yes', '--repo', repo, '--skip-reviews', '--no-session');
   assert.equal(after.code, EXIT.done);
-  assert.match(ownEntries(after.events)[0].message, /^Optional, for Grok Build: this computer has no ~\/\.grok\/auth\.json\. To use it, run grok login, then setup again\. Or paste an xAI API key \(xai-…\) from console\.x\.ai on My settings\.$/);
+  assert.match(ownEntries(after.events)[0].message, new RegExp(`^Optional, for Grok Build: this computer has no ${G}\\. To use it, run grok login, then setup again\\. Or paste an xAI API key \\(xai-…\\) from console\\.x\\.ai on My settings\\.$`));
   assert.equal(ownEntries(after.events)[0].url, `${origin}/settings#grok`);
 });
 
@@ -957,7 +962,7 @@ test('a malformed sign-in file is refused here: nothing asked, nothing sent, its
   assert.deepEqual(pushes(after.calls), []);
   assert.equal(after.questions.filter((q) => /sign-in/.test(q)).length, 0);
   const [grok, opencode] = ownEntries(after.events);
-  assert.match(grok.message, /^~\/\.grok\/auth\.json is not a Grok Build sign-in \(that is not a Grok Build auth\.json: .*\), so it was not sent\./);
+  assert.match(grok.message, new RegExp(`^${G} is not a Grok Build sign-in \\(that is not a Grok Build auth\\.json: .*\\), so it was not sent\\.`));
   assert.match(opencode.message, /is not an OpenCode sign-in \(paste the contents of .*\), so it was not sent\./);
   assertNoContent(after);
 
@@ -975,7 +980,7 @@ test('without a terminal setup sends a sign-in only with its flag, and replaces 
   const none = await run({});
   assert.equal(none.code, EXIT.done);
   assert.deepEqual(pushes(none.calls), []);
-  assert.match(ownEntries(none.events)[0].message, /^Optional, for Grok Build: this computer has ~\/\.grok\/auth\.json\. To save it as your Grok Build sign-in on https:\/\/console\.example, rerun setup with --grok-sign-in, or run woodshed sign-in push grok --console/);
+  assert.match(ownEntries(none.events)[0].message, new RegExp(`^Optional, for Grok Build: this computer has ${G}\\. To save it as your Grok Build sign-in on https://console\\.example, rerun setup with --grok-sign-in, or run woodshed sign-in push grok --console`));
   assertNoContent(none);
 
   const flagged = await run({}, '--grok-sign-in');
@@ -983,10 +988,13 @@ test('without a terminal setup sends a sign-in only with its flag, and replaces 
 
   const savedAlready = await run({ grok: true, opencode: true }, '--grok-sign-in', '--opencode-sign-in');
   assert.deepEqual(pushes(savedAlready.calls), [], 'a flag alone never replaces a saved one');
-  assert.match(ownEntries(savedAlready.events)[0].message, /To replace it with ~\/\.grok\/auth\.json from this computer, rerun setup with --grok-sign-in=replace\./);
+  assert.match(ownEntries(savedAlready.events)[0].message, new RegExp(`To replace it with ${G} from this computer, rerun setup with --grok-sign-in=replace\\.`));
 
   const replaced = await run({ grok: true }, '--grok-sign-in=replace');
   assert.deepEqual(pushes(replaced.calls), [['sign-in', 'push', 'grok', '--replace']]);
+  // =replace reaches the push even when none was saved at the status read: one saved since is replaced as asked.
+  const replacedUnsaved = await run({}, '--grok-sign-in=replace');
+  assert.deepEqual(pushes(replacedUnsaved.calls), [['sign-in', 'push', 'grok', '--replace']]);
   await assert.rejects(run({}, '--grok-sign-in=yes'), /--grok-sign-in takes no value, or =replace/);
 });
 
@@ -995,6 +1003,20 @@ test('setup finds the files where the agents do: GROK_HOME and XDG_DATA_HOME', a
   const after = await fake({ home, env, answers: own() }).invoke('--yes', '--repo', repo, '--skip-reviews', '--no-session');
   assert.deepEqual(ownEntries(after.events).map((event) => event.file), [grokFile, opencodeFile]);
   assert.ok(ownEntries(after.events).every((event) => /this computer has ~/.test(event.message)));
+});
+
+test('a failed push after a yes on the terminal says why and goes on to the next step', async (t) => {
+  const { home } = ownSignInHome(t, { opencode: null });
+  const refused = result(3, { event: 'error', status: 'refused', error: 'https://console.example refused it (409): this console has no secret store, so My settings cannot be saved.' });
+  const after = await fake({ home, tty: true, input: ['y'], answers: { ...own(), 'sign-in push': refused } }).invoke('--repo', repo, '--skip-reviews', '--no-session');
+  assert.equal(after.code, EXIT.done, 'optional, asked with no flag: setup goes on');
+  const [grok] = ownEntries(after.events);
+  assert.equal(grok.status, 'skipped');
+  assert.equal(grok.saveFailed, true);
+  assert.match(grok.message, /^Could not save your Grok Build sign-in: https:\/\/console\.example refused it \(409\): this console has no secret store, so My settings cannot be saved\. Setup goes on: save it later with woodshed sign-in push grok --console "https:\/\/console\.example", or on My settings\.$/);
+  assert.ok(after.events.some((event) => event.step === 'pr-reviews'), 'the steps after it ran');
+  assert.ok(after.events.some((event) => event.step === 'finished' && event.finished === true), 'setup finished');
+  assertNoContent(after);
 });
 
 test('a failed push stops setup with the console\'s reason, never the file', async (t) => {

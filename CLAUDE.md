@@ -370,8 +370,11 @@ URL on top of each env file's Repo settings values
   agent. A send logs `cliSessions: call` with the login and `path: '/api/my/agent-auth/<agent>'`, then `userSettings:
   <Product> sign-in saved` (`apiKey` true or false, never the value). `answered 403` or `404` with `a console from
   before` is a console whose `cliSessions.mjs` does not list the route (`cliSessions: refused, not a route the command
-  line may call`); `refused it:` is the console's own check, as My settings' Save; a 502 is the secret store, which the
-  console logs as `console: My Woodshed change failed`.
+  line may call`); `refused it (409):` is the console's own check, as My settings' Save; a 502 is the secret store, which
+  the console logs as `console: My Woodshed change failed`. `its answer repeated part of the sign-in, so it is not
+  shown` is an answer, from the console or something in front of it, that held part of what was sent: the command never
+  prints it, so read the console's (or the proxy's) own log for why. Setup that asked and got a yes goes on after a
+  failed save (`saveFailed: true`); with `--grok-sign-in` or `--opencode-sign-in` it stops there.
 - **`woodshed settings` skips or refuses an item.** The list says why (cli/README.md, "Settings"). The console logs
   `cliSettings: pushed` or `cliSettings: refused`. A 404 from `/api/cli/settings` means the console has nowhere to keep
   Claude homes or predates the command.

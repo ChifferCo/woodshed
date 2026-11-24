@@ -530,8 +530,19 @@ export async function setupCommand(args, ctx) {
         : `Optional, for ${product}: this computer has ${shown}. To save it as your ${product} sign-in on ${origin}, ${rerun}, or run ${command('sign-in', 'push', id)}.`, fields);
       continue;
     }
-    const pushed = await call('sign-in push', 'sign-in', 'push', id, ...(savedNow ? ['--replace'] : []));
-    if (pushed.code !== EXIT.done) return childError('own-agents', pushed, `Could not save your ${product} sign-in. Run ${command('sign-in', 'push', id)} for details.`, fields);
+    // --replace when one was saved at the status read, or when =replace allows it: one saved since then is replaced too.
+    const replace = savedNow || flag === 'replace';
+    const pushWords = ['sign-in', 'push', id, ...(replace ? ['--replace'] : [])];
+    const pushed = await call('sign-in push', ...pushWords);
+    if (pushed.code !== EXIT.done) {
+      const why = `Could not save your ${product} sign-in`;
+      if (flag) return childError('own-agents', pushed, `${why}. Run ${command(...pushWords)} for details.`, fields);
+      // Asked on the terminal, with no flag: an optional step, as a file that is not there or not a sign-in is. Setup
+      // says why and goes on, and the sign-in can be saved later.
+      const reason = printable(pushed.error?.error);
+      report('own-agents', 'skipped', `${why}${reason ? `: ${reason.replace(/\.$/, '')}` : ''}. Setup goes on: save it later with ${command(...pushWords)}, or on My settings.`, { ...fields, saveFailed: true });
+      continue;
+    }
     signIns = { ...signIns, [id]: true };
     report('own-agents', 'done', `${savedNow ? 'Replaced' : 'Saved'} your ${product} sign-in on ${origin}, from ${shown}. Your next ${product} session uses it.`, { ...fields, saved: true });
   }

@@ -97,7 +97,10 @@ On a terminal each question says what Enter takes.
    one. Without a terminal, or with `--yes`, it sends nothing unless `--grok-sign-in` or `--opencode-sign-in` says to,
    and replaces a saved one only with `--grok-sign-in=replace` (`--opencode-sign-in=replace`). The file goes to the
    console through `woodshed sign-in push <grok|opencode>` (below), over the command line's sign-in, and is never
-   printed, by setup, the command or `--json`.
+   printed, by setup, the command or `--json`. `=replace` is passed on as `--replace` even when the console had none
+   saved when setup asked, so one saved since is replaced as the flag said. A save that fails after a yes on the
+   terminal is said, with why, as `skipped` with `saveFailed: true`, and setup goes on to the next step; with a flag it
+   stops setup, as any step the person asked for by name.
 5. **Review on your repos.** Every repo is reviewed by default, on a commit whose message has `[woodshed-review]`
    (sessions add it for you), with no checkout, project file or pull request: for each repo setup runs `woodshed review
    status --repo <repo>`, stops with the link when the console's reviewer App still has to be made or installed, and
@@ -164,7 +167,7 @@ Keep a source explicit even when only one is supported. Keep session management 
 | `woodshed review pulls\|start` | Lists your open pull requests on a repo, and has the console review them now: [below](#reviewing-your-open-pull-requests-now). | 0 done, 2 a sign-in, 3 a pull request or repo not yours, or a repo whose project file runs its review elsewhere, 1 anything else |
 | `woodshed tunnel <id> -- <line>` | Runs `<line>` with `sh -c` in your running session, as its user, in its checkout, with this command's stdin, stdout and stderr as its own, as `ssh host <line>` does: the words after `--` are joined by spaces into one line. A terminal runtime reaches a session through it (`--via 'woodshed tunnel <id> --'`). Below. | the line's exit code; 255 when the pipe could not open or broke |
 | `woodshed config list\|get\|set` | Reads or sets [your choices on My settings](#your-choices-on-my-settings). | as below |
-| `woodshed sign-in push grok\|opencode [--replace]` | Saves the Grok Build or OpenCode sign-in this computer's `grok login` or `opencode auth login` made as yours on My settings, from the file setup's step 4 names: checked here first, then sent over the command line's sign-in to the console's own save (`POST /api/my/agent-auth/<agent>`, as My settings' Save), and never printed. One saved already is replaced only with `--replace`. `--json` gives `{"event":"sign-in","agent","file","console","saved","replaced","savedAt"}`. | 0 saved, 2 no file or not signed in, 3 not a sign-in, one saved already, or refused by the console, 1 failed |
+| `woodshed sign-in push grok\|opencode [--replace]` | Saves the Grok Build or OpenCode sign-in this computer's `grok login` or `opencode auth login` made as yours on My settings, from the file setup's step 4 names: checked here first, then sent over the command line's sign-in to the console's own save (`POST /api/my/agent-auth/<agent>`, as My settings' Save), and never printed. One saved already is replaced only with `--replace`. `--json` gives `{"event":"sign-in","agent","file","console","saved","replaced","savedAt"}` (`savedAt` a timestamp, or null). A refusal is said in the command's own words for its status; the console's reason follows only when it holds no part of what was sent (the whole value, any field of it, or 12 characters in a row of one), and otherwise `its answer repeated part of the sign-in, so it is not shown`. | 0 saved, 2 no file or not signed in, 3 not a sign-in, one saved already, or refused by the console, 1 failed |
 | `woodshed settings plan\|push\|pull` | Sync [Claude and Codex settings, plugins, dotfiles and ignored checkout files](#settings) with private sessions. Claude MCP definitions pushed from computers stay between computers. | as below |
 
 Every command takes:
