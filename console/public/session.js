@@ -1142,7 +1142,7 @@
   function groupToggle(s, { count, needs }) {
     const open = !foldedGroups.has(s.id);
     return h('button', {
-      type: 'button', class: 'rkids', 'aria-expanded': String(open), 'aria-controls': `group-${s.id}`,
+      type: 'button', class: 'rkids', 'aria-expanded': String(open), 'aria-controls': open ? `group-${s.id}` : null,
       title: open ? 'Fold the sessions it started' : 'Show the sessions it started',
       onclick: () => toggleGroup(s.id),
     },
