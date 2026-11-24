@@ -10,6 +10,8 @@
   const DOTS = { 'needs-you': 'is-needs', failed: 'is-failed', done: 'is-done', merged: 'is-done', review: 'is-done', qa: 'is-done' };
 
   function when(at) {
+    // An entry with no time of its own (the app always gives one) says none, rather than stop the list drawing.
+    if (!Number.isFinite(at)) return '';
     const ms = Date.now() - at;
     return ms < 60_000 ? 'just now' : W.ago(new Date(at).toISOString());
   }
@@ -67,6 +69,11 @@
     function show(next) {
       if (!next || !Array.isArray(next.items)) return;
       list = next;
+      // Arriving while the list is open, it is seen there: marked read, and new in the rows until the list closes.
+      if (!panel.hidden && list.unread) {
+        for (const n of list.items) if (!n.read) newOnOpen.add(n.key);
+        bridge.markRead();
+      }
       drawButton();
       if (!panel.hidden) drawRows();
     }

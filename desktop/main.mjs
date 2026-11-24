@@ -566,9 +566,18 @@ function forget() {
 // notificationBell.js). It is this console's and this sign-in's: a new console, a sign-in or signing out empties it.
 // Kept while the app runs, never on disk.
 const log = createNotificationLog();
+// Sent only while the main window shows the console's own page: the preload hands the bridge to any page, and a sign-in
+// page on GitHub's site, which the window shows too, is no reader of it.
+function consoleInWindow() {
+  if (!mainWindow || mainWindow.isDestroyed() || !consoleUrl) return false;
+  try {
+    return new URL(mainWindow.webContents.getURL()).origin === new URL(consoleUrl).origin;
+  } catch {
+    return false;
+  }
+}
 function logChanged() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send('notifications:changed', log.list());
+  if (consoleInWindow()) mainWindow.webContents.send('notifications:changed', log.list());
 }
 function forgetLog() {
   if (log.clear()) logChanged();
@@ -726,7 +735,7 @@ async function poll() {
     const entry = log.add(n, { read: looking });
     if (looking) continue;
     // The app in front: shown in it, beside the bell (notificationBell.js), not by the OS.
-    if (inFront && bellOnPage) {
+    if (inFront && bellOnPage && consoleInWindow()) {
       mainWindow.webContents.send('notifications:arrived', entry);
       continue;
     }
