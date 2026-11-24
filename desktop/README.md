@@ -3,7 +3,8 @@
 Woodshed's console in a window of its own, for macOS, Windows and Linux, built on Electron. It is the console's page as
 a browser shows it, with three things a browser tab does not give:
 
-- **A notification when one of your sessions needs you**, or finished its turn. Clicking it opens that session.
+- **A notification when one of your sessions needs you**, or finished its turn. Clicking it opens that session, and
+  the bell in the rail's foot, beside your avatar, lists the latest ones.
 - **A badge** counting your sessions that are asking for you: the Dock's (macOS) or the launcher's (Linux) own count, and
   on Windows, which has none, the count drawn over the taskbar button (`overlay.mjs`, from the images in `badges/`,
   which `renderBadges.mjs` draws in the design system's `wait` yellow), with the same in words for screen readers.
@@ -107,29 +108,51 @@ notification is a change between two reads, in the console's words, and clicking
 | A session is assigned to you | `Assigned to you by <name>.`, when someone else hands you a shared session | Yes |
 | A pull request is opened | `Pull request opened: PR 12, <title>.` (not the one a session was started on) | Yes |
 | A pull request is merged or closed | `Merged: PR 12, <title>.` or `Closed without merging: …` | Yes |
-| A review of your pull request finished | `Review finished: approved.`, `changes requested`, `commented`, `approved, held until QA reports`, or `Review finished without a verdict.` | Yes |
-| A QA run on your pull request finished | `QA passed: <its check's title>.`, `QA failed: …` or `QA finished: …` | Yes |
+| A review of your pull request finished | `Review finished: approved.`, `changes requested`, `commented`, `approved, held until QA reports`, or `Review finished without a verdict.` | No: every pull request gets one, again on each push, and its verdict reaches the session that opened the pull request |
+| A QA run on your pull request finished | `QA passed: <its check's title>.`, `QA failed: …` or `QA finished: …` | No: as reviews |
 | A pull request's checks fail or pass | `Checks failing: 1 of 5 on PR 12, <title>.` or `Checks passing: all 5 on …` | No: each push runs them again, and claude usually watches them itself |
 | A session is paused at its idle or lifetime limit | `Paused: idle 2 h. Resume it from the console.` | No: an idle pause follows a needs-you or done already heard |
+
+**Where it shows.** With the app's window in front, a notification is not the OS's: the console's page shows it as a
+card at the window's bottom right, beside the bell (below), which opens its session and goes after 10 seconds (held
+while the pointer is on it). Behind other windows, minimised or closed, it is the OS's. A page with no bell (a settings
+page, a console from before it) gets the OS's in front too.
+
+**Opening a session clears its notifications**: under the bell, the OS's (taken back from its notification centre),
+and its cards, however it was opened (the rail, a link, a notification), and on coming back to the window while it
+shows that session.
+
+Clicking a notification opens its session. The app holds each one it showed (the 50 latest, closing an older one) until it is clicked: one
+nothing refers to is garbage collected, and its click then fires nothing, so the OS only brings the window forward on
+whatever session it showed.
+
+**The bell.** In the app the console's rail has a bell in its foot, beside the user menu (`console/public/notificationBell.js`), listing the
+notifications the app showed, newest first: the session's name, what it said and when, each opening its session. Its
+count is the ones not seen yet; opening the list sees them all, and so does opening their session. A notification about the session you are looking at is
+listed as seen and not shown. The list is kept by the main process (`notificationLog.mjs`), in memory, for this console
+and this sign-in: Change console…, signing in and signing out empty it, and so does quitting the app. The page reads it
+through the preload's `window.woodshedNotifications` (below), which a browser does not have, so the console in a
+browser has no bell.
 
 **File → Notifications** switches each kind on or off, kept in the app's `settings.json` under `notifications`; the
 badge counts whatever they say. A switched-off kind is still followed, so switching it on replays nothing. A session
 with several changes in one read rings once, for the most pressing. The first read after a start notifies about nothing,
 so opening the app does not replay every waiting session, nor does a session you are looking at. A pull request's review
 decision is left out: Woodshed's own review rings from its review session, and a person's review reaches the session
-that opened the pull request, whose next needs-you or done rings. Questions from Slack never count, and reviews and QA
-runs only for their verdict. Signed out, the badge is cleared and what was seen forgotten, so signing in again starts
+that opened the pull request, whose next needs-you or done rings. Questions from Slack never count, and a review or QA
+run only for its verdict, when that is switched on: never for failing, pausing or being handed over. Signed out, the badge is cleared and what was seen forgotten, so signing in again starts
 from a first read. A read that answers after Change console… (or a sign-in) is dropped: it can neither change the new
 console's badge nor notify about the old one's sessions.
 
 ## What a page may do
 
-Windows run with context isolation, the sandbox and no Node. The preload exposes one call, to the app's own setup
-page and nothing else. The console's page may use the microphone (dictation), notifications and the clipboard; a
+Windows run with context isolation, the sandbox and no Node. The preload exposes the app's own setup and sign-in pages'
+calls to them alone, and to any other page in the main window the notifications list (`list`, `markRead`, `onChange`, `onArrived`),
+which main.mjs answers only to the console's own page there. The console's page may use the microphone (dictation), notifications and the clipboard; a
 session app's page the clipboard and full screen; anything else is refused. No page may add a `<webview>`.
 
 ## Checks
 
-`node --test desktop/*.test.mjs` (part of Woodshed's `node --test` run; a bare `desktop/` would run `main.mjs` too, which needs Electron) checks `links.mjs` and `attention.mjs`, which need no
-Electron. To see the app itself, start a dev console (`bash scripts/devConsoleApp.sh start` from the repo's root) and
+`node --test desktop/*.test.mjs` (part of Woodshed's `node --test` run; a bare `desktop/` would run `main.mjs` too, which needs Electron) checks `links.mjs`, `attention.mjs` and `notificationLog.mjs`,
+which need no Electron. To see the app itself, start a dev console (`bash scripts/devConsoleApp.sh start` from the repo's root) and
 `npm start -- --console=localhost:7690`.

@@ -380,6 +380,8 @@
     if (onMy) launcher.applyQuery();
     render();
     refresh();
+    // For what follows the page's address without drawing it (notificationBell.js).
+    window.dispatchEvent(new Event('woodshed:route'));
   }
   window.addEventListener('popstate', moved);
   // Going away altogether (My settings, another page of the console, a reload, closing the browser tab) puts the tab
@@ -1367,7 +1369,8 @@
   // each refresh replaces, so the menu keeps its focus through a refresh.
   let railUser = null;
   function railUserFoot() {
-    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot(), railToggle('rail-hide', 'Hide the rail'));
+    // In the desktop app, its notifications under a bell beside the menu (notificationBell.js); nothing in a browser.
+    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot(), W.notificationBell?.({ navigate }) ?? null, railToggle('rail-hide', 'Hide the rail'));
     return railUser;
   }
 
