@@ -1414,7 +1414,7 @@ function configureAgent(name, auth, env = {}) {
   const vars = ['OWN_AGENT_AUTH_FILE=$HOME/.config/woodshed/agent-auth', 'GROK_HOME_DIR=$HOME/.grok',
     'OPENCODE_DATA_DIR=$HOME/.local/share/opencode', 'OPENCODE_CONFIG_DIR=$HOME/.config/opencode'];
   const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { echo "ERROR: $*"; exit 1; }', ...vars,
-    fn('ownAgentAuthIsKey'), fn('agentDir'), fn('refuseRulesOutsideCheckout'), fn(name).replaceAll('/tmp/', `${tmp}/`), name].join('\n');
+    fn('ownAgentAuthIsKey'), fn('agentDir'), fn('refuseRulesOutsideCheckout'), fn('opencodePermission'), fn(name).replaceAll('/tmp/', `${tmp}/`), name].join('\n');
   const read = (file) => (fs.existsSync(path.join(home, file)) ? fs.readFileSync(path.join(home, file), 'utf8') : null);
   const mode = (file) => fs.statSync(path.join(home, file)).mode & 0o777;
   try {
@@ -1458,6 +1458,28 @@ test('OpenCode: its auth.json, its config with the effort as each agent\'s varia
   assert.match(o.out, /providers: anthropic/);
   assert.equal(JSON.parse(configureAgent('configureOpencode', auth).read('.config/opencode/opencode.json')).agent, undefined);
   assert.equal(configureAgent('configureOpencode', 'sk-ant-x').failed, true, 'a bare key is not its auth.json');
+});
+
+test('OpenCode: each mode\'s permission rules mean what Claude Code\'s mode does, and auto writes none', () => {
+  const auth = '{"anthropic":{"type":"api","key":"sk-ant-x"}}';
+  const config = (env) => JSON.parse(configureAgent('configureOpencode', auth, env).read('.config/opencode/opencode.json'));
+  const asks = { edit: 'ask', bash: 'ask', webfetch: 'ask' };
+  // Its own policy allows edits and commands: default holds both to asking.
+  assert.deepEqual(config({ PERMISSION_MODE: 'default' }).permission, asks);
+  assert.equal(config({ PERMISSION_MODE: 'default' }).agent, undefined);
+  assert.deepEqual(config({ PERMISSION_MODE: 'acceptEdits' }).permission, { edit: 'allow', bash: 'ask', webfetch: 'ask' });
+  // plan: the plan agent's own rules come after the global ones in OpenCode, so its edit deny holds and a command asks;
+  // the build agent, if the person switches to it, asks for both.
+  const plan = config({ PERMISSION_MODE: 'plan', EFFORT: 'high' });
+  assert.deepEqual(plan.permission, asks);
+  assert.deepEqual(plan.agent, { build: { variant: 'high' }, plan: { variant: 'high', permission: { edit: 'deny', bash: 'ask' } } }, 'the effort kept beside the rules');
+  for (const env of [{ PERMISSION_MODE: 'auto' }, {}]) {
+    const auto = config(env);
+    assert.equal(auto.permission, undefined, '--auto answers every ask itself');
+    assert.equal(auto.agent, undefined);
+  }
+  // acceptEdits is its build agent under those rules: no flag of its own.
+  assert.equal(agentFlags('opencodeFlags', { PERMISSION_MODE: 'acceptEdits' }), '');
 });
 
 test('Grok Build: not started where a rules file it reads by itself points outside the checkout', (t) => {

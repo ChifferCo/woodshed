@@ -64,3 +64,33 @@ test('a sign-in\'s digest is the same whatever its spacing, and differs for anot
   assert.equal(agents.signInDigest('xai-abc\n'), agents.signInDigest('xai-abc'));
   assert.match(agents.signInDigest('{not json'), /^[0-9a-f]{64}$/);
 });
+
+test('each agent places every mode it offers on one scale, and a started session never gets a looser one', () => {
+  for (const id of agents.AGENT_IDS) {
+    const a = agents.agent(id);
+    assert.deepEqual(Object.keys(a.modeRanks).sort(), [...a.permissionModes].sort(), `${id}: a rank for each mode it offers, and none other`);
+    assert.ok(Object.values(a.modeRanks).every((r) => Object.values(agents.RANKS).includes(r)));
+    assert.equal(a.modeRanks.plan, agents.RANKS.readOnly, `${id}: a read-only mode, so a started session always has one`);
+    assert.equal(a.modeRanks.auto, agents.RANKS.everything);
+  }
+  // OpenCode's modes mean Claude Code's, held by configureOpencode's permission rules.
+  assert.deepEqual(agents.agent('opencode').modeRanks, agents.agent('claude').modeRanks);
+  assert.deepEqual(agents.agent('opencode').permissionModes, ['auto', 'acceptEdits', 'plan', 'default']);
+  // Codex's own policy edits and runs commands unasked: looser than acceptEdits.
+  assert.ok(agents.agent('codex').modeRanks.default > agents.agent('claude').modeRanks.acceptEdits);
+  for (const from of agents.AGENT_IDS) {
+    for (const mode of [...agents.agent(from).permissionModes, 'bypassPermissions', '']) {
+      for (const to of agents.AGENT_IDS) {
+        const got = agents.modeForStartedSession(from, mode, to);
+        assert.ok(agents.agent(to).permissionModes.includes(got), `${from} ${mode} -> ${to}: ${got}`);
+        const limit = agents.agent(from).modeRanks[mode] ?? agents.RANKS.readOnly;
+        assert.ok(agents.agent(to).modeRanks[got] <= limit, `${from} ${mode} -> ${to} ${got} is no looser`);
+        // The loosest that is no looser.
+        assert.ok(Object.values(agents.agent(to).modeRanks).every((r) => r > limit || r <= agents.agent(to).modeRanks[got]));
+      }
+    }
+  }
+  assert.equal(agents.modeForStartedSession('claude', 'default', 'codex'), 'plan');
+  assert.equal(agents.modeForStartedSession('codex', 'default', 'opencode'), 'acceptEdits');
+  assert.equal(agents.modeForStartedSession('opencode', 'toString', 'claude'), 'plan', 'a name off the object is no mode');
+});

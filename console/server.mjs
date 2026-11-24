@@ -1789,7 +1789,7 @@ export function createHandler({
    * their sessions (sessionStarts.mjs, which gives `startedFrom` and its own permission mode).
    * @returns {Promise<{status: number, body: object}>}  201 and the session, or the refusal the caller answers with
    */
-  async function startMine(login, body, { startedFrom = null } = {}) {
+  async function startMine(login, body, { startedFrom = null, startedApart = false } = {}) {
     const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
     const herdrParent = body.herdrParent === true;
     await userSettings?.refresh?.(login, { force: true });
@@ -1811,7 +1811,7 @@ export function createHandler({
       return { status: 403, body: { error: `you cannot start sessions on a project named ${String(body.project ?? '').slice(0, 40)}: it is not one of this console's, or you have no write access to its repo` } };
     }
     try {
-      const session = await fleet.startPrivate({ owner: login, prompt, name, workOn, agent, model, effort, permissionMode, attachmentIds, background: true, project, herdrParent, startedFrom });
+      const session = await fleet.startPrivate({ owner: login, prompt, name, workOn, agent, model, effort, permissionMode, attachmentIds, background: true, project, herdrParent, startedFrom, startedApart });
       return { status: 201, body: publicSession(session) };
     } catch (err) {
       // The page's own refusals (a branch name git would refuse, a project not ready), as myWrite answers them.

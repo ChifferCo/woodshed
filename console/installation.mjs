@@ -597,7 +597,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // hour per person (createWriteAccess). It ends no sign-in of theirs: the command line's own check does that.
   const startsWriteAccess = createWriteAccess({ canWrite: auth?.canWrite ? (login) => (auth.enabled() ? auth.canWrite(login) : true) : null, revokeAll: () => {}, logAs: 'sessionStarts' });
   const sessionStarts = createSessionStarts({
-    fleet, config, startMine: (login, body) => handle.startMine(login, body, { startedFrom: body.startedFrom }),
+    fleet, config, startMine: (login, body) => handle.startMine(login, body, { startedFrom: body.startedFrom, startedApart: body.startedApart === true }),
     resumeMine: (login, id) => handle.resumeMine(login, id), statusd: callStatusd,
     allowed: (login) => (members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login)),
     canWrite: (login) => startsWriteAccess.allowed(login),

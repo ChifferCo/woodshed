@@ -21,12 +21,32 @@
    *   secret: the name under `users/<login>/`. rotates: the agent refreshes a login and its refresh token works once, so a
    *   session sends the refreshed one back at stop (sessionApi.mjs, /agent-auth). kinds: what the card says it takes.
    * @typedef {{id: string, name: string, product: string, command: string, processNames: string[], quit: string,
-   *   teamCredential: boolean, signIn: SignIn|null, permissionModes: string[], efforts: string[]|null, modelHint: string,
-   *   modelRe: RegExp|null, reviews: boolean, usageUrl: string|null, docsUrl: string}} Agent
+   *   teamCredential: boolean, signIn: SignIn|null, permissionModes: string[], modeRanks: Record<string, number>,
+   *   modeWords?: Record<string, string>, efforts: string[]|null, modelHint: string, modelRe: RegExp|null, reviews: boolean,
+   *   usageUrl: string|null, docsUrl: string}} Agent
    *   processNames: what tmux names the pane's command, and hc the program, while the agent runs. modelRe: the shape of a
    *   model name the console accepts for it (null: its own fixed list, sessions.mjs MODELS). efforts: what its effort
    *   menu offers, the default first (null: none, the agent has no such setting on its command line).
+   *   modeRanks: how much each of its permission modes lets it do unasked, on one scale for every agent (RANKS), so a
+   *   session started from another never gets a looser one (looserModeThan). modeWords: New session's words for a mode
+   *   where this agent's differ from the menu's own.
    */
+
+  // What a permission mode lets an agent do without asking a person, from least to most. Each agent's modes are placed
+  // on it by what its session's flags and config make them (session/entrypoint.sh: claudeFlags, codexFlags, grokFlags,
+  // configureOpencode).
+  const RANKS = Object.freeze({
+    // No change to any file: edits refused, and a command asks or runs in a read-only sandbox.
+    readOnly: 0,
+    // Every edit and every command asks first.
+    asksFirst: 1,
+    // Edits without asking, every command asks first.
+    edits: 2,
+    // Edits and commands in the checkout without asking, sandboxed: Codex's own policy for a trusted folder.
+    workspace: 3,
+    // Nothing asks (or the model alone decides when to).
+    everything: 4,
+  });
 
   // A model name as each agent's own `--model` takes it: letters, digits, dots, dashes and underscores, and for OpenCode
   // its `provider/model`. Never a space or a quote: it ends up on a command line.
@@ -38,12 +58,17 @@
     claude: {
       id: 'claude', name: 'Claude', product: 'Claude Code', command: 'claude', processNames: ['claude'], quit: '/exit',
       teamCredential: true, signIn: null, permissionModes: ['auto', 'acceptEdits', 'plan', 'default'],
+      // auto has Anthropic's classifier refuse what looks risky, but asks nobody.
+      modeRanks: { plan: RANKS.readOnly, default: RANKS.asksFirst, acceptEdits: RANKS.edits, auto: RANKS.everything },
       efforts: ['', 'low', 'medium', 'high', 'xhigh', 'max'], modelHint: '', modelRe: null, reviews: true,
       usageUrl: 'https://claude.ai/settings/usage', docsUrl: 'https://code.claude.com/docs',
     },
     codex: {
       id: 'codex', name: 'Codex', product: 'Codex', command: 'codex', processNames: ['codex'], quit: '/quit',
       teamCredential: true, signIn: null, permissionModes: ['auto', 'plan', 'default'],
+      // plan is its read-only sandbox, where a write asks for approval; default its own policy for the trusted checkout,
+      // workspace-write with approval on request: edits and sandboxed commands run unasked.
+      modeRanks: { plan: RANKS.readOnly, default: RANKS.workspace, auto: RANKS.everything },
       efforts: null, modelHint: '', modelRe: /^[a-z0-9][a-z0-9._-]{0,63}$/, reviews: true,
       usageUrl: 'https://chatgpt.com/codex/settings/usage', docsUrl: 'https://developers.openai.com/codex',
     },
@@ -60,6 +85,8 @@
         ],
       },
       permissionModes: ['auto', 'acceptEdits', 'plan', 'default'],
+      // Its own modes of Claude Code's names (grok --help: default, acceptEdits, plan), and --always-approve for auto.
+      modeRanks: { plan: RANKS.readOnly, default: RANKS.asksFirst, acceptEdits: RANKS.edits, auto: RANKS.everything },
       efforts: ['', 'low', 'medium', 'high', 'xhigh', 'max'], modelHint: 'grok-build', modelRe: MODEL_NAME, reviews: false,
       usageUrl: 'https://grok.com/build', docsUrl: 'https://docs.x.ai/build/overview',
     },
@@ -74,7 +101,11 @@
           { text: 'Copy the sign-ins it saved without printing them, then paste them here (on Linux, wl-copy or xclip -selection clipboard, from the same file):', command: 'pbcopy < ~/.local/share/opencode/auth.json' },
         ],
       },
-      permissionModes: ['auto', 'plan', 'default'],
+      permissionModes: ['auto', 'acceptEdits', 'plan', 'default'],
+      // Each held by the `permission` rules configureOpencode writes for it (measured with 1.19.6), and --auto for auto,
+      // which answers every ask itself.
+      modeRanks: { plan: RANKS.readOnly, default: RANKS.asksFirst, acceptEdits: RANKS.edits, auto: RANKS.everything },
+      modeWords: { default: 'Asks before edits and commands' },
       efforts: ['', 'low', 'medium', 'high', 'max'], modelHint: 'anthropic/claude-sonnet-4-5', modelRe: PROVIDER_MODEL, reviews: false,
       usageUrl: null, docsUrl: 'https://opencode.ai/docs',
     },
@@ -100,6 +131,20 @@
   /** @returns {string}  the agent a session runs, from its options: claude unless it was started on another */
   function agentOfSession(s) {
     return isAgent(s?.options?.agent) ? s.options.agent : 'claude';
+  }
+
+  /**
+   * The mode a session of `toAgent` gets when a session of `fromAgent` in `fromMode` starts it (console/sessionStarts.mjs):
+   * the loosest of its own modes that lets it do no more unasked than the starting session may, so it is never looser.
+   * Every agent has a read-only mode, so there always is one. A mode the starting agent does not have counts as
+   * read-only: never guessed looser.
+   * @returns {string}
+   */
+  function modeForStartedSession(fromAgent, fromMode, toAgent) {
+    const from = agent(fromAgent).modeRanks;
+    const limit = Object.hasOwn(from, fromMode) ? from[fromMode] : RANKS.readOnly;
+    const to = agent(toAgent).modeRanks;
+    return Object.keys(to).filter((m) => to[m] <= limit).sort((a, b) => to[b] - to[a])[0];
   }
 
   /**
@@ -165,5 +210,5 @@
     return require('node:crypto').createHash('sha256').update(canonical).digest('hex');
   }
 
-  return { AGENTS, AGENT_IDS, OWN_SIGN_IN_AGENTS, PROCESS_NAMES, isAgent, agent, agentOfSession, modelShapeOk, checkSignIn, signInDigest };
+  return { AGENTS, AGENT_IDS, RANKS, modeForStartedSession, OWN_SIGN_IN_AGENTS, PROCESS_NAMES, isAgent, agent, agentOfSession, modelShapeOk, checkSignIn, signInDigest };
 });
