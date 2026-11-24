@@ -4,6 +4,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { isolatedEnv } from '../test/isolatedEnv.mjs';
 import { appStartedIn, brokenFileRefusal, marksReady, refusal } from './readyGate.mjs';
@@ -17,11 +18,6 @@ const app = fixtureApp({
 });
 
 const bash = (command) => ({ tool_name: 'Bash', tool_input: { command } });
-
-// The hook as claude runs it, its stdin and exit code, with Start app's log in the test's own folder: a Woodshed session
-// running these tests has a real /tmp/woodshed-app.log.
-const HOOK = new URL('./readyGate.mjs', import.meta.url).href;
-const runHook = (startLog, options) => spawnSync('node', ['--input-type=module', '-e', `import { main } from ${JSON.stringify(HOOK)}; main({ startLog: ${JSON.stringify(startLog)} });`], options);
 const APP = ['web/models/branches.ts', 'web/tests/x.spec.ts'];
 
 test('opening a pull request for review, or marking one ready, is what it looks at; a draft is not', () => {
@@ -42,9 +38,9 @@ test('an app change is refused when the app never started, and the reason says h
   const reason = refusal({ payload: bash('gh pr create -t x'), changedFiles: APP, appStarted: false, app });
   assert.match(reason, /^Not opened: this branch changes the app \(`web\/models\/branches\.ts`, `web\/tests\/x\.spec\.ts`\)/);
   assert.match(reason, /Run `make serve` and check the page\. Put what you saw under `## Proof`/, 'the project\'s own advice');
-  assert.match(reason, /a start that failed counts/);
-  assert.match(reason, /open the pull request ready all the same/);
-  assert.doesNotMatch(reason, /--draft|Needs a human/, 'an app that cannot be shown is no reason for a draft');
+  assert.match(reason, /write what you tried and why it failed under `## Proof` and run this again: it opens ready/);
+  assert.match(reason, /Only when it cannot start at all, with nothing in its logs, open the pull request as a draft \(`gh pr create --draft`\)/);
+  assert.doesNotMatch(reason, /Needs a human/);
 });
 
 test('it lets the call through when the app ran, the change is outside the app, or git could not say', () => {
@@ -67,41 +63,18 @@ test('the app counts as started once any of the project\'s app logs has somethin
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'readyGate-logs-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const repoDir = '/work/app';
-  const startLog = path.join(home, 'no-start.log');
-  assert.equal(appStartedIn({ repoDir, app, home, startLog }), false);
+  assert.equal(appStartedIn({ repoDir, app, home }), false);
   const logDir = path.join(home, '.cache', 'app-servers', 'app');
   fs.mkdirSync(logDir, { recursive: true });
   fs.writeFileSync(path.join(logDir, 'web.log'), '');
-  assert.equal(appStartedIn({ repoDir, app, home, startLog }), false, 'an empty log is not a start');
+  assert.equal(appStartedIn({ repoDir, app, home }), false, 'an empty log is not a start');
   fs.writeFileSync(path.join(logDir, 'api.log'), 'listening on 9000\n');
-  assert.equal(appStartedIn({ repoDir, app, home, startLog }), true);
-  assert.equal(appStartedIn({ repoDir, app: null, home, startLog }), false);
-});
-
-test('a start that failed before its servers logged anything still counts, by Start app\'s own log', (t) => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'readyGate-start-'));
-  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
-  const repoDir = '/work/app';
-  const startLog = path.join(home, 'woodshed-app.log');
-  const one = { ...app, name: 'app' };
-  fs.writeFileSync(startLog, '');
-  assert.equal(appStartedIn({ repoDir, app: one, home, startLog }), false, 'an empty start log is not a try');
-  fs.writeFileSync(startLog, 'Stopping the servers…\n');
-  assert.equal(appStartedIn({ repoDir, app: one, home, startLog }), false, 'Stop app writes here too, and is no start');
-  fs.writeFileSync(startLog, '\n# Woodshed: starting app in /work/other-clone\nError: Cannot find module \'pg\'\n');
-  assert.equal(appStartedIn({ repoDir, app: one, home, startLog }), false, 'another checkout\'s app of the same name is not this one');
-  fs.writeFileSync(startLog, '\n# Woodshed: starting app in /work/app\nError: Cannot find module \'pg\'\n');
-  assert.equal(appStartedIn({ repoDir, app: one, home, startLog }), true);
-  assert.equal(appStartedIn({ repoDir, app: null, home, startLog }), false, 'no app, nothing started');
-  // Of several apps, only the one the log says was started.
-  const web = { ...app, name: 'web' };
-  const admin = { ...app, name: 'admin' };
-  fs.writeFileSync(startLog, '\n# Woodshed: starting web in /work/app\nError: port 3000 in use\n');
-  assert.equal(appStartedIn({ repoDir, app: web, home, startLog }), true);
-  assert.equal(appStartedIn({ repoDir, app: admin, home, startLog }), false);
+  assert.equal(appStartedIn({ repoDir, app, home }), true);
+  assert.equal(appStartedIn({ repoDir, app: null, home }), false);
 });
 
 test('run as the hook, it blocks with exit code 2 and its reason on stderr, and stays quiet otherwise', (t) => {
+  const script = fileURLToPath(new URL('./readyGate.mjs', import.meta.url));
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'readyGate-'));
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'readyGate-home-'));
   t.after(() => {
@@ -120,7 +93,7 @@ test('run as the hook, it blocks with exit code 2 and its reason on stderr, and 
   // Not committed, not even added: a new file still counts.
   fs.writeFileSync(path.join(repo, 'web', 'page.tsx'), 'x');
 
-  const run = (command) => runHook(path.join(home, 'no-start.log'), {
+  const run = (command) => spawnSync('node', [script], {
     input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd: repo }),
     // Without the session's DEFAULT_BRANCH, which would name a branch the fixture repo (on master) does not have.
     env: { ...isolatedEnv(), HOME: home, DEFAULT_BRANCH: '' },
@@ -132,18 +105,6 @@ test('run as the hook, it blocks with exit code 2 and its reason on stderr, and 
   assert.match(blocked.stderr, /`web\/page\.tsx`/);
   assert.equal(run('gh pr create --draft -t x').status, 0);
   assert.equal(run('ls').stdout, '', 'nothing on stdout, which claude would read');
-
-  // A Start app that failed before its servers logged anything is a try; a Stop app's output alone is not.
-  const startLog = path.join(home, 'woodshed-app.log');
-  const hook = (command) => runHook(startLog, {
-    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd: repo }),
-    env: { ...isolatedEnv(), HOME: home, DEFAULT_BRANCH: '' },
-    encoding: 'utf8',
-  });
-  fs.writeFileSync(startLog, 'Stopping the servers…\n');
-  assert.equal(hook('gh pr create -t x -F b.md').status, 2);
-  fs.writeFileSync(startLog, `\n# Woodshed: starting app in ${fs.realpathSync(repo)}\nError: Cannot find module 'pg'\n`);
-  assert.deepEqual([hook('gh pr create -t x -F b.md').status, hook('gh pr create -t x -F b.md').stderr], [0, '']);
 
   const logDir = path.join(home, '.cache', 'servers', path.basename(repo));
   fs.mkdirSync(logDir, { recursive: true });
@@ -175,6 +136,7 @@ test('with several apps, a change under an app\'s paths needs that app started, 
 });
 
 test('run as the hook on a project of several apps, it reads each app\'s own logs', (t) => {
+  const script = fileURLToPath(new URL('./readyGate.mjs', import.meta.url));
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'readyGate-apps-'));
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'readyGate-apps-home-'));
   t.after(() => {
@@ -194,7 +156,7 @@ test('run as the hook on a project of several apps, it reads each app\'s own log
   git('update-ref', 'refs/remotes/origin/master', 'HEAD');
   fs.mkdirSync(path.join(repo, 'admin'));
   fs.writeFileSync(path.join(repo, 'admin', 'users.tsx'), 'x');
-  const run = () => runHook(path.join(home, 'no-start.log'), {
+  const run = () => spawnSync('node', [script], {
     input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'gh pr create -t x' }, cwd: repo }),
     env: { ...isolatedEnv(), HOME: home, DEFAULT_BRANCH: '' },
     encoding: 'utf8',
@@ -215,6 +177,7 @@ test('a branch that breaks its own project file is refused though the installati
   assert.equal(brokenFileRefusal({ project: { repoFileError: 'x' }, changedFiles: null }), null, 'git could not say');
   assert.equal(brokenFileRefusal({ project: {}, changedFiles: ['.woodshed/project.yaml'] }), null, 'the file reads');
 
+  const script = fileURLToPath(new URL('./readyGate.mjs', import.meta.url));
   const scratch = (prefix) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -223,7 +186,7 @@ test('a branch that breaks its own project file is refused though the installati
   const repo = fixtureCheckout(scratch('readyGate-broken-'), { repo: 'acme/app' });
   const files = fixtureProjectFiles(scratch('readyGate-files-'), { 'acme/app': fixtureProject() });
   const home = scratch('readyGate-broken-home-');
-  const run = () => runHook(path.join(home, 'no-start.log'), {
+  const run = () => spawnSync('node', [script], {
     input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'gh pr create -t x -F b.md' }, cwd: repo }),
     env: { ...isolatedEnv(), HOME: home, DEFAULT_BRANCH: 'main', WOODSHED_PROJECT_FILES_DIR: files },
     encoding: 'utf8',

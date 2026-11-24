@@ -64,7 +64,7 @@
 import { createPaneLock, reopenUnderLock } from './paneLock.mjs';
 import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
-import { appendFileSync, createReadStream, existsSync, openSync, readFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, createReadStream, existsSync, openSync, readFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -774,15 +774,6 @@ function appsStatus() {
   return { appName: CURRENT_APP?.name ?? null, apps: PROJECT_APPS.map(({ name, label }) => ({ name, label })) };
 }
 
-// The checkout as git names it (its real path), which readyGate compares with the one a pull request is opened from.
-function realCheckout() {
-  try {
-    return realpathSync(REPO_DIR);
-  } catch {
-    return REPO_DIR;
-  }
-}
-
 // The project's own start or stop command: the project file's `app.start` or `app.stop`.
 function runAppCommand(command) {
   const out = openSync(APP_LOG, 'a');
@@ -845,9 +836,8 @@ async function startApp(name) {
 }
 
 function runStart(app) {
-  // One log for every start, and a line says which app each start is, of which checkout: readyGate reads it as a try at
-  // that app, since a Stop app's output lands in the same file, and a second clone's app of the same name is not this one.
-  appendFileSync(APP_LOG, `\n# Woodshed: starting ${app.name} in ${realCheckout()}\n`);
+  // One log for every start: with several apps, a line says which one each start is.
+  if (PROJECT_APPS.length > 1) appendFileSync(APP_LOG, `\n# Woodshed: starting ${app.name}\n`);
   const child = runAppCommand(app.start);
   const start = { exitCode: null, startedAt: Date.now(), pid: child.pid, stopped: false };
   appStart = start;
