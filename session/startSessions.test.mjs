@@ -156,13 +156,14 @@ test('agent new --wait starts a helper beside this session\'s agent, waits for i
   const { out, args } = io({ files: { '/tmp/token': TOKEN }, answers: [
     [200, { agent: { id: 'agent-2', agent: 'claude' } }],
     [200, { agents: [{ id: 'agent-2', state: 'idle', heldIds: [] }] }],
+    [200, { entries: [] }],
     [200, { agents: [{ id: 'agent-2', state: 'working', heldIds: [] }] }],
     [200, { agents: [{ id: 'agent-2', state: 'done', heldIds: [] }] }],
     [200, { entries: [{ role: 'user', text: 'Look into the flaky test', at: sentAt }, { role: 'tool', text: 'npm test', at: later }, { role: 'assistant', text: 'It races on the clock: fixed with a fake timer.', at: later }] }],
   ] });
   assert.equal(await run({ ...args, argv: ['agent', 'new', 'Look', 'into', 'the', 'flaky', 'test', '--wait'] }), 0);
   assert.deepEqual(out.calls.map((c) => `${c.method} ${c.url.replace('http://10.8.0.1:7691', '')}`), [
-    'POST /agents', 'GET /agents', 'GET /agents', 'GET /agents', 'GET /agents/agent-2/transcript?limit=50',
+    'POST /agents', 'GET /agents', 'GET /agents/agent-2/transcript?limit=20', 'GET /agents', 'GET /agents', 'GET /agents/agent-2/transcript?limit=50',
   ]);
   assert.deepEqual(out.calls[0].body, { prompt: 'Look into the flaky test' });
   assert.match(out.stdout, /^Started agent-2: claude, beside this session's own agent, in this checkout\nagent-2 {2}done\n\[said \d\d:\d\d\] It races on the clock: fixed with a fake timer\.\n$/);
@@ -206,4 +207,17 @@ test('send --wait prints the other session\'s reply; a wait on one waiting on th
   assert.equal(await run({ ...help.args, argv: ['new', '--help'] }), 0);
   assert.match(help.out.stdout, /^Usage: woodshed-session <command>/);
   assert.equal(help.out.calls.length, 0);
+});
+
+test('agent --wait sees a turn too short to be seen working by what it wrote since', async () => {
+  const later = new Date(Date.now() + 60_000).toISOString();
+  const { out, args } = io({ files: { '/tmp/token': TOKEN }, answers: [
+    [200, { ok: true }],
+    [200, { agents: [{ id: 'agent-2', state: 'done', heldIds: [] }] }],
+    [200, { entries: [{ role: 'assistant', text: 'Yes: 42.', at: later }] }],
+    [200, { entries: [{ role: 'user', text: 'Is it 42?', at: later }, { role: 'assistant', text: 'Yes: 42.', at: later }] }],
+  ] });
+  assert.equal(await run({ ...args, argv: ['agent', 'send', 'agent-2', 'Is', 'it', '42?', '--wait'] }), 0);
+  assert.doesNotMatch(out.stdout, /did not take it up/);
+  assert.match(out.stdout, /\[said \d\d:\d\d\] Yes: 42\.\n$/);
 });

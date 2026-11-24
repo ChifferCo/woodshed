@@ -417,3 +417,24 @@ test('a wait on a session that waits on this one answers at once, and a wait who
   for (let i = 0; i < 50 && api.starts.openWaits(); i++) await new Promise((r) => setTimeout(r, 20));
   assert.equal(api.starts.openWaits(), 0, 'gone once its caller went');
 });
+
+test('a reply to a wait whose command went is typed in, not lost', async (t) => {
+  const { token, session, child, sessions } = family();
+  const childToken = newStartToken();
+  child.startTokenHash = startTokenHash(childToken);
+  Object.assign(child, { state: 'working', pendingMessages: [] });
+  const api = await serve({ sessions });
+  t.after(api.close);
+  // The waiting command goes (Ctrl-C, its own timeout) before any reply.
+  const gone = new AbortController();
+  const waiting = fetch(`${api.base}/sessions/${child.id}/wait?for=reply`, { headers: { authorization: `Bearer ${token}` }, signal: gone.signal }).catch(() => null);
+  await new Promise((r) => setTimeout(r, 50));
+  gone.abort();
+  await waiting;
+  await new Promise((r) => setTimeout(r, 50));
+  const sent = await api.call('POST', `/sessions/${session.id}/messages`, { token: childToken, body: { text: 'Done: totals in cents.' } });
+  assert.equal(sent.body.answeredWait, undefined);
+  assert.equal(sent.body.sent, true);
+  assert.equal(api.fleet.sent.length, 1, 'typed in at the session\'s prompt as any message');
+  assert.equal(api.starts.openWaits(), 0);
+});

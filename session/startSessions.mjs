@@ -239,7 +239,13 @@ export async function run({ argv, env, fetch: fetchFn = fetch, readFile = (p) =>
       if (!agent) throw new Refused(`${id} is no longer running`);
       if (agent.state === 'working') worked = true;
       const held = (agent.heldIds ?? []).length > 0;
-      if (!held && worked && ['done', 'needs-you', 'idle'].includes(agent.state)) break;
+      const settled = ['done', 'needs-you', 'idle'].includes(agent.state);
+      if (!held && worked && settled) break;
+      // A turn shorter than the gap between two reads is never seen working: what it wrote since says it worked.
+      if (!held && !worked && settled) {
+        const { entries = [] } = await call('GET', `/agents/${id}/transcript?limit=20`);
+        if (entries.some((e) => e.role === 'assistant' && e.text?.trim() && e.at && e.at > sentAt)) break;
+      }
       if (!held && !worked && Date.now() - started > AGENT_NO_REPLY_MS) {
         say(`${id} did not take it up: nothing held for it, and it did not start working`);
         return 0;

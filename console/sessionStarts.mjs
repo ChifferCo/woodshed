@@ -325,9 +325,8 @@ export function createSessionStarts({
     // `to` is waiting on `from` (send --wait, wait): this is its answer, handed to that wait, not typed in behind it.
     // Typed in, it would be held until that wait's turn ends, and that wait would never end.
     const waiting = waits.get(to.id);
-    if (waiting && waiting.target === from.id) {
-      const at = new Date(now()).toISOString();
-      waiting.answer({ text: said, at });
+    const at = new Date(now()).toISOString();
+    if (waiting && waiting.target === from.id && waiting.answer({ text: said, at })) {
       console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome: 'answered a wait' });
       return reply(res, 200, { sentAt: at, sent: true, answeredWait: true, session: summary(to) });
     }
@@ -351,7 +350,17 @@ export function createSessionStarts({
     let replied = null;
     let wake = null;
     let closed = false;
-    const entry = { target: id, answer: (r) => { replied = r; wake?.(); } };
+    // A reply is taken only while the waiting command is still there to print it: once it went, the message is typed in
+    // as any other (message, above), not lost to a wait nobody reads.
+    const entry = {
+      target: id,
+      answer: (r) => {
+        if (closed || res.destroyed || res.writableEnded) return false;
+        replied = r;
+        wake?.();
+        return true;
+      },
+    };
     waits.set(waiter.id, entry);
     // The request's own 'close' comes once its body is read; the response's, before it is sent, means the caller went.
     res.on('close', () => {
