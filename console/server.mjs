@@ -233,7 +233,7 @@ import { safeNext, signInFailure } from './auth.mjs';
 import { handleDesktopSignIn } from './desktopSignIn.mjs';
 import { handleCliApi, handleCliPage, sessionSignInsOf } from './cliSignIn.mjs';
 import { CLI_REPOS_PATH, handleCliRepos } from './cliRepos.mjs';
-import { carriesCliToken, handleCliCall } from './cliSessions.mjs';
+import { carriesCliToken, CLI_AGENT_AUTH_RE, handleCliCall } from './cliSessions.mjs';
 import { REVIEW_READINESS_PATH, reviewReadinessReply } from './reviewReadiness.mjs';
 import { answerWithView, CLI_CONFIG_PATH, configView, isConfigWrite } from './cliConfig.mjs';
 import { handleCliSettings } from './cliSettings.mjs';
@@ -2788,6 +2788,14 @@ export function createHandler({
     return reply(res, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
   }
   function cliWrite(req, res, pathname, login) {
+    // An own sign-in saved from the command line (woodshed sign-in push): the page's own save, answered with whether one
+    // is saved now and when, never the page's whole view.
+    const agentAuth = CLI_AGENT_AUTH_RE.exec(pathname);
+    if (agentAuth) {
+      const id = agentAuth[1];
+      const view = async () => ({ agent: id, set: Boolean(userSettings?.view(login).agentAuth?.[id]?.set), savedAt: userSettings?.view(login).agentAuth?.[id]?.savedAt ?? null });
+      return answerWithView(res, (held) => writeRoute(req, held, pathname, login), view, reply);
+    }
     if (!isConfigWrite(pathname)) return writeRoute(req, res, pathname, login);
     return answerWithView(res, (held) => writeRoute(req, held, pathname, login), () => configView({ userSettings, projectsView }, login), reply);
   }
