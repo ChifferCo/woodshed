@@ -157,8 +157,10 @@ export function createSessionStarts({
 }) {
   const summary = (s) => startedSummary(s, { publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
 
-  // The open waits, by the waiting session's id: what it waits on, and how a reply from that session answers it.
+  // The waits open now, one for each session waiting and the session it waits on (waitKey): a session may wait on two
+  // at once (two send --wait in the background), and a reply from either answers its own.
   const waits = new Map();
+  const waitKey = (waiter, target) => `${waiter}>${target}`;
 
   function startedBy(session) {
     return fleet.sessions().filter((s) => s.startedFrom === session.id && s.owner === session.owner && !s.startedApart).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
@@ -326,9 +328,9 @@ export function createSessionStarts({
       : `[Message from ${named}, ${from.startedFrom === to.id ? 'which this session started' : 'another session of your person\'s'}. Answer it with: woodshed-session send ${from.id} "<answer>"]`;
     // `to` is waiting on `from` (send --wait, wait): this is its answer, handed to that wait, not typed in behind it.
     // Typed in, it would be held until that wait's turn ends, and that wait would never end.
-    const waiting = waits.get(to.id);
+    const waiting = waits.get(waitKey(to.id, from.id));
     const at = new Date(now()).toISOString();
-    if (waiting && waiting.target === from.id && waiting.answer({ text: said, at, typed: `${head}\n\n${said}` })) {
+    if (waiting && waiting.answer({ text: said, at, typed: `${head}\n\n${said}` })) {
       console.log('sessionStarts: message', { from: from.id, to: to.id, chars: said.length, outcome: 'answered a wait' });
       return reply(res, 200, { sentAt: at, sent: true, answeredWait: true, session: summary(to) });
     }
@@ -344,11 +346,12 @@ export function createSessionStarts({
   async function wait(res, waiter, session, mode) {
     const id = session.id;
     // Each the other's: answered now, or both would wait for a reply neither can give.
-    if (waits.get(id)?.target === waiter.id) {
+    if (waits.has(waitKey(id, waiter.id))) {
       console.log('sessionStarts: wait answered at once, the other session waits on this one', { from: waiter.id, id });
       return reply(res, 200, { session: summary(session), waitingOnYou: true });
     }
-    // One open wait per session: a reply from the session it waits on answers it (message, above).
+    // One open wait for each pair: a reply from the session it waits on answers it (message, above). A second wait of the
+    // same session on the same one takes its place.
     let replied = null;
     let wake = null;
     let closed = false;
@@ -363,7 +366,7 @@ export function createSessionStarts({
         return true;
       },
     };
-    waits.set(waiter.id, entry);
+    waits.set(waitKey(waiter.id, id), entry);
     // The request's own 'close' comes once its body is read; the response's, before it is sent, means the caller went.
     res.on('close', () => {
       if (res.writableFinished) return;
@@ -374,7 +377,7 @@ export function createSessionStarts({
     try {
       return await waitLoop(res, session, mode, () => replied, () => closed, (resolve) => { wake = resolve; }, () => { handed = true; });
     } finally {
-      if (waits.get(waiter.id) === entry) waits.delete(waiter.id);
+      if (waits.get(waitKey(waiter.id, id)) === entry) waits.delete(waitKey(waiter.id, id));
       // Taken in the same tick its command went: typed in at the session's prompt, as any message, not dropped.
       if (replied && !handed) {
         const outcome = await fleet.send(waiter, replied.typed);

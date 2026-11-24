@@ -529,3 +529,26 @@ test('a reply taken by a wait whose command goes in the same moment is typed in,
   assert.equal(api.fleet.sent.length, 1, `typed in once (${sent.body.answeredWait ? 'taken by the wait, then typed in' : 'typed in at once'})`);
   assert.equal(api.starts.openWaits(), 0);
 });
+
+test('a session waiting on two at once gets each one\'s reply in its own wait', async (t) => {
+  const { token, session, child, sibling, sessions } = family();
+  const tokens = {};
+  for (const s of [child, sibling]) {
+    tokens[s.id] = newStartToken();
+    s.startTokenHash = startTokenHash(tokens[s.id]);
+    Object.assign(s, { state: 'working', pendingMessages: [] });
+  }
+  const api = await serve({ sessions });
+  t.after(api.close);
+  const waitOn = (s) => fetch(`${api.base}/sessions/${s.id}/wait?for=reply`, { headers: { authorization: `Bearer ${token}` } }).then((r) => r.json());
+  const onChild = waitOn(child);
+  const onSibling = waitOn(sibling);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(api.starts.openWaits(), 2);
+  await api.call('POST', `/sessions/${session.id}/messages`, { token: tokens[sibling.id], body: { text: 'From the sibling.' } });
+  await api.call('POST', `/sessions/${session.id}/messages`, { token: tokens[child.id], body: { text: 'From the child.' } });
+  assert.equal((await onChild).reply.text, 'From the child.');
+  assert.equal((await onSibling).reply.text, 'From the sibling.');
+  assert.equal(api.fleet.sent.length, 0, 'neither held to be typed in');
+  assert.equal(api.starts.openWaits(), 0);
+});
