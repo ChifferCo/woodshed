@@ -922,8 +922,8 @@ URL on top of each env file's Repo settings values
   statusd `statusd: text sent to claude`; a file from **📎** logs `statusd:
   file uploaded` with `typed: null`. The mic is hidden where the browser has no
   speech recognition, and says why in a toast when the site may not use the
-  microphone. A terminal that reconnected by itself logs `terminal:
-  reconnecting` in the browser's console.
+  microphone. A terminal whose connection dropped logs `[terminal] websocket
+  closed` with the code in its frame's console, and reconnects by itself.
 - **+ Another agent fails, or the agent switch is missing.** The switch shows only to the owner of a running My
   Woodshed session whose statusd reports `agents` (an image from before `session/agents.mjs` reports none). From the
   command line it is `woodshed session agents|agent <id>`, which the console logs as `cliSessions: call` with the path,
@@ -1159,7 +1159,7 @@ for the pane bar's buttons, but has no container: it cannot show a live terminal
 nowhere. `/s/5a5a5a5a` is starting, for the start checklist in the local provider's words, until the start timeout
 fails it. `/s/c0ffee11` is running with a live TUI where ttyd and tmux are on the PATH (as in a Woodshed
 session): `devTerminalSession.mjs` runs them on `session/tmux.conf` over a made-up conversation, for find, copy, links
-and scrolling back. `/s/beadfeed?tab=review` is running with a Review tab that works: `devReviewSession.mjs` answers it with
+and scrolling back, with a second ttyd on a shell for its Terminal tab. `/s/beadfeed?tab=review` is running with a Review tab that works: `devReviewSession.mjs` answers it with
 the shed's real review page over a made-up change it commits to a scratch repo, with an analysis already written. Its
 chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and app go nowhere. `/s/abbaabba` is running on a project with two apps behind the real statusd,
 whose checkout has three branches with a pull request each (one checked out, one pushed and left, one in a git
