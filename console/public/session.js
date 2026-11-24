@@ -384,6 +384,8 @@
     if (onMy) launcher.applyQuery();
     render();
     refresh();
+    // For what follows the page's address without drawing it (notificationBell.js).
+    window.dispatchEvent(new Event('woodshed:route'));
   }
   window.addEventListener('popstate', moved);
   // Going away altogether (My settings, another page of the console, a reload, closing the browser tab) puts the tab
@@ -812,10 +814,13 @@
   function assignActions(s) {
     if (!data.assignable || W.isPrivate(s) || s.kind === 'ask' || W.isPullCheck(s)) return [];
     const mine = W.sameLogin(s.assignee, data.login);
+    const others = data.assignables.filter((l) => !W.sameLogin(l, data.login) && !W.sameLogin(l, s.assignee));
     return [
       !mine && { label: 'Assign to me', note: s.assignee ? `Take it from ${W.personText(s.assignee)}` : 'Nobody has it: take it', run: () => assignTo(s, data.login) },
-      ...data.assignables.filter((l) => !W.sameLogin(l, data.login) && !W.sameLogin(l, s.assignee))
-        .map((l) => ({ label: `Hand over to ${W.personText(l)}`, note: `@${l}`, run: () => assignTo(s, l) })),
+      others.length && {
+        label: 'Hand over…', note: others.length === 1 ? `Give it to ${W.personText(others[0])}` : `Give it to someone else who can be assigned (${others.length})`,
+        run: () => handOver(s, others),
+      },
       s.assignee && { label: 'Unassign', note: 'Nobody has it; anyone who can be assigned can take it', run: () => assignTo(s, null) },
     ].filter(Boolean);
   }
@@ -1022,6 +1027,14 @@
     refresh();
   }
 
+  // Everyone who can be assigned, in one dropdown, rather than a row each in the ⋯ menu, which a team makes long.
+  async function handOver(s, logins) {
+    const options = logins.map((l) => ({ value: l, label: W.personText(l) === `@${l}` ? `@${l}` : `${W.personText(l)} (@${l})` }))
+      .sort((a, b) => a.label.replace(/^@/, '').localeCompare(b.label.replace(/^@/, ''), undefined, { sensitivity: 'base' }));
+    const to = await W.askChoice({ title: 'Hand over this session', label: 'To', options, goLabel: 'Hand over' });
+    if (to) await assignTo(s, to);
+  }
+
   // Shown in a session's last 15 minutes before it pauses or stops by itself: an hour more, each press.
   function extendButton(s, { bar = false } = {}) {
     const pauses = W.pausesIn(s, data);
@@ -1063,7 +1076,6 @@
   // follows it too.
   function railCard(s) {
     const st = W.displayStatus(s);
-    const pr = W.prNumber(s.prUrl);
     const live = W.isLive(s);
     const word = h('b', null, st.word.charAt(0).toUpperCase() + st.word.slice(1));
     const pauses = W.pausesIn(s, data);
@@ -1098,7 +1110,7 @@
         h('span', { class: 'rmarks' }, starButton(s), menuButton(s))),
       h('div', { class: 'rsub' },
         h('span', { class: 'rsub-text' }, sub),
-        pr ? W.prChips(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
+        W.hasPrs(s) ? W.prChips(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
         W.isUnassigned(s) && data.assignable && takeButton(s),
         live && W.canExtend(s, data) && extendButton(s),
         !live && W.canResumePrivate(s) && resumeButton(s, true),
@@ -1371,7 +1383,8 @@
   // each refresh replaces, so the menu keeps its focus through a refresh.
   let railUser = null;
   function railUserFoot() {
-    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot(), railToggle('rail-hide', 'Hide the rail'));
+    // In the desktop app, its notifications under a bell beside the menu (notificationBell.js); nothing in a browser.
+    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot(), W.notificationBell?.({ navigate }) ?? null, railToggle('rail-hide', 'Hide the rail'));
     return railUser;
   }
 
@@ -1726,7 +1739,11 @@
       row('Visible to', W.isPrivate(s) ? 'Only you' : 'Everyone on the console'),
       W.isPrivate(s) && s.kind !== 'ask' && s.branch && !['pr', 'branch'].includes(inviteTargetOf(s).state)
         && row('Invite', 'Invite shows in the bar once GitHub has the branch: the session pushes when it commits and when it stops'),
-      s.taintedAt && row('Production data', `Since ${W.ago(s.taintedAt)}: it reaches only the console, its databases and your organization's private repos, and all it kept is deleted when it is removed`));
+      s.taintedAt && row('Production data', `Since ${W.ago(s.taintedAt)}: it reaches only the console, its databases and your organization's private repos, and all it kept is deleted when it is removed`),
+      // Each a link: the session it came from, and those it started, which are the same person's own.
+      ...W.startedLinks(s, data.sessions).map(([term, list]) => row(term, list.flatMap((x, i) => [
+        i ? ', ' : null, x.id ? h('a', { href: sessionHref(x) }, x.title) : x.title,
+      ]).filter(Boolean))));
   }
 
   // When it pauses and stops by itself, and whether those are its own, with the next one while it runs.
@@ -1911,7 +1928,6 @@
   }
 
   function paneBar(s, view) {
-    const pr = W.prNumber(s.prUrl);
     const typing = s.status === 'running' && !PAGE_TABS.has(view);
     // A question from Slack reads the default branch: it has no branch, app or databases of its own.
     const tools = s.status === 'running' && s.kind !== 'ask';
@@ -1959,7 +1975,7 @@
       // A phone's two rows: the name over one line of its state, its PR and its usage, with ⋯ for the rest.
       h('div', { class: 'pphone' },
         h('b', { class: 'pphone-title', title: s.title }, s.title),
-        h('span', { class: 'pphone-meta' }, W.statusBadge(s), s.taintedAt && W.productionTag(s), W.pausesIn(s, data) && h('span', { class: 'ptimer' }, W.pausesIn(s, data)), phoneAppState(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
+        h('span', { class: 'pphone-meta' }, W.statusBadge(s), s.taintedAt && W.productionTag(s), W.pausesIn(s, data) && h('span', { class: 'ptimer' }, W.pausesIn(s, data)), phoneAppState(s), W.hasPrs(s) && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
       h('button', {
         type: 'button', class: 'pmore', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === `${s.id}:phone`), 'data-menu-for': `${s.id}:phone`,
         'aria-label': `Actions for ${s.title}`, title: 'Actions',
@@ -1984,7 +2000,7 @@
       W.statusBadge(s),
       s.taintedAt && W.productionTag(s, { long: true }),
       s.number && h('a', { class: 'pref', href: W.issueUrl(s.repo ?? data.repo, s), target: '_blank', rel: 'noopener', title: s.kind === 'pr' ? 'Open the pull request' : 'Open the issue' }, W.ref(s)),
-      pr && s.kind !== 'pr' && W.prChips(s, { asLink: true }),
+      W.hasPrs(s) && s.kind !== 'pr' && W.prChips(s, { asLink: true }),
       barMenuButton(s, {
         key: 'details', label: 'Details ▾', className: 'pdetails', title: 'Its branch, who started it, how long it has run, whose Claude it runs on and who can see it',
         // What the narrowing rules took off the bar comes here: the meter's readings and Invite.
@@ -2108,6 +2124,15 @@
   // never hidden to warm it: with no box to measure, xterm makes ttyd attach tmux at 80x24 and tmux shrinks the
   // window for every other client of the session.
   const MAX_TERMINALS = 8;
+  // The console's own terminal page (terminalPage.js), named by hash so the browser keeps it, and a frame loads only its
+  // websocket. Unversioned for a page made without the meta, which the browser then asks for again each time.
+  const TERMINAL_PAGE = document.querySelector('meta[name="woodshed-terminal-page"]')?.content || '/static/term.html';
+  // `arg` names an agent beside the session's own (agent-2 …), which ttyd hands to woodshed-attach from its websocket's
+  // query: the page carries it in its fragment and puts it there.
+  function terminalSrc(path, id, arg = null) {
+    const query = arg ? `?${new URLSearchParams({ arg })}` : '';
+    return `${TERMINAL_PAGE}#${path}/${id}${query}`;
+  }
 
   /**
    * @param {{pane: 'agent'|'terminal', root: () => HTMLElement, path: string, label: string, keyOf: (s: object) => string|null}} args
@@ -2129,7 +2154,7 @@
     function mount(s, key) {
       // An agent beside the session's own: ttyd hands `arg` to woodshed-attach, which attaches to its tmux session.
       const agent = agentOf(s);
-      const src = `/${path}/${s.id}/${agent ? `?${new URLSearchParams({ arg: agent.id })}` : ''}`;
+      const src = terminalSrc(path, s.id, agent?.id);
       const frame = h('iframe', { class: 'term', src, title: `${label} for ${s.title}${agent ? `: ${agentLabel(agent.agent, agent.model)}` : ''}`, onload: (e) => bindTerminal(e.target, s.id, agent ? agent.id : pane) });
       frames.set(key, frame);
       root().append(frame);

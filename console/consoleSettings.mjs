@@ -120,7 +120,8 @@ export function settingProblem(setting, value) {
  * @param {{state: object}} store
  * @param {{hostProjects?: {changes: {added: object[], removed: string[]}|null}|null}} [opts]  what an embedding
  *   program's repos hook changed since the installation was built (addedProjects.mjs, createHostProjects)
- * @returns {object}  the same config, its `maxRunning`, `maxPrivatePerPerson`, `maxAsks`, `limits` and `retention` live
+ * @returns {object}  the same config, its `maxRunning`, `maxPrivatePerPerson`, `maxAsks`, `limits` and
+ *   `retention` live
  */
 export function liveConfig(config, store, { hostProjects = null } = {}) {
   const value = (key) => storedValue(store, key) ?? BY_KEY.get(key).read(config);

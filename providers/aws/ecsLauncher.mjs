@@ -23,6 +23,9 @@ const PER_SESSION_ENV = [
   'WOODSHED_REVIEW_TAG',
   // A private session whose agent's terminal comes from its person's Herdr, as a child of theirs (cli/hc.mjs).
   'WOODSHED_HERDR_PARENT',
+  // A private session's token for starting sessions of its person's (console/sessionStarts.mjs): of the session's
+  // run, like SESSION_TOKEN, and dead once it stops.
+  'WOODSHED_START_TOKEN',
   // MCP servers and production access (console/mcpServers.mjs): the servers it has, whether it may be tainted, is, and its egress proxy.
   'WOODSHED_PROD_MCP', 'WOODSHED_MCP_SERVERS', 'WOODSHED_TAINTED', 'WOODSHED_EGRESS_PROXY',
 ];

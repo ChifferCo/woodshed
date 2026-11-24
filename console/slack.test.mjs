@@ -297,3 +297,24 @@ test('a direct message goes to the member ID as the channel, as Markdown, withou
   const refused = fakes({ answer: { ok: false, error: 'channel_not_found' } });
   assert.equal(await createSlack({ store: storeWith(null), ...refused }).dm({ user: 'U0NOPE', markdown: 'x' }), false);
 });
+
+test('thread reads conversations.replies as a query, pages through the cursor, and leaves out bots and notices', async () => {
+  const urls = [];
+  const pages = [
+    { ok: true, messages: [{ user: 'U1', text: 'root', ts: '1.0' }, { bot_id: 'B1', text: 'bot', ts: '1.1' }], response_metadata: { next_cursor: 'c2' } },
+    { ok: true, messages: [{ user: 'U2', text: 'two', ts: '1.2' }, { user: 'U3', subtype: 'channel_join', text: 'joined', ts: '1.3' }] },
+  ];
+  const fetchImpl = async (url) => { urls.push(String(url)); return { status: 200, async json() { return pages.shift(); } }; };
+  const slack = createSlack({ store: storeWith('C0123456789'), secrets: { async read() { return 'xoxb-1'; } }, fetchImpl });
+  const read = await slack.thread({ channel: 'C1', threadTs: '1.0', before: '1.9', after: '0.5' });
+  assert.deepEqual(read.messages.map((m) => m.text), ['root', 'two']);
+  assert.equal(urls.length, 2);
+  assert.match(urls[0], /conversations\.replies\?channel=C1&ts=1\.0&limit=200&latest=1\.9&oldest=0\.5$/);
+  assert.match(urls[1], /cursor=c2$/);
+});
+
+test('thread says Slack\'s error, such as a missing scope', async () => {
+  const { secrets, fetchImpl } = fakes({ answer: { ok: false, error: 'missing_scope' } });
+  const slack = createSlack({ store: storeWith('C0123456789'), secrets, fetchImpl });
+  assert.deepEqual(await slack.thread({ channel: 'C1', threadTs: '1.0' }), { error: 'missing_scope' });
+});

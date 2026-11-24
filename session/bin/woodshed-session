@@ -1,0 +1,4 @@
+#!/bin/bash
+# Hands a piece of work to a new session of this session's person's, and follows the ones it started
+# (session/startSessions.mjs, console/sessionStarts.mjs). On the PATH of claude's and the Terminal tab's shells.
+exec node "$(cd "$(dirname "$0")" && pwd)/../startSessions.mjs" "$@"

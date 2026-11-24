@@ -110,10 +110,11 @@ export function createCliDevices() {
 /**
  * Whether a token's person still has write access, asked of GitHub at first and then hourly.
  * @param {{canWrite: ((login: string) => Promise<boolean>)|null, revokeAll: (login: string, by: string) => void,
- *          now?: () => number}} deps  `canWrite` null where sign-in does not ask GitHub (no sign-in, or a hosting proxy)
+ *          now?: () => number, logAs?: string}} deps  `canWrite` null where sign-in does not ask GitHub (no sign-in, or a
+ *   hosting proxy); `logAs` the prefix of its log lines, the caller's: a session's start checks it too (sessionStarts)
  * @returns {{allowed: (login: string|null) => Promise<boolean>}}
  */
-export function createWriteAccess({ canWrite, revokeAll, now = Date.now }) {
+export function createWriteAccess({ canWrite, revokeAll, now = Date.now, logAs = 'cliSignIn' }) {
   const checkedAt = new Map();
   const retryAfter = new Map();
   const checking = new Map();
@@ -124,13 +125,13 @@ export function createWriteAccess({ canWrite, revokeAll, now = Date.now }) {
       still = await canWrite(login);
     } catch (err) {
       retryAfter.set(login, now() + WRITE_RETRY_MS);
-      console.warn('cliSignIn: write access not rechecked', { login, retryInMs: WRITE_RETRY_MS, message: String(err?.message ?? err).split('\n')[0] });
+      console.warn(`${logAs}: write access not rechecked`, { login, retryInMs: WRITE_RETRY_MS, message: String(err?.message ?? err).split('\n')[0] });
       return true;
     }
     retryAfter.delete(login);
     if (!still) {
       checkedAt.delete(login);
-      console.log('cliSignIn: refused, write access gone', { login });
+      console.log(`${logAs}: refused, write access gone`, { login });
       revokeAll(login, 'write access gone');
       return false;
     }

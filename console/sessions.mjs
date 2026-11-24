@@ -86,6 +86,11 @@ export function parseCommand(body) {
   return match ? { text: match[1].trim() } : null;
 }
 
+/** @returns {string|null}  the `owner/name` of a pull request's URL on GitHub */
+export function pullRepo(prUrl) {
+  return /^https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/\d+$/.exec(String(prUrl ?? ''))?.[1] ?? null;
+}
+
 /** @returns {number|null}  the number of a pull request URL that ends at its number, and nothing else */
 export function pullNumber(prUrl) {
   const match = /\/pull\/(\d+)$/.exec(prUrl ?? '');
@@ -520,11 +525,20 @@ export function prUrlsOf(session) {
 
 /**
  * The session's list with what its statusd reports now: the pull request of the branch checked out, and those of its
- * other branches (`prUrls`, from a statusd that reads them). Oldest first, which is the lowest number first.
+ * other branches and those claude opened elsewhere (`prUrls`, from a statusd that reads them). Oldest first: on one
+ * repo the lowest number first, and one on another repo where it was first seen, since numbers of two repos say
+ * nothing of which came first. A new one on another repo is the newest.
  */
 function withPrUrls(session, reported) {
-  const all = [...new Set([...prUrlsOf(session), ...reported.filter(Boolean)])];
-  return all.sort((a, b) => pullNumber(a) - pullNumber(b)).slice(-MAX_PR_URLS);
+  const repoOf = (url) => (pullRepo(url) ?? '').toLowerCase();
+  const list = [];
+  // Each one found goes before the first of its repo with a higher number, else last.
+  for (const url of new Set([...prUrlsOf(session), ...reported.filter(Boolean)])) {
+    const at = list.findIndex((other) => repoOf(other) === repoOf(url) && pullNumber(other) > pullNumber(url));
+    if (at < 0) list.push(url);
+    else list.splice(at, 0, url);
+  }
+  return list.slice(-MAX_PR_URLS);
 }
 
 /**
@@ -540,14 +554,17 @@ function withPrUrls(session, reported) {
  * @param {string} nowIso
  * @returns {object}  the fields to update
  */
-export function statusUpdate(session, status, nowIso) {
+export function statusUpdate(session, status, nowIso, { repos = [] } = {}) {
   // statusd runs as the same user as claude, so its answer is only as trusted as the session.
   const prUrl = typeof status.prUrl === 'string' && status.prUrl.startsWith(`https://github.com/${session.repo}/pull/`)
     ? status.prUrl
     : null;
-  // The pull requests of its other branches, a worktree's included. `prUrl` stays the checked-out branch's alone.
+  // The pull requests of its other branches, a worktree's included, and those claude opened from another clone, on
+  // its own repo or another of the console's projects (session/openedPulls.mjs): a repo the console has not is left
+  // out, since the console reads each one's state with its own token. `prUrl` stays the checked-out branch's alone.
+  const known = new Set([session.repo, ...repos].filter(Boolean).map((r) => r.toLowerCase()));
   const otherPrUrls = (Array.isArray(status.prUrls) ? status.prUrls.slice(-MAX_PR_URLS) : [])
-    .filter((url) => typeof url === 'string' && url.startsWith(`https://github.com/${session.repo}/pull/`) && pullNumber(url));
+    .filter((url) => typeof url === 'string' && known.has(pullRepo(url)?.toLowerCase()) && pullNumber(url));
   const update = {
     state: status.state,
     shells: Number.isInteger(status.shells) && status.shells > 0 ? Math.min(status.shells, 99) : 0,
@@ -606,7 +623,8 @@ export function statusUpdate(session, status, nowIso) {
  * @param {object} session
  * @returns {object}  the session as the browser sees it: no token, no endpoint
  */
-export function publicSession({ token, terminalToken, endpoint, pendingMessages, reportedPrUrl, agentOnlySend, ...rest }) {
+// The start token's hash too (sessionStarts.mjs): a page never needs it.
+export function publicSession({ token, terminalToken, startTokenHash, endpoint, pendingMessages, reportedPrUrl, agentOnlySend, ...rest }) {
   // A session whose image predates the Terminal tab has no shell ttyd to open.
   // The page's ids of the messages held, never their text: a send whose answer it lost can tell it is still held.
   const heldIds = (pendingMessages ?? []).filter((m) => m && typeof m === 'object' && m.id).map((m) => m.id);

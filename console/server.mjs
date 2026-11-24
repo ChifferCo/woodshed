@@ -266,6 +266,14 @@ import { createMcpTester } from './mcpTest.mjs';
 import { ROLES, roleById, roleDiffers, roleOf } from './peopleRoles.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
+// Served from elsewhere in the repo: the desktop app's rule for what notifies, which the console in a browser runs too
+// (public/browserNotifications.js), and the agents a session can run, which the session image and the command line
+// read as well (shared/agents.cjs). The console image copies each to the same place (Dockerfile).
+const STATIC_ELSEWHERE = {
+  'attention.mjs': path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'desktop', 'attention.mjs'),
+  'agents.cjs': path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'shared', 'agents.cjs'),
+};
+const staticPath = (file) => STATIC_ELSEWHERE[file] ?? path.join(PUBLIC_DIR, file);
 // /, /all and a session's page are one page, session.js last.
 // The settings pages are one page too: each address loads every settings page's script, and common.js shows the one the
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
@@ -298,6 +306,9 @@ const STATIC_FILES = {
   'chatThread.cjs': 'text/javascript; charset=utf-8',
   'chat.js': 'text/javascript; charset=utf-8',
   'appShare.js': 'text/javascript; charset=utf-8',
+  'notificationBell.js': 'text/javascript; charset=utf-8',
+  'browserNotifications.js': 'text/javascript; charset=utf-8',
+  'attention.mjs': 'text/javascript; charset=utf-8',
   'session.js': 'text/javascript; charset=utf-8',
   'events.js': 'text/javascript; charset=utf-8',
   'secrets.js': 'text/javascript; charset=utf-8',
@@ -318,12 +329,24 @@ const STATIC_FILES = {
   'people.js': 'text/javascript; charset=utf-8',
   // Run on people's own computers, so it is served before sign-in; it holds nothing secret.
   'woodshed-db.mjs': 'text/javascript; charset=utf-8',
+  // The terminal page's (terminalPageHtml): xterm.js as ttyd 1.7.7 bundles it (public/vendor/xterm/README.md), and the
+  // page's own script.
+  'terminalPage.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/xterm.css': 'text/css; charset=utf-8',
+  'vendor/xterm/xterm.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/addon-fit.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/addon-web-links.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/addon-unicode11.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/addon-webgl.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/addon-canvas.js': 'text/javascript; charset=utf-8',
   // The agents a session can run, which the session image and the command line read too (shared/agents.cjs).
   'agents.cjs': 'text/javascript; charset=utf-8',
 };
-// Static files kept outside public/, since the session image and the command line read them as well.
-const STATIC_ELSEWHERE = { 'agents.cjs': path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'shared', 'agents.cjs') };
-const staticPath = (file) => STATIC_ELSEWHERE[file] ?? path.join(PUBLIC_DIR, file);
+// The page behind the TUI and Terminal tabs, made here rather than kept as a file so that it names each of its files
+// by hash: /static/term.html, the same for every session (its fragment names which), kept by the browser.
+const TERMINAL_PAGE = 'term.html';
+const TERMINAL_PAGE_SCRIPTS = ['vendor/xterm/xterm.js', 'vendor/xterm/addon-fit.js', 'vendor/xterm/addon-web-links.js',
+  'vendor/xterm/addon-unicode11.js', 'vendor/xterm/addon-webgl.js', 'vendor/xterm/addon-canvas.js', 'terminalPage.js'];
 const MAX_BODY_BYTES = 16 * 1024;
 // A whole .env file, JSON-escaped, under Secrets Manager's 64 KB.
 const MAX_SECRET_BODY_BYTES = 160 * 1024;
@@ -542,6 +565,43 @@ function staticUrl(file) {
 }
 
 /**
+ * The terminal page (public/terminalPage.js): xterm.js, filling the frame, and a line for the connection's state. Its
+ * background is the session's terminal ground (session/entrypoint.sh's theme), so a frame never shows white or grey
+ * before the terminal draws.
+ * @returns {string}
+ */
+export function terminalPageHtml() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminal</title>
+<link rel="stylesheet" href="${staticUrl('vendor/xterm/xterm.css')}">
+<style>
+html, body { height: 100%; margin: 0; overflow: hidden; background: #14171d; }
+#terminal-container { height: 100%; margin: 0 auto; padding: 0; width: auto; }
+#terminal-container .terminal { height: calc(100% - 10px); padding: 5px; }
+#overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10; padding: 10px 16px;
+  border-radius: 8px; background: rgba(27, 34, 50, .92); color: #e8ecf5; font: 500 15px/1.4 system-ui, sans-serif;
+  pointer-events: none; text-align: center; max-width: 80%; }
+</style>
+</head>
+<body>
+<div id="terminal-container"></div>
+<div id="overlay" role="status" hidden></div>
+${TERMINAL_PAGE_SCRIPTS.map((file) => `<script src="${staticUrl(file)}"></script>`).join('\n')}
+</body>
+</html>
+`;
+}
+
+/** @returns {string}  the terminal page's URL, versioned by what it holds, its files' hashes included */
+export function terminalPageUrl() {
+  return `/static/${TERMINAL_PAGE}?v=${createHash('sha256').update(terminalPageHtml()).digest('hex').slice(0, 12)}`;
+}
+
+/**
  * @param {{title: string, script: string|string[], login?: string|null, provider?: {name: string, words?: object}|null,
  *          linkQuery?: Record<string, string>|null, hostPage?: string, styles?: string[]}} args
  *   `title` is the console's name (config.consoleName): the page's title, the installed app's on a home screen, and
@@ -565,6 +625,7 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <meta name="viewport" content="width=device-width, initial-scale=1">${who}${queryMeta}
 <meta name="woodshed-provider" content="${providerMetaContent(provider)}">
 <meta name="woodshed-console-name" content="${name}">
+<meta name="woodshed-terminal-page" content="${terminalPageUrl()}">
 <title>${name}</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#1b2232">
@@ -591,6 +652,8 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <script src="${staticUrl('common.js')}"></script>
 <script src="${staticUrl('settingsSearch.js')}"></script>
 <script src="${staticUrl('keys.cjs')}"></script>
+<script src="${staticUrl('browserNotifications.js')}" data-attention="${staticUrl('attention.mjs')}"></script>
+<script src="${staticUrl('notificationBell.js')}"></script>
 <script src="${staticUrl('shell.js')}"></script>
 ${[script].flat().map((s) => `<script src="${staticUrl(s)}"></script>`).join('\n')}
 </body>
@@ -707,6 +770,18 @@ export function servePublic(req, res, url, consoleName = DEFAULT_CONSOLE_NAME) {
   }
   if (PWA_PATHS.has(url.pathname) && handlePwaRequest(req, res)) return true;
   const file = url.pathname.startsWith('/static/') ? url.pathname.slice('/static/'.length) : null;
+  if (file === TERMINAL_PAGE) {
+    const page = terminalPageHtml();
+    const current = url.searchParams.get('v') === new URL(terminalPageUrl(), 'http://console.invalid').searchParams.get('v');
+    // Framed only by the console's own pages, as ttyd's page is (terminalProxy.mjs): one framing it could type into claude.
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': current ? 'public, max-age=31536000, immutable' : 'no-cache',
+      'content-security-policy': "frame-ancestors 'self'",
+    });
+    res.end(req.method === 'HEAD' ? undefined : page);
+    return true;
+  }
   if (!file || !STATIC_FILES[file]) return false;
   // Only the version a page names is kept: an old or missing ?v= is asked for again each time.
   const current = url.searchParams.get('v') === staticHash(file);
@@ -1416,8 +1491,9 @@ export function createHandler({
         // /auth/app, which lends one.
         ...(appPorts && s.status === 'running' && s.kind !== 'ask' ? { appUrl: APP_HOLDS_PORT.has(s.app) ? appPorts.urlFor(s.id) : null } : {}),
         // Every pull request it opened, oldest first, for its chips (common.js shownPrs). `runs` is Woodshed's review
-        // and QA at work on it now, which its checks do not show until they report.
-        prs: prUrlsOf(s).map((url) => ({ url, pr: prChips?.view(url) ?? null, runs: runsOn(url) })) })).reverse(),
+        // and QA at work on it now, which its checks do not show until they report. `reading` is one the chips' next
+        // read will get (a cleaned-up session's are never read again), which the page holds back until then.
+        prs: prUrlsOf(s).map((url) => ({ url, pr: prChips?.view(url) ?? null, reading: !s.cleanedAt && (prChips?.reading?.(url) ?? false), runs: runsOn(url) })) })).reverse(),
       // Who may have a shared session, and whether the asker is one: the Assign menu and the rail's Mine read them.
       // `shared` is whether the rail has an Everyone tab.
       assignables: members?.assignables() ?? [],
@@ -1681,6 +1757,69 @@ export function createHandler({
     }
   }
 
+  /**
+   * My Woodshed's Resume, with its checks, for the page and for a session resuming one it started (sessionStarts.mjs).
+   * @returns {Promise<{status: number, body: object}>}
+   */
+  async function resumeMine(login, id, { herdrParent = false } = {}) {
+    const resuming = fleet.find(id);
+    // Whose it is before anything of it is read: someone else's private session answers as one that does not exist.
+    if (!resuming || resuming.owner !== login) return { status: 409, body: { error: 'no session you can open with that id' } };
+    await userSettings?.refresh?.(login, { force: true });
+    const resumingAgent = agentsRegistry.agentOfSession(resuming);
+    const ownRefusal = signInRefusal(login, resumingAgent);
+    if (ownRefusal) return { status: 409, body: { error: ownRefusal } };
+    if (resumingAgent === 'claude' && !userSettings?.view(login).claudeToken.set) return { status: 409, body: { error: 'save your Claude token on My settings first' } };
+    if (!databasesReady(login)) return { status: 409, body: { error: DATABASES_NOT_READY } };
+    // Write access to a project's repo can be taken away after a session started on it: Resume asks again, as a start does.
+    if (projectAccess && (await projectAccess.forStart(login, resuming.project)) === null) {
+      console.log('console: session resume refused, project not open to the person', { login, sessionId: resuming.id, project: resuming.project ?? null });
+      return { status: 403, body: { error: `you can no longer start sessions on ${resuming.project}: you have no write access to its repo, or it is not one of this console's` } };
+    }
+    try {
+      return { status: 201, body: publicSession(await fleet.resumePrivate({ owner: login, id, background: true, herdrParent })) };
+    } catch (err) {
+      if (!err?.shown) throw err;
+      return { status: err.status ?? 409, body: { error: err.message } };
+    }
+  }
+
+  /**
+   * New session's start of a private session of `login`'s, with its checks: from the page, the command line, or one of
+   * their sessions (sessionStarts.mjs, which gives `startedFrom` and its own permission mode).
+   * @returns {Promise<{status: number, body: object}>}  201 and the session, or the refusal the caller answers with
+   */
+  async function startMine(login, body, { startedFrom = null } = {}) {
+    const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
+    const herdrParent = body.herdrParent === true;
+    await userSettings?.refresh?.(login, { force: true });
+    // A Codex session signs in with its own login or the team's OpenAI key, and Grok Build and OpenCode with their
+    // owner's own sign-in alone: none of them needs a Claude token.
+    const ownRefusal = signInRefusal(login, agent);
+    if (ownRefusal) return { status: 409, body: { error: ownRefusal } };
+    if ((!agent || agent === 'claude') && !userSettings?.view(login).claudeToken.set) return { status: 409, body: { error: 'save your Claude token on My settings first' } };
+    if (agent === 'codex' && !userSettings?.view(login).codexAuth?.set && !(await readTeamOpenAiKey())) {
+      return { status: 409, body: { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' } };
+    }
+    // A Codex model or effort is one OpenAI's catalog offers this person now, as New session listed it.
+    const codexRefusal = agent === 'codex' && codexModels ? await codexModels.allows(login, String(model ?? ''), String(effort ?? '')) : null;
+    if (codexRefusal) return { status: 400, body: { error: codexRefusal } };
+    if (!databasesReady(login)) return { status: 409, body: { error: DATABASES_NOT_READY } };
+    const project = projectAccess ? await projectAccess.forStart(login, body.project) : undefined;
+    if (project === null) {
+      console.log('console: session start refused, project not open to the person', { login, project: String(body.project ?? '').slice(0, 40) });
+      return { status: 403, body: { error: `you cannot start sessions on a project named ${String(body.project ?? '').slice(0, 40)}: it is not one of this console's, or you have no write access to its repo` } };
+    }
+    try {
+      const session = await fleet.startPrivate({ owner: login, prompt, name, workOn, agent, model, effort, permissionMode, attachmentIds, background: true, project, herdrParent, startedFrom });
+      return { status: 201, body: publicSession(session) };
+    } catch (err) {
+      // The page's own refusals (a branch name git would refuse, a project not ready), as myWrite answers them.
+      if (!err?.shown) throw err;
+      return { status: err.status ?? 409, body: { error: err.message } };
+    }
+  }
+
   function databasesReady(login) {
     return !databases?.available || databases.view(login).status === 'ready';
   }
@@ -1748,21 +1887,8 @@ export function createHandler({
           await fleet.removePrivateSession({ owner: login, id: actionMatch[1] });
           return reply(res, 200, { removed: actionMatch[1] });
         }
-        const resuming = fleet.find(actionMatch[1]);
-        // Whose it is before anything of it is read: someone else's private session answers as one that does not exist.
-        if (!resuming || resuming.owner !== login) return reply(res, 409, { error: 'no session you can open with that id' });
-        await userSettings?.refresh?.(login, { force: true });
-        const resumingAgent = agentsRegistry.agentOfSession(resuming);
-        const ownRefusal = signInRefusal(login, resumingAgent);
-        if (ownRefusal) return reply(res, 409, { error: ownRefusal });
-        if (resumingAgent === 'claude' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
-        if (!databasesReady(login)) return reply(res, 409, { error: DATABASES_NOT_READY });
-        // Write access to a project's repo can be taken away after a session started on it: Resume asks again, as a start does.
-        if (resuming?.owner === login && projectAccess && (await projectAccess.forStart(login, resuming.project)) === null) {
-          console.log('console: session resume refused, project not open to the person', { login, sessionId: resuming.id, project: resuming.project ?? null });
-          return reply(res, 403, { error: `you can no longer start sessions on ${resuming.project}: you have no write access to its repo, or it is not one of this console's` });
-        }
-        return reply(res, 201, publicSession(await fleet.resumePrivate({ owner: login, id: actionMatch[1], background: true, herdrParent: body?.herdrParent === true })));
+        const answer = await resumeMine(login, actionMatch[1], { herdrParent: body?.herdrParent === true });
+        return reply(res, answer.status, answer.body);
       }
       if (pathname === '/api/my/home/forget') {
         // A running session saves its home every few minutes, which would bring back what was forgotten.
@@ -1793,27 +1919,8 @@ export function createHandler({
         return reply(res, 200, await userSettings.file(login, key));
       }
       if (pathname === '/api/my/sessions') {
-        const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
-        const herdrParent = body.herdrParent === true;
-        await userSettings?.refresh?.(login, { force: true });
-        // A Codex session signs in with its own login or the team's OpenAI key, and Grok Build and OpenCode with their
-        // owner's own sign-in alone: none of them needs a Claude token.
-        const ownRefusal = signInRefusal(login, agent);
-        if (ownRefusal) return reply(res, 409, { error: ownRefusal });
-        if ((!agent || agent === 'claude') && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
-        if (agent === 'codex' && !userSettings?.view(login).codexAuth?.set && !(await readTeamOpenAiKey())) {
-          return reply(res, 409, { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' });
-        }
-        // A Codex model or effort is one OpenAI's catalog offers this person now, as New session listed it.
-        const codexRefusal = agent === 'codex' && codexModels ? await codexModels.allows(login, String(model ?? ''), String(effort ?? '')) : null;
-        if (codexRefusal) return reply(res, 400, { error: codexRefusal });
-        if (!databasesReady(login)) return reply(res, 409, { error: DATABASES_NOT_READY });
-        const project = projectAccess ? await projectAccess.forStart(login, body.project) : undefined;
-        if (project === null) {
-          console.log('console: session start refused, project not open to the person', { login, project: String(body.project ?? '').slice(0, 40) });
-          return reply(res, 403, { error: `you cannot start sessions on a project named ${String(body.project ?? '').slice(0, 40)}: it is not one of this console's, or you have no write access to its repo` });
-        }
-        return reply(res, 201, publicSession(await fleet.startPrivate({ owner: login, prompt, name, workOn, agent, model, effort, permissionMode, attachmentIds, background: true, project, herdrParent })));
+        const started = await startMine(login, body);
+        return reply(res, started.status, started.body);
       }
       if (pathname === MY_DEFAULT_PROJECT_PATH) {
         if (!projectAccess || !viewPrefs) return reply(res, 404, { error: 'this console keeps no default project' });
@@ -2800,7 +2907,7 @@ export function createHandler({
     return answerWithView(res, (held) => writeRoute(req, held, pathname, login), () => configView({ userSettings, projectsView }, login), reply);
   }
 
-  return async function handle(req, res) {
+  const handle = async function handle(req, res) {
     // An app port answers its session's app and nothing else: the console's own pages there would share the app's origin.
     if (appPorts?.owns(req.socket?.localPort)) return appPortRequest(req, res, req.socket.localPort);
     const appId = appIdFor(req.headers.host, config.appDomain);
@@ -2977,6 +3084,10 @@ export function createHandler({
     if (pathname === '/healthz') return reply(res, 200, { ok: true });
     return reply(res, 404, { error: 'not found' });
   };
+  // New session's start, for a session starting one of its person's through the session API (sessionStarts.mjs).
+  handle.startMine = startMine;
+  handle.resumeMine = resumeMine;
+  return handle;
 }
 
 /**
