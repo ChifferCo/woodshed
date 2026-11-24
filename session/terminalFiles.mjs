@@ -20,8 +20,10 @@ const MAX_SCROLL_STEPS = 40;
 // Copy mode moves a line a step. The browser hands it the rest of a pane's history at once when its own scrollback runs
 // out (console/public/terminalScroll.cjs): up to tmux.conf's history-limit.
 const MAX_COPY_LINES = 50_000;
-// The two tmux sessions a page shows: claude's (the TUI tab) and the plain shell (the Terminal tab).
+// The two tmux sessions a page shows: claude's (the TUI tab) and the plain shell (the Terminal tab). An agent started
+// beside the session's own (agents.mjs) is its own tmux session, named as the pane is: `agent-2`.
 const PANES = { agent: 'claude', terminal: 'shell' };
+const paneTarget = (pane) => PANES[pane] ?? (/^agent-[2-9]$/.test(pane ?? '') ? `=${pane}:` : null);
 const IMAGE_TYPES = new Map([['png', 'image/png'], ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'], ['gif', 'image/gif'], ['webp', 'image/webp']]);
 
 function shown(message, status = 400) {
@@ -70,7 +72,7 @@ export async function saveUpload(req, { name, dir = UPLOADS_DIR, maxBytes = MAX_
 
 /** Typed at the prompt with no Enter, as the shed does: the person adds the question. */
 export async function typePaths(run, paths, pane = 'agent') {
-  await run('tmux', ['send-keys', '-t', PANES[pane] ?? PANES.agent, '-l', `${paths.join(' ')} `]);
+  await run('tmux', ['send-keys', '-t', paneTarget(pane) ?? PANES.agent, '-l', `${paths.join(' ')} `]);
 }
 
 /** @returns {{file: string, mime: string}|null}  the picture a terminal path names, if it is one the page may see */
@@ -86,14 +88,14 @@ export function imageFor(requested, { repoDir, home = os.homedir(), uploadsDir =
  * history for a pane on the main screen (claude and codex inline, a shell), whatever it asked for; and nothing at the
  * bottom already.
  * @param {(cmd: string, args: string[]) => Promise<{stdout: string}>} run
- * @param {{steps: number, pane?: 'agent'|'terminal'}} opts  negative steps scroll up
+ * @param {{steps: number, pane?: string}} opts  `agent`, `terminal` or `agent-2`; negative steps scroll up
  * @returns {Promise<'mouse'|'copy-mode'|'bottom'>}
  */
 export async function scrollPane(run, { steps, pane = 'agent' }) {
   const asked = Math.abs(Math.trunc(Number(steps)));
   if (!asked) throw shown('steps must be a number other than 0');
-  const target = PANES[pane];
-  if (!target) throw shown('pane must be agent or terminal');
+  const target = paneTarget(pane);
+  if (!target) throw shown('pane must be agent, terminal or an agent beside it');
   const probe = (await run('tmux', ['display', '-p', '-t', target, '#{alternate_on} #{mouse_any_flag} #{pane_in_mode}'])).stdout.trim();
   const [alternate, mouse, inMode] = probe.split(' ');
   if (alternate === '1' && mouse === '1' && inMode !== '1') {

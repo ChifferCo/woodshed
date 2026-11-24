@@ -33,7 +33,8 @@ export const REVIEW_USAGE = `Usage: woodshed review <session id | pull request> 
   <session id>           review one of your My Woodshed sessions' change on this terminal, as the console's Review tab
   <pull request>         shows it: the analysis, the Q&A, the conversation with the session's agent, the diff file by
                          file with its comments, Re-review, and comment, verdict, rename and merge. A pull request (123,
-                         #123 or its URL) opens the session of yours that opened it; a paused one is resumed first.
+                         #123 or its URL) opens that pull request's review in the session of yours that opened it,
+                         one for each pull request a session opened; a paused one is resumed first.
                          With --json, or with no terminal, it prints the analysis and the diff's summary instead.
 
 Every repo the console has is reviewed by default: put [woodshed-review] in a commit's message, and the console reviews

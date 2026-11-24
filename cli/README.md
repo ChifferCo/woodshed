@@ -54,13 +54,20 @@ woodshed setup --yes --repo acme/app --reviews default
 ```
 
 Use `--console <url>` for your own console and `--no-browser` to print links without opening them. When setup exits 2,
-follow the link or supply the choice it asks for, then run it again with the same options. A new CLI sign-in starts
-in your browser and setup collects the approval the next time you run it.
+follow the link or supply the choice it asks for, then run it again with the same options.
 
-It goes in this order:
+It has seven steps and says which one it is on: `Setup has 7 steps: …` first, then `Step 2 of 7: Repos` as it comes to
+each, and `[done] Setup is finished.` at the end. A run that stops (exit 2, 3 or 1) ends with `Setup is not finished: it
+stopped at step N of 7, <step>. Still to do after it: …`; running it again checks the steps done already and goes on.
+On a terminal each question says what Enter takes.
 
-1. **Sign in**, then **repos**: repeat `--repo` to choose several; the first is for a session.
-2. **Claude Code and Codex.** Setup asks for both: with both connected, your pull requests get reviews from both. On a
+1. **Sign in.** A new CLI sign-in opens the console's page in your browser. On a terminal, or with `--wait`, setup
+   shows the code, waits while you approve it (asking the console every 5 seconds, until the code expires after 10
+   minutes or `--wait`'s time runs out) and goes on in the same run; a sign-in denied there stops it (exit 3).
+   Otherwise it exits 2 with the code and link, and collects the approval the next time you run it.
+2. **Repos**: repeat `--repo` to choose several; the first is for a session. On a terminal setup lists the console's
+   repos, marking those added already, and Enter takes those: type others to add them.
+3. **Claude Code and Codex.** Setup asks for both: with both connected, your pull requests get reviews from both. On a
    console with no team keys (a new org on console.woodshed.run), reviews run on the pull request author's own saved
    Claude token and Codex sign-in, each used for reviews from the moment it is saved (console/reviewAgents.mjs). While
    one is missing, setup lists the steps for each, numbered: what to run in another terminal (`claude setup-token`,
@@ -77,12 +84,12 @@ It goes in this order:
    never runs those commands or handles a token itself, so none passes through it or a coding agent running it. Use
    only one? Pass `--agent claude` or `--agent codex`, or answer so on a terminal, and setup does not ask for the
    other.
-3. **Review on the repo.** Every repo is reviewed by default, on a commit whose message has `[woodshed-review]`
+4. **Review on your repos.** Every repo is reviewed by default, on a commit whose message has `[woodshed-review]`
    (sessions add it for you), with no checkout, project file or pull request: for each repo setup runs `woodshed review
    status --repo <repo>`, stops with the link when the console's reviewer App still has to be made or installed, and
    otherwise tells you the tag. `--reviews` sets your own reviewer choice (`default` is the most the console can run:
    both, once both are connected).
-4. **Reviews of your open pull requests**, the step setup is for: it lists your open pull requests on each repo
+5. **Reviews of your open pull requests**, the step setup is for: it lists your open pull requests on each repo
    (`woodshed review pulls`) and starts the console's review on them now (`woodshed review start`), then gives each
    review's link. On a terminal it asks which, Enter for all (closing the input, Ctrl-D, starts none). `--review-prs
    all`, `none` or numbers (`12,15`) say which: with several repos, each names its repo, as `owner/name#12` (a bare number
@@ -93,26 +100,28 @@ It goes in this order:
    ends with the review's tag (`[woodshed-review]` by default; a session adds it, on your own computer you add it).
    Every repo is reviewed by default; only one whose project file runs its review elsewhere (GitHub Actions, or
    another console by `runsOn`) gets none, and setup says why. With `--reviews none` it starts none.
-5. **Optional: the agent terminal**, Herdr or tmux, for new private sessions. On a terminal Enter keeps the saved
+6. **Optional: the agent terminal**, Herdr or tmux, for new private sessions. On a terminal Enter keeps the saved
    choice; `--terminal herdr` or `--terminal tmux` sets it. With Herdr and a compatible `hc` here, setup then starts
    `session watch --herdr --add` in Herdr (step `herdr-watch`), so each of your private sessions shows in Herdr's
    sidebar as it starts or resumes, wherever it was started: the console's page, Slack, or an agent in another session.
    It says so, and how to stop it (`hc kill woodshed-watch`); `--no-herdr-add` starts the watch without `--add`. One
    already running is kept as it was started. Inside a Woodshed session setup starts no watch and adds nothing to
    Herdr, and says to run the watch on your computer.
-6. **Optional: a first coding session**, only with `--prompt`, or a prompt typed in when asked. Without one, setup
+7. **Optional: a first coding session**, only with `--prompt`, or a prompt typed in when asked. Without one, setup
    finishes and says how to start one. When the terminal choice is Herdr and setup finds a compatible `hc` on macOS or
    Linux, it uses `session new --herdr` to show the agent in a space on the session's machine. On Windows it starts a
    regular session and prints the link. If a private session already exists for the first repo, setup gives you its
    link. Setup then ends with the reviews' links again.
 
-Use `--prompt=--help` for a prompt that looks like an option. `--skip-reviews` skips steps 3 and 4, and `--no-session`
-step 6.
+Use `--prompt=--help` for a prompt that looks like an option. `--skip-reviews` skips steps 4 and 5, and `--no-session`
+step 7.
 
 `--yes`, `--wait` at its step, and runs without a terminal never prompt. `--json` prints one checklist entry per line with
 `event: "setup"`, `step` (`login`, `repos`, `agent`, `repo-review`, `review-choice`, `pr-reviews`, `terminal`,
-`herdr-watch`, `session`, `reviews`), `status`, `message`, and a `url` when relevant; `pr-reviews` and `reviews` carry `reviews`, each
-with its `number`, `url` and `pullUrl`. When this CLI lacks a repo, review, or config command, setup skips that step and
+`herdr-watch`, `session`, `reviews`, `finished`), `status`, `message`, and a `url` when relevant; `pr-reviews` and `reviews` carry `reviews`, each
+with its `number`, `url` and `pullUrl`. `login` is `waiting` with `userCode` and `url` while setup waits for the
+approval. The entry that stops setup carries `finished: false`, `stepNumber`, `stepTotal` and `left` (the keys of the
+steps after it); a run that ends with 0 ends with `step: "finished"` and `finished: true`. When this CLI lacks a repo, review, or config command, setup skips that step and
 says where to do it.
 
 ### Command organization
@@ -240,9 +249,13 @@ a repo whose default branch's project file chooses another runner for its review
 
 `woodshed review <id>` opens one of your My Woodshed sessions' review full-screen, the review the console's Review tab
 shows (`shared/review`, in the session). `123`, `#123` or a pull request's URL open the session of yours that opened
-it, your running one first. A bare number on more than one of your sessions' repos is refused (give the URL), and so is
-a pull request whose session's review now posts to another one, such as one that replaced it: a verdict or a merge
-would land there, so open that session by its id instead. A paused one is resumed first, as `session connect` does. It draws, in the page's order:
+it, your running one first. A bare number on more than one of your sessions' repos is refused (give the URL). A session
+with more than one pull request has a review of each: the branch checked out is reviewed from its working tree (against
+its pull request's base, so one stacked on another branch shows only its own change), and each other pull request it
+opened from GitHub's head of it, beside the checkout, which it never touches. `woodshed review <id>` opens the checkout's;
+a pull request by number or URL opens its own, and `--json` lists the others in `otherPullRequests`. A session from
+before a review of each pull request reviews only its checkout, and a pull request that is not its branch's is refused
+there. A paused one is resumed first, as `session connect` does. It draws, in the page's order:
 
 - **The header**: the title (the pull request's own once there is one), its branch, the pull request's state, verdict
   and checks, the commit, `+`/`−`, what was read (the working tree as of when, or the pull request at which commit),
@@ -272,7 +285,7 @@ would land there, so open that session by its id instead. A paused one is resume
   suggestions). The shed does not stream an answer: the chat says how long it has been reading, then draws it. A
   follow-up asked on AI reviews is a turn here too, under `About <the point>`. **6 AI reviews** (with a pull request):
   what Claude Code and Codex posted on the pull request (the console's review, by its reviewer App), newest first, as
-  the page's AI reviews tab: each review's verdict, whether it read the latest commit, each reviewer's part and its
+  the page's AI reviews tab: the merge risk and QA checks on the head commit first, a line each, then each review's verdict, whether it read the latest commit, each reviewer's part and its
   findings on their lines, with the replies on their threads. Older reviews are folded. `↑`/`↓` choose a review or a
   finding, `Enter` folds or opens a review, and `i` asks the session's agent a follow-up about it: the shed reads the
   point from GitHub by its ids, and the agent checks it against the code and says whether it holds. The answer is drawn
@@ -344,6 +357,10 @@ before the line ends (Ctrl-C, a cut network) hangs up everything the line starte
 | --- | --- | --- |
 | `session new [--repo R] [--branch B] [--agent claude\|codex] [--model M] [--connect\|--herdr [--parent[=T]]] ["prompt"]` | Starts a private session, as My Woodshed's New session does: on `R` (`owner/name`, default the repo New session opens on for you), working on branch `B` or a pull request or issue (`123`, `pr 123`, its URL), with that agent and model. Then it waits, printing each start step as it is done, until the session runs. `--no-wait` returns once the console has it. Ctrl-C stops the wait, not the session. `--connect` then puts this terminal on its agent's, as `connect` does; `--herdr` adds it to Herdr, as `herdr` does (below), and checks for `hc` before starting anything; `--parent` with it makes the agent's terminal a child of a terminal here (below). Inside a Woodshed session `--herdr` adds nothing: [below](#inside-a-woodshed-session). | 0 running (with `--connect`, until you disconnect; with `--herdr`, added, or skipped inside a session), 2 running and needs you, 1 failed or stopped (or `hc` could not add it), 3 a repo you cannot start on, no `hc`, or `--parent` inside a Woodshed session |
 | `session connect <id> [--shell]` | Puts this terminal on one of your sessions' agent, as its TUI tab shows it (claude or codex, in tmux or Herdr), or with `--shell` on its shell, the Terminal tab's. A paused or stopped one is resumed first. Below. | 0 disconnected (Ctrl-\\) or the session's terminal closed normally, 2 the sign-in ended, 1 could not open or reconnect, or the session's terminal closed it on an error, 3 a shared session, or one that has seen production data |
+| `session connect <id> --agent agent-N` | The terminal of an agent started beside the session's own, as its TUI tab shows it once that agent is picked: a tmux session, or in Herdr a Herdr terminal of that name. Only while the session runs. | as `connect`, and 3 when the session has no such agent |
+| `session agents <id>` | The agents started beside one of your running private sessions' own (the page's agent switch, beside the tabs): each one's id (`agent-2` …), agent, model, state and permission mode, after the session's own. `--json`: `{"event":"agents","session","own","agents":[{id, agent, model, effort, permissionMode, state, startedAt}]}`. | 0, 3 a shared or paused session, or one whose image starts none |
+| `session agent <id> [--agent claude\|codex] [--model M] [--effort E] [--mode M] ["message"]` | Starts another agent in it, beside its own, in the same checkout, as the page's + Another agent does: Claude by default, with the model, effort and permission mode (`--mode`, auto by default) New session offers, and the message as the first it is given. Up to three beside its own. It runs in tmux, or in Herdr where the session's own does. `--json`: `{"event":"agent-started","session","agent":{…}}`. | 0, 1 a model or effort that is no name, 3 refused (three running, seen production data, codex not set up in the session) |
+| `session agent <id> stop <agent-N>` | Ends one of them. Its conversation stays in the session's Claude home or codex's. `--json`: `{"event":"agent-stopped","session","agent"}`. | 0, 3 no such agent |
 | `session herdr <id> [--parent[=T]]` | Makes one of your sessions a machine in Herdr, `woodshed-<id>`, so it shows in the app's sidebar beside this computer: below. A paused or stopped one is resumed first, and waited for as `resume` does; with `--parent`, resumed waiting for its agent's terminal from here. | 0 connected, 2 connected and the session needs you, 1 its start failed, `hc` could not add it, or `--parent` and its agent's terminal was already there, 3 no `hc`, one older than 0.1.21, a shared session, one that has seen production data, `--parent` outside a Herdr terminal, or run inside a Woodshed session (`in-session`: nothing resumed or added) |
 | `session list [--all]` | Your sessions and the shared ones you can see, as the console's page shows them to you: id, state (the page's words), kind (below), whose, when it pauses or stops by itself, project and title. Under each, every pull request it opened, as the console's chips read it (`#123 open · approved · checks 3 passing`; `not read yet` before the console has read it), and `review it: woodshed review <id>` under your own sessions'. Then your own open pull requests on the console's repos that no listed session opened (My Woodshed's Pull requests group). Ended shared sessions only with `--all`; a review or QA run has ended once it stops, since nothing of it is kept to resume. With `hc` here, it also names the `woodshed-<id>` machines in Herdr whose session is no longer on the console (`herdrLeftovers` in `--json`), and says to run `prune`. | 0 |
 | `session get <id>` | One session: state, kind, whose, branch, agent, pull request, a review's or QA's verdict, its app, when it pauses or stops, and the hours it runs on. | 0, 1 none you can see |
@@ -356,6 +373,9 @@ before the line ends (Ctrl-C, a cut network) hangs up everything the line starte
 | `session prune` | Forgets the `woodshed-<id>` machines in Herdr whose session is no longer on the console's list: removed on the page, or cleaned up by the console, which only `session remove` would have forgotten. Below. | 0, 1 `hc` could not list or forget one |
 | `session extend <id>` | Puts its pause or stop off by an hour. The console allows it in the session's last 15 minutes, to its owner, or a shared session's assignee. | 0, 3 refused |
 | `session limits <id> [--idle-hours N\|default] [--lifetime-hours N\|default]` | Its own idle pause and lifetime, in place of yours or the console's; `default` goes back to them. The other is kept. | 0, 1 out of range, 3 not yours to change |
+
+Chatting with an agent, the session's own or one beside it, is the page's Chat tab alone: nothing the command line's
+token sends is typed into an agent. `connect` puts this terminal on the agent itself.
 
 Nothing keeps a session awake for being connected to: it pauses after its idle hours and stops at its lifetime unless
 you, or an agent working for you, ask for more with `extend` or `limits`. `list` and `get` (`pause` in `--json`: `at`
@@ -387,7 +407,7 @@ reported, `startedBy` who it was started as, and `inMine` whether the console's 
 private sessions, and the shared sessions, reviews and QA runs you started or have. `mine` stays your own private
 session's alone, the ones `resume`, `remove`, `connect` and `herdr` act on. Which sessions are listed at all is the
 page's rule: someone else's private session never, and shared ones, reviews and QA runs among them, only when People
-gives you Sessions from GitHub.
+gives you Sessions from GitHub (the Contributor, Member or Owner role).
 `herdr` (and `new --herdr` or `resume --herdr` after its `running`) ends with `{"event":"connected","session":{…},"machine":{"name","action","state"},"agent":{"inHerdr","address"}}`,
 or inside a Woodshed session with `{"event":"herdr","action":"skipped","status":"in-session","session","insideSession","onYourComputer","message"}`,
 and `remove`'s `removed` event has `machine`: `{"name","removed"}`, or null with no `hc` here.

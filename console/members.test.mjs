@@ -30,6 +30,7 @@ test('with nobody to start from, the first sign-in is the first member, and its 
   assert.equal(members.claimFirst('joel'), true);
   assert.equal(members.claimFirst('mia'), false);
   assert.deepEqual(members.view().members.map((m) => [m.login, m.how]), [['joel', 'first to sign in']]);
+  assert.deepEqual([members.isAdmin('joel'), members.hasGithubSessions('joel'), members.isAssignable('joel')], [true, true, true], 'the first member is a full Owner');
   assert.equal(members.isAdmin('joel'), true, 'a new console is never locked out of its own pages');
 });
 

@@ -219,7 +219,7 @@ pullRequests:
     # Default: null. Who posts the review's PR comment, whose risk areas the decision brief quotes.
     commentAuthor: review-bot[bot]
     # Default: actions. Where the review runs: `actions` in the `workflow` above, or `woodshed` in a review session the
-    # console starts on the `rerun` tag, which posts the verdict and the Merge risk check as the console's App. With
+    # console starts on the `rerun` tag (or on a push that dismissed its approval), which posts the verdict and the Merge risk check as the console's App. With
     # `woodshed`, `workflow` may be left out, `commentAuthor` is the App's `<slug>[bot]` login, and `author` is the reviewer
     # App's (console/README.md, "The reviewer App"), since GitHub refuses an approval from the pull request's author.
     runner: actions

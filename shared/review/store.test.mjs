@@ -73,3 +73,23 @@ test('the pull request body never reaches the client', () => {
   }
   assert.equal(meta.body, 'attacker-controlled prose', 'the record itself was mutated');
 });
+
+test('a session\'s review names: its checkout\'s, and one per other pull request', async () => {
+  const { isSessionName } = await import('./store.mjs');
+  assert.equal(isSessionName('claude-0badf00d'), true);
+  assert.equal(isSessionName('claude-0badf00d-pr12'), true);
+  assert.equal(isSessionName('claude-0badf00d-pr0'), false);
+  assert.equal(isSessionName('claude-0badf00d-pr12/..'), false);
+  assert.equal(isSessionName('claude-0badf00d-prx'), false);
+});
+
+test('the base a host names for a worktree review is taken when git takes it as a branch name', async () => {
+  const { worktreeBaseRef } = await import('./index.mjs');
+  const base = (name) => worktreeBaseRef({ worktreeBaseRef: async () => name, log: () => {} });
+  assert.equal(await base('feature/first'), 'feature/first');
+  assert.equal(await base('123'), '123', 'a numeric branch is a branch, not a pull request');
+  assert.equal(await base('équipe/feature'), 'équipe/feature');
+  for (const bad of ['-x', '@{-1}', 'a..b', 'a b', 'a/', 'x.lock', '', null]) assert.equal(await base(bad), null, String(bad));
+  assert.equal(await worktreeBaseRef({ worktreeBaseRef: async () => { throw new Error('gh down'); }, log: () => {} }), null);
+  assert.equal(await worktreeBaseRef({}), null, 'a host that names none');
+});

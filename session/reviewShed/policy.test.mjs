@@ -15,12 +15,18 @@ test('every call that writes to GitHub is recognised, and reads are not', () => 
   assert.equal(isGithubWrite({ method: 'GET', pathname: `${s}/merge` }), false);
   assert.equal(isGithubWrite({ method: 'POST', pathname: `${s}/chat` }), false);
   assert.equal(isGithubWrite({ method: 'POST', pathname: `${s}` }), false);
+  // The review of another of the session's pull requests writes to it the same way.
+  assert.equal(isGithubWrite({ method: 'POST', pathname: `${s}-pr12/submit` }), true);
+  assert.equal(isGithubWrite({ method: 'POST', pathname: `${s}-pr12/merge` }), true);
+  assert.equal(isGithubWrite({ method: 'GET', pathname: `${s}-pr12/merge` }), false);
 });
 
 test('sectionOf is empty for the status call', () => {
   assert.equal(sectionOf('/reviews/claude-0a1b2c3d'), '');
   assert.equal(sectionOf('/reviews/claude-0a1b2c3d/explain/abc'), 'explain');
   assert.equal(sectionOf('/review'), '');
+  assert.equal(sectionOf('/reviews/claude-0a1b2c3d-pr12'), '');
+  assert.equal(sectionOf('/reviews/claude-0a1b2c3d-pr12/submit'), 'submit');
 });
 
 test('only a private session whose gh is a person may write', () => {

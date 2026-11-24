@@ -123,6 +123,8 @@ export function dropStagingRef({ repoRoot, sessionId }) {
 /**
  * Fetch the target and check it out as a session worktree.
  *
+ * `detach` checks the head out with no branch at all (`branchName` unused, `ownsBranch` false).
+ *
  * `onPrBranch` says `branchName` is the pull request's own branch on origin
  * (see prBranchFor) rather than a private review/* branch. `ownsBranch` in the
  * answer says whether this call created the branch, which is what decides
@@ -134,7 +136,7 @@ export function dropStagingRef({ repoRoot, sessionId }) {
  *                 | {ok: false, status: number, error: string, stderr?: string}>}
  */
 export async function createReviewWorktree({
-  repoRoot, sessionId, target, baseRef, worktreePath, branchName, onPrBranch = false,
+  repoRoot, sessionId, target, baseRef, worktreePath, branchName, onPrBranch = false, detach = false,
 }) {
   const fetched = await fetchTargetHead({ repoRoot, sessionId, target, baseRef });
   if (!fetched.ok) return fetched;
@@ -148,9 +150,12 @@ export async function createReviewWorktree({
       return { ok: false, status: 500, error: `${worktreePath} already exists` };
     }
 
-    let ownsBranch = true;
-    let addArgs = ['worktree', 'add', '-b', branchName, worktreePath, ref];
-    if (onPrBranch) {
+    // Detached: no branch made, taken or moved; the worktree's own HEAD holds the objects.
+    let ownsBranch = !detach;
+    let addArgs = detach
+      ? ['worktree', 'add', '--detach', worktreePath, headSha]
+      : ['worktree', 'add', '-b', branchName, worktreePath, ref];
+    if (onPrBranch && !detach) {
       const prepared = await preparePrBranch({ repoRoot, branchName, headSha });
       if (!prepared.ok) return prepared;
       ownsBranch = !prepared.existed;
@@ -167,7 +172,7 @@ export async function createReviewWorktree({
         stderr: (added.stderr || '').trim().slice(0, 400),
       };
     }
-    if (onPrBranch) await trackOrigin({ repoRoot, branchName });
+    if (onPrBranch && !detach) await trackOrigin({ repoRoot, branchName });
     return { ok: true, headSha, baseFetched, ownsBranch };
   } finally {
     // Whatever happened, the staging ref has done its job: on success the

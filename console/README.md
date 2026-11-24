@@ -125,6 +125,26 @@ several options, and anything else the agent asks only in its terminal stay **An
 the **TUI** tab (`?tab=tui`; `?tab=agent`, its old name, still opens it): hooks, Remote Control and Resume work as before. A session that is not running has
 no Chat tab and shows its start or its end there.
 
+**More than one agent in a session.** The owner of a running My Woodshed session can start another agent in it, beside
+its own: the agent switch on the pane bar, after the tabs while Chat or TUI shows (`components/AgentSwitch`), has
+**+ Another agent**, a dialog with New session's Agent, Model, Effort and Permissions and an optional first message
+(`POST /api/sessions/<id>/agents`, checked as New session checks its form; the console logs `console: another agent
+asked for`, and `fleet: another agent allowed in the session` the first time a session runs that agent). Up to three
+run beside the session's own, each in the same checkout in a terminal of its own (`session/agents.mjs`): a tmux
+session, or a Herdr terminal when the owner's Agent terminal is Herdr, which their own Herdr then shows beside `claude`. The
+switch lists them all with their state words and says how many others need you; picking one points Chat at its own
+conversation (`/api/sessions/<id>/agents/<agent-N>/transcript`, `send`, `interrupt`, `prompt`, `answer`) and the TUI
+tab at its terminal (`/term/<id>/?arg=agent-N`, ttyd's URL argument). The pick is kept per session in the browser tab.
+**Stop** in the switch's menu ends one. A Codex agent beside claude runs on its owner's Codex sign-in, which the
+console sends with that start alone, or on the team's OpenAI key through the console's proxy, which the session may use
+only once the agent started (`fleet.allowAgent`), as a Codex session does. A session's lockdown drops that at once and cuts
+its calls on the way (`openaiProxy: calls cut at the lockdown`). A shared session, a question, a review and a QA run have none, nor a session
+that has seen production data: its lockdown stops them. They last while the session runs: a Resume starts its own
+agent alone. The command line does the same (cli/README.md, "Sessions"): `woodshed session agents <id>` lists them,
+`woodshed session agent <id> --agent codex --model … "first message"` starts one, `… stop agent-N` ends one, and
+`woodshed session connect <id> --agent agent-N` puts a terminal on one (`x-woodshed-agent` on the terminal pipe,
+`console/execPipe.mjs`).
+
 Under claude's terminal on the TUI tab, a phone has a message box
 (`public/messageBox.js`): the phone's own keyboard, so autocorrect, dictation
 and paste work, **📎** for photos and files, and **🎤** for the browser's speech
@@ -154,8 +174,18 @@ and no Discussion tab, and the session refuses a GitHub write called directly.
 Read-only means GitHub only: anyone who can see a shared session can still start
 its analysis, ask and chat, which spend its Claude.
 
+A session with more than one pull request has a review of each. The checkout's, `claude-<id>`, is of the branch checked
+out now; each other pull request the session opened has its own, `claude-<id>-pr<n>`, taken from GitHub's head of it
+into a detached worktree under `/tmp/woodshed-review-worktrees`, so the checkout and its branches are never touched,
+with its own analysis, Q&A, comments, verdict and merge, which go to that pull request. **Pull requests** above the
+title links each; asked for the one checked out, the page opens the checkout's. The proxy names the session's pull
+requests on its own repo to statusd (`x-woodshed-pulls`, from the session's `prUrls`), and statusd opens no review of a
+pull request it did not name (`review: refused, not one of the session's pull requests`); a review of another one logs
+`review: pull request review ensured` with the number.
+
 What the page does, from the shed's own review code:
-- **The diff** is the checkout against its merge base with the default branch, with
+- **The diff** is the checkout against its merge base with the default branch (with the base of its pull request
+  instead, when it has one open on another branch, so a stacked one shows only its own change), with
   everything uncommitted and untracked (as `.gitignore` allows), read through a
   scratch index so the session's own is left alone. **Read again** reads it
   afresh.
@@ -1066,6 +1096,16 @@ names none, so the pull requests sessions open carry it. Someone who wants no re
 none on My settings ("Who reviews"). `GET /api/review-readiness`
 says what runs in `review` (`{runner, rerun, from}`, `from` being `project file` or `default`).
 
+**A push that dismissed the review's approval is reviewed again, tag or not.** Where the repo dismisses stale
+approvals, a commit pushed after the review approved takes the approval away, and nothing else gives it back: a merge of
+the default branch with git's own message (`Merge branch 'main'`, `Merge remote-tracking branch 'origin/main'`) carries
+no tag. So when the review's own last verdict on the pull request is an APPROVE of an older commit and GitHub lists that
+review as `DISMISSED`, the next pull request event (the push, or the dismissal itself) starts a review of the head
+(`approvalDismissed` in `fleet.mjs`; it logs `fleet: the review's approval was dismissed by a push, reviewing it again`).
+A fix after changes were asked for still waits for the tag, so a session can push its fixes in several commits for one
+review, and a repo that keeps stale approvals is not reviewed again, since its approval stands. The tag is read from the
+commit's whole message, not GitHub's shortened headline, and a merge commit's counts like any other.
+
 At each verdict the console finds the reviewer App's installation on the repo, mints a token narrowed to pull requests,
 and submits the review at the reviewed commit. It logs `fleet: review verdict submitted` with `as: 'reviewer App'`, or
 `as: 'console App'` when no reviewer App was made, in which case GitHub refuses an approval of the App's own pull
@@ -1743,7 +1783,7 @@ first to sign in is the first member and an admin, as on any new console. Once a
 what is asked again, at the next hourly check.
 
 Write access alone is not enough: a person must also be on the console's list,
-on the **People** page (`console/members.mjs`, `members` and `memberRequests`
+on the **People** tab of Settings (`console/members.mjs`, `members` and `memberRequests`
 in `state.json`). An admin can invite a handle (it must have write
 access), accept or decline someone asking to join, and remove another member;
 nobody can remove themselves. A writer who is not on the list signs in only as
@@ -1770,8 +1810,23 @@ rows, one per person, with Accept and Decline on the row, and is left out while 
 whose box holds the table below, which scrolls sideways inside the box on a phone; and **Invite someone** (Add someone
 behind a hosting proxy) is that box's last row, which opens in place on its form (`/people#invite-card` opens it).
 
-**What each member can do.** Members is a table, one row per member and one
-column per switch, each off for a new member and set by an admin:
+**What each member can do.** Members is a table, one row per member, with a **Role** select and what that role can do
+beside it, in words. A role is a name for one set of three switches, which the console keeps and checks
+(`console/peopleRoles.mjs`): picking one sets all three at once (`POST /api/people/access`, `members: role set` in the
+log), and the role shown is read back from the switches, so a list from before roles shows as roles too.
+
+| Role | Admin | Sessions from GitHub | Can be assigned |
+| --- | --- | --- | --- |
+| Owner | on | on | on |
+| Member | off | on | on |
+| Contributor | off | on | off |
+| Private only | off | off | off |
+
+The first person to sign in to a new console is a full Owner. An owner with a switch off (behind a hosting proxy, where
+Can be assigned starts off, or an admin from before roles) shows as **Owner (partly)**, with what they lack in words;
+picking Owner turns the rest on. Picking any other role for yourself while you are an owner asks first, since it takes
+these pages away at once and only another owner can give them back; the last owner is refused anyway. Invite someone takes a role too, picked from a table of the roles with what each can do; without one (an older page or a script), someone new has every switch
+off, Private only. The switches:
 - *Admin*, above.
 - *Sessions from GitHub* (`githubSessions`): the `woodshed` label and
   `/woodshed` comments start or message a session for them, and they see
@@ -1786,10 +1841,10 @@ column per switch, each off for a new member and set by an admin:
   switch starts off, and sessions already assigned keep their assignee.
 
 **Behind a hosting proxy** there is no People list of the console's own, and no People page, unless the program
-embedding the console hands over its list (`members`, "Embedding the console"). With it, People is a tab of Settings,
+embedding the console hands over its list (`members`, "Embedding the console"). With it, People is a tab of Settings, as on any console,
 after General and Secrets & webhooks, for owners (the admins there). Who is in and each person's role (Owner or
-Member) are the program's: **Add someone** takes a GitHub handle and a role, Remove and the Role column change them
-there, and core keeps no copy of the list (`console/hostedMembers.mjs`). Nobody asks to join, so there is no Asking to
+Member) are the program's: **Add someone** takes a GitHub handle and a People role, Remove and the Role column change
+them there (Owner is the program's owner role, every other People role its member role), and core keeps no copy of the list (`console/hostedMembers.mjs`). Nobody asks to join, so there is no Asking to
 join, accept or decline, and no dot. The switches stay the console's, in `state.json` under `memberSwitches` by
 lowercased handle: *Sessions from GitHub* is on for everyone listed (it was never asked behind a proxy, and it also
 gates seeing shared sessions), so only those turned off are kept; *Can be assigned* is off, as above. Someone the list
@@ -2003,7 +2058,26 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   marks its entry in the side list and menu, and its tab in the row and among the entry's pages. `styles` are its
   stylesheets (paths), loaded after the console's, so its rules use the design system's variables and follow the
   theme; it scopes them to `.host-page`, which holds its part. Its forms and links stay the program's. Someone who is not an admin sees the program's tabs alone, and Settings in the Console group opens the
-  first of them; with no tabs, nothing changes for them.
+  first of them; with no tabs, nothing changes for them. It draws its part with the console's own components, made on
+  its server by `settingsMarkup.mjs` (designSystem/components/SettingsRows, "From a program's server"), so it looks
+  like the console's pages and follows the design system as it changes; their rows open in place (`public/hostRows.js`).
+- `repoPage({name, repo, headers})`: groups of the program's own on a repo's settings page (Console settings → Repos →
+  Repo settings), after the console's, for what it keeps about the repo: its session image's project file, the data its
+  sessions start from. Async; it answers markup from `settingsMarkup.mjs`, `{markup, scripts}`
+  where its groups need scripts to work (an upload's: paths on the console's address, at most eight), or `null` for
+  none. The admin's view of the repo carries it as `host: {html, scripts}` (`GET /api/console-settings/repos/<project>`),
+  and the page puts the markup in as a template's contents, so no `<script>` in it runs, then loads each script once:
+  markup from `settingsMarkup.mjs` alone, which escapes every value, never a string the program built some other way. A
+  script listens on the document, or for `woodshed:host-groups` on `window`, which the page fires each time it draws the
+  groups anew (a save answering with new ones). Its forms post to the program, which sends the page back to
+  `/console-settings/repos/<project>#<row>`, opening that row. A hook that throws, or answers anything else, adds none
+  and logs `repoSettings: the program's groups not given`; the page is shown without them.
+- `standalonePage({title, body, brand: {label, href, icon?}, groups?, current?, login?, signOut?, dialog?, refresh?, styles?, scripts?})`
+  from `server.mjs`: a page of the program's that stands outside any console, such as a first visit before there is a
+  console to be in. It is the settings pages' frame drawn by the server, the program's name (and its mark, `icon`, a path) heading the side list in
+  place of Back to sessions, its `groups` of links under it and Sign out posting to `signOut`, with the design system's
+  stylesheet and `hostRows.js` and no console script, so it asks no console anything. `dialog` is a step drawn over it
+  (`settingsMarkup.mjs`'s `dialog`), the page inert behind; `refresh` reloads it after that many seconds.
 - `members: {list(), add({login, role, by}), remove({login, by}), setRole({login, role, by})}`, with `trusted` only
   (given without it, `createInstallation` throws): the program's own list of who is in, for the People page (above,
   "Sign-in", behind a hosting proxy). `list()` answers `[{login, role, note?}]`, `role` `owner` or `member` (an
@@ -2111,6 +2185,13 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   program connects people on its own (on their first page, say): My settings then shows the connection as a status,
   "Pushes as @you", or, unconnected, says it did not happen and offers Connect as the way back. Without a secret store it is off
   (`console: Connect GitHub off, the host gave no secret store to keep tokens in`).
+- The installation's `matchSlack({login, emails})`, for a program that signs people in itself: the Slack match core's
+  own sign-in makes (`slackPeople.mjs`), which links a member's Slack user from the verified emails on their GitHub
+  account so People shows it and assignment pings reach them. Call it as they sign in, with `emails()` answering those
+  emails (GitHub's `/user/emails`, which a GitHub App's user token reads only with the account permission Email
+  addresses: read); it is called only when a look is due, at most once a day, and never over a link set by hand on
+  People. Someone the program's `members` list does not have is not matched (`skipped`). It never throws, and answers
+  `linked`, `unmatched`, `manual` or `skipped`; Slack's bot needs `users:read.email`.
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
   such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s

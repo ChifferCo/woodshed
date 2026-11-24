@@ -1406,7 +1406,6 @@
   // events is a log, reached from Secrets & webhooks, not an entry: Settings stays current on it too.
   const CONSOLE_LINKS = [
     { href: '/console-settings', label: 'Settings', also: ['/secrets', '/events'] },
-    { href: '/people', label: 'People' },
   ];
   const isCurrent = (link, current) => link.href === current || Boolean(link.also?.includes(current));
   // The tabs under Settings' title: the page's own cards, and the secrets. Links, as the rail's Mine | Everyone are.
@@ -1414,10 +1413,10 @@
     { href: '/console-settings', label: 'General' },
     { href: '/secrets', label: 'Secrets & webhooks' },
   ];
-  // Behind a hosting proxy whose program hands over its list of who is in (server.mjs, `people`), People is one of
-  // Settings' own tabs rather than a page of its own: who is in is the program's, beside its own tabs.
+  // People is one of Settings' own tabs, on a console of its own and behind a hosting proxy alike, whenever the console
+  // has a list of who is in (server.mjs, `people` in /api/me): behind a proxy only when the program hands over its own.
   const PEOPLE_TAB = { href: '/people', label: 'People' };
-  const peopleTab = (me) => Boolean(me?.hosted && me.people);
+  const peopleTab = (me) => Boolean(me?.people);
   const ownTabs = (me) => (peopleTab(me) ? [...SETTINGS_TABS, PEOPLE_TAB] : SETTINGS_TABS);
   // Then the tabs of a program embedding the console (server.mjs, settingsTabsOf), its own pages: those are for whoever
   // it gives them to, so someone who is not an admin sees them alone. Until /api/me answers, the console's own.
@@ -1442,7 +1441,7 @@
   // opening Settings first. The one open is the page shown (a repo's own settings are General's); Settings itself is then
   // `true`, the set the page is in, not the page.
   function subItems(me, current, cls, extra = {}) {
-    return tabsOf(me).map((tab) => h('a', { class: cls, href: tab.href, ...extra, 'aria-current': tab.href === current ? 'page' : null }, tab.label));
+    return tabsOf(me).map((tab) => h('a', { class: cls, href: tab.href, ...extra, 'aria-current': tab.href === current ? 'page' : null }, tab.label, tab.href === PEOPLE_TAB.href ? waitingOn(tab, me) : null));
   }
   const settingsMark = (link, current) => (!isCurrent(link, current) ? null : link.label === 'Settings' ? 'true' : 'page');
   // A program embedding the console's own entries (server.mjs, menuOf): the person's pages after My settings (`menuYou`),
@@ -1451,8 +1450,7 @@
   const hostEntries = (me) => [...(me?.menuYou ?? []), ...(me?.menuSections ?? []).flatMap((section) => section.items)];
   const entryOpen = (entry, current) => entry.href === current || Boolean(entry.items?.some((sub) => sub.href === current));
   const entryMark = (entry, current) => (entry.items?.some((sub) => sub.href === current) ? 'true' : entry.href === current ? 'page' : null);
-  // Behind a hosting proxy the host keeps who is in (and signs people in and out): People is no entry of its own, only
-  // Settings' tab when the program hands over its list. Settings also stays current on that tab and on a host's, and
+  // People is no entry of its own, only Settings' tab. Settings also stays current on that tab and on a host's, and
   // someone who is not an admin, given tabs, has Settings alone, opening the first.
   function consoleLinks(me) {
     const host = me?.settingsTabs ?? [];
@@ -1460,7 +1458,7 @@
     const also = [...CONSOLE_LINKS[0].also, ...(peopleTab(me) && me.admin ? [PEOPLE_TAB.href] : []), ...host.map((tab) => tab.href)];
     const settings = { ...CONSOLE_LINKS[0], icon: CONSOLE_LINKS[0].href, also };
     if (!me?.admin) return host.length ? [{ ...settings, href: host[0].href }] : [];
-    return [settings, ...CONSOLE_LINKS.slice(1)].filter((link) => !(me.hosted && link.href === '/people'));
+    return [settings];
   }
 
   // The workflows that build the images and apply the infrastructure, in the installation's repo, as its project file's
@@ -1474,7 +1472,13 @@
   // than the console runs (woodshedUpdate.mjs).
   function waitingOn(link, me) {
     if (link.href === '/people' && me?.asking > 0) return h('span', { class: 'menu-count', title: `${me.asking} asking to join` }, me.asking);
-    if (link.href === '/console-settings' && me?.updates > 0) return h('span', { class: 'menu-count', title: `Woodshed has ${me.updates} newer ${me.updates === 1 ? 'commit' : 'commits'}` }, me.updates);
+    // Settings holds People's tab, so its count is both: those asking to join and the Woodshed update.
+    const asking = peopleTab(me) && me.asking > 0 ? me.asking : 0;
+    const updates = me?.updates > 0 ? me.updates : 0;
+    if (link.href === '/console-settings' && asking + updates > 0) {
+      const title = [asking && `${asking} asking to join`, updates && `Woodshed has ${updates} newer ${updates === 1 ? 'commit' : 'commits'}`].filter(Boolean).join(', ');
+      return h('span', { class: 'menu-count', title }, asking + updates);
+    }
     return null;
   }
 
@@ -1990,7 +1994,7 @@
     invite, sessionTab, forgetSignedIn, forgetOtherLogins, signingOut, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, askText, pickedLogins, byQuery, peoplePicker,
-    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
+    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, productionTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, ownsLimits, canExtend, extendSession, hoursText, sessionLimitsDialog, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, peekView, startedLinks, pauseLeft, usageBadge, usageOf, machineDetails, planUsageOf, planUsageDetails, fmtBytes,
   };
 })();

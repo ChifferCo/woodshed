@@ -420,3 +420,66 @@ test('a note from the program is listed beside the person, as text cut to its le
   const dropped = warned.mock.calls.filter((call) => call.arguments[0] === 'members: entries of the program\'s list left out');
   assert.equal(dropped.length, 0, 'a bad note drops no entry');
 });
+
+test('behind a proxy, the host\'s matchSlack links a member\'s Slack user by email, and nobody the list does not have', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-people-'));
+  t.after(() => fs.rmSync(stateDir, { recursive: true, force: true }));
+  // Slack's users.lookupByEmail, as the bot's token asks it: Sam's email is a Slack user.
+  const asked = [];
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    const u = new URL(String(url));
+    asked.push([u.pathname, u.searchParams.get('email')]);
+    const found = u.pathname.endsWith('/users.lookupByEmail') && u.searchParams.get('email') === 'sam@example.com';
+    const answer = found ? { ok: true, user: { id: 'U0SAM12345', name: 'sam', profile: { display_name: 'Sam M' } } } : { ok: false, error: 'users_not_found' };
+    return new Response(JSON.stringify(answer), { status: 200, headers: { 'content-type': 'application/json' } });
+  });
+  const store = { state: {}, save() {} };
+  const memory = { read: async (name) => (name === 'slack-bot-token' ? 'xoxb-test' : null), save: async () => {}, remove: async () => {} };
+  const installation = await createInstallation({
+    config: { ...CONFIG, stateDir, sessionEnv: {}, sessionApi: {} }, store,
+    provider: { name: 'test', launcher: {}, secrets: memory },
+    trusted: createTrustedIdentity({ secret: SECRET }), members: fakeProgram(),
+  });
+  let read = 0;
+  const emails = async () => { read += 1; return ['sam@example.com']; };
+  assert.equal(await installation.matchSlack({ login: 'sam-member', emails }), 'linked');
+  assert.deepEqual(store.state.slackAccounts['sam-member'], { slackId: 'U0SAM12345', name: 'Sam M', how: 'email', checkedAt: store.state.slackAccounts['sam-member'].checkedAt });
+  assert.equal(await installation.matchSlack({ login: 'sam-member', emails }), 'skipped', 'not asked again within the day');
+  assert.equal(read, 1, 'the emails are read only when a look is due');
+  assert.equal(await installation.matchSlack({ login: 'lee-stranger', emails: async () => ['lee@example.com'] }), 'skipped');
+  assert.equal(store.state.slackAccounts['lee-stranger'], undefined, 'someone the program does not list leaves nothing behind');
+  assert.deepEqual(asked, [['/api/users.lookupByEmail', 'sam@example.com']]);
+});
+
+test('behind a proxy a People role gives the program owner or member and sets the switches here; an add may name one', async (t) => {
+  const { program, post, members, released } = await hostedPeople(t);
+  const state = (body, login) => {
+    const m = row(body, login);
+    return [m.access, m.role, m.githubSessions, m.assignable];
+  };
+  const contributor = await post('/api/people/access', { login: 'sam-member', access: 'contributor' });
+  assert.deepEqual(state(contributor.body, 'sam-member'), ['contributor', 'member', true, false], 'the default for someone listed');
+  const member = await post('/api/people/access', { login: 'sam-member', access: 'member' });
+  assert.deepEqual(state(member.body, 'sam-member'), ['member', 'member', true, true]);
+  assert.deepEqual(program.calls, [], 'the program\'s role did not change: nothing asked of it');
+  const owner = await post('/api/people/access', { login: 'sam-member', access: 'owner' });
+  assert.deepEqual(state(owner.body, 'sam-member'), ['owner', 'owner', true, true]);
+  const priv = await post('/api/people/access', { login: 'sam-member', access: 'private' });
+  assert.deepEqual(state(priv.body, 'sam-member'), ['private', 'member', false, false]);
+  assert.deepEqual(program.calls.map(([what, a]) => [what, a.role]), [['setRole', 'owner'], ['setRole', 'member']]);
+  assert.deepEqual(released.map((r) => r.login), ['sam-member', 'sam-member'], 'Contributor and Private only give shared sessions back');
+
+  const added = await post('/api/people/add', { login: 'new-person', access: 'member' });
+  assert.deepEqual(state(added.body, 'new-person'), ['member', 'member', true, true]);
+  assert.deepEqual(program.calls.at(-1), ['add', { login: 'new-person', role: 'member', by: 'ana-owner' }]);
+  assert.equal(members.isAssignable('new-person'), true);
+  assert.equal((await post('/api/people/add', { login: 'other', access: 'boss' })).status, 400);
+  assert.equal(program.calls.length, 3, 'a role that is not one reached no program');
+
+  program.refuse = 'shown';
+  const refused = await post('/api/people/access', { login: 'new-person', access: 'owner' });
+  assert.deepEqual(refused, { status: 409, body: { error: 'Your plan has room for 2 people.' } });
+  assert.equal(members.isAssignable('new-person'), true, 'the program refused: nothing changed here either');
+});

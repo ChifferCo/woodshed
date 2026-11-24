@@ -177,6 +177,9 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       moving.set(id, script.map((step) => ({ ...step })));
       return s;
     },
+    // The agents beside a session's own (server.mjs, agentAction): allowed once statusd started one.
+    isLocked: (s) => Boolean(s.taintedAt),
+    allowAgent: (s, agent) => { calls.push(['allowAgent', { id: s.id, agent }]); return true; },
     removePrivateSession: async ({ owner, id }) => {
       calls.push(['remove', { owner, id }]);
       sessions.splice(sessions.findIndex((x) => x.id === id && x.owner === owner), 1);
@@ -972,8 +975,8 @@ test('session remove forgets the session\'s machine in hc too', async (t) => {
 // reached, or cut once it was open. Each call is kept, and moves the next of `ends`.
 function fakeTerminal(ends, { during = () => {} } = {}) {
   const calls = [];
-  const run = async (session, kind) => {
-    calls.push([session, kind]);
+  const run = async (session, kind, opts) => {
+    calls.push(opts ? [session, kind, opts] : [session, kind]);
     during(calls.length);
     return ends.shift() ?? { status: 'closed', code: 1000 };
   };
@@ -1757,4 +1760,85 @@ test('session app share is refused for a shared session, another person\'s, a pa
   const none = await plain.run(['session', 'app', 'aaaa0001', 'share']);
   assert.equal(none.code, EXIT.refused);
   assert.match(none.err, /serves no session apps/);
+});
+
+// A session's statusd for the agents beside its own (session/agents.mjs): what it was asked, and its answers.
+async function standInAgents(t) {
+  const asked = [];
+  const agents = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      asked.push([req.method, req.url, body ? JSON.parse(body) : null]);
+      const answer = (status, json) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(json)); };
+      if (req.method === 'GET' && req.url === '/agents') return answer(200, { agents });
+      if (req.method === 'POST' && req.url === '/agents') {
+        if (agents.length >= 3) return answer(409, { error: 'at most 3 agents beside the session\'s own: stop one first' });
+        const b = JSON.parse(body);
+        const a = { id: `agent-${agents.length + 2}`, agent: b.agent, model: b.model || null, effort: b.effort || null, permissionMode: b.permissionMode, startedAt: iso(T0), state: 'starting' };
+        agents.push(a);
+        return answer(200, { agent: a });
+      }
+      const stop = /^\/agents\/(agent-\d)\/stop$/.exec(req.url);
+      if (stop) {
+        const i = agents.findIndex((a) => a.id === stop[1]);
+        if (i === -1) return answer(404, { error: 'no such agent in this session: it was stopped, or never started' });
+        agents.splice(i, 1);
+        return answer(200, { stopped: stop[1] });
+      }
+      return answer(404, { error: 'not found' });
+    });
+  });
+  const port = await listen(server);
+  t.after(() => server.close());
+  return { asked, agents, endpoint: { host: '127.0.0.1', statusPort: port, termPort: 1 } };
+}
+
+test('session agents, agent and agent stop list, start and end the agents beside your running session\'s own', async (t) => {
+  const statusd = await standInAgents(t);
+  const terminal = fakeTerminal([{ status: 'detached' }]);
+  const c = await consoleFor(t, { terminal, extra: [{ id: 'a9a90010', owner: 'mia-dev', title: 'Two agents', status: 'running', state: 'done', options: { agent: 'codex' }, endpoint: statusd.endpoint }] });
+
+  const none = await c.run(['session', 'agents', 'a9a90010']);
+  assert.equal(none.code, EXIT.done, none.err);
+  assert.match(none.out, /^Session a9a90010: codex \(its own\), done\nNo other agents\. Start one: woodshed session agent a9a90010 --agent codex/);
+
+  const started = await c.run(['session', 'agent', 'a9a90010', '--agent', 'claude', '--model', 'opus', '--mode', 'plan', 'review', 'the', 'diff']);
+  assert.equal(started.code, EXIT.done, started.err);
+  assert.match(started.out, /^Started agent-2 in session a9a90010: claude · opus, plan mode\.\n  Its terminal: woodshed session connect a9a90010 --agent agent-2\n/);
+  assert.deepEqual(statusd.asked.at(-1), ['POST', '/agents', { agent: 'claude', model: 'opus', effort: '', permissionMode: 'plan', prompt: 'review the diff' }]);
+  assert.deepEqual(c.calls.find(([k]) => k === 'allowAgent'), ['allowAgent', { id: 'a9a90010', agent: 'claude' }]);
+
+  const json = await c.run(['session', 'agents', 'a9a90010', '--json']);
+  assert.deepEqual(json.lines[0].agents.map((a) => [a.id, a.agent, a.model, a.permissionMode]), [['agent-2', 'claude', 'opus', 'plan']]);
+
+  const connected = await c.run(['session', 'connect', 'a9a90010', '--agent', 'agent-2']);
+  assert.equal(connected.code, EXIT.done, connected.err);
+  assert.match(connected.err, /^Connecting to a9a90010's agent-2's terminal\./);
+  assert.deepEqual(terminal.calls.at(-1).slice(0, 2), ['a9a90010', 'term']);
+  assert.deepEqual(terminal.calls.at(-1)[2], { agent: 'agent-2' });
+  assert.equal((await c.run(['session', 'connect', 'a9a90010', '--agent', 'agent-5'])).code, EXIT.refused, 'no such agent');
+
+  assert.equal((await c.run(['session', 'agent', 'a9a90010', 'stop', 'agent-2'])).code, EXIT.done);
+  assert.deepEqual(statusd.agents, []);
+  const gone = await c.run(['session', 'agent', 'a9a90010', 'stop', 'agent-2']);
+  assert.equal(gone.code, EXIT.refused);
+  assert.match(gone.err, /no such agent in this session/);
+
+  // Only your own running private session: a shared one, and a paused one, have none.
+  assert.equal((await c.run(['session', 'agents', 'cccc0003'])).code, EXIT.refused);
+  assert.equal((await c.run(['session', 'agent', 'bbbb0002'])).code, EXIT.refused);
+});
+
+test('session agent and connect --agent take only what an agent beside the session\'s own can be', () => {
+  const fail = (message) => Object.assign(new Error(message), { usage: true });
+  assert.deepEqual(parseSessionArgs('agent', ['0a1b2c3d', '--agent', 'codex', 'do', 'it'], fail), { agent: 'codex', id: '0a1b2c3d', action: 'start', prompt: 'do it' });
+  assert.deepEqual(parseSessionArgs('agent', ['0a1b2c3d', 'stop', 'agent-3'], fail), { id: '0a1b2c3d', action: 'stop', agentId: 'agent-3' });
+  for (const words of [['0a1b2c3d', 'stop'], ['0a1b2c3d', 'stop', 'claude'], ['0a1b2c3d', 'stop', 'agent-2', '--model', 'x'], ['0a1b2c3d', '--agent', 'bash'],
+    ['0a1b2c3d', '--model', 'opus; id'], ['nope']]) assert.throws(() => parseSessionArgs('agent', words, fail), undefined, words.join(' '));
+  assert.equal(parseSessionArgs('connect', ['0a1b2c3d', '--agent', 'agent-2'], fail).agent, 'agent-2');
+  for (const words of [['0a1b2c3d', '--agent', 'claude'], ['0a1b2c3d', '--agent', 'agent-2', '--shell']]) {
+    assert.throws(() => parseSessionArgs('connect', words, fail), undefined, words.join(' '));
+  }
 });

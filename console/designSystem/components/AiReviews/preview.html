@@ -1,4 +1,4 @@
-<!-- @dsCard group="Review" height=620 subtitle="Claude Code's and Codex's review of a pull request, its findings, and a follow-up checked against the code" -->
+<!-- @dsCard group="Review" height=760 subtitle="The merge risk and QA, Claude Code's and Codex's review of a pull request, its findings, and a follow-up checked against the code" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap">
 <style>
  body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
@@ -32,8 +32,19 @@
  .ans{border-left:2px solid var(--amber);padding-left:9px}
  .ask{display:flex;gap:6px;margin-top:8px}
  .ask input{flex:1;min-width:0;padding:6px 8px;font:13px "Red Hat Display",system-ui,sans-serif;border:1px solid var(--line);border-radius:4px;background:var(--ground);color:var(--ink)}
+ .checks{max-width:640px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:0 12px}
+ .box.risk{border-left-color:var(--amber-ink)}.box.pass{border-left-color:var(--green)}
+ .verdict.warn{color:var(--amber-ink);border-color:var(--amber-ink)}
+ .title{padding:7px 11px;font-size:13.5px;line-height:1.55}
+ .more{border-top:1px solid var(--line-soft);padding:5px 11px 7px;font-weight:600;font-size:12px;color:var(--meta)}
  .ask button{font:500 13px "Red Hat Display",system-ui,sans-serif;padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--slate)}
 </style>
+<div class="checks">
+ <div class="box risk"><div class="head"><span class="who">Merge risk</span><span class="verdict warn">medium</span><span class="tag">latest commit</span><span class="grow"></span><span class="link">Open on GitHub</span></div>
+  <div class="title">Retries change how every webhook is delivered</div><div class="more">▸ Details</div></div>
+ <div class="box pass"><div class="head"><span class="who">QA</span><span class="verdict good">passed</span><span class="tag">latest commit</span><span class="grow"></span><span class="link">Open on GitHub</span></div>
+  <div class="title">3 of 3 test cases passed</div><div class="more">▸ Details</div></div>
+</div>
 <p class="intro">What Claude Code and Codex said about this pull request, newest first. Ask a follow-up on any finding, or on a review as a whole: the session’s agent checks the point against the code and answers here.</p>
 <div class="box">
  <div class="head"><span class="caret">▾</span><span class="who">Claude Code and Codex</span><span class="verdict bad">requests changes</span><span class="tag">latest commit</span><span class="tag">2 findings</span><span class="grow"></span><span class="link">Open on GitHub</span></div>

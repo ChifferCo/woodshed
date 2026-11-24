@@ -58,7 +58,8 @@
 //                                Codex settings, your own files for a repo, and your own dotfile lines (cliSettings.mjs)
 //   POST /api/my/cli-tokens/<id>/revoke   ends one computer's command line sign-in, from My settings
 //   Its token also signs in to GET /api/sessions, GET /api/my/projects, POST /api/my/sessions,
-//   POST /api/my/sessions/<id>/resume|remove, POST /api/sessions/<id>/stop|extend|limits and GET /api/review-readiness,
+//   POST /api/my/sessions/<id>/resume|remove, POST /api/sessions/<id>/stop|extend|limits, the agents beside a
+//   session's own (GET and POST /api/sessions/<id>/agents, POST …/agents/<agent-N>/stop) and GET /api/review-readiness,
 //   as its person (cliSessions.mjs); and to GET /api/cli/config, its person's choices on My settings and never a secret, and the
 //   writes of them: POST /api/my/terminal, /reviews, /codex-auth/reviews, /claude-token/shared, /projects/default and
 //   /github/identity, each answering with that config alone (cliConfig.mjs)
@@ -88,6 +89,12 @@
 //   POST /api/sessions/<id>/answer  the Chat tab's answer to it, which the session types only once its pane shows that
 //        same prompt: {"kind": "question", "questions": [{question, options, pick}]} or {"kind": "approval",
 //        "decision": "approve"|"deny", "key": <GET /prompt's key, the hash of exactly what it asks>} (session/panePrompt.mjs)
+//   GET  /api/sessions/<id>/agents  the agents started beside a private session's own, each with its state (statusd's
+//                                   /agents): its owner's alone
+//   POST /api/sessions/<id>/agents  {"agent", "model", "effort", "permissionMode", "prompt"} starts another in it, its
+//                                   model and effort checked as New session checks them
+//   ANY  /api/sessions/<id>/agents/<agent-N>/transcript|send|interrupt|prompt|answer|stop   that agent's Chat routes, as
+//                                   the session's own below, and its stop
 //   GET  /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>  the conversation so far (what was asked, said and
 //        run), for the Chat tab; `since` answers {unchanged: true} while the agent wrote nothing newer
 //        (session/sessionTranscript.mjs)
@@ -115,6 +122,10 @@
 //   POST /api/people/github-sessions  {"login": "<handle>", "on": true|false}   who starts sessions from GitHub and sees shared ones
 //   POST /api/people/assignable  {"login": "<handle>", "on": true|false}   who may be assigned a shared session (needs the above)
 //   POST /api/people/admin      {"login": "<handle>", "admin": true|false}   who is an admin; the last one keeps it
+//   POST /api/people/access     {"login": "<handle>", "access": "owner"|"member"|"contributor"|"private"}   a role on People,
+//                                which sets the three switches above at once (peopleRoles.mjs); behind a hosting proxy
+//                                Owner is the program's owner role and the rest its member role. Invite and add take
+//                                `access` too
 //   POST /api/people/add|role   {"login": "<handle>", "role": "owner"|"member"}   behind a hosting proxy with the program's
 //                                list (hostedMembers.mjs): add someone, or change their role, through the program; remove
 //                                takes them off there. Invite, accept, decline and admin are not there
@@ -202,6 +213,7 @@
 // A session started from My Woodshed is private: every route that reaches it (its page's data, terminal,
 // Redis, app, review, Stop, the websockets) answers anyone but its owner as it would an id that does not exist.
 
+import { safeHref } from './settingsMarkup.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -230,7 +242,7 @@ import { checkGh } from './github.mjs';
 import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
 import { applyStored, createGitHubAppSetup, supervisorOf } from './githubAppSetup.mjs';
 import { createInstallation } from './installation.mjs';
-import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf, publicSession, sharedRunningCount, woodshedRunsOn } from './sessions.mjs';
+import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf, publicSession, sessionOptions, sharedRunningCount, woodshedRunsOn } from './sessions.mjs';
 import { WEBHOOK_SECRET } from './settings.mjs';
 import { openStore } from './store.mjs';
 import { parseHandle } from './members.mjs';
@@ -247,6 +259,7 @@ import { createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
 import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
 import { createMcpTester } from './mcpTest.mjs';
+import { ROLES, roleById, roleDiffers, roleOf } from './peopleRoles.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
@@ -254,7 +267,7 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'publ
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
 // The most one message to an agent may be: statusd's own limit (session/statusd.mjs, MAX_SEND_CHARS).
 export const MAX_MESSAGE_CHARS = 8000;
-const SETTINGS_SCRIPTS = ['settingsRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
+const SETTINGS_SCRIPTS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
 const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
@@ -291,6 +304,7 @@ const STATIC_FILES = {
   'launcher.js': 'text/javascript; charset=utf-8',
   'mySettings.js': 'text/javascript; charset=utf-8',
   'settingsRows.js': 'text/javascript; charset=utf-8',
+  'hostRows.js': 'text/javascript; charset=utf-8',
   'dbRestore.js': 'text/javascript; charset=utf-8',
   'dbRestoreStates.js': 'text/javascript; charset=utf-8',
   'consoleSettings.js': 'text/javascript; charset=utf-8',
@@ -304,7 +318,7 @@ const STATIC_FILES = {
 const MAX_BODY_BYTES = 16 * 1024;
 // A whole .env file, JSON-escaped, under Secrets Manager's 64 KB.
 const MAX_SECRET_BODY_BYTES = 160 * 1024;
-const PEOPLE_RE = /^\/api\/people\/(invite|accept|decline|remove|slack|assignable|github-sessions|admin|add|role)$/;
+const PEOPLE_RE = /^\/api\/people\/(invite|accept|decline|remove|slack|assignable|github-sessions|admin|add|role|access)$/;
 const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 // A repo's settings page: its project's name, as Console settings' Repos card links it.
 const REPO_SETTINGS_PAGE_RE = /^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -345,6 +359,8 @@ const SHARED_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(resume|delete|remove
 const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename)$/;
 const LIMIT_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(extend|limits)$/;
 const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|interrupt|answer|prompt|applog|diff|transcript)$/;
+// The agents started beside a private session's own (session/agents.mjs): the list, a start, and each one's Chat routes.
+const AGENTS_RE = /^\/api\/sessions\/([0-9a-f]{8})\/agents(?:\/(agent-[2-9])\/(transcript|send|interrupt|answer|prompt|stop))?$/;
 // The skills in the repo change with a merge; an hour is soon enough for a / list.
 const SKILLS_FRESH_MS = 60 * 60_000;
 // A project's open pull requests, for New session's Work on list: every launcher that opens asks.
@@ -597,7 +613,70 @@ export function settingsFrame({ title, body, current, heading = null, tabs = nul
     ...(own ? [`data-heading="${escapeHtml(own)}"`, `data-tabs="${escapeHtml(JSON.stringify(row))}"`] : [])].join(' ');
   const hostPage = `\n<template id="woodshed-host-page" ${attrs}>${html}</template>`;
   const sheets = styles.filter((href) => typeof href === 'string' && href.startsWith('/') && !href.startsWith('//'));
-  return pageShell({ title, script: 'hostSettings.js', login, linkQuery, hostPage, styles: sheets });
+  return pageShell({ title, script: ['hostRows.js', 'hostSettings.js'], login, linkQuery, hostPage, styles: sheets });
+}
+
+/**
+ * A page of a program embedding the console that stands outside any console: one the program shows someone before
+ * they have a console to be in (a first visit, the steps that make one) or between consoles (which to open). It is the
+ * settings pages' frame drawn by the server, with the design system's stylesheet and hostRows.js: the side list holds
+ * the program's own links under its name in place of Back to sessions, and the body is the program's, made with
+ * settingsMarkup.mjs and escaped by it. No console script runs, so nothing on it asks a console anything.
+ * @param {{title: string, body: string, brand: {label: string, href: string, icon?: string}, groups?: {label: string, items: {label: string, href: string}[]}[],
+ *          current?: string|null, login?: string|null, signOut?: string|null, dialog?: string|null, refresh?: number|null,
+ *          styles?: string[], scripts?: string[]}} page
+ *   `groups` are the side list's, each link marked when its `href` is `current`; `signOut` is the path a form posts to
+ *   for Sign out, shown under `login`; `dialog` is a step drawn over the page, which is inert behind it; `refresh` reloads
+ *   the page after that many seconds (a job it waits on); `styles` and `scripts` are the program's own (paths), after the
+ *   console's.
+ * @returns {string}
+ */
+export function standalonePage({ title, body, brand, groups = [], current = null, login = null, signOut = null, dialog = null, refresh = null, styles = [], scripts = [] }) {
+  // A path on this address alone, as settingsMarkup.mjs's links are: `//host` or `/\\host` is another site's to a browser.
+  const path = (href) => {
+    const safe = typeof href === 'string' ? safeHref(href) : null;
+    return safe?.startsWith('/') ? safe : null;
+  };
+  const link = (item) => {
+    const href = path(item?.href);
+    const label = menuText(item?.label);
+    if (!href || !label) return '';
+    return `<a class="side-item" href="${escapeHtml(href)}"${href === current ? ' aria-current="page"' : ''}>${escapeHtml(label)}</a>`;
+  };
+  const side = (Array.isArray(groups) ? groups : []).map((g) => {
+    const items = (Array.isArray(g?.items) ? g.items : []).map(link).filter(Boolean);
+    return items.length ? `<div class="side-group">${escapeHtml(menuText(g?.label))}</div>${items.join('')}` : '';
+  }).join('');
+  const who = /^[A-Za-z0-9-]{1,39}$/.test(String(login ?? '')) ? login : null;
+  const out = who && path(signOut)
+    ? `<div class="side-group">Signed in</div><span class="side-item side-who">@${who}</span><form class="inline-form" method="post" action="${escapeHtml(path(signOut))}"><button type="submit" class="side-item">Sign out</button></form>`
+    : '';
+  const home = path(brand?.href) ?? '/';
+  // The program's mark beside its name, from its own address (a path), as the console's own head has none.
+  const icon = path(brand?.icon) ? `<img src="${escapeHtml(path(brand.icon))}" width="20" height="20" alt="" class="side-brand-icon">` : '';
+  const seconds = Number.isInteger(refresh) && refresh > 0 ? refresh : null;
+  const own = (list, tag) => (Array.isArray(list) ? list : []).map(path).filter(Boolean).map(tag).join('');
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">${seconds ? `\n<meta http-equiv="refresh" content="${seconds}">` : ''}
+<title>${escapeHtml(title)}</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<script src="${staticUrl('theme.js')}"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Red+Hat+Display:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="${staticUrl('style.css')}">${own(styles, (h) => `\n<link rel="stylesheet" href="${escapeHtml(h)}">`)}
+</head>
+<body>
+<div id="app"><div class="settings-view"><div class="page"${dialog ? ' inert aria-hidden="true"' : ''}>
+<aside class="settings-side" aria-label="${escapeHtml(menuText(brand?.label) || 'Settings')}"><div class="side-head"><a class="side-back" href="${escapeHtml(home)}">${icon}<b>${escapeHtml(menuText(brand?.label))}</b></a></div><nav class="side-list">${side}${out}</nav></aside>
+${String(body ?? '')}
+</div>${dialog ? `\n${String(dialog)}` : ''}</div></div>
+<script src="${staticUrl('hostRows.js')}" data-wire="app"></script>${own(scripts, (s) => `\n<script src="${escapeHtml(s)}"></script>`)}
+</body>
+</html>
+`;
 }
 
 /**
@@ -739,13 +818,13 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, repoPage = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false, oidc = null, mcpServers = null,
   cli = null, reviewReadiness = null,
 }) {
   // Tests an MCP server as the relay would call it, from the Console settings page (mcpTest.mjs).
   const mcpTester = mcpServers ? createMcpTester({ servers: mcpServers, issuer: oidc }) : null;
-  const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
+  const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login), hostGroups: repoPage }) : null;
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
   // A config made in a test or by a program embedding the console may not have been through loadConfig.
@@ -866,6 +945,8 @@ export function createHandler({
         // Without sign-in turned on the server lets everyone through (signedIn gives no login), so the menu says the same.
         admin: !auth?.enabled() || Boolean(user && isAdmin(user)),
         asking: user && members && isAdmin(user) ? members.view().requests.length : 0,
+        // People, as a tab of Settings, when the console keeps a list of who is in.
+        people: Boolean(members),
         // Admins see how many Woodshed commits the console lacks, on the menu's Console settings.
         ...(woodshedUpdate && { updates: !auth?.enabled() || (user && isAdmin(user)) ? woodshedUpdate.behindBy() : 0 }),
         names: namesFor([user?.login ?? visitor?.login]),
@@ -967,8 +1048,10 @@ export function createHandler({
     }
     const view = members.view();
     const logins = [...view.members, ...view.requests].flatMap((p) => [p.login, p.addedBy]).filter(Boolean);
+    // Each member's role, named from their switches, and the roles People offers with what each gives.
+    view.members = view.members.map((m) => ({ ...m, access: roleOf(m), accessDiffers: roleDiffers(m) }));
     return reply(res, 200, {
-      ...view, hosted: Boolean(members.hosted), names: namesFor(logins), slack: slackPeople ? slackPeople.links(view.members.map((m) => m.login)) : null, ...extra,
+      ...view, roles: ROLES.map(({ id, label, explain, privateSessions, admin, githubSessions, assignable }) => ({ id, label, explain, privateSessions, admin, githubSessions, assignable })), hosted: Boolean(members.hosted), names: namesFor(logins), slack: slackPeople ? slackPeople.links(view.members.map((m) => m.login)) : null, ...extra,
     });
   }
 
@@ -1021,11 +1104,52 @@ export function createHandler({
     return peopleReply(res);
   }
 
+  // A role sets the three switches at once. The admin part goes first, behind a proxy through the program, so a refusal
+  // there (the last owner) changes nothing; Sessions from GitHub goes before Can be assigned, which needs it.
+  async function applyRole({ handle, role, by, adminDone = false }) {
+    if (!adminDone) {
+      if (members.hosted) await members.setRole({ login: handle, role: role.admin ? 'owner' : 'member', by });
+      else members.setAdmin({ login: handle, admin: role.admin, by });
+    }
+    members.setGithubSessions({ login: handle, on: role.githubSessions, by });
+    members.setAssignable({ login: handle, on: role.assignable, by });
+    console.log('members: role set', { login: handle, access: role.id, by });
+    // Whoever can no longer be assigned gives their shared sessions back to Unassigned.
+    if (!role.assignable) fleet.releaseAssignments?.({ login: handle, by });
+  }
+
+  function roleOrRefuse(res, access) {
+    const role = roleById(access);
+    if (!role) reply(res, 400, { error: `access is one of ${ROLES.map((r) => r.id).join(', ')}` });
+    return role;
+  }
+
+  async function peopleAccess(res, { handle, access, by }) {
+    const role = roleOrRefuse(res, access);
+    if (!role) return;
+    try {
+      if (members.hosted) await members.load();
+      await applyRole({ handle, role, by });
+    } catch (err) {
+      if (err.shown) return reply(res, 409, { error: err.message });
+      if (members.hosted) return reply(res, 500, { error: 'not done: try again' });
+      throw err;
+    }
+    return peopleReply(res);
+  }
+
   // Behind a hosting proxy with the program's list, the program adds, removes and sets each role (hostedMembers.mjs).
   // Its refusal is shown as it said it; any other failure was logged there, and is a 500 here.
   async function hostedPeopleWrite(res, { action, handle, body, by }) {
+    // An add with a People role gives the program its owner or member role, then sets the switches here.
+    const role = action === 'add' && body?.access !== undefined ? roleOrRefuse(res, body.access) : null;
+    if (action === 'add' && body?.access !== undefined && !role) return;
     const call = {
-      add: () => members.add({ login: handle, role: body?.role, by }),
+      add: async () => {
+        const done = await members.add({ login: handle, role: role ? (role.admin ? 'owner' : 'member') : body?.role, by });
+        if (role) await applyRole({ handle: done.login, role, by, adminDone: true });
+        return done;
+      },
       remove: () => members.remove({ login: handle, by }),
       role: () => members.setRole({ login: handle, role: body?.role, by }),
     }[action];
@@ -1058,6 +1182,7 @@ export function createHandler({
     if (!handle) return reply(res, 400, { error: 'login must be a GitHub handle' });
     const action = pathname.split('/').pop();
     if (action === 'slack') return peopleSlack(res, { handle, value: body?.slack, by: login });
+    if (action === 'access') return peopleAccess(res, { handle, access: body?.access, by: login });
     if (action === 'assignable') return peopleSwitch(res, { handle, on: body?.on, by: login, set: members.setAssignable });
     if (action === 'github-sessions') return peopleSwitch(res, { handle, on: body?.on, by: login, set: members.setGithubSessions });
     if (members.hosted && ['add', 'remove', 'role', 'admin', 'invite', 'accept', 'decline'].includes(action)) {
@@ -1076,8 +1201,12 @@ export function createHandler({
       }
       if (!writes) return reply(res, 400, { error: `@${handle} has no write access to the repository, so could not sign in` });
     }
+    // An invite may name a People role; without one, someone new has every switch off (Private only).
+    const role = action === 'invite' && body?.access !== undefined ? roleOrRefuse(res, body.access) : null;
+    if (action === 'invite' && body?.access !== undefined && !role) return;
     try {
-      members[action]({ login: handle, by: login });
+      const invited = members[action]({ login: handle, by: login });
+      if (role) await applyRole({ handle: invited, role, by: login });
     } catch (err) {
       if (err.shown) return reply(res, 409, { error: err.message });
       throw err;
@@ -1798,12 +1927,14 @@ export function createHandler({
   }
 
   // The session's statusd, straight through: the body (a file) and the answer (a file, or JSON) are never held whole.
-  function toStatusd(req, res, session, { method, path, body = null, maxBytes = Infinity }) {
+  // onStatus: told statusd's status code, or 502 when it did not answer.
+  function toStatusd(req, res, session, { method, path, body = null, maxBytes = Infinity, onStatus = null }) {
     const { host, statusPort } = session.endpoint;
     const headers = { authorization: `Bearer ${session.token}` };
     if (body !== null) headers['content-type'] = 'application/json';
     else if (method === 'POST') headers['content-type'] = 'application/octet-stream';
     const upstream = http.request({ host, port: statusPort, method, path, headers, timeout: UPLOAD_TIMEOUT_MS }, (upRes) => {
+      onStatus?.(upRes.statusCode);
       const passed = { 'content-type': upRes.headers['content-type'] || 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' };
       res.writeHead(upRes.statusCode || 502, passed);
       upRes.pipe(res);
@@ -1811,6 +1942,7 @@ export function createHandler({
     upstream.on('timeout', () => upstream.destroy(new Error('statusd took too long')));
     upstream.on('error', (err) => {
       console.warn('console: statusd unreachable', { id: session.id, path: path.split('?')[0], message: err.message });
+      onStatus?.(502);
       if (!res.headersSent) reply(res, 502, { error: 'the session did not answer: try again in a moment' });
       else res.destroy();
     });
@@ -1849,6 +1981,100 @@ export function createHandler({
     return session?.status === 'running' && session.endpoint ? session : null;
   }
 
+  /**
+   * The agents beside a private session's own (session/agents.mjs), its owner's to start, switch to and stop: the
+   * console checks what a start asks for as New session's form, notes that the session may run that agent
+   * (fleet.allowAgent, for a Codex one's sign-in), and passes the rest to statusd's /agents.
+   */
+  async function agentAction(req, res, [, id, agentId, action], login) {
+    const found = findFor(id, login);
+    const session = runningFor(id, login);
+    if (!found || found.owner !== login) {
+      req.resume();
+      return reply(res, 404, { error: 'no such session of yours' });
+    }
+    if (!session) {
+      req.resume();
+      return reply(res, 409, { error: 'the session is not running' });
+    }
+    const url = new URL(req.url, 'http://console.invalid');
+    if (!agentId) {
+      if (req.method === 'GET') return toStatusd(req, res, session, { method: 'GET', path: '/agents' });
+      if (req.method !== 'POST') return reply(res, 405, { error: 'GET or POST' });
+      let body;
+      try {
+        body = await readJson(req);
+      } catch (err) {
+        return reply(res, 400, { error: err.message });
+      }
+      if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
+      let picked;
+      try {
+        picked = sessionOptions({ agent: body?.agent, model: body?.model ?? '', effort: body?.effort ?? '', permissionMode: body?.permissionMode || 'auto' });
+      } catch (err) {
+        return reply(res, 400, { error: err.message });
+      }
+      const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
+      if (prompt.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in the first message` });
+      // A Codex agent beside claude runs on its owner's own Codex sign-in, handed to the session with the start itself and
+      // never asked for by it; with none, on the team's key through the console's proxy, which the session may use only
+      // once the agent has started (fleet.allowAgent). A start the session refuses is allowed nothing.
+      const besideClaude = picked.agent === 'codex' && session.options?.agent !== 'codex';
+      let codexAuth = null;
+      if (besideClaude && userSettings) {
+        try {
+          codexAuth = await userSettings.codexAuth(session.owner);
+        } catch (err) {
+          console.warn('console: Codex sign-in not read for an agent', { id: session.id, message: err?.message });
+          return reply(res, 502, { error: 'the console could not read your Codex sign-in: try again' });
+        }
+        // Asked again after the read: a lockdown that started meanwhile gets no sign-in sent into the session.
+        if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
+      }
+      console.log('console: another agent asked for', {
+        id: session.id, agent: picked.agent, model: picked.model || null, effort: picked.effort || null, permissionMode: picked.permissionMode,
+        prompt: Boolean(prompt.trim()), ...(besideClaude && { ownCodex: Boolean(codexAuth) }),
+      });
+      return toStatusd(req, res, session, {
+        method: 'POST', path: '/agents', body: { ...picked, prompt, ...(codexAuth ? { codexAuth } : {}) },
+        onStatus: (code) => { if (code === 200 && !session.taintedAt && !fleet.isLocked?.(session)) fleet.allowAgent(session, picked.agent); },
+      });
+    }
+    const base = `/agents/${agentId}`;
+    if (req.method === 'GET' && (action === 'transcript' || action === 'prompt')) {
+      const limit = action === 'transcript' ? url.searchParams.get('limit') : null;
+      const since = action === 'transcript' ? url.searchParams.get('since') : null;
+      const params = new URLSearchParams({
+        ...(limit && /^\d{1,4}$/.test(limit) && { limit }),
+        ...(since && /^\d{1,16}(\.\d{1,6})?$/.test(since) && { since }),
+      });
+      return toStatusd(req, res, session, { method: 'GET', path: `${base}/${action}${params.size ? `?${params}` : ''}` });
+    }
+    if (req.method !== 'POST' || action === 'transcript' || action === 'prompt') return reply(res, 405, { error: 'not that method' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    if (action === 'stop' || action === 'interrupt') {
+      console.log(`console: agent ${action === 'stop' ? 'stopped' : 'interrupted'} from the page`, { id: session.id, agent: agentId });
+      return toStatusd(req, res, session, { method: 'POST', path: `${base}/${action}`, body: {} });
+    }
+    if (action === 'answer') {
+      const sent = answerBody(body);
+      if (!sent) return reply(res, 400, { error: 'not an answer: a question\'s picks, or approve or deny' });
+      console.log('console: answer typed in from the page', { id: session.id, agent: agentId, kind: sent.kind });
+      return toStatusd(req, res, session, { method: 'POST', path: `${base}/answer`, body: sent });
+    }
+    // send: statusd holds it while that agent works, and types it once it is back at its prompt (agents.mjs).
+    if (typeof body?.text !== 'string' || !body.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f\s]/g, '')) return reply(res, 400, { error: 'nothing to send' });
+    if (body.text.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in one message` });
+    const messageId = typeof body.id === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(body.id) ? body.id : randomUUID();
+    console.log('console: message typed in from the page', { id: session.id, agent: agentId, chars: body.text.length });
+    return toStatusd(req, res, session, { method: 'POST', path: `${base}/send`, body: { text: body.text, id: messageId } });
+  }
+
   async function terminalAction(req, res, [, id, action], login) {
     const session = runningFor(id, login);
     if (!session) {
@@ -1859,7 +2085,7 @@ export function createHandler({
     if (action === 'upload') {
       // `none` saves the file and types nothing: the phone's message box adds its path to the message itself.
       const asked = url.searchParams.get('pane');
-      const pane = asked === 'none' ? null : asked === 'terminal' ? 'terminal' : 'agent';
+      const pane = asked === 'none' ? null : asked === 'terminal' ? 'terminal' : /^agent-[2-9]$/.test(asked ?? '') ? asked : 'agent';
       const query = new URLSearchParams({ name: url.searchParams.get('name') || 'file', ...(pane && { pane }) });
       return toStatusd(req, res, session, { method: 'POST', path: `/upload?${query}`, maxBytes: MAX_ATTACHMENT_BYTES });
     }
@@ -2402,6 +2628,8 @@ export function createHandler({
     if (repoRoute) return repoSettingsApi(req, res, { route: repoRoute, login });
     const terminalWrite = TERMINAL_RE.exec(pathname);
     if (terminalWrite && ['upload', 'scroll', 'send', 'interrupt', 'answer'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
+    const agentWrite = AGENTS_RE.exec(pathname);
+    if (agentWrite) return agentAction(req, res, agentWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings/webhooks') return webhookSwitchWrite(req, res, login);
     if (MCP_SERVERS_WRITES.has(pathname)) return mcpServersWrite(req, res, pathname, login);
@@ -2519,6 +2747,9 @@ export function createHandler({
     if (pathname === '/api/my/pulls') return pullsReply(res, login);
     const shareRead = APP_SHARE_RE.exec(pathname);
     if (shareRead && !shareRead[2]) return appShareAction(req, res, shareRead, login);
+    // woodshed session agents: the agents beside a private session's own (agentAction checks it is theirs).
+    const agentsRead = AGENTS_RE.exec(pathname);
+    if (agentsRead && !agentsRead[2]) return agentAction(req, res, agentsRead, login);
     return reply(res, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
   }
   function cliWrite(req, res, pathname, login) {
@@ -2655,6 +2886,8 @@ export function createHandler({
     }
     const shareRead = APP_SHARE_RE.exec(pathname);
     if (shareRead && !shareRead[2]) return appShareAction(req, res, shareRead, user.login);
+    const agentRead = AGENTS_RE.exec(pathname);
+    if (agentRead) return agentAction(req, res, agentRead, user.login);
     const imageMatch = TERMINAL_RE.exec(pathname);
     if (imageMatch?.[2] === 'applog' || imageMatch?.[2] === 'diff' || imageMatch?.[2] === 'transcript' || imageMatch?.[2] === 'prompt') {
       const session = runningFor(imageMatch[1], user.login);
@@ -2864,7 +3097,7 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
  *   `repos` and `projectReadiness` are an embedding program's hooks, passed on to createInstallation (installation.mjs):
  *   only the dev console's stand-in (scripts/devHostConsole.mjs) passes them here
  */
-export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null, hostApp = null }) {
+export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null, hostApp = null, repoPage = null }) {
   const first = given ?? loadConfig();
   const store = openStore(first.stateDir);
   // An App saved on the setup page is the console's own from the next start.
@@ -2874,7 +3107,7 @@ export async function startConsole({ provider, config: given = null, repos = nul
   const trusted = loaded.trustedIdentitySecret ? createTrustedIdentity({ secret: loaded.trustedIdentitySecret }) : null;
   console.log('console: hosted mode', { githubBroker: Boolean(loaded.githubBroker), trustedIdentity: Boolean(trusted) });
   await checkGh();
-  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness, hostApp });
+  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness, hostApp, repoPage });
   const { config, handle } = installation;
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {

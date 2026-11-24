@@ -76,6 +76,12 @@ than a third branch inside `prepareReview`:
   fast-forward: a branch that moved both here and there, or a pull that would
   overwrite an uncommitted file, is left alone and the page says why. Opening the
   page never pulls.
+- **The page re-reviews on its own when the pull request moves.** It reads the pull request's head on GitHub on load,
+  on coming back to the tab and every minute while shown, and when that is not the commit the review read it presses
+  Re-review itself, once per head. A worktree review's is `POST /reviews/<session>?follow=1`: after the pull, a checkout
+  still at the commit the review read answers `unchanged` and takes nothing, so a GitHub behind the session never
+  spends an analysis on the same commit again. A target review's `/refresh` already answers `unchanged` for an unmoved
+  head.
 
 `server.mjs` imports eight things from here: `handleReviewRequest`,
 `reviewStartupSweep`, `parseReviewTarget`, `createReviewSession`,
@@ -89,6 +95,15 @@ review needs nothing new from it: `POST /reviews/<session>` arrives through
 `handleReviewRequest` like every other review route, and resolves the session's
 worktree through `ctx.worktreePathFor`, which server.mjs now supplies so the
 `<repo>/.claude/worktrees/bridge-<id>` layout rule stays stated in one place.
+
+### A Woodshed session's other pull requests
+
+A session that opens more than one pull request has a review of each (`session/reviewShed/host.mjs`): its checkout's,
+`claude-<8hex>`, the worktree kind, and one per other pull request, `claude-<8hex>-pr<n>`, which `isSessionName` takes
+too. `ensurePullRequestReview` makes that one a pull request review in a worktree of its own, **detached**
+(`createReviewSession`'s `detach`): no branch is made, taken or moved, because the pull request's branch may be checked
+out in the session or held there with commits of its own. A host's `ctx.worktreeBaseRef` names the base for the
+worktree kind, the base of the checkout's open pull request, so one stacked on another branch is diffed against it.
 
 ## Re-reviewing a target
 
@@ -140,6 +155,7 @@ analyze.mjs    schema, prompt, NDJSON reducer, reconciliation
 explain.mjs    prompt, validation, answer extraction
 chat.mjs       the conversation about the change as a whole: prompt, history bound
 aiReviews.mjs  the AI reviews on the pull request (Claude Code, Codex) read into verdicts and findings
+prChecks.mjs   the merge risk and QA checks on the pull request's head commit, for the AI reviews tab
 qa.mjs         the Q&A tab: a newcomer's questions and their answers, as a tree
 jobs.mjs       `claude -p` child lifecycle, concurrency, orphan reaping
 store.mjs      on-disk layout under $REVIEWS_DIR, one directory per session
@@ -587,6 +603,17 @@ first comment's `pullRequestReview` is the review) the findings, each given to t
 `**Codex:**` mark names, and comments GitHub refused, which the console folded into the body under `**Inline
 comments**`, findings too. These come in `GET /comments` as `aiReviews`, newest first, each saying whether it read the
 pull request's head (`current`).
+
+Over the reviews the tab shows the **merge risk** and **QA** the pull request carries (`prChecks.mjs`), as GitHub has
+them on its head commit: the newest check run named by the base branch's project file (`pullRequests.mergeRisk.check`
+and `pullRequests.qa.check`, read from `origin/<base>` so the pull request cannot rename them; `Merge risk` and `QA`
+when it names none). The merge risk is the check's tier and reason (its title, `High: …`); with no check on the head,
+the `merge risk: <tier>` label the review left, said to be an older commit's. A check the project file asks for and the
+commit lacks says it has not run; one it does not ask for and GitHub lacks is left out. They come in `GET /comments` as
+`checks: {mergeRisk, qa}`, from a GraphQL read of their own (`fetchPrChecks`, the two names only, no App field): a
+token GitHub refuses part of a check suite to then gets `checks: null` and the shed logs `review.checks_unread`, while
+the comments, the reviews and a verdict go on as before. Past 100 check suites a check not found is not called
+missing. Nothing here gates anything: the decision brief is still the console's.
 
 A follow-up is a chat turn with `about: {review, finding}`: ids only. The shed reads the point again from GitHub
 (`aiReviewPoint` in index.mjs), refuses one no longer there (409), and puts it in the prompt fenced like the rest,

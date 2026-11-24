@@ -708,6 +708,8 @@ OWN_FILES_JSON=$HOME/.config/woodshed/own-files.json
 # The owner's own Codex sign-in, for a Codex session: written into codex's own home by configureCodex.
 OWN_CODEX_AUTH_FILE=$HOME/.config/woodshed/codex-auth
 CODEX_HOME_DIR=${CODEX_HOME:-$HOME/.codex}
+# Written once codex's home is made (configureCodex): statusd starts a Codex agent beside the session's only then.
+CODEX_READY_FILE=/tmp/woodshed-codex-ready
 
 # A private session's owner's settings, before the env files are written: their database, tokens, git identity, own
 # whole files and own tmux lines. Their own lines for the env files are in the repo settings (fetchRepoSettings).
@@ -1010,6 +1012,8 @@ installSyncedPlugins() {
 # How codex reaches OpenAI. The owner's own sign-in goes into codex's home as auth.json: an API key as the key file codex
 # reads, a ChatGPT login as it was saved. With none, session/bin/codex uses the console's proxy and the team key. The
 # rules go in codex's own AGENTS.override.md, which it reads at every start, so the terminal shows only the request.
+# `beside`: for a Codex agent a person may start beside claude (session/agents.mjs), whose sign-in statusd asks the console
+# for only when one starts. Its home and rules are made here all the same.
 configureCodex() {
   [ ! -L "$CODEX_HOME_DIR" ] || die "codex's home is a symlink"
   mkdir -p "$CODEX_HOME_DIR"
@@ -1018,7 +1022,9 @@ configureCodex() {
   for file in auth.json config.toml AGENTS.override.md; do
     [ ! -L "$CODEX_HOME_DIR/$file" ] || die "codex's $file is a symlink"
   done
-  if [ "${SESSION_KIND:-}" = private ] && [ -s "$OWN_CODEX_AUTH_FILE" ]; then
+  if [ "${1:-}" = beside ]; then
+    :
+  elif [ "${SESSION_KIND:-}" = private ] && [ -s "$OWN_CODEX_AUTH_FILE" ]; then
     if [[ "$(head -c 3 "$OWN_CODEX_AUTH_FILE")" == sk- ]]; then
       (umask 077 && jq -n --rawfile key "$OWN_CODEX_AUTH_FILE" '{OPENAI_API_KEY: $key}' > "$CODEX_HOME_DIR/auth.json")
     else
@@ -1186,6 +1192,11 @@ startClaude() {
   # woodshed-login reopens claude with the same flags once it signed in, and `woodshed move --from herdr` opens a conversation moved
   # from a laptop with the agent's own (cli/move.mjs).
   if [ "${AGENT:-claude}" = codex ]; then codexFlags > /tmp/woodshed-codex-flags; else claudeFlags > /tmp/woodshed-claude-flags; fi
+  # The agents a person starts beside this one (session/agents.mjs, statusd's /agents) take the session's own flags for
+  # claude, without the model, effort and mode New session picked: they pick their own.
+  if [ "${SESSION_KIND:-}" = private ] && [ -z "${SESSION_MODE:-}" ] && ! tainted; then
+    MODEL='' EFFORT='' PERMISSION_MODE=default claudeFlags > /tmp/woodshed-agent-claude-flags
+  fi
   # A terminal its owner's Herdr makes comes once the session runs, after statusd opened the tunnel it comes through:
   # the agent is typed into it then, in the background, as into the session's own. Handed to the init like progress's
   # reports: this shell becomes statusd, which would never reap it, and it would stay a zombie once done.
@@ -1202,13 +1213,14 @@ startClaude() {
   # xterm.js's 1000, and no more, since each line costs the page its width in cells. tmux keeps 50000.
   local scrollback=scrollback=10000
   # The TUI tab: the agent's terminal, tmux's pane or Herdr's terminal, which a person's own Herdr can attach to too.
-  local attach=(tmux attach -t claude)
-  [ "$WOODSHED_TERMINAL" = tmux ] || attach=(hc attach claude)
+  local attach='exec tmux attach -t claude'
+  [ "$WOODSHED_TERMINAL" = tmux ] || attach='exec hc attach claude'
   # While the owner's Herdr has not made the agent's terminal yet, the tab says so and attaches once it is there, rather
   # than an attach that finds nothing and closes. ttyd runs it for each browser that connects.
-  [ ! -f "$AGENT_TERMINAL_WAIT" ] || attach=(bash -c "$TUI_WAIT_THEN_ATTACH")
-  ttyd --writable --port 7681 --base-path "/term/$SESSION_ID" --credential "woodshed:${TERMINAL_TOKEN:-$SESSION_TOKEN}" \
-    -t "$theme" -t "$scrollback" -t disableLeaveAlert=true "${attach[@]}" >/tmp/ttyd.log 2>&1 &
+  [ ! -f "$AGENT_TERMINAL_WAIT" ] || attach=$TUI_WAIT_THEN_ATTACH
+  # woodshed-attach runs it, or attaches to an agent started beside it that the page names in the URL (--url-arg).
+  WOODSHED_TUI_ATTACH=$attach ttyd --writable --url-arg --port 7681 --base-path "/term/$SESSION_ID" --credential "woodshed:${TERMINAL_TOKEN:-$SESSION_TOKEN}" \
+    -t "$theme" -t "$scrollback" -t disableLeaveAlert=true "$SESSION_DIR/bin/woodshed-attach" >/tmp/ttyd.log 2>&1 &
   # The Terminal tab: a shell beside claude in the repo, with the same environment. Its own tmux session, so a
   # reload or a second browser finds it as it was; -A makes a new one after someone types exit.
   ttyd --writable --port 7684 --base-path "/shell/$SESSION_ID" --credential "woodshed:${TERMINAL_TOKEN:-$SESSION_TOKEN}" \
@@ -1336,10 +1348,16 @@ runSession() {
   writeRules
   if [ "${AGENT:-claude}" = codex ]; then
     configureCodex
+    touch "$CODEX_READY_FILE"
   else
     restorePlugins
     installDefaultPlugins
     installSyncedPlugins
+    # A private session's owner may start a Codex agent beside claude (session/agents.mjs): its home is made now, and a
+    # problem with it never stops claude's start.
+    if [ "${SESSION_KIND:-}" = private ] && [ -z "${SESSION_MODE:-}" ] && ! tainted; then
+      if (configureCodex beside); then touch "$CODEX_READY_FILE"; else log "WARNING: codex not set up, no Codex agent can start beside claude"; fi
+    fi
   fi
   # Both have read it: the env files are written, and the instructions are in the rules (and codex's AGENTS.override.md).
   rm -f "$REPO_SETTINGS_JSON"
