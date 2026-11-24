@@ -539,7 +539,8 @@ writeRules() {
   # The QA label, which a session adds to its pull request once ready, for QA the repo's CI runs (pullRequests.qa.runner:
   # actions). Not for QA run here: the console adds it itself with qa.autoLabel, and without it starts QA only for a
   # person's label, never the App's that a shared session's gh acts as (fleet.mjs, startQa). A label is GitHub's to
-  # name, so plain substitution again, and shell-quoted for the command.
+  # name, so plain substitution again, and shell-quoted for the command. The command is GitHub's API, which takes the
+  # label whole: `gh pr edit --add-label` reads a comma in it as two labels.
   qaLabel=
   [ "$(project get pullRequests.qa.runner 2>/dev/null)" != actions ] || qaLabel=$(project get pullRequests.qa.label 2>/dev/null) || qaLabel=
   if [ -n "$qaLabel" ]; then

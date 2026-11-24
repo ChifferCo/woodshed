@@ -190,14 +190,14 @@ test('a project whose CI runs QA on a label tells its sessions to add it once re
     const review = { author: 'ci[bot]', heading: '## Review', workflow: '.github/workflows/review.yml', rerun: '[run-review]', commentAuthor: null };
     const withQa = (q) => fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ pullRequests: { review, suites: [], qa: q, mergeRisk: null } }));
     // QA in the repo's CI: a label added with the session's gh, the App's or its owner's, starts the workflow.
-    withQa({ check: 'QA', label: "qa: Bob's run", heading: '## QA', author: 'ci[bot]', runner: 'actions' });
+    withQa({ check: 'QA', label: "qa: Bob's, run", heading: '## QA', author: 'ci[bot]', runner: 'actions' });
     for (const kind of ['shared', 'private']) {
       const told = writePrompt({ attachments: false, kind, repoDir: repo });
-      assert.ok(told.rules.includes("PR that has the `qa: Bob's run` label"), kind);
-      assert.ok(told.rules.includes("`gh pr edit <PR number> --add-label qa:\\ Bob\\'s\\ run`"), 'shell-quoted for the command');
+      assert.ok(told.rules.includes("PR that has the `qa: Bob's, run` label"), kind);
+      assert.ok(told.rules.includes("`gh api repos/{owner}/{repo}/issues/<PR number>/labels -f labels[]=qa:\\ Bob\\'s\\,\\ run`"), 'whole, shell-quoted for the command');
       assert.match(told.rules, /once the PR is ready for review, when you open it ready or mark a draft ready, never to a draft/);
       assert.doesNotMatch(told.rules, /\{\{/);
-      assert.match(told.out, /QA label: qa: Bob's run/);
+      assert.match(told.out, /QA label: qa: Bob's, run/);
     }
     // QA run by the console: it starts for a person's label, or the console's own with autoLabel, never the App's that a
     // session adds, so a session is not told to add it.

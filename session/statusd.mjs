@@ -774,7 +774,6 @@ function appsStatus() {
   return { appName: CURRENT_APP?.name ?? null, apps: PROJECT_APPS.map(({ name, label }) => ({ name, label })) };
 }
 
-// The project's own start or stop command: the project file's `app.start` or `app.stop`.
 // The checkout as git names it (its real path), which readyGate compares with the one a pull request is opened from.
 function realCheckout() {
   try {
@@ -784,6 +783,7 @@ function realCheckout() {
   }
 }
 
+// The project's own start or stop command: the project file's `app.start` or `app.stop`.
 function runAppCommand(command) {
   const out = openSync(APP_LOG, 'a');
   return spawn('bash', ['-c', command], { cwd: REPO_DIR, detached: true, stdio: ['ignore', out, out] });
