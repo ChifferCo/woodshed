@@ -25,6 +25,8 @@ const MAX_NAME_WORDS = 8;
 export function cleanName(raw) {
   const line = String(raw ?? '').trim().split('\n')[0].replace(/^["'`*]+|["'`*.]+$/g, '').trim();
   if (line.split(/\s+/).length > MAX_NAME_WORDS || /[.?!…]\s/.test(line) || /[?…]$/.test(line)) return '';
+  // A short refusal ("I cannot access your PR") is as short as a name: a name never speaks for itself or apologises.
+  if (/^(i|i'm|i've|i'd|i'll|sorry|unfortunately|as an ai)\b(?![-\d])/i.test(line)) return '';
   return line.length > MAX_NAME_CHARS ? `${line.slice(0, MAX_NAME_CHARS - 1)}…` : line;
 }
 

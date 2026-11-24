@@ -76,6 +76,11 @@ test('a reply instead of a name leaves the name to the prompt', async () => {
   const { fetchImpl } = fakeFetch({ content: [{ type: 'text', text: reply }] });
   assert.equal(await createAutoNamer({ teamKey: async () => 'k', fetchImpl })('why is CI red on my PR?'), '');
   assert.equal(cleanName('Could you share the PR link?'), '');
+  assert.equal(cleanName('I cannot access your PR.'), '');
+  assert.equal(cleanName("I'm unable to see your CI"), '');
+  assert.equal(cleanName('Sorry, no access to GitHub'), '');
+  assert.equal(cleanName('I18n for the billing page'), 'I18n for the billing page');
+  assert.equal(cleanName('Idle pause off by one'), 'Idle pause off by one');
   assert.equal(cleanName('I need more context. Which repo?'), '');
   assert.equal(cleanName('Billing: EUR rounding'), 'Billing: EUR rounding');
   assert.equal(cleanName('Bump node to v22.4'), 'Bump node to v22.4');
