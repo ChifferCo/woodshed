@@ -8,7 +8,7 @@ const NOW = Date.parse('2026-11-23T12:00:00.000Z');
 
 // A console's session API with only these routes: a made-up fleet, and New session's start as a stand-in that records
 // what it was asked and answers as server.mjs's startMine does.
-async function serve({ sessions, startMine = null, allowed = () => true, perHour = 10 } = {}) {
+async function serve({ sessions, startMine = null, allowed = () => true, perPerson = 3 } = {}) {
   const asked = [];
   const fleet = {
     sessions: () => sessions,
@@ -17,7 +17,7 @@ async function serve({ sessions, startMine = null, allowed = () => true, perHour
   };
   let next = 0;
   const starts = createSessionStarts({
-    fleet, config: { publicUrl: 'https://console.example', sessionStartsPerHour: perHour }, allowed, now: () => NOW,
+    fleet, config: { publicUrl: 'https://console.example', maxPrivatePerPerson: perPerson }, allowed,
     startMine: startMine ?? (async (login, body) => {
       asked.push({ login, body });
       const made = { id: `5e55${String(next++).padStart(4, '0')}`, owner: login, title: body.name || 'Named from the prompt', status: 'queued', branch: body.workOn || `woodshed/${login}-x`,
@@ -101,15 +101,21 @@ test('it refuses what it must', async (t) => {
   assert.equal((await start({ prompt: 'x' })).status, 429, 'one run starts so many');
   session.startsThisRun = 0;
 
-  for (let i = 0; i < 3; i++) sessions.push({ id: `dddd000${i}`, owner: 'joel', startedFrom: 'eeee0000', status: 'running', createdAt: new Date(NOW - 10 * 60_000).toISOString() });
-  const limited = await serve({ sessions, perHour: 3 });
-  t.after(limited.close);
-  const hourly = await limited.call('POST', '/sessions', { token, body: { prompt: 'x' } });
-  assert.equal(hourly.status, 429, 'the person\'s sessions start so many an hour, all of them together');
-  assert.match(hourly.body.error, /in the last hour/);
-  const off = await serve({ sessions: [session], perHour: 0 });
-  t.after(off.close);
-  assert.match((await off.call('POST', '/sessions', { token, body: { prompt: 'x' } })).body.error, /turns off/);
+  // The person's own limit, with the starting session in it: one running and one waiting make three.
+  sessions.push({ id: 'dddd0001', owner: 'joel', status: 'running', createdAt: new Date(NOW).toISOString() },
+    { id: 'dddd0002', owner: 'joel', status: 'queued', createdAt: new Date(NOW).toISOString() },
+    { id: 'dddd0003', owner: 'someone', status: 'running', createdAt: new Date(NOW).toISOString() });
+  const full = await serve({ sessions, perPerson: 3 });
+  t.after(full.close);
+  const atLimit = await full.call('POST', '/sessions', { token, body: { prompt: 'x' } });
+  assert.equal(atLimit.status, 429, 'at the person\'s limit, refused rather than put in line');
+  assert.match(atLimit.body.error, /has 3 sessions open, as many as Console settings allows \(3 per person\)/);
+  assert.equal(full.asked.length, 0);
+  const room = await serve({ sessions, perPerson: 4 });
+  t.after(room.close);
+  assert.equal((await room.call('POST', '/sessions', { token, body: { prompt: 'x' } })).status, 201, 'another person\'s sessions count for nothing');
+  sessions.splice(1);
+  session.startsThisRun = 0;
 
   const gone = await serve({ sessions: [session], allowed: () => false });
   t.after(gone.close);

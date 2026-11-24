@@ -37,11 +37,6 @@ export const SETTINGS = [
     read: (config) => config.maxPrivatePerPerson ?? 3,
   },
   {
-    key: 'sessionStartsPerHour', group: 'sessions', label: 'Sessions a person\'s sessions may start in an hour', unit: 'sessions', min: 0, max: 50, step: 1,
-    help: 'When Claude in a My Woodshed session hands a piece of work to a new session of the same person\'s. Each run of a session starts at most 5. 0 turns it off.',
-    read: (config) => config.sessionStartsPerHour ?? 10,
-  },
-  {
     key: 'idleHours', group: 'sessions', label: 'Pause a session waiting for input after', unit: 'hours', min: 0.25, max: 24, step: 0.25,
     help: 'Claude asked something, or its PR is in review, and nothing came in.',
     read: (config) => config.limits.idleMs / HOUR_MS,
@@ -125,7 +120,7 @@ export function settingProblem(setting, value) {
  * @param {{state: object}} store
  * @param {{hostProjects?: {changes: {added: object[], removed: string[]}|null}|null}} [opts]  what an embedding
  *   program's repos hook changed since the installation was built (addedProjects.mjs, createHostProjects)
- * @returns {object}  the same config, its `maxRunning`, `maxPrivatePerPerson`, `maxAsks`, `sessionStartsPerHour`, `limits` and
+ * @returns {object}  the same config, its `maxRunning`, `maxPrivatePerPerson`, `maxAsks`, `limits` and
  *   `retention` live
  */
 export function liveConfig(config, store, { hostProjects = null } = {}) {
@@ -160,7 +155,6 @@ export function liveConfig(config, store, { hostProjects = null } = {}) {
     get maxRunning() { return value('maxRunning'); },
     get maxPrivatePerPerson() { return value('maxPrivatePerPerson'); },
     get maxAsks() { return value('maxAsks'); },
-    get sessionStartsPerHour() { return value('sessionStartsPerHour'); },
     limits: {
       ...config.limits,
       get idleMs() { return value('idleHours') * HOUR_MS; },

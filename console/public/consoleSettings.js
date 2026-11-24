@@ -13,7 +13,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
   // The numbers, in the blocks they are saved by: a block is one row's fields and its Save. The two limits on how many
   // run at once, and how many a person's sessions may start (console/sessionStarts.mjs), are a row of their own; whatever
   // else the sessions group holds is its timeouts.
-  const RUNNING_KEYS = ['maxRunning', 'maxPrivatePerPerson', 'sessionStartsPerHour'];
+  const RUNNING_KEYS = ['maxRunning', 'maxPrivatePerPerson'];
   const BLOCKS = {
     running: (s) => s.group === 'sessions' && RUNNING_KEYS.includes(s.key),
     timeouts: (s) => s.group === 'sessions' && !RUNNING_KEYS.includes(s.key),
@@ -144,8 +144,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     return [
       numbersRow({
         id: 'sessions-running', title: 'Running at once', block: 'running',
-        value: [n('maxRunning', (one) => (one ? 'shared session' : 'shared sessions')), n('maxPrivatePerPerson', (one) => `My Woodshed ${one ? 'session' : 'sessions'} per person`),
-          n('sessionStartsPerHour', () => 'started by sessions an hour')],
+        value: [n('maxRunning', (one) => (one ? 'shared session' : 'shared sessions')), n('maxPrivatePerPerson', (one) => `My Woodshed ${one ? 'session' : 'sessions'} per person`)],
       }, W.providerWords.capacityNote && h('p', { class: 'cap-note' }, W.providerWords.capacityNote)),
       numbersRow({
         id: 'sessions-timeouts', title: 'Timeouts', block: 'timeouts',
