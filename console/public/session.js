@@ -214,6 +214,11 @@
     render();
   }
 
+  function startAgentItem(s, list = agentsOf(s)) {
+    if (!canRunAgents(s) || list.length >= 3) return null;
+    return { group: 'Start', label: '+ Another agent', note: 'Claude or Codex, with the model you pick, in this checkout', run: () => newAgentDialog(s) };
+  }
+
   // The switch on the pane bar, while Chat or TUI shows: the agent shown, a menu of every agent in the session with its
   // state, + Another agent, and Stop for the one shown when it is not the session's own.
   function agentSwitch(s) {
@@ -241,7 +246,7 @@
       open: () => ({
         items: [
           ...[own, ...list].map(row),
-          list.length < 3 && { group: 'Start', label: '+ Another agent', note: 'Claude or Codex, with the model you pick, in this checkout', run: () => newAgentDialog(s) },
+          startAgentItem(s, list),
           shown && { group: 'Start', end: true, danger: true, label: `Stop ${agentLabel(shown.agent, shown.model)}`, note: 'Ends this agent: its conversation stays in the session\'s home', run: () => stopAgent(s, shown) },
         ].filter(Boolean),
       }),
@@ -305,7 +310,7 @@
     showAgent();
     const field = (label, control) => h('label', { class: 'field-label' }, h('span', null, label), control);
     const form = h('form', { method: 'dialog', class: 'agent-form' },
-      h('p', { class: 'sub' }, 'It works in this session\'s checkout, beside the agents already in it. Pick it above the tabs to chat with it or see its terminal.'),
+      h('p', { class: 'sub' }, 'It works in this session\'s checkout, beside the agents already in it. Use the agent switch in Chat or TUI to choose which agent you see.'),
       h('div', { class: 'agent-grid' }, field('Agent', agent), field('Model', model), field('Effort', effort), field('Permissions', mode)),
       field('First message', prompt),
       error,
@@ -333,7 +338,8 @@
           keepAgentPick(s.id, started.id);
         }
         W.shell.toast(`${agentLabel(agent.value, model.value)} is starting: it shows on ${tab === 'tui' ? 'TUI' : 'Chat'} as it opens`);
-        render();
+        if (tab === 'chat' || tab === 'tui') render();
+        else setTab('chat');
         refresh();
       } catch (err) {
         busy = false;
@@ -1696,6 +1702,7 @@
     const choices = data.appDomain && !busy && !none && W.appChoices(s) ? W.appChoiceItems(s, refresh, render).map((a) => ({ ...a, group: 'App', label: `Start ${a.label}` })) : [];
     const running = W.runningAppLabel(s);
     return [
+      narrow.matches && startAgentItem(s),
       s.hasShell && W.isPrivate(s) && !s.taintedAt && W.agentOf(s) === 'claude' && {
         group: 'Claude', label: 'Sign in for Remote Control', note: 'Asks claude for /woodshed:remote-control: open the link it shows and paste the code in the chat', run: () => claudeLogin(s),
       },
