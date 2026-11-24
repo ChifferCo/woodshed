@@ -19,12 +19,13 @@ woodshed setup --yes --json --repo acme/app --reviews default
 ```
 
 Pass the person's console with `--console <url>` when they use their own. Repeat `--repo` for multiple repos. Each
-checklist entry has a `step`, `status`, and `message`. Setup has 7 steps: sign in, repos, Claude Code and Codex, review
-on their repos, reviews of their open pull requests, then the optional agent terminal and first coding session. Always
+checklist entry has a `step`, `status`, and `message`. Setup has 8 steps: sign in, repos, Claude Code and Codex, the
+optional Grok Build and OpenCode, review on their repos, reviews of their open pull requests, then the optional agent
+terminal and first coding session. Always
 tell the person which step it is on, what is left, and whether it is finished: the entry that stops a run carries
 `finished: false`, `stepNumber`, `stepTotal` and `left` (the steps after it), and a run that ends with 0 ends with
 `step: "finished"`, `finished: true`: only then say setup is finished. On exit 2, show them the message and any `url`
-or `userCode`, say it is step N of 7 and what is left, and stop. Run setup again after they complete that step. They
+or `userCode`, say it is step N of 8 and what is left, and stop. Run setup again after they complete that step. They
 approve the CLI sign-in and install any GitHub Apps in their browser.
 
 - **Sign in (`step: login`).** A new sign-in exits 2 with `userCode` and `url`. Show them both, then run the same
@@ -40,9 +41,6 @@ approve the CLI sign-in and install any GitHub Apps in their browser.
   (`claude setup-token` for Claude; `codex login`, then `~/.codex/auth.json` or an OpenAI API key, for Codex). They
   paste it on My settings themselves: never ask for, read, or pass a token. If they say they use only one, rerun with
   `--agent claude` or `--agent codex`, and setup does not ask for the other.
-  Grok Build and OpenCode are not part of setup: a session runs them only on the person's own sign-in, pasted on My
-  settings (`grok login` then `~/.grok/auth.json` or an xAI key; `opencode auth login` then
-  `~/.local/share/opencode/auth.json`), and `woodshed status --json` lists each in `sessionSignIns`.
   After showing them the steps from that exit 2, don't wait for them to say they are done: run the same setup
   command again with `--wait` added (check `woodshed setup --help` lists it; on older builds, rerun when they say).
   It prints the steps again (`status: "waiting"`), asks the console every 5 seconds, reports each agent as it
@@ -52,6 +50,16 @@ approve the CLI sign-in and install any GitHub Apps in their browser.
   the wait (over 15 minutes for a bare `--wait`; use `--wait=<N>m` when your tool's timeout is shorter). Run it once,
   not in a loop: when it exits 2 at `step: agent` (the time ran out), show them the steps again and stop until they
   say. Every other exit 2 (a GitHub App or the reviewer App, or a sign-in code that expired) is as above: show it and stop.
+- **Grok Build and OpenCode (`step: own-agents`), optional.** A session runs them only on the person's own sign-in,
+  never a team's, and `woodshed status --json` lists each in `sessionSignIns`. Setup looks for the file each agent's
+  own login saved on this computer (`~/.grok/auth.json` from `grok login`, `~/.local/share/opencode/auth.json` from
+  `opencode auth login`; the entry's `file`) and checks it. It sends one only when the person says so: on their own
+  terminal it names the file and the console and asks, and asks again before replacing a saved one. With `--yes` or
+  no terminal it sends nothing and the message says the flag: never add `--grok-sign-in` or `--opencode-sign-in` (or
+  `=replace`) unless the person said yes to sending that file to that console, after you told them which file and
+  which console. Never read, print or pass the file yourself: setup sends it through `woodshed sign-in push` and never
+  prints it. With no file, tell them the message's step (`grok login`, or an xAI key on My settings; `opencode auth
+  login`) only if they want that agent: it is optional and never stops setup unless a flag named it.
 - **Review on their repos (`repo-review`, `review-choice`).** Every repo is reviewed by default, with no checkout, project
   file or pull request. Setup checks it per repo, exits 2 with the link when the console's reviewer App still has to be
   made or installed (an admin's step), and otherwise says the tag (`tag` in `--json`, `[woodshed-review]` unless the
