@@ -573,3 +573,24 @@ test('a reply sent as a question leaves its sender asking, and the answer it get
   assert.deepEqual(api.fleet.questions.at(-1), ['answered', child.id]);
   assert.equal(child.askedAt, null);
 });
+
+test('an answer handed to the asking session\'s own wait answers its question too', async (t) => {
+  const { token, session, child, sessions } = family();
+  const childToken = newStartToken();
+  child.startTokenHash = startTokenHash(childToken);
+  Object.assign(session, { state: 'working', pendingMessages: [] });
+  const api = await serve({ sessions });
+  t.after(api.close);
+  // The child asked, then waits on the session that started it for the answer.
+  await api.call('POST', `/sessions/${session.id}/messages`, { token: childToken, body: { text: 'Developers or customers?', question: true } });
+  assert.ok(child.askedAt);
+  const waiting = api.call('GET', `/sessions/${session.id}/wait?for=reply`, { token: childToken });
+  await new Promise((r) => setTimeout(r, 50));
+  const sentBefore = api.fleet.sent.length;
+  const answer = await api.call('POST', `/sessions/${child.id}/messages`, { token, body: { text: 'Customers.' } });
+  assert.equal(answer.body.answeredWait, true);
+  assert.equal((await waiting).body.reply.text, 'Customers.');
+  assert.equal(api.fleet.sent.length, sentBefore, 'handed to its wait, not typed in');
+  assert.equal(child.askedAt, null, 'and its question answered');
+  assert.deepEqual(api.fleet.questions.at(-1), ['answered', child.id]);
+});
