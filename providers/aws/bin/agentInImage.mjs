@@ -9,9 +9,11 @@
 //
 //   node woodshed/providers/aws/bin/agentInImage.mjs <image> <grok|opencode> [entrypoint.sh]
 //
-// `entrypoint.sh` is copied over the image's, to try a start change before the image is built. Needs Docker and
-// `gh auth token`, whose token the session's git fetches with: the container is removed with a kill, so statusd's stop
-// never pushes. REPO names the repo (owner/name), which an image with no checkout clones at start; IN_IMAGE_CONSOLE_HOST
+// `entrypoint.sh` is copied over the image's, to try a start change before the image is built. Needs Docker. The
+// container runs the repo's code and an agent in auto mode, so it is handed no GitHub credential of yours (as
+// agentsInImage.mjs): its session API hands out a placeholder, and git fetches a public repo without one. For a private
+// repo, IN_IMAGE_GH_TOKEN gives the token to hand out instead: a fine-grained one that can only read that repo
+// (Contents: read), never `gh auth token`. The container is removed with a kill, so statusd's stop never pushes. REPO names the repo (owner/name), which an image with no checkout clones at start; IN_IMAGE_CONSOLE_HOST
 // the address the container reaches this computer at (default host.docker.internal).
 
 import http from 'node:http';
@@ -69,7 +71,7 @@ async function privateEnv() {
 }
 
 function serve(fleet) {
-  const ghToken = execFileSync('gh', ['auth', 'token'], { encoding: 'utf8' }).trim();
+  const ghToken = process.env.IN_IMAGE_GH_TOKEN || 'in-image-no-github-token';
   const handle = createSessionApi({
     fleet,
     tokens: { token: async () => ({ token: ghToken, expiresAt: Date.now() + 3_600_000 }) },

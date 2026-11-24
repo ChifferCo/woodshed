@@ -1188,6 +1188,8 @@ image with no checkout clones `REPO` (default this repo) at start. In a Woodshed
 OpenCode run on its author's own sign-in: made-up sign-ins held by the real `reviewAgentProxy.mjs`, which forwards to a
 recording stand-in upstream on this computer, never xAI or Anthropic; the review's report is kept, never posted. It
 passes when each reached the proxy with the session's token alone and the proxy swapped in the made-up sign-in.
+These two and `agentsInImage.mjs` hand the container no GitHub login of yours: a placeholder, or for a private repo
+`IN_IMAGE_GH_TOKEN`, a fine-grained token that can only read it.
 `providers/aws/bin/agentsInImage.mjs <image>` is the copy for the agents a private session's owner starts beside its own
 (`session/agents.mjs`): it copies the checkout's `session/` and `shared/` over the image's, runs a private claude start,
 then starts a claude and a codex through statusd's `/agents` and opens the TUI tab's ttyd for each, and prints PASSED or

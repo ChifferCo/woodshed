@@ -11,9 +11,14 @@
 //
 //   node woodshed/providers/aws/bin/reviewInImage.mjs <image> [pull request number]
 //
-// Needs Docker and `gh auth token`, whose token the session's git and gh read the pull request with (nothing is written
-// to GitHub). REPO names the repo (owner/name, default this one), which an image with no checkout clones at start;
-// IN_IMAGE_CONSOLE_HOST the address the container reaches this computer at (default host.docker.internal).
+// Needs Docker, and `gh` on this computer to read the pull request's branch and commit, here. The container runs the pull
+// request's code and the reviewers read what anyone who can push to it wrote, so it is handed no GitHub credential of
+// yours (as agentsInImage.mjs): its session API hands out a placeholder, git fetches a public repo without one, and the
+// review's own `gh` reads of the pull request's discussion fail, which the review takes as no context. For a private
+// repo, IN_IMAGE_GH_TOKEN gives the token to hand out instead: a fine-grained one that can only read that repo
+// (Contents and Pull requests: read), never `gh auth token`. REPO names the repo (owner/name, default this one), which an
+// image with no checkout clones at start; IN_IMAGE_CONSOLE_HOST the address the container reaches this computer at
+// (default host.docker.internal).
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -104,7 +109,7 @@ async function reviewEnv() {
 const proxyCalls = [];
 const reports = [];
 function serve(fleet, up) {
-  const ghToken = execFileSync('gh', ['auth', 'token'], { encoding: 'utf8' }).trim();
+  const ghToken = process.env.IN_IMAGE_GH_TOKEN || 'in-image-no-github-token';
   const userSettings = {
     claudeToken: async () => null,
     ownFiles: async () => ({}),
@@ -118,7 +123,8 @@ function serve(fleet, up) {
     grokUpstreams: { key: `${up}/xai/v1`, login: `${up}/grok-login/v1` },
     opencodeUpstreams: { anthropic: `${up}/anthropic` },
   });
-  // A review reads GitHub with the session API's read-only token: here, this computer's own, used only to read.
+  // A review reads GitHub with the session API's read-only token: here a placeholder, or IN_IMAGE_GH_TOKEN's read-only
+  // one, never this computer's own login.
   const tokens = { token: async () => ({ token: ghToken, expiresAt: Date.now() + 3_600_000 }) };
   const handle = createSessionApi({ fleet, tokens, askTokens: tokens, userSettings, reviewAgentProxy });
   const token = fleet.sessions()[0].token;
