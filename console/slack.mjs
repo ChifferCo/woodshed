@@ -341,7 +341,7 @@ export function createSlack({ store, secrets, fetchImpl = fetch, now = Date.now 
   /**
    * The messages of a thread, oldest first, as `conversations.replies` gives them (needs `channels:history` and
    * `groups:history`). Messages by bots and other subtypes (joins, edits' notices) are left out, so the bot's own
-   * answers are not among them. At most `THREAD_PAGES` calls; when there are more, the newest are kept.
+   * answers are not among them. At most `THREAD_PAGES` calls, from the oldest message: a longer thread gives its first pages.
    * @param {{channel: string, threadTs: string, before?: string, after?: string}} args  `before` is a message `ts` the
    *   read stops short of; `after` one it starts after (both exclusive)
    * @returns {Promise<{messages: {user: string, team: string|null, text: string, ts: string}[]}|{error: string}>}
