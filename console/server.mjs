@@ -305,7 +305,22 @@ const STATIC_FILES = {
   'people.js': 'text/javascript; charset=utf-8',
   // Run on people's own computers, so it is served before sign-in; it holds nothing secret.
   'woodshed-db.mjs': 'text/javascript; charset=utf-8',
+  // The terminal page's (terminalPageHtml): xterm.js as ttyd 1.7.7 bundles it (public/vendor/xterm/README.md), and the
+  // page's own script.
+  'terminalPage.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/xterm.css': 'text/css; charset=utf-8',
+  'vendor/xterm/xterm.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/addon-fit.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/addon-web-links.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/addon-unicode11.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/addon-webgl.js': 'text/javascript; charset=utf-8',
+  'vendor/xterm/addon-canvas.js': 'text/javascript; charset=utf-8',
 };
+// The page behind the TUI and Terminal tabs, made here rather than kept as a file so that it names each of its files
+// by hash: /static/term.html, the same for every session (its fragment names which), kept by the browser.
+const TERMINAL_PAGE = 'term.html';
+const TERMINAL_PAGE_SCRIPTS = ['vendor/xterm/xterm.js', 'vendor/xterm/addon-fit.js', 'vendor/xterm/addon-web-links.js',
+  'vendor/xterm/addon-unicode11.js', 'vendor/xterm/addon-webgl.js', 'vendor/xterm/addon-canvas.js', 'terminalPage.js'];
 const MAX_BODY_BYTES = 16 * 1024;
 // A whole .env file, JSON-escaped, under Secrets Manager's 64 KB.
 const MAX_SECRET_BODY_BYTES = 160 * 1024;
@@ -520,6 +535,43 @@ function staticUrl(file) {
 }
 
 /**
+ * The terminal page (public/terminalPage.js): xterm.js, filling the frame, and a line for the connection's state. Its
+ * background is the session's terminal ground (session/entrypoint.sh's theme), so a frame never shows white or grey
+ * before the terminal draws.
+ * @returns {string}
+ */
+export function terminalPageHtml() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminal</title>
+<link rel="stylesheet" href="${staticUrl('vendor/xterm/xterm.css')}">
+<style>
+html, body { height: 100%; margin: 0; overflow: hidden; background: #14171d; }
+#terminal-container { height: 100%; margin: 0 auto; padding: 0; width: auto; }
+#terminal-container .terminal { height: calc(100% - 10px); padding: 5px; }
+#overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10; padding: 10px 16px;
+  border-radius: 8px; background: rgba(27, 34, 50, .92); color: #e8ecf5; font: 500 15px/1.4 system-ui, sans-serif;
+  pointer-events: none; text-align: center; max-width: 80%; }
+</style>
+</head>
+<body>
+<div id="terminal-container"></div>
+<div id="overlay" role="status" hidden></div>
+${TERMINAL_PAGE_SCRIPTS.map((file) => `<script src="${staticUrl(file)}"></script>`).join('\n')}
+</body>
+</html>
+`;
+}
+
+/** @returns {string}  the terminal page's URL, versioned by what it holds, its files' hashes included */
+export function terminalPageUrl() {
+  return `/static/${TERMINAL_PAGE}?v=${createHash('sha256').update(terminalPageHtml()).digest('hex').slice(0, 12)}`;
+}
+
+/**
  * @param {{title: string, script: string|string[], login?: string|null, provider?: {name: string, words?: object}|null,
  *          linkQuery?: Record<string, string>|null, hostPage?: string, styles?: string[]}} args
  *   `title` is the console's name (config.consoleName): the page's title, the installed app's on a home screen, and
@@ -543,6 +595,7 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <meta name="viewport" content="width=device-width, initial-scale=1">${who}${queryMeta}
 <meta name="woodshed-provider" content="${providerMetaContent(provider)}">
 <meta name="woodshed-console-name" content="${name}">
+<meta name="woodshed-terminal-page" content="${terminalPageUrl()}">
 <title>${name}</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#1b2232">
@@ -621,6 +674,18 @@ export function servePublic(req, res, url, consoleName = DEFAULT_CONSOLE_NAME) {
   }
   if (PWA_PATHS.has(url.pathname) && handlePwaRequest(req, res)) return true;
   const file = url.pathname.startsWith('/static/') ? url.pathname.slice('/static/'.length) : null;
+  if (file === TERMINAL_PAGE) {
+    const page = terminalPageHtml();
+    const current = url.searchParams.get('v') === new URL(terminalPageUrl(), 'http://console.invalid').searchParams.get('v');
+    // Framed only by the console's own pages, as ttyd's page is (terminalProxy.mjs): one framing it could type into claude.
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': current ? 'public, max-age=31536000, immutable' : 'no-cache',
+      'content-security-policy': "frame-ancestors 'self'",
+    });
+    res.end(req.method === 'HEAD' ? undefined : page);
+    return true;
+  }
   if (!file || !STATIC_FILES[file]) return false;
   // Only the version a page names is kept: an old or missing ?v= is asked for again each time.
   const current = url.searchParams.get('v') === staticHash(file);

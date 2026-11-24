@@ -289,6 +289,9 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   the terminal in both themes: the image viewer's `bar` ground and outlined `bar-well` buttons, never orange.
 - Every match is washed `bar-amber-line` and the one shown `bar-amber`, with the terminal's ground as its text. The
   count says `3 of 12`, or `No match` in words, with the field's border `bar-amber-line`. Never a red.
+- A terminal whose connection dropped says so in words, centred over it (`public/terminalPage.js`): `Reconnecting…`,
+  `Reconnected`, `Connection closed. Press ⏎ to reconnect`. Dark like the terminal in both themes: light `ink` at 92%
+  as its ground and dark `ink` as its text, in the system sans. Never orange or red, and no spinner.
 
 ## The review page's Q&A
 

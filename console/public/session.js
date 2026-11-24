@@ -1799,6 +1799,18 @@
   // never hidden to warm it: with no box to measure, xterm makes ttyd attach tmux at 80x24 and tmux shrinks the
   // window for every other client of the session.
   const MAX_TERMINALS = 8;
+  // The console's own terminal page (terminalPage.js), which the browser keeps, so a frame loads only its websocket.
+  // `localStorage['woodshed-terminal-page'] = 'ttyd'` in this browser goes back to the page ttyd serves from the session.
+  const TERMINAL_PAGE = document.querySelector('meta[name="woodshed-terminal-page"]')?.content || null;
+  function terminalSrc(path, id) {
+    let page = TERMINAL_PAGE;
+    try {
+      if (window.localStorage.getItem('woodshed-terminal-page') === 'ttyd') page = null;
+    } catch {
+      // No storage here: the console's page.
+    }
+    return page ? `${page}#${path}/${id}` : `/${path}/${id}/`;
+  }
 
   /**
    * @param {{pane: 'agent'|'terminal', root: () => HTMLElement, path: string, label: string, keyOf: (s: object) => string|null}} args
@@ -1818,7 +1830,7 @@
     }
 
     function mount(s, key) {
-      const frame = h('iframe', { class: 'term', src: `/${path}/${s.id}/`, title: `${label} for ${s.title}`, onload: (e) => bindTerminal(e.target, s.id, pane) });
+      const frame = h('iframe', { class: 'term', src: terminalSrc(path, s.id), title: `${label} for ${s.title}`, onload: (e) => bindTerminal(e.target, s.id, pane) });
       frames.set(key, frame);
       root().append(frame);
     }
