@@ -472,7 +472,7 @@ function depsRepo(t, { command = 'echo run >> ran' } = {}) {
   fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), fixtureProject({ dependencies: { installs: [install] } }));
   const records = path.join(root, 'records');
   fs.mkdirSync(path.join(records, 'api'), { recursive: true });
-  const recorded = execFileSync('bash', ['-c', `. "${SESSION_DIR}/deps.sh"; depsRecord "$1" "$2" vendor`, 'x', path.join(repoDir, 'api'), install.files.join(' ')], { encoding: 'utf8' });
+  const recorded = execFileSync('bash', ['-c', `. "${SESSION_DIR}/deps.sh"; depsRecord "$1" "$2" vendor`, 'x', path.join(repoDir, 'api'), install.files.join(' ')], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH }) });
   fs.writeFileSync(path.join(records, 'api/built-from'), recorded);
   return { root, repoDir, records };
 }
@@ -484,7 +484,7 @@ function refreshDeps({ root, repoDir, records }, env = {}) {
     'project() { node "$SHARED_DIR/project.mjs" "$@"; }', `. "${SESSION_DIR}/deps.sh"`,
     `DEPS_STATUS=${root}/woodshed-deps`, fn('refreshDeps'), 'refreshDeps',
   ].join('\n');
-  const run = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir, WOODSHED_DEPS_RECORDS: records, ...env } });
+  const run = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: isolatedEnv({ PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir, WOODSHED_DEPS_RECORDS: records, ...env }) });
   const ran = path.join(repoDir, 'api/ran');
   return { ...run, status: fs.readFileSync(path.join(root, 'woodshed-deps'), 'utf8'), runs: fs.existsSync(ran) ? fs.readFileSync(ran, 'utf8').split('\n').filter(Boolean).length : 0 };
 }
