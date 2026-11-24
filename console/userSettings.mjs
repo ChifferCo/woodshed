@@ -26,6 +26,7 @@ import logins from './public/logins.cjs';
 import { DOTFILES, dotfileProblem } from '../shared/dotfiles.mjs';
 import { SETTINGS, settingProblem } from './consoleSettings.mjs';
 import agents from '../shared/agents.cjs';
+import { MODELS } from './sessions.mjs';
 const { loginKey } = logins;
 
 // Who may review a person's pull requests, as reviewAgents.mjs reads it: a preset's name, or reviewers joined with `+`
@@ -251,6 +252,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
         .map((id) => [id, usesOwnAgentForReviews(login, id)])),
       reviewAgents: reviewChoice(record?.reviewAgents),
       terminal: terminal(login),
+      claudeModel: claudeModel(login),
       limits: { ...record?.limits },
       github: { connected: Boolean(github?.connectedAt), connectedAt: github?.connectedAt ?? null, name: github?.name ?? null, email: github?.email ?? null },
       home: { saved: Boolean(record?.home?.savedAt), savedAt: record?.home?.savedAt ?? null, bytes: record?.home?.bytes ?? 0 },
@@ -552,6 +554,24 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     return TERMINALS.includes(saved) ? saved : 'tmux';
   }
 
+  /**
+   * The Claude model New session starts with picked (launcher.js), as `claude --model` takes it (MODELS in sessions.mjs):
+   * empty for claude's own default. Only the form's first pick: the person can still pick another for one session, and
+   * a session started any other way names its own model.
+   * @throws {Error}  shown on the page, for a model the form does not offer
+   */
+  function setClaudeModel(login, model) {
+    if (typeof model !== 'string' || !MODELS.includes(model)) throw Object.assign(new Error(`the model must be one of ${MODELS.filter(Boolean).join(', ')}, or empty for Claude's own default`), { shown: true, status: 400 });
+    touch(login, { claudeModel: model || null });
+    console.log('userSettings: Claude model changed', { login, model: model || 'default' });
+  }
+
+  /** @returns {string}  the person's model, empty for Claude's own default (also for one the form no longer offers) */
+  function claudeModel(login) {
+    const saved = recordFor(login)?.claudeModel;
+    return typeof saved === 'string' && MODELS.includes(saved) ? saved : '';
+  }
+
   /** Replaces the person's own idle and lifetime hours; an empty object goes back to the console's numbers. */
   function setLimits(login, values) {
     const limits = checkLimits(values);
@@ -589,7 +609,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   return {
-    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setAgentAuth, removeAgentAuth, agentAuth, agentAuthTurn, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setOwnAgentForReviews, usesOwnAgentForReviews, setReviewAgents, reviewAgents, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
+    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setAgentAuth, removeAgentAuth, agentAuth, agentAuthTurn, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setOwnAgentForReviews, usesOwnAgentForReviews, setReviewAgents, reviewAgents, setTerminal, terminal, setClaudeModel, claudeModel, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }

@@ -25,6 +25,7 @@ test('the words people reach for find the section, in the right place', () => {
   assert.ok(titles('timeout').includes('Session limits for everyone'));
   assert.equal(search('ostgr')[0].id, 'my-databases', 'part of a word still matches');
   assert.equal(search('tmux')[0].id, 'my-tmux');
+  assert.equal(search('opus')[0].id, 'my-model', 'a model\'s name finds My Claude model');
   assert.equal(search('slack channel')[0].id, 'card-slack');
   assert.equal(search('slack bot token')[0].id, 'card-slack', 'Slack\'s keys are set on its card, not the Secrets page');
   assert.equal(search('questions')[0].id, 'card-slack');

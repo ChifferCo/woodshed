@@ -33,6 +33,8 @@
       words: 'review reviewer reviews codex openai claude code both none no off agents second opinion verdict approve merge risk pull request pr' },
     { page: '/settings', id: 'my-terminal', title: 'Agent terminal', note: 'Whether your private sessions run their agent in tmux or in Herdr.',
       words: 'terminal tmux herdr hc runtime attach agent claude codex grok opencode tui laptop' },
+    { page: '/settings', id: 'my-model', title: 'My Claude model', note: 'The Claude model New session starts with picked: opus, sonnet, haiku, fable or Claude\'s own default.',
+      words: 'model claude opus sonnet haiku fable default new session start pick choose agent llm' },
     { page: '/settings', id: 'my-project', title: 'My default project', note: 'The repo New session starts on for you.',
       words: 'repo repository default project which repo new session start on pick choose' },
     { page: '/settings', id: 'my-display', title: 'Display', note: 'Theme, review files folded or expanded, and whether a session opens on Chat or TUI, on a desktop and on a phone.',

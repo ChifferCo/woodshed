@@ -2017,6 +2017,32 @@ test('My settings\' Agent terminal: each person picks tmux or Herdr for their ow
   assert.equal(userSettings.terminal('mia-dev'), 'tmux');
 });
 
+test('My settings\' Claude model: each person picks the model New session starts with, claude\'s own default until then', async (t) => {
+  const { createUserSettings } = await import('./userSettings.mjs');
+  const secrets = { values: new Map(), async read(n) { return this.values.get(n) ?? null; }, async write(n, v) { this.values.set(n, v); }, async remove(n) { this.values.delete(n); }, async list() { return [...this.values.keys()]; } };
+  const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets });
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+
+  assert.equal(userSettings.view('mia-dev').claudeModel, '', 'nothing picked: claude\'s own default');
+  const opus = await post(port, '/api/my/claude-model', { model: 'opus', login: 'joel' }, as);
+  assert.deepEqual([opus.status, opus.body], [200, { claudeModel: 'opus' }]);
+  assert.equal(userSettings.claudeModel('mia-dev'), 'opus', 'the body cannot say whose it is');
+  assert.equal(userSettings.claudeModel('joel'), '');
+  const me = JSON.parse(await getBody(port, '/api/my', as));
+  assert.equal(me.claudeModel, 'opus', 'New session reads it from /api/my');
+  assert.equal((await post(port, '/api/my/claude-model', { model: 'gpt-5' }, as)).status, 400, 'only a model the form offers');
+  assert.equal((await post(port, '/api/my/claude-model', {}, as)).status, 400);
+  assert.equal((await post(port, '/api/my/claude-model', { model: 'haiku' }, { ...as, origin: 'https://evil.example' })).status, 403);
+  assert.equal(userSettings.claudeModel('mia-dev'), 'opus');
+  assert.equal((await post(port, '/api/my/claude-model', { model: '' }, as)).body.claudeModel, '', 'back to claude\'s own default');
+});
+
 test('a console that borrows its GitHub access shows no webhook switches, unless its host delivers webhooks', async (t) => {
   const { createWebhookSwitch } = await import('./webhookSwitch.mjs');
   const base = {
