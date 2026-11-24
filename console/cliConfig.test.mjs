@@ -120,7 +120,13 @@ test('a config write runs the page\'s own route and checks, and answers with the
   assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { choice: 'grok+claude' } })).body.reviews, 'claude+grok', 'saved in the registry\'s order');
   assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { choice: 'claude+claude' } })).status, 400);
 
-  for (const [path, body] of [['/api/my/claude-token', { value: 'sk-ant-x' }], ['/api/my/codex-auth', { value: 'sk-x' }], ['/api/my/agent-auth/grok', { value: 'xai-made-up-key-0123456789' }], ['/api/my/files/tmux-conf', { text: 'set -g mouse on' }]]) {
+  // A Grok Build or OpenCode sign-in is saved from the command line by `woodshed sign-in push` (cli/agentSignIns.mjs),
+  // answered with whether one is set and never the page's view; removing one stays the page's.
+  const pushed = await c.call('/api/my/agent-auth/grok', { method: 'POST', body: { value: 'xai-made-up-key-0123456789' } });
+  assert.equal(pushed.status, 200);
+  assert.deepEqual(Object.keys(pushed.body).sort(), ['agent', 'savedAt', 'set']);
+  assert.equal((await c.call('/api/my/agent-auth/grok/remove', { method: 'POST', body: {} })).status, 403, 'a sign-in is never removed from the command line');
+  for (const [path, body] of [['/api/my/claude-token', { value: 'sk-ant-x' }], ['/api/my/codex-auth', { value: 'sk-x' }], ['/api/my/files/tmux-conf', { text: 'set -g mouse on' }]]) {
     const out = await c.call(path, { method: 'POST', body });
     assert.equal(out.status, 403, `${path}: a secret is never set from the command line`);
   }
