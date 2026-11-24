@@ -16,12 +16,18 @@
 // started stops being used at once. The console never refreshes a Grok login (grokModels.mjs says why): one whose
 // `expires_at` has passed is refused, and the review's grok says so. OpenCode runs only on an API key here, never a login
 // (OPENCODE_REVIEW_PROVIDERS says why). Nothing of a sign-in is logged: the login, the agent, how, and a status.
+//
+// Each body is read whole (up to MAX_BODY_BYTES) and checked before the sign-in is read or added: it must be JSON with
+// only the fields the review's agent was measured to send (reviewAgentScope.mjs), so a call cannot name a response,
+// file, vector store, container or anything else the author's account already holds and have the provider read it for
+// a prompt planted in the pull request. A GET passes with no body.
 
 import http from 'node:http';
 import https from 'node:https';
 import agents from '../shared/agents.cjs';
 import { isReview } from './sessions.mjs';
 import { ownReviewCredential } from './reviewAgents.mjs';
+import { refusedField } from './reviewAgentScope.mjs';
 
 const GROK_PREFIX = '/grok';
 const OPENCODE_PREFIX = '/opencode';
@@ -49,7 +55,12 @@ const UNPLAIN_PATH_RE = /[%\\]|\/\/|(?:^|\/)\.{1,2}(?:\/|$)/;
 // Ours to set, or the connection's own: never passed on. OpenAI's organization and project headers too: they pick which
 // of the author's projects a key acts in, which is the key's own, never the review's to choose.
 const DROPPED_HEADERS = new Set(['host', 'connection', 'keep-alive', 'proxy-connection', 'authorization', 'x-api-key',
-  'cookie', 'chatgpt-account-id', 'anthropic-api-key', 'openai-organization', 'openai-project']);
+  'cookie', 'chatgpt-account-id', 'anthropic-api-key', 'openai-organization', 'openai-project',
+  // The body goes on as read and checked here, with its own length.
+  'content-length', 'transfer-encoding', 'content-encoding']);
+
+// The most of a call's body that is read to check it: a long review's conversation, with a few images, fits.
+export const MAX_BODY_BYTES = 32 * 1024 * 1024;
 
 const under = (pathname, prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`);
 
@@ -100,6 +111,26 @@ export function reviewAgentRoute(url, method = 'GET') {
   return { agent, provider, path: rest };
 }
 
+// A body up to MAX_BODY_BYTES; past it, the rest is read and dropped, so the refusal can still be answered.
+function readCapped(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    let bytes = 0;
+    req.on('data', (chunk) => {
+      if (bytes > MAX_BODY_BYTES) return;
+      bytes += chunk.length;
+      if (bytes > MAX_BODY_BYTES) {
+        chunks.length = 0;
+        return resolve('too large');
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', () => resolve('cut off'));
+    req.on('aborted', () => resolve('cut off'));
+  });
+}
+
 function refuse(res, code, message) {
   res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   res.end(JSON.stringify({ error: { type: code === 401 ? 'authentication_error' : 'permission_error', message } }));
@@ -133,11 +164,12 @@ export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}
     return { target: new URL(opencodeUpstreams[provider] ?? OPENCODE_PROVIDERS[provider].upstream), headers: OPENCODE_PROVIDERS[provider].header(cred.key), via: provider };
   }
 
-  function forward(req, res, { target, path, headers: added, product }) {
+  function forward(req, res, { target, path, headers: added, product, body }) {
     const transport = target.protocol === 'http:' ? http : https;
     const headers = {};
     for (const [name, value] of Object.entries(req.headers)) if (!DROPPED_HEADERS.has(name)) headers[name] = value;
     Object.assign(headers, added, { host: target.host });
+    if (body) headers['content-length'] = String(body.length);
     const base = target.pathname.replace(/\/+$/, '');
     // The base names the API's /v1 (a Grok upstream) or none (Anthropic's, OpenAI's): the path asked for has its own.
     const upstreamPath = base.endsWith('/v1') ? `${base}${path.slice('/v1'.length)}` : `${base}${path}`;
@@ -154,7 +186,46 @@ export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}
     });
     // The agent cancels a turn by closing its request: the upstream call goes with it.
     res.on('close', () => { if (!res.writableFinished) out.destroy(); });
-    req.pipe(out);
+    out.end(body ?? undefined);
+  }
+
+  /**
+   * A call's body, read whole and checked before the author's sign-in is read: null when it was refused (and answered).
+   * A GET has none, and one that carries one is not read: nothing of it goes on.
+   */
+  async function checkedBody(req, res, session, route, product) {
+    if (req.method === 'GET') {
+      req.resume();
+      return undefined;
+    }
+    const api = route.agent === 'grok' ? 'grok' : route.provider;
+    const refused = (status, why, field, message) => {
+      console.warn('reviewAgentProxy: refused, a body a review\'s agent does not send', { sessionId: session.id, agent: route.agent, path: route.path, why, field });
+      refuse(res, status, message);
+      return null;
+    };
+    const encoding = String(req.headers['content-encoding'] ?? 'identity').toLowerCase();
+    if (encoding !== 'identity') {
+      req.resume();
+      return refused(415, 'compressed', null, `a review's ${product} sends its calls uncompressed, as JSON the console can check`);
+    }
+    const body = await readCapped(req);
+    if (body === 'too large') return refused(413, 'too large', null, `this call is larger than the console reads for a review (${MAX_BODY_BYTES / 1024 / 1024} MB)`);
+    if (body === 'cut off') {
+      res.destroy();
+      return null;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(body.toString('utf8'));
+    } catch {
+      return refused(400, 'not JSON', null, `a review's ${product} sends JSON the console can check, and this call is not`);
+    }
+    const field = refusedField(api, route.path, parsed);
+    if (field !== null) {
+      return refused(403, 'a field not allowed', field, `a review's ${product} does not send ${field} to ${route.path}: the console passes only what a review's ${product} sends, never a field that could name something the author's account holds`);
+    }
+    return body;
   }
 
   async function handle(req, res, session) {
@@ -193,6 +264,9 @@ export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}
       console.warn('reviewAgentProxy: refused, not the provider the review started on', { sessionId: session.id, provider: route.provider, started: own.provider ?? null });
       return refuse(res, 403, `this review's OpenCode runs on ${own.provider ?? 'no provider'}, not ${route.provider}`);
     }
+    // Checked before the sign-in is read: a call that could name what the author's account holds never gets it.
+    const body = await checkedBody(req, res, session, route, product);
+    if (body === null) return undefined;
     let cred;
     try {
       cred = await authorCredential(own.login, route.agent, route.provider);
@@ -210,7 +284,7 @@ export function createReviewAgentProxy({ userSettings = null, grokUpstreams = {}
       routed.add(`${session.id}/${route.agent}`);
       console.log(`reviewAgentProxy: first call on the author's ${product} sign-in`, { sessionId: session.id, agent: route.agent, author: own.login, via: cred.via });
     }
-    return forward(req, res, { target: cred.target, path: route.path, headers: cred.headers, product });
+    return forward(req, res, { target: cred.target, path: route.path, headers: cred.headers, product, body });
   }
 
   return { isProxyPath: isReviewAgentPath, handle };

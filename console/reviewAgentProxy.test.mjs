@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 
-import { createReviewAgentProxy, reviewAgentRoute, reviewAgentTokenOf } from './reviewAgentProxy.mjs';
+import { MAX_BODY_BYTES, createReviewAgentProxy, reviewAgentRoute, reviewAgentTokenOf } from './reviewAgentProxy.mjs';
 import { createSessionApi, sessionTokenOf } from './sessionApi.mjs';
 
 const NOW = Date.parse('2026-11-18T10:00:00Z');
@@ -50,9 +50,10 @@ async function setup(t, { on = { grok: ['gil', 'lou', 'old'], opencode: ['oto', 
     });
   });
   const up = `http://127.0.0.1:${await listen(upstream)}`;
+  const reads = [];
   const userSettings = {
     usesOwnAgentForReviews: (login, id) => (on[id] ?? []).includes(login),
-    agentAuth: async (login, id) => signIns[id]?.[login] ?? null,
+    agentAuth: async (login, id) => { reads.push(id); return signIns[id]?.[login] ?? null; },
   };
   const reviewAgentProxy = createReviewAgentProxy({
     userSettings, now: () => NOW,
@@ -63,7 +64,7 @@ async function setup(t, { on = { grok: ['gil', 'lou', 'old'], opencode: ['oto', 
   const port = await listen(server);
   t.after(() => { server.close(); upstream.close(); });
   // As sent, with no tidying of `..` (fetch would resolve it before sending).
-  const call = (token, path = '/grok/v1/chat/completions', { method = 'POST', header = 'authorization', extra = {} } = {}) => new Promise((resolve, reject) => {
+  const call = (token, path = '/grok/v1/chat/completions', { method = 'POST', header = 'authorization', extra = {}, body = '{"model":"grok-build"}' } = {}) => new Promise((resolve, reject) => {
     const auth = token ? { [header]: header === 'authorization' ? `Bearer ${token}` : token } : {};
     const r = http.request({ host: '127.0.0.1', port, method, path, headers: { 'content-type': 'application/json', 'x-grok-client-mode': 'headless', ...extra, ...auth } }, (res) => {
       let body = '';
@@ -71,9 +72,9 @@ async function setup(t, { on = { grok: ['gil', 'lou', 'old'], opencode: ['oto', 
       res.on('end', () => resolve({ status: res.statusCode, body }));
     });
     r.on('error', reject);
-    r.end(method === 'POST' ? '{"model":"grok-build"}' : undefined);
+    r.end(method === 'POST' ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined);
   });
-  return { seen, call };
+  return { seen, call, reads };
 }
 
 function logged(t) {
@@ -244,4 +245,149 @@ test('the session API knows the token a review\'s agent sends, as a bearer or as
   assert.equal(reviewAgentTokenOf({}), null);
   assert.equal(sessionTokenOf({ url: '/opencode/anthropic/v1/messages', headers: { 'x-api-key': 'tok' } }), 'tok');
   assert.equal(sessionTokenOf({ url: '/grok/v1/models', headers: { authorization: 'Bearer tok' } }), 'tok');
+});
+
+// Bodies in the shapes each agent was measured to send (reviewAgentScope.mjs): the turn after a tool call, its whole
+// conversation in it. The values are made up.
+const MEASURED = {
+  grokTurn: ['review-gil', '/grok/v1/chat/completions', {
+    model: 'grok-build', stream: true, stream_options: { include_usage: true },
+    messages: [
+      { role: 'system', content: 'You review.' }, { role: 'user', content: 'Review this.' },
+      { role: 'assistant', content: 'Looking.', model_id: 'grok-build', reasoning_content: 'hm', tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a"}' } }] },
+      { role: 'tool', tool_call_id: 'call_1', content: 'file' },
+    ],
+    tools: [{ type: 'function', function: { name: 'read_file', description: 'Reads', parameters: { type: 'object', properties: { file_id: { type: 'string' } } } } }],
+  }],
+  grokTitle: ['review-gil', '/grok/v1/responses', {
+    model: 'grok-build', input: [{ type: 'message', role: 'user', content: 'Review this.' }], max_output_tokens: 64,
+    reasoning: { summary: 'auto' }, store: false, stream: true, temperature: 0,
+    tool_choice: { type: 'function', name: 'title' }, tools: [{ type: 'function', name: 'title', description: 'Names it', parameters: { type: 'object' } }],
+  }],
+  anthropicTurn: ['review-oto', '/opencode/anthropic/v1/messages', {
+    model: 'claude-made-up', max_tokens: 1000, stream: true, output_config: { effort: 'high' },
+    thinking: { type: 'adaptive', display: 'summarized', block_binding: { prefix_mismatch_behavior: 'restart' } },
+    system: [{ type: 'text', text: 'You review.', cache_control: { type: 'ephemeral' } }],
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: 'Review this.' }] },
+      { role: 'assistant', content: [{ type: 'thinking', thinking: 'hm', signature: 'sig' }, { type: 'text', text: 'Looking.' }, { type: 'tool_use', id: 'toolu_1', name: 'bash', input: { command: 'ls', file_id: 'not read' }, cache_control: { type: 'ephemeral' } }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'a b', cache_control: { type: 'ephemeral' } }] },
+    ],
+    tools: [{ name: 'bash', description: 'Runs', input_schema: { type: 'object' }, eager_input_streaming: true }], tool_choice: { type: 'auto' },
+  }],
+  openaiTurn: ['review-ovi', '/opencode/openai/v1/responses', {
+    model: 'gpt-made-up', prompt_cache_key: 'ses_made_up', reasoning: { effort: 'medium', mode: 'auto', summary: 'auto' },
+    store: false, stream: true, text: { verbosity: 'low' }, tool_choice: 'auto',
+    input: [
+      { role: 'system', content: 'You review.' }, { role: 'user', content: [{ type: 'input_text', text: 'Review this.' }] },
+      { type: 'reasoning', encrypted_content: 'opaque', summary: [] }, { role: 'assistant', content: [{ type: 'output_text', text: 'Looking.' }] },
+      { type: 'function_call', call_id: 'call_1', name: 'bash', arguments: '{}' }, { type: 'function_call_output', call_id: 'call_1', output: 'a b' },
+    ],
+    tools: [{ type: 'function', name: 'bash', description: 'Runs', parameters: { type: 'object' }, strict: false }],
+  }],
+};
+const SECRET_ID = 'made-up-foreign-object-7f3a';
+const edit = (which, change) => {
+  const [token, path, body] = MEASURED[which];
+  const copy = structuredClone(body);
+  change(copy);
+  return [token, path, copy];
+};
+
+test('the calls each agent was measured to send pass, whole, on the author\'s sign-in', async (t) => {
+  const { seen, call } = await setup(t);
+  for (const [name, [token, path, body]] of Object.entries(MEASURED)) {
+    const res = await call(token, path, { body });
+    assert.equal(res.status, 200, name);
+    assert.deepEqual(JSON.parse(seen.at(-1).body), body, `${name} goes on as sent`);
+    assert.equal(seen.at(-1).headers['content-length'], String(Buffer.byteLength(JSON.stringify(body))));
+  }
+  assert.equal(seen.length, Object.keys(MEASURED).length);
+});
+
+test('a body naming an object the author\'s account holds is refused, top level or nested, before the sign-in is read', async (t) => {
+  const lines = logged(t);
+  const { seen, call, reads } = await setup(t);
+  const cases = {
+    'previous_response_id': edit('openaiTurn', (b) => { b.previous_response_id = SECRET_ID; }),
+    'conversation': edit('openaiTurn', (b) => { b.conversation = SECRET_ID; }),
+    'prompt': edit('openaiTurn', (b) => { b.prompt = { id: SECRET_ID, version: '1' }; }),
+    'store': edit('openaiTurn', (b) => { b.store = true; }),
+    'input[].type': edit('openaiTurn', (b) => { b.input.push({ type: 'item_reference', id: SECRET_ID }); }),
+    'input[].id': edit('openaiTurn', (b) => { b.input[2].id = SECRET_ID; }),
+    'input[].content[].type': edit('openaiTurn', (b) => { b.input[1].content.push({ type: 'input_file', file_id: SECRET_ID }); }),
+    'input[].content[].file_id': edit('openaiTurn', (b) => { b.input[1].content.push({ type: 'input_image', file_id: SECRET_ID }); }),
+    'input[].content[].image_url': edit('openaiTurn', (b) => { b.input[1].content.push({ type: 'input_image', image_url: `https://files.example/${SECRET_ID}` }); }),
+    'tools[].type': edit('openaiTurn', (b) => { b.tools.push({ type: 'file_search', vector_store_ids: [SECRET_ID] }); }),
+    'tools[].container': edit('openaiTurn', (b) => { b.tools[0].container = SECRET_ID; }),
+    'grok previous_response_id': edit('grokTurn', (b) => { b.previous_response_id = SECRET_ID; }),
+    'grok messages[].content[].type': edit('grokTurn', (b) => { b.messages[1].content = [{ type: 'file', file: { file_id: SECRET_ID } }]; }),
+    'grok tools[].type': edit('grokTurn', (b) => { b.tools.push({ type: 'collections_search', collection_ids: [SECRET_ID] }); }),
+    'grok search_parameters': edit('grokTurn', (b) => { b.search_parameters = { sources: [{ type: 'x' }] }; }),
+    'grok title previous_response_id': edit('grokTitle', (b) => { b.previous_response_id = SECRET_ID; }),
+    'grok title input[].type': edit('grokTitle', (b) => { b.input.push({ type: 'item_reference', id: SECRET_ID }); }),
+    'anthropic document': edit('anthropicTurn', (b) => { b.messages[0].content.push({ type: 'document', source: { type: 'file', file_id: SECRET_ID } }); }),
+    'anthropic image by file': edit('anthropicTurn', (b) => { b.messages[0].content.push({ type: 'image', source: { type: 'file', file_id: SECRET_ID } }); }),
+    'anthropic tool result image by file': edit('anthropicTurn', (b) => { b.messages[2].content[0].content = [{ type: 'image', source: { type: 'file', file_id: SECRET_ID } }]; }),
+    'anthropic container': edit('anthropicTurn', (b) => { b.container = SECRET_ID; }),
+    'anthropic mcp_servers': edit('anthropicTurn', (b) => { b.mcp_servers = [{ type: 'url', url: 'https://mcp.example', name: SECRET_ID }]; }),
+    'anthropic server tool': edit('anthropicTurn', (b) => { b.tools.push({ type: 'code_execution_20250825', name: 'code_execution' }); }),
+  };
+  for (const [name, [token, path, body]] of Object.entries(cases)) {
+    const res = await call(token, path, { body });
+    assert.equal(res.status, 403, name);
+    assert.match(JSON.parse(res.body).error.message, /does not send \S+ to \/v1\//, name);
+    assert.ok(!res.body.includes(SECRET_ID), `${name}: the answer never quotes a value`);
+  }
+  assert.equal(seen.length, 0, 'none reached a provider');
+  assert.deepEqual(reads, [], 'no sign-in was read for any');
+  const refusals = lines.filter((l) => l.includes('reviewAgentProxy: refused, a body a review\'s agent does not send'));
+  assert.equal(refusals.length, Object.keys(cases).length);
+  for (const field of ['"previous_response_id"', '"input[].type"', '"input[].content[].file_id"', '"tools[].type"', '"messages[].content[].type"', '"container"', '"mcp_servers"', '"messages[].content[].content[].source.type"']) {
+    assert.ok(refusals.some((l) => l.includes(`"field":${field}`)), `the log names ${field}`);
+  }
+  assert.ok(!lines.join('\n').includes(SECRET_ID), 'no value is logged');
+});
+
+test('a body that is not JSON, not an object, or compressed is refused, and never reaches the provider', async (t) => {
+  const lines = logged(t);
+  const { seen, call, reads } = await setup(t);
+  assert.equal((await call('review-gil', '/grok/v1/chat/completions', { body: 'model=grok-build' })).status, 400);
+  assert.equal((await call('review-oto', '/opencode/anthropic/v1/messages', { body: '' })).status, 400);
+  assert.equal((await call('review-ovi', '/opencode/openai/v1/responses', { body: '[{"model":"x"}]' })).status, 403);
+  assert.equal((await call('review-gil', '/grok/v1/chat/completions', { body: '{}', extra: { 'content-encoding': 'gzip' } })).status, 415);
+  assert.equal(seen.length, 0);
+  assert.deepEqual(reads, []);
+  assert.ok(lines.some((l) => l.includes('"why":"not JSON"')));
+  assert.ok(lines.some((l) => l.includes('"field":"the body"')));
+  assert.ok(lines.some((l) => l.includes('"why":"compressed"')));
+});
+
+test('grok\'s turns chain by sending the conversation again, and no response id passes: not a made-up one, not another session\'s, not its own', async (t) => {
+  const { seen, call } = await setup(t);
+  const [token, path, turn] = MEASURED.grokTurn;
+  // Turn after turn, each with the conversation so far: what grok was measured to do.
+  const first = { ...turn, messages: turn.messages.slice(0, 2) };
+  assert.equal((await call(token, path, { body: first })).status, 200);
+  assert.equal((await call(token, path, { body: turn })).status, 200);
+  const third = structuredClone(turn);
+  third.messages.push({ role: 'assistant', content: 'Done.', model_id: 'grok-build' });
+  assert.equal((await call(token, path, { body: third })).status, 200);
+  assert.equal(seen.length, 3);
+  // An id the provider answered this very review with, another review's, and a made-up one: none is needed, none passes.
+  for (const id of ['resp_this_review_made', 'resp_another_session', 'resp_made_up']) {
+    assert.equal((await call(token, '/grok/v1/responses', { body: { ...MEASURED.grokTitle[2], previous_response_id: id } })).status, 403);
+    assert.equal((await call('review-lou', path, { body: { ...turn, previous_response_id: id } })).status, 403);
+  }
+  assert.equal(seen.length, 3);
+});
+
+test('a body over the cap is refused with 413, and the call is answered', async (t) => {
+  const lines = logged(t);
+  const { seen, call, reads } = await setup(t);
+  const res = await call('review-gil', '/grok/v1/chat/completions', { body: `{"model":"${'x'.repeat(MAX_BODY_BYTES)}"}` });
+  assert.equal(res.status, 413);
+  assert.equal(seen.length, 0);
+  assert.deepEqual(reads, []);
+  assert.ok(lines.some((l) => l.includes('"why":"too large"')));
 });

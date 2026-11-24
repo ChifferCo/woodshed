@@ -964,8 +964,14 @@ URL on top of each env file's Repo settings values
   `expires_at` passed, OpenCode sign-ins with no Anthropic or OpenAI API key: a login is never used). There is no team key
   to fall back on. One that started logs `reviewAgentProxy: first call on the author's <Product> sign-in` with `via` at its
   first model call, or `reviewAgentProxy: refused` with why (the session's pane says it too, `Grok Build: @<login>…`), and
-  `upstream not reached` when xAI, Anthropic or OpenAI did not answer. In the session, `.review/logs/grok.jsonl` or
-  `opencode.jsonl` is the agent's own output, and `REVIEW_OPENCODE_PROVIDER` the provider OpenCode was pointed at.
+  `upstream not reached` when xAI, Anthropic or OpenAI did not answer. `reviewAgentProxy: refused, a body a review's
+  agent does not send` with `field` (and `why`: `not JSON`, `compressed`, `too large`, `a field not allowed`) is the
+  proxy's body scope (console/README.md, the review agents): only the fields each agent was measured to send pass, never
+  one that names what the author's account holds (`previous_response_id`, a `file_id`, a vector store, a container). The
+  same field in every review after an agent update is one the new version sends: run `reviewInImage.mjs` on the new
+  image, read the fields it prints, and list the new one in `console/reviewAgentScope.mjs` if it names nothing. In the
+  session, `.review/logs/grok.jsonl` or `opencode.jsonl` is the agent's own output, and `REVIEW_OPENCODE_PROVIDER` the
+  provider OpenCode was pointed at.
 - **Chat's Send says `Not sent: this session started before Chat could send safely`.** Its statusd predates the
   guarded send (its `/status` has no `safeSend`), and would type blind, Enter and all, into whatever is on screen: the
   console logs `console: message from the page refused, the session cannot send safely`. Type in the TUI tab, or start
@@ -1186,8 +1192,10 @@ image with no checkout clones `REPO` (default this repo) at start. In a Woodshed
 `IN_IMAGE_CONSOLE_HOST` is this container's own address (`hostname -I`), not `host.docker.internal`.
 `providers/aws/bin/reviewInImage.mjs <image> [pull request number]` is the copy for a review that Grok Build and
 OpenCode run on its author's own sign-in: made-up sign-ins held by the real `reviewAgentProxy.mjs`, which forwards to a
-recording stand-in upstream on this computer, never xAI or Anthropic; the review's report is kept, never posted. It
-passes when each reached the proxy with the session's token alone and the proxy swapped in the made-up sign-in.
+recording stand-in upstream on this computer (`modelStandIn.mjs`), never xAI, Anthropic or OpenAI
+(`IN_IMAGE_OPENCODE_PROVIDER=openai` for OpenCode on OpenAI); the review's report is kept, never posted. It prints each
+body's field names, never a value, and passes when each reached the proxy with the session's token alone, the proxy
+swapped in the made-up sign-in, each took a turn after its tool call, and the proxy's body scope refused none.
 These two and `agentsInImage.mjs` hand the container no GitHub login of yours: a placeholder (the review check puts a
 stand-in `gh` in the container that checks the pull request out by git from its public pull ref), or for a private repo
 `IN_IMAGE_GH_TOKEN`, a fine-grained token that can only read it.

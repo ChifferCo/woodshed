@@ -1326,6 +1326,30 @@ the same path read with another method is another API, such as OpenAI's `GET /v1
 stored completion in the key's project. A private Grok or OpenCode session never comes
 here: it runs on its owner's own sign-in, directly.
 
+Each call's body is read too (up to 32 MB) and checked before the author's sign-in is read or added
+(`reviewAgentScope.mjs`). A model API takes in a body the IDs of what the author's account already holds, and reads it
+for the model: OpenAI's and xAI's `previous_response_id`, `conversation`, a stored `prompt`, an `item_reference`, a
+`file_id`, a `file_search` tool's vector stores or `code_interpreter`'s container; Anthropic's file sources,
+`container` and `mcp_servers`. The review's agent reads what anyone who can push to the pull request wrote, and can
+run commands with the session's token, so a prompt planted there could have it send one. The check is an allowlist,
+not a denylist: only the fields each agent was measured to send pass, at the top level and nested (input items,
+content blocks, tools), each object picked by its `type`, so a field a provider adds later is refused until it is
+measured and listed. Measured in the session image with a recording stand-in upstream (`reviewInImage.mjs`, whose
+`modelStandIn.mjs` prints each body's field names) over a turn with a tool call and the turn after it: grok 1.0.92
+sends its whole conversation to `/v1/chat/completions` each turn and calls `/v1/responses` once, for its title, with
+`store: false`; OpenCode 1.19.6 on OpenAI sends `store: false` and its reasoning items back by `encrypted_content`, with
+no `id`; on Anthropic, text, thinking, tool use and tool result blocks. None sends `previous_response_id` or any other ID
+of a stored object, so none passes, not even one the provider gave the same review: the only IDs that pass are the
+conversation's own tool call IDs, matched within the same body. Beyond what was measured, only what names nothing
+passes: an image given inline (base64, or a `data:` URL, never a URL or a file), a tool result's `is_error`,
+Anthropic's `redacted_thinking`. Tools are functions alone; a provider's own tools have a `type` of their own and are
+refused. A tool's schema and a tool call's arguments are the agent's own and not walked. A body that is not JSON gets a
+400, a compressed one a 415, one over the cap a 413, and a field not listed a 403 naming the field
+(`reviewAgentProxy: refused, a body a review's agent does not send`, with `path`, `why` and `field`, never a value).
+When an agent's update changes what it sends, its reviews fail on that 403: run `reviewInImage.mjs` on the new image
+(with `IN_IMAGE_OPENCODE_PROVIDER=openai` for OpenCode on OpenAI), read the fields it prints, and list the new ones
+that name nothing.
+
 
 The console logs:
 
@@ -1340,7 +1364,9 @@ The console logs:
 - `openaiProxy: refused, the author's sign-in not usable` with `why`;
 - `reviewAgentProxy: first call on the author's Grok Build sign-in` (or `OpenCode`) with `via`;
 - `reviewAgentProxy: refused, the author's sign-in not usable` with `why`, `refused, not a review session`, `refused,
-  the review does not run it`, `refused, not the provider the review started on`, and `upstream not reached`.
+  the review does not run it`, `refused, not the provider the review started on`, `refused, a body a review's agent
+  does not send` with `why` (`not JSON`, `compressed`, `too large`, `a field not allowed`) and the `field`, and
+  `upstream not reached`.
 
 In the session's pane: `Codex reviews on the author's ChatGPT login, which the console adds to its calls` or `on a key
 the console adds to its calls`, then `Codex ended (exit=…)`, and `Codex took longer than … minutes and was stopped`
