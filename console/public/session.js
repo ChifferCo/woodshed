@@ -214,8 +214,10 @@
     render();
   }
 
-  function startAgentItem(s, list = agentsOf(s)) {
-    if (!canRunAgents(s) || list.length >= 3) return null;
+  const canStartAgent = (s, list = agentsOf(s)) => !s.taintedAt && canRunAgents(s) && list.length < 3;
+
+  function startAgentItem(s, list) {
+    if (!canStartAgent(s, list)) return null;
     return { group: 'Start', label: '+ Another agent', note: 'Claude or Codex, with the model you pick, in this checkout', run: () => newAgentDialog(s) };
   }
 
@@ -913,7 +915,10 @@
   // `opened` counts each opening, so a row that ends after its menu was closed and opened again leaves the new one be.
   const cardMenu = { el: h('div', { class: 'card-menu', role: 'menu', tabindex: '-1', hidden: true }), id: null, key: null, state: null, busy: false, opened: 0 };
   document.body.append(cardMenu.el);
-  const menuState = (s) => `${s.status}:${s.kept}:${s.prUrl}:${isPinned(s)}:${s.app}:${s.appName ?? ''}:${s.branch}:${s.assignee ?? ''}`;
+  function menuState(s, key) {
+    const canStart = key === `${s.id}:phone` && narrow.matches && canStartAgent(s);
+    return `${s.status}:${s.kept}:${s.prUrl}:${isPinned(s)}:${s.app}:${s.appName ?? ''}:${s.branch}:${s.assignee ?? ''}:${canStart}`;
+  }
   // The card's ⋯, or on a phone's session page the top bar's: whichever of the two shows.
   const menuAnchor = () => (cardMenu.key
     ? [...document.querySelectorAll(`[data-menu-for="${cardMenu.key}"]`)].find((b) => b.offsetParent) ?? null : null);
@@ -959,7 +964,7 @@
     placeCardMenu(button);
     cardMenu.id = s.id;
     cardMenu.key = key;
-    cardMenu.state = menuState(s);
+    cardMenu.state = menuState(s, key);
     button.setAttribute('aria-expanded', 'true');
     // Details with no branch has no item, so the menu itself takes the focus. The menu is one element, so a sheet
     // scrolled the last time it was open opens at its top again, and the focus does not scroll it.
@@ -972,7 +977,7 @@
     if (!cardMenu.id || cardMenu.busy) return;
     const s = data.sessions.find((x) => x.id === cardMenu.id);
     const button = menuAnchor();
-    if (!s || !button || menuState(s) !== cardMenu.state) return closeCardMenu();
+    if (!s || !button || menuState(s, cardMenu.key) !== cardMenu.state) return closeCardMenu();
     button.setAttribute('aria-expanded', 'true');
     placeCardMenu(button);
   }
