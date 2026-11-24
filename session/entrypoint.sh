@@ -305,7 +305,15 @@ checkoutBranch() {
 # claude read it without asking: change both together.
 DEPS_STATUS=/tmp/woodshed-deps
 refreshDeps() {
-  local manifest kind dir files output command start=$SECONDS
+  local manifest kind dir files output command start=$SECONDS product=
+  # A Grok Build or OpenCode session runs none of the branch's installs by itself: run by the start, before anyone asked,
+  # its command would be code from the branch that can read the owner's own sign-in, in Plan mode too. It says which
+  # changed, and the agent runs them when it needs what they install, as a command of its own.
+  case "${AGENT:-claude}" in
+    grok) product='Grok Build' ;;
+    opencode) product=OpenCode ;;
+  esac
+  local -a left=()
   # Each install's dir is relative to the checkout, and its record is keyed on it (deps.sh). This is its own shell.
   cd "$REPO_DIR" || { echo "failed: the checkout $REPO_DIR is not there" > "$DEPS_STATUS"; return; }
   # Read on its own: a failure inside the loop's input would not stop it, and would report ready having checked nothing.
@@ -317,6 +325,10 @@ refreshDeps() {
   while IFS=$'\t' read -r kind dir files output command; do
     [ "$kind" = install ] || continue
     if depsBuiltFrom "$dir" "$files" "$output"; then continue; fi
+    if [ -n "$product" ]; then
+      left+=("\`$command\` in $dir")
+      continue
+    fi
     log "Dependency files changed since the image was built, reinstalling" "(dir: $dir)"
     # An install may empty what it keeps first, so a failed one can leave nothing to run with.
     if ! depsRun "$dir" "$command"; then
@@ -327,6 +339,13 @@ refreshDeps() {
     mkdir -p "$(dirname "$(depsRecordFile "$dir")")"
     depsRecord "$dir" "$files" "$output" > "$(depsRecordFile "$dir")"
   done <<< "$manifest"
+  if [ ${#left[@]} -gt 0 ]; then
+    local each
+    each=$(printf '%s; ' "${left[@]}")
+    log "Dependencies not refreshed: this $product session runs none of the branch's installs by itself" "(changed: ${#left[@]})"
+    echo "skipped: this $product session runs none of the branch's installs by itself, since they could read its owner's own sign-in. These changed since the image was built, and are yours to run before you need what they install: ${each%; }." > "$DEPS_STATUS"
+    return
+  fi
   echo ready > "$DEPS_STATUS"
   log "Dependencies ready" "(seconds: $((SECONDS - start)))"
 }

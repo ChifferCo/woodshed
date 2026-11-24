@@ -140,7 +140,7 @@ change to the stage by the workflow's run, about the time the build takes.
    plan's limits for the pane bar's **Plan** chip.
 5. In the background, runs an install's `command` again only where its `files` differ from the image's record of
    them (`refreshDeps`, logged as `Dependency files changed since the image was built, reinstalling` with the dir),
-   records them again, then writes `ready` or `failed: …` (the command and its dir) to `/tmp/woodshed-deps`. The
+   records them again, then writes `ready` or `failed: …` (the command and its dir) to `/tmp/woodshed-deps`. A Grok Build or OpenCode session runs none of them: the branch's command could read its owner's own sign-in, so the file says `skipped: …` with each changed install's command and dir, for the agent to run. The
    project's notes have Claude wait for that file before it needs what the installs make, so a reinstall never
    delays the start. Nothing else runs before Claude: the dev servers
    start only when the task needs the app.

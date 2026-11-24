@@ -512,6 +512,23 @@ test('refreshDeps runs an install again where a file changed or a glob matches a
   assert.equal(refreshDeps(repo).runs, 3, 'an install the image has no record of, as one a branch added, runs');
 });
 
+test('a Grok Build or OpenCode session runs none of the branch\'s installs by itself, and says which to run', (t) => {
+  for (const [agent, product] of [['grok', 'Grok Build'], ['opencode', 'OpenCode']]) {
+    const repo = depsRepo(t);
+    assert.equal(refreshDeps(repo, { AGENT: agent }).status, 'ready\n', `${agent}: nothing changed, nothing to run`);
+    fs.writeFileSync(path.join(repo.repoDir, 'api/deps.lock'), 'v2');
+    const changed = refreshDeps(repo, { AGENT: agent });
+    assert.equal(changed.runs, 0, `${agent}: the branch's command never ran`);
+    assert.equal(changed.status, `skipped: this ${product} session runs none of the branch's installs by itself, since they could read its owner's own sign-in. These changed since the image was built, and are yours to run before you need what they install: \`echo run >> ran\` in api.\n`);
+    assert.match(changed.stdout, new RegExp(`Dependencies not refreshed: this ${product} session runs none of the branch's installs by itself \\(changed: 1\\)`));
+    assert.doesNotMatch(changed.stdout, /reinstalling/);
+  }
+  // Claude Code and Codex sessions run it, as before.
+  const repo = depsRepo(t);
+  fs.writeFileSync(path.join(repo.repoDir, 'api/deps.lock'), 'v2');
+  for (const agent of ['claude', 'codex']) assert.equal(refreshDeps({ ...repo }, { AGENT: agent }).status, 'ready\n', agent);
+});
+
 test('a reinstall reads the install secrets already in the session\'s environment, and not the manifest on its stdin', (t) => {
   const repo = depsRepo(t, { command: 'cat > /dev/null; printf %s "$REGISTRY_TOKEN" > token; echo run >> ran' });
   fs.writeFileSync(path.join(repo.repoDir, 'api/deps.lock'), 'v2');
