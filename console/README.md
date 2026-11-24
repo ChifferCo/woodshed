@@ -1238,6 +1238,9 @@ checks of their Claude plan (`teamKeyReason`), or a bot, gets the most the team 
 
 The review gets `review.agents` and `REVIEW_AGENTS` (any of `claude`, `codex`, `grok`, `opencode`), and
 `session/review.sh` runs each, every one but Claude in the background beside it, in its own `.review/<agent>/`.
+Before any of them starts, it removes the whole `.review/` folder: a branch can commit one, verdict and all, which a
+reviewer that writes none would leave to be reported as its own (the pane says `The pull request carries a .review
+folder of its own`).
 Codex works as in a Codex session: it reads the checkout, runs what it likes (the container is the sandbox) and writes
 its verdict's files itself, in `.review/codex/`. It gets `REVIEW_CODEX_MINUTES` (20 by default), then is stopped, and
 Claude's verdict goes out alone. Codex alone sends its own verdict.

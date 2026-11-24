@@ -299,8 +299,14 @@ sendReport() {
 
 main() {
   touch "$RUNNING"
-  mkdir -p "$DIR/logs"
   cd "$REPO_DIR" || exit 1
+  # The review's folder is the run's alone: a branch can commit one, verdict and all, which a reviewer that writes none
+  # would leave to be read as its own. Removed whole first, a link to elsewhere included (the link, not what it names).
+  if [ -e "$DIR" ] || [ -L "$DIR" ]; then
+    if [ -n "$(git ls-files -- "$DIR" 2>/dev/null | head -1)" ]; then say "The pull request carries a .review folder of its own: it is removed, and none of it is read"; fi
+    rm -rf -- "$DIR"
+  fi
+  mkdir -p "$DIR/logs"
   grep -qx '/.review/' .git/info/exclude 2>/dev/null || echo '/.review/' >> .git/info/exclude
   say "Review of pull request #$PR against $REVIEW_BASE"
   git fetch --quiet origin "+refs/heads/$REVIEW_BASE:refs/remotes/origin/$REVIEW_BASE" || say "Could not fetch $REVIEW_BASE"
