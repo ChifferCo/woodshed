@@ -21,7 +21,7 @@ every session, with no switch, and its head reads **My sessions** (`/all` opens 
 loopback alone), one whose People list has a single member, or one whose `WOODSHED_ONE_PERSON` is `1`. The setting
 decides when set, `0` keeping the two views (the dev console sets it, `DEV_CONSOLE_ONE_PERSON=1` for the one list);
 `/api/sessions` says which in `onePerson`. **Take it** on
-an unassigned card, or **Assign to me**, **Hand over to** and **Unassign** in the card's ⋯ menu, change
+an unassigned card, or **Assign to me**, **Hand over…** (a dropdown of who can be assigned) and **Unassign** in the card's ⋯ menu, change
 who has it; only someone who can be assigned can (`POST /api/sessions/<id>/assign`). A later comment from someone else does not move it, but
 someone who can be assigned commenting on an unassigned session takes it. Assignment is a label, not a permission: a shared session stays visible
 to everyone with Sessions from GitHub, and a private one cannot be assigned. On an issue's session the GitHub issue follows: the assignee is put on
