@@ -74,7 +74,7 @@ import { createReviewReadiness } from './reviewReadiness.mjs';
 import { createReviewerApp } from './reviewerApp.mjs';
 import { withAppLogins } from './reviewLogins.mjs';
 import { withDefaultReview } from './defaultReview.mjs';
-import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
+import { allProjects, defaultProject, hasRepo, projectFor, projectForRepo, projectNamed } from './projects.mjs';
 
 // A caller that delivers GitHub's webhooks itself (dispatchWebhook) tells the fleet they arrive this often, as the local
 // provider's receiver does, so the GitHub poll slows to its fallback.
@@ -468,7 +468,10 @@ export async function createInstallation({ config: loaded, store, provider, trus
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
   // Questions need the bot token to answer, and the session API to hear the answer.
-  const asks = slack.canReply && config.sessionApi.host ? createAsks({ store, fleet, slack, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null }) : null;
+  const asks = slack.canReply && config.sessionApi.host ? createAsks({
+    store, fleet, slack, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null,
+    issues: { projectForRepo: (repo) => projectForRepo(config, repo), githubOf: githubFor, loginFor: (id) => slackPeople.loginFor(id) },
+  }) : null;
   console.log('console: Slack questions', { available: Boolean(asks) });
   const events = createWebhookEvents({ file: path.join(loaded.stateDir, 'webhookEvents.jsonl'), store });
   const webhookSwitch = createWebhookSwitch({ store, onOff: (source) => { if (source === 'github') pullWebhooks.forget(); } });

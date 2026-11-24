@@ -6,7 +6,8 @@
       "Read(//tmp/woodshed-deps)",
       "Read(//tmp/woodshed-docker-ports.log)",
       "Read(//tmp/woodshed-dockerd.log)",
-      "Read(//tmp/answer.md)"
+      "Read(//tmp/answer.md)",
+      "Read(//tmp/issue.json)"
     ],
     "ask": ["Bash(gh pr merge:*)", "Bash(gh pr -R:*)", "Bash(gh pr --repo:*)"]
   },

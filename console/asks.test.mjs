@@ -265,3 +265,26 @@ test('the thread fits what is left of the prompt after the question, keeping the
   assert.doesNotMatch(prompt, /m0 /);
   assert.match(prompt, /<\/slack-thread>$/);
 });
+
+test('a question opens an issue for whoever last mentioned the bot, and its reply links it', async () => {
+  const { asks: base, fleet, calls, store } = setup();
+  const filed = [];
+  const gh = { canWrite: async () => true, labelNames: async () => [], createIssue: async (i) => { filed.push(i); return { number: 12, url: 'https://github.com/o/r/issues/12' }; } };
+  const links = { U2: 'bea' };
+  const asks = createAsks({
+    store, fleet, slack: { reply: async (a) => { calls.replies.push(a); return true; }, react: async () => {}, person: async (u) => PEOPLE[u] },
+    publicUrl: 'https://console.test',
+    issues: { projectForRepo: () => ({ repo: 'o/r' }), githubOf: () => gh, loginFor: (id) => links[id] ?? null },
+  });
+  const { sessionId } = await base.handleMention(mention);
+  const session = fleet.find(sessionId);
+  // U1 asked and has no link; U2 then asks in the thread, and is the one the issue is for.
+  await assert.rejects(asks.openIssue(session, { repo: 'o/r', title: 't', body: 'b' }), /not linked/);
+  await base.handleMention({ ...mention, eventId: 'Ev2', user: 'U2', ts: '100.2', threadTs: '100.1', text: '<@B1> open a ticket for this' });
+  const issue = await asks.openIssue(session, { repo: 'o/r', title: 'Retries', body: 'Details' });
+  assert.equal(issue.number, 12);
+  assert.equal(filed[0].body, 'Details');
+  assert.match(calls.replies.at(-1).markdown, /\[o\/r#12\]\(https:\/\/github.com\/o\/r\/issues\/12\)/);
+  await asks.answer(session, `Opened ${issue.url}`);
+  assert.match(calls.replies.at(-1).markdown, /issues\/12/);
+});

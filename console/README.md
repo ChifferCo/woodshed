@@ -2592,7 +2592,10 @@ anyone Slack will not say anything about.
    it gets no repo settings, and the install secrets are unset before claude starts.
    `session/ask.md` tells claude to read the code, link each claim to it at the
    commit it read, and post the answer with `session/answer.sh`, which goes
-   through the session API's `POST /answer` to the thread.
+   through the session API's `POST /answer` to the thread. When the person who mentioned it asked for an issue in that
+   message, it searches for an open one first, then runs `session/issue.sh`, which goes through `POST /issues`: the
+   console opens the issue with its App (the session's token never writes). Only for someone linked on People whose GitHub login writes to that repo, only on the console's own repos,
+   labels the repo already has. The console posts the issue's link in the thread; a refusal's reason is told to the session.
 4. Another mention in the same thread is typed into that session, or resumes it
    with its conversation once it has stopped. A mention in a new thread is a new
    question.
