@@ -1448,8 +1448,11 @@
       const usedPercent = !w ? null : rolled ? 0 : w.usedPercent;
       // Grok Build reports one allowance. A window it did not report is not a limit it has.
       if (agent === 'grok' && usedPercent === null) return [];
-      const span = typeof w?.spanMs === 'number' && Number.isFinite(w.spanMs) && w.spanMs > 0 ? w.spanMs : ms;
-      const pace = reset !== null && !rolled ? Math.min(1, Math.max(0, 1 - (reset - now) / span)) : null;
+      const reportedSpan = typeof w?.spanMs === 'number' && Number.isFinite(w.spanMs) && w.spanMs > 0 ? w.spanMs : null;
+      // Grok's tick is the period it named. A seven-day fallback marks a month with no start as empty, then nearly over in its last week.
+      const span = reportedSpan ?? ms;
+      const pace = reset !== null && !rolled && (agent !== 'grok' || reportedSpan !== null)
+        ? Math.min(1, Math.max(0, 1 - (reset - now) / span)) : null;
       return [{
         key,
         short: w?.short || short,
@@ -1488,13 +1491,14 @@
     const others = u.running - 1;
     const a = window.WoodshedAgents.agent(u.agent);
     const name = a.name;
+    const tickNote = u.windows.some((w) => w.pace !== null) ? 'The tick marks how much of each window has gone by. ' : '';
     return h('div', { class: 'plan-detail' },
       h('div', { class: 'card-menu-group' }, `Your ${name} plan`),
       ...u.windows.map(meter),
       h('p', { class: 'plan-foot' },
         `${a.id === 'claude' ? 'Read from Claude Code after its last answer' : `Last reported by ${a.product}`}${u.asOf ? `, ${ago(u.asOf)}` : ''}. `,
         others > 0 ? `Shared with your ${others} other running private ${name} session${others === 1 ? '' : 's'}. ` : '',
-        'The tick marks how much of each window has gone by. ',
+        tickNote,
         a.usageUrl && h('a', { href: a.usageUrl, target: '_blank', rel: 'noopener' }, a.id === 'claude' ? 'claude.ai usage ↗' : `${name} usage ↗`)));
   }
 
