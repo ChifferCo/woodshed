@@ -4254,3 +4254,27 @@ test('the review report credits Codex when Claude Code wrote no verdict', async 
   assert.match(posted.body, /^## Codex review — REQUEST_CHANGES\n/);
   assert.equal(reviewVerdict([posted], review), posted);
 });
+
+test('a session that asked a question waits for its answer until it is sent a message or works again', async () => {
+  const { fleet, statuses } = setup();
+  const child = await fleet.startPrivate({ owner: 'joel', prompt: 'Write NOTES.md' });
+  statuses[child.id] = { state: 'working' };
+  await fleet.tick();
+  // Asked mid-turn, as reply --question is: still working until its turn on the question ends.
+  fleet.noteQuestion(child, { to: 'aaaa0001' });
+  assert.ok(child.askedAt);
+  await fleet.tick();
+  assert.ok(child.askedAt, 'the turn it asked in is not its answer');
+  statuses[child.id] = { state: 'done' };
+  await fleet.tick();
+  assert.equal(child.askedSettled, true);
+  statuses[child.id] = { state: 'working' };
+  await fleet.tick();
+  assert.equal(child.askedAt, null, 'working again: answered in its own Chat or TUI');
+
+  fleet.noteQuestion(child, { to: 'aaaa0001' });
+  statuses[child.id] = { state: 'done' };
+  await fleet.tick();
+  await fleet.send(child, 'Customers.');
+  assert.equal(child.askedAt, null, 'a message typed into it answers it');
+});

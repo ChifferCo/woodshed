@@ -948,6 +948,10 @@ one session's machine to another's. `list --all` lists them; `list` alone the on
   nothing its agent wrote: no last message, and `tainted: true`.
 - `stop <id>` and `resume <id>` are the page's Stop and Resume, with Resume's checks (`resumeMine` in `server.mjs`).
 - `rename "<name>"` renames the session itself, `rename <id> "<name>"` another of the person's, as the page's rename.
+- `reply --question "<question>"` (or `send --question`) asks something and waits for the answer: the asking session
+  reads **asked a question** on the rail, as asking its person (`key: needs-you`), so its group counts it and Needs you
+  shows its copy, until it is sent a message or works again after the turn it asked in (`fleet.noteQuestion`,
+  `askedAt`). The person answers through the session it asked, which passes it on, or in the asking session's own Chat.
 
 **Helpers beside a session's own agent.** For a side task of the same work, in the same checkout and branch, a session
 starts an agent beside its own, as **+ Another agent** does, instead of a session: `woodshed-session agent new

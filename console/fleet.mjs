@@ -731,6 +731,26 @@ export function createFleet({
     return session;
   }
 
+  // A question a session asked another of its person's (sessionStarts.mjs, --question): it waits for an answer, which the
+  // rail says (public/common.js displayStatus). It ends with any message typed into it, or once it works again after its
+  // turn on the question ended: the person may answer in its own Chat or TUI.
+  function noteQuestion(session, { to }) {
+    update(session, { askedAt: nowIso(), askedOf: to, askedSettled: false });
+    console.log('fleet: session asked a question', { id: session.id, of: to });
+  }
+  function answered(session, why) {
+    if (!session.askedAt) return;
+    update(session, { askedAt: null, askedOf: null, askedSettled: null });
+    console.log('fleet: question answered', { id: session.id, why });
+  }
+  function settleQuestion(session) {
+    if (!session.askedAt) return;
+    if (session.status !== 'running') return answered(session, 'stopped');
+    if (session.state === 'working') {
+      if (session.askedSettled) answered(session, 'working again');
+    } else if (['done', 'needs-you', 'idle'].includes(session.state) && !session.askedSettled) update(session, { askedSettled: true });
+  }
+
   function hold(session, text, id = null) {
     update(session, { pendingMessages: [...session.pendingMessages, id ? { id, text } : text] });
     console.log('fleet: message held until the agent is at its prompt', { id: session.id, pending: session.pendingMessages.length });
@@ -802,6 +822,7 @@ export function createFleet({
    *   in the agent's box unsent, for the person to send or clear in the TUI tab; never typed again
    */
   async function send(session, raw, { id = null } = {}) {
+    answered(session, 'a message');
     // As statusd will take it (session/statusd.mjs, typeableText), so what is held is what can be typed, and the same
     // length the page is told of.
     const text = String(raw).replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
@@ -1059,6 +1080,7 @@ export function createFleet({
       const wasStarting = session.status === 'starting';
       const wasAsking = session.state === 'needs-you';
       update(session, statusUpdate(session, status, nowIso(), { repos: await reportableRepos(session, status) }));
+      settleQuestion(session);
       // A message left in the box: sent or cleared in the TUI tab once the box is empty again.
       if (session.leftInBox && status.boxText === false) {
         update(session, { leftInBox: null });
@@ -2997,6 +3019,7 @@ export function createFleet({
   }
 
   return {
+    noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
     createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,

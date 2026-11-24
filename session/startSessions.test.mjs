@@ -234,3 +234,9 @@ test('agent --wait sees a turn too short to be seen working by what it wrote sin
   assert.doesNotMatch(out.stdout, /did not take it up/);
   assert.match(out.stdout, /\[said \d\d:\d\d\] Yes: 42\.\n$/);
 });
+
+test('reply --question sends it as a question', async () => {
+  const { out, args } = io({ files: { '/tmp/token': TOKEN }, answers: [[200, { sessions: [], startedFrom: { id: 'aaaa0001' } }], [200, { sent: true }]] });
+  assert.equal(await run({ ...args, argv: ['reply', '--question', 'Developers', 'or', 'customers?'] }), 0);
+  assert.deepEqual(out.calls[1].body, { text: 'Developers or customers?', question: true });
+});

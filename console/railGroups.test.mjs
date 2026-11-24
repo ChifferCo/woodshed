@@ -66,3 +66,14 @@ test('no group under a stopped session, another person\'s, one not listed, or a 
   const loop = W.railGroups([mine('x', { startedFrom: 'y' }), mine('y', { startedFrom: 'x' })]);
   assert.deepEqual(ids(loop.top).sort(), ['x', 'y'], 'neither of a loop nests');
 });
+
+test('a session that asked its starter a question reads as asking its person, and counts so in its group', () => {
+  const asked = mine('asked', { startedFrom: 'main', state: 'done', askedAt: at(5) });
+  const st = W.displayStatus(asked);
+  assert.deepEqual([st.key, st.word], ['needs-you', 'asked a question']);
+  assert.equal(W.asksPerson(asked), true);
+  const g = W.railGroups([mine('main'), mine('plain', { startedFrom: 'main', state: 'done', createdAt: at(9) }), asked]);
+  assert.deepEqual(ids(g.kids.get('main')), ['asked', 'plain']);
+  assert.deepEqual(JSON.parse(JSON.stringify(W.groupCounts('main', g.kids))), { count: 2, needs: 1 });
+  assert.equal(W.displayStatus(mine('working', { askedAt: at(5), state: 'working' })).key, 'working', 'at work again, it is working');
+});

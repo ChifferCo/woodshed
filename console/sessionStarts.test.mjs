@@ -16,6 +16,9 @@ async function serve({ sessions, startMine = null, allowed = () => true, canWrit
     find: (id) => sessions.find((s) => s.id === id) ?? null,
     sent: [],
     stopped: [],
+    questions: [],
+    noteQuestion(session, { to }) { fleet.questions.push(['asked', session.id, to]); session.askedAt = 'now'; },
+    clearQuestion(session) { if (session.askedAt) fleet.questions.push(['answered', session.id]); session.askedAt = null; },
     async send(session, text) {
       fleet.sent.push({ id: session.id, text });
       return send ? send(session, text) : 'sent';
@@ -551,4 +554,18 @@ test('a session waiting on two at once gets each one\'s reply in its own wait', 
   assert.equal((await onSibling).reply.text, 'From the sibling.');
   assert.equal(api.fleet.sent.length, 0, 'neither held to be typed in');
   assert.equal(api.starts.openWaits(), 0);
+});
+
+test('a reply sent as a question leaves its sender asking, and the answer it gets clears it', async (t) => {
+  const { token, session, child, sessions } = family();
+  const childToken = newStartToken();
+  child.startTokenHash = startTokenHash(childToken);
+  const api = await serve({ sessions });
+  t.after(api.close);
+  await api.call('POST', `/sessions/${session.id}/messages`, { token: childToken, body: { text: 'Developers or customers?', question: true } });
+  await api.call('POST', `/sessions/${session.id}/messages`, { token: childToken, body: { text: 'NOTES.md is pushed.' } });
+  assert.deepEqual(api.fleet.questions, [['asked', child.id, session.id]], 'only the one sent as a question');
+  await api.call('POST', `/sessions/${child.id}/messages`, { token, body: { text: 'Customers.' } });
+  assert.deepEqual(api.fleet.questions.at(-1), ['answered', child.id]);
+  assert.equal(child.askedAt, null);
 });
