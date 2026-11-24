@@ -2530,9 +2530,8 @@ anyone Slack will not say anything about.
    commit it read, and post the answer with `session/answer.sh`, which goes
    through the session API's `POST /answer` to the thread. When the person who mentioned it asked for an issue in that
    message, it searches for an open one first, then runs `session/issue.sh`, which goes through `POST /issues`: the
-   console opens the issue with its App (the session's token never writes), ending its body with `Asked by @<login> in
-   Slack`. Only for someone linked on People whose GitHub login writes to that repo, only on the console's own repos,
-   labels the repo already has, at most 3 issues a question and 5 a person an hour. A refusal's reason goes in the thread.
+   console opens the issue with its App (the session's token never writes). Only for someone linked on People whose GitHub login writes to that repo, only on the console's own repos,
+   labels the repo already has. The console posts the issue's link in the thread; a refusal's reason is told to the session.
 4. Another mention in the same thread is typed into that session, or resumes it
    with its conversation once it has stopped. A mention in a new thread is a new
    question.

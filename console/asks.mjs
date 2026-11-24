@@ -13,9 +13,6 @@ const TITLE_CHARS = 80;
 const EVENTS_KEPT = 200;
 // The session API takes an answer up to this; Slack's own limit is per part, and slack.mjs splits a long one.
 export const MAX_ANSWER_CHARS = 40_000;
-// A thread cannot turn into a stream of issues: this many for one question, and this many for one person an hour.
-export const MAX_ISSUES_PER_QUESTION = 3;
-export const MAX_ISSUES_PER_PERSON_HOUR = 5;
 const MAX_ISSUE_TITLE = 200;
 export const MAX_ISSUE_BODY_CHARS = 20_000;
 const MAX_ISSUE_LABELS = 5;
@@ -163,9 +160,6 @@ export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, i
     return posted;
   }
 
-  // When each person's issues were opened, for the hourly limit. Kept in memory: a restart gives a fresh hour.
-  const issuesByPerson = new Map();
-
   function refuseIssue(session, why, extra = {}) {
     console.warn('asks: issue refused', { id: session.id, why, ...extra });
     return Object.assign(new Error(why), { shown: true });
@@ -198,24 +192,7 @@ export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, i
     const asker = session.slack.lastUser ?? session.slack.user;
     const login = issues.loginFor(asker);
     if (!login) throw refuseIssue(session, 'the person who asked is not linked to a GitHub account on People', { repo, asker });
-    if ((session.issuesOpened ?? 0) >= MAX_ISSUES_PER_QUESTION) {
-      throw refuseIssue(session, `at most ${MAX_ISSUES_PER_QUESTION} issues for one question`, { repo, asker: login });
-    }
-    const recent = (issuesByPerson.get(login) ?? []).filter((t) => now() - t < 3_600_000);
-    if (recent.length >= MAX_ISSUES_PER_PERSON_HOUR) {
-      throw refuseIssue(session, `at most ${MAX_ISSUES_PER_PERSON_HOUR} issues per person an hour`, { repo, asker: login });
-    }
     const gh = issues.githubOf(project);
-    // Taken now and given back on a refusal, so two runs at once cannot both pass the limit.
-    update(session, { issuesOpened: (session.issuesOpened ?? 0) + 1 });
-    try {
-      return await fileIssue();
-    } catch (err) {
-      update(session, { issuesOpened: session.issuesOpened - 1 });
-      throw err;
-    }
-
-    async function fileIssue() {
     let writes;
     try {
       writes = await gh.canWrite(login);
@@ -231,18 +208,18 @@ export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, i
     });
     const labels = asked.map((l) => known.find((k) => k.toLowerCase() === l.toLowerCase())).filter(Boolean);
     const labelsIgnored = asked.filter((l) => !known.some((k) => k.toLowerCase() === l.toLowerCase()));
-    issuesByPerson.set(login, [...recent, now()]);
     let created;
     try {
-      created = await gh.createIssue({ title, body: `${body}\n\n---\nAsked by @${login} in Slack`, labels });
+      created = await gh.createIssue({ title, body, labels });
     } catch (err) {
-      issuesByPerson.set(login, recent);
       const message = String(err?.message ?? err).split('\n')[0];
       throw refuseIssue(session, `GitHub would not open the issue (the App may lack Issues: write on ${project.repo})`, { repo: project.repo, asker: login, message });
     }
     console.log('asks: issue opened', { id: session.id, repo: project.repo, number: created.number, asker: login });
+    // The console posts the link itself, so the thread has it whatever the session goes on to say.
+    await slack.reply({ channel: session.slack.channel, threadTs: session.slack.threadTs, markdown: `Opened [${project.repo}#${created.number}](${created.url}): ${title}` })
+      .catch((err) => console.warn('asks: issue link not posted', { id: session.id, message: String(err?.message ?? err) }));
     return { number: created.number, url: created.url, labels, labelsIgnored };
-    }
   }
 
   // A question whose session failed, or stopped before it answered, is told so in its thread, once per run.

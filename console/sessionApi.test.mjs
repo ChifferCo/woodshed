@@ -995,6 +995,7 @@ test('an ask session opens issues through /issues with the console\'s App; every
     { id: 'dddddddd', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main' } },
   ];
   const opened = [];
+  const replies = [];
   const gh = {
     async canWrite(login) { return login !== 'reader'; },
     async labelNames() { return ['bug', 'Docs']; },
@@ -1002,7 +1003,7 @@ test('an ask session opens issues through /issues with the console\'s App; every
   };
   const links = { U1: 'ana', U3: 'reader' };
   const asks = createAsks({
-    store: { state: {}, save() {} }, fleet: { sessions: () => sessions }, slack: {}, publicUrl: 'https://console.test',
+    store: { state: {}, save() {} }, fleet: { sessions: () => sessions }, slack: { reply: async (a) => { replies.push(a); return true; } }, publicUrl: 'https://console.test',
     issues: { projectForRepo: (repo) => (repo.toLowerCase() === 'o/r' ? { repo: 'o/r' } : null), githubOf: () => gh, loginFor: (id) => links[id] ?? null },
   });
   const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, asks });
@@ -1015,7 +1016,8 @@ test('an ask session opens issues through /issues with the console\'s App; every
   const ok = await file('ask-token', { labels: ['BUG', 'nope'] });
   assert.equal(ok.status, 200);
   assert.deepEqual(ok.body, { number: 41, url: 'https://github.com/o/r/issues/41', labels: ['bug'], labelsIgnored: ['nope'] });
-  assert.equal(opened[0].body, 'It retries forever.\n\n---\nAsked by @ana in Slack');
+  assert.equal(opened[0].body, 'It retries forever.');
+  assert.deepEqual(replies, [{ channel: 'C1', threadTs: '1.1', markdown: 'Opened [o/r#41](https://github.com/o/r/issues/41): Retry loops' }]);
   assert.deepEqual(opened[0].labels, ['bug']);
 
   // Not an ask session: refused with 404, and nothing opened.
@@ -1029,37 +1031,11 @@ test('an ask session opens issues through /issues with the console\'s App; every
   assert.equal((await file('ask-token', { title: '' })).status, 403);
   assert.equal(opened.length, 1);
 
-  // Three for one question, then the limit holds.
-  assert.equal((await file('ask-token', {})).status, 200);
-  assert.equal((await file('ask-token', {})).status, 200);
-  const fourth = await file('ask-token', {});
-  assert.equal(fourth.status, 403);
-  assert.match(fourth.body.error, /at most 3 issues for one question/);
-  assert.equal(opened.length, 3);
+  // No limit: a fourth for the same question opens too.
+  for (let i = 0; i < 4; i++) assert.equal((await file('ask-token', {})).status, 200);
+  assert.equal(opened.length, 5);
 
   // A session that has seen production data opens none.
-  sessions[0].issuesOpened = 0;
   sessions[0].taintedAt = '2026-11-24T10:00:00.000Z';
   assert.match((await file('ask-token', {})).body.error, /production/);
-});
-
-test('one person is held to a few issues an hour across their questions', async (t) => {
-  const sessions = Array.from({ length: 3 }, (_, i) => ({ id: `a${i}a${i}a${i}a${i}`, status: 'running', token: `t${i}`, kind: 'ask', slack: { user: 'U1' } }));
-  const gh = { canWrite: async () => true, labelNames: async () => [], createIssue: async () => ({ number: 1, url: 'u' }) };
-  let clock = Date.parse('2026-11-24T10:00:00Z');
-  const asks = createAsks({
-    store: { state: {}, save() {} }, fleet: { sessions: () => sessions }, slack: {}, publicUrl: 'https://console.test', now: () => clock,
-    issues: { projectForRepo: () => ({ repo: 'o/r' }), githubOf: () => gh, loginFor: () => 'ana' },
-  });
-  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, asks });
-  const server = http.createServer((req, res) => { handle(req, res); });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => server.close());
-  const { port } = server.address();
-  const file = (token) => request(port, { path: '/issues', authorization: `Bearer ${token}`, body: JSON.stringify({ repo: 'o/r', title: 't', body: 'b' }) });
-  const statuses = [];
-  for (const token of ['t0', 't0', 't0', 't1', 't1', 't1']) statuses.push((await file(token)).status);
-  assert.deepEqual(statuses, [200, 200, 200, 200, 200, 403]);
-  clock += 3_600_001;
-  assert.equal((await file('t2')).status, 200);
 });

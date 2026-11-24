@@ -852,9 +852,9 @@ URL on top of each env file's Repo settings values
 - **A question in Slack asked for an issue and none was opened.** The ask session's `issue.sh` prints the console's reason, and the
   console logs `asks: issue opened` with the session, `repo`, `number` and `asker`, or `asks: issue refused` with `why`: the person
   who last mentioned the bot is not linked to GitHub on People (`slackAccounts`), has no write access to the repo, the repo is
-  not one of Console settings' Repos, a limit (3 for a question, 5 per person an hour, in memory), or GitHub refused the App
+  not one of Console settings' Repos, or GitHub refused the App
   (`Issues: write` not accepted on that installation). The session's own token never writes: only the console's App files it
-  (`POST /issues`, `console/asks.mjs` `openIssue`). Never for a tainted session, and asks are never tainted.
+  (`POST /issues`, `console/asks.mjs` `openIssue`), and the console posts the issue's link in the thread (`asks: issue link not posted` when Slack refused). Never for a tainted session, and asks are never tainted.
 - **A question got 👀 and no answer.** Open the session from the link in the
   thread. The session's log says `mode: ask`; the console logs `asks: answer
   posted` with `posted: false` when Slack refused the reply (`slack: call

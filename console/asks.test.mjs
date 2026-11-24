@@ -221,7 +221,8 @@ test('a question opens an issue for whoever last mentioned the bot, and its repl
   await base.handleMention({ ...mention, eventId: 'Ev2', user: 'U2', ts: '100.2', threadTs: '100.1', text: '<@B1> open a ticket for this' });
   const issue = await asks.openIssue(session, { repo: 'o/r', title: 'Retries', body: 'Details' });
   assert.equal(issue.number, 12);
-  assert.match(filed[0].body, /Asked by @bea in Slack$/);
+  assert.equal(filed[0].body, 'Details');
+  assert.match(calls.replies.at(-1).markdown, /\[o\/r#12\]\(https:\/\/github.com\/o\/r\/issues\/12\)/);
   await asks.answer(session, `Opened ${issue.url}`);
   assert.match(calls.replies.at(-1).markdown, /issues\/12/);
 });
