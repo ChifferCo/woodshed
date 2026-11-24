@@ -59,7 +59,8 @@ approve the CLI sign-in and install any GitHub Apps in their browser.
   `=replace`) unless the person said yes to sending that file to that console, after you told them which file and
   which console. Never read, print or pass the file yourself: setup sends it through `woodshed sign-in push` and never
   prints it. With no file, tell them the message's step (`grok login`, or an xAI key on My settings; `opencode auth
-  login`) only if they want that agent: it is optional and never stops setup unless a flag named it.
+  login`) only if they want that agent: it is optional and never stops setup unless a flag named it. A save that fails
+  after their yes is said as `skipped` with `saveFailed: true` and why, and setup goes on: tell them why, once.
 - **Review on their repos (`repo-review`, `review-choice`).** Every repo is reviewed by default, with no checkout, project
   file or pull request. Setup checks it per repo, exits 2 with the link when the console's reviewer App still has to be
   made or installed (an admin's step), and otherwise says the tag (`tag` in `--json`, `[woodshed-review]` unless the
@@ -167,7 +168,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 
 | Command | Does | Exits | Arrives in |
 | --- | --- | --- | --- |
-| `woodshed setup [--yes] [--repo R] [--agent claude\|codex] [--reviews CHOICE] [--review-prs all\|none\|N,N] [--terminal herdr\|tmux] [--prompt TEXT] [--wait[=Nm]]` | Guides sign-in, repos, connecting Claude Code and Codex, and reviews of their open pull requests; then, optionally, the terminal and a first session | 0 done, 2 needs the person, 3 refused, 1 failed | main |
+| `woodshed setup [--yes] [--repo R] [--agent claude\|codex] [--reviews CHOICE] [--review-prs all\|none\|N,N] [--terminal herdr\|tmux] [--prompt TEXT] [--wait[=Nm]] [--grok-sign-in[=replace]] [--opencode-sign-in[=replace]]` | Guides sign-in, repos, connecting Claude Code and Codex, optionally saving this computer's Grok Build and OpenCode sign-ins (the flags only after the person said yes to that file and console), and reviews of their open pull requests; then, optionally, the terminal and a first session | 0 done, 2 needs the person, 3 refused, 1 failed | main |
 | `woodshed login [--no-browser]` | Prints a code and opens the console's `/cli` page; waits up to 10 minutes for the person to approve | 0 signed in, 2 code expired, 3 denied | main |
 | `woodshed logout` | Ends this computer's sign-in | 0 | main |
 | `woodshed status` | The console, its org, who is signed in, and the Herdr `hc` here with its version | 0, 2 not signed in | main |
@@ -192,6 +193,7 @@ Pass `--json` when you will read the output: each command then writes one JSON o
 | `woodshed settings plan [--pull] [--only …] [--own-files <checkout>]` | Lists what push (or pull) would do with each item; sends and writes nothing | 0 | main |
 | `woodshed settings push [--only …] [--own-files <checkout>]` | Uploads their Claude and Codex settings, skills, plugins, a few dotfiles and ignored checkout files. Imported Claude MCP definitions sync between computers. | 0, 2 not listed before or not confirmed | main |
 | `woodshed settings pull [--only …] [--replace]` | Writes the shared copy to this computer | 0, 2 something held | main |
+| `woodshed sign-in push grok\|opencode [--replace]` | Saves the sign-in this computer's `grok login` or `opencode auth login` made as theirs on My settings, checked here first and never printed; replaces a saved one only with `--replace`. Only when they said yes to sending that file to that console; never read or pass the file yourself | 0 saved, 2 no file or not signed in, 3 not a sign-in, one saved already, or refused, 1 failed | main |
 | `woodshed review enable [--qa] [--rerun <tag>\|--every-commit] [--dry-run]` | In a checkout: writes `pullRequests.review` with `runner: woodshed` (and with `--qa`, QA in a session) into `.woodshed/project.yaml`, checks it, and asks the console what is missing | 0 ready to commit, 2 an admin's step or a sign-in, 1 the file does not read or check, or the console could not confirm | main |
 | `woodshed review status [--repo R]` | Whether review is on (by default, on `[woodshed-review]`, or by the repo's project file) and what the console still needs; `--repo` needs no checkout | 0 on, 2 not yet, 1 the console could not tell | main |
 | `woodshed review pulls [--repo R]` | Their open pull requests on the repo (else the checkout's), and how it is reviewed: on by default, by the project file's review or the console's default, with its tag | 0, 2 sign-in ended, 3 a repo they cannot start on | main |
