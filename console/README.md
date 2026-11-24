@@ -118,7 +118,9 @@ The size and the key bar's choice are remembered in the browser.
 A running session opens on its **Chat** tab unless its person picked TUI as their default view (`public/chat.js`): the conversation as a chat instead of the agent's
 terminal. The thread is read from the agent's own record of it, claude's transcript or codex's rollout, through
 statusd's `GET /transcript` (session/README.md), every 1.5 s while the agent works or a message waits to show and every
-5 s otherwise, with `since` so a record that did not move costs the session a stat. The person's messages are on the
+5 s otherwise, with `since` so a record that did not move costs the session a stat. The page keeps the last 8
+conversations shown as it read them (`keptRecords` in `public/chatThread.cjs`), by session and start: coming back to one
+draws it at once, and its first read only asks whether it moved since. The person's messages are on the
 right; the agent's replies are Markdown, read into a tree and built as DOM nodes, never as HTML, with only http(s)
 and mailto links (`public/chatThread.cjs`); each run of tool calls between them is one work log, summed up in a line
 (`Ran 3 commands, edited 2 files`, `1 failed`) that folds open to the calls, open while it is the turn still running.
