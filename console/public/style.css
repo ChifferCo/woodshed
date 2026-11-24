@@ -174,6 +174,8 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 /* With the app in front its notifications show here, at the bottom right, rather than in the OS's: bell rows on a menu
    surface, each one opening its session. */
 .bell-toasts { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; flex-direction: column; gap: 8px; width: 340px; max-width: calc(100vw - 32px); }
+/* Narrower than the desktop layout the rail runs the whole width, its foot under the cards: they sit above it. */
+@media (max-width: 899px) { .bell-toasts { bottom: 68px; } }
 .bell-toast { display: flex; align-items: flex-start; background: var(--ground); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 20px rgba(27, 34, 50, 0.14); }
 .bell-toast-open { flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: 9px; padding: 10px 4px 10px 12px; border: 0; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; border-radius: 8px 0 0 8px; }
 .bell-toast-open:hover { background: var(--stopped); }
