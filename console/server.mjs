@@ -262,6 +262,10 @@ import { createMcpTester } from './mcpTest.mjs';
 import { ROLES, roleById, roleDiffers, roleOf } from './peopleRoles.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
+// Served from elsewhere in the repo: the desktop app's rule for what notifies, which the console in a browser runs too
+// (public/browserNotifications.js). The console image copies it to the same place (Dockerfile).
+const STATIC_ELSEWHERE = { 'attention.mjs': path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'desktop', 'attention.mjs') };
+const staticPath = (file) => STATIC_ELSEWHERE[file] ?? path.join(PUBLIC_DIR, file);
 // /, /all and a session's page are one page, session.js last.
 // The settings pages are one page too: each address loads every settings page's script, and common.js shows the one the
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
@@ -295,6 +299,8 @@ const STATIC_FILES = {
   'chat.js': 'text/javascript; charset=utf-8',
   'appShare.js': 'text/javascript; charset=utf-8',
   'notificationBell.js': 'text/javascript; charset=utf-8',
+  'browserNotifications.js': 'text/javascript; charset=utf-8',
+  'attention.mjs': 'text/javascript; charset=utf-8',
   'session.js': 'text/javascript; charset=utf-8',
   'events.js': 'text/javascript; charset=utf-8',
   'secrets.js': 'text/javascript; charset=utf-8',
@@ -528,7 +534,7 @@ export function menuOf(userMenu, headers) {
 // fetching every script again on each page. Keyed by mtime, so an edited file gets a new hash without a restart.
 const staticHashes = new Map();
 function staticHash(file) {
-  const full = path.join(PUBLIC_DIR, file);
+  const full = staticPath(file);
   const { mtimeMs } = fs.statSync(full);
   if (staticHashes.get(file)?.mtimeMs !== mtimeMs) {
     staticHashes.set(file, { mtimeMs, hash: createHash('sha256').update(fs.readFileSync(full)).digest('hex').slice(0, 12) });
@@ -633,8 +639,9 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <script src="${staticUrl('common.js')}"></script>
 <script src="${staticUrl('settingsSearch.js')}"></script>
 <script src="${staticUrl('keys.cjs')}"></script>
-<script src="${staticUrl('shell.js')}"></script>
+<script src="${staticUrl('browserNotifications.js')}" data-attention="${staticUrl('attention.mjs')}"></script>
 <script src="${staticUrl('notificationBell.js')}"></script>
+<script src="${staticUrl('shell.js')}"></script>
 ${[script].flat().map((s) => `<script src="${staticUrl(s)}"></script>`).join('\n')}
 </body>
 </html>
@@ -766,7 +773,7 @@ export function servePublic(req, res, url, consoleName = DEFAULT_CONSOLE_NAME) {
   // Only the version a page names is kept: an old or missing ?v= is asked for again each time.
   const current = url.searchParams.get('v') === staticHash(file);
   res.writeHead(200, { 'content-type': STATIC_FILES[file], 'cache-control': current ? 'public, max-age=31536000, immutable' : 'no-cache' });
-  res.end(fs.readFileSync(path.join(PUBLIC_DIR, file)));
+  res.end(fs.readFileSync(staticPath(file)));
   return true;
 }
 

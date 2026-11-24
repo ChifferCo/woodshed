@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import fs from 'node:fs';
 import net from 'node:net';
 
 import { CONSOLE_FAILED, createAuth } from './auth.mjs';
@@ -926,9 +927,16 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
     assert.match(await getBody(port, page, as('octocat')), /<meta name="woodshed-login" content="octocat">/, `${page} names who it is for`);
     // The same scripts on each, since session.js moves between them in place.
     assert.deepEqual(scripts.slice(-8), ['dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'], `${page} is the shell`);
-    // The desktop app's notifications on every page, after the shell that opens them on ⌘J.
-    assert.deepEqual(scripts.slice(scripts.indexOf('shell.js'), scripts.indexOf('shell.js') + 2), ['shell.js', 'notificationBell.js'], `${page} has the notifications`);
+    // The notifications on every page, ahead of the shell that opens them on ⌘J: the browser's own list, then the bell.
+    assert.deepEqual(scripts.slice(scripts.indexOf('keys.cjs'), scripts.indexOf('keys.cjs') + 4), ['keys.cjs', 'browserNotifications.js', 'notificationBell.js', 'shell.js'], `${page} has the notifications`);
   }
+  // The browser's bell runs the desktop app's own rule for what notifies, served from desktop/ under the page's version.
+  const attentionUrl = /data-attention="(\/static\/attention\.mjs\?v=[0-9a-f]{12})"/.exec(await getBody(port, '/', as('octocat')))?.[1];
+  assert.ok(attentionUrl, 'the page names the rule');
+  const rule = await fetch(`http://127.0.0.1:${port}${attentionUrl}`);
+  assert.equal(rule.status, 200);
+  assert.match(rule.headers.get('content-type'), /javascript/);
+  assert.equal(await rule.text(), fs.readFileSync(new URL('../desktop/attention.mjs', import.meta.url), 'utf8'));
   assert.match(await getBody(port, '/static/sharedHome.js', as('octocat')), /createSharedHome/);
   assert.match(await getBody(port, '/static/messageBox.js', as('octocat')), /createMessageBox/);
   assert.match(await getBody(port, '/static/chatThread.cjs', as('octocat')), /WoodshedChatThread/);

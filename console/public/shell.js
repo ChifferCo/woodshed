@@ -44,8 +44,8 @@
     closePalette();
     closeSheet(keys);
   }
-  // The desktop app's notifications, on ⌘J (notificationBell.js, loaded after this): a browser has none.
-  const inApp = typeof window.woodshedNotifications?.list === 'function';
+  // The notifications, on ⌘J (notificationBell.js, loaded before this): the desktop app's, or the browser's own
+  // (browserNotifications.js); none on a page with no one signed in.
   const notifications = () => W.notifications ?? { available: false, isOpen: () => false, close() {} };
 
   // ---- toast ----
@@ -222,7 +222,7 @@
     return [combo, combo && bare && h('span', { class: 'kor' }, 'or'), bare].filter(Boolean);
   }
   const keys = sheet('Keyboard shortcuts', [
-    K.SHORTCUTS.filter((s) => !s.desktop || inApp).map((s) => h('div', { class: 'krow' }, h('div', { class: 'kkeys' }, keyCaps(s)), h('div', null, s.id === 'keys' ? 'This list' : s.what, s.where && h('span', { class: 'kwhere' }, ` on ${s.where}`)))),
+    K.SHORTCUTS.filter((s) => !s.bell || notifications().available).map((s) => h('div', { class: 'krow' }, h('div', { class: 'kkeys' }, keyCaps(s)), h('div', null, s.id === 'keys' ? 'This list' : s.what, s.where && h('span', { class: 'kwhere' }, ` on ${s.where}`)))),
     h('p', { class: 'sheet-note' }, MAC
       ? 'Ctrl works for ⌘ too, except inside a terminal, where Ctrl is the terminal\'s. A key alone works while you are not typing. Sessions have no key of their own: ⌘K, then type a name.'
       : 'A key alone works while you are not typing. Inside a terminal, Ctrl is the terminal\'s: click outside it first. Sessions have no key of their own: Ctrl+K, then type a name.'),

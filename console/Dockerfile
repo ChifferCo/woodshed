@@ -35,6 +35,8 @@ COPY --chown=node:node woodshed/shared/ /opt/woodshed/shared/
 COPY --chown=node:node woodshed/providers/ /opt/woodshed/providers/
 # Each person's ~/.tmux.conf on My settings starts as a copy of the session image's.
 COPY --chown=node:node woodshed/session/tmux.conf /opt/woodshed/session/tmux.conf
+# The desktop app's rule for what notifies, which the console serves to a browser's bell (server.mjs, STATIC_ELSEWHERE).
+COPY --chown=node:node woodshed/desktop/attention.mjs /opt/woodshed/desktop/attention.mjs
 
 USER node
 EXPOSE 7690
