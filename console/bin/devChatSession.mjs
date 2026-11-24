@@ -173,6 +173,18 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   // Grok Build and OpenCode keep their records under the home: the stand-in is given the home itself.
   const recordDir = agent === 'codex' ? codexHome : agent === 'grok' || agent === 'opencode' ? home
     : path.join(home, '.claude', 'projects', repo.replace(/[/.]/g, '-'));
+  // A made-up weekly allowance, the line a Grok Build session's Plan chip reads (session/grokPlanUsage.mjs). The
+  // stand-in's home, never this machine's, so the meter shows this number and nothing of a real account.
+  const grokHome = !real && agent === 'grok' ? path.join(home, '.grok') : null;
+  if (grokHome) {
+    const start = new Date(Date.now() - 2 * 86400_000);
+    const end = new Date(start.getTime() + 7 * 86400_000);
+    fs.mkdirSync(path.join(grokHome, 'logs'), { recursive: true });
+    fs.writeFileSync(path.join(grokHome, 'logs', 'unified.jsonl'), `${JSON.stringify({
+      ts: new Date().toISOString(), msg: 'billing: fetched credits config',
+      ctx: { config: { creditUsagePercent: 62, currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY', start: start.toISOString(), end: end.toISOString() } } },
+    })}\n`);
+  }
   if (realCodex) {
     fs.mkdirSync(codexHome, { recursive: true, mode: 0o700 });
     // The bytes lent, read once: hashed as they were copied, so a refresh of the machine's login meanwhile is not taken
@@ -252,6 +264,7 @@ exec '${process.execPath}' '${AGENT}' codex "\${CODEX_HOME:-$HOME/.codex}" "$PWD
     env: {
       ...tmuxEnv, SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, CODEX_HOME: codexHome,
       AGENT: agent === 'claude' ? '' : agent, APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '',
+      ...(grokHome ? { GROK_HOME: grokHome } : {}),
       // An ordinary session's, whatever kind of session the dev console itself runs in (a QA one's would never say done).
       SESSION_MODE: '',
       ...agentsEnv,

@@ -557,13 +557,13 @@ And what the shed shows about each session:
 - **CPU and memory**: the container's, from statusd's `/status`, in the pane bar's meter (`CPU 41%` while all is
   well, the whole line once one runs high), and after the status word on a phone. Amber past 70% of its memory or
   75% of its cores, red past 90% or 95%, the one over the line first.
-- **Plan**: in a private session's pane bar meter, how much of your session agent's (Claude or Codex) plan is used,
+- **Plan**: in a private session's pane bar meter, how much of your session agent's (Claude, Codex or Grok Build) plan is used,
   its fullest window's share (`Plan 68%`), amber from 70%, red from 90% and `Plan out` at 100%. Click the meter for each
-  window's share and when it resets, a tick for how much of it has gone by, how old the reading
+  window's share and when it resets (a reset already past says so; a window with no end says neither), a tick for how much of it has gone by (left off when a Grok period names no length), how old the reading
   is, and the machine's CPU, memory and disk against their limits (on a phone, the plan under ⋯). Claude Code hands the limits only to its status
   line, after each answer: `session/statusline.sh` saves them to
   `~/.claude/woodshed-usage/claude.json` and statusd's `/status` returns them
-  (`session/planUsage.mjs`; Codex uses local rollout limits from `session/codexPlanUsage.mjs`). Readings and running counts are shared only between private sessions using the same agent. Every private session on the same agent
+  (`session/planUsage.mjs`; Codex uses local rollout limits from `session/codexPlanUsage.mjs`; Grok Build uses the allowance it logs in `~/.grok/logs/unified.jsonl`, `session/grokPlanUsage.mjs`, one week or month). OpenCode reports none. Readings and running counts are shared only between private sessions using the same agent. Every private session on the same agent
   shows the newest reading any of them has, a stopped one's last
   included, and a window whose reset has passed reads 0%. Claude Code reports
   the all-models week only, not claude.ai's per-model one, and leaves a window
