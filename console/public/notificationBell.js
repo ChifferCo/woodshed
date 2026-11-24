@@ -89,9 +89,12 @@
       button.dataset.hint = label;
     }
     function drawPanel() {
+      const hadFocus = panel.contains(document.activeElement);
       panel.replaceChildren(head(), h('div', { class: 'bell-rows' }, list.items.length
         ? list.items.map((n) => row(n, { beforeOpen: () => setOpen(false) }))
         : empty()));
+      // Mark all read goes with what it marked: focus goes back to the bell, where Escape still closes the list.
+      if (hadFocus && !panel.contains(document.activeElement)) button.focus();
     }
     function draw() {
       drawButton();
@@ -119,18 +122,25 @@
   const dialog = available ? h('div', { class: 'palette bell-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Notifications', tabindex: '-1' }) : null;
   const overlay = available ? h('div', { class: 'overlay', hidden: true }, dialog) : null;
   let cursor = 0;
+  // The notification the keys are on, so one arriving above it leaves them on it rather than on whatever takes its place.
+  let cursorKey = null;
   let returnFocus = null;
   function drawDialog() {
     if (!overlay || overlay.hidden) return;
-    cursor = Math.min(cursor, Math.max(0, list.items.length - 1));
+    const at = cursorKey === null ? -1 : list.items.findIndex((n) => n.key === cursorKey);
+    cursor = at >= 0 ? at : Math.min(cursor, Math.max(0, list.items.length - 1));
+    cursorKey = list.items[cursor]?.key ?? null;
+    // A redraw takes away what had focus in it (Mark all read, gone once nothing is new): the dialog keeps it, for its keys.
+    const hadFocus = dialog.contains(document.activeElement);
     const rows = list.items.map((n, i) => row(n, {
       'data-cursor': String(i === cursor), beforeOpen: closeDialog,
-      onmousemove: () => { if (cursor !== i) { cursor = i; drawDialog(); } },
+      onmousemove: () => { if (cursor !== i) { cursor = i; cursorKey = n.key; drawDialog(); } },
     }));
     const hint = (label, key) => h('span', null, h('kbd', null, key), label);
     dialog.replaceChildren(head(), h('div', { class: 'plist bell-rows' }, rows.length ? rows : empty()),
       h('div', { class: 'pfoot' }, list.items.length ? [hint('Select', '↑↓'), hint('Open', '⏎')] : null, hint('Close', 'esc')));
     dialog.querySelector('[data-cursor="true"]')?.scrollIntoView({ block: 'nearest' });
+    if (hadFocus && !dialog.contains(document.activeElement)) dialog.focus();
   }
   function openDialog() {
     if (!overlay) return;
@@ -138,6 +148,7 @@
     if (!overlay.isConnected) document.body.append(overlay);
     returnFocus = document.activeElement;
     cursor = 0;
+    cursorKey = null;
     overlay.hidden = false;
     drawDialog();
     dialog.focus();
@@ -156,6 +167,7 @@
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         if (n) cursor = (cursor + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
+        cursorKey = list.items[cursor]?.key ?? null;
         drawDialog();
       } else if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
