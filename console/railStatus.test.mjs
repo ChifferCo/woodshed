@@ -66,6 +66,16 @@ test('a merged or closed pull request shows only while no newer one came after i
   assert.equal(W.shownPrs({ prUrl: null }).length, 0);
 });
 
+test('a pull request the console has not read yet waits for it, unless Woodshed is at work on it', () => {
+  const merged = { state: 'merged' };
+  const shown = (prs) => [...W.shownPrs({ prs }).map((p) => p.url)];
+  assert.deepEqual(shown([{ url: '1', pr: null, reading: true }, { url: '2', pr: null, reading: true }]), [], 'just after a start, nothing yet');
+  assert.equal(W.hasPrs({ prs: [{ url: '1', pr: null, reading: true }] }), false, 'the card shows its branch meanwhile');
+  assert.deepEqual(shown([{ url: '1', pr: merged }, { url: '2', pr: { state: 'open' } }]), ['2'], 'once read, the merged one never showed');
+  assert.deepEqual(shown([{ url: '1', pr: null, reading: false }]), ['1'], 'one the console never reads shows as it is');
+  assert.deepEqual(shown([{ url: '1', pr: null, reading: true, runs: ['review'] }]), ['1'], 'a review at work on it shows');
+});
+
 // common.js with a stand-in document whose elements keep their attributes and text, for what builds chips.
 function loadCommonWithElements() {
   class Node {}

@@ -45,7 +45,7 @@ import { createConsoleSettings, liveConfig } from './consoleSettings.mjs';
 import { CHECK_EVERY_MS, createWoodshedUpdate } from './woodshedUpdate.mjs';
 import { supervisorOf } from './githubAppSetup.mjs';
 import { createHeldData } from './heldData.mjs';
-import { ACTIVE_STATUSES } from './sessions.mjs';
+import { ACTIVE_STATUSES, prUrlsOf } from './sessions.mjs';
 import { APP_KEY_SECRET, createSettings } from './settings.mjs';
 import { createGitHubUser } from './githubUser.mjs';
 import { createClaudeSettings } from './claudeSettings.mjs';
@@ -416,7 +416,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   });
   const qaRecordings = provider.recordings ? createQaRecordings({ store: provider.recordings }) : null;
   const pullWebhooks = createPullWebhooks();
-  const prChips = createProjectPrChips({ projects: () => allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs });
+  const prChips = createProjectPrChips({ projects: () => allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs, polled: Boolean(tokens) });
   const pings = createAssigneePings({ slack, slackPeople, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
   const appApi = appKey ? createAppApi({ appId: config.githubApp.appId, privateKey: () => appKey.current() }) : null;
   // A host that lends its GitHub access (hosted.mjs) also says who its App is, and lends its reviewer App: the
@@ -648,7 +648,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     loops.every(EVENTS_SWEEP_MS, 'webhook events sweep', () => events.sweep());
     // Every session someone can still open: a stopped one's pull request still merges or closes.
     // Every 10 seconds, so a chip a webhook marked due changes soon; only due pull requests are asked for.
-    if (tokens) loops.every(10_000, 'pull request chips', () => prChips.refresh(fleet.sessions().filter((s) => s.prUrl && !s.cleanedAt)));
+    if (tokens) loops.every(10_000, 'pull request chips', () => prChips.refresh(fleet.sessions().filter((s) => prUrlsOf(s).length && !s.cleanedAt)));
     loops.every(config.tickMs, 'tick', () => fleet.tick());
     loops.every(config.tickMs, 'app shares sweep', () => appShares.sweep(fleet.sessions().filter((s) => ACTIVE_STATUSES.has(s.status)).map((s) => s.id)));
     if (asks) loops.every(config.tickMs, 'asks', () => asks.tick());
