@@ -6,7 +6,8 @@ import zlib from 'node:zlib';
 
 import { OP, acceptFor, createFrameReader, encodeFrame } from '../shared/wsFrames.mjs';
 import {
-  answerWithoutClientContext, basicAuth, handleTerminalRequest, handleTerminalUpgrade, offerWithoutClientContext, parseTerminalPath, takeFirstMessage,
+  answerWithoutClientContext, basicAuth, handleTerminalRequest, handleTerminalUpgrade, isTerminalPage, offerWithoutClientContext, parseTerminalPath,
+  takeFirstMessage,
 } from './terminalProxy.mjs';
 
 test('parseTerminalPath accepts only an 8-hex session id, on either terminal', () => {
@@ -63,12 +64,36 @@ test("ttyd's /token never reaches the browser: the console gives the terminal it
   const proxyPort = await listen(proxy);
   t.after(() => { ttyd.close(); proxy.close(); });
 
-  for (const path of ['/term/0a1b2c3d/token', '/shell/0a1b2c3d/token', '/term/0a1b2c3d/token?x=1']) {
-    const res = await fetch(`http://127.0.0.1:${proxyPort}${path}`);
+  // What ttyd reads as its /token too (each was seen to hand out the credential from ttyd 1.7.7), and any other path.
+  const variants = ['/term/0a1b2c3d/token', '/shell/0a1b2c3d/token', '/term/0a1b2c3d/token?x=1', '/term/0a1b2c3d/%74oken',
+    '/term/0a1b2c3d//token', '/term/0a1b2c3d/token;x', '/term/0a1b2c3d/./token', '/term/0a1b2c3d/x/../token', '/term/0a1b2c3d/TOKEN',
+    '/term/0a1b2c3d/token/', '/term/0a1b2c3d/%2e/token', '/term/0a1b2c3d//', '/shell/0a1b2c3d/%74oken'];
+  for (const path of variants) {
+    const res = await new Promise((resolve, reject) => {
+      // node's fetch would tidy the path; ttyd reads it as the browser sent it.
+      http.get({ host: '127.0.0.1', port: proxyPort, path }, (r) => {
+        let body = '';
+        r.on('data', (d) => { body += d; });
+        r.on('end', () => resolve({ status: r.statusCode, body }));
+      }).on('error', reject);
+    });
     assert.equal(res.status, 404, path);
-    assert.doesNotMatch(await res.text(), /secret|d29vZHNoZWQ6c2VjcmV0/, path);
+    assert.doesNotMatch(res.body, /secret|d29vZHNoZWQ6c2VjcmV0/, path);
   }
   assert.deepEqual(asked, [], 'ttyd was never asked');
+
+  const page = await fetch(`http://127.0.0.1:${proxyPort}/term/0a1b2c3d/?arg=agent-2`);
+  assert.equal(page.status, 200, 'ttyd\'s own page still goes on, its query with it');
+  assert.deepEqual(asked, ['/term/0a1b2c3d/?arg=agent-2']);
+});
+
+test('only ttyd\'s page, written plainly, is a terminal page', () => {
+  assert.equal(isTerminalPage('/term/0a1b2c3d/', 'term', '0a1b2c3d'), true);
+  assert.equal(isTerminalPage('/term/0a1b2c3d', 'term', '0a1b2c3d'), true);
+  assert.equal(isTerminalPage('/shell/0a1b2c3d/?arg=agent-3', 'shell', '0a1b2c3d'), true);
+  for (const url of ['/term/0a1b2c3d/token', '/term/0a1b2c3d//', '/term/0a1b2c3d/%2F', '/term/0a1b2c3d/;x', '/term/0a1b2c3d/index.html', '/term/0a1b2c3d/ws']) {
+    assert.equal(isTerminalPage(url, 'term', '0a1b2c3d'), false, url);
+  }
 });
 
 const CREDENTIAL = Buffer.from('woodshed:secret').toString('base64');
@@ -112,6 +137,10 @@ test('the first message waits until it is all there, lets a ping go first, and r
   rsv2[0] |= 0x20;
   assert.throws(() => takeFirstMessage(rsv2, CREDENTIAL), /RSV2/);
   assert.throws(() => takeFirstMessage(encodeFrame(OP.binary, Buffer.from('not json')), CREDENTIAL), /not JSON/);
+  // Pings with no first message: held up to a bound, never without one.
+  const pings = Buffer.concat(Array.from({ length: 200 }, () => encodeFrame(OP.ping, Buffer.alloc(100))));
+  assert.throws(() => takeFirstMessage(pings, CREDENTIAL), /more before the first message/);
+  assert.equal(takeFirstMessage(pings.subarray(0, 2000), CREDENTIAL), null, 'a few pings still wait for it');
   assert.throws(() => takeFirstMessage(encodeFrame(OP.binary, Buffer.alloc(5000, 0x20)), CREDENTIAL), /larger/);
   assert.throws(() => takeFirstMessage(encodeFrame(OP.binary, Buffer.from('{}'), { mask: false }), CREDENTIAL), /unmasked/);
 });

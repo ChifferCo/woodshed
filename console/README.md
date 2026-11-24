@@ -90,7 +90,7 @@ speaks ttyd's protocol on `/<kind>/<id>/ws`. The page names its files by hash, a
 it and opening a terminal loads only its websocket; ttyd's own page (190 KB gzipped, sent with no cache headers) came
 from the session through the console on every open. The session's ttyd is the connection alone. Its first message is
 the console's (`terminalProxy.mjs`): ttyd's credential with the size the page asked for, so the page never holds the
-credential, and `/<kind>/<id>/token` answers 404. A browser's compression offer goes to ttyd with
+credential, and every other ttyd path, `/<kind>/<id>/token` among them, answers 404. A browser's compression offer goes to ttyd with
 `client_no_context_takeover` added, and ttyd's answer comes back with it too should ttyd leave it out, so the browser
 compresses each message on its own: the console can read that first message compressed and send its own uncompressed,
 and nothing after it refers back to bytes ttyd never saw. ttyd's output stays compressed. The session's `-t` flags (theme, scrollback) reach the page as ttyd's
@@ -1914,8 +1914,9 @@ redirect.
   (Woodshed's `sameOrigin.mjs`), and writes also need the `x-woodshed: 1`
   header, which a cross-site form cannot send.
 - The proxy adds each session's ttyd credentials, in the terminal's first
-  websocket message too, and answers ttyd's `/token` with 404, so the browser
-  never holds the terminal credential. It is a separate token from the one
+  websocket message too, and passes on only ttyd's page itself (`/<kind>/<id>/`,
+  as written: ttyd reads `%74oken`, `//token` and `token;x` as its `/token`),
+  so the browser never holds the terminal credential. It is a separate token from the one
   statusd checks all the same, and only the console can reach statusd.
 - The database viewers and the Redis viewer have no login of their own, so a
   page on another site must not reach them through a signed-in browser.

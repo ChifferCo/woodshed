@@ -40,6 +40,9 @@ const OWN_SITE = new Set(['same-origin', 'none']);
 const PROXY_TIMEOUT_MS = 30_000;
 // The terminal's first message is its size as JSON: a few dozen bytes. A browser that sends more is not a terminal.
 const MAX_FIRST_MESSAGE = 4096;
+// What a browser sent before its first message: a few pings at most, then a few dozen bytes. More is no terminal.
+const MAX_BEFORE_FIRST = 16 * 1024;
+const TERMINALS = new Set(['term', 'shell']);
 // ttyd's answer to the upgrade is a status line and a few headers.
 const MAX_ANSWER_HEAD = 16 * 1024;
 const TOKEN_RE = /^\/(?:term|shell)\/[0-9a-f]{8}\/token$/;
@@ -108,6 +111,17 @@ export function offerWithoutClientContext(value) {
 }
 
 /**
+ * Whether a request is for ttyd's own page, `/<app>/<id>/`, written plainly: no encoding, doubled slash or parameter
+ * that ttyd would read as another of its paths. A query passes (`?arg=agent-2`).
+ * @param {string|undefined} url  the request's target as the browser sent it
+ * @returns {boolean}
+ */
+export function isTerminalPage(url, app, id) {
+  const raw = String(url || '').split('?')[0];
+  return raw === `/${app}/${id}/` || raw === `/${app}/${id}`;
+}
+
+/**
  * @typedef {{host: string, termPort: number, statusPort: number, shellPort?: number, terminalToken: string, sessionToken: string}} SessionTarget
  *   `shellPort` is missing for a session started before its image had the Terminal tab
  */
@@ -132,11 +146,14 @@ export function handleTerminalRequest(req, res, ctx) {
     res.end(VIEWER_NAMES[app] ? `no ${VIEWER_NAMES[app]} viewer for that session\n` : 'no terminal for that session\n');
     return true;
   }
-  // ttyd's page asks for its credential here, then sends it as its first message: the console sends that message
-  // itself (handleTerminalUpgrade), so the page goes on without one.
-  if (TOKEN_RE.test(new URL(req.url || '/', 'http://console.invalid').pathname)) {
+  // Of a ttyd, only its page goes on, by its own address as the browser sent it: ttyd reads `%74oken`, `//token` and
+  // `token;x` as its /token, which hands out its credential. That page asks for /token, then sends what it got as its
+  // first message: the console sends that message itself (handleTerminalUpgrade), so the page goes on without one.
+  if (TERMINALS.has(app) && !isTerminalPage(req.url, app, id)) {
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
-    res.end('no token here: the console gives the terminal its credential itself\n');
+    res.end(TOKEN_RE.test(new URL(req.url || '/', 'http://console.invalid').pathname)
+      ? 'no token here: the console gives the terminal its credential itself\n'
+      : 'not found: the console passes on only the terminal\'s page\n');
     return true;
   }
   const target = { host: session.host, ...UPSTREAM[app](session) };
@@ -315,7 +332,10 @@ export function takeFirstMessage(buf, credential) {
   let at = 0;
   for (;;) {
     const frame = readClientFrame(buf.subarray(at));
-    if (!frame) return null;
+    if (!frame) {
+      if (buf.length > MAX_BEFORE_FIRST) throw new Error('more before the first message than a terminal sends');
+      return null;
+    }
     if (frame.opcode >= 0x8) {
       passed.push(buf.subarray(at, at + frame.length));
       at += frame.length;
