@@ -401,7 +401,10 @@ URL on top of each env file's Repo settings values
   when it got one), `its start token is not one the console knows` a token from a run that stopped, and `no longer has
   write access to the repo on GitHub` its person's write access gone while they stay on People. The console
   logs `sessionStarts: session started` or `start refused` with `why`, and for `start checks` the `status` New session's
-  own checks answered with, then the start's usual `fleet: session created` with `startedFrom`.
+  own checks answered with, then the start's usual `fleet: session created` with `startedFrom`. A message between two sessions logs
+  `sessionStarts: message` with its `outcome`: `queued` is held until the other is at its prompt (it works, waits in
+  line or is paused), as Chat's held messages are; a `send --wait` that says `it did not take up what was sent` saw the
+  other neither work nor hold it for 90 s.
 - **A private session starts without its MCP logins, or Resume opens a blank
   claude.** The session's log says `Claude home restored`, `No Claude home
   saved yet` or `WARNING: Claude home not restored` with the status. Every 5

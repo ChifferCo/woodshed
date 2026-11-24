@@ -894,6 +894,27 @@ refused` with `why` (`no prompt`, `same branch`, `not a member`, `write access g
 New session's `status`), `refused, no running session has that start token` and `refused, a browser's call`. The
 session's log says `Session starts on` when it got a token.
 
+**Messages between them.** A session reaches every other private session of the same person's (never anyone else's, a
+shared one, a question from Slack, a review or a QA run), on the same token and the same session API: nothing goes from
+one session's machine to another's. `list --all` lists them; `list` alone the ones this session started.
+
+- `woodshed-session send <id> "<message>"` (`reply "<message>"` for the session's starter) types it in at the other's
+  prompt as the Chat tab's message is (`fleet.send`), headed `[Message from session <id> "<title>", …]` with how to
+  answer, so the agent and its person tell it from what the person typed. It is held while that session works, waits
+  in line or is paused, and typed once it is at its prompt again, as a held Chat message is.
+- `wait <id>` answers once it is done, needs its person, or stopped; `--reply` (and `send --wait`) once it has worked on
+  what was sent, or says nothing took it up (never seen working, with nothing held, for 90 s). The console answers each
+  wait within 4 minutes and the command asks again.
+- `read <id>` is what it was asked and said, from its statusd's `/transcript`, tools left out. A session that has seen
+  production data is never read by another (403), and what any route says of it (`get`, `list`, `wait`) carries
+  nothing its agent wrote: no last message, and `tainted: true`.
+- `stop <id>` and `resume <id>` are the page's Stop and Resume, with Resume's checks (`resumeMine` in `server.mjs`).
+- `rename "<name>"` renames the session itself, `rename <id> "<name>"` another of the person's, as the page's rename.
+
+The console logs `sessionStarts: message` with `from`, `to`, the `chars` and `outcome` (`sent`, `queued`, `in-box`,
+`unknown`), `sessionStarts: session stopped`, `sessionStarts: resume` with the `status`, `sessionStarts: session renamed`, and `sessionStarts: transcript
+not read` when the other's statusd did not answer.
+
 ### MCP servers
 
 Admins give sessions' claude MCP servers on Console settings' **MCP servers** card, or through its API

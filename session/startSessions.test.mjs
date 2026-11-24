@@ -79,3 +79,65 @@ test('parseArgs takes options before or after the words, and -- ends them', () =
   assert.throws(() => parseArgs(['new', '--wat']), /unknown option/);
   assert.throws(() => parseArgs(['new', '--branch']), /needs a value/);
 });
+
+test('send types a message in, and --wait prints what the other session said after it', async () => {
+  const child = { ...started, id: 'c0c0c0c0', status: 'running', state: 'done', title: 'Move invoice totals' };
+  const { out, args } = io({ files: { '/tmp/token': TOKEN }, answers: [
+    [200, { sent: true, sentAt: '2026-11-24T12:00:00.000Z', session: child }],
+    [200, { session: child, waiting: true }],
+    [200, { session: { ...child, lastMessage: 'Totals are in cents.' } }],
+    [200, { entries: [{ role: 'user', text: 'Use cents', at: '2026-11-24T12:00:01.000Z' }, { role: 'assistant', text: 'Totals are in cents.', at: '2026-11-24T12:03:00.000Z' }] }],
+  ] });
+  assert.equal(await run({ ...args, argv: ['send', 'c0c0c0c0', 'Use', 'cents', '--wait'] }), 0);
+  assert.deepEqual(out.calls.map((c) => `${c.method} ${c.url.replace('http://10.8.0.1:7691', '')}`), [
+    'POST /sessions/c0c0c0c0/messages', 'GET /sessions/c0c0c0c0/wait?for=reply', 'GET /sessions/c0c0c0c0/wait?for=reply',
+    'GET /sessions/c0c0c0c0/transcript?limit=50&since=2026-11-24T12%3A00%3A00.000Z',
+  ]);
+  assert.deepEqual(out.calls[0].body, { text: 'Use cents' });
+  assert.match(out.stdout, /^Sent to session c0c0c0c0\n/);
+  assert.match(out.stdout, /\[said 12:03\] Totals are in cents\.\n$/);
+  assert.doesNotMatch(out.stdout, /Use cents\n/, 'what it was asked is left out of the answer');
+});
+
+test('reply answers the session that started this one, and says when none did', async () => {
+  const { out, args } = io({ files: { '/tmp/token': TOKEN }, answers: [[200, { sessions: [], startedFrom: { id: 'aaaa0001' } }], [200, { held: true, session: { status: 'running', state: 'working' } }]] });
+  assert.equal(await run({ ...args, argv: ['reply', 'Done:', 'totals', 'are', 'in', 'cents'] }), 0);
+  assert.equal(out.calls[1].url, 'http://10.8.0.1:7691/sessions/aaaa0001/messages');
+  assert.deepEqual(out.calls[1].body, { text: 'Done: totals are in cents' });
+  assert.match(out.stdout, /^Held for session aaaa0001: it gets it once it is at its prompt \(running, working\)/);
+
+  const orphan = io({ files: { '/tmp/token': TOKEN }, answers: [[200, { sessions: [], startedFrom: null }]] });
+  assert.equal(await run({ ...orphan.args, argv: ['reply', 'hi'] }), 1);
+  assert.match(orphan.out.stderr, /no session started this one/);
+});
+
+test('read prints the conversation, wait says when nothing took up a message, stop and resume say the state', async () => {
+  const child = { ...started, id: 'c0c0c0c0', status: 'running', state: 'done' };
+  const { out, args } = io({ files: { '/tmp/token': TOKEN }, answers: [
+    [200, { entries: [{ role: 'user', text: 'Move the totals', at: '2026-11-24T11:00:00.000Z' }, { role: 'assistant', text: 'Done.', at: '2026-11-24T11:02:00.000Z' }] }],
+    [200, { session: child, noReply: true }],
+    [200, { session: { ...child, status: 'stopped' } }],
+  ] });
+  assert.equal(await run({ ...args, argv: ['read', 'c0c0c0c0', '--last', '2'] }), 0);
+  assert.match(out.stdout, /^\[asked 11:00\] Move the totals\n\[said 11:02\] Done\.\n/);
+  assert.equal(await run({ ...args, argv: ['wait', 'c0c0c0c0', '--reply'] }), 0);
+  assert.match(out.stdout, /it did not take up what was sent/);
+  assert.equal(await run({ ...args, argv: ['stop', 'c0c0c0c0'] }), 0);
+  assert.match(out.stdout, /c0c0c0c0 {2}stopped/);
+  assert.deepEqual(out.calls.map((c) => `${c.method} ${c.url.replace('http://10.8.0.1:7691', '')}`), [
+    'GET /sessions/c0c0c0c0/transcript?limit=50', 'GET /sessions/c0c0c0c0/wait?for=reply', 'POST /sessions/c0c0c0c0/stop',
+  ]);
+});
+
+test('rename names this session, or another when given its id', async () => {
+  const { out, args } = io({ files: { '/tmp/token': TOKEN }, answers: [[200, { session: { id: 'aaaa0001', title: 'Billing page' } }], [200, { session: { id: 'c0c0c0c0', title: 'Totals in cents' } }]] });
+  assert.equal(await run({ ...args, argv: ['rename', 'Billing', 'page'] }), 0);
+  assert.equal(await run({ ...args, argv: ['rename', 'c0c0c0c0', 'Totals', 'in', 'cents'] }), 0);
+  assert.deepEqual(out.calls.map((c) => [c.url.replace('http://10.8.0.1:7691', ''), c.body.name]), [['/rename', 'Billing page'], ['/sessions/c0c0c0c0/rename', 'Totals in cents']]);
+  assert.match(out.stdout, /^Renamed aaaa0001: Billing page\nRenamed c0c0c0c0: Totals in cents\n$/);
+});
+
+test('a session that has seen production data is said to be so, with no last line', () => {
+  const lines = describe({ id: 'c0c0c0c0', status: 'running', state: 'done', title: 'Prod check', url: 'https://console.example/s/c0c0c0c0', lastMessage: null, tainted: true });
+  assert.deepEqual(lines.slice(2), ['  has seen production data: what it says stays on the console']);
+});
