@@ -1,5 +1,6 @@
-// The app's own pages' bridge (setup.html, signin.html), and nothing for the console's page: it is loaded into the main
-// window, so it exposes these calls only to the app's own file:// pages, and main.mjs checks the sender again.
+// The app's bridge to its pages. Its own file:// pages (setup.html, signin.html) get their calls; any other page gets the
+// notifications list alone, for the console page's bell (console/public/notificationBell.js). main.mjs checks the sender
+// again, and answers the list only to the console's own page in the main window.
 const { contextBridge, ipcRenderer } = require('electron');
 
 if (location.protocol === 'file:') {
@@ -7,5 +8,18 @@ if (location.protocol === 'file:') {
     connect: (url) => ipcRenderer.invoke('console:connect', String(url)),
     signInInBrowser: () => ipcRenderer.invoke('signin:browser'),
     signInHere: () => ipcRenderer.invoke('signin:here'),
+  });
+} else {
+  contextBridge.exposeInMainWorld('woodshedNotifications', {
+    // { items: [{ key, id, kind, title, body, at, read }], unread }, newest first.
+    list: () => ipcRenderer.invoke('notifications:list'),
+    // One entry by its key, or every one with none.
+    markRead: (key) => ipcRenderer.invoke('notifications:read', typeof key === 'string' ? key : null),
+    // Called with the new list each time it changes; returns a function that stops it.
+    onChange: (fn) => {
+      const listener = (_event, list) => fn(list);
+      ipcRenderer.on('notifications:changed', listener);
+      return () => ipcRenderer.removeListener('notifications:changed', listener);
+    },
   });
 }
