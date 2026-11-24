@@ -444,3 +444,14 @@ test('a held bubble whose send got no answer in time stops promising delivery, s
   assert.equal(chat.stillPending([a], [], now + 9 * 60_000).length, 1, 'shown a while, ten minutes from the word, though sent an hour ago');
   assert.equal(chat.stillPending([a], [], now + 11 * 60_000).length, 0);
 });
+
+test('the Chat tab keeps the conversations shown last, at most as many as it may, the one shown longest ago going first', () => {
+  const kept = chat.keptRecords(3);
+  for (const key of ['a', 'b', 'c']) kept.keep(key, { id: key });
+  assert.deepEqual(kept.get('a'), { id: 'a' }, 'coming back to one draws it at once');
+  kept.keep('a', { id: 'a', writtenAt: 2 });
+  kept.keep('d', { id: 'd' });
+  assert.equal(kept.get('b'), undefined, 'b was shown longest ago once a came back');
+  assert.deepEqual(kept.keys(), ['c', 'a', 'd']);
+  assert.deepEqual(kept.get('a'), { id: 'a', writtenAt: 2 }, 'a newer read takes the place of the older');
+});
