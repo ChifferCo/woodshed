@@ -36,6 +36,7 @@
   const FLOW = { limit: 100_000, high: 10, low: 4 };
   const RETRIES_PER_MINUTE = 3;
   const RETRY_MS = [500, 2000, 5000];
+  const CLAIM_MS = 2000;
 
   const route = ROUTE_RE.exec(window.location.hash);
   const container = document.getElementById('terminal-container');
@@ -60,6 +61,7 @@
   let webgl = null;
   let canvas = null;
   const tries = [];
+  let claimedAt = 0;
 
   const term = new window.Terminal(OPTIONS);
   window.term = term;
@@ -90,7 +92,15 @@
   window.addEventListener('resize', () => fit.fit());
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && !isOpen() && !retryTimer) retry();
+    if (!document.hidden) claim();
   });
+  // tmux sizes the window by the client used last (window-size latest), and only input counts: after a phone opened the
+  // session, a desktop that scrolls (the browser's own history, or tmux's copy mode through statusd) or comes back to
+  // the front sends tmux nothing, and stays at the phone's width until a click or a key. Any of those here says so with a
+  // focus-in, which tmux takes as use, only while tmux asked for focus events (DECSET 1004, tmux.conf's focus-events):
+  // otherwise those bytes would be typing.
+  for (const type of ['wheel', 'pointerdown', 'touchstart']) window.addEventListener(type, claim, { capture: true, passive: true });
+  window.addEventListener('focus', claim);
 
   connect();
 
@@ -161,6 +171,15 @@
       if (pending < FLOW.low) send('3');
     });
     if (pending > FLOW.high) send('2');
+  }
+
+  // At most every CLAIM_MS: one says it, and a scroll is many events.
+  function claim() {
+    if (!term.modes.sendFocusMode || socket?.readyState !== WebSocket.OPEN) return;
+    const now = Date.now();
+    if (now - claimedAt < CLAIM_MS) return;
+    claimedAt = now;
+    send('0', '\x1b[I');
   }
 
   function send(type, data = '') {

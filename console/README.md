@@ -94,7 +94,11 @@ credential, and every other ttyd path, `/<kind>/<id>/token` among them, answers 
 `client_no_context_takeover` added, and ttyd's answer comes back with it too should ttyd leave it out, so the browser
 compresses each message on its own: the console can read that first message compressed and send its own uncompressed,
 and nothing after it refers back to bytes ttyd never saw. ttyd's output stays compressed. The session's `-t` flags (theme, scrollback) reach the page as ttyd's
-preferences, as they did ttyd's page. In one browser, `localStorage['woodshed-terminal-page'] = 'ttyd'` goes back to
+preferences, as they did ttyd's page. tmux sizes the agent's window by the client used last, and only input counts, so after a phone opened a session a
+desktop that only scrolls or comes back to the front would stay at the phone's width: the page sends tmux a focus-in
+on a wheel, a click or tap, or its window coming to the front (at most every 2 s, and only while tmux asked for focus
+events, `focus-events on` in `session/tmux.conf`), which gives tmux that device's size again. In one browser,
+`localStorage['woodshed-terminal-page'] = 'ttyd'` goes back to
 ttyd's page (`session.js`, `terminalSrc`), which works as before without `/token`.
 
 On a phone (720px wide or less) it works as the shed does there: the sessions
