@@ -44,14 +44,24 @@ const SIGN_INS = {
   grok: 'xai-reviewInImage-not-a-real-key-0123456789',
   opencode: JSON.stringify({ anthropic: { type: 'api', key: 'sk-ant-reviewInImage-not-a-real-key' } }),
 };
+const OPENCODE_KEY = JSON.parse(SIGN_INS.opencode).anthropic.key;
 
-// The stand-in for xAI's and Anthropic's APIs: records each call, answers a model list, refuses each turn.
+// The stand-in for xAI's and Anthropic's APIs: records each call, answers a model list, refuses each turn. It keeps
+// which header carried a credential and whether it was the made-up sign-in, never a header's value, so nothing printed
+// below can hold a key.
 const upstreamCalls = [];
 function upstream() {
   const server = http.createServer((req, res) => {
     req.resume();
     req.on('end', () => {
-      upstreamCalls.push({ method: req.method, url: req.url, authorization: req.headers.authorization ?? null, apiKey: req.headers['x-api-key'] ?? null });
+      const { authorization, 'x-api-key': apiKey } = req.headers;
+      upstreamCalls.push({
+        method: req.method,
+        url: req.url,
+        carried: [authorization && 'authorization', apiKey && 'x-api-key'].filter(Boolean),
+        grokKey: authorization === `Bearer ${SIGN_INS.grok}`,
+        opencodeKey: apiKey === OPENCODE_KEY,
+      });
       if (req.url.endsWith('/models')) {
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ object: 'list', data: [{ id: 'grok-build', object: 'model', owned_by: 'xai' }] }));
@@ -170,8 +180,7 @@ try {
   const env = docker('exec', '-u', 'node', CONTAINER, 'bash', '-c', 'tmux show-environment -t claude; cat /proc/1/environ | tr "\\0" "\\n"');
   const leaked = Object.values(SIGN_INS).some((v) => env.includes(v)) || /xai-reviewInImage|sk-ant-reviewInImage/.test(docker('exec', '-u', 'node', CONTAINER, 'bash', '-c', 'grep -rl "reviewInImage-not-a-real" /home/node /tmp /work 2>/dev/null || true'));
   console.log('--- calls the console\'s proxy got', JSON.stringify(proxyCalls));
-  const shown = (v) => (v ? v.replace(/^(Bearer )?(.{14}).*$/, '$1$2…') : v);
-  console.log('--- calls the stand-in upstream got', JSON.stringify(upstreamCalls.map((c) => ({ ...c, authorization: shown(c.authorization), apiKey: shown(c.apiKey) }))));
+  console.log('--- calls the stand-in upstream got (which header carried a credential, and whether it was the made-up sign-in)', JSON.stringify(upstreamCalls));
   console.log('--- the report', reports[0] ? JSON.stringify(JSON.parse(reports[0]).conclusion) : 'none');
   const grokCalls = upstreamCalls.filter((c) => c.url.startsWith('/xai/v1/'));
   const opencodeCalls = upstreamCalls.filter((c) => c.url.startsWith('/anthropic/v1/'));
@@ -181,8 +190,8 @@ try {
     'opencode started in review mode': /OpenCode reviews on the author's own anthropic key/.test(pane),
     'every call reached the console\'s proxy with the session\'s token alone': proxyCalls.length > 0 && proxyCalls.every((c) => c.sessionToken),
     'grok\'s first model call reached the console\'s proxy': proxyCalls.some((c) => c.url.startsWith('/grok/v1/')),
-    'the proxy sent grok\'s calls on with the made-up xAI key': grokCalls.length > 0 && grokCalls.every((c) => c.authorization === `Bearer ${SIGN_INS.grok}`),
-    'the proxy sent opencode\'s calls on with the made-up Anthropic key': opencodeCalls.length > 0 && opencodeCalls.every((c) => c.apiKey === 'sk-ant-reviewInImage-not-a-real-key'),
+    'the proxy sent grok\'s calls on with the made-up xAI key': grokCalls.length > 0 && grokCalls.every((c) => c.grokKey),
+    'the proxy sent opencode\'s calls on with the made-up Anthropic key': opencodeCalls.length > 0 && opencodeCalls.every((c) => c.opencodeKey),
     'no made-up sign-in is anywhere in the session': !leaked,
     'the review reported': reports.length === 1,
   };
