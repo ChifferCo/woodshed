@@ -807,7 +807,10 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     const cantRun = Boolean(choice) && chosen.some((id) => !available[id]);
     const names = A.REVIEW_AGENT_IDS.filter((id) => on.has(id)).map((id) => A.agent(id).product);
     const listed = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
-    const who = !names.length ? 'No code review of' : names.length === 2 ? `${listed} both review` : names.length > 2 ? `${listed} all review` : `${listed} reviews`;
+    // The grid stays the saved choice, so a click edits that choice. The summary says who will review: when none of
+    // the choice can run, that is the default, not the agent the row would otherwise name.
+    const who = noneLeft ? 'None of your choice can run, so the default reviews'
+      : !names.length ? 'No code review of' : names.length === 2 ? `${listed} both review` : names.length > 2 ? `${listed} all review` : `${listed} reviews`;
     return row({ id: 'my-reviews', title: 'Reviews of my pull requests', pill: h('span', { class: choice ? 'pill is-ok' : 'pill' }, choice ? 'Your own' : 'Default'), value: `${who} the pull requests you open` },
       h('p', { class: 'sub' }, 'Who reviews a pull request you open, in repos that review with Woodshed sessions. With several on, the strictest verdict wins, so it is approved only when all of them approve. With all off, there is no code review, and the Slack post and QA go on without one. Grok Build and OpenCode review only on your own sign-in, which the console adds to their calls: it never enters the review.'),
       h('table', { class: 'onoff-grid' },
