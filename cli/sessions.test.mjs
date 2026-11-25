@@ -187,6 +187,11 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       moving.set(s.id, script.map((step) => ({ ...step })));
       return s;
     },
+    // The Chat tab's send (server.mjs, terminalAction): held while the agent works, as the fleet's is.
+    send: async (session, text) => {
+      calls.push(['send', { id: session.id, text }]);
+      return session.state === 'working' ? 'queued' : 'sent';
+    },
     // The agents beside a session's own (server.mjs, agentAction): allowed once statusd started one.
     isLocked: (s) => Boolean(s.taintedAt),
     allowAgent: (s, agent) => { calls.push(['allowAgent', { id: s.id, agent }]); return true; },
@@ -1883,4 +1888,69 @@ test('session agent and connect --agent take only what an agent beside the sessi
   for (const words of [['0a1b2c3d', '--agent', 'claude'], ['0a1b2c3d', '--agent', 'agent-2', '--shell']]) {
     assert.throws(() => parseSessionArgs('connect', words, fail), undefined, words.join(' '));
   }
+});
+
+// A session's statusd answering the Chat tab's read: the conversation so far, which the test adds to.
+async function standInTranscript(t) {
+  const entries = [];
+  const asked = [];
+  const server = http.createServer((req, res) => {
+    asked.push(req.url);
+    res.writeHead(req.url.startsWith('/transcript') ? 200 : 404, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(req.url.startsWith('/transcript') ? { agent: 'claude', entries } : { error: 'not found' }));
+  });
+  const port = await listen(server);
+  t.after(() => server.close());
+  return { entries, asked, endpoint: { host: '127.0.0.1', statusPort: port, termPort: 1 } };
+}
+
+test('session send --wait types a message in, waits for the turn on it, and prints what it said; read and wait', async (t) => {
+  const statusd = await standInTranscript(t);
+  const steps = [];
+  let c;
+  c = await consoleFor(t, {
+    extra: [
+      { id: 'c0c0aa01', owner: 'mia-dev', title: 'Billing page', status: 'running', state: 'done', safeSend: true, endpoint: statusd.endpoint },
+      { id: 'c0c0aa02', owner: 'mia-dev', title: 'Read prod', status: 'running', state: 'done', safeSend: true, taintedAt: iso(T0), endpoint: statusd.endpoint },
+    ],
+    onSleep: () => steps.shift()?.(),
+  });
+  const session = at(c.sessions, 'c0c0aa01');
+  const said = (role, text, ms) => statusd.entries.push({ role, text, at: iso(c.now() + ms) });
+  said('assistant', 'An earlier answer.', -60_000);
+  steps.push(() => { session.state = 'working'; said('user', 'Use cents.', 0); });
+  steps.push(() => { session.state = 'done'; said('assistant', 'Totals are in cents now.\n\u001b[2JTests pass.', 0); });
+
+  const sent = await c.run(['session', 'send', 'c0c0aa01', 'Use', 'cents.', '--wait']);
+  assert.equal(sent.code, EXIT.done, sent.err);
+  assert.deepEqual(c.calls.find(([k]) => k === 'send'), ['send', { id: 'c0c0aa01', text: 'Use cents.' }]);
+  assert.match(sent.out, /^Sent to session c0c0aa01\.\nSession c0c0aa01 is done\.\n\[said \d\d:\d\d\] Totals are in cents now\.\n \[2JTests pass\.\n$/, 'its lines kept, the escape not');
+  assert.doesNotMatch(sent.out, /An earlier answer/, 'only what it said after the message');
+
+  const read = await c.run(['session', 'read', 'c0c0aa01', '--last', '2']);
+  assert.equal(read.code, EXIT.done, read.err);
+  assert.match(read.out, /^\[asked \d\d:\d\d\] Use cents\.\n\[said \d\d:\d\d\] Totals are in cents now\.\n \[2JTests pass\.\n$/);
+
+  session.state = 'working';
+  steps.push(() => { session.state = 'needs-you'; });
+  const waited = await c.run(['session', 'wait', 'c0c0aa01']);
+  assert.equal(waited.code, EXIT.waiting, waited.err);
+  assert.match(waited.out, /^Session c0c0aa01 is .+\.\n$/);
+
+  // What a session that has seen production data said stays on the console.
+  const before = statusd.asked.length;
+  const tainted = await c.run(['session', 'read', 'c0c0aa02']);
+  assert.equal(tainted.code, EXIT.refused);
+  assert.match(tainted.err, /seen production data: its conversation is read on the console only/);
+  assert.equal(statusd.asked.length, before, 'its statusd never asked');
+
+  // Only a running session takes a message.
+  assert.equal((await c.run(['session', 'send', 'bbbb0002', 'hi'])).code, EXIT.refused);
+});
+
+test('session send needs a message, and read --last a number', () => {
+  const fail = (message) => Object.assign(new Error(message), { usage: true });
+  assert.deepEqual(parseSessionArgs('send', ['0a1b2c3d', '--wait', 'do', 'it'], fail), { wait: true, id: '0a1b2c3d', text: 'do it' });
+  assert.throws(() => parseSessionArgs('send', ['0a1b2c3d'], fail), /needs the message/);
+  assert.deepEqual(parseSessionArgs('read', ['0a1b2c3d', '--last', '3'], fail), { last: '3', id: '0a1b2c3d' });
 });

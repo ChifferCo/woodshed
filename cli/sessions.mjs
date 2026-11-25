@@ -113,6 +113,12 @@ Commands:
       --agent claude|codex   which (default claude), --model <name>, --effort <level> and --mode <permissions>, as
                              session new takes them (auto by default)
   agent <id> stop <agent-N>  end one of them
+  send <id> "message"        type a message in at one of your running sessions' agent, as the Chat tab's Send does;
+                             held while it works, and typed in once its turn ends
+      --wait                 then wait until it has worked on it, and print what it said
+  wait <id>                  until one of your sessions is done with its turn, needs you, or stops
+  read <id> [--last <n>]     what it was asked and said, newest last (default the last 10), from its Chat. Never a
+                             session that has seen production data: its conversation is read on the console only
   herdr <id>                 make one of your sessions a machine in Herdr (hc ${HC_MINIMUM} or newer), woodshed-<id>,
                              reached through woodshed tunnel; a paused one is resumed first, and waited for. Run on
                              your computer: inside a Woodshed session it adds nothing and says so (exit 3)
@@ -1136,6 +1142,50 @@ export async function sessionCommand({ origin, rest }, ctx) {
   const id = opts.id;
   const { login, s } = await find(id);
 
+  // ---- a session's conversation, from here: send, wait and read (the page's Chat routes, cliSessions.mjs) ----
+  const SETTLED = new Set(['done', 'needs-you', 'idle']);
+  // How long a message that went in may go unworked on before it is said not to have been taken up.
+  const NO_REPLY_MS = 90_000;
+
+  // Until the session is done with its turn, needs its person or stops. With `sentAt`, a turn after the message went in:
+  // one already settled is not its answer, and one too quick to be seen working is told by a newer last message.
+  async function waitTurn(sentAt = null) {
+    const started = now();
+    let worked = false;
+    for (;;) {
+      const { s: x } = await find(id);
+      if (!LIVE.has(x.status)) return { s: x, ended: true };
+      if (x.state === 'working') worked = true;
+      const settled = x.status === 'running' && SETTLED.has(x.state);
+      const newer = sentAt && x.lastMessage?.role === 'assistant' && x.lastMessage.at && Date.parse(x.lastMessage.at) > sentAt;
+      if (settled && (sentAt === null || worked || newer)) return { s: x };
+      if (settled && sentAt && now() - started >= NO_REPLY_MS) return { s: x, noReply: true };
+      await sleep(POLL_MS);
+    }
+  }
+
+  async function conversation(limit) {
+    try {
+      const body = await ask(`/api/sessions/${id}/transcript?limit=${limit}`);
+      return (Array.isArray(body.entries) ? body.entries : []).filter((e) => (e.role === 'user' || e.role === 'assistant') && typeof e.text === 'string' && e.text.trim());
+    } catch (err) {
+      if (err.http === 409) throw fail(`Session ${id}: ${err.message}`, { code: EXIT.refused, status: 'refused' });
+      throw err;
+    }
+  }
+
+  // Its lines kept, each cleaned as any text from the console is, so no escape reaches this terminal.
+  const entryText = (e) => `[${e.role === 'assistant' ? 'said' : 'asked'}${e.at ? ` ${String(e.at).slice(11, 16)}` : ''}] ${e.text.trim().slice(0, 20_000).split(/\r?\n/).map((line) => printable(line, 20_000)).join('\n')}`;
+
+  // 0 done with its turn, 2 it needs you, 1 it stopped first or never took the message up.
+  const turnCode = ({ s: x, ended, noReply }) => (ended || noReply ? EXIT.failed : x.state === 'needs-you' ? EXIT.waiting : EXIT.done);
+
+  function turnLine(x, { ended, noReply }) {
+    if (ended) return `Session ${id} is ${stateOf(x).word}: it stopped before it was done.`;
+    if (noReply) return `Session ${id} did not take it up: it did not start working on it.`;
+    return `Session ${id} is ${stateOf(x).word}.`;
+  }
+
   // The agents beside a running private session's own (session/agents.mjs): its owner's alone, as on the page.
   async function agentsOf() {
     ownPrivate(s, login, 'run other agents in');
@@ -1148,6 +1198,48 @@ export async function sessionCommand({ origin, rest }, ctx) {
       throw err;
     }
     return (Array.isArray(body.agents) ? body.agents : []).filter((a) => a && AGENT_ID_RE.test(a.id)).map(agentSummary);
+  }
+
+  if (sub === 'send') {
+    if (s.status !== 'running') throw fail(`Session ${id} is ${stateOf(s).word}: a message is typed in only while it runs. woodshed session resume ${id} first.`, { code: EXIT.refused, status: 'not-running' });
+    const sentAt = now();
+    let sent;
+    try {
+      sent = await ask(`/api/sessions/${id}/send`, { method: 'POST', body: { text: opts.text } });
+    } catch (err) {
+      if (err.http === 409) throw fail(`Session ${id}: ${err.message}`, { code: EXIT.refused, status: 'refused' });
+      throw err;
+    }
+    if (json) emit({ event: 'sent', session: id, held: Boolean(sent.held), ...(sent.unknown ? { unknown: true } : {}) });
+    else say(sent.held ? `Held for session ${id}: it is typed in once its agent's turn ends.` : `Sent to session ${id}${sent.unknown ? ' (the console did not hear back in time: it may have gone in)' : ''}.`);
+    if (!opts.wait) return EXIT.done;
+    const turn = await waitTurn(sentAt);
+    // What a session that has seen production data said stays on the console.
+    const said = turn.ended || turn.noReply || turn.s.taintedAt ? [] : (await conversation(50)).filter((e) => e.role === 'assistant' && e.at && Date.parse(e.at) > sentAt);
+    if (json) {
+      emit({ event: 'turn', session: summary(turn.s, { origin, login, appsOn }), ended: Boolean(turn.ended), noReply: Boolean(turn.noReply), said });
+      return turnCode(turn);
+    }
+    say(turnLine(turn.s, turn));
+    if (turn.s.taintedAt) say(`It has seen production data: read what it said on the console, ${summary(turn.s, { origin, login, appsOn }).url}`);
+    for (const e of said) say(entryText(e));
+    return turnCode(turn);
+  }
+
+  if (sub === 'wait') {
+    const turn = await waitTurn();
+    if (json) emit({ event: 'turn', session: summary(turn.s, { origin, login, appsOn }), ended: Boolean(turn.ended) });
+    else say(turnLine(turn.s, turn));
+    return turnCode(turn);
+  }
+
+  if (sub === 'read') {
+    if (s.status !== 'running') throw fail(`Session ${id} is ${stateOf(s).word}: its conversation is read while it runs. woodshed session resume ${id} first.`, { code: EXIT.refused, status: 'not-running' });
+    const last = opts.last === undefined ? 10 : Number(opts.last);
+    const entries = (await conversation(Math.max(last * 3, 50))).slice(-last);
+    if (json) emit({ event: 'conversation', session: id, entries });
+    else say(entries.length ? entries.map(entryText).join('\n') : 'Nothing said yet.');
+    return EXIT.done;
   }
 
   if (sub === 'agents') {
@@ -1574,6 +1666,7 @@ export function parseSessionArgs(sub, words, fail) {
   const wordsOf = {
     new: 'prompt', connect: 'id', agents: 'id', agent: 'id-agent', herdr: 'id', list: null, get: 'id', app: 'id-action',
     extend: 'id', limits: 'id', stop: 'id', resume: 'id', handoff: 'id', remove: 'id', prune: null, watch: null,
+    send: 'id-text', wait: 'id', read: 'id',
   };
   const commands = Object.fromEntries(Object.entries(wordsOf).map(([name, w]) => [name, { ...sessionOptions(name), words: w }]));
   // Its own keys only: `constructor` or `toString` is no command.
@@ -1644,6 +1737,13 @@ export function parseSessionArgs(sub, words, fail) {
       out.action = 'start';
       out.prompt = positional.slice(1).join(' ');
     }
+  }
+  else if (takes.words === 'id-text') {
+    // session send <id> message words
+    if (!positional.length || !ID_RE.test(positional[0])) throw fail(`session ${sub} takes a session id first, then the message\n\n${SESSION_USAGE}`);
+    out.id = positional[0];
+    out.text = positional.slice(1).join(' ');
+    if (!out.text.trim()) throw fail(`session ${sub} needs the message: woodshed session ${sub} ${out.id} "what to say"`);
   }
   else if (takes.words === 'id-action') {
     // session app <id> [start|stop|share]

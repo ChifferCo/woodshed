@@ -2982,6 +2982,20 @@ export function createHandler({
     return reply(res, 404, { error: 'not found' });
   }
 
+  // A running session's applog, diff, transcript or prompt, read from its statusd for whoever may open it.
+  function statusdRead(req, res, url, login, [, id, what]) {
+    const session = runningFor(id, login);
+    if (!session) return reply(res, findFor(id, login) ? 409 : 404, { error: 'the session is not running' });
+    const limit = what === 'transcript' ? url.searchParams.get('limit') : null;
+    const since = what === 'transcript' ? url.searchParams.get('since') : null;
+    const params = new URLSearchParams({
+      ...(limit && /^\d{1,4}$/.test(limit) && { limit }),
+      ...(since && /^\d{1,16}(\.\d{1,6})?$/.test(since) && { since }),
+    });
+    const query = params.size ? `?${params}` : '';
+    return toStatusd(req, res, session, { method: 'GET', path: `/${what}${query}` });
+  }
+
   // The command line token's reads and writes, past handleCliCall's checks (cliSessions.mjs). A config write answers
   // with the config alone (cliConfig.mjs).
   async function cliRead(req, res, url, login) {
@@ -2994,6 +3008,16 @@ export function createHandler({
     // woodshed session agents: the agents beside a private session's own (agentAction checks it is theirs).
     const agentsRead = AGENTS_RE.exec(pathname);
     if (agentsRead && !agentsRead[2]) return agentAction(req, res, agentsRead, login);
+    // woodshed session read: the Chat tab's read, never of a session that has seen production data, whose conversation
+    // stays on the console rather than reach a computer.
+    const transcriptRead = TERMINAL_RE.exec(pathname);
+    if (transcriptRead?.[2] === 'transcript') {
+      if (findFor(transcriptRead[1], login)?.taintedAt) {
+        console.log('cliSessions: refused, a tainted session\'s conversation', { login, id: transcriptRead[1] });
+        return reply(res, 409, { error: 'this session has seen production data: its conversation is read on the console only' });
+      }
+      return statusdRead(req, res, url, login, transcriptRead);
+    }
     return reply(res, 200, pathname === '/api/sessions' ? sessionsBody(login) : await projectsView(login));
   }
   function cliWrite(req, res, pathname, login) {
@@ -3143,16 +3167,7 @@ export function createHandler({
     if (agentRead) return agentAction(req, res, agentRead, user.login);
     const imageMatch = TERMINAL_RE.exec(pathname);
     if (imageMatch?.[2] === 'applog' || imageMatch?.[2] === 'diff' || imageMatch?.[2] === 'transcript' || imageMatch?.[2] === 'prompt') {
-      const session = runningFor(imageMatch[1], user.login);
-      if (!session) return reply(res, findFor(imageMatch[1], user.login) ? 409 : 404, { error: 'the session is not running' });
-      const limit = imageMatch[2] === 'transcript' ? url.searchParams.get('limit') : null;
-      const since = imageMatch[2] === 'transcript' ? url.searchParams.get('since') : null;
-      const params = new URLSearchParams({
-        ...(limit && /^\d{1,4}$/.test(limit) && { limit }),
-        ...(since && /^\d{1,16}(\.\d{1,6})?$/.test(since) && { since }),
-      });
-      const query = params.size ? `?${params}` : '';
-      return toStatusd(req, res, session, { method: 'GET', path: `/${imageMatch[2]}${query}` });
+      return statusdRead(req, res, url, user.login, imageMatch);
     }
     if (imageMatch?.[2] === 'image') {
       const session = runningFor(imageMatch[1], user.login);

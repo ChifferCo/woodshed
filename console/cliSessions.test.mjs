@@ -94,16 +94,18 @@ test('the command line allows only the session, config and review routes', () =>
     ['POST', '/api/my/claude-token/shared'], ['POST', '/api/my/projects/default'], ['POST', '/api/my/github/identity'],
     // woodshed session agents and agent's: the agents beside a private session's own.
     ['GET', '/api/sessions/0a1b2c3d/agents'], ['POST', '/api/sessions/0a1b2c3d/agents'], ['POST', '/api/sessions/0a1b2c3d/agents/agent-2/stop'],
+    // woodshed session send, wait and read's: the Chat tab of the session's own agent.
+    ['POST', '/api/sessions/0a1b2c3d/send'], ['GET', '/api/sessions/0a1b2c3d/transcript'],
   ]) assert.equal(cliMayCall(method, path), true, `${method} ${path}`);
   for (const [method, path] of [
     ['POST', '/api/sessions'], ['GET', '/api/my'], ['POST', '/api/my/claude-token'], ['POST', '/api/my/remove'], ['POST', '/api/my/tunnel-token'],
-    ['GET', '/api/secrets'], ['POST', '/api/people/admin'], ['POST', '/api/sessions/0a1b2c3d/send'], ['POST', '/api/sessions/0a1b2c3d/delete'],
-    ['POST', '/api/sessions/0a1b2c3d/resume'], ['GET', '/api/sessions/0a1b2c3d/transcript'], ['POST', '/api/sessions/0a1b2c3d/pin'], ['POST', '/api/sessions/0a1b2c3d/assign'], ['DELETE', '/api/sessions'], ['GET', '/api/sessions/'],
+    ['GET', '/api/secrets'], ['POST', '/api/people/admin'], ['POST', '/api/sessions/0a1b2c3d/delete'], ['POST', '/api/sessions/0a1b2c3d/send/x'],
+    ['POST', '/api/sessions/0a1b2c3d/resume'], ['POST', '/api/sessions/0a1b2c3d/transcript'], ['POST', '/api/sessions/0a1b2c3d/answer'], ['POST', '/api/sessions/0a1b2c3d/interrupt'], ['POST', '/api/sessions/0a1b2c3d/pin'], ['POST', '/api/sessions/0a1b2c3d/assign'], ['DELETE', '/api/sessions'], ['GET', '/api/sessions/'],
     ['POST', '/api/my/sessions/0a1b2c3d/resume/x'], ['GET', '/term/0a1b2c3d/'], ['POST', '/api/my/cli-tokens/0123456789abcdef/revoke'],
     ['POST', '/api/review-readiness'], ['GET', '/api/setup/github/reviewer'],
     ['POST', '/api/my/pulls'], ['GET', '/api/my/pulls/7/review'], ['POST', '/api/my/pulls/0/review'], ['POST', '/api/my/pulls/07/review'],
     ['POST', '/api/my/pulls/1234567890/review'], ['POST', '/api/my/pulls/7/review/x'],
-    // Set up app types into the session's agent, as send does: the page's alone.
+    // Set up app types its own prompt into the session's agent: the page's alone.
     ['POST', '/api/sessions/0a1b2c3d/app/setup'], ['POST', '/api/sessions/0a1b2c3d/app/start/x'],
     ['POST', '/api/sessions/0a1b2c3d/app-share'], ['GET', '/api/sessions/0a1b2c3d/app-share/members'], ['GET', '/api/sessions/0a1b2c3d/app-share/links'],
     ['POST', '/api/sessions/0a1b2c3d/app-share/links/1a2b3c4d'], ['POST', '/api/sessions/0a1b2c3d/app-share/links/x/revoke'],
@@ -221,7 +223,7 @@ test('a command line token reaches nothing else, and no page can use one', async
   const c = await consoleFor(t);
   for (const [path, method] of [
     ['/api/my', 'GET'], ['/api/my/claude-token', 'POST'], ['/api/my/remove', 'POST'], ['/api/my/tunnel-token', 'POST'], ['/api/secrets', 'GET'],
-    ['/api/people', 'GET'], ['/api/sessions', 'POST'], ['/api/sessions/aaaa0001/send', 'POST'], ['/api/sessions/aaaa0001/transcript', 'GET'],
+    ['/api/people', 'GET'], ['/api/sessions', 'POST'], ['/api/sessions/aaaa0001/answer', 'POST'], ['/api/sessions/aaaa0001/agents/agent-2/transcript', 'GET'],
     ['/settings', 'GET'], ['/term/aaaa0001/', 'GET'], ['/api/my/cli-tokens/0123456789abcdef/revoke', 'POST'], ['/api/my/codex-auth', 'POST'],
     ['/api/my/files/tmux-conf', 'GET'], ['/api/my/github/disconnect', 'POST'],
   ]) {
