@@ -463,9 +463,10 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   /**
    * Saves the person's own sign-in for Grok Build or OpenCode (shared/agents.cjs, checkSignIn).
    * `opts.reviews: false` is a first save from the command line. The reviews switch is stored off before the secret
-   * is written, and again with the sign-in's metadata. A stop after the secret lands is a discovery, and an author
-   * who already accepted the wider default keeps it, so the switch would read as on unless that deny is already
-   * stored. A secret write that throws puts the switch back.
+   * is written, and again with the sign-in's metadata. On the service store that write is queued, so it is flushed
+   * first: a stop after the secret lands is a discovery, and an author who already accepted the wider default keeps
+   * it, so the switch would read as on unless that deny is already stored. A secret write that throws puts this
+   * agent's switch back and leaves every other agent's as it is now.
    */
   function setAgentAuth(login, id, value, opts) {
     return agentAuthTurn(login, id, ({ save }) => save(value, opts));
@@ -481,14 +482,24 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     if (denyFirst) {
       touch(login, { ownAgentForReviews: { ...priorFlags, [id]: false } });
       console.log(`userSettings: own ${agent.product} sign-in for reviews`, { login, agent: id, on: false });
+      // The file store writes in save. The service store only queues it: flush is awaited before the secret is
+      // written, and it rejects when that write failed, so the credential is not saved over a deny that did not land.
+      if (typeof store.flush === 'function') {
+        try {
+          await store.flush();
+        } catch {
+          throw Object.assign(new Error(`${agent.product}'s reviews switch could not be saved`), { shown: true });
+        }
+      }
     }
     try {
       await secrets.save(userSecretName(login, agent.signIn.secret), auth, `Woodshed: @${login}'s ${agent.product} sign-in, for their My Woodshed ${agent.product} sessions only`);
     } catch (err) {
       if (denyFirst) {
-        const restored = { ...priorFlags };
-        if (!priorFlags || !Object.hasOwn(priorFlags, id)) delete restored[id];
-        touch(login, { ownAgentForReviews: restored });
+        const current = { ...recordFor(login)?.ownAgentForReviews };
+        if (!priorFlags || !Object.hasOwn(priorFlags, id)) delete current[id];
+        else current[id] = priorFlags[id];
+        touch(login, { ownAgentForReviews: current });
       }
       throw err;
     }

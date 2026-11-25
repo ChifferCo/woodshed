@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import { ownFilesBodyLimit } from '../shared/ownFiles.mjs';
 import { checkClaudeToken, checkCodexAuth, createUserSettings, userSecretName } from './userSettings.mjs';
+import { createReviewAgents } from './reviewAgents.mjs';
+import { openServiceStore } from './store.mjs';
 import agents from '../shared/agents.cjs';
 
 
@@ -258,13 +260,84 @@ test('Grok Build and OpenCode sign-ins are each kept under the person\'s login, 
 
 test('a command-line reviews deny is taken back when the secret write throws', async () => {
   const secrets = fakeSecrets();
-  secrets.save = async () => { throw new Error('store down'); };
-  const store = { state: { reviewDefaultKept: true, people: { mia: { reviewDefault: 'all', ownAgentForReviews: { opencode: false } } } }, save() {} };
+  const store = { state: { reviewDefaultKept: true, people: { mia: { reviewDefault: 'all', agentAuthAt: { opencode: '2026-11-01T00:00:00.000Z' } } } }, save() {} };
   const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-11-25T00:00:00Z') });
+  // OpenCode's switch is turned off while this upload's secret write is in flight. The failure puts back only Grok's flag.
+  secrets.save = async () => {
+    settings.setOwnAgentForReviews('mia', 'opencode', false);
+    throw new Error('store down');
+  };
   await assert.rejects(settings.setAgentAuth('mia', 'grok', 'xai-made-up-mia-0123456789', { reviews: false }), /store down/);
-  assert.equal(store.state.people.mia.agentAuthAt, undefined);
-  assert.deepEqual(store.state.people.mia.ownAgentForReviews, { opencode: false }, 'the deny does not stay, and another agent\'s switch is left as it was');
-  assert.equal(secrets.values.size, 0);
+  assert.equal(store.state.people.mia.agentAuthAt?.grok, undefined);
+  assert.equal(store.state.people.mia.ownAgentForReviews.grok, undefined, 'the failed upload\'s own flag is taken back');
+  assert.equal(store.state.people.mia.ownAgentForReviews.opencode, false, 'the other agent\'s switch stays off');
+  secrets.values.set('users/mia/opencode-auth', '{"openai":{"type":"api","key":"sk-openai-made-up"}}');
+  const reviews = createReviewAgents({ userSettings: settings, connected: async () => ({ claude: true, codex: true }) });
+  assert.deepEqual((await reviews.forReview({ login: 'mia' })).agents, ['claude', 'codex']);
+  assert.equal(secrets.values.has('users/mia/grok-auth'), false);
+});
+
+test('a command-line sign-in is not saved when the service store rejects the reviews-off write', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const store = await openServiceStore({
+    load: async () => ({ reviewDefaultKept: true, people: { mia: { reviewDefault: 'all' } } }),
+    save: async () => { throw new Error('down'); },
+  }, { retryMs: 60_000 });
+  t.after(() => store.close());
+  const saved = [];
+  const secrets = { read: async () => null, save: async (name) => { saved.push(name); }, remove: async () => {} };
+  const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-11-25T00:00:00Z') });
+  await assert.rejects(settings.setAgentAuth('mia', 'grok', 'xai-made-up-mia-0123456789', { reviews: false }), /reviews switch could not be saved/);
+  assert.deepEqual(saved, [], 'the secret is not written when the deny did not land');
+});
+
+test('a command-line reviews deny is durable on the service store before the secret is saved', async () => {
+  let release;
+  const open = new Promise((resolve) => { release = resolve; });
+  let held;
+  const persisted = [];
+  const store = await openServiceStore({
+    load: async () => ({ reviewDefaultKept: true, people: { mia: { reviewDefault: 'all' } } }),
+    save: async (state) => {
+      persisted.push(structuredClone(state));
+      if (persisted.length === 1) {
+        held();
+        await open;
+      }
+    },
+  });
+  const gate = new Promise((resolve) => { held = resolve; });
+  const values = new Map();
+  let secretsWhenSaved = null;
+  const secrets = {
+    values,
+    read: async (name) => values.get(name) ?? null,
+    save: async (name, value) => {
+      secretsWhenSaved = persisted.length;
+      values.set(name, value);
+    },
+    remove: async (name) => { values.delete(name); },
+  };
+  const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-11-25T00:00:00Z') });
+  const pending = settings.setAgentAuth('mia', 'grok', 'xai-made-up-mia-0123456789', { reviews: false });
+  try {
+    await gate;
+    assert.equal(values.size, 0, 'the secret waits until the reviews-off write has finished');
+  } finally {
+    release();
+  }
+  await pending;
+  assert.equal(secretsWhenSaved, 1, 'the secret is saved once the reviews-off write has been accepted');
+  const atSecret = persisted[0];
+  assert.equal(atSecret.people.mia.ownAgentForReviews.grok, false);
+  assert.equal(atSecret.people.mia.agentAuthAt?.grok, undefined);
+  assert.equal(atSecret.people.mia.reviewDefault, 'all');
+  const restarted = createUserSettings({ store: { state: structuredClone(atSecret), save() {} }, secrets, now: () => Date.parse('2026-11-25T00:00:00Z') });
+  await restarted.refresh('mia', { force: true });
+  assert.equal(restarted.usesExpandedReviewDefault('mia'), true);
+  assert.equal(restarted.usesOwnAgentForReviews('mia', 'grok'), false);
+  const reviews = createReviewAgents({ userSettings: restarted, connected: async () => ({ claude: true, codex: true }) });
+  assert.deepEqual((await reviews.forReview({ login: 'mia' })).agents, ['claude', 'codex'], 'a restart after the secret lands does not put Grok Build in the default');
 });
 
 test('a Grok Build or OpenCode sign-in found in the store after startup stays on the previous review default', async (t) => {

@@ -32,7 +32,7 @@ test('a save the service refused is tried again, and a closed store saves nothin
   const written = [];
   const store = await openServiceStore({ load: async () => null, save: async (state) => { if (fail) throw new Error('down'); written.push(state); } }, { retryMs: 10 });
   store.save();
-  await store.flush();
+  await assert.rejects(store.flush(), /state not saved/);
   assert.equal(written.length, 0);
   fail = false;
   await new Promise((r) => setTimeout(r, 30));
