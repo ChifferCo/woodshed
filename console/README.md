@@ -844,9 +844,10 @@ you would any other, and save a new one. Saving a new token or removing it
 reaches running sessions only at their next start.
 
 New session opens on **Codex** for someone with a Codex sign-in saved and no Claude token, and on Claude otherwise,
-until they pick an agent. Its **Agent** menu lists only the agents set up to run (`agents` in `GET /api/my`): Claude with a
-Claude token saved, Codex with a Codex sign-in saved or the team's `openai-api-key`. With one, the menu is greyed out
-on it, and a Codex start with neither is refused (409). Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
+until they pick an agent. Its **Agent** is a card per agent (`createAgentCards` in `public/launcher.js`), each saying what
+it runs on; only the agents set up to run can be picked (`agents` in `GET /api/my`): Claude with a Claude token saved,
+Codex with a Codex sign-in saved or the team's `openai-api-key`. The others stay shown, disabled, with a link to their
+box on My settings, and a Codex start with neither is refused (409). Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
 (`codexModels.mjs`): `GET https://chatgpt.com/backend-api/codex/models?client_version=<codex's version>`, asked with
 your own Codex sign-in, or the team's OpenAI key with none, kept 10 minutes. A model OpenAI ships shows the day it
 ships, and a start is refused with a model or effort the list does not offer. The console never refreshes a ChatGPT
@@ -855,7 +856,7 @@ answering, the menus are your last list read, or else codex's built-in list (`BU
 --bundled` of the image's codex), and a line under them says so. `CODEX_CLIENT_VERSION` follows the image's
 `CODEX_VERSION`, which `codexModels.test.mjs` checks; refresh `BUILT_IN` with it.
 
-**Grok Build** and **OpenCode** are on the Agent menu too (`shared/agents.cjs`), each only for someone whose own sign-in
+**Grok Build** and **OpenCode** have Agent cards too (`shared/agents.cjs`), each only for someone whose own sign-in
 for it is saved on My settings: they run on nothing else, since the console holds no team key or proxy for them. The
 sign-in is `users/<login>/grok-auth` (an xAI key, `xai-…`, or `~/.grok/auth.json` from `grok login`) or `opencode-auth`
 (`~/.local/share/opencode/auth.json` from `opencode auth login`), saved with `POST /api/my/agent-auth/<agent>` and
