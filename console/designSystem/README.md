@@ -15,7 +15,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - **Color roles.** Orange (`action`) is only for the one primary action in a view: New session, Resume, Take it, Assign. Yellow (`wait`) is only for a session that needs a person, and for a PR chip in the merge queue, as GitHub colors it. `slate` is for working, in review, waiting on a job, links and the Assigned outline. `green` is done. `bad` is failed. `amber` is the focus ring and the open session's outline, never text.
 - **Project colours.** `proj-*` (teal, plum, sienna, rose, violet, moss) say which project a session is on, and nothing else: never a status, a warning or an action. None of them is a status hue, and the palette is fixed, so do not add one or borrow a status colour for a project. A project colour never stands alone: its name is on the filter chip and in the card's tooltip. Two projects never share one.
 - **Surfaces.** Page and cards on `ground`; rail groups and stopped cards on `stopped`. Borders are `line`; dividers inside the rail are `line-soft`. No shadows on cards. `menu` shadow only on menus.
-- **Type.** `title` (Merriweather) once per page. Everything else is Red Hat Display: `card-title`, `button`, `group-label`. Meta lines, PR chips and counts are JetBrains Mono: `meta`, `chip`.
+- **Type.** One family, Red Hat: Red Hat Display for text and the `title`, bold, once per page (`card-title`, `button`, `group-label` too), and Red Hat Mono for meta lines, PR chips, counts and code (`meta`, `chip`). The console serves both itself (`public/fonts/`), each a variable font holding every weight, never from Google Fonts: a family not served there falls back to the system's font. The component previews here load them from Google Fonts, as files opened on their own.
 - **Spacing and radius.** Gaps are `space-2` between cards and head controls, `space-3` for rail padding. Cards are `radius-lg`, rail buttons `radius-md`, form buttons `radius-sm`, the People filter and count chips `radius-pill`.
 - **Contrast.** Text meets 4.5:1 on the grounds named in its token note, in both themes. White on `action` is 4.8:1 in light; use `action-ink` in dark.
 - **Dark.** Dark follows the device unless My settings' Display card picked light. Both themes use the same token names.
@@ -210,8 +210,12 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 ## People
 
 - Members are a table: the person, a **Role** select (Owner, Member, Contributor, Private only), **What they can do**
-  (that role in one plain sentence, in `foot`), Slack, and Remove. A role stands for a set of switches, so there is one
-  control per person, never a checkbox per switch. Head cells are uppercase `group-label` on `stopped`. Invite someone
+  (that role in one plain sentence, in `foot`), **Personal tokens**, Slack, and Remove. A role stands for a set of
+  switches, so there is one control per person, never a checkbox per switch. Head cells are uppercase `group-label` on
+  `stopped`. Members are grouped by role, in the Role select's order, each role a table body of its own under a head row
+  (`Owner · 2`, a `rowgroup` heading with the same look as the head cells), and sorted by name within it. Personal tokens names each sign-in the person saved on My
+  settings (Claude, Codex, Grok Build, OpenCode, and GitHub once connected) as a green `pill`, or None in `foot`: never
+  a value. Invite someone
   (Add someone) picks the role from a table under the handle: a row per role with a radio, a column per power (Private sessions,
   which every role has, then Settings pages, Sessions from GitHub, Can be assigned) that says Yes or No (No in `meta`), and its sentence; the picked row is on `stopped`. Invite comes after the table. The table
   scrolls sideways on a phone.

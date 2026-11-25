@@ -1,5 +1,5 @@
-/* Woodshed's look, so the console and the shed read as one tool: Merriweather
-   for the page title, Red Hat Display for text, JetBrains Mono for meta lines,
+/* Woodshed's look, so the console and the shed read as one tool: Red Hat Display
+   for text and the page title (bold), Red Hat Mono for meta lines,
    and the shed's status colours (amber needs you, slate working, green done). */
 :root {
   color-scheme: light dark;
@@ -20,7 +20,7 @@
   --proj-teal: #1b7485; --proj-teal-tint: #e5f3f6; --proj-plum: #8b4f8f; --proj-plum-tint: #f6ecf6;
   --proj-sienna: #8f5a3c; --proj-sienna-tint: #f7eee8; --proj-rose: #b0446a; --proj-rose-tint: #fbebf1;
   --proj-violet: #6652c2; --proj-violet-tint: #efecfb; --proj-moss: #57711f; --proj-moss-tint: #f0f5e4;
-  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --mono: "Red Hat Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 /* Dark follows the device unless the settings sheet picked light; a picked dark wins anywhere. */
 @media (prefers-color-scheme: dark) {
@@ -60,7 +60,7 @@ button { font: inherit; }
 /* ---- the Shared page ---- */
 .page { max-width: 1140px; margin: 0 auto; padding: 32px 16px 48px; display: flex; flex-direction: column; gap: 20px; }
 .page-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px 24px; }
-h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size: 30px; }
+h1.title { margin: 0 0 4px; font-family: "Red Hat Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-weight: 700; font-size: 30px; }
 .sub { margin: 0; color: var(--sub); font-size: 14px; }
 .stats { display: flex; gap: 14px; font-family: var(--mono); font-size: 12px; color: var(--sub); }
 .stats b { color: var(--ink); font-weight: 600; }
@@ -579,7 +579,7 @@ dialog.wizard:focus { outline: none; }
 /* ---- the Review tab ---- */
 .review { padding: 20px 24px 40px; display: flex; flex-direction: column; gap: 14px; max-width: 1200px; }
 .rv-head { display: flex; flex-direction: column; gap: 8px; }
-.rv-title { margin: 0; font-family: Merriweather, Georgia, serif; font-size: 24px; line-height: 1.25; overflow-wrap: anywhere; }
+.rv-title { margin: 0; font-family: "Red Hat Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-weight: 700; font-size: 24px; line-height: 1.25; overflow-wrap: anywhere; }
 .rv-kicker { color: var(--amber-ink); }
 .rv-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-family: var(--mono); font-size: 12px; color: var(--meta); }
 .rv-chip { font-size: 12px; padding: 1px 6px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); overflow-wrap: anywhere; }
@@ -739,7 +739,7 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .launch-body[hidden] { display: none; }
 .home { padding: 24px; display: flex; flex-direction: column; gap: 18px; max-width: 1040px; overflow-y: auto; min-width: 0; }
 .home[hidden] { display: none; }
-.launch-title { margin: 0 0 4px; font: 700 22px/1.25 Merriweather, Georgia, serif; }
+.launch-title { margin: 0 0 4px; font: 700 22px/1.25 "Red Hat Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
 .launch-form { display: flex; flex-direction: column; gap: 12px; }
 .launch-form[hidden], .launch-card[hidden] { display: none; }
 .lfield { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
@@ -1221,7 +1221,7 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px
 .pfoot { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 8px 14px; border-top: 1px solid var(--line); color: var(--meta); font-size: 11px; }
 .sheet:focus { outline: none; }
 .sheet-head { display: flex; align-items: baseline; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--stopped); }
-.sheet-head h3 { margin: 0; font-family: Merriweather, Georgia, serif; font-size: 15px; }
+.sheet-head h3 { margin: 0; font-family: "Red Hat Display", -apple-system, BlinkMacSystemFont, system-ui, sans-serif; font-weight: 700; font-size: 15px; }
 .sheet-head .esc { color: var(--meta); font-size: 11px; }
 .sheet-body { padding: 10px 16px 14px; overflow-y: auto; }
 .krow { display: grid; grid-template-columns: 11rem 1fr; gap: 12px; align-items: center; padding: 5px 0; font-size: 13px; }
@@ -1403,6 +1403,9 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 .people-table .role-can { min-width: 260px; line-height: 1.45; }
 .people-table .end-cell { text-align: right; white-space: nowrap; }
 .people-table .edit-row td { border-top: 0; padding-top: 0; }
+.people-table .role-head th { border-top: 1px solid var(--line-soft); padding-top: 10px; }
+.people-table .sign-ins { min-width: 160px; }
+.sign-in-list { display: flex; flex-wrap: wrap; gap: 4px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .slack-line { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
 .slack-edit { margin-top: 6px; }

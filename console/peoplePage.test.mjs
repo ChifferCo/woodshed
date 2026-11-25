@@ -32,7 +32,7 @@ function walk(el, out = []) {
 
 const person = (login, role, fields = {}) => ({ login, role, admin: role === 'owner', githubSessions: true, assignable: false, ...fields });
 
-async function loadPage({ members, addReply, hosted = true, requests = [], confirm = () => true }) {
+async function loadPage({ members, addReply, hosted = true, requests = [], confirm = () => true, names = {} }) {
   const asked = [];
   const app = element('div');
   const h = (tag, attrs, ...children) => {
@@ -51,7 +51,7 @@ async function loadPage({ members, addReply, hosted = true, requests = [], confi
   const withRoles = (reply) => (reply && Array.isArray(reply.members)
     ? { ...reply, roles: ROLES.map(({ id, label, explain, privateSessions, admin, githubSessions, assignable }) => ({ id, label, explain, privateSessions, admin, githubSessions, assignable })), members: reply.members.map((m) => ({ ...m, access: roleOf(m), accessDiffers: roleDiffers(m) })) }
     : reply);
-  const list = withRoles({ members, requests, hosted, names: {}, slack: null });
+  const list = withRoles({ members, requests, hosted, names, slack: null });
   const posted = [];
   const heard = {};
   const W = {
@@ -236,4 +236,54 @@ test('making yourself anything but an owner is asked first; a no leaves the sele
   await select('lee-dev').listeners.change({ currentTarget: { value: 'member', disabled: false } });
   assert.equal(asked.length, 2, 'someone else\'s role is not asked about');
   assert.equal(posted.length, 2);
+});
+
+test('members are grouped by role in the roles\' order, by name within each, with their personal tokens', async () => {
+  const member = (login, fields) => person(login, 'member', { assignable: true, ...fields });
+  const { app } = await loadPage({
+    hosted: false,
+    members: [
+      person('sam-ops', 'private', { githubSessions: false, signIns: [] }),
+      member('zed-qa', { signIns: ['Codex'] }),
+      person('mia-dev', 'contributor', { signIns: ['GitHub'] }),
+      member('constructor', { signIns: [] }),
+      person('ana-owner', 'owner', { assignable: true, signIns: ['Claude', 'Codex', 'GitHub'] }),
+      member('bo-dev', { signIns: ['Claude', 'Grok Build', 'OpenCode'] }),
+      member('Abe', { signIns: [] }),
+    ],
+    // Named people sort by their name, the rest by handle: Bo Zhang after @Abe and before @constructor.
+    names: { 'bo-dev': 'Bo Zhang', 'zed-qa': 'Ada Zed' },
+    addReply: () => null,
+  });
+  const table = walk(app).find((e) => e.className === 'people-table');
+  const bodies = table.children.filter((c) => c.tag === 'tbody');
+  const heads = bodies.map((b) => walk(b).find((e) => e.tag === 'th'));
+  assert.deepEqual(heads.map(textOf), ['Owner · 1', 'Member · 4', 'Contributor · 1', 'Private only · 1'], 'one body per role, in the select\'s order');
+  assert.ok(heads.every((th) => th.attrs.scope === 'rowgroup'), 'each heading names the rows of its own body');
+  const loginOf = (row) => walk(row).find((e) => e.tag === 'select').attrs['aria-label'].replace('Role: @', '');
+  const logins = (body) => body.children.filter((r) => r.className !== 'role-head').map(loginOf);
+  assert.deepEqual(bodies.map(logins), [['ana-owner'], ['Abe', 'zed-qa', 'bo-dev', 'constructor'], ['mia-dev'], ['sam-ops']]);
+
+  const columns = walk(table.children.find((c) => c.tag === 'thead')).filter((e) => e.tag === 'th').map(textOf);
+  assert.ok(columns.includes('Personal tokens'));
+  const tokens = (login) => {
+    const row = bodies.flatMap((b) => b.children).find((r) => r.className !== 'role-head' && loginOf(r) === login);
+    const cell = row.children.find((c) => c.className === 'sign-ins');
+    return walk(cell).filter((e) => e.className === 'pill is-ok').map(textOf).join(', ') || textOf(cell);
+  };
+  assert.deepEqual(['ana-owner', 'bo-dev', 'zed-qa', 'mia-dev', 'constructor', 'sam-ops'].map(tokens),
+    ['Claude, Codex, GitHub', 'Claude, Grok Build, OpenCode', 'Codex', 'GitHub', 'None', 'None']);
+});
+
+test('with no personal tokens in the reply (no My settings), there is no column for them', async () => {
+  const { app } = await loadPage({ members: [person('ana-owner', 'owner')], addReply: () => null });
+  const thead = walk(app).find((e) => e.tag === 'thead' && textOf(e).includes('Member'));
+  assert.ok(!textOf(thead).includes('Personal tokens'));
+});
+
+test('a saved name equal to the handle still shows as the name, with the handle under it', async () => {
+  const { rowOf } = await loadPage({ members: [person('ana-owner', 'owner'), person('lee', 'member')], names: { lee: 'lee' }, addReply: () => null });
+  const cell = rowOf('lee').children[0];
+  assert.equal(textOf(walk(cell).find((e) => e.tag === 'b')), 'lee');
+  assert.equal(textOf(walk(cell).find((e) => e.className === 'meta')), '@lee');
 });
