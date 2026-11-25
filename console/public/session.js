@@ -1681,7 +1681,7 @@
     // that stopped.
     // Everyone: what nobody has, then the shed's groups.
     // Reviews and QA the console ran on pull requests come last, in a zone of their own folded until opened.
-    const checks = listed.filter(W.isPullCheck);
+    const checks = W.latestPullChecks(listed.filter(W.isPullCheck));
     const work = listed.filter((s) => !W.isPullCheck(s));
     const unassigned = railMine() ? [] : work.filter(W.isUnassigned);
     // On Mine, a session started as a piece of another's work sits under it while that one is live (W.railGroups); one

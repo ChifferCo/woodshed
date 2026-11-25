@@ -3406,6 +3406,48 @@ test('a review on an author without Sessions from GitHub still runs, on the team
   assert.equal(t.fleet.sessions()[0].review.teamKey, true);
 });
 
+test('an ended review a later one on its pull request replaced goes off the list, and the last once the pull request closed', async () => {
+  const { fleet, github } = reviewSetup();
+  await fleet.reviewOnTag({ number: 7 });
+  await fleet.reviewFinished(fleet.sessions()[0], REVIEW_RESULT);
+  const newer = { ...REVIEW_PULL, head: { ...REVIEW_PULL.head, sha: 'b'.repeat(40) } };
+  github.pull = async () => newer;
+  await fleet.reviewOnDemand({ project: { name: 'r', repo: 'o/r', default: true }, number: 7, login: 'joel' });
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 2, 'the first stays while the second runs: its verdict is the last posted one');
+  await fleet.reviewFinished(fleet.sessions()[1], { ...REVIEW_RESULT, sha: 'b'.repeat(40) });
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().map((s) => s.review.sha), ['b'.repeat(40)], 'the replaced review is off the list');
+  assert.deepEqual(await fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'the commit still reads as reviewed');
+  github.pull = async () => ({ ...newer, state: 'closed' });
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 1, 'the pull request is read again only after a while, or a webhook');
+  assert.deepEqual(fleet.pullsChanged([7]), [7]);
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 0, 'nothing reads a closed pull request\'s runs');
+});
+
+test('an ended QA run a later one replaced goes off the list, but not while its recordings are watched', async () => {
+  const { fleet, github } = qaSetup();
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const first = fleet.sessions()[0];
+  first.qa.videos = [{ n: 1, bytes: 10 }];
+  await fleet.qaFinished(first, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  for (const sha of ['c', 'd']) {
+    const newer = { ...QA_PULL, head: { ...QA_PULL.head, sha: sha.repeat(40) } };
+    github.pull = async () => newer;
+    github.reviews = async () => reviewOn(newer.head.sha);
+    await fleet.qaAfterReview({ number: 7 });
+    await fleet.qaFinished(fleet.sessions().at(-1), { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: sha.repeat(40), costUsd: 1 });
+  }
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['a', 'd'], 'c is gone; a keeps its recording, d is the latest');
+  github.pull = async () => ({ ...QA_PULL, state: 'closed' });
+  fleet.pullsChanged([7]);
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['a'], 'once closed, only the run with a recording stays, for its days');
+});
+
 const HELD_GATES = { ...REVIEW_GATES, qa: QA_GATES.qa };
 const HELD_PULL = { ...REVIEW_PULL, labels: [{ name: 'qa' }] };
 function heldSetup(options = {}) {
@@ -3559,7 +3601,7 @@ test('a commit approved while a QA run held QA gets its own run when that run st
   await t.fleet.stop(qa, 'idle for 2 h');
   await t.fleet.tick();
   const runs = t.fleet.sessions().filter((s) => s.trigger === 'qa');
-  assert.deepEqual(runs.map((s) => s.qa.sha), ['a'.repeat(40), 'b'.repeat(40)], 'the newer commit is tested now');
+  assert.deepEqual(runs.map((s) => s.qa.sha), ['b'.repeat(40)], 'the newer commit is tested now, and the run it replaced is off the list');
 });
 
 // Each repo's own label and switches (repoTriggers.mjs), set on its settings page.
