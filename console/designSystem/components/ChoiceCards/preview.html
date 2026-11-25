@@ -1,4 +1,4 @@
-<!-- @dsCard group="Settings" height=300 subtitle="Two exclusive choices side by side, Production in its own colours when picked" -->
+<!-- @dsCard group="Settings" height=440 subtitle="Two exclusive choices side by side, Production in its own colours when picked; New session's four agents, compact" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600;700&display=swap">
 <style>
  body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
@@ -10,13 +10,22 @@
  .title{font-weight:600;font-size:14px}
  .line{grid-column:2;font-size:12.5px;color:var(--sub)}
  .prod .title::before{content:"";display:inline-block;width:7px;height:6px;background:currentColor;border-radius:1px;margin-right:6px;vertical-align:1px;box-shadow:0 -3px 0 -1px currentColor}
- .prod.on{background:var(--prod);border-color:var(--prod);color:var(--prod-ink)}
+ .prod.on{box-shadow:none;background:var(--prod);border-color:var(--prod);color:var(--prod-ink)}
  .prod.on .line{color:var(--prod-ink)}
  .prod.on .radio{border:5px solid var(--prod-ink)}
  .callout{margin-top:10px;max-width:640px;box-sizing:border-box;padding:10px 12px;border:1px solid var(--prod);border-left-width:4px;border-radius:6px;font-size:12.5px}
  .callout p{margin:0 0 6px;font-weight:600;font-size:13px;display:flex;gap:8px;align-items:center}
  .tag{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:var(--prod);color:var(--prod-ink)}
  ul{margin:0;padding-left:18px}
+ .on{border-color:var(--amber);box-shadow:inset 0 0 0 1px var(--amber)}
+ .on .radio{border:5px solid var(--amber)}
+ .agents{margin-top:24px}
+ .agents .cards{grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+ .agents .card{padding:10px 12px;gap:2px 8px;align-content:start}
+ .agents .line{font-size:12px}
+ .off{background:var(--stopped);color:var(--sub)}
+ .off .radio{border-color:var(--line)}
+ .off a{color:inherit}
 </style>
 <fieldset>
  <legend>Kind</legend>
@@ -27,3 +36,12 @@
 </fieldset>
 <div class="callout"><p><span class="tag">Production</span>What happens to a session that uses it</p>
  <ul><li>Its first call locks that session down for good: no internet but its org's private repos on GitHub, and no package installs.</li><li>The session is removed some time after it stops.</li></ul></div>
+<fieldset class="agents">
+ <legend>Agent</legend>
+ <div class="cards">
+  <label class="card on"><span class="radio"></span><span class="title">Claude</span><span class="line">Your Claude plan</span></label>
+  <label class="card"><span class="radio"></span><span class="title">Codex</span><span class="line">Your sign-in or the team key</span></label>
+  <label class="card off"><span class="radio"></span><span class="title">Grok</span><span class="line"><a href="#">Sign in on My settings</a></span></label>
+  <label class="card off"><span class="radio"></span><span class="title">OpenCode</span><span class="line"><a href="#">Sign in on My settings</a></span></label>
+ </div>
+</fieldset>

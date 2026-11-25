@@ -32,6 +32,9 @@
   // What a session of that agent runs on, for the line under Start.
   const RUNS_ON = { claude: 'Claude plan', codex: 'Codex sign-in or the team key' };
   const runsOn = (id) => RUNS_ON[id] ?? `own ${A.agent(id).product} sign-in`;
+  // The same, short, for the agent's card on New session.
+  const CARD_LINES = { claude: 'Your Claude plan', codex: 'Your sign-in or the team key' };
+  const cardLine = (id) => CARD_LINES[id] ?? `Your ${A.agent(id).product} sign-in`;
   // Codex's models and efforts are OpenAI's catalog's, as the console reads it for you (GET /api/my/codex-models,
   // codexModels.mjs); its permission modes are CODEX_PERMISSION_MODES in sessions.mjs.
   const CODEX_MODES = [['auto', 'auto', 'Works unattended; asks when the model decides to'], ['plan', 'plan', 'Read-only, changes nothing'],
@@ -41,6 +44,44 @@
 
   // For + Another agent on a session's pane bar (session.js), which offers the same choices.
   W.agentChoices = { AGENTS, MODELS, EFFORTS, MODES, CODEX_MODES };
+
+  // New session's agent, as choice cards (designSystem/components/ChoiceCards): every agent stays shown, each saying what
+  // it runs on, and one with no sign-in saved is disabled with where to save it. `onPick` hears a person's pick.
+  function createAgentCards(onPick) {
+    let value = AGENTS[0][0];
+    const cards = new Map(AGENTS.map(([id, name, title]) => {
+      const input = h('input', { id: `l-agent-${id}`, type: 'radio', name: 'l-agent', value: id, 'aria-describedby': `l-agent-${id}-line`,
+        onchange: () => { value = id; paint(); onPick(id); } });
+      const line = h('span', { class: 'choice-line', id: `l-agent-${id}-line` });
+      const card = h('label', { class: 'choice-card', for: `l-agent-${id}`, title },
+        input, h('span', { class: 'radio', 'aria-hidden': 'true' }), h('span', { class: 'choice-title' }, name), line);
+      return [id, { card, input, line }];
+    }));
+    function paint() {
+      for (const [id, c] of cards) {
+        c.input.checked = id === value;
+        c.card.classList.toggle('is-on', id === value);
+        c.card.classList.toggle('is-off', c.input.disabled);
+        c.line.replaceChildren(...(c.input.disabled
+          ? [h('a', { href: `/settings#${id}` }, 'Sign in on My settings')]
+          : [cardLine(id)]));
+      }
+    }
+    paint();
+    return {
+      el: h('fieldset', { class: 'choice-set lagents' }, h('legend', { class: 'field-label' }, 'Agent'),
+        h('div', { class: 'choice-cards' }, [...cards.values()].map((c) => c.card))),
+      get value() { return value; },
+      set value(id) { value = id; paint(); },
+      /** @returns {string[]}  the agents a session can start on now, in their order */
+      get offered() { return [...cards].filter(([, c]) => !c.input.disabled).map(([id]) => id); },
+      /** Which agents have what they run on: the rest stay shown, disabled, saying where to save it. */
+      offer(ids) {
+        for (const [id, c] of cards) c.input.disabled = !ids.includes(id);
+        paint();
+      },
+    };
+  }
 
   function select(id, options) {
     return h('select', { id, class: 'field' }, options.map(([value, label, title]) => h('option', { value, title }, label)));
@@ -509,7 +550,14 @@
   function createLauncher() {
     const prompt = h('textarea', { id: 'l-prompt', class: 'field', rows: '5', placeholder: 'What should Claude do? Type / for the repo\'s skills.' });
     const workOn = h('input', { id: 'l-on', class: 'field mono', autocomplete: 'off', placeholder: 'Search open PRs, or type PR #123 or a branch' });
-    const agent = select('l-agent', AGENTS);
+    const agent = createAgentCards(() => {
+      agentPicked = true;
+      // A model name is one agent's own (OpenCode's `provider/model`, Grok's `grok-…`): another agent starts from its default.
+      modelText.value = '';
+      grokTyped = false;
+      showAgent();
+      if (me) update(me);
+    });
     const model = select('l-model', MODELS);
     // An agent other than Claude Code or Codex takes any model name its own --model does (the registry's modelRe): typed,
     // unless it is Grok Build and the console read a list of its models on the person's own sign-in.
@@ -558,6 +606,8 @@
       e.preventDefault();
       attachments.add([...e.clipboardData.files]);
     });
+    // Until the person picks one, the agent follows their sign-ins: Codex for someone with only a Codex sign-in saved.
+    let agentPicked = false;
     // Model, effort and permissions, folded on a phone to one line of what is picked, and open on a desktop as before.
     const picked = h('span', { class: 'loptions-picked' });
     const showPicked = () => {
@@ -666,25 +716,16 @@
       prompt.placeholder = `What should ${a.name} do? Type / for the repo\u2019s skills.`;
       showPicked();
     }
-    // Until the person picks one, the agent follows their sign-ins: Codex for someone with only a Codex sign-in saved.
-    let agentPicked = false;
-    agent.addEventListener('change', () => {
-      agentPicked = true;
-      // A model name is one agent's own (OpenCode's `provider/model`, Grok's `grok-…`): another agent starts from its default.
-      modelText.value = '';
-      grokTyped = false;
-      showAgent();
-      if (me) update(me);
-    });
     for (const s of [model, effort, mode]) s.addEventListener('change', showPicked);
     modelText.addEventListener('input', showPicked);
     showPicked();
     const options = h('details', { class: 'loptions', open: !window.matchMedia('(max-width: 720px)').matches },
-      h('summary', null, h('span', { class: 'field-label' }, 'Agent, model, effort and permissions'), picked),
-      h('div', { class: 'lgrid4' }, field('l-agent', 'Agent', agent), field('l-model', 'Model', h('div', null, model, modelText)), effortField, field('l-mode', 'Permissions', mode)), catalogNote);
+      h('summary', null, h('span', { class: 'field-label' }, 'Model, effort and permissions'), picked),
+      h('div', { class: 'lgrid3' }, field('l-model', 'Model', h('div', { class: 'lmodel' }, model, modelText)), effortField, field('l-mode', 'Permissions', mode)), catalogNote);
     // Where a blocked repo's fix card goes, in place of the rest of the form: the picker above stays.
     const blockedSlot = h('div', { class: 'launch-setup', hidden: true });
     const body = h('div', { class: 'launch-body' },
+      agent.el,
       field('l-prompt', 'Prompt', promptWrap, 'optional when continuing a PR or branch: opens its review'),
       attachments.el, attachments.chips,
       // No name to give: the console names the session from its prompt, and its page offers a rename once it has.
@@ -758,18 +799,20 @@
       // Only the agents set up to run are offered (`agents` in /api/my): a Claude token, a Codex sign-in or the team's
       // OpenAI key, or the person's own sign-in for the others. A console from before `agents` offers Claude and Codex,
       // and one from before the other agents never lists them, which leaves them out.
-      const offered = AGENTS.filter(([value]) => (me?.agents ? me.agents[value] : ['claude', 'codex'].includes(value)));
-      const shown = offered.length ? offered : AGENTS.slice(0, 1);
-      if (shown.map(([v]) => v).join() !== [...agent.options].map((o) => o.value).join()) {
+      // The others stay shown, disabled, saying where to save what they run on.
+      const offered = A.AGENT_IDS.filter((id) => (me?.agents ? me.agents[id] : ['claude', 'codex'].includes(id)));
+      const shown = offered.length ? offered : A.AGENT_IDS.slice(0, 1);
+      if (shown.join() !== agent.offered.join()) {
         const was = agent.value;
-        fill(agent, shown);
-        if (shown.some(([v]) => v === was)) agent.value = was;
-        else agentPicked = false;
-        if (agent.value !== was) showAgent();
+        agent.offer(shown);
+        if (!shown.includes(was)) {
+          agentPicked = false;
+          agent.value = shown[0];
+          showAgent();
+        }
       }
-      agent.disabled = shown.length < 2;
       // With no Claude token, the first agent they can run: Codex for someone with only a Codex sign-in saved.
-      const preferred = !me?.claudeToken?.set && me?.codexAuth?.set && shown.some(([v]) => v === 'codex') ? 'codex' : shown[0][0];
+      const preferred = !me?.claudeToken?.set && me?.codexAuth?.set && shown.includes('codex') ? 'codex' : shown[0];
       if (me && !agentPicked && agent.value !== preferred) {
         agent.value = preferred;
         showAgent();
