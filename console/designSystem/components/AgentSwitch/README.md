@@ -1,6 +1,7 @@
 Which agent the Chat and TUI tabs show, when a private session's owner started more than one in it
 (`session/agents.mjs`). `session.js` draws it (`agentSwitch`) on the pane bar, after the tabs, while Chat or TUI shows,
-and only for the owner of a running private session whose image can start them.
+and only for the owner of a running private session whose image can start them. A private Claude Code, Codex, Grok
+Build or OpenCode session can start Claude Code and Codex agents alongside its own.
 
 - **The switch**: a `pbtn` with a `bar-well-line` border, in `bar-ink`: the agent shown and its model when one was
   picked (`Claude · opus`), then in `bar-sub` how many agents the session has (`3 agents`) once it has more than one, and

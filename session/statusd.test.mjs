@@ -1618,11 +1618,9 @@ test('an agent beside the session\'s own starts in its own tmux session, and its
   assert.ok((await tmux('ls')).stdout.includes('claude:'), 'the session\'s own is still there');
 });
 
-// A Grok Build or OpenCode session runs on its owner's own sign-in alone: no claude or codex starts beside it, and
-// /status leaves `agents` out, so the page shows no switch.
-test('a Grok Build or OpenCode session starts no agent beside its own', async (t) => {
+test('a private Grok Build or OpenCode session reports support for extra agents', async (t) => {
   for (const agent of ['grok', 'opencode']) {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), `statusd-no-agents-${agent}-`));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), `statusd-extra-agents-${agent}-`));
     t.after(() => fs.rm(dir, { recursive: true, force: true }));
     await fs.writeFile(path.join(dir, 'flags'), '');
     await fs.writeFile(path.join(dir, 'codex-ready'), '');
@@ -1633,10 +1631,11 @@ test('a Grok Build or OpenCode session starts no agent beside its own', async (t
       // The Plan chip reads this home's log. A test must not read the machine's.
       GROK_HOME: dir,
     } });
-    assert.equal((await call('GET', '/agents', 'sess')).status, 404, agent);
-    assert.equal((await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'claude' }))).status, 404, agent);
-    assert.equal((await call('GET', '/agents/agent-2/transcript', 'sess')).status, 404, agent);
-    assert.equal('agents' in (await call('GET', '/status', 'sess')).body, false, agent);
+    assert.deepEqual(await call('GET', '/agents', 'sess'), { status: 200, body: { agents: [] } }, agent);
+    const start = JSON.stringify({ agent: 'claude' });
+    assert.equal((await call('POST', '/agents', 'sess', start)).status, 409, agent + ' refuses the old Claude start route');
+    assert.equal((await call('POST', '/agents/with-claude-token', 'sess', start)).status, 409, agent + ' requires an owner token');
+    assert.deepEqual((await call('GET', '/status', 'sess')).body.agents, [], agent);
   }
 });
 

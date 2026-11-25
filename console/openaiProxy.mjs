@@ -229,15 +229,15 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, userSettings
       return forward(req, res, { target: targets.chatgpt, path: allowed, headers: cred.headers, sessionId: session.id });
     }
     // A review reads what anyone who can push wrote, and runs it: on a key, its codex reaches Codex's calls alone. So does
-    // a Codex agent its owner started beside claude (session/agents.mjs): the team key's files, batches and the rest of
+    // an extra Codex agent its owner started (session/agents.mjs): the team key's files, batches and the rest of
     // its account are no session's to reach.
     let openaiPath = req.url.slice(PREFIX.length) || '/';
-    const besideClaude = !isReview(session) && session.options?.agent !== 'codex';
-    if (isReview(session) || besideClaude) {
+    const extraCodex = !isReview(session) && session.options?.agent !== 'codex';
+    if (isReview(session) || extraCodex) {
       openaiPath = reviewOpenAiPathAllowed(openaiPath);
       if (!openaiPath) {
         req.resume();
-        console.warn(`openaiProxy: refused an OpenAI path ${besideClaude ? 'a Codex agent beside claude' : 'a review\'s codex'} does not need`, { sessionId: session.id, path: req.url.slice(0, 120) });
+        console.warn(`openaiProxy: refused an OpenAI path ${extraCodex ? 'an extra Codex agent' : 'a review\'s codex'} does not need`, { sessionId: session.id, path: req.url.slice(0, 120) });
         return refuse(res, 404, 'not something codex needs');
       }
     }
