@@ -156,7 +156,7 @@ explain.mjs    prompt, validation, answer extraction
 chat.mjs       the conversation about the change as a whole: prompt, history bound
 aiReviews.mjs  the AI reviews on the pull request (Claude Code, Codex) read into verdicts and findings
 prChecks.mjs   the merge risk and QA checks on the pull request's head commit, for the AI reviews tab
-qa.mjs         the Q&A tab: a newcomer's questions and their answers, as a tree
+qa.mjs         the Q&A tab: questions and answers generated from the reviewed code
 jobs.mjs       `claude -p` child lifecycle, concurrency, orphan reaping
 store.mjs      on-disk layout under $REVIEWS_DIR, one directory per session
 github.mjs     the `gh` CLI

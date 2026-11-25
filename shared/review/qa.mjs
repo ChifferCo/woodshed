@@ -237,6 +237,11 @@ export function buildGeneratedQaPrompt({ meta, files, overview, diffOnly, items,
     return lines.join('\n');
   }
 
+  const earlierTag = `earlier-questions-${nonce}`;
+  lines.push('', 'Earlier questions across the whole Q&A:', `<${earlierTag}>`);
+  for (const item of items) lines.push(`- ${item.question}`);
+  lines.push(`</${earlierTag}>`);
+
   const tag = `previous-answers-${nonce}`;
   lines.push('', 'The answers eligible for a follow-up and the earlier answers that led to them:', `<${tag}>`);
   for (const item of frontier) {
@@ -250,7 +255,7 @@ export function buildGeneratedQaPrompt({ meta, files, overview, diffOnly, items,
     'Write and answer follow-up questions that explain unfamiliar concepts or fill in steps the reader needs.',
     'Set "about" to the id of the answer each question follows.',
     `Write at most ${MAX_FOLLOWUPS_PER_ANSWER} per answer and ${MAX_FOLLOWUPS_PER_ROUND} total. Return an empty list if no follow-ups are needed.`,
-    'Avoid repeating an earlier answer.',
+    'Skip any question already covered anywhere in the Q&A, including rewordings.',
   );
   return lines.join('\n');
 }

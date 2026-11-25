@@ -77,6 +77,7 @@ test('a follow-up carries the questions and answers above it into both prompts',
   const items = [
     { id: 'q1', parent: null, depth: 1, question: 'What does the relay do?', answer: 'It forwards MCP calls.' },
     { id: 'q1.1', parent: 'q1', depth: 2, question: 'What is MCP?', answer: null },
+    { id: 'q2', parent: null, depth: 1, question: 'Who can use the relay?', answer: 'Signed-in users.' },
   ];
   assert.deepEqual(pathTo(items, 'q1.1').map((i) => i.id), ['q1', 'q1.1']);
   const meta = { title: 't', body: 'b' };
@@ -86,6 +87,8 @@ test('a follow-up carries the questions and answers above it into both prompts',
   assert.match(answers, /--- id: q1\.1\n\(earlier question: [^\n]*\n\(earlier answer: [^\n]*\nquestion: What is MCP\?/);
   items[1].answer = 'A protocol.';
   const followups = buildGeneratedQaPrompt({ meta, files: [], overview: '', items, frontier: [items[1]] });
+  assert.match(followups, /earlier-questions-[^>]+>\n- What does the relay do\?\n- What is MCP\?\n- Who can use the relay\?/);
+  assert.doesNotMatch(followups, /--- id: q2/);
   assert.match(followups, /question: What does the relay do\?\nanswer: It forwards MCP calls\.\nquestion: What is MCP\?\nanswer: A protocol\./);
 });
 

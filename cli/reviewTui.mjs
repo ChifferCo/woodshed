@@ -578,7 +578,7 @@ export function runReviewTui({
           state.qa.started = true;
           const asked = await call('POST', `/qa?forDiff=${encodeURIComponent(state.diffAt ?? '')}&first=1`);
           if (asked.kept) state.qa.data = (await call('GET', '/qa')).qa ?? null;
-          else state.qa.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
+          else state.qa.data = { status: 'running', phase: 'generating', depth: 1, items: [] };
         }
       } catch (err) {
         if (finished) return;
@@ -613,7 +613,7 @@ export function runReviewTui({
       state.qa.sure = false;
       try {
         const asked = await call('POST', `/qa?forDiff=${encodeURIComponent(state.diffAt ?? '')}${replace ? '' : '&first=1'}`);
-        state.qa = { data: asked.kept ? null : { status: 'running', phase: 'asking', depth: 1, items: [] }, started: true, error: null, loading: false };
+        state.qa = { data: asked.kept ? null : { status: 'running', phase: 'generating', depth: 1, items: [] }, started: true, error: null, loading: false };
         state.flash = null;
         draw();
         loadQa(false);
