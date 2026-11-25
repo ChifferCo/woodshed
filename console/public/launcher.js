@@ -712,13 +712,15 @@
     });
     function showAgent() {
       if (shownAgent && shownAgent !== agent.value) {
-        kept[shownAgent] = { model: model.value, text: modelText.value, effort: effort.value, mode: mode.value };
+        kept[shownAgent] = { model: model.value, text: modelText.hidden ? '' : modelText.value, effort: effort.value, mode: mode.value };
       }
       const switched = shownAgent !== agent.value;
       shownAgent = agent.value;
       if (switched) modelText.value = kept[agent.value]?.text ?? '';
       const codex = agent.value === 'codex';
       const grok = agent.value === 'grok';
+      // A Grok model typed while there was no list stays typed when the list that came since does not have it.
+      if (switched && grok) grokTyped = Boolean(modelText.value) && !(grokCatalog?.models ?? []).some((m) => m.slug === modelText.value);
       const own = ownAgent();
       const typed = typedModel();
       const a = A.agent(agent.value);
@@ -741,6 +743,8 @@
         for (const [s, v] of [[model, was.model], [effort, was.effort], [mode, was.mode]]) {
           if ([...s.options].some((o) => o.value === v)) s.value = v;
         }
+        // A Grok model typed before its list came, and on it now: picked in the menu.
+        if (grok && was.text && !typedModel() && [...model.options].some((o) => o.value === was.text)) model.value = was.text;
         if (codex) keepPick(effort, codexEffortOptions());
         if (grok) keepPick(effort, grokEffortOptions());
       }
