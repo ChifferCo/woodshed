@@ -326,8 +326,12 @@
   function onKey(e, inFrame, modOnly = false) {
     onTapKeyDown(e);
     hideHint();
-    // Shift pressed on its way to a digit (AZERTY) is not a key of the mode, nor the one after G.
-    if (MODIFIERS.has(e.key)) return;
+    // Shift pressed on its way to a digit (AZERTY) is not a key of the mode. A modifier still ends a waiting G, as any
+    // key did before: G, Ctrl, then S is no sequence.
+    if (MODIFIERS.has(e.key)) {
+      gAt = 0;
+      return;
+    }
     // A key held down in the mode acts once, and its repeats go nowhere: not into a field that has the focus still,
     // nor into a terminal or a field the key itself focused or left the focus in once the mode ended (an Esc, a tab, an
     // N with nothing to go to): heldCode keeps them out until that key is let go.
