@@ -33,7 +33,7 @@
 //                     one of several (`apps`), the default without it, after stopping the one running
 //   POST /app/stop    stop it (app.stop), a start still in progress included
 //   POST /upload?name=<file>&pane=agent|terminal   the body saved under /tmp/uploads, and its path typed at that
-//                     pane's prompt with no Enter (terminalFiles.mjs)
+//                     pane's prompt with no Enter (terminalFiles.mjs); `typed` false where it could not be (Herdr)
 //   GET  /image?path=<path>   a picture a terminal path names, inside the repo, the uploads or claude's scratchpad
 //   POST /scroll      {"steps": -3, "pane": "agent"}   a swipe or wheel the browser's own scrollback did not take
 //   GET  /transcript?limit=<n>&since=<writtenAt>   the conversation so far from the agent's own record of it, for the
@@ -1779,13 +1779,14 @@ async function uploadReply(req, res) {
   const pane = url.searchParams.get('pane');
   try {
     const saved = await saveUpload(req, { name: url.searchParams.get('name') });
-    // Herdr types no text without an Enter, so a file dropped on the agent there is saved and not typed in: the page
-    // says where it is. The Terminal tab's shell is tmux's always.
+    // Herdr types no text without an Enter, so a file dropped on the agent there is saved and not typed in here: the
+    // answer says so (`typed: false`), and the page types its path through the terminal's own connection, as a paste.
+    // The Terminal tab's shell is tmux's always.
     // An agent beside the session's own (agents.mjs) is in tmux always, under its own name.
     const typed = pane === 'terminal' || (pane === 'agent' && agentIo().typesText) || (agents && TERMINAL === 'tmux' && AGENT_ID_RE.test(pane ?? '')) ? pane : null;
     if (typed) await typePaths(run, [saved.path], typed);
     console.log('statusd: file uploaded', { bytes: saved.bytes, typed });
-    return reply(res, 200, saved);
+    return reply(res, 200, { ...saved, typed: Boolean(typed) });
   } catch (err) {
     if (err.shown) return reply(res, err.status, { error: err.message });
     throw err;
