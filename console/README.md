@@ -849,7 +849,19 @@ it runs on; only the agents set up to run can be picked (`agents` in `GET /api/m
 Codex with a Codex sign-in saved or the team's `openai-api-key`. The others stay shown, disabled, with a link to their
 box on My settings, and a Codex start with neither is refused (409). Each card says, in one line, the model, effort and
 permissions that agent would start with; the picked one's menus are a panel under the cards, and each agent keeps its own
-while the page is open, so the next session started from it offers them again. Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
+while the page is open, so the next session started from it offers them again.
+The Model and Effort menus' **default** says what it is, and so does each card, as of the page's last look at `GET
+/api/my` (`agentDefaults`, from `savedChoices` in `claudeSettings.mjs` over the person's shared copy, which a new
+session starts from; `claudeSettings.peek` reads it without bumping its version). For Claude Code it is the `model`
+and `effortLevel` in `~/.claude/settings.json`, which `/model` in any private session writes: `opus (your last pick)`
+in the menu, `opus (saved)` on the card. With none saved, Claude Code picks Opus or Sonnet by the plan (and switches of
+Anthropic's), which the console cannot see, so the menu says `plan default (Opus or Sonnet)` and the card `plan
+default`, never a model as if it were certain. For Codex it is `model` and `model_reasoning_effort` in
+`~/.codex/config.toml` (its `profile`'s own first); with none, `default`, codex's own pick. A repo's own
+`.claude/settings.json` naming a model still wins in the session. Grok Build and OpenCode keep their model in nothing a
+session carries (`agentDefaults` has `null` for them), so theirs is `default`, the agent's own pick. A copy that does
+not read (`read: false`, and the console logs `console: shared Claude settings not read for New session`) or names
+something that is not a plain model or effort name shows plain `default` too. Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
 (`codexModels.mjs`): `GET https://chatgpt.com/backend-api/codex/models?client_version=<codex's version>`, asked with
 your own Codex sign-in, or the team's OpenAI key with none, kept 10 minutes. A model OpenAI ships shows the day it
 ships, and a start is refused with a model or effort the list does not offer. The console never refreshes a ChatGPT

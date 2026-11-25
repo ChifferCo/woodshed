@@ -159,7 +159,11 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 - New session's **Agent** is choice cards (`components/ChoiceCards`), under the prompt and Continue a PR or branch:
   every agent, each its name, what it runs on (`Your Claude plan`) and, in `meta` mono under it, what it would start
-  with (`opus · high · auto`; effort only when one is picked). The pick is in the `amber` outline. An agent with no
+  with (`opus · high · auto`; effort only when one is picked or saved), each part kept whole on its line where it
+  fits. A default names what it is when the console knows it from the person's shared settings: `opus (saved)` on the
+  card and `opus (your last pick)` as the menu's default option, `plan default` and `plan default (Opus or Sonnet)` for
+  Claude Code with nothing saved, and plain `default` where the agent picks for itself (Grok Build, OpenCode, or a copy
+  the console could not read). Never a model shown as certain that the console cannot know. The pick is in the `amber` outline. An agent with no
   sign-in saved stays, disabled, its line a link to its box on My settings and no settings line. The prompt's
   placeholder names the pick.
 - Under the cards, the picked agent's Model, Effort and Permissions are a panel headed `<Agent>'s settings`: the pick's

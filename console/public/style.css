@@ -772,6 +772,8 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .lagents .choice-line { font-size: 12px; }
 .lagents .choice-line a { position: relative; z-index: 1; }
 .lagents .choice-meta { grid-column: 2; margin-top: 2px; font-family: var(--mono); font-size: 11.5px; color: var(--meta); overflow-wrap: anywhere; }
+/* Each part (`gpt-5.5 (last pick)`) goes to the next line whole, and breaks inside only when it is wider than the card. */
+.lagents .choice-meta > span { display: inline-block; max-width: 100%; }
 .lmodel > .field { width: 100%; }
 .launch-actions, .set-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .btn-keys { display: inline-flex; margin-left: 8px; }
