@@ -155,6 +155,18 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - With no PR and no branch on GitHub yet there is no button: Details says it shows once GitHub has the branch. Never copy a dead link, and never spend the bar's room on a button that does nothing.
 - The link holds the PR number or branch name and nothing else. The session stays private.
 
+## Agent
+
+- New session's **Agent** is choice cards (`components/ChoiceCards`), under the prompt and Continue a PR or branch:
+  every agent, each its name, what it runs on (`Your Claude plan`) and, in `meta` mono under it, what it would start
+  with (`opus · high · auto`; effort only when one is picked). The pick is in the `amber` outline. An agent with no
+  sign-in saved stays, disabled, its line a link to its box on My settings and no settings line. The prompt's
+  placeholder names the pick.
+- Under the cards, the picked agent's Model, Effort and Permissions are a panel headed `<Agent>'s settings`: the pick's
+  `amber` border on `amber-tint`, the field labels in `amber-ink`, open on every width. Each agent keeps its own
+  settings while the page is open, a session started from it included, so picking Codex again finds what was picked for it. Never orange: the panel is the
+  pick's, not the page's primary action.
+
 ## Work on
 
 - New session's Work on, labelled **Continue a PR or branch** with `optional: leave empty to start a new branch`, is a combobox over the project's open pull requests (`components/PullPicker`): type to narrow
