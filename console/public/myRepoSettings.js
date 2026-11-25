@@ -426,7 +426,7 @@
             }, 'Remove')),
           failed ? h('p', { class: 'form-error', role: 'alert' }, `Could not read your files: ${failed}`) : note(k),
           h('p', { class: 'sub' }, `Whole files your private sessions on ${v.repo} write into its checkout. Git must ignore the path, so it never reaches a commit.`,
-            v.filesMaxBytes ? ` Up to ${Math.floor(v.filesMaxBytes / 1024)} KB, ${v.filesMax ?? 20} files at most.` : '')));
+            v.filesMaxBytes ? ` Up to ${Math.floor(v.filesMaxBytes / 1024)} KB across this repo's files, ${v.filesMax ?? 20} files at most.` : '')));
     }
 
     // An open repo shows one part at a time, picked on a switch whose dot says where the person keeps something.

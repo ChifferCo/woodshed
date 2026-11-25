@@ -7,7 +7,7 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
   const { h } = W;
   const MASK = '•••••••••••• hidden';
   const SESSION_EFFECT = 'New sessions start with the new value. Running sessions keep the old one until they stop.';
-  const CLIENT_SECRET_EFFECT = 'Sign-in with GitHub becomes available. It stays optional until the first sign-in works, so a wrong Callback URL locks nobody out.';
+  const CLIENT_SECRET_EFFECT = 'Sign-in with GitHub becomes available. The first sign-in that works makes it required on every page; until then a wrong Callback URL locks nobody out.';
 
   const RECEIVER = W.providerWords.webhookReceiver ?? 'the webhook receiver';
   // Slack's two keys are set on Settings' Slack card, which checks the token with Slack first (slackSetup.mjs). They

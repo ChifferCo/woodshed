@@ -168,7 +168,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       }),
       h('span', { class: 'toggle-label', id: `${id}-reviews-label` }, 'Also use it for reviews of my pull requests'),
       h('p', { class: 'sub' }, on
-        ? `On: when you pick ${a.name}, it reviews your pull requests on ${what}. The sign-in stays in the console.${a.signIn.rotates && id === 'grok' ? ' An expired login is skipped until a Grok session refreshes it.' : ''}`
+        ? `On: when you pick ${a.name}, reviews of your pull requests use ${what}. It stays in the console.${a.signIn.rotates && id === 'grok' ? ' An expired login is skipped until a Grok session refreshes it.' : ''}`
         : `Off: ${a.name} does not review your pull requests. There is no team key.`),
       !saved && h('p', { class: 'why-off' }, 'Save a sign-in above to turn this on.'));
   }

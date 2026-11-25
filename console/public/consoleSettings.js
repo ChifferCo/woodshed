@@ -714,7 +714,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         mcpField(f, 'people', 'People', 'GitHub logins, comma-separated, or * for everyone.', 'people'),
         data.projects ? mcpRepos(f) : mcpField(f, 'repos', 'Repos', 'owner/name, comma-separated, or * for every repo.', 'repos'),
         mcpSelect(f, 'auth', 'What the console adds', 'Signed token: the console signs it. Header: a value the console keeps, such as an API key.', 'auth', Object.entries(AUTH_WORDS), (v) => { f.auth = v; }),
-        f.auth === 'oidc' && mcpField(f, 'audience', 'Audience', `The token's aud. Empty uses ${f.production ? 'woodshed-prod-mcp' : 'the server\'s name'}. The server trusts issuer ${mcp.issuer}.`, 'audience'),
+        f.auth === 'oidc' && mcpField(f, 'audience', 'Audience', `The token's aud. Empty uses ${f.production ? 'woodshed-prod-mcp' : 'the server\'s name'}. The server trusts issuer ${mcp.issuer}, keys at ${mcp.jwks}.`, 'audience'),
         f.auth === 'header' && mcp.headers && mcpField(f, 'header', 'Header', 'Its name, such as Authorization or X-Api-Key.', 'header'),
         f.auth === 'header' && mcp.headers && mcpField(f, 'value', 'Value', f.editing ? 'Leave empty to keep the saved one. Never shown again.' : 'Never shown again.', 'value', { type: 'password', autocomplete: 'new-password' })),
       f.auth === 'header' && !mcp.headers && h('p', { class: 'cap-note' }, 'This console has no secret store, so it cannot keep a header.'),
