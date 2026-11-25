@@ -340,7 +340,10 @@ sendLog() {
   postLog summary "$DIR/logs/run-summary.log"
   [ "${1:-}" = summary ] && return 0
   logBody full 2>&1 | node "$RUN_LOG" --redact > "$DIR/logs/run.log"
-  screenLog "$DIR/logs/run.log"
+  # The screen is a claude call, through the console's Anthropic proxy: a review that did not choose Claude as a reviewer keeps
+  # its other providers' diagnostics out of it, and its log is scrubbed by pattern alone.
+  if withClaude || [ -z "$(reviewers)" ]; then screenLog "$DIR/logs/run.log"
+  else printf '\n(No model check for secrets: Claude is not one of this review'"'"'s reviewers, so its log was scrubbed by pattern only.)\n' >> "$DIR/logs/run.log"; fi
   postLog full "$DIR/logs/run.log"
 }
 
@@ -365,16 +368,26 @@ sendReport() {
   say "Verdict sent to the console (status: $code)"
 }
 
+# A checkpoint as the reviewers start, summary only (no model screen to wait for), so a review stopped while they work still
+# leaves its steps, the starting one included.
+checkpoint() {
+  : > "$DIR/logs/review-started"
+  sendLog summary
+}
+
 main() {
   touch "$RUNNING"
   cd "$REPO_DIR" || exit 1
   # The review's folder is the run's alone: a branch can commit one, verdict and all, which a reviewer that writes none
   # would leave to be read as its own. Removed whole first, a link to elsewhere included (the link, not what it names).
+  local carried=
   if [ -e "$DIR" ] || [ -L "$DIR" ]; then
-    if [ -n "$(git ls-files -- "$DIR" 2>/dev/null | head -1)" ]; then say "The pull request carries a .review folder of its own: it is removed, and none of it is read"; fi
+    [ -n "$(git ls-files -- "$DIR" 2>/dev/null | head -1)" ] && carried=1
     rm -rf -- "$DIR"
   fi
   mkdir -p "$DIR/logs"
+  # Said only now: before this, a step is kept in a folder the branch may have committed, links included.
+  [ -z "$carried" ] || say "The pull request carries a .review folder of its own: it is removed, and none of it is read"
   grep -qx '/.review/' .git/info/exclude 2>/dev/null || echo '/.review/' >> .git/info/exclude
   say "Review of pull request #$PR against $REVIEW_BASE"
   git fetch --quiet origin "+refs/heads/$REVIEW_BASE:refs/remotes/origin/$REVIEW_BASE" || say "Could not fetch $REVIEW_BASE"
@@ -385,15 +398,14 @@ main() {
     --reviewer "${REVIEW_AUTHOR:-}"; then
     say "Could not write the review prompt (repo: ${repo:-unknown}), so there is no review"
   else
-    # A checkpoint before the reviewers start, summary only, so a review stopped while they work still leaves its steps.
-    : > "$DIR/logs/review-started"
-    sendLog summary
     if [ "$(reviewers | tr '\n' ' ')" = 'claude ' ] || [ -z "$(reviewers)" ]; then
       say "Reviewing the diff of $repo"
+      checkpoint
       runClaude
     else
       # Each reviewer but Claude runs beside it, in the background; the verdict waits for all of them.
       say "Reviewing the diff of $repo with $(reviewerNames)"
+      checkpoint
       local running=() others
       withCodex && { runCodex "$repo" & running+=($!); }
       withAgent grok && { runGrok "$repo" & running+=($!); }

@@ -375,6 +375,12 @@ test('a verdict the pull request commits in .review is never reported, for a sol
   }
 });
 
+// Claude as the review's reviewer or only as the secret screen: it records every prompt it is given that names the screen.
+const REVIEW_FAKE_SCREEN_RECORDER = `#!/bin/bash
+case " $* " in *" haiku "*) printf '%s\\n' "$4" >> "\${FAKE_SCREEN_SEEN:?}"; echo NONE; exit 0 ;; esac
+exec "\${FAKE_REAL_CLAUDE:?}" "$@"
+`;
+
 const REVIEW_FAKE_FAILING_CLAUDE = `#!/bin/bash
 prompt=$4
 [ -n "$prompt" ] || exit 1
@@ -412,4 +418,33 @@ test('every summary a review sends is one the console accepts, with each reviewe
     assert.ok(summaries.length > 0, JSON.stringify(options));
     for (const l of summaries) assert.equal(reviewSummaryProblem(l.text, { number: 7, base: 'main' }), null, `${JSON.stringify(options)}: ${l.text}`);
   }
+});
+
+test('the model screen is a claude call, so a review that did not choose Claude never sends its other providers\' diagnostics to it', async (t) => {
+  const seen = path.join(os.tmpdir(), `screen-seen-${process.pid}-${Date.now()}`);
+  t.after(() => fs.rmSync(seen, { force: true }));
+  const realClaude = path.join(os.tmpdir(), `real-claude-${process.pid}-${Date.now()}`);
+  fs.writeFileSync(realClaude, FAKE_CLAUDE, { mode: 0o755 });
+  t.after(() => fs.rmSync(realClaude, { force: true }));
+  process.env.FAKE_SCREEN_SEEN = seen;
+  process.env.FAKE_REAL_CLAUDE = realClaude;
+  t.after(() => { delete process.env.FAKE_SCREEN_SEEN; delete process.env.FAKE_REAL_CLAUDE; });
+  const codexWithPrivateDiagnostic = FAKE_CODEX.replace("echo '{\"type\":\"turn.completed\"}'", "echo '{\"message\":\"@octo sign-in refused for PRIVATE-WORKSPACE-MARKER\"}'");
+  const codexOnly = await runReview(t, { agents: 'codex', claude: REVIEW_FAKE_SCREEN_RECORDER, codex: codexWithPrivateDiagnostic });
+  assert.equal(fs.existsSync(seen), false, 'claude was never called, not even as the screen');
+  assert.match(codexOnly.logs.find((l) => l.tier === 'full').text, /No model check for secrets: Claude is not one of this review's reviewers/);
+  const both = await runReview(t, { agents: 'claude codex', claude: REVIEW_FAKE_SCREEN_RECORDER, codex: codexWithPrivateDiagnostic });
+  assert.ok(fs.existsSync(seen), 'with Claude among the reviewers, the screen runs');
+  assert.ok(both.logs.some((l) => l.tier === 'full'));
+});
+
+test('a review whose branch commits a .review folder with a link in it follows none, and says the folder was removed', async (t) => {
+  const { output, logs } = await runReview(t, { committed: { '.review/note.txt': 'planted' } });
+  assert.match(output, /The pull request carries a \.review folder of its own/);
+  assert.match(logs.find((l) => l.tier === 'summary' && /carries a \.review folder/.test(l.text))?.text ?? '', /carries a \.review folder of its own/, 'the step reaches the run log');
+});
+
+test('a Codex-only review records its starting step before its first checkpoint', async (t) => {
+  const { logs } = await runReview(t, { agents: 'codex' });
+  assert.match(logs[0].text, /Reviewing the diff with Codex/);
 });
