@@ -1983,6 +1983,7 @@ test('session send needs a message, and read --last a number', () => {
   assert.deepEqual(parseSessionArgs('send', ['0a1b2c3d', '--wait', 'do', 'it'], fail), { wait: true, id: '0a1b2c3d', text: 'do it' });
   assert.throws(() => parseSessionArgs('send', ['0a1b2c3d'], fail), /needs the message/);
   assert.deepEqual(parseSessionArgs('read', ['0a1b2c3d', '--last', '3'], fail), { last: '3', id: '0a1b2c3d' });
+  for (const n of ['0', '-1', '101', 'x', '1.5']) assert.throws(() => parseSessionArgs('read', ['0a1b2c3d', `--last=${n}`], fail), /--last needs a number from 1 to 100/, n);
 });
 
 test('a conversation read the command line waits on is cut when the session\'s lockdown starts, and refused while it locks', async (t) => {
@@ -2013,4 +2014,9 @@ test('a conversation read the command line waits on is cut when the session\'s l
   at(c.sessions, 'c0c0aa03').taintedAt = iso(T0);
   const listed = await c.run(['session', 'get', 'c0c0aa03', '--json']);
   assert.doesNotMatch(listed.out, /Reading\./);
+  const device = c.cli.start({ name: 'test' });
+  c.cli.decide({ code: device.userCode, login: 'mia-dev', approve: true });
+  const { token } = c.cli.poll(device.deviceCode);
+  const body = await (await fetch(`${c.origin}/api/sessions`, { headers: { authorization: `Bearer ${token}` } })).json();
+  assert.equal(at(body.sessions, 'c0c0aa03').lastMessage, null, 'the console\'s own answer to the token carries none');
 });

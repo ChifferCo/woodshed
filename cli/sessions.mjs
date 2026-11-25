@@ -1720,6 +1720,7 @@ export function parseSessionArgs(sub, words, fail) {
   }
   for (const flag of PARENT_FLAGS) if (out[flag] && !out.parent) throw fail(`--${flag} goes with --parent`);
   if (sub === 'resume' && out.herdr && out.wait === false) throw fail('--herdr waits for the session to run: leave out --no-wait');
+  if (sub === 'read' && out.last !== undefined && !/^(100|[1-9][0-9]?)$/.test(out.last)) throw fail('--last needs a number from 1 to 100');
   if (sub === 'limits' && out['idle-hours'] === undefined && out['lifetime-hours'] === undefined) throw fail('session limits needs --idle-hours or --lifetime-hours (a number, or default)');
   if (sub === 'connect' && out.agent !== undefined) {
     if (!AGENT_ID_RE.test(out.agent)) throw fail(`--agent needs an agent beside the session's own, agent-2 to agent-9, as woodshed session agents lists them`);
