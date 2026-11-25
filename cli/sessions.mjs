@@ -117,6 +117,7 @@ Commands:
   send <id> "message"        type a message in at one of your running sessions' agent, as the Chat tab's Send does;
                              held while it works or a prompt is on its screen, typed in once it is back at its prompt
       --wait                 then wait until it has gone in and been worked on, and print what it said
+  rename <id> "name"         rename one of your sessions, as its title on the page does
   wait <id>                  until one of your sessions is done with its turn, needs you, or stops
   read <id> [--last <n>]     what it was asked and said, newest last (default 10, up to 100), from its Chat. Never a
                              session that has seen production data: its conversation is read on the console only
@@ -1241,6 +1242,14 @@ export async function sessionCommand({ origin, rest }, ctx) {
     return turnCode(turn);
   }
 
+  if (sub === 'rename') {
+    const renamed = await ask(`/api/sessions/${id}/rename`, { method: 'POST', body: { title: opts.text } });
+    const title = printable(renamed.title, 200);
+    if (json) emit({ event: 'renamed', session: id, title });
+    else say(`Session ${id} is now "${title}".`);
+    return EXIT.done;
+  }
+
   if (sub === 'wait') {
     const turn = await waitTurn();
     if (json) emit({ event: 'turn', session: summary(turn.s, { origin, login, appsOn }), ended: Boolean(turn.ended) });
@@ -1681,7 +1690,7 @@ export function parseSessionArgs(sub, words, fail) {
   const wordsOf = {
     new: 'prompt', connect: 'id', agents: 'id', agent: 'id-agent', herdr: 'id', list: null, get: 'id', app: 'id-action',
     extend: 'id', limits: 'id', stop: 'id', resume: 'id', handoff: 'id', remove: 'id', prune: null, watch: null,
-    send: 'id-text', wait: 'id', read: 'id',
+    send: 'id-text', wait: 'id', read: 'id', rename: 'id-text',
   };
   const commands = Object.fromEntries(Object.entries(wordsOf).map(([name, w]) => [name, { ...sessionOptions(name), words: w }]));
   // Its own keys only: `constructor` or `toString` is no command.
@@ -1755,11 +1764,12 @@ export function parseSessionArgs(sub, words, fail) {
     }
   }
   else if (takes.words === 'id-text') {
-    // session send <id> message words
-    if (!positional.length || !ID_RE.test(positional[0])) throw fail(`session ${sub} takes a session id first, then the message\n\n${SESSION_USAGE}`);
+    // session send <id> message words, session rename <id> name words
+    const what = sub === 'rename' ? ['the name', 'its new name'] : ['the message', 'what to say'];
+    if (!positional.length || !ID_RE.test(positional[0])) throw fail(`session ${sub} takes a session id first, then ${what[0]}\n\n${SESSION_USAGE}`);
     out.id = positional[0];
     out.text = positional.slice(1).join(' ');
-    if (!out.text.trim()) throw fail(`session ${sub} needs the message: woodshed session ${sub} ${out.id} "what to say"`);
+    if (!out.text.trim()) throw fail(`session ${sub} needs ${what[0]}: woodshed session ${sub} ${out.id} "${what[1]}"`);
   }
   else if (takes.words === 'id-action') {
     // session app <id> [start|stop|share]

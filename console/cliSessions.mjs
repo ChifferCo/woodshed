@@ -21,6 +21,8 @@
 //   GET  /api/sessions/<id>/transcript      woodshed session read and send --wait: its conversation, as the Chat tab
 //                                           reads it. Never a session that has seen production data, whose conversation
 //                                           is read on the console only, as `woodshed tunnel` never opens one
+//   POST /api/sessions/<id>/rename          woodshed session rename: the name every page shows, as the title's rename
+//                                           (server.mjs, viewAction), for whoever can see the session
 //   POST /api/sessions/<id>/app/start|stop  woodshed session app: Start app and Stop app, for whoever may on the page.
 //                                           Not Set up app, which types into the session's agent
 //   GET  /api/sessions/<id>/app-share       woodshed session app <id> share: who besides its owner may open a My Woodshed
@@ -67,7 +69,7 @@ const ROUTES = [
   ['POST', /^\/api\/my\/pulls\/[1-9][0-9]{0,8}\/review$/],
   ['POST', /^\/api\/my\/sessions$/],
   ['POST', /^\/api\/my\/sessions\/[0-9a-f]{8}\/(resume|remove|handoff)$/],
-  ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/(stop|extend|limits|send)$/],
+  ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/(stop|extend|limits|send|rename)$/],
   ['GET', /^\/api\/sessions\/[0-9a-f]{8}\/transcript$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/app\/(start|stop)$/],
   ['GET', /^\/api\/sessions\/[0-9a-f]{8}\/app-share$/],
