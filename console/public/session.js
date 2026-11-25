@@ -1860,6 +1860,8 @@
 
   W.shell.register({
     sessions: paletteSessions, actions: paletteActions, toggleRail, railShown: () => !railHidden, moveSession, nextNeedsYou, showTab,
+    // ⌘B's mode ended (Esc, another key, a toast): the session shown may take focus again.
+    endMoving: () => { movingByKey = false; },
   });
 
   // What a phone's top bar puts in its ⋯ ahead of the card's: the app, the databases, and the key bar's switch.

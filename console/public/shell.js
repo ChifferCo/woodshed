@@ -17,7 +17,7 @@
 
   // moveSession(step), nextNeedsYou() and showTab(n, onlyAsk) are the session page's (keys.cjs, `page`): a page without
   // them leaves ⌘B and its mode's keys alone.
-  let page = { sessions: () => [], actions: () => [], toggleRail: null, railShown: () => true, moveSession: null, nextNeedsYou: null, showTab: null };
+  let page = { sessions: () => [], actions: () => [], toggleRail: null, railShown: () => true, moveSession: null, nextNeedsYou: null, showTab: null, endMoving: null };
 
   function register(next) {
     page = { ...page, ...next };
@@ -264,6 +264,8 @@
   function stopMoving() {
     moving = false;
     if (movingEl) movingEl.hidden = true;
+    // The session page's side of it (session.js, movingByKey): the session shown may take focus again.
+    page.endMoving?.();
   }
   // A click is the pointer's move, not the keyboard's: it ends the mode, in the page or in a frame (bindFrame).
   function stopMovingOnClick() {
@@ -297,7 +299,8 @@
     // palette or the sheet open, it also closes that, below.
     if (e.key === 'Escape' && moving) {
       stopMoving();
-      if (palette.hidden && keys.el.hidden) {
+      // Open notifications take the same Esc and close (notificationBell.js), so it is not stopped here for them.
+      if (palette.hidden && keys.el.hidden && !notifications().isOpen()) {
         e.preventDefault();
         e.stopPropagation();
         return;
