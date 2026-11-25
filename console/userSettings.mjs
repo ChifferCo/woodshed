@@ -167,7 +167,8 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   // sign-in keeps the previous default (Claude Code and Codex) until they set reviews back to the default. That switch
   // was already on, and it used to mean "when you pick this agent", so joining the default by itself would send their
   // pull requests to that provider with no new choice. Someone who saves a sign-in after this has no mark, and the
-  // wider default includes it.
+  // wider default includes it. A sign-in written straight into the store, which this mark cannot see until refresh
+  // reads it, is kept the same way there.
   function keepPreviousReviewDefault() {
     if (store.state.reviewDefaultKept) return;
     let kept = 0;
@@ -239,10 +240,21 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
       else delete ownAt[id];
     });
     if (ownChanged) changes.agentAuthAt = ownAt;
+    // The mark above only sees agentAuthAt. A Grok Build or OpenCode sign-in that is in the store and not yet on this
+    // record was not saved on My settings: written on the old release before this console looked it up, or straight
+    // into the store since. Keep the previous default until they accept the wider one. An explicit save writes
+    // agentAuthAt first, so it is not discovered here, and someone who already has one of these sign-ins on the record
+    // is already on the wider default. One they accepted (`all`) or who is already kept (`legacy`) stays there. A
+    // Claude token or a Codex sign-in never marks it.
+    const reviewsSignIn = (id) => agents.agent(id).reviews;
+    const hadReviewSignIn = agents.OWN_SIGN_IN_AGENTS.some((id) => reviewsSignIn(id) && record?.agentAuthAt?.[id]);
+    const discoveredReviewSignIn = !hadReviewSignIn && agents.OWN_SIGN_IN_AGENTS.some((id) => reviewsSignIn(id) && ownAt[id] && !record?.agentAuthAt?.[id]);
+    if (discoveredReviewSignIn && record?.reviewDefault !== 'all' && record?.reviewDefault !== 'legacy') changes.reviewDefault = 'legacy';
     if (!Object.keys(changes).length) return;
     touch(login, changes);
     console.log('userSettings: sign-ins follow the secret store', {
       login, claudeToken: Boolean(token), codexAuth: Boolean(codex), ...Object.fromEntries(agents.OWN_SIGN_IN_AGENTS.map((id, i) => [id, Boolean(own[i])])),
+      ...(changes.reviewDefault === 'legacy' ? { reviewDefault: 'legacy' } : {}),
     });
   }
 
@@ -522,9 +534,9 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   /**
    * The switch on the Grok Build and OpenCode cards: whether reviews of this person's pull requests may run that agent on
    * their own sign-in. On once a sign-in is saved, unless they turned it off, as Codex's is. With no reviewer choice
-   * saved, the default includes it (reviewAgents.mjs), except a sign-in already saved when that default shipped
-   * (usesExpandedReviewDefault). A saved choice that leaves it out does not, unless none of that choice can run, in
-   * which case the same default runs. The sign-in never
+   * saved, the default includes it (reviewAgents.mjs), except a sign-in already saved when that default shipped, or
+   * found in the secret store without a save on My settings since (usesExpandedReviewDefault). A saved choice that
+   * leaves it out does not, unless none of that choice can run, in which case the same default runs. The sign-in never
    * goes into the review session: the console's proxy adds it to the agent's calls (reviewAgentProxy.mjs).
    * @throws {Error}  shown on the page, when it is turned on with no sign-in saved
    */
@@ -567,7 +579,8 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
 
   /**
    * Whether a review with no choice saved runs every reviewer that can, Grok Build and OpenCode included. False only
-   * for a sign-in of one of those already saved when that default shipped, until they set reviews back to the default.
+   * for a sign-in of one of those already saved when that default shipped, or found in the secret store without a save
+   * on My settings since, until they set reviews back to the default.
    * @param {string|null} login
    * @returns {boolean}
    */

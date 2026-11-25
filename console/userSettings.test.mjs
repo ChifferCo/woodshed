@@ -256,6 +256,49 @@ test('Grok Build and OpenCode sign-ins are each kept under the person\'s login, 
   await assert.rejects(settings.setAgentAuth('octocat', 'opencode', '{"x":{"type":"magic"}}'), /OpenCode auth.json/);
 });
 
+test('a Grok Build or OpenCode sign-in found in the store after startup stays on the previous review default', async (t) => {
+  const lines = [];
+  t.mock.method(console, 'log', (...args) => lines.push(args));
+  const secrets = fakeSecrets();
+  // The one-time mark already ran, on a record that did not know about the sign-in yet: the old release wrote it
+  // straight into the store, and this console had not looked it up.
+  const store = { state: { reviewDefaultKept: true, people: {} }, save() {} };
+  const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-11-25T00:00:00Z') });
+  secrets.values.set('users/joel/grok-auth', 'xai-made-up-joel-0123456789');
+  await settings.refresh('joel', { force: true });
+  assert.equal(store.state.people.joel.reviewDefault, 'legacy');
+  assert.equal(settings.usesExpandedReviewDefault('joel'), false);
+  assert.equal(settings.view('joel').expandedReviewDefault, false);
+  assert.equal(settings.view('joel').agentAuth.grok.set, true);
+  const followed = lines.find((args) => args[0] === 'userSettings: sign-ins follow the secret store');
+  assert.equal(followed?.[1]?.reviewDefault, 'legacy');
+  assert.equal(JSON.stringify(followed).includes('xai-'), false, 'the log never carries the sign-in');
+
+  await settings.setAgentAuth('mia', 'grok', 'xai-made-up-mia-0123456789');
+  await settings.refresh('mia', { force: true });
+  assert.equal(store.state.people.mia.reviewDefault, undefined, 'a save on My settings after the mark joins the wider default');
+  assert.equal(settings.usesExpandedReviewDefault('mia'), true);
+
+  // She already saved one, so a second sign-in written straight into the store joins the same wider default.
+  secrets.values.set('users/mia/opencode-auth', '{"openai":{"type":"api","key":"sk-x"}}');
+  await settings.refresh('mia', { force: true });
+  assert.equal(store.state.people.mia.reviewDefault, undefined);
+  assert.equal(settings.view('mia').agentAuth.opencode.set, true);
+
+  settings.setReviewAgents('joel', null);
+  assert.equal(store.state.people.joel.reviewDefault, 'all');
+  secrets.values.set('users/joel/opencode-auth', '{"openai":{"type":"api","key":"sk-x"}}');
+  await settings.refresh('joel', { force: true });
+  assert.equal(store.state.people.joel.reviewDefault, 'all', 'accepting the wider default is not undone by a sign-in found later');
+  assert.equal(settings.usesExpandedReviewDefault('joel'), true);
+
+  secrets.values.set('users/neo/claude-token', 'sk-ant-oat01-neo');
+  secrets.values.set('users/neo/codex-auth', 'sk-neo');
+  await settings.refresh('neo', { force: true });
+  assert.equal(store.state.people.neo.reviewDefault, undefined, 'a Claude token or Codex sign-in never keeps the previous default');
+  assert.equal(settings.usesExpandedReviewDefault('neo'), true);
+});
+
 test('an own sign-in written straight into the store counts as set, as a Claude token does', async (t) => {
   t.mock.method(console, 'log', () => {});
   const secrets = fakeSecrets();

@@ -152,7 +152,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   }
 
   // Whether reviews of your pull requests may run this agent on your sign-in. On once a sign-in is saved, unless turned
-  // off; the default then includes it (console/reviewAgents.mjs). A sign-in already saved when that default shipped
+  // off; the default then includes it (console/reviewAgents.mjs). A sign-in already saved when that default shipped,
+  // or found in the secret store without a save on My settings since,
   // stays out until Reviews of my pull requests is set back to the default. A saved choice that leaves it out does
   // not, unless none of that choice can run, in which case the same default runs. The console adds the sign-in to the
   // agent's calls (console/reviewAgentProxy.mjs), never into the review session.
@@ -161,6 +162,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     if (!a.reviews) return null;
     const saved = Boolean(me.agentAuth?.[id]?.set);
     const on = Boolean(saved && me.ownAgentForReviews?.[id]);
+    // The reviews answer is newer than `me` after Include every reviewer: that save returns `expanded` before the
+    // next /api/my, and this switch's note has to follow it on the same draw.
     const widened = me.expandedReviewDefault !== false;
     const what = id === 'opencode' ? 'your Anthropic or OpenAI API key, of those saved here' : 'your sign-in';
     const onNote = widened
@@ -776,15 +779,22 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   // (shared/agents.cjs), Off and On across the top (designSystem/components/OnOffGrid). Several on is all of them, all
   // off is no code review. On is offered only while the team's key or your own sign-in can run it: Grok Build and
   // OpenCode have no team key. With nothing saved, every reviewer that can run does, except a Grok Build or OpenCode
-  // sign-in already saved when that default shipped: those stay Claude Code and Codex until Include every reviewer.
+  // sign-in already saved when that default shipped, or found in the secret store without a save on My settings
+  // since: those stay Claude Code and Codex until Include every reviewer.
   // A pick saves at once.
   let reviews = null;
   const reviewStatus = h('p', { class: 'form-note', role: 'status' });
   let reviewsLoaded = false;
-  const loadReviews = () => W.getJson('/api/my/reviews').then((answer) => { reviews = answer; }, () => {}).finally(() => { reviewsLoaded = true; if (me) render(); });
+  // `expanded` on the reviews answer is what the card and the sign-in switches say after a save. `me` is the last
+  // /api/my, so without this the switches keep the old note until the next full load.
+  function rememberReviews(answer) {
+    reviews = answer;
+    if (me && answer && Object.hasOwn(answer, 'expanded')) me.expandedReviewDefault = answer.expanded !== false;
+  }
+  const loadReviews = () => W.getJson('/api/my/reviews').then(rememberReviews, () => {}).finally(() => { reviewsLoaded = true; if (me) render(); });
 
   function saveReviews(choice, done) {
-    return act({ card: 'reviews', note: reviewStatus, done, call: async () => { reviews = await W.postJson('/api/my/reviews', { choice }); } });
+    return act({ card: 'reviews', note: reviewStatus, done, call: async () => { rememberReviews(await W.postJson('/api/my/reviews', { choice })); } });
   }
 
   function reviewsCard() {

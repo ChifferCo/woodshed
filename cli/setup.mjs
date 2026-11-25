@@ -609,7 +609,10 @@ export async function setupCommand(args, ctx) {
         if (answer !== null) value = answer || prior;
       }
       if (!isReviewChoice(value)) return stop('review-choice', EXIT.waiting, `Choose who reviews your pull requests with --reviews ${REVIEW_CHOICES.join('|')} or reviewers joined with + (claude+grok), or use --skip-reviews. Current choice: ${prior}.`);
-      if (value !== prior) {
+      // `default` already reads as the current choice for someone still on the previous review default, who saved
+      // none. An explicit --reviews default has to be written anyway: that is what accepts the wider one. Enter at
+      // the question keeps the current choice and does not write.
+      if (value !== prior || opts['--reviews'] === 'default') {
         const set = await call('config set reviews', 'config', 'set', 'reviews', value);
         if (set.code !== EXIT.done) return childError('review-choice', set, 'Could not save your reviewer choice.');
       }

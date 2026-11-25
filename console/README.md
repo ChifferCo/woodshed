@@ -1249,7 +1249,7 @@ not in the default. `fleet: review runs other than the author chose` says why on
 (`Grok Build left out: …`). With no choice saved,
 a review runs every reviewer that can: Claude Code and Codex from the team keys or the author's own sign-ins, and Grok
 Build and OpenCode when the author's own sign-in is on for reviews. A Grok Build or OpenCode sign-in already saved when
-that default shipped stays out of it (`userSettings: previous review default kept`): the switch was already on, and it
+that default shipped, or found later in the secret store without a save on My settings since, stays out of it (`userSettings: previous review default kept`, or `sign-ins follow the secret store` with `reviewDefault: legacy`): the switch was already on, and it
 used to mean the sign-in is used when that agent is picked. My settings says **As before**, and **Include every reviewer
 that can run** (or `woodshed config set reviews default`) accepts the wider default (`accepted: true` on `userSettings:
 reviews of my pull requests`). A saved choice that can no longer run keeps what of
@@ -1324,7 +1324,7 @@ Grok Build and OpenCode review the same way, on the author's own sign-in alone, 
 - **The switch.** On My settings' Grok Build and OpenCode cards, **Also use it for reviews of my pull requests** is on
   once a sign-in is saved, unless the person turns it off (`POST /api/my/agent-auth/<agent>/reviews`, `woodshed config
   set grok-reviews|opencode-reviews`). It needs the same checks as Codex's (`teamKeyReason`; never a bot). With no
-  reviewer choice saved, the default includes it, except a sign-in already saved when that default shipped, which stays out until they set reviews back to the default; a saved choice that leaves it out does not, unless none of that choice can run, in which case the same default runs. The review keeps `review.ownSignIns`: whose sign-in and how
+  reviewer choice saved, the default includes it, except a sign-in already saved when that default shipped, or found in the secret store without a save on My settings since, which stays out until they set reviews back to the default; a saved choice that leaves it out does not, unless none of that choice can run, in which case the same default runs. The review keeps `review.ownSignIns`: whose sign-in and how
   (`{grok: {login, via: 'key'|'login'}, opencode: {login, provider}}`), never the sign-in itself.
 - **Grok Build** runs with `XAI_API_KEY` set to the session's token and `GROK_MODELS_BASE_URL` at the console's
   `/grok/v1`, which takes all its model traffic: `GET /v1/models`, `POST /v1/responses` (its session title on a key, and
@@ -2424,7 +2424,7 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   `slack-bot-token` the dialog does. Without the hook the dialog opens on the own app's steps.
 
 A Claude token, Codex sign-in or own sign-in for another agent written straight into the secret store, as
-`users/<login>/claude-token`, `codex-auth`, `grok-auth` or `opencode-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
+`users/<login>/claude-token`, `codex-auth`, `grok-auth` or `opencode-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`). A Grok Build or OpenCode one found that way, when the record did not already have one, stays on the previous review default until reviews is set back to it.
 
 ## Slack
 

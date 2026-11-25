@@ -213,6 +213,23 @@ test('setup skips already enabled reviews, applies a changed personal choice and
   assert.equal(lastEntry(after.events).url, url);
 });
 
+test('setup writes an explicit --reviews default even when the choice already reads as default', async () => {
+  const { invoke } = fake({ commands: ['config'], answers: {
+    'config list': result(0, { config: { reviews: 'default' } }),
+    'config set': result(0, { event: 'set', key: 'reviews', value: 'default' }),
+  } });
+  const after = await invoke('--yes', '--reviews', 'default', '--no-session');
+  assert.equal(after.code, 0);
+  assert.deepEqual(after.calls.filter((call) => call[0] === 'config' && call[1] !== 'get'), [['config', 'list'], ['config', 'set', 'reviews', 'default']]);
+
+  // Enter keeps a choice that already reads as default, and does not accept a wider one by writing it again.
+  const kept = await fake({ commands: ['config'], tty: true, input: [''], answers: { 'config list': result(0, { config: { reviews: 'default' } }) } })
+    .invoke('--no-session');
+  assert.equal(kept.code, 0);
+  assert.ok(!kept.calls.some((call) => call[1] === 'set'), 'Enter does not write a default it was not asked to set');
+  assert.equal(kept.events.find((event) => event.step === 'review-choice').choice, 'default');
+});
+
 test('setup takes a combined reviewer choice from --reviews, and reads a saved one back without refusing it', async () => {
   // A saved grok+opencode, changed to claude+grok from the flag: sent on as given.
   const { invoke } = fake({ commands: ['config'], answers: {

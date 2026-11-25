@@ -26,7 +26,8 @@
 //   POST /api/my/agent-auth/<agent>/remove
 //   POST /api/my/agent-auth/<agent>/reviews  {"on": true|false}   reviews of my pull requests may run Grok Build or
 //                                     OpenCode on this sign-in (reviewAgents.mjs): the default includes it while on,
-//                                     except a sign-in already saved when that default shipped
+//                                     except a sign-in already saved when that default shipped, or found in the
+//                                     secret store without a save on My settings since
 //   GET  /api/my/reviews              who reviews my pull requests, and the choices this console can run for me
 //   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|"claude+grok"|…|null}   null is every
 //                                     reviewer that can run, and accepts that default for someone still on the
