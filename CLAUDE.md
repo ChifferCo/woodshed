@@ -965,7 +965,8 @@ URL on top of each env file's Repo settings values
   `expires_at` passed, OpenCode sign-ins with no Anthropic or OpenAI API key: a login is never used). That line is for a
   saved choice that named the agent. With no choice saved, a sign-in that cannot run is simply not in the default: the
   Reviews card says why, and there is no such line. A Grok Build or OpenCode sign-in already saved when the default grew
-  to every reviewer, or found in the secret store afterwards without a save on My settings, stays out of it until that
+  to every reviewer, or found in the secret store afterwards without a save on My settings (saving a different one of
+  those sign-ins first does not cover an uncached one), stays out of it until that
   person sets reviews back to the default (`userSettings: previous review default kept` at the console's first start
   after, or `sign-ins follow the secret store` with `reviewDefault: legacy` when refresh finds one, then `reviews of my
   pull requests` with `accepted: true`). There is no team key

@@ -228,6 +228,14 @@ test('setup writes an explicit --reviews default even when the choice already re
   assert.equal(kept.code, 0);
   assert.ok(!kept.calls.some((call) => call[1] === 'set'), 'Enter does not write a default it was not asked to set');
   assert.equal(kept.events.find((event) => event.step === 'review-choice').choice, 'default');
+
+  // Typing default is an explicit accept, unlike Enter, even while the choice already reads as default.
+  const typed = await fake({ commands: ['config'], tty: true, input: ['default'], answers: {
+    'config list': result(0, { config: { reviews: 'default' } }),
+    'config set': result(0, { event: 'set', key: 'reviews', value: 'default' }),
+  } }).invoke('--no-session');
+  assert.equal(typed.code, 0);
+  assert.deepEqual(typed.calls.filter((call) => call[0] === 'config' && call[1] !== 'get'), [['config', 'list'], ['config', 'set', 'reviews', 'default']]);
 });
 
 test('setup takes a combined reviewer choice from --reviews, and reads a saved one back without refusing it', async () => {

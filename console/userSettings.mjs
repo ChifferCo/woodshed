@@ -242,13 +242,12 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     if (ownChanged) changes.agentAuthAt = ownAt;
     // The mark above only sees agentAuthAt. A Grok Build or OpenCode sign-in that is in the store and not yet on this
     // record was not saved on My settings: written on the old release before this console looked it up, or straight
-    // into the store since. Keep the previous default until they accept the wider one. An explicit save writes
-    // agentAuthAt first, so it is not discovered here, and someone who already has one of these sign-ins on the record
-    // is already on the wider default. One they accepted (`all`) or who is already kept (`legacy`) stays there. A
-    // Claude token or a Codex sign-in never marks it.
+    // into the store since. Keep the previous default until they accept the wider one. Each sign-in is checked on its
+    // own: saving a different one through My settings writes that one's metadata first, and must not hide this one.
+    // An explicit save writes agentAuthAt first, so that sign-in is not discovered here. One they accepted (`all`) or
+    // who is already kept (`legacy`) stays there. A Claude token or a Codex sign-in never marks it.
     const reviewsSignIn = (id) => agents.agent(id).reviews;
-    const hadReviewSignIn = agents.OWN_SIGN_IN_AGENTS.some((id) => reviewsSignIn(id) && record?.agentAuthAt?.[id]);
-    const discoveredReviewSignIn = !hadReviewSignIn && agents.OWN_SIGN_IN_AGENTS.some((id) => reviewsSignIn(id) && ownAt[id] && !record?.agentAuthAt?.[id]);
+    const discoveredReviewSignIn = agents.OWN_SIGN_IN_AGENTS.some((id) => reviewsSignIn(id) && ownAt[id] && !record?.agentAuthAt?.[id]);
     if (discoveredReviewSignIn && record?.reviewDefault !== 'all' && record?.reviewDefault !== 'legacy') changes.reviewDefault = 'legacy';
     if (!Object.keys(changes).length) return;
     touch(login, changes);

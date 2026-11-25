@@ -279,11 +279,25 @@ test('a Grok Build or OpenCode sign-in found in the store after startup stays on
   assert.equal(store.state.people.mia.reviewDefault, undefined, 'a save on My settings after the mark joins the wider default');
   assert.equal(settings.usesExpandedReviewDefault('mia'), true);
 
-  // She already saved one, so a second sign-in written straight into the store joins the same wider default.
+  // A different sign-in written straight into the store afterwards is still uncached. It keeps the previous default
+  // until she accepts the wider one, which also takes the sign-in she saved back out until then.
   secrets.values.set('users/mia/opencode-auth', '{"openai":{"type":"api","key":"sk-x"}}');
   await settings.refresh('mia', { force: true });
-  assert.equal(store.state.people.mia.reviewDefault, undefined);
+  assert.equal(store.state.people.mia.reviewDefault, 'legacy');
+  assert.equal(settings.usesExpandedReviewDefault('mia'), false);
   assert.equal(settings.view('mia').agentAuth.opencode.set, true);
+
+  // The upgrade order the mark misses: Grok was already in the store, with no metadata, and OpenCode is saved through
+  // My settings before the first refresh. That save must not hide the uncached Grok sign-in.
+  secrets.values.set('users/ada/grok-auth', 'xai-made-up-ada-0123456789');
+  await settings.setAgentAuth('ada', 'opencode', '{"openai":{"type":"api","key":"sk-x"}}');
+  assert.equal(store.state.people.ada.reviewDefault, undefined, 'saving one sign-in does not look the other up');
+  await settings.refresh('ada', { force: true });
+  assert.equal(store.state.people.ada.reviewDefault, 'legacy');
+  assert.equal(settings.usesExpandedReviewDefault('ada'), false);
+  assert.equal(settings.view('ada').agentAuth.grok.set, true);
+  assert.equal(settings.view('ada').agentAuth.opencode.set, true);
+  assert.equal(JSON.stringify(lines).includes('xai-made-up-ada'), false, 'the log never carries the sign-in');
 
   settings.setReviewAgents('joel', null);
   assert.equal(store.state.people.joel.reviewDefault, 'all');

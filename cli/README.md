@@ -106,7 +106,7 @@ On a terminal each question says what Enter takes.
    status --repo <repo>`, stops with the link when the console's reviewer App still has to be made or installed, and
    otherwise tells you the tag. `--reviews` sets your own reviewer choice (`default` is every reviewer the console can
    run: Claude Code, Codex, and Grok Build and OpenCode once their sign-ins are on for reviews). A sign-in saved before
-   that default, or found in the secret store without a save on My settings since, stays out of it until `reviews` is set to `default`. An explicit `--reviews default` is saved even when the choice already reads as default, which accepts the wider one. Enter at the question keeps the current choice and does not.
+   that default, or found in the secret store without a save on My settings since, stays out of it until `reviews` is set to `default`. An explicit `--reviews default`, or typing `default` at the question, is saved even when the choice already reads as default, which accepts the wider one. Enter at the question keeps the current choice and does not.
 6. **Reviews of your open pull requests**, the step setup is for: it lists your open pull requests on each repo
    (`woodshed review pulls`) and starts the console's review on them now (`woodshed review start`), then gives each
    review's link. On a terminal it asks which, Enter for all (closing the input, Ctrl-D, starts none). `--review-prs
