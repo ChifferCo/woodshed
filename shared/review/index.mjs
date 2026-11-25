@@ -1003,6 +1003,29 @@ export async function handleReviewRequest(req, res, ctx) {
   const section = match[2] || '';
   const tail = match[3] ? match[3].slice(1) : '';
 
+  if (req.method === 'GET' && section === '/image' && !tail) {
+    if (!ctx.readPrImage) {
+      json(res, 403, { ok: false, error: 'review images require a verified GitHub credential' });
+      return true;
+    }
+    const got = await prContextFor(ctx, session);
+    const src = url.searchParams.get('src');
+    const image = got.ok && src?.length <= 2048 ? await ctx.readPrImage({ slug: got.slug, src, log: ctx.log }) : null;
+    if (!image) {
+      json(res, 404, { ok: false, error: 'review image unavailable' });
+    } else {
+      ctx.log('review.image_loaded', { pr: got.live.number, type: image.type, bytes: image.bytes.length });
+      res.writeHead(200, {
+        'content-type': image.type,
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+        'cross-origin-resource-policy': 'same-origin',
+      });
+      res.end(image.bytes);
+    }
+    return true;
+  }
+
   if (req.method === 'GET' && !section) {
     json(res, 200, statusPayload(session));
     return true;
