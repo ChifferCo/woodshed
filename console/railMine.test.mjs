@@ -58,7 +58,8 @@ test('the reviews and QA zone lists every run still going, and the last ended ru
     run('q3', 7, 'qa', 'running', '2026-11-22T11:00:00Z'),
     run('r3', 8, 'review', 'stopped', '2026-11-19T10:00:00Z'),
     { ...run('r4', 8, 'review', 'stopped', '2026-11-22T10:00:00Z'), project: 'tools' },
+    { id: 'w1', number: 7, trigger: 'label', status: 'stopped', createdAt: '2026-11-18T10:00:00Z', owner: null, kind: 'pr' },
   ];
-  assert.deepEqual(W.latestPullChecks(checks).map((s) => s.id), ['r2', 'q2', 'q3', 'r3', 'r4'],
-    'an earlier run on the same pull request is left out; another project\'s #8 is a pull request of its own');
+  assert.deepEqual(W.latestPullChecks(checks).map((s) => s.id), ['r2', 'q2', 'q3', 'r3', 'r4', 'w1'],
+    'an earlier run on the same pull request is left out; another project\'s #8 is a pull request of its own; work stays');
 });

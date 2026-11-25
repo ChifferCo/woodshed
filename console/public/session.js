@@ -1669,7 +1669,8 @@
   function railBody() {
     const all = railListing();
     const onProject = railProject();
-    const listed = onProject ? all.filter((s) => s.project === onProject) : all;
+    // An earlier review or QA run on a pull request is left out of the cards and the status chips' counts alike.
+    const listed = W.latestPullChecks(onProject ? all.filter((s) => s.project === onProject) : all);
     const emptyText = all.length && onProject ? `No sessions on ${onProject} here. All shows the other projects'.`
       : railMine() ? 'No sessions yet. Start one with New session.' : W.sharedEmptyText(picked);
     const empty = !listed.length && h('p', { class: 'rail-empty' }, emptyText);
@@ -1681,7 +1682,7 @@
     // that stopped.
     // Everyone: what nobody has, then the shed's groups.
     // Reviews and QA the console ran on pull requests come last, in a zone of their own folded until opened.
-    const checks = W.latestPullChecks(listed.filter(W.isPullCheck));
+    const checks = listed.filter(W.isPullCheck);
     const work = listed.filter((s) => !W.isPullCheck(s));
     const unassigned = railMine() ? [] : work.filter(W.isUnassigned);
     // On Mine, a session started as a piece of another's work sits under it while that one is live (W.railGroups); one

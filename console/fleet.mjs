@@ -1440,6 +1440,8 @@ export function createFleet({
       const key = `${projectFor(config, session).name}#${session.number}`;
       byPull.set(key, [...(byPull.get(key) ?? []), session]);
     }
+    // A pull request whose runs all went off the list is not read again.
+    for (const key of pullRunsCheckedAt.keys()) if (!byPull.has(key)) pullRunsCheckedAt.delete(key);
     for (const [key, runs] of byPull) {
       // Not yet settled: still going, or its end not yet told (qaEndedUnreported, reviewEndedUnreported), or a Claude
       // home still being deleted, which nothing retries once the record is gone.
@@ -1453,8 +1455,10 @@ export function createFleet({
         continue;
       }
       const latest = (kind, has = () => true) => runs.filter((s) => (kind === 'qa' ? isQa(s) : isReview(s)) && has(s)).at(-1);
+      // The last settled run of each kind too, while a later one still runs: its result is the pull request's until then.
       const read = new Set([
-        latest('qa'), latest('qa', (s) => s.qa.commentId),
+        latest('qa'), latest('qa', settled), latest('qa', (s) => s.qa.commentId),
+        latest('review', settled),
         latest('review'), latest('review', (s) => s.review.commentId),
         latest('review', (s) => s.review.conclusion && s.review.posted),
         ...runs.filter((s) => (isReview(s) && s.review.held) || watched(s)),

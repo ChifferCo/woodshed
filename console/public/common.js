@@ -257,21 +257,21 @@
   }
 
   /**
-   * The reviews and QA the rail lists: every one still going, and the last that ended of each kind on each pull request,
-   * whose card holds its result. An earlier run is a commit that has since moved on.
-   * @param {object[]} checks  isPullCheck sessions
+   * The sessions the rail lists, its counts included: every one but a review or QA run that ended before the last
+   * ended run of its kind on its pull request, whose card holds the result. An earlier run is a commit since moved on.
+   * @param {object[]} sessions
    * @returns {object[]}  in the order given
    */
-  function latestPullChecks(checks) {
+  function latestPullChecks(sessions) {
     const last = new Map();
-    for (const s of checks) {
-      if (isLive(s)) continue;
+    for (const s of sessions) {
+      if (!isPullCheck(s) || isLive(s)) continue;
       const key = `${s.project ?? ''}#${s.number}#${s.trigger}`;
       const kept = last.get(key);
       if (!kept || Date.parse(s.createdAt) >= Date.parse(kept.createdAt)) last.set(key, s);
     }
     const shown = new Set(last.values());
-    return checks.filter((s) => isLive(s) || shown.has(s));
+    return sessions.filter((s) => !isPullCheck(s) || isLive(s) || shown.has(s));
   }
 
   /** @returns {boolean}  a shared session nobody has, that still has something to do: Unassigned on Everyone */

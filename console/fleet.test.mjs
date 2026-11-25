@@ -3427,6 +3427,21 @@ test('an ended review a later one on its pull request replaced goes off the list
   assert.equal(fleet.sessions().length, 0, 'nothing reads a closed pull request\'s runs');
 });
 
+test('an ended QA run stays while the run that replaces it is still going: its result is the pull request\'s until then', async () => {
+  const { fleet, github } = qaSetup();
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  await fleet.qaFinished(fleet.sessions()[0], { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  const newer = { ...QA_PULL, head: { ...QA_PULL.head, sha: 'c'.repeat(40) } };
+  github.pull = async () => newer;
+  github.reviews = async () => reviewOn(newer.head.sha);
+  await fleet.qaAfterReview({ number: 7 });
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['a', 'c'], 'c runs, with a\'s comment: a stays');
+  await fleet.qaFinished(fleet.sessions()[1], { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'c'.repeat(40), costUsd: 1 });
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().map((s) => s.qa.sha[0]), ['c'], 'once c ended, a goes');
+});
+
 test('an ended QA run a later one replaced goes off the list, but not while its recordings are watched', async () => {
   const { fleet, github } = qaSetup();
   await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
@@ -3601,7 +3616,7 @@ test('a commit approved while a QA run held QA gets its own run when that run st
   await t.fleet.stop(qa, 'idle for 2 h');
   await t.fleet.tick();
   const runs = t.fleet.sessions().filter((s) => s.trigger === 'qa');
-  assert.deepEqual(runs.map((s) => s.qa.sha), ['b'.repeat(40)], 'the newer commit is tested now, and the run it replaced is off the list');
+  assert.deepEqual(runs.map((s) => s.qa.sha), ['a'.repeat(40), 'b'.repeat(40)], 'the newer commit is tested now, and the run it replaces stays until it ends');
 });
 
 // Each repo's own label and switches (repoTriggers.mjs), set on its settings page.
