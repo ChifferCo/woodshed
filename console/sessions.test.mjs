@@ -468,6 +468,20 @@ test('planUsageFrom preserves Codex attribution through status updates', () => {
   assert.deepEqual(statusUpdate({ ...session({}), owner: 'octocat', options: { agent: 'codex' } }, { state: 'done', planUsage: usage }, 'now').planUsage, usage);
 });
 
+test('planUsageFrom keeps a Grok Build window\'s week or month, and drops anything else on it', () => {
+  const usage = {
+    agent: 'grok', asOf: '2026-11-12T12:00:00.000Z', fiveHour: null,
+    sevenDay: { usedPercent: 140, resetsAt: '2026-11-19T00:00:00Z', label: 'Month', short: 'mo', spanMs: 30 * 86400_000, subscriptionTier: 'nope' },
+  };
+  assert.deepEqual(planUsageFrom(usage), {
+    agent: 'grok', asOf: '2026-11-12T12:00:00.000Z', fiveHour: null,
+    sevenDay: { usedPercent: 100, resetsAt: '2026-11-19T00:00:00.000Z', label: 'Month', short: 'mo', spanMs: 30 * 86400_000 },
+  });
+  const stripped = planUsageFrom({ ...usage, sevenDay: { usedPercent: 40, resetsAt: null, label: 'Lifetime', short: 'yr', spanMs: -5 } });
+  assert.deepEqual(stripped.sevenDay, { usedPercent: 40, resetsAt: null });
+  assert.equal(planUsageFrom({ agent: 'grok', fiveHour: null, sevenDay: { usedPercent: 1, resetsAt: null, spanMs: 401 * 86400_000 } }).sevenDay.spanMs, undefined);
+});
+
 test('statusUpdate keeps whether text waits in the agent\'s box, for Chat to say so, and nothing else as true', () => {
   const nowIso = '2026-10-21T12:00:00.000Z';
   assert.equal(statusUpdate(session(), { state: 'done', boxText: true }, nowIso).boxText, true);

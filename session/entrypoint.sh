@@ -534,7 +534,7 @@ appRules() {
 }
 
 writeRules() {
-  local rules setup notes tag apps added
+  local rules setup notes tag qaLabel apps added
   leaveOutConsoleLinks
   # Woodshed's own rules, then the project's: its skills, checks and review workflow.
   rules=$(cat "$SESSION_DIR/prompt.md"; printf '\n'; project file rules) || die "the project's rules could not be read"
@@ -556,6 +556,19 @@ writeRules() {
     rules=${rules//"{{REVIEW_TAG}}"/"$tag"}
   else
     rules=$(grep -vF '{{REVIEW_TAG}}' <<< "$rules" || true)
+  fi
+  # The QA label, which a session adds to its pull request once ready, for QA the repo's CI runs (pullRequests.qa.runner:
+  # actions). Not for QA run here: the console adds it itself with qa.autoLabel, and without it starts QA only for a
+  # person's label, never the App's that a shared session's gh acts as (fleet.mjs, startQa). A label is GitHub's to
+  # name, so plain substitution again, and shell-quoted for the command. The command is GitHub's API, which takes the
+  # label whole: `gh pr edit --add-label` reads a comma in it as two labels.
+  qaLabel=
+  [ "$(project get pullRequests.qa.runner 2>/dev/null)" != actions ] || qaLabel=$(project get pullRequests.qa.label 2>/dev/null) || qaLabel=
+  if [ -n "$qaLabel" ]; then
+    rules=${rules//"{{QA_LABEL_ARG}}"/"$(printf '%q' "labels[]=$qaLabel")"}
+    rules=${rules//"{{QA_LABEL}}"/"$qaLabel"}
+  else
+    rules=$(grep -vF '{{QA_LABEL}}' <<< "$rules" || true)
   fi
   # The project's environment notes. A shared session gets them inline. A private one is often just a conversation,
   # so it gets a pointer to them instead of the whole text: claudeHooks.json lets claude read that file, outside the
@@ -594,7 +607,7 @@ writeRules() {
     added=$(REPO_SETTINGS_FILE=$REPO_SETTINGS_JSON project add-instructions /tmp/woodshed-rules.md) || die "the repo's instructions could not be added to the rules"
     [ -z "$added" ] || log "Instructions added to the rules" "($added)"
   fi
-  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, docker: ${WOODSHED_SESSION_DOCKER:-none}, apps: $(project get apps | grep -c . || true))"
+  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, QA label: ${qaLabel:-none}, docker: ${WOODSHED_SESSION_DOCKER:-none}, apps: $(project get apps | grep -c . || true))"
 }
 
 # With this machine's Docker, the ports its containers publish are forwarded to the same ports on 127.0.0.1 here, where
@@ -953,6 +966,17 @@ claudeFlags() {
   [ -z "${EFFORT:-}" ] || printf ' --effort %s' "$EFFORT"
 }
 
+extraClaudeFlags() {
+  case "${AGENT:-claude}" in
+    grok | opencode)
+      # Only Woodshed's explicit hooks and the owner's settings. Branch hooks and MCP servers can read its sign-in.
+      MCP_CONFIG='' MODEL='' EFFORT='' PERMISSION_MODE=default claudeFlags
+      printf ' --setting-sources user --strict-mcp-config --disable-slash-commands'
+      ;;
+    *) MODEL='' EFFORT='' PERMISSION_MODE=default claudeFlags ;;
+  esac
+}
+
 # Whether the restored home holds the conversation to reopen. Claude names a project's folder after its path.
 resumable() {
   [ -n "${RESUME_SESSION:-}" ] || return 1
@@ -1050,7 +1074,7 @@ installSyncedPlugins() {
 # How codex reaches OpenAI. The owner's own sign-in goes into codex's home as auth.json: an API key as the key file codex
 # reads, a ChatGPT login as it was saved. With none, session/bin/codex uses the console's proxy and the team key. The
 # rules go in codex's own AGENTS.override.md, which it reads at every start, so the terminal shows only the request.
-# `beside`: for a Codex agent a person may start beside claude (session/agents.mjs), whose sign-in statusd asks the console
+# `beside`: for an extra Codex agent (session/agents.mjs), whose sign-in statusd asks the console
 # for only when one starts. Its home and rules are made here all the same.
 configureCodex() {
   [ ! -L "$CODEX_HOME_DIR" ] || die "codex's home is a symlink"
@@ -1073,10 +1097,11 @@ configureCodex() {
     export WOODSHED_CODEX_AUTH=key
     log "codex runs on the team key, through the console"
   fi
-  # The checkout is trusted so codex loads the repo's .codex/config.toml and AGENTS.md without asking. The rest of
-  # config.toml is a private session's owner's own, which pullSettings wrote and statusd keeps in step
-  # (settingsSync.mjs): each side keeps its own trusted folders, so this one stays this session's.
-  node "$SHARED_DIR/codexConfig.mjs" trust "$CODEX_HOME_DIR/config.toml" "$REPO_DIR" || die "codex's config.toml could not be written"
+  # Keep branch configuration out of a Codex helper beside Grok Build or OpenCode, where it could load MCP servers
+  # or hooks with access to the primary agent's sign-in. This trust setting stays local to the session.
+  local trust=trust
+  case "${AGENT:-claude}" in grok | opencode) trust=untrust ;; esac
+  node "$SHARED_DIR/codexConfig.mjs" "$trust" "$CODEX_HOME_DIR/config.toml" "$REPO_DIR" || die "codex's config.toml could not be written"
   # The rules win. codex reads AGENTS.override.md in place of AGENTS.md: it holds the rules, then the owner's own
   # AGENTS.md, which stays theirs as it is synced.
   {
@@ -1410,12 +1435,9 @@ startClaude() {
     *) claudeFlags > /tmp/woodshed-claude-flags ;;
   esac
   # The agents a person starts beside this one (session/agents.mjs, statusd's /agents) take the session's own flags for
-  # claude, without the model, effort and mode New session picked: they pick their own. Only beside Claude Code or Codex:
-  # a Grok Build or OpenCode session runs on its owner's own sign-in and nothing else, so none starts beside it.
+  # claude, without the model, effort and mode New session picked: they pick their own.
   if [ "${SESSION_KIND:-}" = private ] && [ -z "${SESSION_MODE:-}" ] && ! tainted; then
-    case "${AGENT:-claude}" in
-      claude | codex) MODEL='' EFFORT='' PERMISSION_MODE=default claudeFlags > /tmp/woodshed-agent-claude-flags ;;
-    esac
+    extraClaudeFlags > /tmp/woodshed-agent-claude-flags
   fi
   # A terminal its owner's Herdr makes comes once the session runs, after statusd opened the tunnel it comes through:
   # the agent is typed into it then, in the background, as into the session's own. Handed to the init like progress's
@@ -1579,13 +1601,12 @@ runSession() {
       restorePlugins
       installDefaultPlugins
       installSyncedPlugins
-      # A private session's owner may start a Codex agent beside claude (session/agents.mjs): its home is made now, and a
-      # problem with it never stops claude's start.
-      if [ "${SESSION_KIND:-}" = private ] && [ -z "${SESSION_MODE:-}" ] && ! tainted; then
-        if (configureCodex beside); then touch "$CODEX_READY_FILE"; else log "WARNING: codex not set up, no Codex agent can start beside claude"; fi
-      fi
       ;;
   esac
+  # Set up an extra Codex agent's home without interrupting the session's own agent if setup fails.
+  if [ "${AGENT:-claude}" != codex ] && [ "${SESSION_KIND:-}" = private ] && [ -z "${SESSION_MODE:-}" ] && ! tainted; then
+    if (configureCodex beside); then touch "$CODEX_READY_FILE"; else log "WARNING: codex not set up, no extra Codex agent can start"; fi
+  fi
   # Both have read it: the env files are written, and the instructions are in the rules (and each agent's own copy).
   rm -f "$REPO_SETTINGS_JSON"
   progress env

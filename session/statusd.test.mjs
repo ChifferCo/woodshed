@@ -1498,12 +1498,21 @@ test('POST /send with agentOnly types into a running agent and never into a shel
   assert.equal(await got(), 'The review asks for changes\nFix PR 9\n', 'only the one on its pull request, once');
   await taken();
 
+  // A hand-off's checkpoint that fails (this checkout has nowhere to push to, and CI's git no identity to commit as)
+  // leaves the session running: its sends go on, and the console does not stop it.
+  const handoff = await call('POST', '/checkpoint', undefined, JSON.stringify({ keepRunningOnFailure: true }));
+  assert.equal(handoff.status, 500);
+  assert.match(handoff.body.error, /^Command failed: git /, 'its commit or its push');
+  assert.equal((await send(forNine)).status, 200, 'it sends again');
+  for (let i = 0; i < 50 && !(await got()).includes('Fix PR 9\nFix PR 9'); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  await taken();
+
   // Once the stop's checkpoint has started, nothing guarded is typed.
   await call('POST', '/checkpoint');
   const stopping = await send(forNine);
   assert.deepEqual([stopping.status, stopping.body.error], [409, 'the session is stopping']);
   await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.equal(await got(), 'The review asks for changes\nFix PR 9\n');
+  assert.equal(await got(), 'The review asks for changes\nFix PR 9\nFix PR 9\n');
 });
 test('a branch pointed at another pull request\'s ref, which @{u} cannot name, is another lookup key', async (t) => {
   // A real repository, configured as gh pr checkout leaves a pull request's branch.
@@ -1542,6 +1551,45 @@ test('a guarded send names how long it may still be typed, a minute at most', ()
 test('a guarded send carries its caller\'s own deadline', () => {
   assert.equal(sendNotAfter('{"text":"x","notAfter":1700000000000}'), 1700000000000);
   for (const raw of ['{"text":"x"}', '{"text":"x","notAfter":"soon"}', '{"text":"x","notAfter":-1}', 'nope']) assert.equal(sendNotAfter(raw), null, raw);
+});
+
+test('a hand-off\'s checkpoint that fails turns the shared settings sync back on, so an edit after it still reaches the shared copy', async (t) => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-handoff-home-'));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  await fs.mkdir(path.join(home, '.claude'));
+  await fs.writeFile(path.join(home, '.claude/settings.json'), JSON.stringify({ model: 'opus' }));
+  // The console's session API, as far as a stop reaches it: the settings exchange and the home's save.
+  const rounds = [];
+  let version = 0;
+  const consoleApi = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      if (req.url.startsWith('/claude-settings')) {
+        rounds.push(JSON.parse(body));
+        version += 1;
+        return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ version }));
+      }
+      return res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+    });
+  });
+  await new Promise((resolve) => consoleApi.listen(0, '127.0.0.1', resolve));
+  t.after(() => consoleApi.close());
+  const { call } = await statusdWithApp(t, {
+    env: {
+      HOME: home, SESSION_KIND: 'private', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleApi.address().port}`,
+      WOODSHED_SETTINGS_STATE_FILE: path.join(home, 'settings-sync.json'),
+    },
+  });
+  const failed = await call('POST', '/checkpoint', undefined, JSON.stringify({ keepRunningOnFailure: true }));
+  assert.equal(failed.status, 500, 'this checkout has nowhere to push to');
+  const seen = rounds.length;
+  assert.ok(seen >= 1, 'the checkpoint had its settings round');
+
+  await fs.writeFile(path.join(home, '.claude/settings.json'), JSON.stringify({ model: 'sonnet' }));
+  await call('POST', '/checkpoint');
+  const sent = rounds.slice(seen).map((r) => r.changed?.['.claude/settings.json']).filter(Boolean);
+  assert.ok(sent.some((v) => Buffer.from(v, 'base64').toString('utf8').includes('sonnet')), 'the stop after it sends the edit');
 });
 
 test('Grok Build and OpenCode get pastes, as codex does', () => {
@@ -1618,11 +1666,9 @@ test('an agent beside the session\'s own starts in its own tmux session, and its
   assert.ok((await tmux('ls')).stdout.includes('claude:'), 'the session\'s own is still there');
 });
 
-// A Grok Build or OpenCode session runs on its owner's own sign-in alone: no claude or codex starts beside it, and
-// /status leaves `agents` out, so the page shows no switch.
-test('a Grok Build or OpenCode session starts no agent beside its own', async (t) => {
+test('a private Grok Build or OpenCode session reports support for extra agents', async (t) => {
   for (const agent of ['grok', 'opencode']) {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), `statusd-no-agents-${agent}-`));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), `statusd-extra-agents-${agent}-`));
     t.after(() => fs.rm(dir, { recursive: true, force: true }));
     await fs.writeFile(path.join(dir, 'flags'), '');
     await fs.writeFile(path.join(dir, 'codex-ready'), '');
@@ -1630,11 +1676,14 @@ test('a Grok Build or OpenCode session starts no agent beside its own', async (t
       AGENT: agent, TMUX: '', TMUX_TMPDIR: dir, SESSION_KIND: 'private', SESSION_MODE: '', WOODSHED_AGENT_BIN: path.join(dir, 'bin'),
       WOODSHED_AGENT_CLAUDE_FLAGS_FILE: path.join(dir, 'flags'), WOODSHED_CODEX_READY_FILE: path.join(dir, 'codex-ready'), WOODSHED_AGENT_STATE_DIR: dir,
       WOODSHED_CLAUDE_STATE_FILE: path.join(dir, 'own-state.json'),
+      // The Plan chip reads this home's log. A test must not read the machine's.
+      GROK_HOME: dir,
     } });
-    assert.equal((await call('GET', '/agents', 'sess')).status, 404, agent);
-    assert.equal((await call('POST', '/agents', 'sess', JSON.stringify({ agent: 'claude' }))).status, 404, agent);
-    assert.equal((await call('GET', '/agents/agent-2/transcript', 'sess')).status, 404, agent);
-    assert.equal('agents' in (await call('GET', '/status', 'sess')).body, false, agent);
+    assert.deepEqual(await call('GET', '/agents', 'sess'), { status: 200, body: { agents: [] } }, agent);
+    const start = JSON.stringify({ agent: 'claude' });
+    assert.equal((await call('POST', '/agents', 'sess', start)).status, 409, agent + ' refuses the old Claude start route');
+    assert.equal((await call('POST', '/agents/with-claude-token', 'sess', start)).status, 409, agent + ' requires an owner token');
+    assert.deepEqual((await call('GET', '/status', 'sess')).body.agents, [], agent);
   }
 });
 
@@ -1756,4 +1805,20 @@ exec '${process.execPath}' '${standIn}' claude '${records}' "$PWD" "$@"
   assert.ok(typed, 'the agent got the message');
   assert.deepEqual((await call('GET', '/agents', 'sess')).body.agents[0].deliveredIds, ['msg-00000001']);
   await call('POST', '/agents/agent-2/stop', 'sess', '{}');
+});
+
+// hc types no text without its Enter: a file dropped on an agent in Herdr is saved and its path answered untyped, for
+// the page to type through the terminal's own connection (console/public/terminal.js), never sent with an Enter.
+test('in Herdr, an upload to the agent is saved and answered as not typed, and nothing reaches hc', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-upload-hc-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const hc = await standInHc(dir);
+  const uploads = path.join(dir, 'uploads');
+  const { call } = await statusdWithApp(t, { env: { WOODSHED_TERMINAL: 'herdr', WOODSHED_HC_BIN: hc.file, UPLOADS_DIR: uploads } });
+  const up = await call('POST', '/upload?name=shot.png&pane=agent', 'sess', 'png bytes');
+  assert.equal(up.status, 200, JSON.stringify(up.body));
+  assert.equal(up.body.typed, false);
+  assert.equal(path.dirname(up.body.path), uploads);
+  assert.equal(await fs.readFile(up.body.path, 'utf8'), 'png bytes');
+  assert.deepEqual((await hc.calls()).filter(([command]) => command === 'send' || command === 'keys'), [], 'no Enter sent with it');
 });

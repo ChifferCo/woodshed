@@ -11,6 +11,7 @@
 //   POST /api/my/sessions                   woodshed session new: a private session of theirs
 //   POST /api/my/sessions/<id>/resume       woodshed session resume: one of their private sessions
 //   POST /api/my/sessions/<id>/remove       woodshed session remove: one of their private sessions
+//   POST /api/my/sessions/<id>/handoff      woodshed session handoff: one of their running private sessions, to another agent
 //   POST /api/sessions/<id>/stop            woodshed session stop: a session they may stop on the console's page
 //   POST /api/sessions/<id>/extend          woodshed session extend: its pause or stop an hour later, in its last minutes
 //   POST /api/sessions/<id>/limits          woodshed session limits: its own pause and stop. These two are a private
@@ -60,7 +61,7 @@ const ROUTES = [
   ['GET', /^\/api\/my\/pulls$/],
   ['POST', /^\/api\/my\/pulls\/[1-9][0-9]{0,8}\/review$/],
   ['POST', /^\/api\/my\/sessions$/],
-  ['POST', /^\/api\/my\/sessions\/[0-9a-f]{8}\/(resume|remove)$/],
+  ['POST', /^\/api\/my\/sessions\/[0-9a-f]{8}\/(resume|remove|handoff)$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/(stop|extend|limits)$/],
   ['POST', /^\/api\/sessions\/[0-9a-f]{8}\/app\/(start|stop)$/],
   ['GET', /^\/api\/sessions\/[0-9a-f]{8}\/app-share$/],

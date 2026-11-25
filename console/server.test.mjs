@@ -1957,7 +1957,7 @@ test('Console settings turns each source\'s webhooks off and on, says who did, a
 test('My settings\' Reviews card: each person picks who reviews their pull requests, from what can run for them', async (t) => {
   const { createReviewAgents } = await import('./reviewAgents.mjs');
   const { createUserSettings } = await import('./userSettings.mjs');
-  const secrets = { values: new Map(), async read(n) { return this.values.get(n) ?? null; }, async write(n, v) { this.values.set(n, v); }, async remove(n) { this.values.delete(n); }, async list() { return [...this.values.keys()]; } };
+  const secrets = { values: new Map(), async read(n) { return this.values.get(n) ?? null; }, async write(n, v) { this.values.set(n, v); }, async save(n, v) { this.values.set(n, v); }, async remove(n) { this.values.delete(n); }, async list() { return [...this.values.keys()]; } };
   const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets });
   const reviewAgents = createReviewAgents({ userSettings, connected: async () => ({ claude: true, codex: false }) });
   const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
@@ -1969,7 +1969,8 @@ test('My settings\' Reviews card: each person picks who reviews their pull reque
   const as = { cookie: 'woodshed_session=mia-dev' };
   const get = async () => (await fetch(`http://127.0.0.1:${port}/api/my/reviews`, { headers: as })).json();
 
-  assert.deepEqual(await get(), { available: { claude: true, codex: false }, own: { claude: false, codex: false }, best: 'claude', choice: null },
+  const off = { grok: false, opencode: false };
+  assert.deepEqual(await get(), { available: { claude: true, codex: false, ...off }, own: { claude: false, codex: false, ...off }, ownWhy: { grok: null, opencode: null }, best: 'claude', expanded: true, choice: null },
     'the team Anthropic key alone: Claude Code is the most there is');
   const none = await post(port, '/api/my/reviews', { choice: 'none', login: 'joel' }, as);
   assert.equal(none.status, 200);
@@ -1979,6 +1980,17 @@ test('My settings\' Reviews card: each person picks who reviews their pull reque
   assert.equal((await post(port, '/api/my/reviews', { choice: 'everyone' }, as)).status, 400);
   assert.equal((await post(port, '/api/my/reviews', { choice: null }, as)).body.choice, null, 'back to the default');
   assert.equal((await post(port, '/api/my/reviews', { choice: 'both' }, { ...as, origin: 'https://evil.example' })).status, 403);
+
+  // Grok Build reviews only on the person's own sign-in, switched on for reviews: offered once one is saved.
+  assert.equal((await post(port, '/api/my/agent-auth/grok/reviews', { on: true }, as)).status, 409, 'no sign-in saved yet');
+  assert.equal((await post(port, '/api/my/agent-auth/grok', { value: 'xai-made-up-mia-0123456789' }, as)).status, 200);
+  const withGrok = await get();
+  assert.deepEqual([withGrok.available.grok, withGrok.own.grok, withGrok.choice, withGrok.best], [true, true, null, 'claude+grok'], 'the default includes Grok Build once its sign-in is on for reviews');
+  const picked = await post(port, '/api/my/reviews', { choice: 'grok+claude' }, as);
+  assert.equal(picked.body.choice, 'claude+grok');
+  const offNow = await post(port, '/api/my/agent-auth/grok/reviews', { on: false }, as);
+  assert.deepEqual([offNow.status, offNow.body.ownAgentForReviews.grok, (await get()).available.grok], [200, false, false]);
+  assert.equal((await post(port, '/api/my/agent-auth/claude/reviews', { on: true }, as)).status, 404, 'Claude Code has no own sign-in here');
 });
 
 test('My settings\' Agent terminal: each person picks tmux or Herdr for their own private sessions, tmux by default', async (t) => {
@@ -2826,7 +2838,9 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
     host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
     maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, launcher: { kind: 'docker' }, localLogin: 'local',
   };
-  const server = http.createServer(createHandler({ config, fleet }));
+  let hasClaude = false;
+  const userSettings = { claudeToken: async () => hasClaude ? 'dummy-owner-claude-token' : null };
+  const server = http.createServer(createHandler({ config, fleet, userSettings }));
   const port = await listen(server);
   t.after(() => server.close());
   const call = (path, body, method = 'POST') => fetch(`http://127.0.0.1:${port}${path}`, {
@@ -2843,9 +2857,16 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   assert.equal((await call('/api/sessions/2c3d4e5f/agents', { agent: 'claude' })).status, 409, 'a tainted session starts none');
   assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'grok' })).status, 400, 'Grok Build and OpenCode never start beside another');
   assert.equal((await call('/api/sessions/0a1b2c3d/agents', { agent: 'opencode', model: 'openai/gpt-5' })).status, 400);
-  assert.equal((await call('/api/sessions/3d4e5f6a/agents', { agent: 'claude' })).status, 409, 'a Grok Build session runs on its owner\'s own sign-in alone');
-  assert.equal((await call('/api/sessions/3d4e5f6a/agents', undefined, 'GET')).status, 409);
+  const missingClaude = await call('/api/sessions/3d4e5f6a/agents', { agent: 'claude' });
+  assert.equal(missingClaude.status, 409);
+  assert.match((await missingClaude.json()).error, /save your Claude token on My settings/);
   assert.equal(asked.length, 1, 'nothing refused reached the session');
+  hasClaude = true;
+  assert.equal((await call('/api/sessions/3d4e5f6a/agents', { agent: 'claude' })).status, 200);
+  assert.equal((await call('/api/sessions/3d4e5f6a/agents', undefined, 'GET')).status, 200);
+  assert.deepEqual(allowed.at(-1), ['3d4e5f6a', 'claude']);
+  assert.equal(asked[1].url, '/agents/with-claude-token');
+  assert.equal(JSON.parse(asked[1].body).claudeToken, 'dummy-owner-claude-token');
 
   assert.equal((await call('/api/sessions/0a1b2c3d/agents', undefined, 'GET')).status, 200);
   assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/transcript?limit=50&since=x', undefined, 'GET')).status, 200);
@@ -2853,7 +2874,7 @@ test('another agent in a private session: its owner\'s alone, checked as New ses
   assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/interrupt', { keys: 'rm -rf /' })).status, 200);
   assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-2/stop', {})).status, 200);
   assert.equal((await call('/api/sessions/0a1b2c3d/agents/agent-1/stop', {})).status, 404, 'not an agent beside the session\'s own');
-  assert.deepEqual(asked.slice(1).map((a) => [a.method, a.url, a.body]), [
+  assert.deepEqual(asked.slice(3).map((a) => [a.method, a.url, a.body]), [
     ['GET', '/agents', ''],
     ['GET', '/agents/agent-2/transcript?limit=50', ''],
     ['POST', '/agents/agent-2/send', '{"text":"hi","id":"msg-00000001"}'],

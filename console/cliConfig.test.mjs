@@ -4,6 +4,7 @@ import http from 'node:http';
 
 import { answerWithView } from './cliConfig.mjs';
 import { createCliSignIn } from './cliSignIn.mjs';
+import { createReviewAgents } from './reviewAgents.mjs';
 import { createHandler } from './server.mjs';
 import { createUserSettings } from './userSettings.mjs';
 
@@ -11,11 +12,12 @@ function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 }
 
-const KEYS = ['terminal', 'reviews', 'codex-reviews', 'claude-token-shared', 'default-repo', 'github-name', 'github-email'];
+const KEYS = ['terminal', 'reviews', 'codex-reviews', 'grok-reviews', 'opencode-reviews', 'claude-token-shared', 'default-repo', 'github-name', 'github-email'];
 
 // A console with the real My settings (userSettings.mjs) over a secret store that keeps nothing: mia-dev has a Claude
 // token saved and GitHub connected, octocat has neither. A command line token for each.
-async function consoleFor(t, { writers = null } = {}) {
+async function consoleFor(t, { writers = null, rememberSecrets = false, saves = null, secretSaves = null } = {}) {
+  const values = new Map();
   const store = {
     state: {
       people: {
@@ -23,9 +25,21 @@ async function consoleFor(t, { writers = null } = {}) {
         octocat: { terminal: 'herdr', codexAuthAt: '2026-11-01T00:00:00.000Z' },
       },
     },
-    save() {},
+    save() { if (saves) saves.push(structuredClone(this.state)); },
   };
-  const secrets = { read: async () => null, save: async () => {}, remove: async () => {}, configured: () => true };
+  const secrets = rememberSecrets
+    ? {
+      read: async (name) => values.get(name) ?? null,
+      save: async (name, value) => {
+        values.set(name, value);
+        // The state as the credential becomes readable. A restart that stops before the sign-in metadata is written
+        // reads this, with the secret already in the store.
+        if (secretSaves) secretSaves.push({ name, state: structuredClone(store.state) });
+      },
+      remove: async (name) => { values.delete(name); },
+      configured: () => true,
+    }
+    : { read: async () => null, save: async () => {}, remove: async () => {}, configured: () => true };
   const userSettings = createUserSettings({ store, secrets });
   // GitHub's answer on write access, which cliSignIn.mjs's authenticate asks for every call a token makes.
   const cli = createCliSignIn({ store: { state: {}, save() {} }, canWrite: async (login) => !writers || writers.has(login) });
@@ -62,7 +76,7 @@ async function consoleFor(t, { writers = null } = {}) {
     });
     return { status: res.status, body: await res.json().catch(() => null) };
   }
-  return { origin, call, tokens, userSettings, cli };
+  return { origin, call, tokens, userSettings, cli, secrets };
 }
 
 test('GET /api/cli/config answers its person\'s choices, exactly these keys and no secret', async (t) => {
@@ -70,7 +84,7 @@ test('GET /api/cli/config answers its person\'s choices, exactly these keys and 
   const mine = await c.call('/api/cli/config');
   assert.equal(mine.status, 200);
   assert.deepEqual(mine.body, {
-    terminal: 'tmux', reviews: 'default', 'codex-reviews': 'off', 'claude-token-shared': 'on', 'default-repo': 'app',
+    terminal: 'tmux', reviews: 'default', 'codex-reviews': 'off', 'grok-reviews': 'off', 'opencode-reviews': 'off', 'claude-token-shared': 'on', 'default-repo': 'app',
     'github-name': 'Mia Dev', 'github-email': 'mia@example.com',
   });
   const theirs = await c.call('/api/cli/config', { token: c.tokens.octocat });
@@ -114,10 +128,96 @@ test('a config write runs the page\'s own route and checks, and answers with the
   assert.equal(notConnected.status, 409);
   assert.match(notConnected.body.error, /connect GitHub first/);
 
+  // Grok Build's and OpenCode's switches for reviews, as Codex's: refused with no sign-in saved, and a combined choice.
+  assert.deepEqual(await c.call('/api/my/agent-auth/grok/reviews', { method: 'POST', body: { on: true } }), { status: 409, body: { error: 'save your Grok Build sign-in first' } });
+  assert.equal((await c.call('/api/my/agent-auth/opencode/reviews', { method: 'POST', body: { on: false } })).body['opencode-reviews'], 'off');
+  assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { choice: 'grok+claude' } })).body.reviews, 'claude+grok', 'saved in the registry\'s order');
+  assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { choice: 'claude+claude' } })).status, 400);
+
+  // A Grok Build or OpenCode sign-in is saved from the command line by `woodshed sign-in push` (cli/agentSignIns.mjs),
+  // answered with whether one is set and never the page's view; removing one stays the page's.
+  const pushed = await c.call('/api/my/agent-auth/grok', { method: 'POST', body: { value: 'xai-made-up-key-0123456789' } });
+  assert.equal(pushed.status, 200);
+  assert.deepEqual(Object.keys(pushed.body).sort(), ['agent', 'savedAt', 'set']);
+  assert.equal((await c.call('/api/my/agent-auth/grok/remove', { method: 'POST', body: {} })).status, 403, 'a sign-in is never removed from the command line');
   for (const [path, body] of [['/api/my/claude-token', { value: 'sk-ant-x' }], ['/api/my/codex-auth', { value: 'sk-x' }], ['/api/my/files/tmux-conf', { text: 'set -g mouse on' }]]) {
     const out = await c.call(path, { method: 'POST', body });
     assert.equal(out.status, 403, `${path}: a secret is never set from the command line`);
   }
+});
+
+test('a first command-line sign-in stays out of reviews until that person turns it on', async (t) => {
+  const saves = [];
+  const secretSaves = [];
+  const c = await consoleFor(t, { rememberSecrets: true, saves, secretSaves });
+  const reviews = createReviewAgents({ userSettings: c.userSettings, connected: async () => ({ claude: true, codex: true }) });
+  // Already accepted the wider default, and has no Grok Build sign-in yet. Discovery then keeps `all` and does not
+  // mark the previous default, so a sign-in found in the store reads as on for reviews unless the off flag is already stored.
+  assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { choice: null } })).status, 200);
+  assert.equal(c.userSettings.usesExpandedReviewDefault('mia-dev'), true);
+  const grok = 'xai-made-up-key-0123456789';
+  const pushed = await c.call('/api/my/agent-auth/grok', { method: 'POST', body: { value: grok } });
+  assert.equal(pushed.status, 200);
+  assert.equal(c.userSettings.usesOwnAgentForReviews('mia-dev', 'grok'), false, 'a first upload does not turn the reviews switch on');
+  // The first settings write that records the sign-in is what a restart reads if the console stops there. It has to
+  // already say reviews are off: a later write never runs.
+  const first = saves.find((state) => state.people['mia-dev']?.agentAuthAt?.grok);
+  assert.equal(first.people['mia-dev'].ownAgentForReviews?.grok, false, 'the sign-in and the reviews-off flag are one settings update');
+  assert.equal(first.reviewDefaultKept, true, 'the one-time mark has already run, so a restart does not apply it again');
+  const restarted = createUserSettings({ store: { state: structuredClone(first), save() {} }, secrets: c.secrets });
+  assert.equal(restarted.usesOwnAgentForReviews('mia-dev', 'grok'), false);
+  const afterRestart = createReviewAgents({ userSettings: restarted, connected: async () => ({ claude: true, codex: true }) });
+  assert.deepEqual((await afterRestart.forReview({ login: 'mia-dev' })).agents, ['claude', 'codex'], 'the restored snapshot does not put Grok Build in the default');
+  // The credential can land before that metadata write. The state at that moment is what a restart reads, and the
+  // secret is already in the store. Refresh then discovers the sign-in and keeps the accepted wider default.
+  const atCredential = secretSaves.find((saved) => saved.name === 'users/mia-dev/grok-auth');
+  assert.equal(atCredential.state.people['mia-dev'].agentAuthAt?.grok, undefined, 'the credential is stored before the sign-in metadata');
+  assert.equal(atCredential.state.people['mia-dev'].reviewDefault, 'all', 'the wider default was already accepted');
+  assert.equal(atCredential.state.people['mia-dev'].ownAgentForReviews?.grok, false, 'the reviews-off flag is stored before the credential can be discovered');
+  const discovered = createUserSettings({ store: { state: structuredClone(atCredential.state), save() {} }, secrets: c.secrets });
+  await discovered.refresh('mia-dev', { force: true });
+  assert.equal(discovered.usesExpandedReviewDefault('mia-dev'), true, 'discovery keeps the accepted wider default');
+  assert.equal(discovered.usesOwnAgentForReviews('mia-dev', 'grok'), false, 'the switch stays off after the sign-in is discovered');
+  const afterDiscovery = createReviewAgents({ userSettings: discovered, connected: async () => ({ claude: true, codex: true }) });
+  assert.deepEqual((await afterDiscovery.forReview({ login: 'mia-dev' })).agents, ['claude', 'codex'], 'the discovered sign-in does not join the default');
+  assert.equal(c.userSettings.usesExpandedReviewDefault('mia-dev'), true, 'the person stays on the wider default; only this sign-in is left out');
+  assert.equal((await c.call('/api/cli/config')).body['grok-reviews'], 'off');
+  assert.deepEqual((await reviews.forReview({ login: 'mia-dev' })).agents, ['claude', 'codex']);
+
+  const replaced = await c.call('/api/my/agent-auth/grok', { method: 'POST', body: { value: 'xai-made-up-mia-0123456789' } });
+  assert.equal(replaced.status, 200);
+  assert.equal(c.userSettings.usesOwnAgentForReviews('mia-dev', 'grok'), false, 'replacing it does not turn the switch on');
+
+  assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { choice: 'claude+grok' } })).status, 200);
+  const named = await reviews.forReview({ login: 'mia-dev' });
+  assert.deepEqual(named.agents, ['claude'], 'a choice that names it still leaves it out while the switch is off');
+  assert.match(named.why, /Grok Build left out/);
+
+  const on = await c.call('/api/my/agent-auth/grok/reviews', { method: 'POST', body: { on: true } });
+  assert.equal(on.body['grok-reviews'], 'on');
+  assert.deepEqual((await reviews.forReview({ login: 'mia-dev' })).agents, ['claude', 'grok']);
+  assert.equal((await c.call('/api/my/reviews', { method: 'POST', body: { choice: null } })).body.reviews, 'default');
+  assert.deepEqual((await reviews.forReview({ login: 'mia-dev' })).agents, ['claude', 'codex', 'grok']);
+
+  await c.userSettings.setAgentAuth('mia-dev', 'opencode', '{"openai":{"type":"api","key":"sk-x"}}');
+  assert.equal(c.userSettings.usesOwnAgentForReviews('mia-dev', 'opencode'), true, 'a save through My settings still starts the switch on');
+  const kept = await c.call('/api/my/agent-auth/opencode', { method: 'POST', body: { value: '{"anthropic":{"type":"api","key":"sk-ant-api03"}}' } });
+  assert.equal(kept.status, 200);
+  assert.equal(c.userSettings.usesOwnAgentForReviews('mia-dev', 'opencode'), true, 'replacing a sign-in already on for reviews leaves the switch on');
+
+  const firstOpen = await c.call('/api/my/agent-auth/opencode', { method: 'POST', token: c.tokens.octocat, body: { value: '{"openai":{"type":"api","key":"sk-x"}}' } });
+  assert.equal(firstOpen.status, 200);
+  assert.equal(c.userSettings.usesOwnAgentForReviews('octocat', 'opencode'), false);
+  const page = await c.call('/api/my/agent-auth/grok', {
+    method: 'POST', token: null,
+    headers: { cookie: 'woodshed_session=octocat', 'x-woodshed': '1' },
+    body: { value: grok },
+  });
+  assert.equal(page.status, 200);
+  assert.equal(c.userSettings.usesOwnAgentForReviews('octocat', 'grok'), true, 'My settings\' Save of a first sign-in still turns the switch on');
+  const octo = await reviews.forReview({ login: 'octocat' });
+  assert.deepEqual(octo.agents, ['claude', 'codex', 'grok']);
+  assert.equal(JSON.stringify(pushed).includes(grok), false, 'the answer never carries the sign-in');
 });
 
 test('the config routes check a token as every other route does: a person who lost write access is refused, and changes nothing', async (t) => {

@@ -24,8 +24,14 @@
 //   POST /api/my/codex-auth/reviews  {"on": true|false}   reviews of my pull requests run Codex on this sign-in (reviewAgents.mjs)
 //   POST /api/my/agent-auth/<agent>  {"value": ...}   my own Grok Build or OpenCode sign-in (shared/agents.cjs)
 //   POST /api/my/agent-auth/<agent>/remove
+//   POST /api/my/agent-auth/<agent>/reviews  {"on": true|false}   reviews of my pull requests may run Grok Build or
+//                                     OpenCode on this sign-in (reviewAgents.mjs): the default includes it while on,
+//                                     except a sign-in already saved when that default shipped, or found in the
+//                                     secret store without a save on My settings since
 //   GET  /api/my/reviews              who reviews my pull requests, and the choices this console can run for me
-//   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|null}   null is the most there is
+//   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|"claude+grok"|…|null}   null is every
+//                                     reviewer that can run, and accepts that default for someone still on the
+//                                     previous one; any reviewers joined with + (shared/agents.cjs, reviewersOf)
 //   POST /api/my/terminal             {"terminal": "tmux"|"herdr"}   what my private sessions run their agent in
 //   POST /api/my/claude-token/remove
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
@@ -48,6 +54,9 @@
 //   POST /api/my/home/forget     deletes your saved Claude home: MCP logins, memory, transcripts
 //   POST /api/my/sessions/<id>/resume   a stopped private session again, claude's conversation and all; {"herdrParent": true}
 //                                       as a start's, for that run alone
+//   POST /api/my/sessions/<id>/handoff  {"agent": "codex", "model"?, "effort"?, "permissionMode"?, "note"?: "...",
+//                                       "conversation"?: true}   a running private session's work into a new one run by
+//                                       that agent, on its branch, with its conversation attached; it stops (handoff.mjs)
 //   POST /api/my/sessions/<id>/remove   a private session (a running one is stopped first) off the list, with the Claude home it kept
 //   POST /api/my/databases       your own databases, made, or copied from the template again ({"confirm": "reset"} once made)
 //   POST /api/my/databases/restore?name=<file>   a pg_dump or mongodump as the body, restored into a copy of your database to check;
@@ -61,10 +70,10 @@
 //                                Codex settings, your own files for a repo, and your own dotfile lines (cliSettings.mjs)
 //   POST /api/my/cli-tokens/<id>/revoke   ends one computer's command line sign-in, from My settings
 //   Its token also signs in to GET /api/sessions, GET /api/my/projects, POST /api/my/sessions,
-//   POST /api/my/sessions/<id>/resume|remove, POST /api/sessions/<id>/stop|extend|limits, the agents beside a
+//   POST /api/my/sessions/<id>/resume|remove|handoff, POST /api/sessions/<id>/stop|extend|limits, the agents beside a
 //   session's own (GET and POST /api/sessions/<id>/agents, POST …/agents/<agent-N>/stop) and GET /api/review-readiness,
 //   as its person (cliSessions.mjs); and to GET /api/cli/config, its person's choices on My settings and never a secret, and the
-//   writes of them: POST /api/my/terminal, /reviews, /codex-auth/reviews, /claude-token/shared, /projects/default and
+//   writes of them: POST /api/my/terminal, /reviews, /codex-auth/reviews, /agent-auth/<agent>/reviews, /claude-token/shared, /projects/default and
 //   /github/identity, each answering with that config alone (cliConfig.mjs)
 //   POST /api/sessions           {"number": 123, "startedBy": "login", "prompt": "..."}
 //   POST /api/sessions/<id>/stop
@@ -280,7 +289,7 @@ const staticPath = (file) => STATIC_ELSEWHERE[file] ?? path.join(PUBLIC_DIR, fil
 // The most one message to an agent may be: statusd's own limit (session/statusd.mjs, MAX_SEND_CHARS).
 export const MAX_MESSAGE_CHARS = 8000;
 const SETTINGS_SCRIPTS = ['settingsRows.js', 'hostRows.js', 'dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
-const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
+const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminalPaste.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
   'logins.cjs': 'text/javascript; charset=utf-8',
@@ -298,6 +307,7 @@ const STATIC_FILES = {
   'terminalCache.js': 'text/javascript; charset=utf-8',
   'terminalScroll.cjs': 'text/javascript; charset=utf-8',
   'terminalFind.cjs': 'text/javascript; charset=utf-8',
+  'terminalPaste.cjs': 'text/javascript; charset=utf-8',
   'sessionTabs.cjs': 'text/javascript; charset=utf-8',
   'terminal.js': 'text/javascript; charset=utf-8',
   'sharedHome.js': 'text/javascript; charset=utf-8',
@@ -358,7 +368,7 @@ const REPO_SETTINGS_PAGE_RE = /^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]
 const SETTINGS_PAGE_RE = new RegExp(`^/(?:events|secrets|people|console-settings)$|${REPO_SETTINGS_PAGE_RE.source}`);
 const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove|reviews))?$/;
 // An agent that runs on its owner's own sign-in alone (shared/agents.cjs, OWN_SIGN_IN_AGENTS): any other id is a 404.
-const MY_AGENT_AUTH_RE = /^\/api\/my\/agent-auth\/([a-z]+)(?:\/(remove))?$/;
+const MY_AGENT_AUTH_RE = /^\/api\/my\/agent-auth\/([a-z]+)(?:\/(remove|reviews))?$/;
 const MY_LIMITS_PATH = '/api/my/limits';
 const PROJECTS_PATH = '/api/console-settings/projects';
 const UPDATES_PATH = '/api/console-settings/updates';
@@ -379,7 +389,7 @@ const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
 const PULLS_FRESH_MS = 60_000;
 const MY_FILE_RE = /^\/api\/my\/files\/([a-z-]+)(\/reset)?$/;
 const MY_GITHUB_RE = /^\/api\/my\/github\/(identity|disconnect)$/;
-const MY_SESSION_ACTION_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/(resume|remove)$/;
+const MY_SESSION_ACTION_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/(resume|remove|handoff)$/;
 const MY_PULL_REVIEW_RE = /^\/api\/my\/pulls\/([1-9][0-9]{0,8})\/review$/;
 const MY_TUNNEL_RE = /^\/api\/my\/tunnel-token(\/remove)?$/;
 const MY_CLI_REVOKE_RE = /^\/api\/my\/cli-tokens\/([0-9a-f]{16})\/revoke$/;
@@ -1785,13 +1795,11 @@ export function createHandler({
   }
 
   /**
-   * New session's start of a private session of `login`'s, with its checks: from the page, the command line, or one of
-   * their sessions (sessionStarts.mjs, which gives `startedFrom` and its own permission mode).
-   * @returns {Promise<{status: number, body: object}>}  201 and the session, or the refusal the caller answers with
+   * What stops `login` starting a private session with that agent, model and effort now: New session's own checks,
+   * which a hand-off makes too before it stops anything.
+   * @returns {Promise<{status: number, body: object}|null>}
    */
-  async function startMine(login, body, { startedFrom = null, startedApart = false } = {}) {
-    const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
-    const herdrParent = body.herdrParent === true;
+  async function startRefusal(login, { agent, model, effort }) {
     await userSettings?.refresh?.(login, { force: true });
     // A Codex session signs in with its own login or the team's OpenAI key, and Grok Build and OpenCode with their
     // owner's own sign-in alone: none of them needs a Claude token.
@@ -1805,6 +1813,19 @@ export function createHandler({
     const codexRefusal = agent === 'codex' && codexModels ? await codexModels.allows(login, String(model ?? ''), String(effort ?? '')) : null;
     if (codexRefusal) return { status: 400, body: { error: codexRefusal } };
     if (!databasesReady(login)) return { status: 409, body: { error: DATABASES_NOT_READY } };
+    return null;
+  }
+
+  /**
+   * New session's start of a private session of `login`'s, with its checks: from the page, the command line, or one of
+   * their sessions (sessionStarts.mjs, which gives `startedFrom` and its own permission mode).
+   * @returns {Promise<{status: number, body: object}>}  201 and the session, or the refusal the caller answers with
+   */
+  async function startMine(login, body, { startedFrom = null, startedApart = false } = {}) {
+    const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
+    const herdrParent = body.herdrParent === true;
+    const refused = await startRefusal(login, { agent, model, effort });
+    if (refused) return refused;
     const project = projectAccess ? await projectAccess.forStart(login, body.project) : undefined;
     if (project === null) {
       console.log('console: session start refused, project not open to the person', { login, project: String(body.project ?? '').slice(0, 40) });
@@ -1818,6 +1839,25 @@ export function createHandler({
       if (!err?.shown) throw err;
       return { status: err.status ?? 409, body: { error: err.message } };
     }
+  }
+
+  // Hand off (handoff.mjs): every check a start makes is made before the session is stopped, so a refusal leaves it
+  // running as it was.
+  async function handOff(res, login, id, body) {
+    const from = fleet.find(id);
+    if (!from || from.owner !== login) return reply(res, 409, { error: 'no session you can open with that id' });
+    const { agent, model, effort, permissionMode, note } = body;
+    if (agent !== undefined && !agentsRegistry.isAgent(agent)) return reply(res, 400, { error: `agent must be one of ${agentsRegistry.AGENT_IDS.join(', ')}` });
+    if (body.conversation !== undefined && typeof body.conversation !== 'boolean') return reply(res, 400, { error: 'conversation must be true or false' });
+    const refused = await startRefusal(login, { agent, model, effort });
+    if (refused) return reply(res, refused.status, refused.body);
+    const project = projectAccess ? await projectAccess.forStart(login, from.project) : undefined;
+    if (project === null) {
+      console.log('console: hand-off refused, project not open to the person', { login, sessionId: id, project: from.project ?? null });
+      return reply(res, 403, { error: `you can no longer start sessions on ${from.project}: you have no write access to its repo, or it is not one of this console's` });
+    }
+    const next = await fleet.handOffPrivate({ owner: login, id, agent, model, effort, permissionMode, note, conversation: body.conversation !== false, ...(project ? { project } : {}) });
+    return reply(res, 201, publicSession(next));
   }
 
   function databasesReady(login) {
@@ -1887,6 +1927,7 @@ export function createHandler({
           await fleet.removePrivateSession({ owner: login, id: actionMatch[1] });
           return reply(res, 200, { removed: actionMatch[1] });
         }
+        if (actionMatch[2] === 'handoff') return await handOff(res, login, actionMatch[1], body);
         const answer = await resumeMine(login, actionMatch[1], { herdrParent: body?.herdrParent === true });
         return reply(res, answer.status, answer.body);
       }
@@ -1978,9 +2019,24 @@ export function createHandler({
       const agentMatch = MY_AGENT_AUTH_RE.exec(pathname);
       if (agentMatch) {
         if (!agentsRegistry.OWN_SIGN_IN_AGENTS.includes(agentMatch[1])) return reply(res, 404, { error: 'no such agent sign-in' });
+        if (agentMatch[2] === 'reviews') {
+          if (typeof body.on !== 'boolean') return reply(res, 400, { error: 'on must be true or false' });
+          userSettings.setOwnAgentForReviews(login, agentMatch[1], body.on);
+          return reply(res, 200, myView(login));
+        }
         if (agentMatch[2]) await userSettings.removeAgentAuth(login, agentMatch[1]);
         else {
-          await userSettings.setAgentAuth(login, agentMatch[1], body.value);
+          // A first save from the command line (woodshed sign-in push, and setup's send of the same file) is a sign-in
+          // for private sessions. The reviews switch would otherwise come on with it, and with no reviewer choice saved
+          // the next review of a private pull request would run that agent. The off flag is stored before the secret
+          // (setAgentAuth's reviews: false), and again in the same settings update as the sign-in. A stop after the
+          // secret lands is a discovery, and an author who already accepted the wider default keeps it, so the switch
+          // would read as on unless that flag is already stored. My settings' Save still comes on with the sign-in,
+          // and replacing one already saved leaves the switch as it is.
+          const id = agentMatch[1];
+          const had = Boolean(userSettings.view(login).agentAuth?.[id]?.set);
+          const reviewsOff = !had && carriesCliToken(req.headers) && agentsRegistry.agent(id).reviews;
+          await userSettings.setAgentAuth(login, id, body.value, reviewsOff ? { reviews: false } : undefined);
           await firstDatabases(login);
         }
         // As for Codex: the Grok models list was read on the sign-in that is gone.
@@ -2133,12 +2189,6 @@ export function createHandler({
       req.resume();
       return reply(res, 409, { error: 'the session is not running' });
     }
-    // Only beside Claude Code or Codex (shared/agents.cjs, teamCredential): a Grok Build or OpenCode session runs on its
-    // owner's own sign-in and nothing else, and its statusd starts no other agent.
-    if (!agentsRegistry.agent(agentsRegistry.agentOfSession(session)).teamCredential) {
-      req.resume();
-      return reply(res, 409, { error: 'this session runs on its owner\'s own sign-in alone: no other agent starts in it' });
-    }
     const url = new URL(req.url, 'http://console.invalid');
     if (!agentId) {
       if (req.method === 'GET') return toStatusd(req, res, session, { method: 'GET', path: '/agents' });
@@ -2160,12 +2210,26 @@ export function createHandler({
       if (!agentsRegistry.agent(picked.agent).teamCredential) return reply(res, 400, { error: 'the agent must be claude or codex' });
       const prompt = typeof body?.prompt === 'string' ? body.prompt : '';
       if (prompt.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in the first message` });
-      // A Codex agent beside claude runs on its owner's own Codex sign-in, handed to the session with the start itself and
+      // A direct Anthropic call must use the owner's credential, not the session token used by the plan proxy.
+      const primary = agentsRegistry.agent(agentsRegistry.agentOfSession(session));
+      const needsClaudeToken = picked.agent === 'claude' && !primary.teamCredential;
+      let claudeToken = null;
+      if (needsClaudeToken) {
+        try {
+          claudeToken = await userSettings?.claudeToken(session.owner);
+        } catch {
+          console.warn('console: Claude token not read for an agent', { id: session.id });
+          return reply(res, 502, { error: 'the console could not read your Claude token: try again' });
+        }
+        if (!claudeToken) return reply(res, 409, { error: 'save your Claude token on My settings first' });
+        if (session.taintedAt || fleet.isLocked(session)) return reply(res, 409, { error: 'this session has seen production data: no other agent starts in it' });
+      }
+      // An extra Codex agent runs on its owner's own Codex sign-in, handed to the session with the start itself and
       // never asked for by it; with none, on the team's key through the console's proxy, which the session may use only
       // once the agent has started (fleet.allowAgent). A start the session refuses is allowed nothing.
-      const besideClaude = picked.agent === 'codex' && session.options?.agent !== 'codex';
+      const extraCodex = picked.agent === 'codex' && session.options?.agent !== 'codex';
       let codexAuth = null;
-      if (besideClaude && userSettings) {
+      if (extraCodex && userSettings) {
         try {
           codexAuth = await userSettings.codexAuth(session.owner);
         } catch (err) {
@@ -2177,10 +2241,12 @@ export function createHandler({
       }
       console.log('console: another agent asked for', {
         id: session.id, agent: picked.agent, model: picked.model || null, effort: picked.effort || null, permissionMode: picked.permissionMode,
-        prompt: Boolean(prompt.trim()), ...(besideClaude && { ownCodex: Boolean(codexAuth) }),
+        prompt: Boolean(prompt.trim()), ...(extraCodex && { ownCodex: Boolean(codexAuth) }),
       });
       return toStatusd(req, res, session, {
-        method: 'POST', path: '/agents', body: { ...picked, prompt, ...(codexAuth ? { codexAuth } : {}) },
+        // Older images refuse this route rather than ignoring the credential and launching on the session token.
+        method: 'POST', path: needsClaudeToken ? '/agents/with-claude-token' : '/agents',
+        body: { ...picked, prompt, ...(claudeToken ? { claudeToken } : {}), ...(codexAuth ? { codexAuth } : {}) },
         onStatus: (code) => { if (code === 200 && !session.taintedAt && !fleet.isLocked?.(session)) fleet.allowAgent(session, picked.agent); },
       });
     }
@@ -2510,9 +2576,9 @@ export function createHandler({
 
   /** My settings' Reviews card: who reviews my pull requests, and what this console can run for me (reviewAgents.mjs). */
   async function myReviewsView(login) {
-    if (!reviewAgents) return { available: { claude: false, codex: false }, best: 'none', choice: null };
-    const { available, own, best } = await reviewAgents.options(login);
-    return { available, own, best, choice: userSettings?.reviewAgents(login) ?? null };
+    if (!reviewAgents) return { available: Object.fromEntries(agentsRegistry.REVIEW_AGENT_IDS.map((id) => [id, false])), best: 'none', choice: null };
+    const { available, own, ownWhy, best, expanded } = await reviewAgents.options(login);
+    return { available, own, ownWhy, best, expanded, choice: userSettings?.reviewAgents(login) ?? null };
   }
 
   // `woodshed review start`: the console's review of one of the person's own open pull requests, now (fleet.mjs,
@@ -2898,7 +2964,7 @@ export function createHandler({
   }
   function cliWrite(req, res, pathname, login) {
     // An own sign-in saved from the command line (woodshed sign-in push): the page's own save, answered with whether one
-    // is saved now and when, never the page's whole view.
+    // is saved now and when, never the page's whole view. A first save leaves that agent's reviews switch off (myWrite).
     const agentAuth = CLI_AGENT_AUTH_RE.exec(pathname);
     if (agentAuth) {
       const id = agentAuth[1];

@@ -99,7 +99,7 @@ Commands:
             sync your Claude and Codex settings, plugins, dotfiles and ignored checkout files with private
             sessions. Claude MCP definitions pushed from a computer stay between computers.
             Codex MCP definitions from a computer stay on that computer.
-            plan lists each item and sends nothing (cli/README.md, "Settings")
+            plan lists each item and sends nothing, and with --pull what pull would write (cli/README.md, "Settings")
   sign-in   push grok|opencode [--replace]
             save the Grok Build or OpenCode sign-in this computer's grok login or opencode auth login made as
             yours on My settings: checked here, never printed, and replacing a saved one only with --replace
@@ -265,7 +265,8 @@ export function approvalUrl(origin, userCode) {
  * @param {string[]} argv
  * @param {{env?: object, stdout?: {write: Function}, stderr?: {write: Function}, fetch?: typeof fetch,
  *          sleep?: (ms: number) => Promise<void>, credentials?: ReturnType<typeof createCredentials>,
- *          openBrowser?: (url: string) => void, hostname?: string, platform?: string, now?: () => number}} [deps]
+ *          openBrowser?: (url: string) => void, hostname?: string, platform?: string, now?: () => number,
+ *          token?: string}} [deps]  `token`: a sign-in the caller holds, used in place of this computer's (api.mjs)
  * @returns {Promise<number>}  the exit code
  */
 export async function main(argv, deps = {}) {
@@ -340,6 +341,12 @@ export async function main(argv, deps = {}) {
   const plain = (text) => (text === null || text === undefined ? null : String(text).replace(/[^\x20-\x7e]/g, '').slice(0, 100));
 
   function signedIn(origin) {
+    // A sign-in its caller holds (api.mjs): the token for this one run, never read from or kept on this computer.
+    // Given by its caller, even as none: then nobody is signed in, and this computer's own sign-in is never read.
+    if (Object.hasOwn(deps, 'token')) {
+      if (!deps.token) return { config: { current: null, consoles: {} }, entry: null, store: null, token: null };
+      return { config: { current: null, consoles: {} }, entry: { store: 'given' }, store: { label: 'the caller', read: () => deps.token, remove: () => {} }, token: deps.token };
+    }
     const config = readConfig(dir);
     const entry = config.consoles[origin];
     const store = entry && credentials.storeFor(entry.store);
@@ -545,7 +552,7 @@ export async function main(argv, deps = {}) {
       return TUNNEL_FAILED;
     }
     // As ssh does: the words after -- are one line, joined by spaces, for the session's sh -c.
-    return runTunnel({ origin, token, session, line: args.rest.join(' '), stdin, stdout, stderr, userAgent: `woodshed-cli/${VERSION}` });
+    return runTunnel({ origin, token, session, line: args.rest.join(' '), stdin, stdout, stderr, userAgent: `woodshed-cli/${VERSION}`, signal: deps.signal ?? null });
   }
 
   // The command as typed, for the catch below: only the tunnel's failures exit 255, whatever the other commands' words.

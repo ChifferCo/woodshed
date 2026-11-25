@@ -177,6 +177,16 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       moving.set(id, script.map((step) => ({ ...step })));
       return s;
     },
+    // As the fleet's: the old one stops, and a new one starts on its branch with the agent picked.
+    handOffPrivate: async ({ owner, id, agent, model, note, conversation }) => {
+      calls.push(['handoff', { owner, id, agent, model, note, conversation }]);
+      const from = sessions.find((x) => x.id === id && x.owner === owner);
+      Object.assign(from, { status: 'stopped', stopReason: `handed off to ${agent}` });
+      const s = { ...base, id: 'dddd0004', owner, title: from.title, branch: from.branch, status: 'queued', startedAt: null, startSteps: null, options: { agent, model } };
+      sessions.push(s);
+      moving.set(s.id, script.map((step) => ({ ...step })));
+      return s;
+    },
     // The agents beside a session's own (server.mjs, agentAction): allowed once statusd started one.
     isLocked: (s) => Boolean(s.taintedAt),
     allowAgent: (s, agent) => { calls.push(['allowAgent', { id: s.id, agent }]); return true; },
@@ -233,7 +243,7 @@ async function consoleFor(t, { script = [], refuse = null, claudeToken = true, s
       s.limits = values;
     },
   };
-  const userSettings = { view: () => ({ claudeToken: { set: claudeToken }, codexAuth: { set: true } }), refresh: async () => {}, limitsFor: () => ({ idleMs: 2 * 3_600_000, lifetimeMs: 12 * 3_600_000 }) };
+  const userSettings = { view: () => ({ claudeToken: { set: claudeToken }, codexAuth: { set: true }, agentAuth: { grok: { set: true }, opencode: { set: true } } }), refresh: async () => {}, limitsFor: () => ({ idleMs: 2 * 3_600_000, lifetimeMs: 12 * 3_600_000 }) };
   const projectAccess = {
     view: async () => ({ projects: [{ name: 'app', repo: 'acme/app' }, { name: 'tools', repo: 'acme/tools' }], defaultProject: savedDefault, saved: savedDefault !== 'app' }),
     forStart: async (login, name) => (name === undefined ? { name: 'app', repo: 'acme/app' } : ['app', 'tools'].includes(name) ? { name, repo: `acme/${name}` } : null),
@@ -1764,6 +1774,34 @@ test('session app share is refused for a shared session, another person\'s, a pa
   const none = await plain.run(['session', 'app', 'aaaa0001', 'share']);
   assert.equal(none.code, EXIT.refused);
   assert.match(none.err, /serves no session apps/);
+});
+
+test('session handoff hands your running session to another agent and follows the new one; it needs --agent, and refuses others\' and paused ones', async (t) => {
+  const c = await consoleFor(t, { script: [{ status: 'starting' }, { status: 'running', state: 'working' }] });
+  const noAgent = await c.run(['session', 'handoff', 'aaaa0001']);
+  assert.equal(noAgent.code, EXIT.failed);
+  assert.match(noAgent.err, /needs --agent: the agent the work goes to, one of claude, codex, grok, opencode/);
+  const paused = await c.run(['session', 'handoff', 'bbbb0002', '--agent', 'codex']);
+  assert.equal(paused.code, EXIT.refused);
+  assert.match(paused.err, /only a running session can be handed off\. Run woodshed session resume bbbb0002 first/);
+  assert.equal((await c.run(['session', 'handoff', 'cccc0003', '--agent', 'codex'])).code, EXIT.refused, 'a shared session');
+  assert.ok(!c.calls.length, 'nothing asked of the fleet');
+
+  const handed = await c.run(['session', 'handoff', 'aaaa0001', '--agent', 'codex', '--model', 'gpt-6.1-sol', '--note', 'Only the tests are left.', '--no-conversation', '--json']);
+  assert.equal(handed.code, EXIT.done, handed.err);
+  assert.deepEqual(c.calls[0], ['handoff', { owner: 'mia-dev', id: 'aaaa0001', agent: 'codex', model: 'gpt-6.1-sol', note: 'Only the tests are left.', conversation: false }]);
+  assert.deepEqual([handed.lines[0].event, handed.lines[0].from, handed.lines[0].session.id], ['handed-off', 'aaaa0001', 'dddd0004']);
+  assert.equal(handed.lines.at(-1).event, 'running');
+});
+
+test('session handoff names the agent the work went to by its product name', async (t) => {
+  for (const [agent, product] of [['grok', 'Grok Build'], ['codex', 'Codex'], ['opencode', 'OpenCode']]) {
+    const c = await consoleFor(t, { script: [{ status: 'starting' }, { status: 'running', state: 'working' }] });
+    const handed = await c.run(['session', 'handoff', 'aaaa0001', '--agent', agent, '--no-wait']);
+    assert.equal(handed.code, EXIT.done, handed.err);
+    assert.match(handed.out, new RegExp(`^Handed session aaaa0001 off to ${product}: session dddd0004`, 'm'));
+    assert.doesNotMatch(handed.out, /Claude Code/);
+  }
 });
 
 // A session's statusd for the agents beside its own (session/agents.mjs): what it was asked, and its answers.

@@ -1,7 +1,7 @@
 // statusd: the only port the console talks to inside a session task.
 //
 //   GET  /status      what claude is doing, its last message, the branch, its head and its PR, and what the
-//                     container uses (usage.mjs), and how much of the owner's Claude plan is used (planUsage.mjs)
+//                     container uses (usage.mjs), and how much of the owner's plan is used (planUsage.mjs, codexPlanUsage.mjs, grokPlanUsage.mjs)
 //   GET  /applog      the end of the app's logs: its start, the backend's and the frontend's
 //   GET  /diff        the checkout against its merge base with the default branch, uncommitted work included, as one
 //                     plain unified diff (sessionDiff.mjs)
@@ -33,7 +33,7 @@
 //                     one of several (`apps`), the default without it, after stopping the one running
 //   POST /app/stop    stop it (app.stop), a start still in progress included
 //   POST /upload?name=<file>&pane=agent|terminal   the body saved under /tmp/uploads, and its path typed at that
-//                     pane's prompt with no Enter (terminalFiles.mjs)
+//                     pane's prompt with no Enter (terminalFiles.mjs); `typed` false where it could not be (Herdr)
 //   GET  /image?path=<path>   a picture a terminal path names, inside the repo, the uploads or claude's scratchpad
 //   POST /scroll      {"steps": -3, "pane": "agent"}   a swipe or wheel the browser's own scrollback did not take
 //   GET  /transcript?limit=<n>&since=<writtenAt>   the conversation so far from the agent's own record of it, for the
@@ -45,6 +45,7 @@
 //                     session's on Claude Code or Codex alone, 404 anywhere else
 //   POST /agents      {"agent": "claude"|"codex", "model", "effort", "permissionMode", "prompt"} starts another, in a tmux
 //                     session of its own in the same checkout; 409 once the session is tainted, or with three running
+//   POST /agents/with-claude-token   starts Claude beside Grok Build or OpenCode with the owner's claudeToken
 //   ANY  /agents/<id>/transcript|send|interrupt|prompt|answer|stop   as the routes of the same names, for that agent:
 //                     its own record of its conversation, a message typed into its pane (held while it works, and typed
 //                     once it is back at its prompt), Esc, what it asks and the answer; stop ends it
@@ -81,6 +82,7 @@ import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs
 import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
+import { readGrokPlanUsage } from './grokPlanUsage.mjs';
 import { TAINTED_CLAUDE_FLAGS, applyTaint, isTaintSetUp, isTainted, markTaintSetUp } from './taint.mjs';
 import { lastInterruptAt, openToolCalls, paneState, stateReader } from './agentState.mjs';
 import { AGENT_ID_RE, createAgents, openRollout } from './agents.mjs';
@@ -208,6 +210,7 @@ const AGENTS = createRequire(import.meta.url)('../shared/agents.cjs');
 const AGENT = AGENTS.isAgent(process.env.AGENT) ? process.env.AGENT : 'claude';
 const CLAUDE = AGENT === 'claude';
 const CODEX = AGENT === 'codex';
+const GROK = AGENT === 'grok';
 // The agents whose input box statusd reads from the screen (panePrompt.mjs, composerText): claude's and codex's. The
 // others' boxes are not read: a message to them is typed only between turns, with no prompt on screen, as for any.
 const READS_BOX = CLAUDE || CODEX;
@@ -624,15 +627,13 @@ async function newestTranscript() {
 }
 
 // The agents a person starts beside the session's own (agents.mjs): in a private coding session alone, never a shared
-// one, a question, a QA run or a review, and only beside Claude Code or Codex (shared/agents.cjs, teamCredential): a
-// Grok Build or OpenCode session runs on its owner's own sign-in and nothing else, and has no claude or codex set up to
-// start, nor records of theirs to keep apart from its own (the entrypoint writes neither for it). The entrypoint writes the claude flags they start with, and says when codex is
+// one, a question, a QA run or a review. The entrypoint writes the claude flags they start with, and says when codex is
 // set up (configureCodex). WOODSHED_AGENT_BIN, WOODSHED_AGENT_CLAUDE_FLAGS_FILE, WOODSHED_CODEX_READY_FILE and
 // WOODSHED_AGENT_STATE_DIR move them
 // for the dev console's made-up sessions (console/bin/devChatSession.mjs): the fleet never sets them, so they are in no
 // PER_SESSION_ENV (providers/aws/ecsLauncher.mjs).
 const CODEX_READY_FILE = process.env.WOODSHED_CODEX_READY_FILE || '/tmp/woodshed-codex-ready';
-const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.env.SESSION_MODE !== 'review' && AGENTS.agent(AGENT).teamCredential ? createAgents({
+const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.env.SESSION_MODE !== 'review' ? createAgents({
   run,
   repoDir: REPO_DIR,
   bin: process.env.WOODSHED_AGENT_BIN || path.join(import.meta.dirname, 'bin'),
@@ -641,6 +642,7 @@ const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.
   claudeFlagsFile: process.env.WOODSHED_AGENT_CLAUDE_FLAGS_FILE || '/tmp/woodshed-agent-claude-flags',
   codexReady: async () => existsSync(CODEX_READY_FILE),
   codexEnv: codexBeside,
+  claudeEnv: AGENTS.agent(AGENT).teamCredential ? undefined : claudeBeside,
   uploadsDir: process.env.UPLOADS_DIR || '/tmp/uploads',
   stateDir: process.env.WOODSHED_AGENT_STATE_DIR || '/tmp',
   tainted: () => tainted(),
@@ -649,7 +651,24 @@ const agents = process.env.SESSION_KIND === 'private' && !ASK && !QA && process.
   hcBin: process.env.WOODSHED_HC_BIN || 'hc',
 }) : null;
 
-// A Codex agent beside claude: its sign-in, the owner's own from My settings when they saved one, which the console sends
+// Start Claude with the owner's own token. Hold it outside every saved home and pass only its filename to the pane.
+async function claudeBeside(token) {
+  if (!token) throw Object.assign(new Error('save your Claude token on My settings first, then start Claude from the console'), { status: 409 });
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'woodshed-extra-claude-'));
+  const file = path.join(dir, 'token');
+  const cleanup = () => fs.rm(dir, { recursive: true, force: true }).catch(() => {
+    console.warn('statusd: could not remove an extra Claude token file');
+  });
+  try {
+    await fs.writeFile(file, token, { mode: 0o600, flag: 'wx' });
+  } catch (err) {
+    await cleanup();
+    throw err;
+  }
+  return { env: { WOODSHED_CLAUDE_AUTH: 'own', WOODSHED_CLAUDE_TOKEN_FILE: file }, undo: cleanup, cleanup };
+}
+
+// An extra Codex agent: its sign-in, the owner's own from My settings when they saved one, which the console sends
 // with the start (console/server.mjs, agentAction) and nothing here asks for, written into codex's home as configureCodex
 // writes it; with none, the console's proxy and the team key (session/bin/codex). In a Codex session codex has its own.
 // A start that fails after it takes back a sign-in it wrote.
@@ -938,7 +957,7 @@ const readAgent = stateReader({ qa: QA, agent: AGENT, terminal: TERMINAL });
 // ChatGPT's refresh token rotates, so the sign-in saved on My settings stops working once a session used it. The
 // console keeps the copy only for an owner who saved one, and says 409 to anyone else.
 async function keepCodexAuth() {
-  // A Codex agent beside claude in a session that has since seen production data sends nothing back (the console refuses
+  // An extra Codex agent in a session that has since seen production data sends nothing back (the console refuses
   // it too): its sign-in file is the session's to write.
   if (!(CODEX || (agents?.ranCodex() && !tainted())) || !CONSOLE_URL || process.env.SESSION_KIND !== 'private') return;
   try {
@@ -1040,12 +1059,12 @@ async function agentState({ strict = false } = {}) {
   return { state, source, pane: paneText, tail, hook };
 }
 
-// The plan meter's reading for the session's agent: Claude Code's status line, Codex's rollouts. Grok Build and OpenCode
-// report no plan's limits anywhere a session can read (Grok's /usage is a screen of its own, OpenCode keeps only costs),
-// so they have none.
+// The plan meter's reading for the session's agent: Claude Code's status line, Codex's rollouts, Grok Build's billing
+// line in ~/.grok/logs/unified.jsonl. OpenCode keeps only costs, so it has none.
 async function readAgentPlanUsage() {
   if (CLAUDE) return readPlanUsage();
   if (CODEX) return readCodexPlanUsage();
+  if (GROK) return readGrokPlanUsage();
   return null;
 }
 
@@ -1465,6 +1484,9 @@ let settingsState = null;
 // The round in flight, which the stop waits for, and whether the stop has had its last one.
 let settingsRound = null;
 let settingsOver = false;
+// Where the sync keeps what it last synced: the session's fixed path, or a test's own (statusd.test.mjs), which must
+// never write the one of the session it runs in.
+const SETTINGS_STATE_FILE = process.env.WOODSHED_SETTINGS_STATE_FILE || undefined;
 
 function syncSettings(timeoutMs) {
   // A tainted session's settings stay its own: the console refuses them, so nothing is sent.
@@ -1474,7 +1496,7 @@ function syncSettings(timeoutMs) {
 }
 
 async function settingsRoundOnce(timeoutMs) {
-  settingsState ??= await readState();
+  settingsState ??= await readState(SETTINGS_STATE_FILE);
   const result = await syncOnce({
     home: os.homedir(), state: settingsState, live: true, send: (body) => exchange({ consoleUrl: CONSOLE_URL, token: TOKEN, body, timeoutMs }),
   });
@@ -1482,7 +1504,7 @@ async function settingsRoundOnce(timeoutMs) {
   const moved = result.sent + result.removed + result.written + result.deleted;
   settingsState = result.state;
   if (!moved) return;
-  await writeState(settingsState);
+  await writeState(settingsState, SETTINGS_STATE_FILE);
   console.log('statusd: shared Claude settings synced', {
     version: settingsState.version, sent: result.sent, removed: result.removed, written: result.written, deleted: result.deleted,
   });
@@ -1502,10 +1524,30 @@ async function lastSettingsRound() {
   }
 }
 
-async function checkpoint() {
+// keepRunningOnFailure: a hand-off's checkpoint (console/handoff.mjs), which the console stops the session after only
+// when the push went through. When it fails the session runs on as before: its sends and home saves start again, and
+// its work stays in the checkout, committed.
+async function checkpoint({ keepRunningOnFailure = false } = {}) {
+  const before = { homeSavesOver, stopping, settingsOver };
   homeSavesOver = true;
   // The session is stopping: a guarded send still checking GitHub types nothing now.
   stopping = true;
+  try {
+    return await checkpointNow();
+  } catch (err) {
+    if (keepRunningOnFailure) {
+      // Each as it was before: the last settings round (lastSettingsRound) turned the sync off too. A taint since keeps
+      // it off.
+      homeSavesOver = before.homeSavesOver;
+      stopping = before.stopping;
+      settingsOver = before.settingsOver || tainted();
+      console.warn('statusd: checkpoint failed, the session runs on', { message: String(err?.message ?? err).split('\n')[0] });
+    }
+    throw err;
+  }
+}
+
+async function checkpointNow() {
   await keepCodexAuth();
   await keepAgentAuth();
   await lastSettingsRound();
@@ -1737,13 +1779,14 @@ async function uploadReply(req, res) {
   const pane = url.searchParams.get('pane');
   try {
     const saved = await saveUpload(req, { name: url.searchParams.get('name') });
-    // Herdr types no text without an Enter, so a file dropped on the agent there is saved and not typed in: the page
-    // says where it is. The Terminal tab's shell is tmux's always.
+    // Herdr types no text without an Enter, so a file dropped on the agent there is saved and not typed in here: the
+    // answer says so (`typed: false`), and the page types its path through the terminal's own connection, as a paste.
+    // The Terminal tab's shell is tmux's always.
     // An agent beside the session's own (agents.mjs) is in tmux always, under its own name.
     const typed = pane === 'terminal' || (pane === 'agent' && agentIo().typesText) || (agents && TERMINAL === 'tmux' && AGENT_ID_RE.test(pane ?? '')) ? pane : null;
     if (typed) await typePaths(run, [saved.path], typed);
     console.log('statusd: file uploaded', { bytes: saved.bytes, typed });
-    return reply(res, 200, saved);
+    return reply(res, 200, { ...saved, typed: Boolean(typed) });
   } catch (err) {
     if (err.shown) return reply(res, err.status, { error: err.message });
     throw err;
@@ -1945,7 +1988,15 @@ async function handle(req, res) {
     }
     return reply(res, 200, await taint(body));
   }
-  if (route === 'POST /checkpoint') return reply(res, 200, await checkpoint());
+  if (route === 'POST /checkpoint') {
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req)) || '{}') ?? {};
+    } catch {
+      return reply(res, 400, { error: 'the body is not JSON' });
+    }
+    return reply(res, 200, await checkpoint({ keepRunningOnFailure: body.keepRunningOnFailure === true }));
+  }
   if (route === 'POST /upload') return uploadReply(req, res);
   if (route === 'GET /applog') return reply(res, 200, await appLogs());
   if (route === 'GET /diff') {
@@ -2011,12 +2062,18 @@ async function agentsReply(req, res, route, pathname) {
   if (!agents) return reply(res, 404, { error: 'this session runs no other agents: only a private coding session does' });
   if (route === 'GET /agents') return reply(res, 200, { agents: await agents.list() });
   try {
-    if (route === 'POST /agents') {
+    if (route === 'POST /agents' || route === 'POST /agents/with-claude-token') {
       let body;
       try {
         body = JSON.parse((await readBody(req)) || '{}');
       } catch {
         return reply(res, 400, { error: 'body must be JSON' });
+      }
+      if (route === 'POST /agents/with-claude-token' && (body?.agent !== 'claude' || AGENTS.agent(AGENT).teamCredential)) {
+        return reply(res, 400, { error: 'this route starts Claude beside Grok Build or OpenCode' });
+      }
+      if (route === 'POST /agents' && body?.agent === 'claude' && !AGENTS.agent(AGENT).teamCredential) {
+        return reply(res, 409, { error: 'start Claude from a console that can pass your Claude token' });
       }
       return reply(res, 200, { agent: await agents.start(body) });
     }

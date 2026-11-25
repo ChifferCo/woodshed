@@ -84,7 +84,7 @@ window.Woodshed.settingsPage('/events', (app, life) => {
       h('div', null,
         h('p', { class: 'crumb' }, h('a', { href: '/secrets' }, '‹ Secrets & webhooks')),
         h('h1', { class: 'title' }, 'Webhook events ', W.scopePill('/events')),
-        h('p', { class: 'sub' }, 'Every delivery the console took off the queue, and what it did with it.')));
+        h('p', { class: 'sub' }, 'What came in, and what the console did with it.')));
     if (!data) {
       app.replaceChildren(h('div', { class: 'page' }, life.nav('/events'), head,
         h('p', { class: 'empty' }, loadError ? `Could not load events: ${loadError}` : 'Loading events…')));

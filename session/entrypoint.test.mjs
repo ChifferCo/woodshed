@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { seedEnv, seedEnvFiles } from './dbAdmin.mjs';
+import { pathOf, readToml } from '../shared/codexConfig.mjs';
 import { loadProject } from '../shared/project.mjs';
 import { fixtureApp, fixtureCheckout, fixtureProject } from '../shared/projectFixture.mjs';
 import { isolatedEnv } from '../test/isolatedEnv.mjs';
@@ -183,6 +184,47 @@ test('a repo with no app, or no project file, has its rules say what Set up app 
   assert.doesNotMatch(writePrompt({ attachments: false, repoDir: withApp }).rules, /Set up app/);
 });
 
+test('a project whose CI runs QA on a label tells its sessions to add it once ready; QA run by the console, or none, says nothing', () => {
+  assert.doesNotMatch(writePrompt({ attachments: false }).rules, /QA runs in its CI|\{\{QA_LABEL/);
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-qalabel-'));
+  try {
+    fs.mkdirSync(path.join(repo, '.woodshed'));
+    const review = { author: 'ci[bot]', heading: '## Review', workflow: '.github/workflows/review.yml', rerun: '[run-review]', commentAuthor: null };
+    const withQa = (q) => fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ pullRequests: { review, suites: [], qa: q, mergeRisk: null } }));
+    // QA in the repo's CI: a label added with the session's gh, the App's or its owner's, starts the workflow.
+    withQa({ check: 'QA', label: "qa: Bob's, run", heading: '## QA', author: 'ci[bot]', runner: 'actions' });
+    for (const kind of ['shared', 'private']) {
+      const told = writePrompt({ attachments: false, kind, repoDir: repo });
+      assert.ok(told.rules.includes("PR that has the `qa: Bob's, run` label"), kind);
+      assert.ok(told.rules.includes("`gh api repos/{owner}/{repo}/issues/<PR number>/labels -f labels\\[\\]=qa:\\ Bob\\'s\\,\\ run`"), 'whole, shell-quoted for the command, brackets and all');
+      assert.match(told.rules, /once the PR is ready for review, when you open it ready or mark a draft ready, never to a draft/);
+      assert.doesNotMatch(told.rules, /\{\{/);
+      assert.match(told.out, /QA label: qa: Bob's, run/);
+    }
+    // QA run by the console: it starts for a person's label, or the console's own with autoLabel, never the App's that a
+    // session adds, so a session is not told to add it.
+    for (const q of [{ check: 'QA', label: 'run-qa', heading: '## QA', runner: 'woodshed' }, { check: 'QA', label: 'run-qa', heading: '## QA', runner: 'woodshed', autoLabel: true }]) {
+      withQa(q);
+      const told = writePrompt({ attachments: false, kind: 'shared', repoDir: repo });
+      assert.doesNotMatch(told.rules, /QA runs in its CI|\{\{QA_LABEL/, JSON.stringify(q));
+      assert.match(told.out, /QA label: none/);
+    }
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('sessions open their pull requests ready, and a requirement they could not prove is no reason for a draft', () => {
+  for (const kind of ['shared', 'private']) {
+    const { rules } = writePrompt({ attachments: false, kind });
+    assert.match(rules, /^- Open the PR ready for review, not as a draft\. A draft is only for work that is not finished/m, kind);
+    assert.match(rules, /A requirement you could not prove is not a reason for a draft/);
+    assert.match(rules, /Always try your best to check it in the running app/);
+    assert.doesNotMatch(rules, /could have proven it here and did not, open the PR as a draft/);
+    assert.doesNotMatch(rules, /Once the PR is ready for review/, 'the review tag goes on from the first push');
+  }
+});
+
 test('a project with a review tag tells its sessions to end each push\'s last commit with it; one with none says nothing', () => {
   const none = writePrompt({ attachments: false, kind: 'shared' });
   assert.doesNotMatch(none.rules, /code review runs on a push|\{\{REVIEW_TAG\}\}/);
@@ -195,7 +237,7 @@ test('a project with a review tag tells its sessions to end each push\'s last co
     fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ pullRequests: { review, suites: [], qa: null, mergeRisk: null } }));
     for (const kind of ['shared', 'private']) {
       const tagged = writePrompt({ attachments: false, kind, repoDir: repo });
-      assert.ok(tagged.rules.includes('end the subject of the last commit of each push with ` [run-review]`'), kind);
+      assert.ok(tagged.rules.includes('End the subject of the last commit of each push with ` [run-review]`'), kind);
       assert.match(tagged.rules, /keep the tag out of the PR title/);
       assert.doesNotMatch(tagged.rules, /\{\{/);
       assert.match(tagged.out, /review tag: \[run-review\]/);
@@ -212,7 +254,7 @@ test('a project with a review tag tells its sessions to end each push\'s last co
   after(() => fs.rmSync(bare, { recursive: true, force: true }));
   fixtureCheckout(bare);
   const byDefault = writePrompt({ attachments: false, repoDir: bare, reviewTag: '[woodshed-review]' });
-  assert.ok(byDefault.rules.includes('end the subject of the last commit of each push with ` [woodshed-review]`'));
+  assert.ok(byDefault.rules.includes('End the subject of the last commit of each push with ` [woodshed-review]`'));
   assert.match(byDefault.out, /review tag: \[woodshed-review\]/);
 });
 
@@ -933,7 +975,7 @@ test('a Codex session starts codex with the picked flags, and the rules go in co
 });
 
 // configureCodex as the entrypoint has it, in a codex home of the test's own, after a pull wrote `pulled` into it.
-function configureCodex({ pulled = {}, linkedInstructions = false } = {}) {
+function configureCodex({ pulled = {}, linkedInstructions = false, agent = 'codex' } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-codex-'));
   const codexHome = path.join(tmp, 'codex');
   fs.mkdirSync(codexHome);
@@ -943,7 +985,7 @@ function configureCodex({ pulled = {}, linkedInstructions = false } = {}) {
   const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { echo "ERROR: $*"; exit 1; }',
     fn('configureCodex').replaceAll('/tmp/', `${tmp}/`), 'configureCodex'].join('\n');
   try {
-    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: tmp, SESSION_DIR, SHARED_DIR, REPO_DIR: '/work/app', CODEX_HOME_DIR: codexHome } });
+    const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: tmp, SESSION_DIR, SHARED_DIR, REPO_DIR: '/work/app', CODEX_HOME_DIR: codexHome, AGENT: agent } });
     const read = (name) => (fs.existsSync(path.join(codexHome, name)) ? fs.readFileSync(path.join(codexHome, name), 'utf8') : null);
     return { out, config: read('config.toml'), agents: read('AGENTS.md'), override: read('AGENTS.override.md') };
   } finally {
@@ -961,6 +1003,34 @@ test('a Codex session trusts its checkout in the owner\'s own config.toml, and t
   assert.equal(owner.config, 'model = "gpt-5.5"\n\n[tui]\nnotifications = true\n\n[projects."/work/app"]\ntrust_level = "trusted"\n', 'the owner\'s settings stay, with the checkout trusted');
   assert.equal(owner.agents, 'Use pnpm.\n', 'the synced file is left as it is');
   assert.equal(owner.override, '# Woodshed rules\n\nOpen a pull request.\n\n\n# Your own instructions, from ~/.codex/AGENTS.md\n\nUse pnpm.\n', 'codex reads this in place of AGENTS.md: the rules, then theirs');
+});
+
+test('extra agents in Grok Build and OpenCode sessions skip branch startup configuration', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-extra-agent-flags-'));
+  t.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+  const mcp = path.join(tmp, 'mcp.json');
+  fs.writeFileSync(mcp, '{}');
+  const script = ['set -euo pipefail', 'tainted() { return 1; }', fn('claudeFlags'), fn('extraClaudeFlags'),
+    'extraClaudeFlags > "$FLAGS_FILE"'].join('\n');
+  for (const agent of ['grok', 'opencode', 'claude', 'codex']) {
+    const flagsFile = path.join(tmp, 'flags');
+    execFileSync('bash', ['-c', script], { env: { PATH: process.env.PATH, SESSION_DIR, AGENT: agent, MCP_CONFIG: mcp, FLAGS_FILE: flagsFile } });
+    const flags = fs.readFileSync(flagsFile, 'utf8');
+    assert.match(flags, /--settings .*claudeHooks\.json/);
+    if (agent === 'claude' || agent === 'codex') {
+      assert.ok(flags.includes('--mcp-config ' + mcp));
+      assert.doesNotMatch(flags, /--setting-sources|--strict-mcp-config/);
+      continue;
+    }
+    assert.match(flags, /--setting-sources user --strict-mcp-config --disable-slash-commands/);
+    assert.doesNotMatch(flags, / --mcp-config/);
+    const owner = configureCodex({ agent, pulled: { 'config.toml': 'model = "gpt-5.5"\n\n[projects."/work/app"]\ntrust_level = "trusted"\n' } });
+    const config = readToml(owner.config).filter((statement) => statement.kind === 'kv');
+    assert.deepEqual(config.map((statement) => [pathOf(statement), statement.value]), [
+      [['model'], '"gpt-5.5"'],
+      [['projects', '/work/app', 'trust_level'], '"untrusted"'],
+    ]);
+  }
 });
 
 test('Codex startup does not copy a linked sign-in into the model instructions', () => {
@@ -1285,6 +1355,16 @@ test('the agent runs in Herdr only in a private session whose owner picked it, a
   for (const mode of ['ask', 'qa', 'review']) {
     assert.equal(agentTerminalRun({ terminal: 'herdr', mode, body: 'agentTerminal' }).out.trim(), 'tmux', mode);
   }
+});
+
+test('a review that Grok Build or OpenCode reviews in still runs review.sh in tmux, and never the agent on a sign-in of its own', () => {
+  const start = fn('startAgent').replaceAll('/tmp/', '$HOME/');
+  for (const agents of ['claude grok', 'grok opencode']) {
+    const { calls } = agentTerminalRun({ mode: 'review', kind: '', env: { REVIEW_AGENTS: agents, SESSION_DIR: '/opt/woodshed/session', WOODSHED_TERMINAL: 'tmux' }, body: `${start}\nstartAgent` });
+    assert.equal(calls, 'tmux send-keys -t claude SESSION_DIR=/opt/woodshed/session bash /opt/woodshed/session/review.sh Enter\n', agents);
+  }
+  // A review session gets nobody's sign-in: the console's proxy adds the author's to its calls (reviewAgentProxy.mjs).
+  assert.doesNotMatch(fn('startAgent'), /configureGrok|configureOpencode|agentAuth/);
 });
 
 test('the owner\'s terminal comes from the /settings answer, read where the other own settings are', () => {

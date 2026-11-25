@@ -3072,6 +3072,24 @@ test('a review runs whom its author chose, and says so on the pull request', asy
   assert.match(codex.calls.comments[0].body, /Reviewing\*\* with Codex in/);
 });
 
+test('a review on its author\'s Grok Build and OpenCode sign-ins records whose they are, and the session gets none of them', async (t) => {
+  const lines = [];
+  t.mock.method(console, 'log', (...args) => lines.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')));
+  const ownSignIns = { grok: { login: 'joel', via: 'login' }, opencode: { login: 'joel', provider: 'openai' } };
+  const { fleet, calls } = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['claude', 'grok', 'opencode'], choice: 'claude+grok+opencode', ownSignIns, why: null }) } });
+  await fleet.reviewOnTag({ number: 7 });
+  const [session] = fleet.sessions();
+  assert.deepEqual(session.review.ownSignIns, ownSignIns);
+  await fleet.tick();
+  const env = calls.started[0].env;
+  assert.equal(env.REVIEW_AGENTS, 'claude grok opencode');
+  assert.equal(env.REVIEW_OPENCODE_PROVIDER, 'openai', 'which provider its config points at the console');
+  assert.equal(env.REVIEW_CODEX_AUTH, undefined);
+  assert.ok(!Object.keys(env).some((k) => /XAI_API_KEY|AGENT_AUTH|GROK|OPENAI_API_KEY|ANTHROPIC_API_KEY/.test(k)), 'no sign-in in the session');
+  assert.match(calls.comments[0].body, /Reviewing\*\* with Claude Code, Grok Build and OpenCode in/);
+  assert.ok(lines.some((l) => l.includes('fleet: review session started') && l.includes('"grok":"own login"') && l.includes('"opencode":"own openai key"')));
+});
+
 test('team keys that could not be read start no review and skip nothing: QA and the Slack post keep waiting', async () => {
   const unread = { forReview: async () => ({ agents: [], choice: null, why: 'the team keys could not be read: timed out', keysUnread: true }) };
   const gates = { ...QA_GATES, review: { ...PULL_GATES.review, rerun: '[woodshed-review]', runner: 'woodshed' } };
@@ -4291,4 +4309,252 @@ test('a session that asked a question waits for its answer until it is sent a me
   fleet.noteQuestion(child, { to: 'aaaa0001' });
   await fleet.stop(child, 'stopped from the console', { by: 'joel' });
   assert.deepEqual([child.status, child.askedAt], ['stopped', null]);
+});
+
+function fakeAttachments() {
+  const written = {};
+  return {
+    written,
+    async claim() { return 0; },
+    async put({ sessionId, files, after }) { written[sessionId] = { files, after }; return files.length; },
+  };
+}
+
+test('Hand off stops a running private session, pushing its work, and starts a new one on its branch with the agent picked and the conversation attached', async () => {
+  const attachments = fakeAttachments();
+  const { fleet, calls, statuses, answers } = setup({ attachments });
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix', name: 'Fix the login' });
+  statuses[first.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+  answers['/transcript'] = { agent: 'claude', entries: [{ role: 'user', text: 'Fix it', at: null }, { role: 'assistant', text: 'Half done.', at: null }] };
+
+  await assert.rejects(fleet.handOffPrivate({ owner: 'mia', id: first.id, agent: 'codex' }), /no session you can open/);
+  await assert.rejects(fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'gemini' }), /the agent must be one of/);
+  assert.equal(first.status, 'running', 'a refusal leaves it running');
+
+  const next = await fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'codex', model: 'gpt-6.1-sol', note: 'Only the tests are left.' });
+  assert.equal(first.status, 'stopped');
+  assert.equal(first.stopReason, 'handed off to Codex');
+  assert.equal(first.handedOffTo, next.id);
+  const paths = calls.statusd.filter((c) => c.id === first.id).map((c) => c.path);
+  assert.ok(paths.indexOf('/transcript') < paths.indexOf('/checkpoint'), 'the conversation is read before the stop, which pushes its work');
+  assert.equal(next.owner, 'joel');
+  assert.equal(next.branch, 'joel/fix', 'the same branch');
+  assert.equal(next.title, 'Fix the login');
+  assert.deepEqual(next.options, { agent: 'codex', model: 'gpt-6.1-sol', effort: '', permissionMode: 'auto' });
+  assert.equal(next.handedOffFrom, first.id);
+  assert.match(next.prompt, /^Only the tests are left\.\n/);
+  assert.match(next.prompt, /from a Claude Code session/);
+  const { files } = attachments.written[next.id];
+  assert.equal(files[0].name, 'handoff.md');
+  assert.match(files[0].text, /### The agent\n\nHalf done\./);
+  assert.equal(next.attachments, 1);
+
+  await assert.rejects(fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'claude' }), /only a running session/);
+});
+
+test('Hand off without the conversation reads none and attaches nothing; a tainted session or an unreadable conversation is refused, still running', async () => {
+  const attachments = fakeAttachments();
+  const { fleet, calls, statuses, answers } = setup({ attachments });
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix', agent: 'codex' });
+  statuses[first.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+
+  answers['/transcript'] = Promise.reject(new Error('statusd /transcript answered 500'));
+  answers['/transcript'].catch(() => {});
+  await assert.rejects(fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'claude' }), /conversation could not be read/);
+  assert.equal(first.status, 'running');
+
+  first.taintedAt = '2026-10-21T10:00:00.000Z';
+  await assert.rejects(fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'claude', conversation: false }), /production data/);
+  delete first.taintedAt;
+
+  const before = calls.statusd.filter((c) => c.path === '/transcript').length;
+  const next = await fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'claude', conversation: false });
+  assert.equal(calls.statusd.filter((c) => c.path === '/transcript').length, before, 'no read');
+  assert.equal(attachments.written[next.id], undefined);
+  assert.match(next.prompt, /from a Codex session/);
+  assert.match(next.prompt, /was not handed over/);
+  assert.equal(next.options.agent, 'claude');
+});
+
+test('a hand-off whose push is refused leaves the session running with its checkout, and starts nothing', async () => {
+  const attachments = fakeAttachments();
+  const { fleet, calls, statuses, answers, alive, store } = setup({ attachments });
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });
+  statuses[first.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+  answers['/transcript'] = { entries: [{ role: 'user', text: 'Fix it', at: null }] };
+  const refused = Object.assign(new Error('statusd /checkpoint answered 500'), { status: 500, body: { error: 'Command failed: git push -u origin HEAD\n! [rejected] HEAD -> joel/fix (fetch first)' } });
+  answers['/checkpoint'] = Promise.reject(refused);
+  answers['/checkpoint'].catch(() => {});
+  const before = store.state.sessions.length;
+  await assert.rejects(fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'codex' }), {
+    shown: true, message: /its work could not be pushed \(Command failed: git push -u origin HEAD\): it keeps running/,
+  });
+  assert.equal(first.status, 'running');
+  assert.equal(first.stopReason, null);
+  assert.ok(alive.has(`c-${first.id}`), 'its container, and the checkout in it, stay');
+  assert.ok(!calls.stopped.includes(`c-${first.id}`));
+  assert.deepEqual(calls.statusd.find((c) => c.path === '/checkpoint').body, { keepRunningOnFailure: true }, 'statusd lets it run on');
+  assert.equal(store.state.sessions.length, before, 'no new session');
+  assert.deepEqual(attachments.written, {});
+});
+
+test('a hand-off and a lockdown never overlap: a lockdown under way refuses the hand-off, and a hand-off refuses a lockdown', async () => {
+  const attachments = fakeAttachments();
+  const { fleet, statuses, answers, launcher, store } = setup({ attachments });
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });
+  statuses[first.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+  first.mayUseProduction = true;
+  let unlock;
+  launcher.lockDown = () => new Promise((resolve) => { unlock = resolve; });
+  const lockdown = fleet.taint(first, { why: 'test' });
+  await assert.rejects(fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'codex' }), /seen production data/);
+  unlock(null);
+  await lockdown;
+  assert.ok(first.taintedAt);
+
+  const second = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/two' });
+  statuses[second.id] = { state: 'done', branch: 'joel/two' };
+  await fleet.tick();
+  second.mayUseProduction = true;
+  let release;
+  answers['/transcript'] = new Promise((resolve) => { release = resolve; });
+  const before = store.state.sessions.length;
+  const handing = fleet.handOffPrivate({ owner: 'joel', id: second.id, agent: 'codex' });
+  await new Promise((resolve) => setImmediate(resolve));
+  await assert.rejects(fleet.taint(second, { why: 'test' }), /being handed off/, 'the first production call is refused');
+  assert.equal(second.taintedAt, undefined);
+  // Had a lockdown won anyway, what was read goes nowhere.
+  second.taintedAt = '2026-10-21T10:00:00.000Z';
+  release({ entries: [{ role: 'assistant', text: 'order 42: paid', at: null }] });
+  await assert.rejects(handing, /seen production data/);
+  assert.equal(second.status, 'running');
+  assert.equal(store.state.sessions.length, before, 'no replacement');
+  assert.deepEqual(attachments.written, {}, 'no attachment');
+});
+
+test('a hand-off checks the branch before it stops anything, and gives the new agent no looser a permission mode than the old one had', async () => {
+  const { fleet, statuses, answers, github } = setup({ attachments: fakeAttachments() });
+  github.defaultBranch = async () => 'main';
+  answers['/transcript'] = { entries: [] };
+  const onMain = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix', permissionMode: 'plan' });
+  statuses[onMain.id] = { state: 'done', branch: 'main' };
+  await fleet.tick();
+  assert.equal(onMain.branch, 'main', 'the agent checked out the default branch');
+  await assert.rejects(fleet.handOffPrivate({ owner: 'joel', id: onMain.id, agent: 'codex' }), /main is not a branch name a session can work on/);
+  assert.equal(onMain.status, 'running');
+
+  statuses[onMain.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+  const toCodex = await fleet.handOffPrivate({ owner: 'joel', id: onMain.id, agent: 'codex' });
+  assert.equal(toCodex.options.permissionMode, 'plan', 'plan is a Codex mode too');
+  const edits = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/edits', permissionMode: 'acceptEdits' });
+  statuses[edits.id] = { state: 'done', branch: 'joel/edits' };
+  await fleet.tick();
+  const fromEdits = await fleet.handOffPrivate({ owner: 'joel', id: edits.id, agent: 'codex' });
+  assert.equal(fromEdits.options.permissionMode, 'plan', 'Codex has no acceptEdits, and its next mode runs commands unasked: read-only');
+  const auto = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/auto' });
+  statuses[auto.id] = { state: 'done', branch: 'joel/auto' };
+  await fleet.tick();
+  const toGrok = await fleet.handOffPrivate({ owner: 'joel', id: auto.id, agent: 'grok' });
+  assert.deepEqual([toGrok.options.agent, toGrok.options.permissionMode], ['grok', 'auto'], 'auto to auto, on another agent of the registry');
+});
+
+test('the hand-off file is written by the real attachments store and goes out in the new session\'s tar', async (t) => {
+  const { createAttachments } = await import('./attachments.mjs');
+  const { execFileSync } = await import('node:child_process');
+  const fsp = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { PassThrough } = await import('node:stream');
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'woodshed-handoff-'));
+  t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+  const attachments = createAttachments({ dir });
+  const { fleet, statuses, answers, calls } = setup({ attachments });
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });
+  statuses[first.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+  answers['/transcript'] = { entries: [{ role: 'assistant', text: 'MARKER-7f3: the token check was inverted', at: null }] };
+  const next = await fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'codex' });
+  assert.equal(calls.started.filter((c) => c.id === next.id).at(-1).env.ATTACHMENTS, '1', 'the container is told to fetch one');
+  const out = new PassThrough();
+  const chunks = [];
+  out.on('data', (c) => chunks.push(c));
+  out.writeHead = () => {};
+  await attachments.send(next.id, out);
+  const tarFile = path.join(dir, 'got.tar');
+  await fsp.writeFile(tarFile, Buffer.concat(chunks));
+  assert.deepEqual(execFileSync('tar', ['tf', tarFile], { encoding: 'utf8' }).trim().split('\n'), ['1-handoff.md']);
+  assert.match(execFileSync('tar', ['xOf', tarFile, '1-handoff.md'], { encoding: 'utf8' }), /MARKER-7f3: the token check was inverted/);
+  assert.equal(await attachments.has(first.id), false, 'nothing under the old session');
+});
+
+test('a Stop pressed while a hand-off reads the conversation ends the hand-off: nothing is attached and nothing starts', async () => {
+  const attachments = fakeAttachments();
+  const { fleet, statuses, answers, store } = setup({ attachments });
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });
+  statuses[first.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+  const before = store.state.sessions.length;
+
+  // The ordinary stop's push is refused, so it stops anyway, and is done before the read is.
+  let release;
+  answers['/transcript'] = new Promise((resolve) => { release = resolve; });
+  answers['/checkpoint'] = Promise.reject(Object.assign(new Error('statusd /checkpoint answered 500'), { status: 500 }));
+  answers['/checkpoint'].catch(() => {});
+  const handing = fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'codex' });
+  await new Promise((resolve) => setImmediate(resolve));
+  await fleet.stop(first, 'stopped from the console', { by: 'joel' });
+  assert.equal(first.status, 'stopped');
+  release({ entries: [{ role: 'assistant', text: 'Half done.', at: null }] });
+  await assert.rejects(handing, { shown: true, message: /it was stopped meanwhile: nothing was handed off/ });
+  assert.equal(first.stopReason, 'stopped from the console');
+  assert.equal(first.handedOffTo, undefined);
+
+  // A stop still pushing when the read comes back ends it the same way.
+  const second = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/two' });
+  statuses[second.id] = { state: 'done', branch: 'joel/two' };
+  await fleet.tick();
+  const beforeSecond = store.state.sessions.length;
+  answers['/transcript'] = new Promise((resolve) => { release = resolve; });
+  let push;
+  answers['/checkpoint'] = new Promise((resolve) => { push = resolve; });
+  const handingSecond = fleet.handOffPrivate({ owner: 'joel', id: second.id, agent: 'codex' });
+  await new Promise((resolve) => setImmediate(resolve));
+  const stopping = fleet.stop(second, 'stopped from the console', { by: 'joel' });
+  assert.equal(second.status, 'stopping');
+  release({ entries: [] });
+  await assert.rejects(handingSecond, { shown: true, message: /it was stopped meanwhile: nothing was handed off/ });
+  push({ committed: true, head: 'def' });
+  await stopping;
+  assert.equal(second.status, 'stopped');
+  assert.equal(second.stopReason, 'stopped from the console');
+  assert.equal(store.state.sessions.length, beforeSecond, 'no new session');
+  assert.equal(beforeSecond, before + 1, 'only the second one started meanwhile');
+  assert.deepEqual(attachments.written, {}, 'no attachment');
+});
+
+test('a Stop pressed while a hand-off pushes is carried out when the push fails', async () => {
+  const { fleet, statuses, answers, alive } = setup({ attachments: fakeAttachments() });
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });
+  statuses[first.id] = { state: 'done', branch: 'joel/fix' };
+  await fleet.tick();
+  answers['/transcript'] = { entries: [] };
+  let refuse;
+  answers['/checkpoint'] = new Promise((_, reject) => { refuse = reject; });
+  answers['/checkpoint'].catch(() => {});
+  const handing = fleet.handOffPrivate({ owner: 'joel', id: first.id, agent: 'codex' });
+  for (let i = 0; i < 20 && first.status !== 'stopping'; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(first.status, 'stopping');
+  await fleet.stop(first, 'stopped from the console', { by: 'joel' });
+  answers['/checkpoint'] = { committed: false, head: 'abc' };
+  refuse(Object.assign(new Error('statusd /checkpoint answered 500'), { status: 500, body: { error: 'Command failed: git push -u origin HEAD' } }));
+  await assert.rejects(handing, /its work could not be pushed \(Command failed: git push -u origin HEAD\): it was stopped, as asked meanwhile/);
+  assert.equal(first.status, 'stopped');
+  assert.equal(first.stopReason, 'stopped from the console');
+  assert.equal(first.stoppedBy, 'joel');
+  assert.ok(!alive.has(`c-${first.id}`));
 });

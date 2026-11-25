@@ -9,7 +9,8 @@
 // (devChatSession.mjs): a message is answered with a few tool calls and a reply, one that says "fail" has a tool fail,
 // and one that says "ask" puts the codex session at Needs you until Enter in its TUI tab.
 // /s/62000c0d and /s/0c0de0c0 are the same over a stand-in Grok Build and OpenCode, writing each one's own record (its
-// updates.jsonl, its SQLite database) for the real statusd to read.
+// updates.jsonl, its SQLite database) for the real statusd to read. The Grok Build one's pane bar shows Plan 62%, from
+// a made-up weekly allowance in that home's unified.jsonl, the line a session's Plan chip reads.
 // /s/c1a0de02 is the same claude, started from a Claude home that holds an earlier session's conversation, as a private
 // session started while another runs is: its Chat stays empty until it is sent a message. /s/a6e1a6e1 is @local's own
 // session on that codex, whose pane bar's agent switch starts a stand-in claude or codex beside it (session/agents.mjs).

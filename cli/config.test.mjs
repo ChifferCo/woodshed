@@ -79,7 +79,7 @@ test('config list and get print the person\'s choices, and --json gives every ke
   const json = await c.run(['config', 'list', '--json']);
   assert.deepEqual(json.lines, [{
     console: c.origin,
-    config: { terminal: 'tmux', reviews: 'default', 'codex-reviews': 'off', 'claude-token-shared': 'on', 'default-repo': 'app', 'github-name': 'Mia Dev', 'github-email': 'mia@example.com' },
+    config: { terminal: 'tmux', reviews: 'default', 'codex-reviews': 'off', 'grok-reviews': 'off', 'opencode-reviews': 'off', 'claude-token-shared': 'on', 'default-repo': 'app', 'github-name': 'Mia Dev', 'github-email': 'mia@example.com' },
   }]);
   assert.deepEqual(Object.keys(json.lines[0].config), Object.keys(CONFIG_KEYS));
 
@@ -150,7 +150,7 @@ test('an unknown key, a bad value or a secret exits 3 and says what is valid, an
   const c = await consoleFor(t);
   const unknown = await c.run(['config', 'set', 'colour', 'blue']);
   assert.equal(unknown.code, EXIT.refused);
-  assert.match(unknown.err, /not a config key\. Keys: terminal, reviews, codex-reviews, claude-token-shared, default-repo, github-name, github-email/);
+  assert.match(unknown.err, /not a config key\. Keys: terminal, reviews, codex-reviews, grok-reviews, opencode-reviews, claude-token-shared, default-repo, github-name, github-email/);
 
   const terminal = await c.run(['config', 'set', 'terminal', 'screen', '--json']);
   assert.equal(terminal.code, EXIT.refused);

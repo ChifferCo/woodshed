@@ -213,6 +213,72 @@ test('setup skips already enabled reviews, applies a changed personal choice and
   assert.equal(lastEntry(after.events).url, url);
 });
 
+test('setup writes an explicit --reviews default even when the choice already reads as default', async () => {
+  const { invoke } = fake({ commands: ['config'], answers: {
+    'config list': result(0, { config: { reviews: 'default' } }),
+    'config set': result(0, { event: 'set', key: 'reviews', value: 'default' }),
+  } });
+  const after = await invoke('--yes', '--reviews', 'default', '--no-session');
+  assert.equal(after.code, 0);
+  assert.deepEqual(after.calls.filter((call) => call[0] === 'config' && call[1] !== 'get'), [['config', 'list'], ['config', 'set', 'reviews', 'default']]);
+
+  // Enter keeps a choice that already reads as default, and does not accept a wider one by writing it again.
+  const kept = await fake({ commands: ['config'], tty: true, input: [''], answers: { 'config list': result(0, { config: { reviews: 'default' } }) } })
+    .invoke('--no-session');
+  assert.equal(kept.code, 0);
+  assert.ok(!kept.calls.some((call) => call[1] === 'set'), 'Enter does not write a default it was not asked to set');
+  assert.equal(kept.events.find((event) => event.step === 'review-choice').choice, 'default');
+
+  // Typing default is an explicit accept, unlike Enter, even while the choice already reads as default.
+  const typed = await fake({ commands: ['config'], tty: true, input: ['default'], answers: {
+    'config list': result(0, { config: { reviews: 'default' } }),
+    'config set': result(0, { event: 'set', key: 'reviews', value: 'default' }),
+  } }).invoke('--no-session');
+  assert.equal(typed.code, 0);
+  assert.deepEqual(typed.calls.filter((call) => call[0] === 'config' && call[1] !== 'get'), [['config', 'list'], ['config', 'set', 'reviews', 'default']]);
+});
+
+test('setup takes a combined reviewer choice from --reviews, and reads a saved one back without refusing it', async () => {
+  // A saved grok+opencode, changed to claude+grok from the flag: sent on as given.
+  const { invoke } = fake({ commands: ['config'], answers: {
+    'config list': result(0, { config: { reviews: 'grok+opencode' } }),
+    'config set': result(0, { event: 'set', key: 'reviews', value: 'claude+grok' }),
+  } });
+  const changed = await invoke('--yes', '--reviews', 'claude+grok', '--no-session');
+  assert.equal(changed.code, 0);
+  assert.deepEqual(changed.calls.filter((call) => call[0] === 'config' && call[1] !== 'get'), [['config', 'list'], ['config', 'set', 'reviews', 'claude+grok']]);
+  const saved = changed.events.find((event) => event.step === 'review-choice');
+  assert.deepEqual([saved.status, saved.choice], ['done', 'claude+grok']);
+
+  // The same saved choice, kept: nothing is set, and it is not taken for an unreadable one.
+  const kept = await fake({ commands: ['config'], answers: { 'config list': result(0, { config: { reviews: 'grok+opencode' } }) } })
+    .invoke('--yes', '--reviews', 'grok+opencode', '--no-session');
+  assert.equal(kept.code, 0);
+  assert.ok(!kept.calls.some((call) => call[1] === 'set'), 'an unchanged choice is not saved again');
+  const step = kept.events.find((event) => event.step === 'review-choice');
+  assert.equal(step.status, 'done');
+  assert.equal(step.choice, 'grok+opencode');
+
+  // On a terminal, Enter keeps the saved combination, and the question names + choices.
+  const asked = await fake({ commands: ['config'], tty: true, input: [''], answers: { 'config list': result(0, { config: { reviews: 'claude+opencode' } }) } })
+    .invoke('--no-session');
+  const question = asked.questions.find((q) => /Who should review/.test(q));
+  assert.match(question, /joined with \+ \(claude\+grok\)\)\? Enter keeps claude\+opencode\./);
+  assert.equal(asked.events.find((event) => event.step === 'review-choice').choice, 'claude+opencode');
+});
+
+test('setup refuses a combined reviewer choice that names a reviewer twice or one that does not review', async () => {
+  for (const bad of ['claude+claude', 'grok+nope', 'claude+', '+grok', 'both+grok']) {
+    await assert.rejects(fake().invoke('--yes', '--reviews', bad), /--reviews must be one of none, claude, codex, both, default, or reviewers joined with \+ \(claude\+grok\)\./, bad);
+  }
+  // A saved choice it cannot read is setup's own failure, never taken as the new one.
+  const { invoke } = fake({ commands: ['config'], answers: { 'config list': result(0, { config: { reviews: 'grok+grok' } }) } });
+  const after = await invoke('--yes', '--reviews', 'claude+grok', '--no-session');
+  assert.notEqual(after.code, 0);
+  assert.ok(!after.calls.some((call) => call[1] === 'set'));
+  assert.match(after.events.find((event) => event.step === 'review-choice').message, /Could not read your reviewer choice/);
+});
+
 test('setup skips subcommands absent from this build and launches normally without hc using the saved agent', async () => {
   const { invoke } = fake({ answers: {
     status: result(0, { ...ready, hc: { ok: false }, sessionSignIns: { codex: true, claude: false } }),

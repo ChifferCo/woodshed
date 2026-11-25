@@ -75,11 +75,13 @@ export function modelsFrom(body) {
 /**
  * How a saved Grok sign-in reaches a catalog: where, its header, and which kind it is.
  * @param {string} saved  an `xai-` key, or the JSON of ~/.grok/auth.json (checkSignIn in shared/agents.cjs)
- * @returns {{url: string, authorization: string, source: 'login'|'key'}|{expired: true}|null}  null: nothing usable
+ * @returns {{url: string, base: string, authorization: string, source: 'login'|'key'}|{expired: true}|null}  null:
+ *   nothing usable. `base` is the API the sign-in calls, under which `url` is the model list: a review's grok reaches it
+ *   through the console (reviewAgentProxy.mjs)
  */
 export function credentialOf(saved, now = Date.now(), { loginUpstream = LOGIN_UPSTREAM, keyUpstream = KEY_UPSTREAM } = {}) {
   if (typeof saved !== 'string' || !saved) return null;
-  const key = (k) => ({ url: `${keyUpstream}/models`, authorization: `Bearer ${k}`, source: 'key' });
+  const key = (k) => ({ url: `${keyUpstream}/models`, base: keyUpstream, authorization: `Bearer ${k}`, source: 'key' });
   if (!saved.startsWith('{')) return key(saved);
   let auth;
   try {
@@ -93,11 +95,14 @@ export function credentialOf(saved, now = Date.now(), { loginUpstream = LOGIN_UP
   const [, entry] = entries.find(([scope]) => scope.startsWith('https://auth.x.ai::')) ?? entries[0] ?? [];
   if (!entry) return null;
   if (entry.key.startsWith('xai-') && !entry.refresh_token) return key(entry.key);
+  let expiresAt = null;
   if (typeof entry.expires_at === 'string') {
     const at = Date.parse(entry.expires_at);
     if (!Number.isFinite(at) || at <= now) return { expired: true };
+    expiresAt = at;
   }
-  return { url: `${loginUpstream}/models`, authorization: `Bearer ${entry.key}`, source: 'login' };
+  // `expiresAt` null: the login says nothing of when it ends, which the catalog tries anyway, and a review never does.
+  return { url: `${loginUpstream}/models`, base: loginUpstream, authorization: `Bearer ${entry.key}`, source: 'login', expiresAt };
 }
 
 /**

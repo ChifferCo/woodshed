@@ -28,7 +28,7 @@ const plain = (text) => String(text).replace(/[^\x20-\x7e]/g, ' ').trim().slice(
  *          userAgent?: string, answerMs?: number}} args
  * @returns {Promise<number>}  the line's exit code, or 255
  */
-export function runTunnel({ origin, token, session, line, stdin, stdout, stderr, userAgent = 'woodshed-cli', answerMs = ANSWER_MS }) {
+export function runTunnel({ origin, token, session, line, stdin, stdout, stderr, userAgent = 'woodshed-cli', answerMs = ANSWER_MS, signal = null }) {
   const url = new URL(`/api/tunnel/exec/${session}`, origin);
   const fail = (message) => {
     stderr.write(`woodshed: ${message}\n`);
@@ -56,6 +56,12 @@ export function runTunnel({ origin, token, session, line, stdin, stdout, stderr,
       finish(fail(`${url.origin} did not answer in ${Math.round(answerMs / 1000)} s`));
     });
     req.on('error', (err) => finish(fail(`could not reach ${url.origin}: ${err.message}`)));
+    // Stopped while it connects: nothing is opened, so nothing runs.
+    if (signal?.aborted) {
+      req.destroy();
+      return finish(fail('stopped before the line ran'));
+    }
+    signal?.addEventListener('abort', () => { if (!settled) req.destroy(); }, { once: true });
     req.on('response', (res) => {
       let text = '';
       res.setEncoding('utf8');
@@ -75,6 +81,12 @@ export function runTunnel({ origin, token, session, line, stdin, stdout, stderr,
       res.on('error', () => finish(fail(`refused (${res.statusCode})`)));
     });
     req.on('upgrade', (res, remote, head) => {
+      // A caller that stopped meanwhile (api.mjs's signal): the pipe closes, which hangs up what the line started.
+      if (signal?.aborted) {
+        remote.destroy();
+        return finish(fail('stopped before the line ran'));
+      }
+      signal?.addEventListener('abort', () => remote.destroy(), { once: true });
       req.setTimeout(0);
       remote.setTimeout(0);
       remote.setNoDelay(true);

@@ -54,7 +54,7 @@
   /** @param {string} page  a settings page's path, for the words that say whose sessions it changes */
   function scopePill(page) {
     const you = Index.PAGES[page].scope === 'you';
-    return h('span', { class: 'pill', title: you ? 'Changes your My Woodshed sessions only' : 'Changes every shared session, and the console' },
+    return h('span', { class: 'pill', title: you ? 'Your My Woodshed sessions' : 'Shared sessions and the console' },
       you ? 'Only you' : 'Everyone');
   }
 

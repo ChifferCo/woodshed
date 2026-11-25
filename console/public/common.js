@@ -158,7 +158,8 @@
   // The rail card's line for a stopped private session: since when first, since the card's Resume button leaves
   // little room, then why (`idle 1 h`, `by you`). A failed one's word says enough; its pane says why.
   function privateStopLine(s, me) {
-    const why = s.stoppedBy ? `by ${s.stoppedBy === me ? 'you' : personText(s.stoppedBy)}`
+    // A hand-off says where the work went rather than who stopped it (handoff.mjs).
+    const why = s.handedOffTo && s.stopReason ? s.stopReason : s.stoppedBy ? `by ${s.stoppedBy === me ? 'you' : personText(s.stoppedBy)}`
       : displayStatus(s).key === 'failed' ? null : s.stopReason?.replace(PAUSE_REASON_RE, '$1 ');
     return [ago(s.stoppedAt), why].filter(Boolean).join(' · ');
   }
@@ -1433,8 +1434,9 @@
 
   /**
    * @returns {{asOf: string|null, stale: boolean, running: number,
-   *            windows: {key: string, short: string, label: string, usedPercent: number|null, resetsAt: string|null, pace: number|null, level: string}[]}|null}
-   *   `pace` is how much of the window has gone by, from 0 to 1; a window whose reset has passed reads 0% however old the reading
+   *            windows: {key: string, short: string, label: string, usedPercent: number|null, resetsAt: string|null, rolled: boolean, pace: number|null, level: string}[]}|null}
+   *   `pace` is how much of the window has gone by, from 0 to 1; a window whose reset has passed reads 0% however old the reading.
+   *   `rolled` is that case: a reset the reading named is already past. A window that named no end is not rolled.
    */
   function planUsageOf(s, sessions) {
     if (!isPrivate(s)) return null;
@@ -1444,13 +1446,28 @@
       .sort((a, b) => (b.asOf ?? '').localeCompare(a.asOf ?? ''))[0];
     if (!newest) return null;
     const now = Date.now();
-    const windows = PLAN_WINDOWS.map(({ key, short, label, ms }) => {
+    const windows = PLAN_WINDOWS.flatMap(({ key, short, label, ms }) => {
       const w = newest[key];
       const reset = w?.resetsAt ? Date.parse(w.resetsAt) : null;
       const rolled = reset !== null && reset <= now;
       const usedPercent = !w ? null : rolled ? 0 : w.usedPercent;
-      const pace = reset !== null && !rolled ? Math.min(1, Math.max(0, 1 - (reset - now) / ms)) : null;
-      return { key, short, label: agent !== 'claude' && key === 'sevenDay' ? 'Week' : label, usedPercent, resetsAt: rolled ? null : w?.resetsAt ?? null, pace, level: planLevel(usedPercent) };
+      // Grok Build reports one allowance. A window it did not report is not a limit it has.
+      if (agent === 'grok' && usedPercent === null) return [];
+      const reportedSpan = typeof w?.spanMs === 'number' && Number.isFinite(w.spanMs) && w.spanMs > 0 ? w.spanMs : null;
+      // Grok's tick is the period it named. A seven-day fallback marks a month with no start as empty, then nearly over in its last week.
+      const span = reportedSpan ?? ms;
+      const pace = reset !== null && !rolled && (agent !== 'grok' || reportedSpan !== null)
+        ? Math.min(1, Math.max(0, 1 - (reset - now) / span)) : null;
+      return [{
+        key,
+        short: w?.short || short,
+        label: w?.label || (agent !== 'claude' && key === 'sevenDay' ? 'Week' : label),
+        usedPercent,
+        resetsAt: rolled ? null : w?.resetsAt ?? null,
+        rolled,
+        pace,
+        level: planLevel(usedPercent),
+      }];
     });
     return {
       agent,
@@ -1470,23 +1487,28 @@
 
   // What the pane bar's meter opens: each window with when it resets, how old the reading is, and that it is shared.
   function planUsageDetails(u) {
-    const meter = (w) => h('div', { class: `plan-meter${w.level ? ` is-${w.level === 'out' ? 'hot' : w.level}` : ''}` },
-      h('div', { class: 'plan-row' }, h('span', null, w.label), h('b', null, w.usedPercent === null ? '—' : `${Math.round(w.usedPercent)}%`)),
-      h('div', { class: 'plan-bar', role: 'img', 'aria-label': w.usedPercent === null ? `${w.label}: not reported` : `${w.label}: ${Math.round(w.usedPercent)}% used` },
-        h('i', { style: `width:${w.usedPercent ?? 0}%` }),
-        w.pace !== null && h('span', { class: 'plan-pace', style: `left:${(w.pace * 100).toFixed(1)}%`, title: 'How much of the window has gone by' })),
-      h('div', { class: 'plan-sub' }, w.usedPercent === null ? `${window.WoodshedAgents.agent(u.agent).product} has not reported it yet`
-        : w.resetsAt ? `Resets ${resetText(w.resetsAt)} · in ${span(Date.parse(w.resetsAt) - Date.now())}` : 'Reset since the reading'));
+    const meter = (w) => {
+      const caption = w.usedPercent === null ? `${window.WoodshedAgents.agent(u.agent).product} has not reported it yet`
+        : w.resetsAt ? `Resets ${resetText(w.resetsAt)} · in ${span(Date.parse(w.resetsAt) - Date.now())}`
+        : w.rolled ? 'Reset since the reading' : null;
+      return h('div', { class: `plan-meter${w.level ? ` is-${w.level === 'out' ? 'hot' : w.level}` : ''}` },
+        h('div', { class: 'plan-row' }, h('span', null, w.label), h('b', null, w.usedPercent === null ? '—' : `${Math.round(w.usedPercent)}%`)),
+        h('div', { class: 'plan-bar', role: 'img', 'aria-label': w.usedPercent === null ? `${w.label}: not reported` : `${w.label}: ${Math.round(w.usedPercent)}% used` },
+          h('i', { style: `width:${w.usedPercent ?? 0}%` }),
+          w.pace !== null && h('span', { class: 'plan-pace', style: `left:${(w.pace * 100).toFixed(1)}%`, title: 'How much of the window has gone by' })),
+        caption && h('div', { class: 'plan-sub' }, caption));
+    };
     const others = u.running - 1;
     const a = window.WoodshedAgents.agent(u.agent);
     const name = a.name;
+    const tickNote = u.windows.some((w) => w.pace !== null) ? 'The tick marks how much of each window has gone by. ' : '';
     return h('div', { class: 'plan-detail' },
       h('div', { class: 'card-menu-group' }, `Your ${name} plan`),
       ...u.windows.map(meter),
       h('p', { class: 'plan-foot' },
         `${a.id === 'claude' ? 'Read from Claude Code after its last answer' : `Last reported by ${a.product}`}${u.asOf ? `, ${ago(u.asOf)}` : ''}. `,
         others > 0 ? `Shared with your ${others} other running private ${name} session${others === 1 ? '' : 's'}. ` : '',
-        'The tick marks how much of each window has gone by. ',
+        tickNote,
         a.usageUrl && h('a', { href: a.usageUrl, target: '_blank', rel: 'noopener' }, a.id === 'claude' ? 'claude.ai usage ↗' : `${name} usage ↗`)));
   }
 

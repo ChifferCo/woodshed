@@ -28,8 +28,12 @@ import { SETTINGS, settingProblem } from './consoleSettings.mjs';
 import agents from '../shared/agents.cjs';
 const { loginKey } = logins;
 
-// Who may review a person's pull requests, as reviewAgents.mjs reads it.
-const REVIEW_CHOICES = ['none', 'claude', 'codex', 'both'];
+// Who may review a person's pull requests, as reviewAgents.mjs reads it: a preset's name, or reviewers joined with `+`
+// (shared/agents.cjs, reviewersOf), kept as reviewChoiceOf writes it.
+const reviewChoice = (choice) => {
+  const reviewers = agents.reviewersOf(choice);
+  return reviewers ? agents.reviewChoiceOf(reviewers) : null;
+};
 // What the person's private sessions run their agent in (session/agentPane.mjs): tmux, as every session does, or Herdr's
 // terminal runtime, which their own Herdr can attach to. tmux is the default, and the only one for every other session.
 export const TERMINALS = Object.freeze(['tmux', 'herdr']);
@@ -159,6 +163,29 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     return store.state.people;
   }
 
+  // Once, the first start after the default grew to every reviewer. A person who already had a Grok Build or OpenCode
+  // sign-in keeps the previous default (Claude Code and Codex) until they set reviews back to the default. That switch
+  // was already on, and it used to mean "when you pick this agent", so joining the default by itself would send their
+  // pull requests to that provider with no new choice. Someone who saves a sign-in after this has no mark, and the
+  // wider default includes it. A sign-in written straight into the store, which this mark cannot see until refresh
+  // reads it, is kept the same way there.
+  function keepPreviousReviewDefault() {
+    if (store.state.reviewDefaultKept) return;
+    let kept = 0;
+    for (const record of Object.values(store.state.people ?? {})) {
+      if (!record || typeof record !== 'object' || record.reviewDefault) continue;
+      const saved = record.agentAuthAt;
+      const had = saved && agents.OWN_SIGN_IN_AGENTS.some((id) => agents.agent(id).reviews && saved[id]);
+      if (!had) continue;
+      record.reviewDefault = 'legacy';
+      kept += 1;
+    }
+    store.state.reviewDefaultKept = true;
+    store.save();
+    console.log('userSettings: previous review default kept', { people: kept });
+  }
+  keepPreviousReviewDefault();
+
   function recordFor(login) {
     return people()[loginKey(login)] ?? null;
   }
@@ -213,10 +240,22 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
       else delete ownAt[id];
     });
     if (ownChanged) changes.agentAuthAt = ownAt;
+    // The mark above only sees agentAuthAt. A Grok Build or OpenCode sign-in that is in the store and not yet on this
+    // record was not saved on My settings: written on the old release before this console looked it up, or straight
+    // into the store since. Keep the previous default until they accept the wider one. Each sign-in is checked on its
+    // own: saving a different one through My settings writes that one's metadata first, and must not hide this one.
+    // An explicit save writes agentAuthAt before it returns, so that sign-in is not discovered here. A first
+    // command-line save stores the reviews switch off before the secret, so a stop after the secret lands still
+    // discovers it with the switch off. One they accepted (`all`) or who is already kept (`legacy`) stays there.
+    // A Claude token or a Codex sign-in never marks it.
+    const reviewsSignIn = (id) => agents.agent(id).reviews;
+    const discoveredReviewSignIn = agents.OWN_SIGN_IN_AGENTS.some((id) => reviewsSignIn(id) && ownAt[id] && !record?.agentAuthAt?.[id]);
+    if (discoveredReviewSignIn && record?.reviewDefault !== 'all' && record?.reviewDefault !== 'legacy') changes.reviewDefault = 'legacy';
     if (!Object.keys(changes).length) return;
     touch(login, changes);
     console.log('userSettings: sign-ins follow the secret store', {
       login, claudeToken: Boolean(token), codexAuth: Boolean(codex), ...Object.fromEntries(agents.OWN_SIGN_IN_AGENTS.map((id, i) => [id, Boolean(own[i])])),
+      ...(changes.reviewDefault === 'legacy' ? { reviewDefault: 'legacy' } : {}),
     });
   }
 
@@ -242,7 +281,12 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
       agentAuth: Object.fromEntries(agents.OWN_SIGN_IN_AGENTS.map((id) => [id, { set: Boolean(record?.agentAuthAt?.[id]), savedAt: record?.agentAuthAt?.[id] ?? null }])),
       ownTokenForShared: record?.ownTokenForShared !== false,
       ownCodexForReviews: record?.ownCodexForReviews !== false,
-      reviewAgents: REVIEW_CHOICES.includes(record?.reviewAgents) ? record.reviewAgents : null,
+      // Whether reviews of their pull requests may run Grok Build and OpenCode on their own sign-in (reviewAgents.mjs).
+      ownAgentForReviews: Object.fromEntries(agents.OWN_SIGN_IN_AGENTS.filter((id) => agents.agent(id).reviews)
+        .map((id) => [id, usesOwnAgentForReviews(login, id)])),
+      reviewAgents: reviewChoice(record?.reviewAgents),
+      // False while a Grok Build or OpenCode sign-in saved before the wider default is still kept out of it.
+      expandedReviewDefault: usesExpandedReviewDefault(login),
       terminal: terminal(login),
       limits: { ...record?.limits },
       github: { connected: Boolean(github?.connectedAt), connectedAt: github?.connectedAt ?? null, name: github?.name ?? null, email: github?.email ?? null },
@@ -409,24 +453,60 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
    */
   function agentAuthTurn(login, id, fn) {
     const key = `${loginKey(login)}/${id}`;
-    const run = (agentAuthTurns.get(key) ?? Promise.resolve()).then(() => fn({ read: () => agentAuth(login, id), save: (value) => saveAgentAuth(login, id, value) }));
+    const run = (agentAuthTurns.get(key) ?? Promise.resolve()).then(() => fn({ read: () => agentAuth(login, id), save: (value, opts) => saveAgentAuth(login, id, value, opts) }));
     const settled = run.catch(() => {});
     agentAuthTurns.set(key, settled);
     settled.then(() => { if (agentAuthTurns.get(key) === settled) agentAuthTurns.delete(key); });
     return run;
   }
 
-  /** Saves the person's own sign-in for Grok Build or OpenCode (shared/agents.cjs, checkSignIn). */
-  function setAgentAuth(login, id, value) {
-    return agentAuthTurn(login, id, ({ save }) => save(value));
+  /**
+   * Saves the person's own sign-in for Grok Build or OpenCode (shared/agents.cjs, checkSignIn).
+   * `opts.reviews: false` is a first save from the command line. The reviews switch is stored off before the secret
+   * is written, and again with the sign-in's metadata. On the service store that write is queued, so it is flushed
+   * first: a stop after the secret lands is a discovery, and an author who already accepted the wider default keeps
+   * it, so the switch would read as on unless that deny is already stored. A secret write that throws puts this
+   * agent's switch back and leaves every other agent's as it is now.
+   */
+  function setAgentAuth(login, id, value, opts) {
+    return agentAuthTurn(login, id, ({ save }) => save(value, opts));
   }
 
-  async function saveAgentAuth(login, id, value) {
+  async function saveAgentAuth(login, id, value, opts) {
     requireSecrets();
     const agent = ownSignInAgent(id);
     const auth = agents.checkSignIn(id, value);
-    await secrets.save(userSecretName(login, agent.signIn.secret), auth, `Woodshed: @${login}'s ${agent.product} sign-in, for their My Woodshed ${agent.product} sessions only`);
-    touch(login, { agentAuthAt: { ...recordFor(login)?.agentAuthAt, [id]: new Date(now()).toISOString() } });
+    if (opts?.reviews === false && !agent.reviews) throw Object.assign(new Error(`${agent.product} does not review`), { shown: true });
+    const denyFirst = opts?.reviews === false;
+    const priorFlags = denyFirst ? recordFor(login)?.ownAgentForReviews : undefined;
+    if (denyFirst) {
+      touch(login, { ownAgentForReviews: { ...priorFlags, [id]: false } });
+      console.log(`userSettings: own ${agent.product} sign-in for reviews`, { login, agent: id, on: false });
+      // The file store writes in save. The service store only queues it: flush is awaited before the secret is
+      // written, and it rejects when that write failed or the store has closed, so the credential is not saved over
+      // a deny that did not land.
+      if (typeof store.flush === 'function') {
+        try {
+          await store.flush();
+        } catch {
+          throw Object.assign(new Error(`${agent.product}'s reviews switch could not be saved`), { shown: true });
+        }
+      }
+    }
+    try {
+      await secrets.save(userSecretName(login, agent.signIn.secret), auth, `Woodshed: @${login}'s ${agent.product} sign-in, for their My Woodshed ${agent.product} sessions only`);
+    } catch (err) {
+      if (denyFirst) {
+        const current = { ...recordFor(login)?.ownAgentForReviews };
+        if (!priorFlags || !Object.hasOwn(priorFlags, id)) delete current[id];
+        else current[id] = priorFlags[id];
+        touch(login, { ownAgentForReviews: current });
+      }
+      throw err;
+    }
+    const fields = { agentAuthAt: { ...recordFor(login)?.agentAuthAt, [id]: new Date(now()).toISOString() } };
+    if (denyFirst) fields.ownAgentForReviews = { ...recordFor(login)?.ownAgentForReviews, [id]: false };
+    touch(login, fields);
     console.log(`userSettings: ${agent.product} sign-in saved`, { login, agent: id, apiKey: !auth.startsWith('{') });
   }
 
@@ -489,20 +569,64 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   /**
-   * Who reviews this person's pull requests (reviewAgents.mjs): none, claude, codex or both, or null for the most this
-   * console can run, which is the default.
+   * The switch on the Grok Build and OpenCode cards: whether reviews of this person's pull requests may run that agent on
+   * their own sign-in. On once a sign-in is saved on My settings, unless they turned it off, as Codex's is. A first save
+   * from the command line sets it off before the secret is stored (setAgentAuth's `reviews: false`), and again with
+   * the sign-in's metadata, so that sign-in stays out of reviews until they turn it on, including when a restart
+   * discovers the secret before the metadata write; replacing one already saved leaves it as it was. With no reviewer choice
+   * saved, the default includes it (reviewAgents.mjs), except a sign-in already saved when that default shipped, or
+   * found in the secret store without a save on My settings since (usesExpandedReviewDefault). A saved choice that
+   * leaves it out does not, unless none of that choice can run, in which case the same default runs. The sign-in never
+   * goes into the review session: the console's proxy adds it to the agent's calls (reviewAgentProxy.mjs).
+   * @throws {Error}  shown on the page, when it is turned on with no sign-in saved
+   */
+  function setOwnAgentForReviews(login, id, on) {
+    const agent = ownSignInAgent(id);
+    if (!agent.reviews) throw Object.assign(new Error(`${agent.product} does not review`), { shown: true });
+    if (on && !recordFor(login)?.agentAuthAt?.[id]) throw Object.assign(new Error(`save your ${agent.product} sign-in first`), { shown: true });
+    touch(login, { ownAgentForReviews: { ...recordFor(login)?.ownAgentForReviews, [id]: Boolean(on) } });
+    console.log(`userSettings: own ${agent.product} sign-in for reviews`, { login, agent: id, on: Boolean(on) });
+  }
+
+  /** @returns {boolean}  the switch is on and a sign-in is saved */
+  function usesOwnAgentForReviews(login, id) {
+    const record = recordFor(login);
+    return Boolean(agents.OWN_SIGN_IN_AGENTS.includes(id) && record?.ownAgentForReviews?.[id] !== false && record?.agentAuthAt?.[id]);
+  }
+
+  /**
+   * Who reviews this person's pull requests (reviewAgents.mjs): none, claude, codex or both, or any reviewers joined with
+   * `+` (claude+grok), or null for every reviewer that can run, which is the default.
    * @throws {Error}  shown on the page, for anything else
    */
   function setReviewAgents(login, choice) {
-    if (choice !== null && !REVIEW_CHOICES.includes(choice)) throw Object.assign(new Error(`reviews must be one of ${REVIEW_CHOICES.join(', ')}`), { shown: true, status: 400 });
-    touch(login, { reviewAgents: choice });
-    console.log('userSettings: reviews of my pull requests', { login, choice: choice ?? 'the most there is' });
+    const saved = choice === null ? null : reviewChoice(choice);
+    if (choice !== null && !saved) {
+      throw Object.assign(new Error(`reviews must be one of ${Object.keys(agents.REVIEW_PRESETS).join(', ')}, or reviewers joined with + (${agents.REVIEW_AGENT_IDS.join(', ')}), such as claude+grok`), { shown: true, status: 400 });
+    }
+    // Null is the default, and setting it is how someone kept on the previous one accepts the wider default. A saved
+    // choice does not: picking Claude Code and Codex, or Grok Build alone, leaves the previous default for the day
+    // that choice can no longer run.
+    const accepted = saved === null && recordFor(login)?.reviewDefault === 'legacy';
+    touch(login, { reviewAgents: saved, ...(saved === null ? { reviewDefault: 'all' } : {}) });
+    console.log('userSettings: reviews of my pull requests', { login, choice: saved ?? 'every reviewer that can run', ...(accepted ? { accepted: true } : {}) });
   }
 
   /** @returns {string|null}  the person's saved choice, or null for the default */
   function reviewAgents(login) {
-    const saved = recordFor(login)?.reviewAgents;
-    return REVIEW_CHOICES.includes(saved) ? saved : null;
+    return reviewChoice(recordFor(login)?.reviewAgents);
+  }
+
+  /**
+   * Whether a review with no choice saved runs every reviewer that can, Grok Build and OpenCode included. False only
+   * for a sign-in of one of those already saved when that default shipped, or found in the secret store without a save
+   * on My settings since, until they set reviews back to the default.
+   * @param {string|null} login
+   * @returns {boolean}
+   */
+  function usesExpandedReviewDefault(login) {
+    if (!login) return true;
+    return recordFor(login)?.reviewDefault !== 'legacy';
   }
 
   /**
@@ -559,7 +683,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   return {
-    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setAgentAuth, removeAgentAuth, agentAuth, agentAuthTurn, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setReviewAgents, reviewAgents, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
+    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setAgentAuth, removeAgentAuth, agentAuth, agentAuthTurn, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setOwnAgentForReviews, usesOwnAgentForReviews, setReviewAgents, reviewAgents, usesExpandedReviewDefault, setTerminal, terminal, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }

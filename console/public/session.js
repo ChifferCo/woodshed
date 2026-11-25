@@ -172,9 +172,8 @@
       // A private window keeps the pick for this page only.
     }
   }
-  // Only beside Claude Code or Codex (shared/agents.cjs, teamCredential): a Grok Build or OpenCode session starts none.
-  const canRunAgents = (s) => s?.status === 'running' && Array.isArray(s.agents) && Boolean(s.owner) && s.owner === data?.login
-    && window.WoodshedAgents.agent(W.agentOf(s)).teamCredential;
+  // The session reports an agents array when its image supports starting extra agents.
+  const canRunAgents = (s) => s?.status === 'running' && Array.isArray(s.agents) && Boolean(s.owner) && s.owner === data?.login;
   // This run's: a Resume starts the session's own agent alone, and the console's last read may still be the run before.
   // One started from this page, until the console's read of the session has it (a read asked for before the start
   // would take it off the switch again for a few seconds).
@@ -214,6 +213,13 @@
     render();
   }
 
+  const canStartAgent = (s, list = agentsOf(s)) => !s.taintedAt && canRunAgents(s) && list.length < 3;
+
+  function startAgentItem(s, list) {
+    if (!canStartAgent(s, list)) return null;
+    return { group: 'Start', label: '+ Another agent', note: 'Claude or Codex, with the model you pick, in this checkout', run: () => newAgentDialog(s) };
+  }
+
   // The switch on the pane bar, while Chat or TUI shows: the agent shown, a menu of every agent in the session with its
   // state, + Another agent, and Stop for the one shown when it is not the session's own.
   function agentSwitch(s) {
@@ -241,7 +247,7 @@
       open: () => ({
         items: [
           ...[own, ...list].map(row),
-          list.length < 3 && { group: 'Start', label: '+ Another agent', note: 'Claude or Codex, with the model you pick, in this checkout', run: () => newAgentDialog(s) },
+          startAgentItem(s, list),
           shown && { group: 'Start', end: true, danger: true, label: `Stop ${agentLabel(shown.agent, shown.model)}`, note: 'Ends this agent: its conversation stays in the session\'s home', run: () => stopAgent(s, shown) },
         ].filter(Boolean),
       }),
@@ -305,7 +311,7 @@
     showAgent();
     const field = (label, control) => h('label', { class: 'field-label' }, h('span', null, label), control);
     const form = h('form', { method: 'dialog', class: 'agent-form' },
-      h('p', { class: 'sub' }, 'It works in this session\'s checkout, beside the agents already in it. Pick it above the tabs to chat with it or see its terminal.'),
+      h('p', { class: 'sub' }, 'It works in this session\'s checkout, beside the agents already in it. Use the agent switch in Chat or TUI to choose which agent you see.'),
       h('div', { class: 'agent-grid' }, field('Agent', agent), field('Model', model), field('Effort', effort), field('Permissions', mode)),
       field('First message', prompt),
       error,
@@ -333,7 +339,8 @@
           keepAgentPick(s.id, started.id);
         }
         W.shell.toast(`${agentLabel(agent.value, model.value)} is starting: it shows on ${tab === 'tui' ? 'TUI' : 'Chat'} as it opens`);
-        render();
+        if (tab === 'chat' || tab === 'tui') render();
+        else setTab('chat');
         refresh();
       } catch (err) {
         busy = false;
@@ -519,6 +526,93 @@
       window.alert(`Could not resume: ${err.message}`);
       return false;
     }
+  }
+
+  // Hand off (console/handoff.mjs): this running session's work to a new session of yours, on its branch, run by the
+  // agent picked here. The console reads its conversation, stops it (its work pushed), and starts the new one with the
+  // conversation attached as a file, unless the switch leaves it behind. The page then opens the new session.
+  function handOff(s) {
+    const { AGENTS, MODELS } = W.agentChoices;
+    const from = W.agentOf(s);
+    const options = (list) => list.map(([value, label, title]) => h('option', { value, title }, label));
+    const agent = h('select', { id: 'handoff-agent', class: 'field' }, options(AGENTS));
+    // Another agent is what a hand-off is mostly for; the same one is a fresh start for it.
+    agent.value = AGENTS.find(([v]) => v !== from)?.[0] ?? from;
+    const model = h('select', { id: 'handoff-model', class: 'field' });
+    let codexModels = null;
+    // Claude's own list and Codex's catalog; Grok Build and OpenCode start on their own default model, which a session's
+    // agent can change itself.
+    const fillModels = () => {
+      const list = agent.value === 'codex'
+        ? [['', 'default', 'Codex\u2019s own default'], ...(codexModels ?? []).map((m) => [m.slug, m.slug, m.description || m.name])]
+        : agent.value === 'claude' ? MODELS : [['', 'default', `${window.WoodshedAgents.agent(agent.value).product}\u2019s own default`]];
+      const was = model.value;
+      model.replaceChildren(...options(list));
+      if (list.some(([v]) => v === was)) model.value = was;
+    };
+    const pickAgent = () => {
+      fillModels();
+      if (agent.value !== 'codex' || codexModels) return;
+      W.getJson('/api/my/codex-models').then((answer) => { codexModels = answer?.models ?? []; fillModels(); }).catch(() => { codexModels = []; });
+    };
+    agent.addEventListener('change', pickAgent);
+    pickAgent();
+    let carry = true;
+    const carrySub = h('p', { class: 'sub' });
+    const carrySwitch = h('button', { type: 'button', class: 'switch-ui', role: 'switch', 'aria-labelledby': 'handoff-carry-label' });
+    const carryRow = h('div', { class: 'toggle-row' }, carrySwitch, h('span', { class: 'toggle-label', id: 'handoff-carry-label' }, 'Hand over the conversation'), carrySub);
+    const showCarry = () => {
+      carrySwitch.setAttribute('aria-checked', String(carry));
+      carryRow.classList.toggle('is-off', !carry);
+      carrySub.textContent = carry
+        ? `On: what was asked, said and run goes as a file the new agent reads first. Tool output stays behind.`
+        : 'Off: the new agent starts from the branch and your note alone, a clean start.';
+    };
+    carrySwitch.addEventListener('click', () => { carry = !carry; showCarry(); });
+    showCarry();
+    const note = h('textarea', { id: 'handoff-note', class: 'field', rows: '4', maxlength: '4000', placeholder: 'What is left to do, or what to try differently. Optional.' });
+    const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+    const cancel = h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel');
+    const go = h('button', { type: 'submit', class: 'btn btn-primary' }, 'Hand off');
+    const form = h('form', { method: 'dialog' },
+      h('p', null, `${W.agentTitle(s)} stops here, its work committed and pushed to `, h('code', null, s.branch), '. A new session of yours carries on from that branch with the agent you pick. Resume still reopens this one.'),
+      h('label', { class: 'field-label' }, h('span', null, 'Hand off to'), agent),
+      h('label', { class: 'field-label' }, h('span', null, 'Model'), model),
+      carryRow,
+      h('label', { class: 'field-label' }, h('span', null, 'Note to the new agent'), note),
+      error,
+      h('div', { class: 'dialog-actions' }, cancel, go));
+    const dialog = h('dialog', { class: 'confirm', 'aria-labelledby': 'handoff-title' }, h('h2', { id: 'handoff-title' }, 'Hand off to another agent'), form);
+    // While the console stops this one and starts the next the dialog stays: closing it would hide where the work went.
+    let pending = false;
+    dialog.addEventListener('cancel', (e) => { if (pending) e.preventDefault(); });
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (pending) return;
+      pending = true;
+      go.disabled = true;
+      cancel.disabled = true;
+      go.textContent = 'Handing off\u2026';
+      error.hidden = true;
+      try {
+        const next = await W.postJson(`/api/my/sessions/${s.id}/handoff`, { agent: agent.value, model: model.value, note: note.value, conversation: carry });
+        pending = false;
+        dialog.close();
+        navigate(`/s/${next.id}?tab=chat`);
+      } catch (err) {
+        pending = false;
+        go.disabled = false;
+        cancel.disabled = false;
+        go.textContent = 'Hand off';
+        error.replaceChildren(...W.errorParts(err));
+        error.hidden = false;
+        refresh();
+      }
+    });
+    dialog.addEventListener('close', () => dialog.remove());
+    document.body.append(dialog);
+    dialog.showModal();
+    agent.focus();
   }
 
   async function resumeFromRow(s, row) {
@@ -853,6 +947,9 @@
       s.branch && { label: 'Review work', note: 'Read what this session did as a review, against the default branch', run: open('review') },
       s.prUrl && { label: `Open PR ${W.prNumber(s.prUrl)} ↗`, note: 'Its pull request on GitHub, in a new tab', href: s.prUrl },
       ...assignActions(s),
+      W.isPrivate(s) && W.sameLogin(s.owner, data.login) && s.status === 'running' && !s.taintedAt && s.branch && {
+        label: 'Hand off…', note: 'Carry its work on in a new session with another agent, such as Codex or Claude Code', run: () => handOff(s),
+      },
       { label: 'Rename…', note: 'Give it a new name, the one the rail and its page show', run: () => rename(s) },
       live && s.kind !== 'ask' && W.canExtend(s, data) && { label: 'Extend 1 hour', note: `${W.pausesIn(s, data)}: put it off by an hour`, run: async () => { await W.extendSession(s); refresh(); } },
       W.ownsLimits(s, data) && { label: 'Pause and stop…', note: 'How long this session alone waits for input before it pauses, and runs before it stops', run: () => editLimits(s) },
@@ -907,7 +1004,10 @@
   // `opened` counts each opening, so a row that ends after its menu was closed and opened again leaves the new one be.
   const cardMenu = { el: h('div', { class: 'card-menu', role: 'menu', tabindex: '-1', hidden: true }), id: null, key: null, state: null, busy: false, opened: 0 };
   document.body.append(cardMenu.el);
-  const menuState = (s) => `${s.status}:${s.kept}:${s.prUrl}:${isPinned(s)}:${s.app}:${s.appName ?? ''}:${s.branch}:${s.assignee ?? ''}`;
+  function menuState(s, key) {
+    const canStart = key === `${s.id}:phone` && narrow.matches && canStartAgent(s);
+    return `${s.status}:${s.kept}:${s.prUrl}:${isPinned(s)}:${s.app}:${s.appName ?? ''}:${s.branch}:${s.assignee ?? ''}:${canStart}`;
+  }
   // The card's ⋯, or on a phone's session page the top bar's: whichever of the two shows.
   const menuAnchor = () => (cardMenu.key
     ? [...document.querySelectorAll(`[data-menu-for="${cardMenu.key}"]`)].find((b) => b.offsetParent) ?? null : null);
@@ -953,7 +1053,7 @@
     placeCardMenu(button);
     cardMenu.id = s.id;
     cardMenu.key = key;
-    cardMenu.state = menuState(s);
+    cardMenu.state = menuState(s, key);
     button.setAttribute('aria-expanded', 'true');
     // Details with no branch has no item, so the menu itself takes the focus. The menu is one element, so a sheet
     // scrolled the last time it was open opens at its top again, and the focus does not scroll it.
@@ -966,7 +1066,7 @@
     if (!cardMenu.id || cardMenu.busy) return;
     const s = data.sessions.find((x) => x.id === cardMenu.id);
     const button = menuAnchor();
-    if (!s || !button || menuState(s) !== cardMenu.state) return closeCardMenu();
+    if (!s || !button || menuState(s, cardMenu.key) !== cardMenu.state) return closeCardMenu();
     button.setAttribute('aria-expanded', 'true');
     placeCardMenu(button);
   }
@@ -1696,6 +1796,7 @@
     const choices = data.appDomain && !busy && !none && W.appChoices(s) ? W.appChoiceItems(s, refresh, render).map((a) => ({ ...a, group: 'App', label: `Start ${a.label}` })) : [];
     const running = W.runningAppLabel(s);
     return [
+      narrow.matches && startAgentItem(s),
       s.hasShell && W.isPrivate(s) && !s.taintedAt && W.agentOf(s) === 'claude' && {
         group: 'Claude', label: 'Sign in for Remote Control', note: 'Asks claude for /woodshed:remote-control: open the link it shows and paste the code in the chat', run: () => claudeLogin(s),
       },
