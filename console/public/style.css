@@ -1395,6 +1395,9 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 .people-table .role-can { min-width: 260px; line-height: 1.45; }
 .people-table .end-cell { text-align: right; white-space: nowrap; }
 .people-table .edit-row td { border-top: 0; padding-top: 0; }
+.people-table .role-head th { border-top: 1px solid var(--line-soft); padding-top: 10px; }
+.people-table .sign-ins { min-width: 160px; }
+.sign-in-list { display: flex; flex-wrap: wrap; gap: 4px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .slack-line { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
 .slack-edit { margin-top: 6px; }

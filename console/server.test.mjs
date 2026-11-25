@@ -543,6 +543,40 @@ test('an admin invites, accepts and removes on the People page, a member who is 
   assert.equal((await post(port, '/api/access/ask', {}, { ...sam, origin: 'https://evil.example' })).status, 403);
 });
 
+test('People names the personal tokens each member saved on My settings, never a value', async (t) => {
+  const { createMembers } = await import('./members.mjs');
+  const store = {
+    state: {
+      members: {
+        'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true },
+        'sam-ops': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' },
+      },
+      people: {
+        'mia-dev': { claudeTokenAt: '2026-10-03T00:00:00.000Z', codexAuthAt: '2026-10-03T00:00:00.000Z', agentAuthAt: { grok: '2026-10-03T00:00:00.000Z' }, github: { connectedAt: '2026-10-03T00:00:00.000Z' } },
+      },
+    },
+    save() {},
+  };
+  const members = createMembers({ store });
+  const userSettings = createUserSettings({ store, secrets: null });
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const auth = {
+    enabled: () => true, available: () => true,
+    sessionFor: async () => ({ login: 'mia-dev' }), visitorFor: async () => ({ login: 'mia-dev' }),
+  };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const people = await fetch(`http://127.0.0.1:${port}/api/people`, { headers: { cookie: 'woodshed_session=mia-dev' } });
+  assert.equal(people.status, 200);
+  const body = await people.json();
+  assert.deepEqual(Object.fromEntries(body.members.map((m) => [m.login, m.signIns])), {
+    'mia-dev': ['Claude', 'Codex', 'Grok Build', 'GitHub'],
+    'sam-ops': [],
+  });
+});
+
 test('on a console with no list of people, everyone signed in reaches the Secrets & webhooks and Webhook events pages', async (t) => {
   const reached = [];
   const settings = new Proxy({}, { get: (_, name) => async () => { reached.push(`settings.${String(name)}`); return {}; } });

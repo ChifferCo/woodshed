@@ -1146,10 +1146,21 @@ export function createHandler({
     const view = members.view();
     const logins = [...view.members, ...view.requests].flatMap((p) => [p.login, p.addedBy]).filter(Boolean);
     // Each member's role, named from their switches, and the roles People offers with what each gives.
-    view.members = view.members.map((m) => ({ ...m, access: roleOf(m), accessDiffers: roleDiffers(m) }));
+    view.members = view.members.map((m) => ({ ...m, access: roleOf(m), accessDiffers: roleDiffers(m), ...(userSettings && { signIns: signInsOf(m.login) }) }));
     return reply(res, 200, {
       ...view, roles: ROLES.map(({ id, label, explain, privateSessions, admin, githubSessions, assignable }) => ({ id, label, explain, privateSessions, admin, githubSessions, assignable })), hosted: Boolean(members.hosted), names: namesFor(logins), slack: slackPeople ? slackPeople.links(view.members.map((m) => m.login)) : null, ...extra,
     });
+  }
+
+  // Which of a member's own sign-ins (personal tokens) My settings has saved, by name: never a value.
+  function signInsOf(login) {
+    const v = userSettings.view(login);
+    return [
+      v.claudeToken.set && 'Claude',
+      v.codexAuth?.set && 'Codex',
+      ...Object.entries(v.agentAuth ?? {}).filter(([, a]) => a.set).map(([id]) => agentsRegistry.agent(id).product),
+      v.github?.connected && 'GitHub',
+    ].filter(Boolean);
   }
 
   async function slackSearchReply(res, query) {
