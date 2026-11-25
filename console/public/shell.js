@@ -272,15 +272,22 @@
   // ⌘B waits this long for its key, as Herdr's prefix does (with a word on screen that it waits).
   const PREFIX_MS = 2500;
   let prefixAt = 0;
+  const PREFIX_IDS = new Set(['nextSession', 'prevSession', 'needsYou', 'tab', 'cancel']);
   const MODIFIERS = new Set(['Shift', 'Meta', 'Control', 'Alt', 'AltGraph', 'CapsLock']);
   function onKey(e, inFrame, modOnly = false) {
     // Shift pressed on its way to a digit (AZERTY) is not the key after ⌘B or G.
     if (MODIFIERS.has(e.key)) return;
     hideHint();
-    // An Esc that closes the palette or the sheet cancels a waiting ⌘B too: the next key is the page's again.
-    if (e.key === 'Escape' && prefixAt) {
+    // Esc after ⌘B cancels it, and goes no further: not to a terminal, whose agent would take it as its own Esc. With
+    // the palette or the sheet open, it also closes that, below.
+    if (e.key === 'Escape' && Date.now() - prefixAt < PREFIX_MS) {
       prefixAt = 0;
       prefixHint(false);
+      if (palette.hidden && keys.el.hidden) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
     }
     if (e.key === 'Escape' && (!palette.hidden || !keys.el.hidden)) {
       if (!palette.hidden && actionsFor) return;
@@ -299,6 +306,8 @@
     // A key alone is for the page, never for an open palette or sheet, whose own keys come first.
     const overlayOpen = !palette.hidden || !keys.el.hidden || notifications().isOpen();
     const id = K.match(e, { inFrame, afterG, afterPrefix, typing: overlayOpen || K.takesTyping(e.composedPath?.()[0] ?? e.target) });
+    // In the Review, a key alone after ⌘B is the shell's only when it is one of the prefix's own: / there is the page's.
+    if (modOnly && !e.metaKey && !e.ctrlKey && !PREFIX_IDS.has(id)) return;
     if (id === 'cancel') {
       e.preventDefault();
       e.stopPropagation();
