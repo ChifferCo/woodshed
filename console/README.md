@@ -720,6 +720,40 @@ what was forgotten. Forget it is refused while one of your sessions runs, since
 that session would save its home again within 5 minutes; Remove My Woodshed
 stops them first.
 
+**Hand off…**, in a running private session's ⋯ menu (or `woodshed session handoff <id> --agent <agent>`), carries
+its work on with another agent: any of Claude Code, Codex, Grok Build and OpenCode to any other (`shared/agents.cjs`), or a
+fresh run of the same one
+(`console/handoff.mjs`; `POST /api/my/sessions/<id>/handoff`). Each agent keeps its conversation in a format of its own
+that no other reads, so what goes across is agent-neutral:
+- the branch: the session stops, which commits and pushes its work as any stop does, and a new private session of yours
+  starts on that branch with the agent and model picked, under the same name, and the loosest permission mode of the new
+  agent that lets it do no more unasked than the old one could, as a session started from another gets
+  (`modeForStartedSession`). Grok Build and OpenCode start on their own default model. Unlike an ordinary Stop, it stops only once the push went through: a push
+  refused (the branch moved on remotely) leaves it running, its work committed in its checkout and statusd sending again
+  (`POST /checkpoint {"keepRunningOnFailure": true}`, which turns its sends, home saves and shared settings sync back
+  on), and nothing is handed off. A Stop pressed while that push is under way is held, and carried out if the push fails
+  (`fleet: stop asked during a hand-off, held until its push is done`);
+- the conversation, unless the dialog's switch (`--no-conversation`) leaves it behind: the console reads it first, from
+  statusd's `GET /transcript` as the Chat tab does (what was asked, said and run; tool output left out, long messages
+  cut, at most 2 MB with the oldest entries left out first), and attaches it to the new session as `handoff.md`, which the
+  entrypoint fetches into `/tmp/uploads` as any attachment;
+- your note, if you write one (at most 4000 characters), first in the new session's prompt, which then says where the
+  work came from and to read the file and the branch's `git log`.
+
+Every check a start makes (the agent's sign-in, Codex's catalog, your databases, write access to the repo, and the
+branch, which may be the default branch if the agent checked it out) is made before the session stops, so a refusal
+leaves it running. A session that has seen production data is never handed off (nothing it holds goes anywhere that
+outlives it), and a hand-off and a lockdown never overlap: one whose lockdown is under way is refused, a production call
+made while it is handed off is refused (`fleet.taint`, so the relay answers 503), and the taint is read again before
+the file is written. Only a running session can be handed off: its conversation is read from it. The
+old session stays on the list, stopped, its card saying `handed off to Codex`, and Resume reopens it as ever; the
+records keep `handedOffTo` and `handedOffFrom`. The console logs `fleet: session handed off` with both ids, the agents,
+`conversation`, how many `entries` went and whether there was a `note`; `fleet: hand-off refused, the conversation not
+read` when statusd did not answer (nothing stopped), and `fleet: checkpoint failed, the session keeps running` when its push was refused (statusd
+logs `statusd: checkpoint failed, the session runs on`), and `fleet: hand-off stopped the session, the new one did not
+start` with why, which the page says too. An agent added to the console's `AGENTS` (`sessions.mjs`) can be handed off
+to and from with its product name in `handoff.mjs`'s `AGENT_NAMES`.
+
 **Repo settings**, on My settings, hold your own values for each repo's env files, your own instructions and your own
 files ("Your files" below), for your private sessions on that repo ("Repo settings" below says how they are kept and
 handed out):

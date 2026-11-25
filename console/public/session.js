@@ -528,6 +528,93 @@
     }
   }
 
+  // Hand off (console/handoff.mjs): this running session's work to a new session of yours, on its branch, run by the
+  // agent picked here. The console reads its conversation, stops it (its work pushed), and starts the new one with the
+  // conversation attached as a file, unless the switch leaves it behind. The page then opens the new session.
+  function handOff(s) {
+    const { AGENTS, MODELS } = W.agentChoices;
+    const from = W.agentOf(s);
+    const options = (list) => list.map(([value, label, title]) => h('option', { value, title }, label));
+    const agent = h('select', { id: 'handoff-agent', class: 'field' }, options(AGENTS));
+    // Another agent is what a hand-off is mostly for; the same one is a fresh start for it.
+    agent.value = AGENTS.find(([v]) => v !== from)?.[0] ?? from;
+    const model = h('select', { id: 'handoff-model', class: 'field' });
+    let codexModels = null;
+    // Claude's own list and Codex's catalog; Grok Build and OpenCode start on their own default model, which a session's
+    // agent can change itself.
+    const fillModels = () => {
+      const list = agent.value === 'codex'
+        ? [['', 'default', 'Codex\u2019s own default'], ...(codexModels ?? []).map((m) => [m.slug, m.slug, m.description || m.name])]
+        : agent.value === 'claude' ? MODELS : [['', 'default', `${window.WoodshedAgents.agent(agent.value).product}\u2019s own default`]];
+      const was = model.value;
+      model.replaceChildren(...options(list));
+      if (list.some(([v]) => v === was)) model.value = was;
+    };
+    const pickAgent = () => {
+      fillModels();
+      if (agent.value !== 'codex' || codexModels) return;
+      W.getJson('/api/my/codex-models').then((answer) => { codexModels = answer?.models ?? []; fillModels(); }).catch(() => { codexModels = []; });
+    };
+    agent.addEventListener('change', pickAgent);
+    pickAgent();
+    let carry = true;
+    const carrySub = h('p', { class: 'sub' });
+    const carrySwitch = h('button', { type: 'button', class: 'switch-ui', role: 'switch', 'aria-labelledby': 'handoff-carry-label' });
+    const carryRow = h('div', { class: 'toggle-row' }, carrySwitch, h('span', { class: 'toggle-label', id: 'handoff-carry-label' }, 'Hand over the conversation'), carrySub);
+    const showCarry = () => {
+      carrySwitch.setAttribute('aria-checked', String(carry));
+      carryRow.classList.toggle('is-off', !carry);
+      carrySub.textContent = carry
+        ? `On: what was asked, said and run goes as a file the new agent reads first. Tool output stays behind.`
+        : 'Off: the new agent starts from the branch and your note alone, a clean start.';
+    };
+    carrySwitch.addEventListener('click', () => { carry = !carry; showCarry(); });
+    showCarry();
+    const note = h('textarea', { id: 'handoff-note', class: 'field', rows: '4', maxlength: '4000', placeholder: 'What is left to do, or what to try differently. Optional.' });
+    const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+    const cancel = h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel');
+    const go = h('button', { type: 'submit', class: 'btn btn-primary' }, 'Hand off');
+    const form = h('form', { method: 'dialog' },
+      h('p', null, `${W.agentTitle(s)} stops here, its work committed and pushed to `, h('code', null, s.branch), '. A new session of yours carries on from that branch with the agent you pick. Resume still reopens this one.'),
+      h('label', { class: 'field-label' }, h('span', null, 'Hand off to'), agent),
+      h('label', { class: 'field-label' }, h('span', null, 'Model'), model),
+      carryRow,
+      h('label', { class: 'field-label' }, h('span', null, 'Note to the new agent'), note),
+      error,
+      h('div', { class: 'dialog-actions' }, cancel, go));
+    const dialog = h('dialog', { class: 'confirm', 'aria-labelledby': 'handoff-title' }, h('h2', { id: 'handoff-title' }, 'Hand off to another agent'), form);
+    // While the console stops this one and starts the next the dialog stays: closing it would hide where the work went.
+    let pending = false;
+    dialog.addEventListener('cancel', (e) => { if (pending) e.preventDefault(); });
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (pending) return;
+      pending = true;
+      go.disabled = true;
+      cancel.disabled = true;
+      go.textContent = 'Handing off\u2026';
+      error.hidden = true;
+      try {
+        const next = await W.postJson(`/api/my/sessions/${s.id}/handoff`, { agent: agent.value, model: model.value, note: note.value, conversation: carry });
+        pending = false;
+        dialog.close();
+        navigate(`/s/${next.id}?tab=chat`);
+      } catch (err) {
+        pending = false;
+        go.disabled = false;
+        cancel.disabled = false;
+        go.textContent = 'Hand off';
+        error.replaceChildren(...W.errorParts(err));
+        error.hidden = false;
+        refresh();
+      }
+    });
+    dialog.addEventListener('close', () => dialog.remove());
+    document.body.append(dialog);
+    dialog.showModal();
+    agent.focus();
+  }
+
   async function resumeFromRow(s, row) {
     row.classList.add('is-busy');
     if (!(await resumePrivate(s))) row.classList.remove('is-busy');
@@ -860,6 +947,9 @@
       s.branch && { label: 'Review work', note: 'Read what this session did as a review, against the default branch', run: open('review') },
       s.prUrl && { label: `Open PR ${W.prNumber(s.prUrl)} ↗`, note: 'Its pull request on GitHub, in a new tab', href: s.prUrl },
       ...assignActions(s),
+      W.isPrivate(s) && W.sameLogin(s.owner, data.login) && s.status === 'running' && !s.taintedAt && s.branch && {
+        label: 'Hand off…', note: 'Carry its work on in a new session with another agent, such as Codex or Claude Code', run: () => handOff(s),
+      },
       { label: 'Rename…', note: 'Give it a new name, the one the rail and its page show', run: () => rename(s) },
       live && s.kind !== 'ask' && W.canExtend(s, data) && { label: 'Extend 1 hour', note: `${W.pausesIn(s, data)}: put it off by an hour`, run: async () => { await W.extendSession(s); refresh(); } },
       W.ownsLimits(s, data) && { label: 'Pause and stop…', note: 'How long this session alone waits for input before it pauses, and runs before it stops', run: () => editLimits(s) },

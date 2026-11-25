@@ -155,7 +155,8 @@
   // The rail card's line for a stopped private session: since when first, since the card's Resume button leaves
   // little room, then why (`idle 1 h`, `by you`). A failed one's word says enough; its pane says why.
   function privateStopLine(s, me) {
-    const why = s.stoppedBy ? `by ${s.stoppedBy === me ? 'you' : personText(s.stoppedBy)}`
+    // A hand-off says where the work went rather than who stopped it (handoff.mjs).
+    const why = s.handedOffTo && s.stopReason ? s.stopReason : s.stoppedBy ? `by ${s.stoppedBy === me ? 'you' : personText(s.stoppedBy)}`
       : displayStatus(s).key === 'failed' ? null : s.stopReason?.replace(PAUSE_REASON_RE, '$1 ');
     return [ago(s.stoppedAt), why].filter(Boolean).join(' · ');
   }

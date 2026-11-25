@@ -1498,12 +1498,21 @@ test('POST /send with agentOnly types into a running agent and never into a shel
   assert.equal(await got(), 'The review asks for changes\nFix PR 9\n', 'only the one on its pull request, once');
   await taken();
 
+  // A hand-off's checkpoint that fails (this checkout has nowhere to push to, and CI's git no identity to commit as)
+  // leaves the session running: its sends go on, and the console does not stop it.
+  const handoff = await call('POST', '/checkpoint', undefined, JSON.stringify({ keepRunningOnFailure: true }));
+  assert.equal(handoff.status, 500);
+  assert.match(handoff.body.error, /^Command failed: git /, 'its commit or its push');
+  assert.equal((await send(forNine)).status, 200, 'it sends again');
+  for (let i = 0; i < 50 && !(await got()).includes('Fix PR 9\nFix PR 9'); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  await taken();
+
   // Once the stop's checkpoint has started, nothing guarded is typed.
   await call('POST', '/checkpoint');
   const stopping = await send(forNine);
   assert.deepEqual([stopping.status, stopping.body.error], [409, 'the session is stopping']);
   await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.equal(await got(), 'The review asks for changes\nFix PR 9\n');
+  assert.equal(await got(), 'The review asks for changes\nFix PR 9\nFix PR 9\n');
 });
 test('a branch pointed at another pull request\'s ref, which @{u} cannot name, is another lookup key', async (t) => {
   // A real repository, configured as gh pr checkout leaves a pull request's branch.
@@ -1542,6 +1551,45 @@ test('a guarded send names how long it may still be typed, a minute at most', ()
 test('a guarded send carries its caller\'s own deadline', () => {
   assert.equal(sendNotAfter('{"text":"x","notAfter":1700000000000}'), 1700000000000);
   for (const raw of ['{"text":"x"}', '{"text":"x","notAfter":"soon"}', '{"text":"x","notAfter":-1}', 'nope']) assert.equal(sendNotAfter(raw), null, raw);
+});
+
+test('a hand-off\'s checkpoint that fails turns the shared settings sync back on, so an edit after it still reaches the shared copy', async (t) => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-handoff-home-'));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  await fs.mkdir(path.join(home, '.claude'));
+  await fs.writeFile(path.join(home, '.claude/settings.json'), JSON.stringify({ model: 'opus' }));
+  // The console's session API, as far as a stop reaches it: the settings exchange and the home's save.
+  const rounds = [];
+  let version = 0;
+  const consoleApi = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      if (req.url.startsWith('/claude-settings')) {
+        rounds.push(JSON.parse(body));
+        version += 1;
+        return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ version }));
+      }
+      return res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+    });
+  });
+  await new Promise((resolve) => consoleApi.listen(0, '127.0.0.1', resolve));
+  t.after(() => consoleApi.close());
+  const { call } = await statusdWithApp(t, {
+    env: {
+      HOME: home, SESSION_KIND: 'private', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleApi.address().port}`,
+      WOODSHED_SETTINGS_STATE_FILE: path.join(home, 'settings-sync.json'),
+    },
+  });
+  const failed = await call('POST', '/checkpoint', undefined, JSON.stringify({ keepRunningOnFailure: true }));
+  assert.equal(failed.status, 500, 'this checkout has nowhere to push to');
+  const seen = rounds.length;
+  assert.ok(seen >= 1, 'the checkpoint had its settings round');
+
+  await fs.writeFile(path.join(home, '.claude/settings.json'), JSON.stringify({ model: 'sonnet' }));
+  await call('POST', '/checkpoint');
+  const sent = rounds.slice(seen).map((r) => r.changed?.['.claude/settings.json']).filter(Boolean);
+  assert.ok(sent.some((v) => Buffer.from(v, 'base64').toString('utf8').includes('sonnet')), 'the stop after it sends the edit');
 });
 
 test('Grok Build and OpenCode get pastes, as codex does', () => {

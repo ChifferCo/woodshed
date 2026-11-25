@@ -20,6 +20,7 @@ import { blockerText } from './databaseGate.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 import { TAINT_MESSAGE } from './taint.mjs';
+import { HANDOFF_FILE, handoffDocument, handoffNote, handoffPrompt } from './handoff.mjs';
 import { mayStartSessions, newStartToken, startTokenHash } from './sessionStarts.mjs';
 import { checkLimits } from './userSettings.mjs';
 import {
@@ -32,6 +33,8 @@ import agents from '../shared/agents.cjs';
 const { findLogin, sameLogin } = logins;
 
 const CHECKPOINT_TIMEOUT_MS = 90_000;
+// Reading a session's conversation for a hand-off: a long one is megabytes of transcript to read and shape.
+const HANDOFF_READ_TIMEOUT_MS = 20_000;
 // How long the repos a session's owner may start on are kept, for the pull requests it reports (reportableRepos).
 const STARTABLE_KEEP_MS = 60_000;
 const STATUS_TIMEOUT_MS = 5_000;
@@ -91,6 +94,12 @@ export const SETUP_APP_PROMPT = 'Woodshed\'s Start app has nothing to run: .wood
   + 'commit the file on this branch. The console reads the file within seconds and shows Open app once the frontend '
   + 'answers. Then tell me in a few plain words what you set up and that Open app opens it, at the address your rules '
   + 'give, never a localhost one, which I cannot reach.';
+
+// What statusd said went wrong, for a person: its own error when it gave one (git's push refusal), else the call's.
+function statusdError(err) {
+  const said = typeof err?.body?.error === 'string' ? err.body.error : firstLine(err);
+  return said.split('\n')[0].slice(0, 200);
+}
 
 function firstLine(err) {
   return String(err?.message ?? err).split('\n')[0].slice(0, 300);
@@ -310,6 +319,10 @@ export function createFleet({
   const unreachedStarts = new Map();
   // Stops in flight in this process. A session left `stopping` by a restart has none, and tick finishes it.
   const stopsInFlight = new Set();
+  // Private sessions being handed off (handOffPrivate): a second Hand off meanwhile would start a second session.
+  const handoffsInFlight = new Set();
+  // A Stop pressed while a hand-off's stop pushes: carried out if that push fails and the session would run on.
+  const stopsAskedMidHandoff = new Map();
   // Launches in flight in this process. A session left `starting` with no task by a restart has none, and tick
   // looks for the task it began.
   const launchesInFlight = new Set();
@@ -444,6 +457,8 @@ export function createFleet({
     if (session.taintedAt) return Promise.resolve(session);
     if (locking.has(session.id)) return locking.get(session.id);
     const run = (async () => {
+      // A hand-off reads the conversation into a session that outlives this one (handoff.mjs): never both at once.
+      if (handoffsInFlight.has(session.id)) throw shown('the session is being handed off to another agent: try again once it is done');
       if (session.status !== 'running' || !session.ref || !session.endpoint) throw shown('the session is not running');
       // One started before it could use production holds what an untainted session does (its owner's databases, maybe
       // the machine's Docker): it is never tainted, whatever the servers say now.
@@ -885,7 +900,11 @@ export function createFleet({
     }
   }
 
-  async function stop(session, reason, { by = null } = {}) {
+  /**
+   * @param {{by?: string|null, requireCheckpoint?: boolean}} [opts]  requireCheckpoint: a hand-off's stop, which goes on
+   *   only once the work is pushed; a checkpoint that fails leaves the session running and throws
+   */
+  async function stop(session, reason, { by = null, requireCheckpoint = false } = {}) {
     if (session.status === 'queued' || (session.status === 'starting' && !session.ref)) {
       // A start the console lost track of, e.g. across a restart, may still have made a container.
       if (session.status === 'starting') await launcher.stop(launcher.refFor(session.id));
@@ -901,24 +920,39 @@ export function createFleet({
       console.log('fleet: stopped session moved to Stopped', { id: session.id, by, stopReason: session.stopReason });
       return;
     }
+    if (session.status === 'stopping' && handoffsInFlight.has(session.id)) {
+      stopsAskedMidHandoff.set(session.id, { reason, by });
+      console.log('fleet: stop asked during a hand-off, held until its push is done', { id: session.id, by });
+      return;
+    }
     if (session.status !== 'starting' && session.status !== 'running') return;
     update(session, { status: 'stopping', stoppingAt: nowIso(), stopReason: reason, stoppedBy: by });
     console.log('fleet: stopping session', { id: session.id, reason, by });
     stopsInFlight.add(session.id);
     try {
-      await checkpointAndRemove(session);
+      await checkpointAndRemove(session, { requireCheckpoint });
     } finally {
       stopsInFlight.delete(session.id);
     }
     await startQueued();
   }
 
-  async function checkpointAndRemove(session) {
+  async function checkpointAndRemove(session, { requireCheckpoint = false } = {}) {
+    if (requireCheckpoint && !session.endpoint) {
+      update(session, { status: 'running', stoppingAt: null, stopReason: null, stoppedBy: null });
+      throw shown('the console cannot reach it to push its work: it keeps running');
+    }
     if (session.endpoint) {
       try {
-        const result = await statusd(session, 'POST', '/checkpoint', { timeoutMs: CHECKPOINT_TIMEOUT_MS });
+        const result = await statusd(session, 'POST', '/checkpoint', { timeoutMs: CHECKPOINT_TIMEOUT_MS, ...(requireCheckpoint ? { body: { keepRunningOnFailure: true } } : {}) });
         console.log('fleet: checkpoint pushed', { id: session.id, committed: result?.committed, head: result?.head });
       } catch (err) {
+        if (requireCheckpoint) {
+          // Its container and checkout stay: what it could not push is still there, and it runs on as it did.
+          update(session, { status: 'running', stoppingAt: null, stopReason: null, stoppedBy: null });
+          console.warn('fleet: checkpoint failed, the session keeps running', { id: session.id, message: firstLine(err) });
+          throw shown(`its work could not be pushed (${statusdError(err)}): it keeps running, with its work in its checkout`);
+        }
         console.warn('fleet: checkpoint failed, stopping anyway', { id: session.id, message: firstLine(err) });
       }
     }
@@ -1802,7 +1836,7 @@ export function createFleet({
    * @param {{owner: string, prompt: string, name?: string, workOn?: string, model?: string, effort?: string,
    *          permissionMode?: string, background?: boolean}} args  `workOn` is the form's optional issue, pull request or branch
    */
-  async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], background = false, project = defaultProject(config), herdrParent = false, startedFrom = null, startedApart = false, ...picked }) {
+  async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], files = [], background = false, project = defaultProject(config), herdrParent = false, startedFrom = null, startedApart = false, ...picked }) {
     refuseWithoutRepo(project, { kind: 'task', trigger: 'my-woodshed' });
     const on = parseWorkOn(workOn, { defaultBranch: await githubOf(project).defaultBranch?.() ?? null });
     const reviewOnly = !String(prompt ?? '').trim() && on.kind !== 'task';
@@ -1818,13 +1852,102 @@ export function createFleet({
     const given = String(name ?? '').trim().slice(0, TITLE_CHARS) || target.title || (reviewOnly ? `Review ${target.branch}` : '');
     // With no namer the first line stays, and the page offers the rename all the same.
     const naming = given ? null : (autoName?.(text) ?? Promise.resolve(null));
-    const attach = attachments && attachmentIds?.length ? (sessionId) => attachments.claim({ login: owner, ids: attachmentIds, sessionId }) : null;
+    // The files the person attached, then any the console made for it (a hand-off's conversation).
+    const attach = attachments && (attachmentIds?.length || files.length) ? async (sessionId) => {
+      const claimed = attachmentIds?.length ? await attachments.claim({ login: owner, ids: attachmentIds, sessionId }) : 0;
+      return claimed + (files.length ? await attachments.put({ sessionId, files, after: claimed }) : 0);
+    } : null;
     const session = await createSession({
       ...target, title: given || titleFrom(text), startedBy: owner, owner, trigger: 'my-woodshed', prompt: text, options, attach, background, reviewOnly, project,
       herdrParent, startedFrom, startedApart,
     });
     if (naming) renameWhenNamed(session, naming);
     return session;
+  }
+
+  /**
+   * Hand off, on a running private session: its work goes on in a new private session of the same owner, on the same
+   * branch, run by the agent picked (handoff.mjs). Its conversation is read first, while it runs; then it stops, which
+   * commits and pushes its work as any stop does; then the new one starts on the branch with the conversation attached
+   * and a prompt that says where it came from. The old one stays on the list, stopped, and Resume picks it up as ever.
+   * @param {{owner: string, id: string, conversation?: boolean, note?: string, project?: object, agent?: string,
+   *   model?: string, effort?: string, permissionMode?: string}} args  conversation: whether it goes across
+   * @returns {Promise<object>}  the new session
+   */
+  async function handOffPrivate({ owner, id, conversation = true, note = '', project: given = null, ...picked }) {
+    const from = find(id);
+    if (!from || from.owner !== owner) throw shown('no session you can open with that id');
+    // Nothing a tainted session holds is copied anywhere that outlives it (CLAUDE.md, "Production data").
+    // Its lockdown under way counts as seen: the call that started it may be answering with production data now.
+    if (isLocked(from)) throw shown('it has seen production data: nothing it holds goes to another session');
+    if (handoffsInFlight.has(id)) throw shown('it is being handed off already');
+    if (from.status !== 'running' || !from.endpoint) throw shown('only a running session can be handed off: resume it first');
+    if (!from.branch) throw shown('it has no branch to hand off');
+    const text = handoffNote(note);
+    const sourceAgent = agents.agentOfSession(from);
+    // The new agent's loosest mode that lets it do no more unasked than the old one could, as a session started from
+    // another gets (shared/agents.cjs, modeForStartedSession), unless the person picked one.
+    const carried = picked.permissionMode || agents.modeForStartedSession(sourceAgent, from.options?.permissionMode || 'auto', picked.agent || 'claude');
+    const options = sessionOptions({ ...picked, permissionMode: carried });
+    const source = { id, title: from.title, agent: sourceAgent, branch: from.branch };
+    const project = given ?? projectFor(config, from);
+    // The branch the new session starts on is checked as its start would, before anything stops: the agent may have
+    // checked out the default branch, or a pull request's branch may have a name a session cannot take.
+    const workOn = parseWorkOn(from.branch, { defaultBranch: await githubOf(project).defaultBranch?.() ?? null });
+    if (workOn.kind !== 'branch' || workOn.branch !== from.branch) throw shown(`${from.branch} is not a branch name a session can work on`);
+    // Taken before anything is awaited after the checks above, so a lockdown that starts from here on is refused (taint).
+    if (isLocked(from) || handoffsInFlight.has(id)) throw shown('it has seen production data, or is being handed off already');
+    handoffsInFlight.add(id);
+    try {
+      let entries = [];
+      if (conversation) {
+        try {
+          const read = await statusd(from, 'GET', '/transcript', { timeoutMs: HANDOFF_READ_TIMEOUT_MS });
+          entries = Array.isArray(read?.entries) ? read.entries : [];
+        } catch (err) {
+          console.warn('fleet: hand-off refused, the conversation not read', { id, message: firstLine(err) });
+          throw shown('its conversation could not be read: try again, or hand off without it');
+        }
+      }
+      // A lockdown that won the race before the hand-off was taken: nothing read from it goes anywhere.
+      if (isLocked(from)) throw shown('it has seen production data: nothing it holds goes to another session');
+      // Stopped only once its work is pushed: a push refused (a branch moved on remotely) leaves it running, its work
+      // in its checkout, and nothing handed off.
+      try {
+        await stop(from, `handed off to ${agents.agent(options.agent).product}`, { by: owner, requireCheckpoint: true });
+      } catch (err) {
+        // Someone pressed Stop meanwhile: it runs on only because the hand-off failed, so their stop goes ahead.
+        const asked = stopsAskedMidHandoff.get(id);
+        if (asked) {
+          stopsAskedMidHandoff.delete(id);
+          handoffsInFlight.delete(id);
+          await stop(from, asked.reason, { by: asked.by });
+          throw shown(`${err.message.replace(/: it keeps running.*$/, '')}: it was stopped, as asked meanwhile`);
+        }
+        throw err;
+      }
+      if (from.status !== 'stopped') throw shown('it did not stop: try again in a moment');
+      const files = conversation ? [{ name: HANDOFF_FILE, text: handoffDocument({ from: source, to: options, entries, at: nowIso() }) }] : [];
+      let next;
+      try {
+        next = await startPrivate({
+          owner, prompt: handoffPrompt({ from: source, to: options, note: text, conversation }), name: from.title, workOn: from.branch,
+          files, background: true, project, ...options,
+        });
+      } catch (err) {
+        console.warn('fleet: hand-off stopped the session, the new one did not start', { id, agent: options.agent, message: firstLine(err) });
+        throw shown(`it stopped with its work pushed, but the new session did not start (${err.message}): Resume picks it up again`);
+      }
+      update(from, { handedOffTo: next.id });
+      update(next, { handedOffFrom: id });
+      console.log('fleet: session handed off', {
+        id, to: next.id, owner, from: source.agent, agent: options.agent, model: options.model || null, conversation, entries: entries.length, note: Boolean(text),
+      });
+      return next;
+    } finally {
+      handoffsInFlight.delete(id);
+      stopsAskedMidHandoff.delete(id);
+    }
   }
 
   // At the limit a private session waits in its owner's own line, and starts when one of their tasks stops.
@@ -3009,7 +3132,7 @@ export function createFleet({
   }
 
   return {
-    createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    createSession, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

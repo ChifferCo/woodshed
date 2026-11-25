@@ -410,6 +410,15 @@ URL on top of each env file's Repo settings values
   own line (`userSettings: terminal changed`, `reviews of my pull requests`, `own token for shared sessions`, `own
   Codex sign-in for reviews`, `git identity changed`). `answered 404` or `does not let the command line change` is a
   console from before `GET /api/cli/config` (cli/README.md, "Your choices on My settings").
+- **Hand off refused, or the new session does not know what the old one did.** The console logs `fleet: session handed
+  off` with both ids, the agents, `conversation` and how many `entries` went (console/README.md, "My Woodshed"). `hand-off
+  refused, the conversation not read` is statusd not answering `/transcript`: nothing was stopped. `checkpoint failed,
+  the session keeps running` is its push refused (often a branch moved on remotely): it runs on with its work committed
+  in its checkout; pull and push there, then hand off again. A production call refused with `being handed off` is a
+  lockdown asked for mid-hand-off, which the two never share. `hand-off stopped the
+  session, the new one did not start` gives why; the old one is stopped with its work pushed, and Resume reopens it. A
+  new session with no `handoff.md` in `/tmp/uploads` was handed off with the conversation left behind, or its
+  attachments were not fetched (`WARNING: attachments not fetched` in its log).
 - **`woodshed-session` in a session refuses, or the session it started is missing.** It says why (console/README.md,
   "Sessions that start sessions"): `only a My Woodshed session can` is no `/tmp/woodshed-start-token` (a shared session,
   a question, review or QA run, a tainted one, or an image from before it; the session's log says `Session starts on`

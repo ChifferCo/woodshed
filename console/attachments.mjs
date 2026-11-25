@@ -105,6 +105,22 @@ export function createAttachments({ dir, now = Date.now }) {
     return picked.length;
   }
 
+  /**
+   * Files the console made itself for a session (a hand-off's conversation, handoff.mjs), after any the person attached.
+   * @param {{sessionId: string, files: {name: string, text: string}[], after?: number}} args  after: how many it has already
+   * @returns {Promise<number>}  how many it wrote
+   */
+  async function put({ sessionId, files, after = 0 }) {
+    if (!files?.length) return 0;
+    const to = sessionDir(sessionId);
+    await fsp.mkdir(to, { recursive: true });
+    for (const [i, file] of files.entries()) {
+      await fsp.writeFile(path.join(to, attachmentName(file.name, after + i)), file.text, { mode: 0o600, flag: 'wx' });
+    }
+    console.log('attachments: written by the console', { sessionId, count: files.length });
+    return files.length;
+  }
+
   /** @returns {Promise<boolean>}  whether the session has any, before tarring them */
   async function has(sessionId) {
     return (await fsp.readdir(sessionDir(sessionId)).catch(() => [])).length > 0;
@@ -152,5 +168,5 @@ export function createAttachments({ dir, now = Date.now }) {
     if (removed) console.log('attachments: old staged files removed', { removed });
   }
 
-  return { stage, claim, has, send, drop, sweep };
+  return { stage, claim, put, has, send, drop, sweep };
 }
