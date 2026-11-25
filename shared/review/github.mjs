@@ -1,7 +1,7 @@
 // Everything that talks to GitHub, via the `gh` CLI already installed and
 // authenticated on the box.
 //
-// Every call is spawn(binary, [argv]) via exec.mjs — no shell is constructed
+// Calls pass argv through exec.mjs — no shell is constructed
 // anywhere here, which is why server.mjs's `shQuote` is deliberately
 // unused here. `shQuote` exists for tmux's `new-session <command>` string,
 // which really is handed to /bin/sh; there is no equivalent on this path.
@@ -18,6 +18,49 @@ import { aiReviewsOf } from './aiReviews.mjs';
 import { checkRunsOf } from './prChecks.mjs';
 
 const GH_TIMEOUT_MS = 30_000;
+const REVIEW_IMAGE_TYPES = new Map([
+  ['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'],
+  ['.gif', 'image/gif'], ['.webp', 'image/webp'], ['.avif', 'image/avif'],
+]);
+
+// prAssets.sh links to a commit, including for private repositories where the
+// browser's cross-site request to github.com may have no GitHub cookie.
+async function fetchPrImage({ slug, src, log }, env) {
+  const match = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/blob\/([a-f0-9]{40})\/([^?#]+)\?raw=true$/i.exec(src || '');
+  if (!match || match[1].toLowerCase() !== slug.toLowerCase()) return null;
+  const [, , sha, rawPath] = match;
+  let parts;
+  try {
+    parts = rawPath.split('/').map(decodeURIComponent);
+  } catch {
+    return null;
+  }
+  if (parts.some((part) => !part || part === '.' || part === '..' || /[/\\\x00-\x1f\x7f]/.test(part))) return null;
+  const type = REVIEW_IMAGE_TYPES.get(path.extname(parts.at(-1)).toLowerCase());
+  if (!type) return null;
+  const file = parts.map(encodeURIComponent).join('/');
+  const read = await run('gh', [
+    'api', `repos/${slug}/contents/${file}?ref=${sha}`, '-H', 'Accept: application/vnd.github.raw',
+  ], { env, binary: true, timeoutMs: GH_TIMEOUT_MS, maxBytes: 10 * 1024 * 1024 });
+  if (read.truncated || read.timedOut || read.status !== 0) {
+    const reason = read.truncated ? 'size limit' : read.timedOut ? 'timeout' : 'subprocess failure';
+    log?.('review.image_not_loaded', { reason });
+    return null;
+  }
+  return read.stdout.length ? { type, bytes: read.stdout } : null;
+}
+
+// Snapshot the credential once. The session's gh wrapper honors GH_TOKEN, so
+// validation and the contents request use the same token even during a refresh.
+export async function personalPrImageReader() {
+  const token = await run('gh', ['auth', 'token', '--hostname', 'github.com'], { timeoutMs: GH_TIMEOUT_MS });
+  const value = token.stdout.trim();
+  if (token.status !== 0 || !value || /\s/.test(value)) return null;
+  const env = { ...process.env, GH_HOST: 'github.com', GH_TOKEN: value };
+  const user = await run('gh', ['api', 'user', '--jq', '.login'], { env, timeoutMs: GH_TIMEOUT_MS });
+  if (user.status !== 0 || !/^[A-Za-z0-9-]{1,39}$/.test(user.stdout.trim())) return null;
+  return (image) => fetchPrImage(image, env);
+}
 // The three things a review can say, and nothing else reaches argv. A map
 // rather than a check-then-interpolate, so an unknown action cannot become a
 // flag.
@@ -462,11 +505,9 @@ export async function fetchReviewState({ pr, slug }) {
     description: {
       author: node.author?.login || 'someone',
       body: (node.body || '').trim(),
-      // GitHub's own rendering, which is the only way to show an image on a
-      // private repository: its links come back signed for about five
-      // minutes, where the markdown's point at github.com and need a login
-      // cookie a cross-site image request does not carry. The page rebuilds
-      // it through an allowlist rather than inserting it.
+      // GitHub signs some image URLs in its own rendering. The page rebuilds
+      // that HTML through an allowlist and can retry unsigned repository
+      // screenshots through the review's image route.
       html: node.bodyHTML || '',
       at: node.createdAt || null,
       url: node.url || null,
