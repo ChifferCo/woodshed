@@ -1811,8 +1811,13 @@
     document.activeElement?.blur?.();
     window.focus();
     keyMove = true;
+    // On a phone, Everyone's status chip lives in the address (railStatus): the session opened keeps it, so the next key
+    // moves within it still.
+    const status = !railMine() && narrow.matches ? railStatus() : 'all';
+    const href = sessionHref(s);
+    const to = status === 'all' ? href : `${href}${href.includes('?') ? '&' : '?'}status=${encodeURIComponent(status)}`;
     try {
-      navigate(sessionHref(s));
+      navigate(to);
     } finally {
       keyMove = false;
     }
@@ -1857,7 +1862,8 @@
           // Review is a framed page: the frame takes the keys. Diff and App log are this page's panels: the panel does,
           // so the arrows and Page Down scroll it.
           const frame = tab === 'review' ? slots.review.querySelector('iframe') : null;
-          const panel = frame ? null : ({ diff: slots.diff, applog: slots.applog })[tab];
+          // A stopped session's Review is drawn into the pane itself, with no frame: the pane takes the keys then.
+          const panel = frame ? null : ({ diff: slots.diff, applog: slots.applog, review: slots.review })[tab];
           if (frame) frame.focus();
           else if (panel) {
             panel.tabIndex = -1;
