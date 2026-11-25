@@ -299,19 +299,31 @@
   // (its repeats) it is not one either. Read in the page and in every frame (bindFrame), with one state for all.
   const TAP_MS = 400;
   let tapDown = false;
+  let tapDownAt = 0;
   let lastTapAt = 0;
-  function onTapKeyDown(e) {
-    if (K.isTap(e, MAC)) {
-      if (!e.repeat) tapDown = true;
-      return;
-    }
+  function notATap() {
     tapDown = false;
     lastTapAt = 0;
+  }
+  function onTapKeyDown(e) {
+    if (K.isTap(e, MAC)) {
+      if (!e.repeat) {
+        tapDown = true;
+        tapDownAt = Date.now();
+      }
+      return;
+    }
+    notATap();
   }
   function onTapKeyUp(e) {
     if (!K.isTap(e, MAC) || !tapDown) return;
     tapDown = false;
     const now = Date.now();
+    // Held longer than a tap (Ctrl kept down while thinking) is no tap, and no first one for the next either.
+    if (now - tapDownAt > TAP_MS) {
+      lastTapAt = 0;
+      return;
+    }
     if (now - lastTapAt > TAP_MS) {
       lastTapAt = now;
       return;
@@ -325,7 +337,9 @@
       startMoving();
     }
   }
-  window.addEventListener('blur', () => { tapDown = false; lastTapAt = 0; });
+  window.addEventListener('blur', notATap);
+  // ⌘ or Ctrl with a click or the wheel (a new tab, a zoom) is that, not a tap.
+  for (const type of ['pointerdown', 'wheel']) document.addEventListener(type, notATap, { capture: true, passive: true });
 
   function onKey(e, inFrame, modOnly = false) {
     onTapKeyDown(e);
@@ -385,7 +399,11 @@
       return;
     }
     // A move or a tab picked with the palette or the sheet open closes it first, so the new session gets the keys.
-    if (movingKey) closeAll();
+    // Notifications too: a move takes the focus from their list, whose own Esc would then never close it.
+    if (movingKey) {
+      closeAll();
+      notifications().close();
+    }
     // A tab ends the mode: the tab takes the keys from there, to be typed in.
     if (id === 'tab') {
       stopMoving();
@@ -404,6 +422,7 @@
       doc.__woodshedShell = true;
       doc.addEventListener('keydown', (e) => onKey(e, terminal, !terminal), true);
       doc.addEventListener('keyup', onTapKeyUp, true);
+      for (const type of ['pointerdown', 'wheel']) doc.addEventListener(type, notATap, { capture: true, passive: true });
       doc.addEventListener('pointerdown', stopMovingOnClick, true);
     } catch {
       // Not same-origin after all: the page's own keys still work.
