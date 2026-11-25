@@ -426,6 +426,28 @@ test('a QA session sends its run log through /qa-log, as often as it likes and e
   assert.match(kept[1].text, /ran out of turns/);
 });
 
+test('a review session sends its run log through /review-log, as a QA run does: a summary of its script\'s lines only, and no other session can', async (t) => {
+  const review = { id: 'aaaaaaaa', status: 'running', token: 'rv-token', kind: 'pr', number: 7, review: { base: 'main' } };
+  const sessions = [review, { id: 'bbbbbbbb', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main' } }];
+  const kept = [];
+  const fleet = { sessions: () => sessions, reviewLog: (session, text, tier) => kept.push({ id: session.id, text, tier }) };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({ token: 'ghs', expiresAt: 0 }) } });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const send = (authorization, body, path = '/review-log') => request(port, { path, authorization, body });
+  const summary = 'Review of pull request #7 against main, session aaaaaaaa\n\n## verdict\nVerdict: none\n';
+
+  assert.equal((await send('Bearer qa-token', summary, '/review-log?tier=summary')).status, 404, 'a QA session has none to send here');
+  assert.equal((await send('Bearer rv-token', summary, '/review-log?tier=summary')).status, 200);
+  assert.equal((await send('Bearer rv-token', 'anything the agents said', '/review-log')).status, 200, 'the full log is not checked');
+  const refused = await send('Bearer rv-token', `${summary}registry credential zzOpaque7788\n`, '/review-log?tier=summary');
+  assert.equal(refused.status, 400);
+  assert.ok(!JSON.stringify(refused.body).includes('zzOpaque7788'));
+  assert.deepEqual(kept.map((k) => k.tier), ['summary', 'full'], 'the refused one was not kept');
+});
+
 test('a QA session sends its WebM videos through /qa-video before its report; nothing else, and no other session, can', async (t) => {
   const qa = { id: 'aaaaaaaa', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main' } };
   const sessions = [qa, { id: 'bbbbbbbb', status: 'running', token: 'pr-token', kind: 'pr', number: 7 }];

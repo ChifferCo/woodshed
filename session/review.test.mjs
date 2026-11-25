@@ -6,6 +6,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { isolatedEnv } from '../test/isolatedEnv.mjs';
+import { reviewSummaryProblem } from '../console/reviewSummary.mjs';
 
 const HERE = import.meta.dirname;
 const REVIEW_SH = path.join(HERE, 'review.sh');
@@ -133,10 +134,16 @@ async function runReview(t, { committed = {}, origin = 'https://github.com/Acme/
   }
   if (Object.keys(committed).length) execFileSync('bash', ['-c', `cd "${repo}" && git add -A -f && git -c user.email=t@t -c user.name=t commit -qm branch`]);
   const reports = [];
+  const logs = [];
   const consoleServer = await listen((req, res) => {
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
+      if (req.url.startsWith('/review-log')) {
+        logs.push({ tier: new URL(req.url, 'http://x').searchParams.get('tier'), type: req.headers['content-type'], auth: req.headers.authorization, text: body, reports: reports.length });
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+        return;
+      }
       reports.push({ path: req.url, body: body ? JSON.parse(body) : null, auth: req.headers.authorization });
       res.writeHead(204).end();
     });
@@ -144,7 +151,7 @@ async function runReview(t, { committed = {}, origin = 'https://github.com/Acme/
   t.after(() => consoleServer.close());
   const env = {
     ...isolatedEnv(), PATH: `${bin}:${process.env.PATH}`, SESSION_DIR: sessionDir, REPO_DIR: repo, PR: '7', REVIEW_BASE: 'main',
-    SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`, REVIEW_SCRIPT: REVIEW_MJS,
+    SESSION_ID: '0a1b2c3d', SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`, REVIEW_SCRIPT: REVIEW_MJS,
     REVIEW_RUNNING: path.join(dir, 'running'), REVIEW_AUTHOR: 'rev[bot]', GIT_ALLOW_PROTOCOL: 'file',
   };
   delete env.GITHUB_REPOSITORY;
@@ -167,7 +174,7 @@ async function runReview(t, { committed = {}, origin = 'https://github.com/Acme/
     child.stderr.on('data', (c) => { output += c; });
     child.on('close', resolve);
   });
-  return { reports, output, standIn: fs.existsSync(seen) ? JSON.parse(fs.readFileSync(seen, 'utf8')) : null, codexHome };
+  return { reports, logs, output, standIn: fs.existsSync(seen) ? JSON.parse(fs.readFileSync(seen, 'utf8')) : null, codexHome };
 }
 
 test('a review in a session, where GitHub Actions\' variables are not set, finds its repo from the checkout and reports the verdict', async (t) => {
@@ -365,5 +372,44 @@ test('a verdict the pull request commits in .review is never reported, for a sol
     assert.equal(body.conclusion, null, `${agents ?? 'claude'}: no verdict of the branch's`);
     assert.doesNotMatch(JSON.stringify(body), /ship it/, `${agents ?? 'claude'}: nothing of the planted summary`);
     assert.match(output, /carries a \.review folder of its own/, `${agents ?? 'claude'}: said in the pane`);
+  }
+});
+
+const REVIEW_FAKE_FAILING_CLAUDE = `#!/bin/bash
+prompt=$4
+[ -n "$prompt" ] || exit 1
+case " $* " in *" haiku "*) echo "\${FAKE_SCREEN:-NONE}"; exit 0 ;; esac
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"registry said zzOpaque7788"},{"type":"tool_use","name":"Bash"}]}}'
+echo '{"type":"result","subtype":"error_max_turns","is_error":false,"num_turns":60,"total_cost_usd":2}'
+`;
+
+test('a review leaves a run log in two tiers: a summary the console accepts, and a full log, each before the verdict', async (t) => {
+  const { logs, reports } = await runReview(t);
+  const summary = logs.filter((l) => l.tier === 'summary');
+  const full = logs.filter((l) => l.tier === 'full');
+  assert.ok(summary.length >= 2 && full.length === 1, 'a summary before the reviewers start and one with the verdict, and one full log');
+  assert.deepEqual([logs[0].auth, logs[0].type], ['Bearer tok', 'text/plain']);
+  assert.match(summary[0].text, /Review of pull request #7 against main[\s\S]*## review\nStarted; its outcome is not known yet\.[\s\S]*Verdict: not yet/);
+  assert.match(summary.at(-1).text, /## review\nEnded: finished \(success\)[\s\S]*Verdict: APPROVE/);
+  for (const l of summary) assert.equal(reviewSummaryProblem(l.text, { number: 7, base: 'main' }), null, l.text);
+  assert.ok(logs.every((l) => l.reports === 0), 'all before the report');
+  assert.equal(reports.length, 1);
+});
+
+test('a review whose claude ran out of turns says so in its log and writes no verdict, and the summary holds none of what it said', async (t) => {
+  const { logs } = await runReview(t, { claude: REVIEW_FAKE_FAILING_CLAUDE });
+  const summary = logs.filter((l) => l.tier === 'summary').at(-1);
+  assert.match(summary.text, /Ended: ran out of turns before it finished \(error_max_turns\)[\s\S]*Verdict: none/);
+  assert.doesNotMatch(summary.text, /zzOpaque7788|registry said/);
+  assert.equal(reviewSummaryProblem(summary.text, { number: 7, base: 'main' }), null);
+  assert.match(logs.find((l) => l.tier === 'full').text, /registry said zzOpaque7788/, 'the full log, for admins and the starter, has it');
+});
+
+test('every summary a review sends is one the console accepts, with each reviewer', async (t) => {
+  for (const options of [{ agents: 'claude codex' }, { agents: 'codex' }, { agents: 'claude codex grok opencode', provider: 'openai' }, { origin: null }]) {
+    const { logs } = await runReview(t, options);
+    const summaries = logs.filter((l) => l.tier === 'summary');
+    assert.ok(summaries.length > 0, JSON.stringify(options));
+    for (const l of summaries) assert.equal(reviewSummaryProblem(l.text, { number: 7, base: 'main' }), null, `${JSON.stringify(options)}: ${l.text}`);
   }
 });

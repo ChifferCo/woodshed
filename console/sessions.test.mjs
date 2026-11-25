@@ -300,6 +300,12 @@ test('publicSession keeps a QA run\'s log out of the list and says it has one', 
   assert.deepEqual(publicSession(session({ qa: { base: 'main' } })).qa, { base: 'main' });
 });
 
+test('publicSession keeps a review run\'s logs out of the list and says it has one', () => {
+  const view = publicSession(session({ review: { base: 'main', log: 'full text', summaryLog: 'counts' } }));
+  assert.deepEqual(view.review, { base: 'main', hasLog: true });
+  assert.deepEqual(publicSession(session({ review: { base: 'main' } })).review, { base: 'main' });
+});
+
 test('publicSession drops a public QA run\'s secret, and keeps the rest of its QA', () => {
   const view = publicSession(session({ qa: { base: 'main', share: 'c'.repeat(32), videos: [{ n: 1, bytes: 1 }] } }));
   assert.deepEqual(view.qa, { base: 'main', videos: [{ n: 1, bytes: 1 }] });

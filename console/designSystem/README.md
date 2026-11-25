@@ -151,7 +151,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## Run log
 
-- A QA session that has stopped shows what its run did under its facts, in a fold (`components/RunLog`): a `Run log`
+- A QA or review session that has stopped shows what its run did under its facts, in a fold (`components/RunLog`): a `Run log`
   summary, and opened, a `line`-bordered, 6px-radius panel of mono text on `ground`, 12.5px, wrapped, at most 60vh
   tall and scrolling. Plain text only, never a status by color. It is read when opened, so a closed fold costs nothing.
 - The text is the console's own record of the run. An admin and whoever started the run read the full log, with credentials

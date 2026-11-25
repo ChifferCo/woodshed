@@ -11,9 +11,8 @@ const ENDED = ['ran out of turns before it finished', 'hit an error while it ran
 const CATEGORY = '(?:timeout|connection refused|not found|permission denied|server error|other)';
 
 // Lines with nothing in them that varies but a count.
-const LINES = [
+export const COUNT_LINES = [
   /^$/,
-  /^## (?:steps|plan|test)$/,
   /^Did not run\.$/,
   /^Started; its outcome is not known yet\.$/,
   /^No report\.md was written\.$/,
@@ -26,8 +25,9 @@ const LINES = [
   /^Said: \d{1,6} messages?$/,
   /^Other output: \d{1,6} lines?$/,
 ];
+const LINES = [/^## (?:steps|plan|test)$/, ...COUNT_LINES];
 
-const escaped = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export const escaped = (text) => String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * @param {string} text  the summary a QA session posted

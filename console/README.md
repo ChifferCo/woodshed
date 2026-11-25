@@ -1334,6 +1334,14 @@ The review gets `review.agents` and `REVIEW_AGENTS` (any of `claude`, `codex`, `
 Before any of them starts, it removes the whole `.review/` folder: a branch can commit one, verdict and all, which a
 reviewer that writes none would leave to be reported as its own (the pane says `The pull request carries a .review
 folder of its own`).
+
+A review leaves a run log as a QA run does (`POST /review-log`, `?tier=summary` or full; `fleet: review run log kept`),
+so one that ends with no verdict says why. The **summary** is the steps, how claude's pass ended (turns, cost, tool errors
+by category) and the verdict's word, and the console keeps it only when every line is one `session/review.sh` writes
+(`reviewSummary.mjs`, the pull request's number and base branch checked against the session's). The **full log** adds what
+the agents said, scrubbed by value, by pattern and by a model's second look. An ended review session's page shows it under
+**Run log** (`GET /api/sessions/<id>/review-log`): the full log to an admin and whoever started the review, the summary to
+anyone else who may open the session. A review is stopped before its first checkpoint leaves none.
 Codex works as in a Codex session: it reads the checkout, runs what it likes (the container is the sandbox) and writes
 its verdict's files itself, in `.review/codex/`. It gets `REVIEW_CODEX_MINUTES` (20 by default), then is stopped, and
 Claude's verdict goes out alone. Codex alone sends its own verdict.

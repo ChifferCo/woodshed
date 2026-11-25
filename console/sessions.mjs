@@ -639,6 +639,8 @@ export function publicSession({ token, terminalToken, startTokenHash, endpoint, 
   const heldIds = (pendingMessages ?? []).filter((m) => m && typeof m === 'object' && m.id).map((m) => m.id);
   // A public QA run's secret opens its videos to anyone: the page has the comment's links, never the key to them.
   // Its run log is read on request (GET /api/sessions/<id>/qa-log), not carried in every list: the page gets `hasLog`.
-  const qa = rest.qa ? (({ share, log, summaryLog, ...own }) => ({ ...own, ...(log || summaryLog ? { hasLog: true } : {}) }))(rest.qa) : rest.qa;
-  return { ...rest, ...(qa ? { qa } : {}), pendingMessages: pendingMessages?.length ?? 0, heldIds, hasShell: Boolean(endpoint?.shellPort) };
+  const withoutLogs = ({ share, log, summaryLog, ...own }) => ({ ...own, ...(log || summaryLog ? { hasLog: true } : {}) });
+  const qa = rest.qa ? withoutLogs(rest.qa) : rest.qa;
+  const review = rest.review ? withoutLogs(rest.review) : rest.review;
+  return { ...rest, ...(qa ? { qa } : {}), ...(review ? { review } : {}), pendingMessages: pendingMessages?.length ?? 0, heldIds, hasShell: Boolean(endpoint?.shellPort) };
 }

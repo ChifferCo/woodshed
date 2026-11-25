@@ -258,7 +258,7 @@ import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
 import agentsRegistry from '../shared/agents.cjs';
 import { applyStored, createGitHubAppSetup, supervisorOf } from './githubAppSetup.mjs';
 import { createInstallation } from './installation.mjs';
-import { ACTIVE_STATUSES, activePrivateCount, canSee, isQa, linkQueryString, prUrlsOf, publicSession, sessionOptions, sharedRunningCount, woodshedRunsOn } from './sessions.mjs';
+import { ACTIVE_STATUSES, activePrivateCount, canSee, isQa, isReview, linkQueryString, prUrlsOf, publicSession, sessionOptions, sharedRunningCount, woodshedRunsOn } from './sessions.mjs';
 import { WEBHOOK_SECRET } from './settings.mjs';
 import { openStore } from './store.mjs';
 import { parseHandle } from './members.mjs';
@@ -420,7 +420,7 @@ const ASSIGN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/assign$/;
 const SHARED_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(resume|delete|remove)$/;
 const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename|group)$/;
 const LIMIT_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(extend|limits)$/;
-const QA_LOG_RE = /^\/api\/sessions\/([0-9a-f]{8})\/qa-log$/;
+const QA_LOG_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(qa|review)-log$/;
 const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|interrupt|answer|prompt|applog|diff|transcript)$/;
 // The agents started beside a private session's own (session/agents.mjs): the list, a start, and each one's Chat routes.
 const AGENTS_RE = /^\/api\/sessions\/([0-9a-f]{8})\/agents(?:\/(agent-[2-9])\/(transcript|send|interrupt|answer|prompt|stop))?$/;
@@ -3230,10 +3230,11 @@ export function createHandler({
       // Whoever may open the QA session reads its run log's summary (counts and fixed words). The full log, which holds
       // what claude and its tools printed, is for an admin and whoever started the run (or owns the session).
       const found = findFor(qaLogRead[1], user.login);
-      if (!found || !isQa(found)) return reply(res, 404, { error: 'no such QA session' });
-      const full = (isAdmin(user) || (user.login && (found.startedBy === user.login || found.owner === user.login))) && found.qa?.log;
-      const text = full ? found.qa.log : found.qa?.summaryLog;
-      if (!text) return reply(res, 404, { error: 'this QA session sent no run log' });
+      const logs = qaLogRead[2] === 'qa' ? (isQa(found ?? {}) ? found.qa : null) : (isReview(found ?? {}) ? found.review : null);
+      if (!found || !logs) return reply(res, 404, { error: `no such ${qaLogRead[2] === 'qa' ? 'QA' : 'review'} session` });
+      const full = (isAdmin(user) || (user.login && (found.startedBy === user.login || found.owner === user.login))) && logs.log;
+      const text = full ? logs.log : logs.summaryLog;
+      if (!text) return reply(res, 404, { error: 'this session sent no run log' });
       res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-qa-log-tier': full ? 'full' : 'summary' }).end(text);
       return;
     }

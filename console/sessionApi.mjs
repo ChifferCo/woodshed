@@ -88,6 +88,7 @@ import { MAX_ANSWER_CHARS, MAX_ISSUE_BODY_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
 import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { summaryProblem } from './qaSummary.mjs';
+import { reviewSummaryProblem } from './reviewSummary.mjs';
 import { MAX_QA_LOG_BYTES, MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES, MAX_REPORT_CHARS, isWebm, parseQaReport } from './qaSessions.mjs';
 import { MAX_QA_POSTER_BYTES, isPng } from './qaRecordings.mjs';
 import { ACTIVE_STATUSES, START_STEPS, isAsk, isQa, isReview, runsCodex } from './sessions.mjs';
@@ -226,7 +227,7 @@ export function createSessionApi({
     }
     // Its own token, not the session token (sessionStarts.mjs).
     if (sessionStarts?.isPath(pathname)) return sessionStarts.handle(req, res);
-    const routes = ['/codex-auth', '/agent-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/issues', '/qa-report', '/qa-log', '/qa-video', '/qa-poster', '/review-report', '/egress'];
+    const routes = ['/codex-auth', '/agent-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/issues', '/qa-report', '/qa-log', '/review-log', '/qa-video', '/qa-poster', '/review-report', '/egress'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -242,6 +243,7 @@ export function createSessionApi({
     if (pathname === '/issues') return issueReply(req, res, session, asks);
     if (pathname === '/qa-report') return qaReportReply(req, res, session, fleet);
     if (pathname === '/qa-log') return qaLogReply(req, res, session, fleet);
+    if (pathname === '/review-log') return reviewLogReply(req, res, session, fleet);
     if (pathname === '/qa-video') return qaRecordingReply(req, res, session, fleet, VIDEO);
     if (pathname === '/qa-poster') return qaRecordingReply(req, res, session, fleet, POSTER);
     if (pathname === '/review-report') return reviewReportReply(req, res, session, fleet);
@@ -626,9 +628,22 @@ function qaReportReply(req, res, session, fleet) {
 // A QA session's run log (session/qa.sh), in two tiers (`?tier=summary`, else full; see fleet.qaLog): plain text, sent after each pass and before the report, and kept whole, the
 // latest replacing the last, so a run that is stopped before its report still leaves why. Never refused for being late.
 async function qaLogReply(req, res, session, fleet) {
-  if (!isQa(session) || !fleet.qaLog) {
+  return runLogReply(req, res, session, {
+    kind: 'QA', mine: isQa(session), save: fleet.qaLog?.bind(fleet), problem: (text) => summaryProblem(text, { number: session.number, base: session.qa?.base ?? '' }),
+  });
+}
+
+// A review session's run log, the same (session/review.sh, reviewSummary.mjs).
+async function reviewLogReply(req, res, session, fleet) {
+  return runLogReply(req, res, session, {
+    kind: 'review', mine: isReview(session), save: fleet.reviewLog?.bind(fleet), problem: (text) => reviewSummaryProblem(text, { number: session.number, base: session.review?.base ?? '' }),
+  });
+}
+
+async function runLogReply(req, res, session, { kind, mine, save, problem }) {
+  if (!mine || !save) {
     req.resume();
-    return reply(res, 404, { error: 'only a QA session has a run log to send' });
+    return reply(res, 404, { error: `only a ${kind} session has a run log to send` });
   }
   if (Number(req.headers['content-length']) > MAX_QA_LOG_BYTES) {
     req.resume();
@@ -643,14 +658,14 @@ async function qaLogReply(req, res, session, fleet) {
   }
   const tier = new URL(req.url || '/', 'http://x').searchParams.get('tier') === 'summary' ? 'summary' : 'full';
   const text = Buffer.concat(chunks).toString('utf8');
-  // The summary is read by everyone who can open the session and is posted by a process running the pull request's code:
-  // it is kept only if every line is one the run's own script writes (qaSummary.mjs).
-  const problem = tier === 'summary' ? summaryProblem(text, { number: session.number, base: session.qa?.base ?? '' }) : null;
-  if (problem) {
-    console.warn('sessionApi: a QA summary refused', { sessionId: session.id, why: problem });
-    return reply(res, 400, { error: `the summary has only the lines the run's script writes: ${problem}` });
+  // The summary is read by everyone who can open the session and is posted by a process running beside the pull request's
+  // code: it is kept only if every line is one the run's own script writes (qaSummary.mjs, reviewSummary.mjs).
+  const why = tier === 'summary' ? problem(text) : null;
+  if (why) {
+    console.warn(`sessionApi: a ${kind} summary refused`, { sessionId: session.id, why });
+    return reply(res, 400, { error: `the summary has only the lines the run's script writes: ${why}` });
   }
-  fleet.qaLog(session, text, tier);
+  save(session, text, tier);
   return reply(res, 200, { saved: true });
 }
 

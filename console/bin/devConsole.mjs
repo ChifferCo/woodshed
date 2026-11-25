@@ -231,7 +231,41 @@ No report.md was written.
   session('9a9a0001', 26334, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '5eed334', stopReason: 'QA finished: Fail: 1 of 6 test cases failed', createdAt: earlier, startedAt: earlier, stoppedAt: earlier }),
   session('7f7f7f7f', 144, 'Review: feat(console): pin a session', {
     trigger: 'review', prUrl: null, stopReason: 'Review finished: APPROVE',
-    review: { base: 'main', sha: 'f00d144', heading: null, author: null, check: null, commentId: null, conclusion: 'APPROVE', reported: true },
+    review: { base: 'main', sha: 'f00d144', heading: null, author: null, check: null, commentId: null, conclusion: 'APPROVE', reported: true, log: `Review of pull request #144 against main, session 7f7f7f7f
+
+## steps
+[review 10:02:11] Review of pull request #144 against main
+[review 10:02:13] Reviewing the diff of example-org/example-repo with Claude Code and Codex
+[review 10:09:02] Codex ended (exit=0)
+[review 10:12:40] Waiting for Codex to finish
+
+## review
+Ended: finished (success)
+Ran: 31 turns, 58 tool calls, 640 s, $1.92
+Last said (1 of 14):
+  > The change reads right; one inline comment on the helper.
+
+## verdict
+Verdict: APPROVE
+
+## what the agents said
+[review 10:09:02] Codex: nothing to add beyond Claude Code's comment
+`, summaryLog: `Review of pull request #144 against main, session 7f7f7f7f
+
+## steps
+[review 10:02:11] Review of pull request #144 against main
+[review 10:02:13] Reviewing the diff with Claude Code and Codex
+[review 10:09:02] Codex ended (exit=0)
+[review 10:12:40] Waiting for Codex to finish
+
+## review
+Ended: finished (success)
+Ran: 31 turns, 58 tool calls, 640 s, $1.92
+Said: 14 messages
+
+## verdict
+Verdict: APPROVE
+` },
   }),
   // Three pull requests, oldest first: its card shows a merged or closed one only while no newer one came after it.
   // Polling is off, so none has a state here and all three show.

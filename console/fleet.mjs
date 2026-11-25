@@ -2555,6 +2555,15 @@ export function createFleet({
   }
 
   /**
+   * A review run's log (POST /review-log), kept as a QA run's is (qaLog): a summary of counts and fixed words for whoever may
+   * open the session, and the full log for an admin and whoever started it.
+   */
+  function reviewLog(session, text, tier = 'full') {
+    update(session, { review: { ...session.review, [tier === 'summary' ? 'summaryLog' : 'log']: text } });
+    console.log('fleet: review run log kept', { id: session.id, number: session.number, tier, bytes: Buffer.byteLength(text) });
+  }
+
+  /**
    * The still the QA comment shows, from the run's first video: kept beside the videos at a name nobody can guess, the
    * one part of a recording served without sign-in, since GitHub fetches a comment's images with none.
    * @param {object} session
@@ -3317,7 +3326,7 @@ export function createFleet({
   return {
     noteMessage, noteQuestion, clearQuestion: (session) => answered(session, 'a message'),
     createSession, assign, releaseAssignments, startManual, startPrivate, handOffPrivate, taint, isLocked, onLocking, rename, regroup, allowAgent, extend, setLimits, limitsOf, pauseOf, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
-    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaLog, qaVideo, qaPoster, publicQaVideo, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
+    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaLog, reviewLog, qaVideo, qaPoster, publicQaVideo, reviewOnTag, reviewOnDemand, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),
   };

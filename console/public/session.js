@@ -2481,11 +2481,11 @@
             : `This QA session stopped before it sent a report, so ${W.ref(s)} has no QA result from it. Add the QA label to the pull request again to run QA again.`)
             : h('p', null, 'Work in progress is committed and pushed to the branch before a stop. Comment ', h('code', null, '/woodshed …'), ` on ${W.ref(s)} to start a new session on the same branch.`),
       h('dl', null, facts.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])),
-      s.trigger === 'qa' && s.qa?.hasLog && qaRunLog(s));
+      (s.trigger === 'qa' && s.qa?.hasLog && qaRunLog(s, 'qa')) || (s.trigger === 'review' && s.review?.hasLog && qaRunLog(s, 'review')));
   }
 
-  // A QA run's log, read when it is opened: how each claude pass ended and what the run did, for a run with no verdict.
-  function qaRunLog(s) {
+  // A QA or review run's log, read when it is opened: how each claude pass ended and what the run did, for a run with no verdict.
+  function qaRunLog(s, kind) {
     const body = h('pre', { class: 'run-log' }, 'Loading…');
     const note = h('p', { class: 'hint' });
     let loaded = false;
@@ -2493,7 +2493,7 @@
       if (loaded) return;
       loaded = true;
       try {
-        const res = await fetch(`/api/sessions/${s.id}/qa-log`, { cache: 'no-store' });
+        const res = await fetch(`/api/sessions/${s.id}/${kind}-log`, { cache: 'no-store' });
         if (!res.ok) loaded = false;
         body.textContent = res.ok ? await res.text() : `The run log was not read (${res.status}).`;
         // The full text is for admins and whoever started the run: anyone else reads the summary, and is told so.
@@ -2883,7 +2883,7 @@
     if (s.status === 'starting') return `${s.id}:starting:${Date.now()}`;
     // A wait with steps counts its seconds, as a start does.
     if (W.waitsForRetry(s) && s.waitProgress) return `${s.id}:waiting:${Date.now()}`;
-    return s.status === 'running' ? `${agentTermKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.stoppedBy}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}:${Boolean(s.qa?.hasLog)}`;
+    return s.status === 'running' ? `${agentTermKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.stoppedBy}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}:${Boolean(s.qa?.hasLog)}:${Boolean(s.review?.hasLog)}`;
   }
 
   let currentSession = null;
