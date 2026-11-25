@@ -61,7 +61,7 @@ export function verdictOf({ report, skip, noPlan, notCovered, endedWith = null }
   let result;
   if (notCovered) result = notCoveredBy(`🔌 **Not covered**: ${notCovered}`, `Not covered: ${notCovered}`);
   else if (skip != null) result = notCoveredBy(`⏭️ **Not covered**: ${skip}`, 'Not covered: nothing to test');
-  else if (noPlan != null) result = notCoveredBy(`⚠️ **Not covered**: ${noPlan}`, 'Not covered: no test plan');
+  else if (noPlan != null) result = notCoveredBy(`⚠️ **Not covered**: ${noPlan}${endedWith ? `, because ${endedWith}` : ''}`, 'Not covered: no test plan');
   else if (total === 0) {
     result = notCoveredBy(`⚠️ **Not covered**: the run ended without a QA report${endedWith ? `, because ${endedWith}` : ''}`, 'Not covered: no QA report');
   }

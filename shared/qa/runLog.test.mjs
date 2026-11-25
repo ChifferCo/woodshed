@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarize, whyEnded } from './runLog.mjs';
+import { redact, summarize, whyEnded } from './runLog.mjs';
 
 const line = (o) => JSON.stringify(o);
 const said = (text) => line({ type: 'assistant', message: { content: [{ type: 'text', text }, { type: 'tool_use', name: 'Bash' }] } });
@@ -45,4 +45,26 @@ test('what claude or its tools printed never reaches the published reason, only 
     assert.doesNotMatch(whyEnded('test', stream), /PRIVATE-MARKER|token/);
     assert.match(summarize('test', stream), /PRIVATE-MARKER/, 'the console-only log keeps it');
   }
+});
+
+test('redact takes credentials out of free text, whatever prints them, and the environment\'s own secrets by value', () => {
+  const env = { NPM_REGISTRY_TOKEN: 'registry-value-1234', HOME: '/home/x' };
+  const dirty = [
+    'npm ERR! //registry.example/:_authToken=abcdef1234567890', 'Authorization: Bearer abc.def.ghi-12345',
+    'git clone https://user:pw123@example.com/r.git', 'used ghp_AbCdEfGh1234567890 and registry-value-1234',
+    'fetch https://api.example/x?api_key=SECRETVALUE99&page=2', 'password: "hunter2hunter2"',
+  ].join('\n');
+  const clean = redact(dirty, env);
+  for (const secret of ['abcdef1234567890', 'abc.def.ghi-12345', 'pw123', 'ghp_AbCdEfGh1234567890', 'registry-value-1234', 'SECRETVALUE99', 'hunter2hunter2']) {
+    assert.ok(!clean.includes(secret), `${secret} is gone`);
+  }
+  assert.match(clean, /page=2/, 'ordinary text stays');
+  assert.match(clean, /https:\/\/\[redacted\]@example\.com\/r\.git/);
+});
+
+test('a credential in a tool error, a message or the output never reaches the summary', () => {
+  const stream = [toolError('npm ERR! _authToken=abcdef1234567890'), said('I used ghp_AbCdEfGh1234567890'), 'stderr: Bearer abc.def.ghi-12345'].join('\n');
+  const clean = redact(summarize('test', stream), {});
+  assert.doesNotMatch(clean, /abcdef1234567890|ghp_AbCdEfGh|abc\.def\.ghi/);
+  assert.match(clean, /Tool errors: 1/);
 });

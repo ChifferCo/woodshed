@@ -149,6 +149,13 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - Its status pill says the job's state in a word: `slate` while it runs, `green` when it is done or ready to check,
   `bad` when it failed. Never `wait`: a restore ready to check is not a session that needs a person.
 
+## Run log
+
+- A QA session that has stopped shows what its run did under its facts, in a fold (`components/RunLog`): a `Run log`
+  summary, and opened, a `line-soft`-bordered `radius` panel of mono text on `ground`, 12.5px, wrapped, at most 60vh
+  tall and scrolling. Plain text only, never a status by color. It is read when opened, so a closed fold costs nothing.
+- The text is the console's own record of the run, with credentials taken out. It may still quote what the app printed.
+
 ## Invite
 
 - A quiet pane-bar button (`pbtn`), **Invite**, on a My Woodshed session that copies a link to New session with Work on set to its PR, or its pushed branch. It is never orange: the session's primary action stays the only filled one.

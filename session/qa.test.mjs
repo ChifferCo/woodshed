@@ -21,6 +21,7 @@ fi
 if [ ! -f .qa/plan/plan.md ]; then
   if [ -n "\${FAKE_SKIP:-}" ]; then echo 'Docs only' > .qa/plan/SKIP.md; else echo '# Plan' > .qa/plan/plan.md; fi
   echo '{"type":"result","total_cost_usd":0.5}'
+  [ -n "\${FAKE_LEAK:-}" ] && echo 'npm ERR! _authToken=abcdef1234567890'
 else
   printf '## TC-1: signs in ✅\\n## TC-2: saves ❌\\n' > .qa/report.md
   # The browser's recording, where the MCP config claude was given says to write it.
@@ -38,7 +39,7 @@ function listen(handler) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-async function runQa(t, { skip = false, app = 'running', noReport = false } = {}) {
+async function runQa(t, { skip = false, app = 'running', noReport = false, leak = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-sh-'));
   const sessionDir = path.join(dir, 'session');
   const bin = path.join(dir, 'fakebin');
@@ -87,7 +88,7 @@ async function runQa(t, { skip = false, app = 'running', noReport = false } = {}
   const env = {
     ...isolatedEnv(), PATH: `${bin}:${process.env.PATH}`, SESSION_DIR: sessionDir, REPO_DIR: repo, PR: '7', QA_BASE: 'stacked-base',
     SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`,
-    STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_FFMPEG: ffmpeg, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}), ...(noReport ? { FAKE_NO_REPORT: '1' } : {}),
+    STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_FFMPEG: ffmpeg, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}), ...(noReport ? { FAKE_NO_REPORT: '1' } : {}), ...(leak ? { FAKE_LEAK: '1' } : {}),
   };
   const output = await new Promise((resolve, reject) => {
     const child = spawn('bash', [QA_SH], { env });
@@ -158,4 +159,11 @@ test('a test pass that runs out of turns with no report says so in the verdict a
   assert.equal(verdict.conclusion, 'neutral');
   assert.match(verdict.status, /the run ended without a QA report, because the test pass ran out of turns before it finished \(200 turns\)/);
   assert.match(logs.at(-1).text, /## test\nEnded: ran out of turns[\s\S]*Opening the app[\s\S]*No report\.md was written\./);
+});
+
+test('a credential a pass printed is taken out of the log the console keeps', async (t) => {
+  const { logs } = await runQa(t, { leak: true });
+  assert.ok(logs.length > 0);
+  for (const l of logs) assert.doesNotMatch(l.text, /abcdef1234567890/);
+  assert.match(logs.at(-1).text, /_authToken=\[redacted\]/);
 });

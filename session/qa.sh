@@ -143,7 +143,7 @@ sendLog() {
     node "$RUN_LOG" test "$DIR/logs/test.jsonl"
     for f in SKIP NO_PLAN; do [ -f "$DIR/plan/$f.md" ] && { echo; echo "## plan/$f.md"; head -c 2000 "$DIR/plan/$f.md"; }; done
     [ -f "$DIR/report.md" ] || { echo; echo 'No report.md was written.'; }
-  } > "$DIR/logs/run.log" 2>&1
+  } 2>&1 | node "$RUN_LOG" --redact > "$DIR/logs/run.log"
   code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
     | curl -sS --max-time 60 -o /tmp/qa-log-reply.json -w '%{http_code}' -X POST -K - -H 'content-type: text/plain' \
       --data-binary "@$DIR/logs/run.log" "$WOODSHED_CONSOLE_URL/qa-log") || code=000

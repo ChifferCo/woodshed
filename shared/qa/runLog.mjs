@@ -4,6 +4,7 @@
 //
 //   node runLog.mjs <phase> <stream.jsonl>         prints the pass's summary
 //   node runLog.mjs --why <phase> <stream.jsonl>   prints one line saying how the pass ended, nothing when it ended well
+//   node runLog.mjs --redact                        copies stdin to stdout with credentials taken out (redact)
 import fs from 'node:fs';
 import { isMain } from '../isMain.mjs';
 
@@ -19,6 +20,34 @@ const ENDINGS = {
   error_during_execution: 'hit an error while it ran',
   error_max_budget_usd: 'ran out of its budget',
 };
+
+// The console keeps the log, and whoever may open the session reads it. The run's tools print what they like (a failed
+// install shows the registry token it used), so the whole log is scrubbed before it is sent: the values of this
+// environment's own secrets, then what credentials look like.
+const SECRET_NAME_RE = /(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|AUTH)/i;
+const PATTERNS = [
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
+  /\b(?:gh[pousr]_|github_pat_|glpat-|xox[abprs]-|sk-ant-|sk-|npm_|AKIA|ASIA|AIza)[A-Za-z0-9_\-]{8,}/g,
+  /\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]*/g,
+  /\b(Bearer|Basic|token)\s+[A-Za-z0-9._~+/=\-]{8,}/gi,
+  /([?&;]|\b)((?:access_?|auth_?|api_?|private_?|client_?)?(?:token|secret|password|passwd|key|signature|sig|credential)s?|authorization|_authToken)(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s&;,"']+)/gi,
+  /\b([a-z][a-z0-9+.\-]*:\/\/)[^\s/@:]+(?::[^\s/@]*)?@/gi,
+];
+
+/**
+ * @param {string} text
+ * @param {NodeJS.ProcessEnv} [env]  whose secrets' own values are taken out too
+ * @returns {string}  the text with credentials replaced by `[redacted]`
+ */
+export function redact(text, env = process.env) {
+  let out = String(text ?? '');
+  const values = Object.entries(env).filter(([k, v]) => SECRET_NAME_RE.test(k) && typeof v === 'string' && v.length >= 8).map(([, v]) => v)
+    .sort((a, b) => b.length - a.length);
+  for (const v of values) out = out.split(v).join('[redacted]');
+  out = out.replace(PATTERNS[0], '[redacted]').replace(PATTERNS[1], '[redacted]').replace(PATTERNS[2], '[redacted]')
+    .replace(PATTERNS[3], '$1 [redacted]').replace(PATTERNS[4], '$1$2$3[redacted]').replace(PATTERNS[5], '$1[redacted]@');
+  return out;
+}
 
 const clip = (text, max) => (text.length > max ? `${text.slice(0, max)}…` : text);
 const oneLine = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
@@ -122,6 +151,10 @@ export function summarize(phase, stream) {
 }
 
 function main(argv) {
+  if (argv[0] === '--redact') {
+    process.stdout.write(redact(fs.readFileSync(0, 'utf8')));
+    return;
+  }
   const why = argv[0] === '--why';
   const [phase, file] = why ? argv.slice(1) : argv;
   if (!phase || !file) throw new Error('usage: runLog.mjs [--why] <phase> <stream.jsonl>');
