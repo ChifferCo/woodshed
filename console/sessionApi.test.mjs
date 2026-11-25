@@ -1142,10 +1142,19 @@ test('a session\'s conversation is kept beside its own home, never a tainted one
     { id: 'cccccccc', status: 'running', token: 'mia-token', owner: 'mia-dev' },
     { id: 'dddddddd', status: 'running', token: 'tainted-token', owner: 'octocat', taintedAt: '2026-11-25T10:00:00Z' },
     { id: 'eeeeeeee', status: 'running', token: 'locking-token', owner: 'octocat' },
+    { id: 'ffffffff', status: 'running', token: 'ask-token', owner: null, kind: 'ask' },
+    { id: '0a0a0a0a', status: 'stopping', token: 'removed-token', owner: 'octocat' },
   ];
   const texts = new Map();
   const marked = [];
-  const homes = { putText: async (key, text) => { texts.set(key, text); } };
+  const homes = {
+    putText: async (key, text) => {
+      texts.set(key, text);
+      // Removed while its write was on its way.
+      if (key.includes('0a0a0a0a')) sessions.splice(sessions.findIndex((s) => s.id === '0a0a0a0a'), 1);
+    },
+    removeKey: async (key) => { texts.delete(key); },
+  };
   const userSettings = { view: (login) => ({ setUp: login !== 'mia-dev' }) };
   const fleet = { sessions: () => sessions, isLocked: (s) => s.id === 'eeeeeeee', conversationSaved: (s, at) => marked.push([s.id, at]) };
   const handle = createSessionApi({ fleet, tokens: { token: async () => ({}) }, userSettings, homes });
@@ -1168,7 +1177,10 @@ test('a session\'s conversation is kept beside its own home, never a tainted one
   assert.equal((await send('tainted-token', good)).status, 409, 'never a tainted session\'s');
   assert.equal((await send('locking-token', good)).status, 409, 'nor one whose lockdown began as it came in');
   assert.equal((await send('mia-token', good)).status, 409, 'nor for someone who removed My Woodshed');
-  assert.ok(![...texts.keys()].some((k) => /dddddddd|eeeeeeee|mia-dev/.test(k)));
+  assert.equal((await send('ask-token', good)).status, 404, 'nor a question from Slack\'s');
+  assert.equal((await send('removed-token', good)).status, 409, 'one removed as it came in');
+  assert.ok(!texts.has('octocat/sessions/0a0a0a0a/conversation.json'), 'leaves no copy behind');
+  assert.ok(![...texts.keys()].some((k) => /dddddddd|eeeeeeee|ffffffff|mia-dev/.test(k)));
 
   for (const bad of ['not json', { ...good, agent: 'gemini' }, { ...good, entries: [] }, { ...good, entries: [{ role: 'system', text: 'x' }] },
     { ...good, entries: [{ role: 'user', text: 3 }] }, { ...good, writtenAt: 'soon' }]) {

@@ -1833,8 +1833,8 @@ test('the stop sends the conversation before the home, only when it changed, and
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
-      posted.push({ url: req.url.split('?')[0], body });
-      if (req.url === '/conversation') return res.writeHead(204).end();
+      posted.push({ url: req.url.split('?')[0], body, auth: req.headers.authorization });
+      if (req.url === '/conversation') return res.writeHead(req.headers.authorization === 'Bearer refused' ? 409 : 204).end();
       return res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
     });
   });
@@ -1889,6 +1889,16 @@ test('the stop sends the conversation before the home, only when it changed, and
   await tainted.call('POST', '/checkpoint');
   assert.ok(posted.some((p) => p.url === '/home'), 'its home is still saved');
   assert.ok(!posted.some((p) => p.url === '/conversation'), 'its conversation is not');
+
+  // A console that keeps none for it is not asked again, however the conversation changes.
+  const refused = await session('refused', { SESSION_TOKEN: 'refused' });
+  posted.length = 0;
+  await refused.call('POST', '/checkpoint', 'refused');
+  assert.equal(posted.filter((p) => p.url === '/conversation').length, 1, 'asked once');
+  await fs.appendFile(path.join(refused.projects, 'a1b2c3d4-0000-4000-8000-000000000000.jsonl'),
+    line({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: 'More' } }));
+  await refused.call('POST', '/checkpoint', 'refused');
+  assert.equal(posted.filter((p) => p.url === '/conversation').length, 1, 'and not again');
 
   // A question from Slack: its Chat is not read after it ends.
   const ask = await session('ask', { SESSION_MODE: 'ask' });

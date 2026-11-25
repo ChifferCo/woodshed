@@ -1509,28 +1509,46 @@ const CONVERSATION_SAVE_TIMEOUT_MS = 10_000;
 // The writtenAt of the record last kept, which the next read is asked against: a record nobody wrote to costs a stat.
 let conversationKeptAt = null;
 let conversationSaving = Promise.resolve();
+// A periodic save in flight, which the stop gives up rather than waits for, as it does the home's.
+let periodicConversation = null;
+// Set when the console said it keeps none for this session (404: a console from before the route, or one with no home
+// store; 409: tainted, or its owner removed My Woodshed): nothing more is sent.
+let conversationRefused = false;
 
-async function saveConversation(why) {
-  if (!CONSOLE_URL || !KEEPS_CONVERSATION || tainted()) return;
+async function saveConversation(why, signal) {
+  if (!CONSOLE_URL || !KEEPS_CONVERSATION || conversationRefused || tainted()) return;
   const read = await readOwnConversation(conversationKeptAt === null ? {} : { since: conversationKeptAt });
   if (!read || read.unchanged) return;
   const body = fitConversation(read);
   if (!body) return;
+  signal?.throwIfAborted();
+  const timeout = AbortSignal.timeout(CONVERSATION_SAVE_TIMEOUT_MS);
   const res = await fetch(`${CONSOLE_URL}/conversation`, {
     method: 'POST', headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }, body,
-    signal: AbortSignal.timeout(CONVERSATION_SAVE_TIMEOUT_MS),
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   });
   await res.body?.cancel();
+  if (res.status === 404 || res.status === 409) {
+    conversationRefused = true;
+    console.log('statusd: conversation not kept by the console, none sent again', { why, status: res.status });
+    return;
+  }
   if (!res.ok) throw new Error(`the console answered ${res.status}`);
   conversationKeptAt = read.writtenAt;
   console.log('statusd: conversation kept', { why, entries: read.entries.length, bytes: Buffer.byteLength(body) });
 }
 
-// One at a time, so the stop's lands after a periodic one begun before it. Its failure is logged, never thrown: the
-// home and the push go on without it.
+// One at a time, so the stop's lands after a periodic one begun before it; the stop gives a periodic one up instead of
+// waiting for it, since the push after it needs the time. Its failure is logged, never thrown: the home and the push go
+// on without it.
 function saveConversationInTurn(why) {
-  conversationSaving = conversationSaving.then(() => saveConversation(why)).catch((err) => {
+  if (why === 'stop') periodicConversation?.abort(new Error('given up for the save at stop'));
+  const controller = why === 'periodic' ? new AbortController() : null;
+  if (controller) periodicConversation = controller;
+  conversationSaving = conversationSaving.then(() => saveConversation(why, controller?.signal)).catch((err) => {
     console.warn('statusd: conversation not kept', { why, message: String(err?.message ?? err).split('\n')[0] });
+  }).finally(() => {
+    if (periodicConversation === controller) periodicConversation = null;
   });
   return conversationSaving;
 }

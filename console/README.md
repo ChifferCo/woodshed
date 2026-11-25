@@ -160,8 +160,10 @@ record, which the copy was made from, so nothing shows twice. A question from Sl
 nor does a session that has seen production data: statusd sends nothing once tainted, the session API refuses one
 whose lockdown began (409), and the console shows none of a tainted session's. The console logs `sessionApi:
 conversation kept` with the entries and bytes, or `conversation refused, the session has seen production data`;
-statusd logs `statusd: conversation kept` with `why` (`stop` or `periodic`), or `conversation not kept` with the
-console's answer.
+statusd logs `statusd: conversation kept` with `why` (`stop` or `periodic`), `conversation not kept` with the
+console's answer, or, after a 404 or 409, `conversation not kept by the console, none sent again`. The stop gives up a
+periodic save still on its way, as it does the home's. A save that lands after the session was removed is deleted again
+(`sessionApi: conversation dropped, the session was removed as it came in`).
 
 **More than one agent in a session.** The owner of a running My Woodshed session can start another agent in it, beside
 its own: the agent switch on the pane bar, after the tabs while Chat or TUI shows (`components/AgentSwitch`), has

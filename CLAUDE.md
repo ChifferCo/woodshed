@@ -1013,7 +1013,7 @@ URL on top of each env file's Repo settings values
 - **A stopped session has no Chat tab, or its Chat is older than where the session stopped.** Chat shows a stopped
   session's conversation only when the session kept one (console/README.md, "A stopped session's conversation"): its
   record has `conversationSavedAt`. At its stop statusd logged `statusd: conversation kept` with `why` and the entries,
-  or `conversation not kept` with the console's answer; the console logged `sessionApi: conversation kept`, or `conversation
+  or `conversation not kept` with the console's answer (`not kept by the console, none sent again` after a 404 or 409); the console logged `sessionApi: conversation kept`, or `conversation
   refused, the session has seen production data`. None is kept for a question from Slack, a QA run, a review, a tainted
   session, an image from before it, or a console with no home store (`this console keeps no Claude homes`). A task that
   ended without its checkpoint (a crash) shows the periodic copy, up to 5 minutes older. `console: saved conversation

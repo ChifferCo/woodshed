@@ -2006,8 +2006,9 @@ export function createHandler({
         // The sessions' first, so a failure leaves the owner's home, and the size My settings shows for it, as they were.
         if (homes) {
           await homes.removeSessionsOf(login);
-          await homes.remove(login);
+          // The conversations went with the session homes: their marks go now, whatever the owner's home does next.
           fleet.forgetConversations?.(login);
+          await homes.remove(login);
         }
         await claudeSettings?.remove(login);
         userSettings?.noteHome(login, 0);
@@ -2251,7 +2252,7 @@ export function createHandler({
     const saved = text ? parseSavedConversation(text) : null;
     if (!saved) return reply(res, 404, { error: 'no conversation was kept for this session' });
     const savedAt = saved.savedAt ?? session.conversationSavedAt;
-    if (since && saved.writtenAt !== null && String(saved.writtenAt) === since) return reply(res, 200, { agent: saved.agent, unchanged: true, writtenAt: saved.writtenAt });
+    if (since && saved.writtenAt !== null && String(saved.writtenAt) === since) return reply(res, 200, { agent: saved.agent, unchanged: true, writtenAt: saved.writtenAt, savedAt });
     return reply(res, 200, { ...saved, saved: true, savedAt });
   }
 

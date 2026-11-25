@@ -687,7 +687,14 @@
         if (id !== session?.id) return;
         readError = null;
         current = true;
-        if (answer.unchanged && record?.id === id) return;
+        if (answer.unchanged && record?.id === id) {
+          // A stopped session's copy is the record the page already has: only when it was kept is new.
+          if (answer.savedAt && record.savedAt !== answer.savedAt) {
+            record = { ...record, savedAt: answer.savedAt };
+            drawStatus();
+          }
+          return;
+        }
         record = { id, ...answer };
         kept.keep(keyOf(session), record);
         drawThread(false);

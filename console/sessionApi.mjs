@@ -769,6 +769,11 @@ async function conversationReply(req, res, session, { homes, userSettings, fleet
     req.resume();
     return reply(res, 404, { error: 'this console keeps no Claude homes' });
   }
+  // Their Chat is not read once they end: a question's thread is in Slack, a QA run's and a review's on GitHub.
+  if (isAsk(session) || isQa(session) || isReview(session)) {
+    req.resume();
+    return reply(res, 404, { error: 'this session keeps no conversation' });
+  }
   if (session.owner && !userSettings?.view(session.owner).setUp) {
     req.resume();
     return reply(res, 409, { error: 'My Woodshed was removed, so nothing is kept' });
@@ -791,7 +796,15 @@ async function conversationReply(req, res, session, { homes, userSettings, fleet
     return reply(res, 409, { error: 'this session has seen production data, so its conversation is not kept' });
   }
   const savedAt = new Date().toISOString();
-  await homes.putText(conversationKey(sessionHomeName(session)), JSON.stringify({ ...conversation, savedAt }));
+  const key = conversationKey(sessionHomeName(session));
+  await homes.putText(key, JSON.stringify({ ...conversation, savedAt }));
+  // A write that came in as the session was removed, or cleaned up with its home, would leave a copy nothing deletes.
+  const gone = !fleet.sessions().includes(session) || Boolean(session.cleanedAt);
+  if (gone) {
+    await homes.removeKey?.(key).catch(() => {});
+    console.log('sessionApi: conversation dropped, the session was removed as it came in', { sessionId: session.id });
+    return reply(res, 409, { error: 'the session was removed' });
+  }
   fleet.conversationSaved?.(session, savedAt);
   console.log('sessionApi: conversation kept', { sessionId: session.id, entries: conversation.entries.length, bytes });
   res.writeHead(204);
