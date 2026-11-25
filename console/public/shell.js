@@ -301,8 +301,10 @@
   // Read in the page and in every frame (bindFrame), with one count for all.
   const taps = K.doubleTap({ mac: MAC });
   const notATap = () => taps.reset();
-  // A key let go in another window is never seen let go here: leaving the window forgets the one held.
-  window.addEventListener('blur', () => { heldCode = null; });
+  // A key let go in another window is never seen let go here: leaving the window forgets the one held. The top window
+  // gets `blur` too when one of the page's own frames takes the focus (a tab key focusing the terminal), which leaves
+  // the page, and the held key, as they were.
+  window.addEventListener('blur', () => setTimeout(() => { if (!document.hasFocus()) heldCode = null; }));
   function onTapKeyDown(e) {
     taps.down(e, Date.now());
   }
@@ -326,10 +328,19 @@
     hideHint();
     // Shift pressed on its way to a digit (AZERTY) is not a key of the mode, nor the one after G.
     if (MODIFIERS.has(e.key)) return;
+    // A key held down in the mode acts once, and its repeats go nowhere: not into a field that has the focus still,
+    // nor into a terminal or a field the key itself focused or left the focus in once the mode ended (an Esc, a tab, an
+    // N with nothing to go to): heldCode keeps them out until that key is let go.
+    if (e.repeat && (moving || (heldCode && e.code === heldCode))) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     // Esc ends the mode and goes no further: not to a terminal, whose agent would take it as its own Esc. With the
     // palette or the sheet open, it also closes that, below.
     if (e.key === 'Escape' && moving) {
       stopMoving();
+      heldCode = e.code || null;
       // Open notifications take the same Esc and close (notificationBell.js), so it is not stopped here for them.
       if (palette.hidden && keys.el.hidden && !notifications().isOpen()) {
         e.preventDefault();
@@ -341,13 +352,6 @@
       if (!palette.hidden && actionsFor) return;
       e.preventDefault();
       closeAll();
-      return;
-    }
-    // A key held down in the mode moves once, and its repeats go nowhere: not into a field that has the focus still,
-    // nor into the one a tab key just focused (the mode has ended by then: heldCode keeps them out until it is let go).
-    if (e.repeat && (moving || (heldCode && e.code === heldCode))) {
-      e.preventDefault();
-      e.stopPropagation();
       return;
     }
     if (e.repeat || e.isComposing) return;
@@ -392,12 +396,12 @@
     // A move or a tab picked with the palette or the sheet open closes it first, so the new session gets the keys.
     // Notifications too: a move takes the focus from their list, whose own Esc would then never close it.
     if (movingKey) {
+      heldCode = e.code || null;
       closeAll();
       notifications().close();
     }
     // A tab ends the mode: the tab takes the keys from there, to be typed in.
     if (id === 'tab') {
-      heldCode = e.code || null;
       stopMoving();
       page.showTab(K.tabOf(e));
     } else (ACTS[id] ?? go(K.byId[id].href))();
