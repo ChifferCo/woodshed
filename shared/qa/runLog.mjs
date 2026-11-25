@@ -68,22 +68,22 @@ export function readStream(stream, env = process.env) {
   let result = null;
   let tools = 0;
   let turns = 0;
-  for (let line of String(stream ?? '').split('\n')) {
+  for (const line of String(stream ?? '').split('\n')) {
     if (!line.trim()) continue;
-    // Scrubbed here, whole, before anything is clipped: a clip inside a secret would leave a piece the scrub cannot match.
-    line = redact(line, env);
+    // Parsed first and scrubbed after, by field: scrubbing the raw line can break its JSON (a quoted value's escape). Each
+    // text is scrubbed whole here, before anything is clipped: a clip inside a secret would leave a piece no scrub can match.
     let event;
     try {
       event = JSON.parse(line);
     } catch {
-      other.push(line);
+      other.push(redact(line, env));
       continue;
     }
-    if (event?.type === 'result') result = event;
+    if (event?.type === 'result') result = { ...event, ...(typeof event.result === 'string' ? { result: redact(event.result, env) } : {}) };
     if (event?.type === 'assistant') {
       turns += 1;
       for (const part of event.message?.content ?? []) {
-        if (part.type === 'text' && part.text?.trim()) said.push(part.text.trim());
+        if (part.type === 'text' && part.text?.trim()) said.push(redact(part.text.trim(), env));
         if (part.type === 'tool_use') tools += 1;
       }
     }
@@ -91,7 +91,7 @@ export function readStream(stream, env = process.env) {
       for (const part of Array.isArray(event.message?.content) ? event.message.content : []) {
         if (part.type === 'tool_result' && part.is_error) {
           const text = Array.isArray(part.content) ? part.content.map((c) => c.text ?? '').join(' ') : part.content;
-          errors.push(oneLine(text));
+          errors.push(oneLine(redact(String(text ?? ''), env)));
         }
       }
     }

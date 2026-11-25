@@ -95,3 +95,10 @@ test('a short value the installation names as an install secret is taken out too
   assert.doesNotMatch(clean, /48151/);
   assert.match(clean, /1234/, 'a short value of a variable only named like a secret stays');
 });
+
+test('a quoted credential in a tool error keeps the event valid JSON, so the error is counted and its value is gone', () => {
+  const stream = line({ type: 'user', message: { content: [{ type: 'tool_result', is_error: true, content: 'config: password: "opaqueValue123" rejected' }] } });
+  const text = summarize('test', stream);
+  assert.match(text, /Tool errors: 1/);
+  assert.doesNotMatch(text, /opaqueValue123/);
+});
