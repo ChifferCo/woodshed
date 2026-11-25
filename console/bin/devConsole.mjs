@@ -60,6 +60,8 @@ const server = path.join(woodshed, ...(process.env.DEV_CONSOLE_HOST_REPOS === '1
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-console-'));
 
 const now = new Date().toISOString();
+// A run of an earlier commit, a day before the rest.
+const earlier = new Date(Date.now() - 86_400_000).toISOString();
 // /s/5747ed01's start token (console/sessionStarts.mjs), for session/bin/woodshed-session from this machine: with
 // DEV_CONSOLE_SESSION_API_PORT, `WOODSHED_CONSOLE_URL=http://127.0.0.1:<port> node session/startSessions.mjs` with this
 // file as its token file (WOODSHED_START_TOKEN_FILE). Only its hash is in the made-up state, as the console keeps it.
@@ -171,6 +173,13 @@ const sessions = [
     trigger: 'review', prUrl: null, status: 'running', state: 'working', stoppedAt: null, stopReason: null, assignee: null,
     review: { base: 'main', sha: 'f00d145', heading: null, author: null, check: null, commentId: null },
   }),
+  // An earlier review and QA run on the same pull requests, of a commit since pushed over: the console takes the review
+  // off the list (fleet.mjs, pruneEndedRuns), and the rail shows only the last ended run of each kind on a pull request.
+  session('7f7f0001', 144, 'Review: feat(console): pin a session', {
+    trigger: 'review', prUrl: null, stopReason: 'Review finished: REQUEST_CHANGES', createdAt: earlier, startedAt: earlier, stoppedAt: earlier,
+    review: { base: 'main', sha: 'f00d143', heading: null, author: null, check: null, commentId: null, conclusion: 'REQUEST_CHANGES', reported: true },
+  }),
+  session('9a9a0001', 26334, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '5eed334', stopReason: 'QA finished: Fail: 1 of 6 test cases failed', createdAt: earlier, startedAt: earlier, stoppedAt: earlier }),
   session('7f7f7f7f', 144, 'Review: feat(console): pin a session', {
     trigger: 'review', prUrl: null, stopReason: 'Review finished: APPROVE',
     review: { base: 'main', sha: 'f00d144', heading: null, author: null, check: null, commentId: null, conclusion: 'APPROVE', reported: true },

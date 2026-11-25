@@ -46,3 +46,20 @@ test('a review or QA the console ran on a pull request is no one\'s to take: it 
   assert.equal(W.isUnassigned({ ...shared, trigger: 'review' }), false, 'nobody takes a review');
   assert.equal(W.isUnassigned({ ...shared, trigger: 'label' }), true, 'a label nobody has is still Unassigned');
 });
+
+test('the reviews and QA zone lists every run still going, and the last ended run of each kind on each pull request', () => {
+  const W = common();
+  const run = (id, number, trigger, status, createdAt) => ({ id, number, trigger, status, createdAt, owner: null, kind: 'pr' });
+  const checks = [
+    run('r1', 7, 'review', 'stopped', '2026-11-20T10:00:00Z'),
+    run('q1', 7, 'qa', 'failed', '2026-11-20T11:00:00Z'),
+    run('r2', 7, 'review', 'stopped', '2026-11-21T10:00:00Z'),
+    run('q2', 7, 'qa', 'stopped', '2026-11-21T11:00:00Z'),
+    run('q3', 7, 'qa', 'running', '2026-11-22T11:00:00Z'),
+    run('r3', 8, 'review', 'stopped', '2026-11-19T10:00:00Z'),
+    { ...run('r4', 8, 'review', 'stopped', '2026-11-22T10:00:00Z'), project: 'tools' },
+    { id: 'w1', number: 7, trigger: 'label', status: 'stopped', createdAt: '2026-11-18T10:00:00Z', owner: null, kind: 'pr' },
+  ];
+  assert.deepEqual(W.latestPullChecks(checks).map((s) => s.id), ['r2', 'q2', 'q3', 'r3', 'r4', 'w1'],
+    'an earlier run on the same pull request is left out; another project\'s #8 is a pull request of its own; work stays');
+});
