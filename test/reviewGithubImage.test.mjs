@@ -20,7 +20,9 @@ case "$1/$2" in
 esac
 [ "$GH_TOKEN" = fixture-person ] || exit 1
 case "$2" in
-  */denied.png\?*) printf 'fixture upstream error details\\n' >&2; exit 1 ;;
+  */denied.png[?]*) printf 'fixture upstream error details\\n' >&2; exit 1 ;;
+  */binary.png[?]*) printf '\\211PNG'; exit ;;
+  */oversized.png[?]*) head -c 10485761 /dev/zero; exit ;;
 esac
 printf '%s\\n' "$@"
 `, { mode: 0o755 });
@@ -50,6 +52,11 @@ printf '%s\\n' "$@"
     const denied = urls.at(-1).replace('proof%20shot.png', 'denied.png');
     assert.equal(await read({ slug, src: denied, log: (...args) => logs.push(args) }), null);
     assert.deepEqual(logs, [['review.image_not_loaded', { reason: 'subprocess failure' }]]);
+    const binary = await read({ slug, src: denied.replace('denied.png', 'binary.png') });
+    assert.equal(binary.bytes.toString('hex'), '89504e47');
+    const oversized = denied.replace('denied.png', 'oversized.png');
+    assert.equal(await read({ slug, src: oversized, log: (...args) => logs.push(args) }), null);
+    assert.deepEqual(logs.at(-1), ['review.image_not_loaded', { reason: 'size limit' }]);
     for (const src of urls) {
       const image = await read({ slug, src });
       console.log(JSON.stringify(image && { type: image.type, args: image.bytes.toString().trim().split('\\n') }));

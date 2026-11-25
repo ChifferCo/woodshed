@@ -1,7 +1,7 @@
 // Everything that talks to GitHub, via the `gh` CLI already installed and
 // authenticated on the box.
 //
-// Calls pass argv directly to the executable — no shell is constructed
+// Calls pass argv through exec.mjs — no shell is constructed
 // anywhere here, which is why server.mjs's `shQuote` is deliberately
 // unused here. `shQuote` exists for tmux's `new-session <command>` string,
 // which really is handed to /bin/sh; there is no equivalent on this path.
@@ -12,15 +12,12 @@
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 
 import { run } from './exec.mjs';
 import { aiReviewsOf } from './aiReviews.mjs';
 import { checkRunsOf } from './prChecks.mjs';
 
 const GH_TIMEOUT_MS = 30_000;
-const execFileAsync = promisify(execFile);
 const REVIEW_IMAGE_TYPES = new Map([
   ['.png', 'image/png'], ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'],
   ['.gif', 'image/gif'], ['.webp', 'image/webp'], ['.avif', 'image/avif'],
@@ -42,18 +39,15 @@ async function fetchPrImage({ slug, src, log }, env) {
   const type = REVIEW_IMAGE_TYPES.get(path.extname(parts.at(-1)).toLowerCase());
   if (!type) return null;
   const file = parts.map(encodeURIComponent).join('/');
-  try {
-    // exec.mjs decodes stdout as text. The raw contents response is binary.
-    const { stdout } = await execFileAsync('gh', [
-      'api', `repos/${slug}/contents/${file}?ref=${sha}`, '-H', 'Accept: application/vnd.github.raw',
-    ], { env, encoding: 'buffer', timeout: GH_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 });
-    return stdout.length ? { type, bytes: stdout } : null;
-  } catch (err) {
-    const reason = err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'size limit'
-      : err.killed ? 'timeout' : 'subprocess failure';
+  const read = await run('gh', [
+    'api', `repos/${slug}/contents/${file}?ref=${sha}`, '-H', 'Accept: application/vnd.github.raw',
+  ], { env, binary: true, timeoutMs: GH_TIMEOUT_MS, maxBytes: 10 * 1024 * 1024 });
+  if (read.truncated || read.timedOut || read.status !== 0) {
+    const reason = read.truncated ? 'size limit' : read.timedOut ? 'timeout' : 'subprocess failure';
     log?.('review.image_not_loaded', { reason });
     return null;
   }
+  return read.stdout.length ? { type, bytes: read.stdout } : null;
 }
 
 // Snapshot the credential once. The session's gh wrapper honors GH_TOKEN, so
