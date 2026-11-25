@@ -107,6 +107,8 @@ test('no key alone moves through the sessions, and no ⌥⌘ or Ctrl+Alt key doe
   assert.equal(match({ key: '2', code: 'Digit2', ctrlKey: true, altKey: true }), null, 'Ctrl+Alt is AltGr on many keyboards');
   assert.equal(tabOf({ code: 'Digit2' }), 2);
   assert.equal(tabOf({ code: 'Digit5' }), 0);
+  assert.equal(tabOf({ code: 'Numpad3' }), 3);
+  assert.equal(match({ key: '2', code: 'Numpad2' }), null, 'the keypad\'s 2 alone is nothing either');
 });
 
 test('⌘ tapped twice (Ctrl off a Mac) turns on the mode, and ⌘B or Ctrl+B is no key of the console\'s', () => {
@@ -140,6 +142,9 @@ test('in the mode its keys move through the sessions from anywhere, and any othe
     assert.equal(match({ key: 'n', code: 'KeyN' }, on), 'needsYou');
     assert.equal(match({ key: '3', code: 'Digit3' }, on), 'tab');
     assert.equal(match({ key: '3', code: 'Digit3', shiftKey: true }, on), 'tab', 'AZERTY types 3 with Shift');
+    assert.equal(match({ key: '2', code: 'Numpad2' }, on), 'tab', 'the keypad\'s 2, Num Lock on');
+    assert.equal(match({ key: 'ArrowDown', code: 'Numpad2' }, on), 'nextSession', 'and its ↓, Num Lock off');
+    assert.equal(match({ key: '5', code: 'Numpad5' }, on), null);
     assert.equal(match({ key: '"', code: 'Digit3' }, on), null, 'AZERTY\'s " is not 3');
     assert.equal(match({ key: 'J', code: 'KeyJ', shiftKey: true }, on), null);
     assert.equal(match({ key: 'Escape', code: 'Escape' }, on), 'cancel');

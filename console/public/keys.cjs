@@ -44,12 +44,15 @@
   const AFTER_G = { m: 'mine', e: 'everyone', s: 'mySettings' };
   // What a key is while the double tap's mode is on: the session keys alone, read whatever has the focus. Arrows too, as Herdr's.
   const AFTER_PREFIX = { j: 'nextSession', k: 'prevSession', n: 'needsYou', arrowdown: 'nextSession', arrowup: 'prevSession' };
-  // The tab keys: 1 to 4, read from the key's place.
+  // The tab keys: 1 to 4, read from the key's place, on the number row or the keypad. A keypad with Num Lock off sends
+  // the arrows (key ArrowDown on Numpad2), which match() reads as the arrows they are.
   const TAB_CODES = ['Digit1', 'Digit2', 'Digit3', 'Digit4'];
+  const PAD_CODES = ['Numpad1', 'Numpad2', 'Numpad3', 'Numpad4'];
 
   /** @returns {number}  which tab a tab key names, from 1, or 0 for none */
   function tabOf(e) {
-    return TAB_CODES.indexOf(e.code || '') + 1;
+    const code = e.code || '';
+    return Math.max(TAB_CODES.indexOf(code), PAD_CODES.indexOf(code)) + 1;
   }
 
   /**
